@@ -498,6 +498,14 @@ impl AgentConnection for AcpConnection {
         })
     }
 
+    fn prompt_capabilities(&self) -> acp::PromptCapabilities {
+        acp::PromptCapabilities {
+            image: false,
+            audio: false,
+            embedded_context: false,
+        }
+    }
+
     fn cancel(&self, _session_id: &acp::SessionId, cx: &mut App) {
         let task = self
             .connection

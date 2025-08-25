@@ -181,7 +181,7 @@ pub(crate) fn generate_auto_close_edits(
          */
         {
             let tag_node_name_equals = |node: &Node, name: &str| {
-                let is_empty = name.len() == 0;
+                let is_empty = name.is_empty();
                 if let Some(node_name) = node.named_child(TS_NODE_TAG_NAME_CHILD_INDEX) {
                     let range = node_name.byte_range();
                     return buffer.text_for_range(range).equals_str(name);
@@ -207,7 +207,7 @@ pub(crate) fn generate_auto_close_edits(
                     cur = descendant;
                 }
 
-                assert!(ancestors.len() > 0);
+                assert!(!ancestors.is_empty());
 
                 let mut tree_root_node = open_tag;
 
@@ -507,7 +507,7 @@ pub(crate) fn handle_from(
 
             {
                 let selections = this
-                    .read_with(cx, |this, _| this.selections.disjoint_anchors().clone())
+                    .read_with(cx, |this, _| this.selections.disjoint_anchors())
                     .ok()?;
                 for selection in selections.iter() {
                     let Some(selection_buffer_offset_head) =

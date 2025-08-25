@@ -266,8 +266,19 @@ impl ThreadsDatabase {
     }
 
     pub fn new(executor: BackgroundExecutor) -> Result<Self> {
-        let connection = if *ZED_STATELESS || cfg!(any(feature = "test-support", test)) {
+        let connection = if *ZED_STATELESS {
             Connection::open_memory(Some("THREAD_FALLBACK_DB"))
+        } else if cfg!(any(feature = "test-support", test)) {
+            // rust stores the name of the test on the current thread.
+            // We use this to automatically create a database that will
+            // be shared within the test (for the test_retrieve_old_thread)
+            // but not with concurrent tests.
+            let thread = std::thread::current();
+            let test_name = thread.name();
+            Connection::open_memory(Some(&format!(
+                "THREAD_FALLBACK_{}",
+                test_name.unwrap_or_default()
+            )))
         } else {
             let threads_dir = paths::data_dir().join("threads");
             std::fs::create_dir_all(&threads_dir)?;
@@ -287,7 +298,7 @@ impl ThreadsDatabase {
         .map_err(|e| anyhow!("Failed to create threads table: {}", e))?;
 
         let db = Self {
-            executor: executor.clone(),
+            executor,
             connection: Arc::new(Mutex::new(connection)),
         };
 
@@ -325,7 +336,7 @@ impl ThreadsDatabase {
             INSERT OR REPLACE INTO threads (id, summary, updated_at, data_type, data) VALUES (?, ?, ?, ?, ?)
         "})?;
 
-        insert((id.0.clone(), title, updated_at, data_type, data))?;
+        insert((id.0, title, updated_at, data_type, data))?;
 
         Ok(())
     }
@@ -434,7 +445,7 @@ mod tests {
             let client = Client::new(clock, http_client, cx);
             agent::init(cx);
             agent_settings::init(cx);
-            language_model::init(client.clone(), cx);
+            language_model::init(client, cx);
         });
     }
 

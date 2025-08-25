@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/acp_tools",
     "crates/acp_thread",
     "crates/action_log",
     "crates/activity_indicator",
@@ -155,6 +156,7 @@ members = [
     "crates/streaming_diff",
     "crates/sum_tree",
     "crates/supermaven",
+    "crates/system_specs",
     "crates/supermaven_api",
     "crates/svg_preview",
     "crates/tab_switcher",
@@ -226,6 +228,7 @@ edition = "2024"
 # Workspace member crates
 #
 
+acp_tools = { path = "crates/acp_tools" }
 acp_thread = { path = "crates/acp_thread" }
 action_log = { path = "crates/action_log" }
 agent = { path = "crates/agent" }
@@ -381,6 +384,7 @@ streaming_diff = { path = "crates/streaming_diff" }
 sum_tree = { path = "crates/sum_tree" }
 supermaven = { path = "crates/supermaven" }
 supermaven_api = { path = "crates/supermaven_api" }
+system_specs = { path = "crates/system_specs" }
 tab_switcher = { path = "crates/tab_switcher" }
 task = { path = "crates/task" }
 tasks_ui = { path = "crates/tasks_ui" }
@@ -422,8 +426,7 @@ zlog_settings = { path = "crates/zlog_settings" }
 # External crates
 #
 
-agentic-coding-protocol = "0.0.10"
-agent-client-protocol = "0.0.26"
+agent-client-protocol = "0.0.31"
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", branch = "add-hush-login-flag" }
 any_vec = "0.14"
@@ -450,6 +453,7 @@ aws-sdk-bedrockruntime = { version = "1.80.0", features = [
 aws-smithy-runtime-api = { version = "1.7.4", features = ["http-1x", "client"] }
 aws-smithy-types = { version = "1.3.0", features = ["http-body-1-x"] }
 base64 = "0.22"
+bincode = "1.2.1"
 bitflags = "2.6.0"
 blade-graphics = { git = "https://github.com/kvark/blade", rev = "e0ec4e720957edd51b945b64dd85605ea54bcfe5" }
 blade-macros = { git = "https://github.com/kvark/blade", rev = "e0ec4e720957edd51b945b64dd85605ea54bcfe5" }
@@ -493,6 +497,7 @@ handlebars = "4.3"
 heck = "0.5"
 heed = { version = "0.21.0", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
+human_bytes = "0.4.1"
 html5ever = "0.27.0"
 http = "1.1"
 http-body = "1.0"
@@ -532,6 +537,7 @@ palette = { version = "0.7.5", default-features = false, features = ["std"] }
 parking_lot = "0.12.1"
 partial-json-fixer = "0.5.3"
 parse_int = "0.9"
+pciid-parser = "0.8.0"
 pathdiff = "0.2"
 pet = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
 pet-conda = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
@@ -802,60 +808,32 @@ unexpected_cfgs = { level = "allow" }
 dbg_macro = "deny"
 todo = "deny"
 
-# Motivation: We use `vec![a..b]` a lot when dealing with ranges in text, so
-# warning on this rule produces a lot of noise.
-single_range_in_vec_init = "allow"
+# This is not a style lint, see https://github.com/rust-lang/rust-clippy/pull/15454
+# Remove when the lint gets promoted to `suspicious`.
+declare_interior_mutable_const = "deny"
 
-# These are all of the rules that currently have violations in the Zed
-# codebase.
-#
-# We'll want to drive this list down by either:
-# 1. fixing violations of the rule and begin enforcing it
-# 2. deciding we want to allow the rule permanently, at which point
-#    we should codify that separately above.
-#
-# This list shouldn't be added to; it should only get shorter.
-# =============================================================================
+redundant_clone = "deny"
 
-# There are a bunch of rules currently failing in the `style` group, so
-# allow all of those, for now.
+# We currently do not restrict any style rules
+# as it slows down shipping code to Zed.
+#
+# Running ./script/clippy can take several minutes, and so it's
+# common to skip that step and let CI do it. Any unexpected failures
+# (which also take minutes to discover) thus require switching back
+# to an old branch, manual fixing, and re-pushing.
+#
+# In the future we could improve this by either making sure
+# Zed can surface clippy errors in diagnostics (in addition to the
+# rust-analyzer errors), or by having CI fix style nits automatically.
 style = { level = "allow", priority = -1 }
-
-# Temporary list of style lints that we've fixed so far.
-comparison_to_empty = "warn"
-into_iter_on_ref = "warn"
-iter_cloned_collect = "warn"
-iter_next_slice = "warn"
-iter_nth = "warn"
-iter_nth_zero = "warn"
-iter_skip_next = "warn"
-let_and_return = "warn"
-module_inception = { level = "deny" }
-question_mark = { level = "deny" }
-single_match = "warn"
-redundant_closure = { level = "deny" }
-redundant_static_lifetimes = { level = "warn" }
-redundant_pattern_matching = "warn"
-redundant_field_names = "warn"
-declare_interior_mutable_const = { level = "deny" }
-collapsible_if = { level = "warn"}
-collapsible_else_if = { level = "warn" }
-needless_borrow = { level = "warn"}
-needless_return = { level = "warn" }
-unnecessary_mut_passed = {level = "warn"}
-unnecessary_map_or = { level = "warn" }
-unused_unit = "warn"
 
 # Individual rules that have violations in the codebase:
 type_complexity = "allow"
-# We often return trait objects from `new` functions.
-new_ret_no_self = { level = "allow" }
-# We have a few `next` functions that differ in lifetimes
-# compared to Iterator::next. Yet, clippy complains about those.
-should_implement_trait = { level = "allow" }
 let_underscore_future = "allow"
-# It doesn't make sense to implement `Default` unilaterally.
-new_without_default = "allow"
+
+# Motivation: We use `vec![a..b]` a lot when dealing with ranges in text, so
+# warning on this rule produces a lot of noise.
+single_range_in_vec_init = "allow"
 
 # in Rust it can be very tedious to reduce argument count without
 # running afoul of the borrow checker.
@@ -863,10 +841,6 @@ too_many_arguments = "allow"
 
 # We often have large enum variants yet we rarely actually bother with splitting them up.
 large_enum_variant = "allow"
-
-# `enum_variant_names` fires for all enums, even when they derive serde traits.
-# Adhering to this lint would be a breaking change.
-enum_variant_names = "allow"
 
 [workspace.metadata.cargo-machete]
 ignored = [

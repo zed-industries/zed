@@ -2453,7 +2453,7 @@ impl Window {
     /// time.
     pub fn get_asset<A: Asset>(&mut self, source: &A::Source, cx: &mut App) -> Option<A::Output> {
         let (task, _) = cx.fetch_asset::<A>(source);
-        task.clone().now_or_never()
+        task.now_or_never()
     }
     /// Obtain the current element offset. This method should only be called during the
     /// prepaint phase of element drawing.
@@ -3044,7 +3044,7 @@ impl Window {
 
         let tile = self
             .sprite_atlas
-            .get_or_insert_with(&params.clone().into(), &mut || {
+            .get_or_insert_with(&params.into(), &mut || {
                 Ok(Some((
                     data.size(frame_index),
                     Cow::Borrowed(
@@ -3731,7 +3731,7 @@ impl Window {
                 self.dispatch_keystroke_observers(
                     event,
                     Some(binding.action),
-                    match_result.context_stack.clone(),
+                    match_result.context_stack,
                     cx,
                 );
                 self.pending_input_changed(cx);
@@ -4442,7 +4442,7 @@ impl Window {
                         if let Some((_, inspector_id)) =
                             self.hovered_inspector_hitbox(inspector, &self.rendered_frame)
                         {
-                            inspector.set_active_element_id(inspector_id.clone(), self);
+                            inspector.set_active_element_id(inspector_id, self);
                         }
                     }
                 });
@@ -4583,7 +4583,7 @@ impl<V: 'static + Render> WindowHandle<V> {
     where
         C: AppContext,
     {
-        cx.read_window(self, |root_view, _cx| root_view.clone())
+        cx.read_window(self, |root_view, _cx| root_view)
     }
 
     /// Check if this window is 'active'.

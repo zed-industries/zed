@@ -264,7 +264,7 @@ impl http_client::HttpClient for ReqwestClient {
 
             let bytes = response
                 .bytes_stream()
-                .map_err(|e| futures::io::Error::new(futures::io::ErrorKind::Other, e))
+                .map_err(futures::io::Error::other)
                 .into_async_read();
             let body = http_client::AsyncBody::from_reader(bytes);
 

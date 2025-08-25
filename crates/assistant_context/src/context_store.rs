@@ -862,7 +862,7 @@ impl ContextStore {
                     ContextServerStatus::Running => {
                         self.load_context_server_slash_commands(
                             server_id.clone(),
-                            context_server_store.clone(),
+                            context_server_store,
                             cx,
                         );
                     }

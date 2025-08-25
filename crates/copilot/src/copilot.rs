@@ -81,10 +81,7 @@ pub fn init(
     };
     copilot_chat::init(fs.clone(), http.clone(), configuration, cx);
 
-    let copilot = cx.new({
-        let node_runtime = node_runtime.clone();
-        move |cx| Copilot::start(new_server_id, fs, node_runtime, cx)
-    });
+    let copilot = cx.new(move |cx| Copilot::start(new_server_id, fs, node_runtime, cx));
     Copilot::set_global(copilot.clone(), cx);
     cx.observe(&copilot, |copilot, cx| {
         copilot.update(cx, |copilot, cx| copilot.update_action_visibilities(cx));
@@ -129,7 +126,7 @@ impl CopilotServer {
     fn as_authenticated(&mut self) -> Result<&mut RunningCopilotServer> {
         let server = self.as_running()?;
         anyhow::ensure!(
-            matches!(server.sign_in_status, SignInStatus::Authorized { .. }),
+            matches!(server.sign_in_status, SignInStatus::Authorized),
             "must sign in before using copilot"
         );
         Ok(server)
@@ -581,12 +578,12 @@ impl Copilot {
     pub(crate) fn sign_in(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         if let CopilotServer::Running(server) = &mut self.server {
             let task = match &server.sign_in_status {
-                SignInStatus::Authorized { .. } => Task::ready(Ok(())).shared(),
+                SignInStatus::Authorized => Task::ready(Ok(())).shared(),
                 SignInStatus::SigningIn { task, .. } => {
                     cx.notify();
                     task.clone()
                 }
-                SignInStatus::SignedOut { .. } | SignInStatus::Unauthorized { .. } => {
+                SignInStatus::SignedOut { .. } | SignInStatus::Unauthorized => {
                     let lsp = server.lsp.clone();
                     let task = cx
                         .spawn(async move |this, cx| {
@@ -730,7 +727,7 @@ impl Copilot {
             ..
         }) = &mut self.server
         {
-            if !matches!(status, SignInStatus::Authorized { .. }) {
+            if !matches!(status, SignInStatus::Authorized) {
                 return;
             }
 
@@ -1012,8 +1009,8 @@ impl Copilot {
             CopilotServer::Error(error) => Status::Error(error.clone()),
             CopilotServer::Running(RunningCopilotServer { sign_in_status, .. }) => {
                 match sign_in_status {
-                    SignInStatus::Authorized { .. } => Status::Authorized,
-                    SignInStatus::Unauthorized { .. } => Status::Unauthorized,
+                    SignInStatus::Authorized => Status::Authorized,
+                    SignInStatus::Unauthorized => Status::Unauthorized,
                     SignInStatus::SigningIn { prompt, .. } => Status::SigningIn {
                         prompt: prompt.clone(),
                     },

@@ -206,7 +206,7 @@ impl CachedLspAdapter {
     }
 
     pub fn name(&self) -> LanguageServerName {
-        self.adapter.name().clone()
+        self.adapter.name()
     }
 
     pub async fn get_language_server_command(

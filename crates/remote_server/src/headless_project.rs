@@ -46,6 +46,9 @@ pub struct HeadlessProject {
     pub languages: Arc<LanguageRegistry>,
     pub extensions: Entity<HeadlessExtensionStore>,
     pub git_store: Entity<GitStore>,
+    // Used mostly to keep alive the toolchain store for RPC handlers.
+    // Local variant is used within LSP store, but that's a separate entity.
+    pub _toolchain_store: Entity<ToolchainStore>,
 }
 
 pub struct HeadlessAppState {
@@ -237,11 +240,11 @@ impl HeadlessProject {
         session.add_entity_message_handler(BufferStore::handle_close_buffer);
 
         session.add_request_handler(
-            extensions.clone().downgrade(),
+            extensions.downgrade(),
             HeadlessExtensionStore::handle_sync_extensions,
         );
         session.add_request_handler(
-            extensions.clone().downgrade(),
+            extensions.downgrade(),
             HeadlessExtensionStore::handle_install_extension,
         );
 
@@ -269,6 +272,7 @@ impl HeadlessProject {
             languages,
             extensions,
             git_store,
+            _toolchain_store: toolchain_store,
         }
     }
 

@@ -181,6 +181,7 @@ impl LanguageServerTree {
                     &root_path.path,
                     language_name.clone(),
                 );
+
                 (
                     Arc::new(InnerTreeNode::new(
                         adapter.name(),
@@ -312,8 +313,8 @@ impl LanguageServerTree {
 
     /// Remove nodes with a given ID from the tree.
     pub(crate) fn remove_nodes(&mut self, ids: &BTreeSet<LanguageServerId>) {
-        for (_, servers) in &mut self.instances {
-            for (_, nodes) in &mut servers.roots {
+        for servers in self.instances.values_mut() {
+            for nodes in &mut servers.roots.values_mut() {
                 nodes.retain(|_, (node, _)| node.id.get().is_none_or(|id| !ids.contains(id)));
             }
         }
@@ -408,6 +409,7 @@ impl ServerTreeRebase {
                 if live_node.id.get().is_some() {
                     return Some(node);
                 }
+
                 let disposition = &live_node.disposition;
                 let Some((existing_node, _)) = self
                     .old_contents

@@ -1,8 +1,11 @@
+use std::cell::Cell;
 use std::ops::Range;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use acp_thread::MentionUri;
+use agent_client_protocol as acp;
 use agent2::{HistoryEntry, HistoryStore};
 use anyhow::Result;
 use editor::{CompletionProvider, Editor, ExcerptId};
@@ -63,6 +66,7 @@ pub struct ContextPickerCompletionProvider {
     workspace: WeakEntity<Workspace>,
     history_store: Entity<HistoryStore>,
     prompt_store: Option<Entity<PromptStore>>,
+    prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
 }
 
 impl ContextPickerCompletionProvider {
@@ -71,12 +75,14 @@ impl ContextPickerCompletionProvider {
         workspace: WeakEntity<Workspace>,
         history_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
+        prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
     ) -> Self {
         Self {
             message_editor,
             workspace,
             history_store,
             prompt_store,
+            prompt_capabilities,
         }
     }
 
@@ -89,7 +95,7 @@ impl ContextPickerCompletionProvider {
     ) -> Option<Completion> {
         match entry {
             ContextPickerEntry::Mode(mode) => Some(Completion {
-                replace_range: source_range.clone(),
+                replace_range: source_range,
                 new_text: format!("@{} ", mode.keyword()),
                 label: CodeLabel::plain(mode.label().to_string(), None),
                 icon_path: Some(mode.icon().path().into()),
@@ -102,62 +108,7 @@ impl ContextPickerCompletionProvider {
                 confirm: Some(Arc::new(|_, _, _| true)),
             }),
             ContextPickerEntry::Action(action) => {
-                let (new_text, on_action) = match action {
-                    ContextPickerAction::AddSelections => {
-                        const PLACEHOLDER: &str = "selection ";
-                        let selections = selection_ranges(workspace, cx)
-                            .into_iter()
-                            .enumerate()
-                            .map(|(ix, (buffer, range))| {
-                                (
-                                    buffer,
-                                    range,
-                                    (PLACEHOLDER.len() * ix)..(PLACEHOLDER.len() * (ix + 1) - 1),
-                                )
-                            })
-                            .collect::<Vec<_>>();
-
-                        let new_text: String = PLACEHOLDER.repeat(selections.len());
-
-                        let callback = Arc::new({
-                            let source_range = source_range.clone();
-                            move |_, window: &mut Window, cx: &mut App| {
-                                let selections = selections.clone();
-                                let message_editor = message_editor.clone();
-                                let source_range = source_range.clone();
-                                window.defer(cx, move |window, cx| {
-                                    message_editor
-                                        .update(cx, |message_editor, cx| {
-                                            message_editor.confirm_mention_for_selection(
-                                                source_range,
-                                                selections,
-                                                window,
-                                                cx,
-                                            )
-                                        })
-                                        .ok();
-                                });
-                                false
-                            }
-                        });
-
-                        (new_text, callback)
-                    }
-                };
-
-                Some(Completion {
-                    replace_range: source_range.clone(),
-                    new_text,
-                    label: CodeLabel::plain(action.label().to_string(), None),
-                    icon_path: Some(action.icon().path().into()),
-                    documentation: None,
-                    source: project::CompletionSource::Custom,
-                    insert_text_mode: None,
-                    // This ensures that when a user accepts this completion, the
-                    // completion menu will still be shown after "@category " is
-                    // inserted
-                    confirm: Some(on_action),
-                })
+                Self::completion_for_action(action, source_range, message_editor, workspace, cx)
             }
         }
     }
@@ -187,7 +138,7 @@ impl ContextPickerCompletionProvider {
             documentation: None,
             insert_text_mode: None,
             source: project::CompletionSource::Custom,
-            icon_path: Some(icon_for_completion.clone()),
+            icon_path: Some(icon_for_completion),
             confirm: Some(confirm_completion_callback(
                 thread_entry.title().clone(),
                 source_range.start,
@@ -218,9 +169,9 @@ impl ContextPickerCompletionProvider {
             documentation: None,
             insert_text_mode: None,
             source: project::CompletionSource::Custom,
-            icon_path: Some(icon_path.clone()),
+            icon_path: Some(icon_path),
             confirm: Some(confirm_completion_callback(
-                rule.title.clone(),
+                rule.title,
                 source_range.start,
                 new_text_len - 1,
                 editor,
@@ -260,7 +211,7 @@ impl ContextPickerCompletionProvider {
         let completion_icon_path = if is_recent {
             IconName::HistoryRerun.path().into()
         } else {
-            crease_icon_path.clone()
+            crease_icon_path
         };
 
         let new_text = format!("{} ", uri.as_link());
@@ -296,9 +247,9 @@ impl ContextPickerCompletionProvider {
 
         let abs_path = project.read(cx).absolute_path(&symbol.path, cx)?;
         let uri = MentionUri::Symbol {
-            path: abs_path,
+            abs_path,
             name: symbol.name.clone(),
-            line_range: symbol.range.start.0.row..symbol.range.end.0.row,
+            line_range: symbol.range.start.0.row..=symbol.range.end.0.row,
         };
         let new_text = format!("{} ", uri.as_link());
         let new_text_len = new_text.len();
@@ -309,10 +260,10 @@ impl ContextPickerCompletionProvider {
             label,
             documentation: None,
             source: project::CompletionSource::Custom,
-            icon_path: Some(icon_path.clone()),
+            icon_path: Some(icon_path),
             insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
-                symbol.name.clone().into(),
+                symbol.name.into(),
                 source_range.start,
                 new_text_len - 1,
                 message_editor,
@@ -327,7 +278,7 @@ impl ContextPickerCompletionProvider {
         message_editor: WeakEntity<MessageEditor>,
         cx: &mut App,
     ) -> Option<Completion> {
-        let new_text = format!("@fetch {} ", url_to_fetch.clone());
+        let new_text = format!("@fetch {} ", url_to_fetch);
         let url_to_fetch = url::Url::parse(url_to_fetch.as_ref())
             .or_else(|_| url::Url::parse(&format!("https://{url_to_fetch}")))
             .ok()?;
@@ -341,7 +292,7 @@ impl ContextPickerCompletionProvider {
             label: CodeLabel::plain(url_to_fetch.to_string(), None),
             documentation: None,
             source: project::CompletionSource::Custom,
-            icon_path: Some(icon_path.clone()),
+            icon_path: Some(icon_path),
             insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
                 url_to_fetch.to_string().into(),
@@ -350,6 +301,71 @@ impl ContextPickerCompletionProvider {
                 message_editor,
                 mention_uri,
             )),
+        })
+    }
+
+    pub(crate) fn completion_for_action(
+        action: ContextPickerAction,
+        source_range: Range<Anchor>,
+        message_editor: WeakEntity<MessageEditor>,
+        workspace: &Entity<Workspace>,
+        cx: &mut App,
+    ) -> Option<Completion> {
+        let (new_text, on_action) = match action {
+            ContextPickerAction::AddSelections => {
+                const PLACEHOLDER: &str = "selection ";
+                let selections = selection_ranges(workspace, cx)
+                    .into_iter()
+                    .enumerate()
+                    .map(|(ix, (buffer, range))| {
+                        (
+                            buffer,
+                            range,
+                            (PLACEHOLDER.len() * ix)..(PLACEHOLDER.len() * (ix + 1) - 1),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+
+                let new_text: String = PLACEHOLDER.repeat(selections.len());
+
+                let callback = Arc::new({
+                    let source_range = source_range.clone();
+                    move |_, window: &mut Window, cx: &mut App| {
+                        let selections = selections.clone();
+                        let message_editor = message_editor.clone();
+                        let source_range = source_range.clone();
+                        window.defer(cx, move |window, cx| {
+                            message_editor
+                                .update(cx, |message_editor, cx| {
+                                    message_editor.confirm_mention_for_selection(
+                                        source_range,
+                                        selections,
+                                        window,
+                                        cx,
+                                    )
+                                })
+                                .ok();
+                        });
+                        false
+                    }
+                });
+
+                (new_text, callback)
+            }
+        };
+
+        Some(Completion {
+            replace_range: source_range,
+            new_text,
+            label: CodeLabel::plain(action.label().to_string(), None),
+            icon_path: Some(action.icon().path().into()),
+            documentation: None,
+            source: project::CompletionSource::Custom,
+            insert_text_mode: None,
+            // This ensures that when a user accepts this completion, the
+            // completion menu will still be shown after "@category " is
+            // inserted
+            confirm: Some(on_action),
         })
     }
 
@@ -365,8 +381,7 @@ impl ContextPickerCompletionProvider {
         };
         match mode {
             Some(ContextPickerMode::File) => {
-                let search_files_task =
-                    search_files(query.clone(), cancellation_flag.clone(), &workspace, cx);
+                let search_files_task = search_files(query, cancellation_flag, &workspace, cx);
                 cx.background_spawn(async move {
                     search_files_task
                         .await
@@ -377,8 +392,7 @@ impl ContextPickerCompletionProvider {
             }
 
             Some(ContextPickerMode::Symbol) => {
-                let search_symbols_task =
-                    search_symbols(query.clone(), cancellation_flag.clone(), &workspace, cx);
+                let search_symbols_task = search_symbols(query, cancellation_flag, &workspace, cx);
                 cx.background_spawn(async move {
                     search_symbols_task
                         .await
@@ -389,12 +403,8 @@ impl ContextPickerCompletionProvider {
             }
 
             Some(ContextPickerMode::Thread) => {
-                let search_threads_task = search_threads(
-                    query.clone(),
-                    cancellation_flag.clone(),
-                    &self.history_store,
-                    cx,
-                );
+                let search_threads_task =
+                    search_threads(query, cancellation_flag, &self.history_store, cx);
                 cx.background_spawn(async move {
                     search_threads_task
                         .await
@@ -415,7 +425,7 @@ impl ContextPickerCompletionProvider {
             Some(ContextPickerMode::Rules) => {
                 if let Some(prompt_store) = self.prompt_store.as_ref() {
                     let search_rules_task =
-                        search_rules(query.clone(), cancellation_flag.clone(), prompt_store, cx);
+                        search_rules(query, cancellation_flag, prompt_store, cx);
                     cx.background_spawn(async move {
                         search_rules_task
                             .await
@@ -448,7 +458,7 @@ impl ContextPickerCompletionProvider {
                 let executor = cx.background_executor().clone();
 
                 let search_files_task =
-                    search_files(query.clone(), cancellation_flag.clone(), &workspace, cx);
+                    search_files(query.clone(), cancellation_flag, &workspace, cx);
 
                 let entries = self.available_context_picker_entries(&workspace, cx);
                 let entry_candidates = entries
@@ -550,17 +560,19 @@ impl ContextPickerCompletionProvider {
                 }),
         );
 
-        const RECENT_COUNT: usize = 2;
-        let threads = self
-            .history_store
-            .read(cx)
-            .recently_opened_entries(cx)
-            .into_iter()
-            .filter(|thread| !mentions.contains(&thread.mention_uri()))
-            .take(RECENT_COUNT)
-            .collect::<Vec<_>>();
+        if self.prompt_capabilities.get().embedded_context {
+            const RECENT_COUNT: usize = 2;
+            let threads = self
+                .history_store
+                .read(cx)
+                .recently_opened_entries(cx)
+                .into_iter()
+                .filter(|thread| !mentions.contains(&thread.mention_uri()))
+                .take(RECENT_COUNT)
+                .collect::<Vec<_>>();
 
-        recent.extend(threads.into_iter().map(Match::RecentThread));
+            recent.extend(threads.into_iter().map(Match::RecentThread));
+        }
 
         recent
     }
@@ -570,11 +582,17 @@ impl ContextPickerCompletionProvider {
         workspace: &Entity<Workspace>,
         cx: &mut App,
     ) -> Vec<ContextPickerEntry> {
-        let mut entries = vec![
-            ContextPickerEntry::Mode(ContextPickerMode::File),
-            ContextPickerEntry::Mode(ContextPickerMode::Symbol),
-            ContextPickerEntry::Mode(ContextPickerMode::Thread),
-        ];
+        let embedded_context = self.prompt_capabilities.get().embedded_context;
+        let mut entries = if embedded_context {
+            vec![
+                ContextPickerEntry::Mode(ContextPickerMode::File),
+                ContextPickerEntry::Mode(ContextPickerMode::Symbol),
+                ContextPickerEntry::Mode(ContextPickerMode::Thread),
+            ]
+        } else {
+            // File is always available, but we don't need a mode entry
+            vec![]
+        };
 
         let has_selection = workspace
             .read(cx)
@@ -589,11 +607,13 @@ impl ContextPickerCompletionProvider {
             ));
         }
 
-        if self.prompt_store.is_some() {
-            entries.push(ContextPickerEntry::Mode(ContextPickerMode::Rules));
-        }
+        if embedded_context {
+            if self.prompt_store.is_some() {
+                entries.push(ContextPickerEntry::Mode(ContextPickerMode::Rules));
+            }
 
-        entries.push(ContextPickerEntry::Mode(ContextPickerMode::Fetch));
+            entries.push(ContextPickerEntry::Mode(ContextPickerMode::Fetch));
+        }
 
         entries
     }
@@ -631,7 +651,11 @@ impl CompletionProvider for ContextPickerCompletionProvider {
             let offset_to_line = buffer.point_to_offset(line_start);
             let mut lines = buffer.text_for_range(line_start..position).lines();
             let line = lines.next()?;
-            MentionCompletion::try_parse(line, offset_to_line)
+            MentionCompletion::try_parse(
+                self.prompt_capabilities.get().embedded_context,
+                line,
+                offset_to_line,
+            )
         });
         let Some(state) = state else {
             return Task::ready(Ok(Vec::new()));
@@ -751,12 +775,16 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         let offset_to_line = buffer.point_to_offset(line_start);
         let mut lines = buffer.text_for_range(line_start..position).lines();
         if let Some(line) = lines.next() {
-            MentionCompletion::try_parse(line, offset_to_line)
-                .map(|completion| {
-                    completion.source_range.start <= offset_to_line + position.column as usize
-                        && completion.source_range.end >= offset_to_line + position.column as usize
-                })
-                .unwrap_or(false)
+            MentionCompletion::try_parse(
+                self.prompt_capabilities.get().embedded_context,
+                line,
+                offset_to_line,
+            )
+            .map(|completion| {
+                completion.source_range.start <= offset_to_line + position.column as usize
+                    && completion.source_range.end >= offset_to_line + position.column as usize
+            })
+            .unwrap_or(false)
         } else {
             false
         }
@@ -777,7 +805,7 @@ pub(crate) fn search_threads(
     history_store: &Entity<HistoryStore>,
     cx: &mut App,
 ) -> Task<Vec<HistoryEntry>> {
-    let threads = history_store.read(cx).entries(cx);
+    let threads = history_store.read(cx).entries().collect();
     if query.is_empty() {
         return Task::ready(threads);
     }
@@ -847,7 +875,7 @@ struct MentionCompletion {
 }
 
 impl MentionCompletion {
-    fn try_parse(line: &str, offset_to_line: usize) -> Option<Self> {
+    fn try_parse(allow_non_file_mentions: bool, line: &str, offset_to_line: usize) -> Option<Self> {
         let last_mention_start = line.rfind('@')?;
         if last_mention_start >= line.len() {
             return Some(Self::default());
@@ -871,7 +899,9 @@ impl MentionCompletion {
         if let Some(mode_text) = parts.next() {
             end += mode_text.len();
 
-            if let Some(parsed_mode) = ContextPickerMode::try_from(mode_text).ok() {
+            if let Some(parsed_mode) = ContextPickerMode::try_from(mode_text).ok()
+                && (allow_non_file_mentions || matches!(parsed_mode, ContextPickerMode::File))
+            {
                 mode = Some(parsed_mode);
             } else {
                 argument = Some(mode_text.to_string());
@@ -904,10 +934,10 @@ mod tests {
 
     #[test]
     fn test_mention_completion_parse() {
-        assert_eq!(MentionCompletion::try_parse("Lorem Ipsum", 0), None);
+        assert_eq!(MentionCompletion::try_parse(true, "Lorem Ipsum", 0), None);
 
         assert_eq!(
-            MentionCompletion::try_parse("Lorem @", 0),
+            MentionCompletion::try_parse(true, "Lorem @", 0),
             Some(MentionCompletion {
                 source_range: 6..7,
                 mode: None,
@@ -916,7 +946,7 @@ mod tests {
         );
 
         assert_eq!(
-            MentionCompletion::try_parse("Lorem @file", 0),
+            MentionCompletion::try_parse(true, "Lorem @file", 0),
             Some(MentionCompletion {
                 source_range: 6..11,
                 mode: Some(ContextPickerMode::File),
@@ -925,7 +955,7 @@ mod tests {
         );
 
         assert_eq!(
-            MentionCompletion::try_parse("Lorem @file ", 0),
+            MentionCompletion::try_parse(true, "Lorem @file ", 0),
             Some(MentionCompletion {
                 source_range: 6..12,
                 mode: Some(ContextPickerMode::File),
@@ -934,7 +964,7 @@ mod tests {
         );
 
         assert_eq!(
-            MentionCompletion::try_parse("Lorem @file main.rs", 0),
+            MentionCompletion::try_parse(true, "Lorem @file main.rs", 0),
             Some(MentionCompletion {
                 source_range: 6..19,
                 mode: Some(ContextPickerMode::File),
@@ -943,7 +973,7 @@ mod tests {
         );
 
         assert_eq!(
-            MentionCompletion::try_parse("Lorem @file main.rs ", 0),
+            MentionCompletion::try_parse(true, "Lorem @file main.rs ", 0),
             Some(MentionCompletion {
                 source_range: 6..19,
                 mode: Some(ContextPickerMode::File),
@@ -952,7 +982,7 @@ mod tests {
         );
 
         assert_eq!(
-            MentionCompletion::try_parse("Lorem @file main.rs Ipsum", 0),
+            MentionCompletion::try_parse(true, "Lorem @file main.rs Ipsum", 0),
             Some(MentionCompletion {
                 source_range: 6..19,
                 mode: Some(ContextPickerMode::File),
@@ -961,7 +991,7 @@ mod tests {
         );
 
         assert_eq!(
-            MentionCompletion::try_parse("Lorem @main", 0),
+            MentionCompletion::try_parse(true, "Lorem @main", 0),
             Some(MentionCompletion {
                 source_range: 6..11,
                 mode: None,
@@ -969,6 +999,28 @@ mod tests {
             })
         );
 
-        assert_eq!(MentionCompletion::try_parse("test@", 0), None);
+        assert_eq!(MentionCompletion::try_parse(true, "test@", 0), None);
+
+        // Allowed non-file mentions
+
+        assert_eq!(
+            MentionCompletion::try_parse(true, "Lorem @symbol main", 0),
+            Some(MentionCompletion {
+                source_range: 6..18,
+                mode: Some(ContextPickerMode::Symbol),
+                argument: Some("main".to_string()),
+            })
+        );
+
+        // Disallowed non-file mentions
+
+        assert_eq!(
+            MentionCompletion::try_parse(false, "Lorem @symbol main", 0),
+            Some(MentionCompletion {
+                source_range: 6..18,
+                mode: None,
+                argument: Some("main".to_string()),
+            })
+        );
     }
 }

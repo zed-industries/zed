@@ -126,7 +126,7 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
                 .gap_1()
                 .child(
                     h_flex()
-                        .id(name.clone())
+                        .id(name)
                         .relative()
                         .w_full()
                         .border_2()
@@ -201,7 +201,7 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
                 });
             } else {
                 let appearance = *SystemAppearance::global(cx);
-                settings.set_theme(theme.clone(), appearance);
+                settings.set_theme(theme, appearance);
             }
         });
     }

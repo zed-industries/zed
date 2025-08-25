@@ -1968,7 +1968,7 @@ impl LocalWorktree {
         cx: &Context<Worktree>,
     ) -> Option<Task<Result<()>>> {
         let path = self.entry_for_id(entry_id).unwrap().path.clone();
-        let mut rx = self.add_path_prefix_to_scan(path.clone());
+        let mut rx = self.add_path_prefix_to_scan(path);
         Some(cx.background_spawn(async move {
             rx.next().await;
             Ok(())
@@ -3952,7 +3952,7 @@ impl BackgroundScanner {
             .iter()
             .map(|path| {
                 if path.file_name().is_some() {
-                    root_canonical_path.as_path().join(path).to_path_buf()
+                    root_canonical_path.as_path().join(path)
                 } else {
                     root_canonical_path.as_path().to_path_buf()
                 }
@@ -5509,7 +5509,7 @@ impl ProjectEntryId {
         Self(id as usize)
     }
 
-    pub fn to_proto(&self) -> u64 {
+    pub fn to_proto(self) -> u64 {
         self.0 as u64
     }
 
@@ -5517,14 +5517,14 @@ impl ProjectEntryId {
         ProjectEntryId(id)
     }
 
-    pub fn to_usize(&self) -> usize {
+    pub fn to_usize(self) -> usize {
         self.0
     }
 }
 
 #[cfg(any(test, feature = "test-support"))]
 impl CreatedEntry {
-    pub fn to_included(self) -> Option<Entry> {
+    pub fn into_included(self) -> Option<Entry> {
         match self {
             CreatedEntry::Included(entry) => Some(entry),
             CreatedEntry::Excluded { .. } => None,

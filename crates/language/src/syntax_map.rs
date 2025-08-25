@@ -832,7 +832,7 @@ impl SyntaxSnapshot {
         query: fn(&Grammar) -> Option<&Query>,
     ) -> SyntaxMapCaptures<'a> {
         SyntaxMapCaptures::new(
-            range.clone(),
+            range,
             text,
             [SyntaxLayer {
                 language,

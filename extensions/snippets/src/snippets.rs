@@ -113,7 +113,7 @@ impl zed::Extension for SnippetExtension {
     ) -> Result<Option<zed_extension_api::serde_json::Value>> {
         let settings = LspSettings::for_worktree(server_id.as_ref(), worktree)
             .ok()
-            .and_then(|lsp_settings| lsp_settings.settings.clone())
+            .and_then(|lsp_settings| lsp_settings.settings)
             .unwrap_or_else(|| {
                 json!({
                     "max_completion_items": 20,

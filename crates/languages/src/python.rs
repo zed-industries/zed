@@ -103,7 +103,7 @@ impl PythonLspAdapter {
 #[async_trait(?Send)]
 impl LspAdapter for PythonLspAdapter {
     fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
+        Self::SERVER_NAME
     }
 
     async fn initialization_options(
@@ -1026,7 +1026,7 @@ const BINARY_DIR: &str = if cfg!(target_os = "windows") {
 #[async_trait(?Send)]
 impl LspAdapter for PyLspAdapter {
     fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
+        Self::SERVER_NAME
     }
 
     async fn check_if_user_installed(
@@ -1318,7 +1318,7 @@ impl BasedPyrightLspAdapter {
 #[async_trait(?Send)]
 impl LspAdapter for BasedPyrightLspAdapter {
     fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
+        Self::SERVER_NAME
     }
 
     async fn initialization_options(

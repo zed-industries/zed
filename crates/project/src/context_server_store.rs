@@ -760,7 +760,7 @@ mod tests {
             &store,
             vec![
                 (server_1_id.clone(), ContextServerStatus::Starting),
-                (server_1_id.clone(), ContextServerStatus::Running),
+                (server_1_id, ContextServerStatus::Running),
                 (server_2_id.clone(), ContextServerStatus::Starting),
                 (server_2_id.clone(), ContextServerStatus::Running),
                 (server_2_id.clone(), ContextServerStatus::Stopped),

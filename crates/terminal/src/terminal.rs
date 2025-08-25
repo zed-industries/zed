@@ -486,7 +486,7 @@ impl TerminalBuilder {
         //And connect them together
         let event_loop = EventLoop::new(
             term.clone(),
-            ZedListener(events_tx.clone()),
+            ZedListener(events_tx),
             pty,
             pty_options.drain_on_exit,
             false,
@@ -1661,7 +1661,7 @@ impl Terminal {
                 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
                 MouseButton::Middle => {
                     if let Some(item) = _cx.read_from_primary() {
-                        let text = item.text().unwrap_or_default().to_string();
+                        let text = item.text().unwrap_or_default();
                         self.input(text.into_bytes());
                     }
                 }

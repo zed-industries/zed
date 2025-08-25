@@ -432,7 +432,7 @@ impl TerminalInlineAssist {
             terminal: terminal.downgrade(),
             prompt_editor: Some(prompt_editor.clone()),
             codegen: codegen.clone(),
-            workspace: workspace.clone(),
+            workspace,
             context_store,
             prompt_store,
             _subscriptions: vec![

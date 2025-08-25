@@ -434,7 +434,7 @@ mod tests {
             .await;
 
         let range = search_result.range.clone();
-        let content = content[range.clone()].to_owned();
+        let content = content[range].to_owned();
 
         assert!(content.contains("garbage in, garbage out"));
     }

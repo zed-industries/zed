@@ -1,4 +1,5 @@
 use crate::{
+    QuoteSelection,
     language_model_selector::{LanguageModelSelector, language_model_selector},
     ui::BurnModeTooltip,
 };
@@ -89,8 +90,6 @@ actions!(
         CycleMessageRole,
         /// Inserts the selected text into the active editor.
         InsertIntoEditor,
-        /// Quotes the current selection in the assistant conversation.
-        QuoteSelection,
         /// Splits the conversation at the current cursor position.
         Split,
     ]
@@ -191,7 +190,6 @@ pub struct TextThreadEditor {
     invoked_slash_command_creases: HashMap<InvokedSlashCommandId, CreaseId>,
     _subscriptions: Vec<Subscription>,
     last_error: Option<AssistError>,
-    show_accept_terms: bool,
     pub(crate) slash_menu_handle:
         PopoverMenuHandle<Picker<slash_command_picker::SlashCommandDelegate>>,
     // dragged_file_worktrees is used to keep references to worktrees that were added
@@ -290,7 +288,6 @@ impl TextThreadEditor {
             invoked_slash_command_creases: HashMap::default(),
             _subscriptions,
             last_error: None,
-            show_accept_terms: false,
             slash_menu_handle: Default::default(),
             dragged_file_worktrees: Vec::new(),
             language_model_selector: cx.new(|cx| {
@@ -364,24 +361,12 @@ impl TextThreadEditor {
         if self.sending_disabled(cx) {
             return;
         }
+        telemetry::event!("Agent Message Sent", agent = "zed-text");
         self.send_to_model(window, cx);
     }
 
     fn send_to_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let provider = LanguageModelRegistry::read_global(cx)
-            .default_model()
-            .map(|default| default.provider);
-        if provider
-            .as_ref()
-            .is_some_and(|provider| provider.must_accept_terms(cx))
-        {
-            self.show_accept_terms = true;
-            cx.notify();
-            return;
-        }
-
         self.last_error = None;
-
         if let Some(user_message) = self.context.update(cx, |context, cx| context.assist(cx)) {
             let new_selection = {
                 let cursor = user_message
@@ -1739,7 +1724,7 @@ impl TextThreadEditor {
                                 render_slash_command_output_toggle,
                                 |_, _, _, _| Empty.into_any(),
                             )
-                            .with_metadata(metadata.crease.clone())
+                            .with_metadata(metadata.crease)
                         }),
                         cx,
                     );
@@ -1810,7 +1795,7 @@ impl TextThreadEditor {
                 .filter_map(|(anchor, render_image)| {
                     const MAX_HEIGHT_IN_LINES: u32 = 8;
                     let anchor = buffer.anchor_in_excerpt(excerpt_id, anchor).unwrap();
-                    let image = render_image.clone();
+                    let image = render_image;
                     anchor.is_valid(&buffer).then(|| BlockProperties {
                         placement: BlockPlacement::Above(anchor),
                         height: Some(MAX_HEIGHT_IN_LINES),
@@ -1873,7 +1858,7 @@ impl TextThreadEditor {
     }
 
     fn render_send_button(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let focus_handle = self.focus_handle(cx).clone();
+        let focus_handle = self.focus_handle(cx);
 
         let (style, tooltip) = match token_state(&self.context, cx) {
             Some(TokenState::NoTokensLeft { .. }) => (
@@ -1931,7 +1916,6 @@ impl TextThreadEditor {
             ConfigurationError::NoProvider
             | ConfigurationError::ModelNotFound
             | ConfigurationError::ProviderNotAuthenticated(_) => true,
-            ConfigurationError::ProviderPendingTermsAcceptance(_) => self.show_accept_terms,
         }
     }
 
@@ -2015,7 +1999,7 @@ impl TextThreadEditor {
             None => IconName::Ai,
         };
 
-        let focus_handle = self.editor().focus_handle(cx).clone();
+        let focus_handle = self.editor().focus_handle(cx);
 
         PickerPopoverMenu::new(
             self.language_model_selector.clone(),

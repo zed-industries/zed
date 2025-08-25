@@ -760,7 +760,7 @@ impl Inventory {
             TaskSettingsLocation::Global(path) => {
                 previously_existing_scenarios = parsed_scenarios
                     .global_scenarios()
-                    .map(|(_, scenario)| scenario.label.clone())
+                    .map(|(_, scenario)| scenario.label)
                     .collect::<HashSet<_>>();
                 parsed_scenarios
                     .global
@@ -770,7 +770,7 @@ impl Inventory {
             TaskSettingsLocation::Worktree(location) => {
                 previously_existing_scenarios = parsed_scenarios
                     .worktree_scenarios(location.worktree_id)
-                    .map(|(_, scenario)| scenario.label.clone())
+                    .map(|(_, scenario)| scenario.label)
                     .collect::<HashSet<_>>();
 
                 if new_templates.is_empty() {

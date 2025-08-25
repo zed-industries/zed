@@ -818,13 +818,8 @@ pub fn crease_for_mention(
 
     let render_trailer = move |_row, _unfold, _window: &mut Window, _cx: &mut App| Empty.into_any();
 
-    Crease::inline(
-        range,
-        placeholder.clone(),
-        fold_toggle("mention"),
-        render_trailer,
-    )
-    .with_metadata(CreaseMetadata { icon_path, label })
+    Crease::inline(range, placeholder, fold_toggle("mention"), render_trailer)
+        .with_metadata(CreaseMetadata { icon_path, label })
 }
 
 fn render_fold_icon_button(

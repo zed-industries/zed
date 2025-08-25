@@ -161,7 +161,7 @@ impl ActionLog {
                     diff_base,
                     last_seen_base,
                     unreviewed_edits,
-                    snapshot: text_snapshot.clone(),
+                    snapshot: text_snapshot,
                     status,
                     version: buffer.read(cx).version(),
                     diff,
@@ -190,7 +190,7 @@ impl ActionLog {
         cx: &mut Context<Self>,
     ) {
         match event {
-            BufferEvent::Edited { .. } => self.handle_buffer_edited(buffer, cx),
+            BufferEvent::Edited => self.handle_buffer_edited(buffer, cx),
             BufferEvent::FileHandleChanged => {
                 self.handle_buffer_file_changed(buffer, cx);
             }
@@ -461,7 +461,7 @@ impl ActionLog {
             anyhow::Ok((
                 tracked_buffer.diff.clone(),
                 buffer.read(cx).language().cloned(),
-                buffer.read(cx).language_registry().clone(),
+                buffer.read(cx).language_registry(),
             ))
         })??;
         let diff_snapshot = BufferDiff::update_diff(
@@ -529,12 +529,12 @@ impl ActionLog {
 
     /// Mark a buffer as created by agent, so we can refresh it in the context
     pub fn buffer_created(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        self.track_buffer_internal(buffer.clone(), true, cx);
+        self.track_buffer_internal(buffer, true, cx);
     }
 
     /// Mark a buffer as edited by agent, so we can refresh it in the context
     pub fn buffer_edited(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        let tracked_buffer = self.track_buffer_internal(buffer.clone(), false, cx);
+        let tracked_buffer = self.track_buffer_internal(buffer, false, cx);
         if let TrackedBufferStatus::Deleted = tracked_buffer.status {
             tracked_buffer.status = TrackedBufferStatus::Modified;
         }
@@ -2425,7 +2425,7 @@ mod tests {
         assert_eq!(
             unreviewed_hunks(&action_log, cx),
             vec![(
-                buffer.clone(),
+                buffer,
                 vec![
                     HunkStatus {
                         range: Point::new(6, 0)..Point::new(7, 0),

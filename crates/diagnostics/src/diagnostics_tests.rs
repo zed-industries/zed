@@ -862,7 +862,7 @@ async fn test_random_diagnostics_with_inlays(cx: &mut TestAppContext, mut rng: S
             21..=50 => mutated_diagnostics.update_in(cx, |diagnostics, window, cx| {
                 diagnostics.editor.update(cx, |editor, cx| {
                     let snapshot = editor.snapshot(window, cx);
-                    if snapshot.buffer_snapshot.len() > 0 {
+                    if !snapshot.buffer_snapshot.is_empty() {
                         let position = rng.gen_range(0..snapshot.buffer_snapshot.len());
                         let position = snapshot.buffer_snapshot.clip_offset(position, Bias::Left);
                         log::info!(

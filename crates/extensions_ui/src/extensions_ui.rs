@@ -692,7 +692,7 @@ impl ExtensionsPage {
                                 cx.open_url(&repository_url);
                             }
                         }))
-                        .tooltip(Tooltip::text(repository_url.clone()))
+                        .tooltip(Tooltip::text(repository_url))
                     })),
             )
     }
@@ -825,7 +825,7 @@ impl ExtensionsPage {
                                         cx.open_url(&repository_url);
                                     }
                                 }))
-                                .tooltip(Tooltip::text(repository_url.clone())),
+                                .tooltip(Tooltip::text(repository_url)),
                             )
                             .child(
                                 PopoverMenu::new(SharedString::from(format!(

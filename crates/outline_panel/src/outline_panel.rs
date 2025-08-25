@@ -4377,12 +4377,13 @@ impl OutlinePanel {
             })
             .filter(|(match_range, _)| {
                 let editor = active_editor.read(cx);
-                if let Some(buffer_id) = match_range.start.buffer_id
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                if let Some(buffer_id) = snapshot.buffer_id_for_anchor(match_range.start)
                     && editor.is_buffer_folded(buffer_id, cx)
                 {
                     return false;
                 }
-                if let Some(buffer_id) = match_range.start.buffer_id
+                if let Some(buffer_id) = snapshot.buffer_id_for_anchor(match_range.end)
                     && editor.is_buffer_folded(buffer_id, cx)
                 {
                     return false;
@@ -4934,7 +4935,7 @@ impl Panel for OutlinePanel {
 
 impl Focusable for OutlinePanel {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.filter_editor.focus_handle(cx).clone()
+        self.filter_editor.focus_handle(cx)
     }
 }
 
@@ -5172,7 +5173,7 @@ fn subscribe_for_editor_events(
                 }
                 EditorEvent::Reparsed(buffer_id) => {
                     if let Some(excerpts) = outline_panel.excerpts.get_mut(buffer_id) {
-                        for (_, excerpt) in excerpts {
+                        for excerpt in excerpts.values_mut() {
                             excerpt.invalidate_outlines();
                         }
                     }

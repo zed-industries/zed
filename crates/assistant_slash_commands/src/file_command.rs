@@ -371,7 +371,7 @@ fn collect_files(
                             &mut output,
                         )
                         .log_err();
-                        let mut buffer_events = output.to_event_stream();
+                        let mut buffer_events = output.into_event_stream();
                         while let Some(event) = buffer_events.next().await {
                             events_tx.unbounded_send(event)?;
                         }

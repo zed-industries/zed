@@ -77,7 +77,7 @@ impl ManifestTree {
             _subscriptions: [
                 cx.subscribe(&worktree_store, Self::on_worktree_store_event),
                 cx.observe_global::<SettingsStore>(|this, cx| {
-                    for (_, roots) in &mut this.root_points {
+                    for roots in this.root_points.values_mut() {
                         roots.update(cx, |worktree_roots, _| {
                             worktree_roots.roots = RootPathTrie::new();
                         })

@@ -155,7 +155,7 @@ impl ModuleList {
                 h_flex()
                     .text_ui_xs(cx)
                     .text_color(cx.theme().colors().text_muted)
-                    .when_some(module.path.clone(), |this, path| this.child(path)),
+                    .when_some(module.path, |this, path| this.child(path)),
             )
             .into_any()
     }
@@ -189,7 +189,7 @@ impl ModuleList {
 
     fn select_next(&mut self, _: &menu::SelectNext, _window: &mut Window, cx: &mut Context<Self>) {
         let ix = match self.selected_ix {
-            _ if self.entries.len() == 0 => None,
+            _ if self.entries.is_empty() => None,
             None => Some(0),
             Some(ix) => {
                 if ix == self.entries.len() - 1 {
@@ -209,7 +209,7 @@ impl ModuleList {
         cx: &mut Context<Self>,
     ) {
         let ix = match self.selected_ix {
-            _ if self.entries.len() == 0 => None,
+            _ if self.entries.is_empty() => None,
             None => Some(self.entries.len() - 1),
             Some(ix) => {
                 if ix == 0 {
@@ -228,7 +228,7 @@ impl ModuleList {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let ix = if self.entries.len() > 0 {
+        let ix = if !self.entries.is_empty() {
             Some(0)
         } else {
             None
@@ -237,7 +237,7 @@ impl ModuleList {
     }
 
     fn select_last(&mut self, _: &menu::SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
-        let ix = if self.entries.len() > 0 {
+        let ix = if !self.entries.is_empty() {
             Some(self.entries.len() - 1)
         } else {
             None

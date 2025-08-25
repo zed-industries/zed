@@ -974,8 +974,6 @@ impl Buffer {
                 TextBuffer::new_normalized(0, buffer_id, Default::default(), text).snapshot();
             let mut syntax = SyntaxMap::new(&text).snapshot();
             if let Some(language) = language.clone() {
-                let text = text.clone();
-                let language = language.clone();
                 let language_registry = language_registry.clone();
                 syntax.reparse(&text, language_registry, language);
             }
@@ -1020,9 +1018,6 @@ impl Buffer {
         let text = TextBuffer::new_normalized(0, buffer_id, Default::default(), text).snapshot();
         let mut syntax = SyntaxMap::new(&text).snapshot();
         if let Some(language) = language.clone() {
-            let text = text.clone();
-            let language = language.clone();
-            let language_registry = language_registry.clone();
             syntax.reparse(&text, language_registry, language);
         }
         BufferSnapshot {
@@ -1574,11 +1569,21 @@ impl Buffer {
         self.send_operation(op, true, cx);
     }
 
-    pub fn get_diagnostics(&self, server_id: LanguageServerId) -> Option<&DiagnosticSet> {
-        let Ok(idx) = self.diagnostics.binary_search_by_key(&server_id, |v| v.0) else {
-            return None;
-        };
-        Some(&self.diagnostics[idx].1)
+    pub fn buffer_diagnostics(
+        &self,
+        for_server: Option<LanguageServerId>,
+    ) -> Vec<&DiagnosticEntry<Anchor>> {
+        match for_server {
+            Some(server_id) => match self.diagnostics.binary_search_by_key(&server_id, |v| v.0) {
+                Ok(idx) => self.diagnostics[idx].1.iter().collect(),
+                Err(_) => Vec::new(),
+            },
+            None => self
+                .diagnostics
+                .iter()
+                .flat_map(|(_, diagnostic_set)| diagnostic_set.iter())
+                .collect(),
+        }
     }
 
     fn request_autoindent(&mut self, cx: &mut Context<Self>) {
@@ -2206,7 +2211,7 @@ impl Buffer {
         self.remote_selections.insert(
             AGENT_REPLICA_ID,
             SelectionSet {
-                selections: selections.clone(),
+                selections,
                 lamport_timestamp,
                 line_mode,
                 cursor_shape,
@@ -3006,9 +3011,9 @@ impl BufferSnapshot {
         }
 
         let mut error_ranges = Vec::<Range<Point>>::new();
-        let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
-            grammar.error_query.as_ref()
-        });
+        let mut matches = self
+            .syntax
+            .matches(range, &self.text, |grammar| grammar.error_query.as_ref());
         while let Some(mat) = matches.peek() {
             let node = mat.captures[0].node;
             let start = Point::from_ts_point(node.start_position());
@@ -4075,7 +4080,7 @@ impl BufferSnapshot {
         // Get the ranges of the innermost pair of brackets.
         let mut result: Option<(Range<usize>, Range<usize>)> = None;
 
-        for pair in self.enclosing_bracket_ranges(range.clone()) {
+        for pair in self.enclosing_bracket_ranges(range) {
             if let Some(range_filter) = range_filter
                 && !range_filter(pair.open_range.clone(), pair.close_range.clone())
             {
@@ -4248,7 +4253,7 @@ impl BufferSnapshot {
                         .map(|(range, name)| {
                             (
                                 name.to_string(),
-                                self.text_for_range(range.clone()).collect::<String>(),
+                                self.text_for_range(range).collect::<String>(),
                             )
                         })
                         .collect();

@@ -244,7 +244,7 @@ impl ProjectItem for ImageItem {
     }
 
     fn project_path(&self, cx: &App) -> Option<ProjectPath> {
-        Some(self.project_path(cx).clone())
+        Some(self.project_path(cx))
     }
 
     fn is_dirty(&self) -> bool {
@@ -375,7 +375,6 @@ impl ImageStore {
                 let (mut tx, rx) = postage::watch::channel();
                 entry.insert(rx.clone());
 
-                let project_path = project_path.clone();
                 let load_image = self
                     .state
                     .open_image(project_path.path.clone(), worktree, cx);

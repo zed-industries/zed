@@ -231,14 +231,15 @@ impl AnyEntity {
         Self {
             entity_id: id,
             entity_type,
-            entity_map: entity_map.clone(),
             #[cfg(any(test, feature = "leak-detection"))]
             handle_id: entity_map
+                .clone()
                 .upgrade()
                 .unwrap()
                 .write()
                 .leak_detector
                 .handle_created(id),
+            entity_map,
         }
     }
 

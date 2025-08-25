@@ -261,7 +261,6 @@ impl ConfigureContextServerModal {
         _cx: &mut Context<Workspace>,
     ) {
         workspace.register_action({
-            let language_registry = language_registry.clone();
             move |_workspace, _: &AddContextServer, window, cx| {
                 let workspace_handle = cx.weak_entity();
                 let language_registry = language_registry.clone();

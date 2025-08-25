@@ -209,7 +209,7 @@ fn replace_value_in_json_text(
                     if ch == ',' {
                         removal_end = existing_value_range.end + offset + 1;
                         // Also consume whitespace after the comma
-                        while let Some((_, next_ch)) = chars.next() {
+                        for (_, next_ch) in chars.by_ref() {
                             if next_ch.is_whitespace() {
                                 removal_end += next_ch.len_utf8();
                             } else {
@@ -361,7 +361,7 @@ pub fn replace_top_level_array_value_in_json_text(
     let needs_indent = range.start_point.row > 0;
 
     if new_value.is_none() && key_path.is_empty() {
-        let mut remove_range = text_range.clone();
+        let mut remove_range = text_range;
         if index == 0 {
             while cursor.goto_next_sibling()
                 && (cursor.node().is_extra() || cursor.node().is_missing())
@@ -582,7 +582,7 @@ mod tests {
             expected: String,
         ) {
             let result = replace_value_in_json_text(&input, key_path, 4, value.as_ref(), None);
-            let mut result_str = input.to_string();
+            let mut result_str = input;
             result_str.replace_range(result.0, &result.1);
             pretty_assertions::assert_eq!(expected, result_str);
         }

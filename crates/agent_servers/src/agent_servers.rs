@@ -1,12 +1,14 @@
 mod acp;
 mod claude;
+mod custom;
 mod gemini;
 mod settings;
 
-#[cfg(test)]
-mod e2e_tests;
+#[cfg(any(test, feature = "test-support"))]
+pub mod e2e_tests;
 
 pub use claude::*;
+pub use custom::*;
 pub use gemini::*;
 pub use settings::*;
 
@@ -31,9 +33,10 @@ pub fn init(cx: &mut App) {
 
 pub trait AgentServer: Send {
     fn logo(&self) -> ui::IconName;
-    fn name(&self) -> &'static str;
-    fn empty_state_headline(&self) -> &'static str;
-    fn empty_state_message(&self) -> &'static str;
+    fn name(&self) -> SharedString;
+    fn empty_state_headline(&self) -> SharedString;
+    fn empty_state_message(&self) -> SharedString;
+    fn telemetry_id(&self) -> &'static str;
 
     fn connect(
         &self,
@@ -95,7 +98,7 @@ pub struct AgentServerCommand {
 }
 
 impl AgentServerCommand {
-    pub(crate) async fn resolve(
+    pub async fn resolve(
         path_bin_name: &'static str,
         extra_args: &[&'static str],
         fallback_path: Option<&Path>,

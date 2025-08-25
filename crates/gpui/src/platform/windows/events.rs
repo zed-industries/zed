@@ -956,7 +956,7 @@ impl WindowsWindowInner {
                 click_count,
                 first_mouse: false,
             });
-            let result = func(input.clone());
+            let result = func(input);
             let handled = !result.propagate || result.default_prevented;
             self.state.borrow_mut().callbacks.input = Some(func);
 

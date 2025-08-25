@@ -183,7 +183,7 @@ impl LivekitWindow {
                 match track {
                     livekit_client::RemoteTrack::Audio(track) => {
                         output.audio_output_stream = Some((
-                            publication.clone(),
+                            publication,
                             room.play_remote_audio_track(&track, cx).unwrap(),
                         ));
                     }

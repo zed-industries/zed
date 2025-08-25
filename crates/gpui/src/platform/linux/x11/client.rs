@@ -456,7 +456,7 @@ impl X11Client {
                 move |event, _, client| match event {
                     XDPEvent::WindowAppearance(appearance) => {
                         client.with_common(|common| common.appearance = appearance);
-                        for (_, window) in &mut client.0.borrow_mut().windows {
+                        for window in client.0.borrow_mut().windows.values_mut() {
                             window.window.set_appearance(appearance);
                         }
                     }
@@ -1329,7 +1329,7 @@ impl X11Client {
         state.composing = false;
         drop(state);
         if let Some(mut keystroke) = keystroke {
-            keystroke.key_char = Some(text.clone());
+            keystroke.key_char = Some(text);
             window.handle_input(PlatformInput::KeyDown(crate::KeyDownEvent {
                 keystroke,
                 is_held: false,
@@ -2108,7 +2108,7 @@ fn current_pointer_device_states(
                     .classes
                     .iter()
                     .filter_map(|class| class.data.as_scroll())
-                    .map(|class| *class)
+                    .copied()
                     .rev()
                     .collect::<Vec<_>>();
                 let old_state = scroll_values_to_preserve.get(&info.deviceid);

@@ -505,9 +505,8 @@ impl Settings for AgentSettings {
             }
         }
 
-        debug_assert_eq!(
-            sources.default.always_allow_tool_actions.unwrap_or(false),
-            false,
+        debug_assert!(
+            !sources.default.always_allow_tool_actions.unwrap_or(false),
             "For security, agent.always_allow_tool_actions should always be false in default.json. If it's true, that is a bug that should be fixed!"
         );
 

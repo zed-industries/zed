@@ -1229,27 +1229,27 @@ pub enum GenerationMode {
 impl GenerationMode {
     fn start_label(self) -> &'static str {
         match self {
-            GenerationMode::Generate { .. } => "Generate",
+            GenerationMode::Generate => "Generate",
             GenerationMode::Transform => "Transform",
         }
     }
     fn tooltip_interrupt(self) -> &'static str {
         match self {
-            GenerationMode::Generate { .. } => "Interrupt Generation",
+            GenerationMode::Generate => "Interrupt Generation",
             GenerationMode::Transform => "Interrupt Transform",
         }
     }
 
     fn tooltip_restart(self) -> &'static str {
         match self {
-            GenerationMode::Generate { .. } => "Restart Generation",
+            GenerationMode::Generate => "Restart Generation",
             GenerationMode::Transform => "Restart Transform",
         }
     }
 
     fn tooltip_accept(self) -> &'static str {
         match self {
-            GenerationMode::Generate { .. } => "Accept Generation",
+            GenerationMode::Generate => "Accept Generation",
             GenerationMode::Transform => "Accept Transform",
         }
     }

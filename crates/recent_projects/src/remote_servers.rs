@@ -119,7 +119,7 @@ impl EditNicknameState {
         let starting_text = SshSettings::get_global(cx)
             .ssh_connections()
             .nth(index)
-            .and_then(|state| state.nickname.clone())
+            .and_then(|state| state.nickname)
             .filter(|text| !text.is_empty());
         this.editor.update(cx, |this, cx| {
             this.set_placeholder_text("Add a nickname for this server", cx);
@@ -165,7 +165,7 @@ impl ProjectPicker {
         let nickname = connection.nickname.clone().map(|nick| nick.into());
         let _path_task = cx
             .spawn_in(window, {
-                let workspace = workspace.clone();
+                let workspace = workspace;
                 async move |this, cx| {
                     let Ok(Some(paths)) = rx.await else {
                         workspace
@@ -519,7 +519,7 @@ impl RemoteServerProjects {
         self.mode = Mode::CreateRemoteServer(CreateRemoteServer {
             address_editor: editor,
             address_error: None,
-            ssh_prompt: Some(ssh_prompt.clone()),
+            ssh_prompt: Some(ssh_prompt),
             _creating: Some(creating),
         });
     }
@@ -842,7 +842,7 @@ impl RemoteServerProjects {
                                 .start_slot(Icon::new(IconName::Plus).color(Color::Muted))
                                 .child(Label::new("Open Folder"))
                                 .on_click(cx.listener({
-                                    let ssh_connection = connection.clone();
+                                    let ssh_connection = connection;
                                     let host = host.clone();
                                     move |this, _, window, cx| {
                                         let new_ix = this.create_host_from_ssh_config(&host, cx);
@@ -1375,7 +1375,7 @@ impl RemoteServerProjects {
         };
 
         let connection_string = connection.host.clone();
-        let nickname = connection.nickname.clone().map(|s| s.into());
+        let nickname = connection.nickname.map(|s| s.into());
 
         v_flex()
             .id("ssh-edit-nickname")

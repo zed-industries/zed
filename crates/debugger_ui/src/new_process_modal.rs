@@ -785,7 +785,7 @@ impl RenderOnce for AttachMode {
         v_flex()
             .w_full()
             .track_focus(&self.attach_picker.focus_handle(cx))
-            .child(self.attach_picker.clone())
+            .child(self.attach_picker)
     }
 }
 

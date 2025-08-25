@@ -2250,11 +2250,11 @@ impl ReferenceMultibuffer {
             let base_buffer = diff.base_text();
 
             let mut offset = buffer_range.start;
-            let mut hunks = diff
+            let hunks = diff
                 .hunks_intersecting_range(excerpt.range.clone(), buffer, cx)
                 .peekable();
 
-            while let Some(hunk) = hunks.next() {
+            for hunk in hunks {
                 // Ignore hunks that are outside the excerpt range.
                 let mut hunk_range = hunk.buffer_range.to_offset(buffer);
 

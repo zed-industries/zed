@@ -384,9 +384,7 @@ impl SupermavenAgent {
         match message {
             SupermavenMessage::ActivationRequest(request) => {
                 self.account_status = match request.activate_url {
-                    Some(activate_url) => AccountStatus::NeedsActivation {
-                        activate_url: activate_url.clone(),
-                    },
+                    Some(activate_url) => AccountStatus::NeedsActivation { activate_url },
                     None => AccountStatus::Ready,
                 };
             }

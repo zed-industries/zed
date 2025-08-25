@@ -63,11 +63,11 @@ impl AgentTool for TerminalTool {
     type Input = TerminalToolInput;
     type Output = String;
 
-    fn name(&self) -> SharedString {
-        "terminal".into()
+    fn name() -> &'static str {
+        "terminal"
     }
 
-    fn kind(&self) -> acp::ToolKind {
+    fn kind() -> acp::ToolKind {
         acp::ToolKind::Execute
     }
 
@@ -234,7 +234,7 @@ fn process_content(
             if is_empty {
                 "Command executed successfully.".to_string()
             } else {
-                content.to_string()
+                content
             }
         }
         Some(exit_status) => {

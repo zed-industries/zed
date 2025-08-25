@@ -248,7 +248,7 @@ impl MessageEditor {
             editor: editor.clone(),
             project: thread.read(cx).project().clone(),
             thread,
-            incompatible_tools_state: incompatible_tools.clone(),
+            incompatible_tools_state: incompatible_tools,
             workspace,
             context_store,
             prompt_store,
@@ -378,17 +378,12 @@ impl MessageEditor {
     }
 
     fn send_to_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(ConfiguredModel { model, provider }) = self
+        let Some(ConfiguredModel { model, .. }) = self
             .thread
             .update(cx, |thread, cx| thread.get_or_init_configured_model(cx))
         else {
             return;
         };
-
-        if provider.must_accept_terms(cx) {
-            cx.notify();
-            return;
-        }
 
         let (user_message, user_message_creases) = self.editor.update(cx, |editor, cx| {
             let creases = extract_message_creases(editor, cx);
@@ -839,7 +834,6 @@ impl MessageEditor {
                                     .child(self.profile_selector.clone())
                                     .child(self.model_selector.clone())
                                     .map({
-                                        let focus_handle = focus_handle.clone();
                                         move |parent| {
                                             if is_generating {
                                                 parent
@@ -1683,7 +1677,7 @@ impl Render for MessageEditor {
         let has_history = self
             .history_store
             .as_ref()
-            .and_then(|hs| hs.update(cx, |hs, cx| hs.entries(cx).len() > 0).ok())
+            .and_then(|hs| hs.update(cx, |hs, cx| !hs.entries(cx).is_empty()).ok())
             .unwrap_or(false)
             || self
                 .thread
@@ -1696,7 +1690,7 @@ impl Render for MessageEditor {
                 !has_history && is_signed_out && has_configured_providers,
                 |this| this.child(cx.new(ApiKeysWithProviders::new)),
             )
-            .when(changed_buffers.len() > 0, |parent| {
+            .when(!changed_buffers.is_empty(), |parent| {
                 parent.child(self.render_edits_bar(&changed_buffers, window, cx))
             })
             .child(self.render_editor(window, cx))
@@ -1801,7 +1795,7 @@ impl AgentPreview for MessageEditor {
                             .bg(cx.theme().colors().panel_background)
                             .border_1()
                             .border_color(cx.theme().colors().border)
-                            .child(default_message_editor.clone())
+                            .child(default_message_editor)
                             .into_any_element(),
                     )])
                     .into_any_element(),

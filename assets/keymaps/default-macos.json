@@ -162,7 +162,7 @@
       "cmd-alt-f": "buffer_search::DeployReplace",
       "cmd-alt-l": ["buffer_search::Deploy", { "selection_search_enabled": true }],
       "cmd-e": ["buffer_search::Deploy", { "focus": false }],
-      "cmd->": "assistant::QuoteSelection",
+      "cmd->": "agent::QuoteSelection",
       "cmd-<": "assistant::InsertIntoEditor",
       "cmd-alt-e": "editor::SelectEnclosingSymbol",
       "alt-enter": "editor::OpenSelectionsInMultibuffer"
@@ -281,7 +281,7 @@
       "cmd-shift-i": "agent::ToggleOptionsMenu",
       "cmd-alt-shift-n": "agent::ToggleNewThreadMenu",
       "shift-alt-escape": "agent::ExpandMessageEditor",
-      "cmd->": "assistant::QuoteSelection",
+      "cmd->": "agent::QuoteSelection",
       "cmd-alt-e": "agent::RemoveAllContext",
       "cmd-shift-e": "project_panel::ToggleFocus",
       "cmd-ctrl-b": "agent::ToggleBurnMode",
@@ -915,7 +915,7 @@
       "cmd-backspace": ["project_panel::Trash", { "skip_prompt": true }],
       "cmd-delete": ["project_panel::Delete", { "skip_prompt": false }],
       "alt-cmd-r": "project_panel::RevealInFileManager",
-      "ctrl-shift-enter": "project_panel::OpenWithSystem",
+      "ctrl-shift-enter": "workspace::OpenWithSystem",
       "alt-d": "project_panel::CompareMarkedFiles",
       "cmd-alt-backspace": ["project_panel::Delete", { "skip_prompt": false }],
       "cmd-alt-shift-f": "project_panel::NewSearchInDirectory",
@@ -1300,6 +1300,13 @@
       "cmd-escape": "onboarding::Finish",
       "alt-tab": "onboarding::SignIn",
       "alt-shift-a": "onboarding::OpenAccount"
+    }
+  },
+  {
+    "context": "InvalidBuffer",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-shift-enter": "workspace::OpenWithSystem"
     }
   }
 ]

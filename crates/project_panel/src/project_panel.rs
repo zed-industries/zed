@@ -69,6 +69,7 @@ use workspace::{
     notifications::{DetachAndPromptErr, NotifyTaskExt},
 };
 use worktree::CreatedEntry;
+use zed_actions::workspace::OpenWithSystem;
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
@@ -251,8 +252,6 @@ actions!(
         RevealInFileManager,
         /// Removes the selected folder from the project.
         RemoveFromProject,
-        /// Opens the selected file with the system's default application.
-        OpenWithSystem,
         /// Cuts the selected file or directory.
         Cut,
         /// Pastes the previously cut or copied item.
@@ -442,7 +441,7 @@ impl ProjectPanel {
             cx.subscribe(&project, |this, project, event, cx| match event {
                 project::Event::ActiveEntryChanged(Some(entry_id)) => {
                     if ProjectPanelSettings::get_global(cx).auto_reveal_entries {
-                        this.reveal_entry(project.clone(), *entry_id, true, cx).ok();
+                        this.reveal_entry(project, *entry_id, true, cx).ok();
                     }
                 }
                 project::Event::ActiveEntryChanged(None) => {
@@ -457,10 +456,7 @@ impl ProjectPanel {
                     }
                 }
                 project::Event::RevealInProjectPanel(entry_id) => {
-                    if let Some(()) = this
-                        .reveal_entry(project.clone(), *entry_id, false, cx)
-                        .log_err()
-                    {
+                    if let Some(()) = this.reveal_entry(project, *entry_id, false, cx).log_err() {
                         cx.emit(PanelEvent::Activate);
                     }
                 }
@@ -802,7 +798,7 @@ impl ProjectPanel {
         diagnostic_severity: DiagnosticSeverity,
     ) {
         diagnostics
-            .entry((project_path.worktree_id, path_buffer.clone()))
+            .entry((project_path.worktree_id, path_buffer))
             .and_modify(|strongest_diagnostic_severity| {
                 *strongest_diagnostic_severity =
                     cmp::min(*strongest_diagnostic_severity, diagnostic_severity);
@@ -2504,7 +2500,7 @@ impl ProjectPanel {
 
             if clip_is_cut {
                 // Convert the clipboard cut entry to a copy entry after the first paste.
-                self.clipboard = self.clipboard.take().map(ClipboardEntry::to_copy_entry);
+                self.clipboard = self.clipboard.take().map(ClipboardEntry::into_copy_entry);
             }
 
             self.expand_entry(worktree_id, entry.id, cx);
@@ -2769,7 +2765,7 @@ impl ProjectPanel {
 
         let destination_worktree = self.project.update(cx, |project, cx| {
             let entry_path = project.path_for_entry(entry_to_move, cx)?;
-            let destination_entry_path = project.path_for_entry(destination, cx)?.path.clone();
+            let destination_entry_path = project.path_for_entry(destination, cx)?.path;
 
             let mut destination_path = destination_entry_path.as_ref();
             if destination_is_file {
@@ -3887,14 +3883,12 @@ impl ProjectPanel {
         // Always highlight directory or parent directory if it's file
         if target_entry.is_dir() {
             Some(target_entry.id)
-        } else if let Some(parent_entry) = target_entry
-            .path
-            .parent()
-            .and_then(|parent_path| target_worktree.entry_for_path(parent_path))
-        {
-            Some(parent_entry.id)
         } else {
-            None
+            target_entry
+                .path
+                .parent()
+                .and_then(|parent_path| target_worktree.entry_for_path(parent_path))
+                .map(|parent_entry| parent_entry.id)
         }
     }
 
@@ -3931,12 +3925,10 @@ impl ProjectPanel {
         // Always highlight directory or parent directory if it's file
         if target_entry.is_dir() {
             Some(target_entry.id)
-        } else if let Some(parent_entry) =
-            target_parent_path.and_then(|parent_path| target_worktree.entry_for_path(parent_path))
-        {
-            Some(parent_entry.id)
         } else {
-            None
+            target_parent_path
+                .and_then(|parent_path| target_worktree.entry_for_path(parent_path))
+                .map(|parent_entry| parent_entry.id)
         }
     }
 
@@ -4012,8 +4004,8 @@ impl ProjectPanel {
                 .as_ref()
                 .map_or(ValidationState::None, |e| e.validation_state.clone())
             {
-                ValidationState::Error(msg) => Some((Color::Error.color(cx), msg.clone())),
-                ValidationState::Warning(msg) => Some((Color::Warning.color(cx), msg.clone())),
+                ValidationState::Error(msg) => Some((Color::Error.color(cx), msg)),
+                ValidationState::Warning(msg) => Some((Color::Warning.color(cx), msg)),
                 ValidationState::None => None,
             }
         } else {
@@ -5346,7 +5338,7 @@ impl Render for ProjectPanel {
                     .with_priority(3)
                 }))
         } else {
-            let focus_handle = self.focus_handle(cx).clone();
+            let focus_handle = self.focus_handle(cx);
 
             v_flex()
                 .id("empty-project_panel")
@@ -5550,7 +5542,7 @@ impl ClipboardEntry {
         }
     }
 
-    fn to_copy_entry(self) -> Self {
+    fn into_copy_entry(self) -> Self {
         match self {
             ClipboardEntry::Copied(_) => self,
             ClipboardEntry::Cut(entries) => ClipboardEntry::Copied(entries),

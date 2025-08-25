@@ -90,11 +90,8 @@ impl ExampleInstance {
         worktrees_dir: &Path,
         repetition: usize,
     ) -> Self {
-        let name = thread.meta().name.to_string();
-        let run_directory = run_dir
-            .join(&name)
-            .join(repetition.to_string())
-            .to_path_buf();
+        let name = thread.meta().name;
+        let run_directory = run_dir.join(&name).join(repetition.to_string());
 
         let repo_path = repo_path_for_url(repos_dir, &thread.meta().url);
 
@@ -772,7 +769,7 @@ pub async fn query_lsp_diagnostics(
 }
 
 fn parse_assertion_result(response: &str) -> Result<RanAssertionResult> {
-    let analysis = get_tag("analysis", response)?.to_string();
+    let analysis = get_tag("analysis", response)?;
     let passed = match get_tag("passed", response)?.to_lowercase().as_str() {
         "true" => true,
         "false" => false,
@@ -916,9 +913,9 @@ impl RequestMarkdown {
             for tool in &request.tools {
                 write!(&mut tools, "# {}\n\n", tool.name).unwrap();
                 write!(&mut tools, "{}\n\n", tool.description).unwrap();
-                write!(
+                writeln!(
                     &mut tools,
-                    "{}\n",
+                    "{}",
                     MarkdownCodeBlock {
                         tag: "json",
                         text: &format!("{:#}", tool.input_schema)
@@ -1192,7 +1189,7 @@ mod test {
             output.analysis,
             Some("The model did a good job but there were still compilations errors.".into())
         );
-        assert_eq!(output.passed, true);
+        assert!(output.passed);
 
         let response = r#"
             Text around ignored
@@ -1212,6 +1209,6 @@ mod test {
             output.analysis,
             Some("Failed to compile:\n- Error 1\n- Error 2".into())
         );
-        assert_eq!(output.passed, false);
+        assert!(!output.passed);
     }
 }

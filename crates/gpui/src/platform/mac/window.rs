@@ -1090,7 +1090,7 @@ impl PlatformWindow for MacWindow {
                         NSView::removeFromSuperview(blur_view);
                         this.blurred_view = None;
                     }
-                } else if this.blurred_view == None {
+                } else if this.blurred_view.is_none() {
                     let content_view = this.native_window.contentView();
                     let frame = NSView::bounds(content_view);
                     let mut blur_view: id = msg_send![BLURRED_VIEW_CLASS, alloc];

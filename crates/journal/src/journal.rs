@@ -123,7 +123,7 @@ pub fn new_journal_entry(workspace: &Workspace, window: &mut Window, cx: &mut Ap
     }
 
     let app_state = workspace.app_state().clone();
-    let view_snapshot = workspace.weak_handle().clone();
+    let view_snapshot = workspace.weak_handle();
 
     window
         .spawn(cx, async move |cx| {

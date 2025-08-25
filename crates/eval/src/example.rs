@@ -335,7 +335,7 @@ impl ExampleContext {
             for message in thread.messages().skip(message_count_before) {
                 messages.push(Message {
                     _role: message.role,
-                    text: message.to_string(),
+                    text: message.to_message_content(),
                     tool_use: thread
                         .tool_uses_for_message(message.id, cx)
                         .into_iter()

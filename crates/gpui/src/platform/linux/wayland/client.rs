@@ -528,7 +528,7 @@ impl WaylandClient {
 
                             client.common.appearance = appearance;
 
-                            for (_, window) in &mut client.windows {
+                            for window in client.windows.values_mut() {
                                 window.set_appearance(appearance);
                             }
                         }
@@ -1280,7 +1280,6 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 let Some(focused_window) = focused_window else {
                     return;
                 };
-                let focused_window = focused_window.clone();
 
                 let keymap_state = state.keymap_state.as_ref().unwrap();
                 let keycode = Keycode::from(key + MIN_KEYCODE);
