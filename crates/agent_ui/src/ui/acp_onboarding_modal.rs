@@ -112,18 +112,19 @@ impl Render for AcpOnboardingModal {
             .border_b_1()
             .border_color(cx.theme().colors().border_variant)
             .justify_center()
+            .gap_8()
             .rounded_t_md()
             .overflow_hidden()
             .child(
                 div().absolute().inset_0().w(px(515.)).h(px(126.)).child(
                     Vector::new(VectorName::AcpGrid, rems_from_px(515.), rems_from_px(126.))
-                        .color(ui::Color::Custom(cx.theme().colors().text.opacity(0.012))),
+                        .color(ui::Color::Custom(cx.theme().colors().text.opacity(0.02))),
                 ),
             )
             .child(div().absolute().inset_0().size_full().bg(linear_gradient(
                 0.,
                 linear_color_stop(
-                    cx.theme().colors().elevated_surface_background.opacity(0.4),
+                    cx.theme().colors().elevated_surface_background.opacity(0.1),
                     0.9,
                 ),
                 linear_color_stop(
@@ -131,6 +132,29 @@ impl Render for AcpOnboardingModal {
                     0.,
                 ),
             )))
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .size_full()
+                    .bg(gpui::black().opacity(0.15)),
+            )
+            .child(
+                h_flex()
+                    .gap_4()
+                    .child(
+                        Vector::new(VectorName::AcpLogo, rems_from_px(106.), rems_from_px(40.))
+                            .color(ui::Color::Custom(cx.theme().colors().text.opacity(0.8))),
+                    )
+                    .child(
+                        Vector::new(
+                            VectorName::AcpLogoSerif,
+                            rems_from_px(111.),
+                            rems_from_px(41.),
+                        )
+                        .color(ui::Color::Custom(cx.theme().colors().text.opacity(0.8))),
+                    ),
+            )
             .child(
                 v_flex()
                     .gap_1p5()

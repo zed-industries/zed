@@ -14,6 +14,8 @@ use crate::prelude::*;
 #[strum(serialize_all = "snake_case")]
 pub enum VectorName {
     AcpGrid,
+    AcpLogo,
+    AcpLogoSerif,
     AiGrid,
     DebuggerGrid,
     Grid,
