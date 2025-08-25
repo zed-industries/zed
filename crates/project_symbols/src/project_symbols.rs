@@ -44,6 +44,7 @@ pub struct ProjectSymbolsDelegate {
     external_match_candidates: Vec<StringMatchCandidate>,
     show_worktree_root_name: bool,
     matches: Vec<StringMatch>,
+    manually_selected: Option<Symbol>,
 }
 
 impl ProjectSymbolsDelegate {
@@ -57,6 +58,7 @@ impl ProjectSymbolsDelegate {
             external_match_candidates: Default::default(),
             matches: Default::default(),
             show_worktree_root_name: false,
+            manually_selected: None,
         }
     }
 
@@ -99,6 +101,18 @@ impl ProjectSymbolsDelegate {
         }
 
         self.matches = matches;
+
+        // Preserve manually selected item if it exists
+        if let Some(manually_selected) = &self.manually_selected {
+            if let Some(index) = self.matches.iter().position(|mat| {
+                let symbol = &self.symbols[mat.candidate_id];
+                symbol.path == manually_selected.path && symbol.range == manually_selected.range
+            }) {
+                self.set_selected_index(index, window, cx);
+                return;
+            }
+        }
+
         self.set_selected_index(0, window, cx);
     }
 }
@@ -168,6 +182,11 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         _cx: &mut Context<Picker<Self>>,
     ) {
         self.selected_match_index = ix;
+
+        // Store the manually selected symbol
+        if let Some(mat) = self.matches.get(ix) {
+            self.manually_selected = Some(self.symbols[mat.candidate_id].clone());
+        }
     }
 
     fn update_matches(

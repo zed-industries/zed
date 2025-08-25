@@ -116,7 +116,7 @@ struct ThemeSelectorDelegate {
     matches: Vec<StringMatch>,
     original_theme: Arc<Theme>,
     selection_completed: bool,
-    selected_theme: Option<Arc<Theme>>,
+    manually_selected: Option<Arc<Theme>>,
     selected_index: usize,
     selector: WeakEntity<ThemeSelector>,
 }
@@ -165,7 +165,7 @@ impl ThemeSelectorDelegate {
             original_theme: original_theme.clone(),
             selected_index: 0,
             selection_completed: false,
-            selected_theme: None,
+            manually_selected: None,
             selector,
         };
 
@@ -271,7 +271,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
         cx: &mut Context<Picker<ThemeSelectorDelegate>>,
     ) {
         self.selected_index = ix;
-        self.selected_theme = self.show_selected_theme(cx);
+        self.manually_selected = self.show_selected_theme(cx);
     }
 
     fn update_matches(
@@ -315,12 +315,12 @@ impl PickerDelegate for ThemeSelectorDelegate {
 
             this.update(cx, |this, cx| {
                 this.delegate.matches = matches;
-                if query.is_empty() && this.delegate.selected_theme.is_none() {
+                if query.is_empty() && this.delegate.manually_selected.is_none() {
                     this.delegate.selected_index = this
                         .delegate
                         .selected_index
                         .min(this.delegate.matches.len().saturating_sub(1));
-                } else if let Some(selected) = this.delegate.selected_theme.as_ref() {
+                } else if let Some(selected) = this.delegate.manually_selected.as_ref() {
                     this.delegate.selected_index = this
                         .delegate
                         .matches
@@ -332,7 +332,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
                 } else {
                     this.delegate.selected_index = 0;
                 }
-                this.delegate.selected_theme = this.delegate.show_selected_theme(cx);
+                this.delegate.manually_selected = this.delegate.show_selected_theme(cx);
             })
             .log_err();
         })
