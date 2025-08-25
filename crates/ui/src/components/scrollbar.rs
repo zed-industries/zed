@@ -1088,19 +1088,17 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> Element for ScrollbarEl
                 {
                     const MAXIMUM_OPACITY: f32 = 0.7;
                     let thumb_state = self.state.read(cx).thumb_state;
-                    let thumb_base_color = match thumb_state {
+                    let (thumb_base_color, hovered) = match thumb_state {
                         ThumbState::Dragging(dragged_axis, _) if dragged_axis == *axis => {
-                            colors.scrollbar_thumb_active_background
+                            (colors.scrollbar_thumb_active_background, false)
                         }
                         ThumbState::Hover(hovered_axis) if hovered_axis == *axis => {
-                            colors.scrollbar_thumb_hover_background
+                            (colors.scrollbar_thumb_hover_background, true)
                         }
-                        _ => colors.scrollbar_thumb_background,
+                        _ => (colors.scrollbar_thumb_background, false),
                     };
 
-                    let blending_color = if matches!(thumb_state, ThumbState::Hover(_))
-                        || reserved_space.needs_scroll_track()
-                    {
+                    let blending_color = if hovered || reserved_space.needs_scroll_track() {
                         colors.surface_background
                     } else {
                         let blend_color = colors.surface_background;
