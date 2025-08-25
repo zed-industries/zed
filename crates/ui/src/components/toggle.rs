@@ -616,7 +616,7 @@ impl SwitchField {
         Self {
             id: id.into(),
             label: label.into(),
-            description: description,
+            description,
             toggle_state: toggle_state.into(),
             on_click: Arc::new(on_click),
             disabled: false,

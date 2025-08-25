@@ -148,9 +148,9 @@ pub fn toggle_modal(
 ) -> Task<()> {
     let task_store = workspace.project().read(cx).task_store().clone();
     let workspace_handle = workspace.weak_handle();
-    let can_open_modal = workspace.project().update(cx, |project, cx| {
-        project.is_local() || project.ssh_connection_string(cx).is_some() || project.is_via_ssh()
-    });
+    let can_open_modal = workspace
+        .project()
+        .read_with(cx, |project, _| !project.is_via_collab());
     if can_open_modal {
         let task_contexts = task_contexts(workspace, window, cx);
         cx.spawn_in(window, async move |workspace, cx| {
@@ -434,7 +434,7 @@ mod tests {
         )
         .await;
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-        let worktree_store = project.read_with(cx, |project, _| project.worktree_store().clone());
+        let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
         let rust_language = Arc::new(
             Language::new(
                 LanguageConfig::default(),

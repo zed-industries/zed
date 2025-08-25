@@ -136,22 +136,7 @@ This is enabled by default and can be configured as
 ## Manual Cargo Diagnostics fetch
 
 By default, rust-analyzer has `checkOnSave: true` enabled, which causes every buffer save to trigger a `cargo check --workspace --all-targets` command.
-For lager projects this might introduce excessive wait times, so a more fine-grained triggering could be enabled by altering the
-
-```json
-"diagnostics": {
-  "cargo": {
-    // When enabled, Zed disables rust-analyzer's check on save and starts to query
-    // Cargo diagnostics separately.
-    "fetch_cargo_diagnostics": false
-  }
-}
-```
-
-default settings.
-
-This will stop rust-analyzer from running `cargo check ...` on save, yet still allow to run
-`editor: run/clear/cancel flycheck` commands in Rust files to refresh cargo diagnostics; the project diagnostics editor will also refresh cargo diagnostics with `editor: run flycheck` command when the setting is enabled.
+If disabled with `checkOnSave: false` (see the example of the server configuration json above), it's still possible to fetch the diagnostics manually, with the `editor: run/clear/cancel flycheck` commands in Rust files to refresh cargo diagnostics; the project diagnostics editor will also refresh cargo diagnostics with `editor: run flycheck` command when the setting is enabled.
 
 ## More server configuration
 

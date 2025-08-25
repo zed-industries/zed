@@ -44,7 +44,7 @@ impl DiagnosticsSlashCommand {
                         score: 0.,
                         positions: Vec::new(),
                         worktree_id: entry.worktree_id.to_usize(),
-                        path: entry.path.clone(),
+                        path: entry.path,
                         path_prefix: path_prefix.clone(),
                         is_dir: false, // Diagnostics can't be produced for directories
                         distance_to_relative_ancestor: 0,
@@ -189,7 +189,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
 
         window.spawn(cx, async move |_| {
             task.await?
-                .map(|output| output.to_event_stream())
+                .map(|output| output.into_event_stream())
                 .context("No diagnostics found")
         })
     }

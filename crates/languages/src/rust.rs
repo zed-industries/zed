@@ -106,7 +106,7 @@ impl ManifestProvider for CargoManifestProvider {
 #[async_trait(?Send)]
 impl LspAdapter for RustLspAdapter {
     fn name(&self) -> LanguageServerName {
-        SERVER_NAME.clone()
+        SERVER_NAME
     }
 
     async fn check_if_user_installed(
@@ -510,20 +510,6 @@ impl LspAdapter for RustLspAdapter {
             }
         }
 
-        let cargo_diagnostics_fetched_separately = ProjectSettings::get_global(cx)
-            .diagnostics
-            .fetch_cargo_diagnostics();
-        if cargo_diagnostics_fetched_separately {
-            let disable_check_on_save = json!({
-                "checkOnSave": false,
-            });
-            if let Some(initialization_options) = &mut original.initialization_options {
-                merge_json_value_into(disable_check_on_save, initialization_options);
-            } else {
-                original.initialization_options = Some(disable_check_on_save);
-            }
-        }
-
         Ok(original)
     }
 }
@@ -659,7 +645,7 @@ impl ContextProvider for RustContextProvider {
             .variables
             .get(CUSTOM_TARGET_DIR)
             .cloned();
-        let run_task_args = if let Some(package_to_run) = package_to_run.clone() {
+        let run_task_args = if let Some(package_to_run) = package_to_run {
             vec!["run".into(), "-p".into(), package_to_run]
         } else {
             vec!["run".into()]
@@ -1019,8 +1005,8 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
 
         let path = last.context("no cached binary")?;
         let path = match RustLspAdapter::GITHUB_ASSET_KIND {
-            AssetKind::TarGz | AssetKind::Gz => path.clone(), // Tar and gzip extract in place.
-            AssetKind::Zip => path.clone().join("rust-analyzer.exe"), // zip contains a .exe
+            AssetKind::TarGz | AssetKind::Gz => path, // Tar and gzip extract in place.
+            AssetKind::Zip => path.join("rust-analyzer.exe"), // zip contains a .exe
         };
 
         anyhow::Ok(LanguageServerBinary {

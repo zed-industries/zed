@@ -301,6 +301,7 @@ mod tests {
         init_test(cx, |settings| {
             settings.defaults.completions = Some(CompletionSettings {
                 words: WordsCompletionMode::Disabled,
+                words_min_length: 0,
                 lsp: true,
                 lsp_fetch_timeout_ms: 0,
                 lsp_insert_mode: LspInsertMode::Insert,
@@ -533,6 +534,7 @@ mod tests {
         init_test(cx, |settings| {
             settings.defaults.completions = Some(CompletionSettings {
                 words: WordsCompletionMode::Disabled,
+                words_min_length: 0,
                 lsp: true,
                 lsp_fetch_timeout_ms: 0,
                 lsp_insert_mode: LspInsertMode::Insert,
@@ -1083,7 +1085,7 @@ mod tests {
         let replace_range_marker: TextRangeMarker = ('<', '>').into();
         let (_, mut marked_ranges) = marked_text_ranges_by(
             marked_string,
-            vec![complete_from_marker.clone(), replace_range_marker.clone()],
+            vec![complete_from_marker, replace_range_marker.clone()],
         );
 
         let replace_range =

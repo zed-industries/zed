@@ -55,7 +55,7 @@ pub fn register_editor(editor: &mut Editor, buffer: Entity<MultiBuffer>, cx: &mu
         buffers: Default::default(),
     });
 
-    let buffers = buffer.read(cx).all_buffers().clone();
+    let buffers = buffer.read(cx).all_buffers();
     for buffer in buffers {
         buffer_added(editor, buffer, cx);
     }
@@ -129,7 +129,7 @@ fn buffer_added(editor: &mut Editor, buffer: Entity<Buffer>, cx: &mut Context<Ed
             let subscription = cx.subscribe(&conflict_set, conflicts_updated);
             BufferConflicts {
                 block_ids: Vec::new(),
-                conflict_set: conflict_set.clone(),
+                conflict_set,
                 _subscription: subscription,
             }
         });
@@ -437,7 +437,6 @@ fn render_conflict_buttons(
             Button::new("both", "Use Both")
                 .label_size(LabelSize::Small)
                 .on_click({
-                    let editor = editor.clone();
                     let conflict = conflict.clone();
                     let ours = conflict.ours.clone();
                     let theirs = conflict.theirs.clone();

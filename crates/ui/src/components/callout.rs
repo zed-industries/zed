@@ -81,7 +81,8 @@ impl Callout {
         self
     }
 
-    /// Sets an optional tertiary call-to-action button.
+    /// Sets an optional dismiss button, which is usually an icon button with a close icon.
+    /// This button is always rendered as the last one to the far right.
     pub fn dismiss_action(mut self, action: impl IntoElement) -> Self {
         self.dismiss_action = Some(action.into_any_element());
         self
@@ -131,6 +132,7 @@ impl RenderOnce for Callout {
 
         h_flex()
             .min_w_0()
+            .w_full()
             .p_2()
             .gap_2()
             .items_start()

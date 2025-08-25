@@ -1960,7 +1960,7 @@ impl FileHandle for FakeHandle {
         };
 
         if state.try_entry(&target, false).is_some() {
-            return Ok(target.clone());
+            return Ok(target);
         }
         anyhow::bail!("fake fd target not found")
     }
@@ -2256,7 +2256,7 @@ impl Fs for FakeFs {
 
     async fn load(&self, path: &Path) -> Result<String> {
         let content = self.load_internal(path).await?;
-        Ok(String::from_utf8(content.clone())?)
+        Ok(String::from_utf8(content)?)
     }
 
     async fn load_bytes(&self, path: &Path) -> Result<Vec<u8>> {
@@ -2412,19 +2412,18 @@ impl Fs for FakeFs {
             tx,
             original_path: path.to_owned(),
             fs_state: self.state.clone(),
-            prefixes: Mutex::new(vec![path.to_owned()]),
+            prefixes: Mutex::new(vec![path]),
         });
         (
             Box::pin(futures::StreamExt::filter(rx, {
                 let watcher = watcher.clone();
                 move |events| {
                     let result = events.iter().any(|evt_path| {
-                        let result = watcher
+                        watcher
                             .prefixes
                             .lock()
                             .iter()
-                            .any(|prefix| evt_path.path.starts_with(prefix));
-                        result
+                            .any(|prefix| evt_path.path.starts_with(prefix))
                     });
                     let executor = executor.clone();
                     async move {

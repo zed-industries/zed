@@ -180,7 +180,7 @@ impl SubView {
         let weak_list = list.downgrade();
         let focus_handle = list.focus_handle(cx);
         let this = Self::new(
-            focus_handle.clone(),
+            focus_handle,
             list.into(),
             DebuggerPaneItem::BreakpointList,
             cx,
@@ -358,7 +358,7 @@ pub(crate) fn new_debugger_pane(
         }
     };
 
-    let ret = cx.new(move |cx| {
+    cx.new(move |cx| {
         let mut pane = Pane::new(
             workspace.clone(),
             project.clone(),
@@ -562,9 +562,7 @@ pub(crate) fn new_debugger_pane(
             }
         });
         pane
-    });
-
-    ret
+    })
 }
 
 pub struct DebugTerminal {
@@ -918,7 +916,10 @@ impl RunningState {
         let task_store = project.read(cx).task_store().downgrade();
         let weak_project = project.downgrade();
         let weak_workspace = workspace.downgrade();
-        let is_local = project.read(cx).is_local();
+        let ssh_info = project
+            .read(cx)
+            .ssh_client()
+            .and_then(|it| it.read(cx).ssh_info());
 
         cx.spawn_in(window, async move |this, cx| {
             let DebugScenario {
@@ -1002,7 +1003,7 @@ impl RunningState {
                     None
                 };
 
-                let builder = ShellBuilder::new(is_local, &task.resolved.shell);
+                let builder = ShellBuilder::new(ssh_info.as_ref().map(|info| &*info.shell), &task.resolved.shell);
                 let command_label = builder.command_label(&task.resolved.command_label);
                 let (command, args) =
                     builder.build(task.resolved.command.clone(), &task.resolved.args);
@@ -1115,9 +1116,8 @@ impl RunningState {
         };
         let session = self.session.read(cx);
 
-        let cwd = Some(&request.cwd)
-            .filter(|cwd| cwd.len() > 0)
-            .map(PathBuf::from)
+        let cwd = (!request.cwd.is_empty())
+            .then(|| PathBuf::from(&request.cwd))
             .or_else(|| session.binary().unwrap().cwd.clone());
 
         let mut envs: HashMap<String, String> =
@@ -1152,7 +1152,7 @@ impl RunningState {
             } else {
                 None
             }
-        } else if args.len() > 0 {
+        } else if !args.is_empty() {
             Some(args.remove(0))
         } else {
             None
@@ -1169,9 +1169,9 @@ impl RunningState {
             id: task::TaskId("debug".to_string()),
             full_label: title.clone(),
             label: title.clone(),
-            command: command.clone(),
+            command,
             args,
-            command_label: title.clone(),
+            command_label: title,
             cwd,
             env: envs,
             use_new_terminal: true,
@@ -1758,7 +1758,7 @@ impl RunningState {
             this.activate_item(0, false, false, window, cx);
         });
 
-        let rightmost_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
+        let rightmost_pane = new_debugger_pane(workspace.clone(), project, window, cx);
         rightmost_pane.update(cx, |this, cx| {
             this.add_item(
                 Box::new(SubView::new(

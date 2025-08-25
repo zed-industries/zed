@@ -1,6 +1,7 @@
 use crate::{
     CollaboratorId, DelayedDebouncedEditAction, FollowableViewRegistry, ItemNavHistory,
     SerializableItemRegistry, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
+    invalid_buffer_view::InvalidBufferView,
     pane::{self, Pane},
     persistence::model::ItemId,
     searchable::SearchableItemHandle,
@@ -22,6 +23,7 @@ use std::{
     any::{Any, TypeId},
     cell::RefCell,
     ops::Range,
+    path::PathBuf,
     rc::Rc,
     sync::Arc,
     time::Duration,
@@ -1161,6 +1163,22 @@ pub trait ProjectItem: Item {
     ) -> Self
     where
         Self: Sized;
+
+    /// A fallback handler, which will be called after [`project::ProjectItem::try_open`] fails,
+    /// with the error from that failure as an argument.
+    /// Allows to open an item that can gracefully display and handle errors.
+    fn for_broken_project_item(
+        _abs_path: PathBuf,
+        _is_local: bool,
+        _e: &anyhow::Error,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Option<InvalidBufferView>
+    where
+        Self: Sized,
+    {
+        None
+    }
 }
 
 #[derive(Debug)]

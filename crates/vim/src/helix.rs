@@ -201,10 +201,7 @@ impl Vim {
                     let right_kind = classifier.kind_with(right, ignore_punctuation);
                     let at_newline = (left == '\n') ^ (right == '\n');
 
-                    let found = (left_kind != right_kind && right_kind != CharKind::Whitespace)
-                        || at_newline;
-
-                    found
+                    (left_kind != right_kind && right_kind != CharKind::Whitespace) || at_newline
                 })
             }
             Motion::NextWordEnd { ignore_punctuation } => {
@@ -213,10 +210,7 @@ impl Vim {
                     let right_kind = classifier.kind_with(right, ignore_punctuation);
                     let at_newline = (left == '\n') ^ (right == '\n');
 
-                    let found = (left_kind != right_kind && left_kind != CharKind::Whitespace)
-                        || at_newline;
-
-                    found
+                    (left_kind != right_kind && left_kind != CharKind::Whitespace) || at_newline
                 })
             }
             Motion::PreviousWordStart { ignore_punctuation } => {
@@ -225,10 +219,7 @@ impl Vim {
                     let right_kind = classifier.kind_with(right, ignore_punctuation);
                     let at_newline = (left == '\n') ^ (right == '\n');
 
-                    let found = (left_kind != right_kind && left_kind != CharKind::Whitespace)
-                        || at_newline;
-
-                    found
+                    (left_kind != right_kind && left_kind != CharKind::Whitespace) || at_newline
                 })
             }
             Motion::PreviousWordEnd { ignore_punctuation } => {
@@ -237,10 +228,7 @@ impl Vim {
                     let right_kind = classifier.kind_with(right, ignore_punctuation);
                     let at_newline = (left == '\n') ^ (right == '\n');
 
-                    let found = (left_kind != right_kind && right_kind != CharKind::Whitespace)
-                        || at_newline;
-
-                    found
+                    (left_kind != right_kind && right_kind != CharKind::Whitespace) || at_newline
                 })
             }
             Motion::FindForward {

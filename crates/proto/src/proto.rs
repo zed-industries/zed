@@ -169,6 +169,9 @@ messages!(
     (MarkNotificationRead, Foreground),
     (MoveChannel, Foreground),
     (ReorderChannel, Foreground),
+    (LspQuery, Background),
+    (LspQueryResponse, Background),
+    // todo(lsp) remove after Zed Stable hits v0.204.x
     (MultiLspQuery, Background),
     (MultiLspQueryResponse, Background),
     (OnTypeFormatting, Background),
@@ -426,7 +429,10 @@ request_messages!(
     (SetRoomParticipantRole, Ack),
     (BlameBuffer, BlameBufferResponse),
     (RejoinRemoteProjects, RejoinRemoteProjectsResponse),
+    // todo(lsp) remove after Zed Stable hits v0.204.x
     (MultiLspQuery, MultiLspQueryResponse),
+    (LspQuery, Ack),
+    (LspQueryResponse, Ack),
     (RestartLanguageServers, Ack),
     (StopLanguageServers, Ack),
     (OpenContext, OpenContextResponse),
@@ -478,6 +484,20 @@ request_messages!(
     (GitClone, GitCloneResponse)
 );
 
+lsp_messages!(
+    (GetReferences, GetReferencesResponse, true),
+    (GetDocumentColor, GetDocumentColorResponse, true),
+    (GetHover, GetHoverResponse, true),
+    (GetCodeActions, GetCodeActionsResponse, true),
+    (GetSignatureHelp, GetSignatureHelpResponse, true),
+    (GetCodeLens, GetCodeLensResponse, true),
+    (GetDocumentDiagnostics, GetDocumentDiagnosticsResponse, true),
+    (GetDefinition, GetDefinitionResponse, true),
+    (GetDeclaration, GetDeclarationResponse, true),
+    (GetTypeDefinition, GetTypeDefinitionResponse, true),
+    (GetImplementation, GetImplementationResponse, true),
+);
+
 entity_messages!(
     {project_id, ShareProject},
     AddProjectCollaborator,
@@ -520,6 +540,9 @@ entity_messages!(
     LeaveProject,
     LinkedEditingRange,
     LoadCommitDiff,
+    LspQuery,
+    LspQueryResponse,
+    // todo(lsp) remove after Zed Stable hits v0.204.x
     MultiLspQuery,
     RestartLanguageServers,
     StopLanguageServers,
@@ -777,6 +800,28 @@ pub fn split_repository_update(
     }])
 }
 
+impl LspQuery {
+    pub fn query_name_and_write_permissions(&self) -> (&str, bool) {
+        match self.request {
+            Some(lsp_query::Request::GetHover(_)) => ("GetHover", false),
+            Some(lsp_query::Request::GetCodeActions(_)) => ("GetCodeActions", true),
+            Some(lsp_query::Request::GetSignatureHelp(_)) => ("GetSignatureHelp", false),
+            Some(lsp_query::Request::GetCodeLens(_)) => ("GetCodeLens", true),
+            Some(lsp_query::Request::GetDocumentDiagnostics(_)) => {
+                ("GetDocumentDiagnostics", false)
+            }
+            Some(lsp_query::Request::GetDefinition(_)) => ("GetDefinition", false),
+            Some(lsp_query::Request::GetDeclaration(_)) => ("GetDeclaration", false),
+            Some(lsp_query::Request::GetTypeDefinition(_)) => ("GetTypeDefinition", false),
+            Some(lsp_query::Request::GetImplementation(_)) => ("GetImplementation", false),
+            Some(lsp_query::Request::GetReferences(_)) => ("GetReferences", false),
+            Some(lsp_query::Request::GetDocumentColor(_)) => ("GetDocumentColor", false),
+            None => ("<unknown>", true),
+        }
+    }
+}
+
+// todo(lsp) remove after Zed Stable hits v0.204.x
 impl MultiLspQuery {
     pub fn request_str(&self) -> &str {
         match self.request {

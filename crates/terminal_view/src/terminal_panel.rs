@@ -181,7 +181,6 @@ impl TerminalPanel {
                             .anchor(Corner::TopRight)
                             .with_handle(pane.split_item_context_menu_handle.clone())
                             .menu({
-                                let split_context = split_context.clone();
                                 move |window, cx| {
                                     ContextMenu::build(window, cx, |menu, _, _| {
                                         menu.when_some(
@@ -236,7 +235,7 @@ impl TerminalPanel {
     ) -> Result<Entity<Self>> {
         let mut terminal_panel = None;
 
-        match workspace
+        if let Some((database_id, serialization_key)) = workspace
             .read_with(&cx, |workspace, _| {
                 workspace
                     .database_id()
@@ -244,34 +243,29 @@ impl TerminalPanel {
             })
             .ok()
             .flatten()
+            && let Some(serialized_panel) = cx
+                .background_spawn(async move { KEY_VALUE_STORE.read_kvp(&serialization_key) })
+                .await
+                .log_err()
+                .flatten()
+                .map(|panel| serde_json::from_str::<SerializedTerminalPanel>(&panel))
+                .transpose()
+                .log_err()
+                .flatten()
+            && let Ok(serialized) = workspace
+                .update_in(&mut cx, |workspace, window, cx| {
+                    deserialize_terminal_panel(
+                        workspace.weak_handle(),
+                        workspace.project().clone(),
+                        database_id,
+                        serialized_panel,
+                        window,
+                        cx,
+                    )
+                })?
+                .await
         {
-            Some((database_id, serialization_key)) => {
-                if let Some(serialized_panel) = cx
-                    .background_spawn(async move { KEY_VALUE_STORE.read_kvp(&serialization_key) })
-                    .await
-                    .log_err()
-                    .flatten()
-                    .map(|panel| serde_json::from_str::<SerializedTerminalPanel>(&panel))
-                    .transpose()
-                    .log_err()
-                    .flatten()
-                    && let Ok(serialized) = workspace
-                        .update_in(&mut cx, |workspace, window, cx| {
-                            deserialize_terminal_panel(
-                                workspace.weak_handle(),
-                                workspace.project().clone(),
-                                database_id,
-                                serialized_panel,
-                                window,
-                                cx,
-                            )
-                        })?
-                        .await
-                {
-                    terminal_panel = Some(serialized);
-                }
-            }
-            _ => {}
+            terminal_panel = Some(serialized);
         }
 
         let terminal_panel = if let Some(panel) = terminal_panel {
@@ -487,14 +481,17 @@ impl TerminalPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<WeakEntity<Terminal>>> {
-        let Ok(is_local) = self
-            .workspace
-            .update(cx, |workspace, cx| workspace.project().read(cx).is_local())
-        else {
+        let Ok((ssh_client, false)) = self.workspace.update(cx, |workspace, cx| {
+            let project = workspace.project().read(cx);
+            (
+                project.ssh_client().and_then(|it| it.read(cx).ssh_info()),
+                project.is_via_collab(),
+            )
+        }) else {
             return Task::ready(Err(anyhow!("Project is not local")));
         };
 
-        let builder = ShellBuilder::new(is_local, &task.shell);
+        let builder = ShellBuilder::new(ssh_client.as_ref().map(|info| &*info.shell), &task.shell);
         let command_label = builder.command_label(&task.command_label);
         let (command, args) = builder.build(task.command.clone(), &task.args);
 
@@ -629,7 +626,7 @@ impl TerminalPanel {
                 workspace
                     .read(cx)
                     .panes()
-                    .into_iter()
+                    .iter()
                     .cloned()
                     .flat_map(pane_terminal_views),
             )

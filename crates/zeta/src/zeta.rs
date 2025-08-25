@@ -55,10 +55,10 @@ use workspace::Workspace;
 use workspace::notifications::{ErrorMessagePrompt, NotificationId};
 use worktree::Worktree;
 
-const CURSOR_MARKER: &'static str = "<|user_cursor_is_here|>";
-const START_OF_FILE_MARKER: &'static str = "<|start_of_file|>";
-const EDITABLE_REGION_START_MARKER: &'static str = "<|editable_region_start|>";
-const EDITABLE_REGION_END_MARKER: &'static str = "<|editable_region_end|>";
+const CURSOR_MARKER: &str = "<|user_cursor_is_here|>";
+const START_OF_FILE_MARKER: &str = "<|start_of_file|>";
+const EDITABLE_REGION_START_MARKER: &str = "<|editable_region_start|>";
+const EDITABLE_REGION_END_MARKER: &str = "<|editable_region_end|>";
 const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
 const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_choice";
 
@@ -118,12 +118,8 @@ impl Dismissable for ZedPredictUpsell {
     }
 }
 
-pub fn should_show_upsell_modal(user_store: &Entity<UserStore>, cx: &App) -> bool {
-    if user_store.read(cx).has_accepted_terms_of_service() {
-        !ZedPredictUpsell::dismissed()
-    } else {
-        true
-    }
+pub fn should_show_upsell_modal() -> bool {
+    !ZedPredictUpsell::dismissed()
 }
 
 #[derive(Clone)]
@@ -166,7 +162,7 @@ fn interpolate(
 ) -> Option<Vec<(Range<Anchor>, String)>> {
     let mut edits = Vec::new();
 
-    let mut model_edits = current_edits.into_iter().peekable();
+    let mut model_edits = current_edits.iter().peekable();
     for user_edit in new_snapshot.edits_since::<usize>(&old_snapshot.version) {
         while let Some((model_old_range, _)) = model_edits.peek() {
             let model_old_range = model_old_range.to_offset(old_snapshot);
@@ -1547,16 +1543,6 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
     ) -> bool {
         true
     }
-
-    fn needs_terms_acceptance(&self, cx: &App) -> bool {
-        !self
-            .zeta
-            .read(cx)
-            .user_store
-            .read(cx)
-            .has_accepted_terms_of_service()
-    }
-
     fn is_refreshing(&self) -> bool {
         !self.pending_completions.is_empty()
     }
@@ -1569,10 +1555,6 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
         _debounce: bool,
         cx: &mut Context<Self>,
     ) {
-        if self.needs_terms_acceptance(cx) {
-            return;
-        }
-
         if self.zeta.read(cx).update_required {
             return;
         }
@@ -2123,7 +2105,7 @@ mod tests {
         let completion = completion_task.await.unwrap().unwrap();
         completion
             .edits
-            .into_iter()
+            .iter()
             .map(|(old_range, new_text)| (old_range.to_point(&snapshot), new_text.clone()))
             .collect::<Vec<_>>()
     }

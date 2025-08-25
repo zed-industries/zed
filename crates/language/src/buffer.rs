@@ -974,8 +974,6 @@ impl Buffer {
                 TextBuffer::new_normalized(0, buffer_id, Default::default(), text).snapshot();
             let mut syntax = SyntaxMap::new(&text).snapshot();
             if let Some(language) = language.clone() {
-                let text = text.clone();
-                let language = language.clone();
                 let language_registry = language_registry.clone();
                 syntax.reparse(&text, language_registry, language);
             }
@@ -1020,9 +1018,6 @@ impl Buffer {
         let text = TextBuffer::new_normalized(0, buffer_id, Default::default(), text).snapshot();
         let mut syntax = SyntaxMap::new(&text).snapshot();
         if let Some(language) = language.clone() {
-            let text = text.clone();
-            let language = language.clone();
-            let language_registry = language_registry.clone();
             syntax.reparse(&text, language_registry, language);
         }
         BufferSnapshot {
@@ -1128,7 +1123,7 @@ impl Buffer {
         } else {
             ranges.as_slice()
         }
-        .into_iter()
+        .iter()
         .peekable();
 
         let mut edits = Vec::new();
@@ -1395,7 +1390,8 @@ impl Buffer {
                     is_first = false;
                     return true;
                 }
-                let any_sub_ranges_contain_range = layer
+
+                layer
                     .included_sub_ranges
                     .map(|sub_ranges| {
                         sub_ranges.iter().any(|sub_range| {
@@ -1404,9 +1400,7 @@ impl Buffer {
                             !is_before_start && !is_after_end
                         })
                     })
-                    .unwrap_or(true);
-                let result = any_sub_ranges_contain_range;
-                result
+                    .unwrap_or(true)
             })
             .last()
             .map(|info| info.language.clone())
@@ -2207,7 +2201,7 @@ impl Buffer {
         self.remote_selections.insert(
             AGENT_REPLICA_ID,
             SelectionSet {
-                selections: selections.clone(),
+                selections,
                 lamport_timestamp,
                 line_mode,
                 cursor_shape,
@@ -2616,7 +2610,7 @@ impl Buffer {
                     self.completion_triggers = self
                         .completion_triggers_per_language_server
                         .values()
-                        .flat_map(|triggers| triggers.into_iter().cloned())
+                        .flat_map(|triggers| triggers.iter().cloned())
                         .collect();
                 } else {
                     self.completion_triggers_per_language_server
@@ -2776,7 +2770,7 @@ impl Buffer {
             self.completion_triggers = self
                 .completion_triggers_per_language_server
                 .values()
-                .flat_map(|triggers| triggers.into_iter().cloned())
+                .flat_map(|triggers| triggers.iter().cloned())
                 .collect();
         } else {
             self.completion_triggers_per_language_server
@@ -3007,9 +3001,9 @@ impl BufferSnapshot {
         }
 
         let mut error_ranges = Vec::<Range<Point>>::new();
-        let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
-            grammar.error_query.as_ref()
-        });
+        let mut matches = self
+            .syntax
+            .matches(range, &self.text, |grammar| grammar.error_query.as_ref());
         while let Some(mat) = matches.peek() {
             let node = mat.captures[0].node;
             let start = Point::from_ts_point(node.start_position());
@@ -4076,7 +4070,7 @@ impl BufferSnapshot {
         // Get the ranges of the innermost pair of brackets.
         let mut result: Option<(Range<usize>, Range<usize>)> = None;
 
-        for pair in self.enclosing_bracket_ranges(range.clone()) {
+        for pair in self.enclosing_bracket_ranges(range) {
             if let Some(range_filter) = range_filter
                 && !range_filter(pair.open_range.clone(), pair.close_range.clone())
             {
@@ -4249,7 +4243,7 @@ impl BufferSnapshot {
                         .map(|(range, name)| {
                             (
                                 name.to_string(),
-                                self.text_for_range(range.clone()).collect::<String>(),
+                                self.text_for_range(range).collect::<String>(),
                             )
                         })
                         .collect();

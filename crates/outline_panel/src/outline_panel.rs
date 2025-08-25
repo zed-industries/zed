@@ -733,7 +733,8 @@ impl OutlinePanel {
     ) -> Entity<Self> {
         let project = workspace.project().clone();
         let workspace_handle = cx.entity().downgrade();
-        let outline_panel = cx.new(|cx| {
+
+        cx.new(|cx| {
             let filter_editor = cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
                 editor.set_placeholder_text("Filter...", cx);
@@ -912,9 +913,7 @@ impl OutlinePanel {
                 outline_panel.replace_active_editor(item, editor, window, cx);
             }
             outline_panel
-        });
-
-        outline_panel
+        })
     }
 
     fn serialization_key(workspace: &Workspace) -> Option<String> {
@@ -2624,7 +2623,7 @@ impl OutlinePanel {
     }
 
     fn entry_name(&self, worktree_id: &WorktreeId, entry: &Entry, cx: &App) -> String {
-        let name = match self.project.read(cx).worktree_for_id(*worktree_id, cx) {
+        match self.project.read(cx).worktree_for_id(*worktree_id, cx) {
             Some(worktree) => {
                 let worktree = worktree.read(cx);
                 match worktree.snapshot().root_entry() {
@@ -2645,8 +2644,7 @@ impl OutlinePanel {
                 }
             }
             None => file_name(entry.path.as_ref()),
-        };
-        name
+        }
     }
 
     fn update_fs_entries(
@@ -2681,7 +2679,8 @@ impl OutlinePanel {
                 new_collapsed_entries = outline_panel.collapsed_entries.clone();
                 new_unfolded_dirs = outline_panel.unfolded_dirs.clone();
                 let multi_buffer_snapshot = active_multi_buffer.read(cx).snapshot(cx);
-                let buffer_excerpts = multi_buffer_snapshot.excerpts().fold(
+
+                multi_buffer_snapshot.excerpts().fold(
                     HashMap::default(),
                     |mut buffer_excerpts, (excerpt_id, buffer_snapshot, excerpt_range)| {
                         let buffer_id = buffer_snapshot.remote_id();
@@ -2728,8 +2727,7 @@ impl OutlinePanel {
                         );
                         buffer_excerpts
                     },
-                );
-                buffer_excerpts
+                )
             }) else {
                 return;
             };
@@ -4395,12 +4393,13 @@ impl OutlinePanel {
             })
             .filter(|(match_range, _)| {
                 let editor = active_editor.read(cx);
-                if let Some(buffer_id) = match_range.start.buffer_id
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                if let Some(buffer_id) = snapshot.buffer_id_for_anchor(match_range.start)
                     && editor.is_buffer_folded(buffer_id, cx)
                 {
                     return false;
                 }
-                if let Some(buffer_id) = match_range.start.buffer_id
+                if let Some(buffer_id) = snapshot.buffer_id_for_anchor(match_range.end)
                     && editor.is_buffer_folded(buffer_id, cx)
                 {
                     return false;
@@ -4807,7 +4806,7 @@ impl OutlinePanel {
                             .with_compute_indents_fn(cx.entity(), |outline_panel, range, _, _| {
                                 let entries = outline_panel.cached_entries.get(range);
                                 if let Some(entries) = entries {
-                                    entries.into_iter().map(|item| item.depth).collect()
+                                    entries.iter().map(|item| item.depth).collect()
                                 } else {
                                     smallvec::SmallVec::new()
                                 }
@@ -5093,7 +5092,7 @@ impl Panel for OutlinePanel {
 
 impl Focusable for OutlinePanel {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.filter_editor.focus_handle(cx).clone()
+        self.filter_editor.focus_handle(cx)
     }
 }
 
@@ -5340,7 +5339,7 @@ fn subscribe_for_editor_events(
                 }
                 EditorEvent::Reparsed(buffer_id) => {
                     if let Some(excerpts) = outline_panel.excerpts.get_mut(buffer_id) {
-                        for (_, excerpt) in excerpts {
+                        for excerpt in excerpts.values_mut() {
                             excerpt.invalidate_outlines();
                         }
                     }

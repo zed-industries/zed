@@ -162,6 +162,22 @@ impl BufferDiffSnapshot {
         }
     }
 
+    fn unchanged(
+        buffer: &text::BufferSnapshot,
+        base_text: language::BufferSnapshot,
+    ) -> BufferDiffSnapshot {
+        debug_assert_eq!(buffer.text(), base_text.text());
+        BufferDiffSnapshot {
+            inner: BufferDiffInner {
+                base_text,
+                hunks: SumTree::new(buffer),
+                pending_hunks: SumTree::new(buffer),
+                base_text_exists: false,
+            },
+            secondary_diff: None,
+        }
+    }
+
     fn new_with_base_text(
         buffer: text::BufferSnapshot,
         base_text: Option<Arc<String>>,
@@ -175,12 +191,8 @@ impl BufferDiffSnapshot {
         if let Some(text) = &base_text {
             let base_text_rope = Rope::from(text.as_str());
             base_text_pair = Some((text.clone(), base_text_rope.clone()));
-            let snapshot = language::Buffer::build_snapshot(
-                base_text_rope,
-                language.clone(),
-                language_registry.clone(),
-                cx,
-            );
+            let snapshot =
+                language::Buffer::build_snapshot(base_text_rope, language, language_registry, cx);
             base_text_snapshot = cx.background_spawn(snapshot);
             base_text_exists = true;
         } else {
@@ -217,7 +229,10 @@ impl BufferDiffSnapshot {
         cx: &App,
     ) -> impl Future<Output = Self> + use<> {
         let base_text_exists = base_text.is_some();
-        let base_text_pair = base_text.map(|text| (text, base_text_snapshot.as_rope().clone()));
+        let base_text_pair = base_text.map(|text| {
+            debug_assert_eq!(&*text, &base_text_snapshot.text());
+            (text, base_text_snapshot.as_rope().clone())
+        });
         cx.background_executor()
             .spawn_labeled(*CALCULATE_DIFF_TASK, async move {
                 Self {
@@ -877,6 +892,18 @@ impl BufferDiff {
         }
     }
 
+    pub fn new_unchanged(
+        buffer: &text::BufferSnapshot,
+        base_text: language::BufferSnapshot,
+    ) -> Self {
+        debug_assert_eq!(buffer.text(), base_text.text());
+        BufferDiff {
+            buffer_id: buffer.remote_id(),
+            inner: BufferDiffSnapshot::unchanged(buffer, base_text).inner,
+            secondary_diff: None,
+        }
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn new_with_base_text(
         base_text: &str,
@@ -957,7 +984,7 @@ impl BufferDiff {
             .buffer_range
             .start;
         let end = self
-            .hunks_intersecting_range_rev(range.clone(), buffer)
+            .hunks_intersecting_range_rev(range, buffer)
             .next()?
             .buffer_range
             .end;
@@ -1441,7 +1468,7 @@ mod tests {
         .unindent();
 
         let buffer = Buffer::new(0, BufferId::new(1).unwrap(), buffer_text);
-        let unstaged_diff = BufferDiffSnapshot::new_sync(buffer.clone(), index_text.clone(), cx);
+        let unstaged_diff = BufferDiffSnapshot::new_sync(buffer.clone(), index_text, cx);
         let mut uncommitted_diff =
             BufferDiffSnapshot::new_sync(buffer.clone(), head_text.clone(), cx);
         uncommitted_diff.secondary_diff = Some(Box::new(unstaged_diff));
@@ -2028,8 +2055,8 @@ mod tests {
         fn gen_working_copy(rng: &mut StdRng, head: &str) -> String {
             let mut old_lines = {
                 let mut old_lines = Vec::new();
-                let mut old_lines_iter = head.lines();
-                while let Some(line) = old_lines_iter.next() {
+                let old_lines_iter = head.lines();
+                for line in old_lines_iter {
                     assert!(!line.ends_with("\n"));
                     old_lines.push(line.to_owned());
                 }
@@ -2133,7 +2160,7 @@ mod tests {
             diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &working_copy, cx)
                 .collect::<Vec<_>>()
         });
-        if hunks.len() == 0 {
+        if hunks.is_empty() {
             return;
         }
 

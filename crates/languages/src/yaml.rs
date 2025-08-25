@@ -38,7 +38,7 @@ impl YamlLspAdapter {
 #[async_trait(?Send)]
 impl LspAdapter for YamlLspAdapter {
     fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
+        Self::SERVER_NAME
     }
 
     async fn fetch_latest_server_version(

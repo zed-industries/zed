@@ -438,7 +438,7 @@ fn init_test(cx: &mut App) -> Entity<ChannelStore> {
 
     let clock = Arc::new(FakeSystemClock::new());
     let http = FakeHttpClient::with_404_response();
-    let client = Client::new(clock, http.clone(), cx);
+    let client = Client::new(clock, http, cx);
     let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
 
     client::init(&client, cx);

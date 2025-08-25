@@ -89,10 +89,15 @@ impl FeatureFlag for JjUiFeatureFlag {
     const NAME: &'static str = "jj-ui";
 }
 
-pub struct AcpFeatureFlag;
+pub struct GeminiAndNativeFeatureFlag;
 
-impl FeatureFlag for AcpFeatureFlag {
-    const NAME: &'static str = "acp";
+impl FeatureFlag for GeminiAndNativeFeatureFlag {
+    // This was previously called "acp".
+    //
+    // We renamed it because existing builds used it to enable the Claude Code
+    // integration too, and we'd like to turn Gemini/Native on in new builds
+    // without enabling Claude Code in old builds.
+    const NAME: &'static str = "gemini-and-native";
 }
 
 pub struct ClaudeCodeFeatureFlag;

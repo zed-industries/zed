@@ -4,6 +4,8 @@ use minidumper::{Client, LoopAction, MinidumpBinary};
 use release_channel::{RELEASE_CHANNEL, ReleaseChannel};
 use serde::{Deserialize, Serialize};
 
+#[cfg(target_os = "macos")]
+use std::sync::atomic::AtomicU32;
 use std::{
     env,
     fs::{self, File},
@@ -25,6 +27,9 @@ pub static CRASH_HANDLER: OnceLock<Arc<Client>> = OnceLock::new();
 pub static REQUESTED_MINIDUMP: AtomicBool = AtomicBool::new(false);
 const CRASH_HANDLER_PING_TIMEOUT: Duration = Duration::from_secs(60);
 const CRASH_HANDLER_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+#[cfg(target_os = "macos")]
+static PANIC_THREAD_ID: AtomicU32 = AtomicU32::new(0);
 
 pub async fn init(crash_init: InitCrashHandler) {
     if *RELEASE_CHANNEL == ReleaseChannel::Dev && env::var("ZED_GENERATE_MINIDUMPS").is_err() {
@@ -74,6 +79,9 @@ pub async fn init(crash_init: InitCrashHandler) {
                 .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
                 .is_ok()
             {
+                #[cfg(target_os = "macos")]
+                suspend_all_other_threads();
+
                 client.ping().unwrap();
                 client.request_dump(crash_context).is_ok()
             } else {
@@ -98,9 +106,28 @@ pub async fn init(crash_init: InitCrashHandler) {
     }
 }
 
+#[cfg(target_os = "macos")]
+unsafe fn suspend_all_other_threads() {
+    let task = unsafe { mach2::traps::current_task() };
+    let mut threads: mach2::mach_types::thread_act_array_t = std::ptr::null_mut();
+    let mut count = 0;
+    unsafe {
+        mach2::task::task_threads(task, &raw mut threads, &raw mut count);
+    }
+    let current = unsafe { mach2::mach_init::mach_thread_self() };
+    let panic_thread = PANIC_THREAD_ID.load(Ordering::SeqCst);
+    for i in 0..count {
+        let t = unsafe { *threads.add(i as usize) };
+        if t != current && t != panic_thread {
+            unsafe { mach2::thread_act::thread_suspend(t) };
+        }
+    }
+}
+
 pub struct CrashServer {
     initialization_params: OnceLock<InitCrashHandler>,
     panic_info: OnceLock<CrashPanic>,
+    active_gpu: OnceLock<system_specs::GpuSpecs>,
     has_connection: Arc<AtomicBool>,
 }
 
@@ -108,6 +135,9 @@ pub struct CrashServer {
 pub struct CrashInfo {
     pub init: InitCrashHandler,
     pub panic: Option<CrashPanic>,
+    pub minidump_error: Option<String>,
+    pub gpus: Vec<system_specs::GpuInfo>,
+    pub active_gpu: Option<system_specs::GpuSpecs>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -116,7 +146,6 @@ pub struct InitCrashHandler {
     pub zed_version: String,
     pub release_channel: String,
     pub commit_sha: String,
-    // pub gpu: String,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -142,16 +171,26 @@ impl minidumper::ServerHandler for CrashServer {
     }
 
     fn on_minidump_created(&self, result: Result<MinidumpBinary, minidumper::Error>) -> LoopAction {
-        match result {
+        let minidump_error = match result {
             Ok(mut md_bin) => {
                 use io::Write;
                 let _ = md_bin.file.flush();
-                info!("wrote minidump to disk {:?}", md_bin.path);
+                None
             }
-            Err(e) => {
-                info!("failed to write minidump: {:#}", e);
+            Err(e) => Some(format!("{e:?}")),
+        };
+
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+        let gpus = vec![];
+
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        let gpus = match system_specs::read_gpu_info_from_sys_class_drm() {
+            Ok(gpus) => gpus,
+            Err(err) => {
+                log::warn!("Failed to collect GPU information for crash report: {err}");
+                vec![]
             }
-        }
+        };
 
         let crash_info = CrashInfo {
             init: self
@@ -160,6 +199,9 @@ impl minidumper::ServerHandler for CrashServer {
                 .expect("not initialized")
                 .clone(),
             panic: self.panic_info.get().cloned(),
+            minidump_error,
+            active_gpu: self.active_gpu.get().cloned(),
+            gpus,
         };
 
         let crash_data_path = paths::logs_dir()
@@ -184,6 +226,13 @@ impl minidumper::ServerHandler for CrashServer {
                 let panic_data =
                     serde_json::from_slice::<CrashPanic>(&buffer).expect("invalid panic data");
                 self.panic_info.set(panic_data).expect("already panicked");
+            }
+            3 => {
+                let gpu_specs: system_specs::GpuSpecs =
+                    bincode::deserialize(&buffer).expect("gpu specs");
+                self.active_gpu
+                    .set(gpu_specs)
+                    .expect("already set active gpu");
             }
             _ => {
                 panic!("invalid message kind");
@@ -218,6 +267,13 @@ pub fn handle_panic(message: String, span: Option<&Location>) {
                 )
                 .ok();
             log::error!("triggering a crash to generate a minidump...");
+
+            #[cfg(target_os = "macos")]
+            PANIC_THREAD_ID.store(
+                unsafe { mach2::mach_init::mach_thread_self() },
+                Ordering::SeqCst,
+            );
+
             #[cfg(target_os = "linux")]
             CrashHandler.simulate_signal(crash_handler::Signal::Trap as u32);
             #[cfg(not(target_os = "linux"))]
@@ -254,6 +310,7 @@ pub fn crash_server(socket: &Path) {
                 initialization_params: OnceLock::new(),
                 panic_info: OnceLock::new(),
                 has_connection,
+                active_gpu: OnceLock::new(),
             }),
             &shutdown,
             Some(CRASH_HANDLER_PING_TIMEOUT),

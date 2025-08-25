@@ -47,12 +47,9 @@ impl TerminalTool {
             }
 
             if which::which("bash").is_ok() {
-                log::info!("agent selected bash for terminal tool");
                 "bash".into()
             } else {
-                let shell = get_system_shell();
-                log::info!("agent selected {shell} for terminal tool");
-                shell
+                get_system_shell()
             }
         });
         Self {
@@ -66,11 +63,11 @@ impl AgentTool for TerminalTool {
     type Input = TerminalToolInput;
     type Output = String;
 
-    fn name(&self) -> SharedString {
-        "terminal".into()
+    fn name() -> &'static str {
+        "terminal"
     }
 
-    fn kind(&self) -> acp::ToolKind {
+    fn kind() -> acp::ToolKind {
         acp::ToolKind::Execute
     }
 
@@ -237,7 +234,7 @@ fn process_content(
             if is_empty {
                 "Command executed successfully.".to_string()
             } else {
-                content.to_string()
+                content
             }
         }
         Some(exit_status) => {

@@ -426,7 +426,7 @@ impl GitPanel {
         let git_store = project.read(cx).git_store().clone();
         let active_repository = project.read(cx).active_repository(cx);
 
-        let git_panel = cx.new(|cx| {
+        cx.new(|cx| {
             let focus_handle = cx.focus_handle();
             cx.on_focus(&focus_handle, window, Self::focus_in).detach();
             cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
@@ -563,9 +563,7 @@ impl GitPanel {
 
             this.schedule_update(false, window, cx);
             this
-        });
-
-        git_panel
+        })
     }
 
     fn hide_scrollbars(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1198,14 +1196,13 @@ impl GitPanel {
             window,
             cx,
         );
-        cx.spawn(async move |this, cx| match prompt.await {
-            Ok(RestoreCancel::RestoreTrackedFiles) => {
+        cx.spawn(async move |this, cx| {
+            if let Ok(RestoreCancel::RestoreTrackedFiles) = prompt.await {
                 this.update(cx, |this, cx| {
                     this.perform_checkout(entries, cx);
                 })
                 .ok();
             }
-            _ => {}
         })
         .detach();
     }
@@ -1338,7 +1335,7 @@ impl GitPanel {
                         section.contains(status_entry, repository)
                             && status_entry.staging.as_bool() != Some(goal_staged_state)
                     })
-                    .map(|status_entry| status_entry.clone())
+                    .cloned()
                     .collect::<Vec<_>>();
 
                 (goal_staged_state, entries)
@@ -1470,7 +1467,6 @@ impl GitPanel {
             .read(cx)
             .as_singleton()
             .unwrap()
-            .clone()
     }
 
     fn toggle_staged_for_selected(
@@ -2179,7 +2175,7 @@ impl GitPanel {
 
         let worktree = if worktrees.len() == 1 {
             Task::ready(Some(worktrees.first().unwrap().clone()))
-        } else if worktrees.len() == 0 {
+        } else if worktrees.is_empty() {
             let result = window.prompt(
                 PromptLevel::Warning,
                 "Unable to initialize a git repository",
@@ -2762,22 +2758,22 @@ impl GitPanel {
             }
         }
 
-        if conflict_entries.len() == 0 && staged_count == 1 && pending_staged_count == 0 {
+        if conflict_entries.is_empty() && staged_count == 1 && pending_staged_count == 0 {
             match pending_status_for_single_staged {
                 Some(TargetStatus::Staged) | None => {
                     self.single_staged_entry = single_staged_entry;
                 }
                 _ => {}
             }
-        } else if conflict_entries.len() == 0 && pending_staged_count == 1 {
+        } else if conflict_entries.is_empty() && pending_staged_count == 1 {
             self.single_staged_entry = last_pending_staged;
         }
 
-        if conflict_entries.len() == 0 && changed_entries.len() == 1 {
+        if conflict_entries.is_empty() && changed_entries.len() == 1 {
             self.single_tracked_entry = changed_entries.first().cloned();
         }
 
-        if conflict_entries.len() > 0 {
+        if !conflict_entries.is_empty() {
             self.entries.push(GitListEntry::Header(GitHeaderEntry {
                 header: Section::Conflict,
             }));
@@ -2785,7 +2781,7 @@ impl GitPanel {
                 .extend(conflict_entries.into_iter().map(GitListEntry::Status));
         }
 
-        if changed_entries.len() > 0 {
+        if !changed_entries.is_empty() {
             if !sort_by_path {
                 self.entries.push(GitListEntry::Header(GitHeaderEntry {
                     header: Section::Tracked,
@@ -2794,7 +2790,7 @@ impl GitPanel {
             self.entries
                 .extend(changed_entries.into_iter().map(GitListEntry::Status));
         }
-        if new_entries.len() > 0 {
+        if !new_entries.is_empty() {
             self.entries.push(GitListEntry::Header(GitHeaderEntry {
                 header: Section::New,
             }));
@@ -2987,9 +2983,7 @@ impl GitPanel {
             let status_toast = StatusToast::new(message, cx, move |this, _cx| {
                 use remote_output::SuccessStyle::*;
                 match style {
-                    Toast { .. } => {
-                        this.icon(ToastIcon::new(IconName::GitBranchAlt).color(Color::Muted))
-                    }
+                    Toast => this.icon(ToastIcon::new(IconName::GitBranchAlt).color(Color::Muted)),
                     ToastWithLog { output } => this
                         .icon(ToastIcon::new(IconName::GitBranchAlt).color(Color::Muted))
                         .action("View Log", move |window, cx| {
@@ -3210,7 +3204,7 @@ impl GitPanel {
                     Some(ContextMenu::build(window, cx, |context_menu, _, _| {
                         context_menu
                             .when_some(keybinding_target.clone(), |el, keybinding_target| {
-                                el.context(keybinding_target.clone())
+                                el.context(keybinding_target)
                             })
                             .when(has_previous_commit, |this| {
                                 this.toggleable_entry(
@@ -3390,7 +3384,7 @@ impl GitPanel {
         let enable_coauthors = self.render_co_authors(cx);
 
         let editor_focus_handle = self.commit_editor.focus_handle(cx);
-        let expand_tooltip_focus_handle = editor_focus_handle.clone();
+        let expand_tooltip_focus_handle = editor_focus_handle;
 
         let branch = active_repository.read(cx).branch.clone();
         let head_commit = active_repository.read(cx).head_commit.clone();
@@ -3419,7 +3413,7 @@ impl GitPanel {
                 display_name,
                 branch,
                 head_commit,
-                Some(git_panel.clone()),
+                Some(git_panel),
             ))
             .child(
                 panel_editor_container(window, cx)
@@ -3570,7 +3564,7 @@ impl GitPanel {
                 }),
                 self.render_git_commit_menu(
                     ElementId::Name(format!("split-button-right-{}", title).into()),
-                    Some(commit_tooltip_focus_handle.clone()),
+                    Some(commit_tooltip_focus_handle),
                     cx,
                 )
                 .into_any_element(),
@@ -3636,7 +3630,7 @@ impl GitPanel {
                                 CommitView::open(
                                     commit.clone(),
                                     repo.clone(),
-                                    workspace.clone().clone(),
+                                    workspace.clone(),
                                     window,
                                     cx,
                                 );
@@ -4344,7 +4338,7 @@ impl GitPanel {
                         }
                     })
                     .child(
-                        self.entry_label(display_name.clone(), label_color)
+                        self.entry_label(display_name, label_color)
                             .when(status.is_deleted(), |this| this.strikethrough()),
                     ),
             )
@@ -4472,7 +4466,7 @@ fn current_language_model(cx: &Context<'_, GitPanel>) -> Option<Arc<dyn Language
     is_enabled
         .then(|| {
             let ConfiguredModel { provider, model } =
-                LanguageModelRegistry::read_global(cx).commit_message_model()?;
+                LanguageModelRegistry::read_global(cx).commit_message_model(cx)?;
 
             provider.is_authenticated(cx).then(|| model)
         })
@@ -4482,7 +4476,7 @@ fn current_language_model(cx: &Context<'_, GitPanel>) -> Option<Arc<dyn Language
 impl Render for GitPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let project = self.project.read(cx);
-        let has_entries = self.entries.len() > 0;
+        let has_entries = !self.entries.is_empty();
         let room = self
             .workspace
             .upgrade()
@@ -4693,7 +4687,7 @@ impl GitPanelMessageTooltip {
                     author_email: details.author_email.clone(),
                     commit_time: OffsetDateTime::from_unix_timestamp(details.commit_timestamp)?,
                     message: Some(ParsedCommitMessage {
-                        message: details.message.clone(),
+                        message: details.message,
                         ..Default::default()
                     }),
                 };
@@ -4826,7 +4820,7 @@ impl RenderOnce for PanelRepoFooter {
         };
 
         let truncated_branch_name = if branch_actual_len <= branch_display_len {
-            branch_name.to_string()
+            branch_name
         } else {
             util::truncate_and_trailoff(branch_name.trim_ascii(), branch_display_len)
         };
@@ -4839,7 +4833,7 @@ impl RenderOnce for PanelRepoFooter {
 
         let repo_selector = PopoverMenu::new("repository-switcher")
             .menu({
-                let project = project.clone();
+                let project = project;
                 move |window, cx| {
                     let project = project.clone()?;
                     Some(cx.new(|cx| RepositorySelector::new(project, rems(16.), window, cx)))
@@ -5010,10 +5004,7 @@ impl Component for PanelRepoFooter {
                                 div()
                                     .w(example_width)
                                     .overflow_hidden()
-                                    .child(PanelRepoFooter::new_preview(
-                                        active_repository(1).clone(),
-                                        None,
-                                    ))
+                                    .child(PanelRepoFooter::new_preview(active_repository(1), None))
                                     .into_any_element(),
                             ),
                             single_example(
@@ -5022,7 +5013,7 @@ impl Component for PanelRepoFooter {
                                     .w(example_width)
                                     .overflow_hidden()
                                     .child(PanelRepoFooter::new_preview(
-                                        active_repository(2).clone(),
+                                        active_repository(2),
                                         Some(branch(unknown_upstream)),
                                     ))
                                     .into_any_element(),
@@ -5033,7 +5024,7 @@ impl Component for PanelRepoFooter {
                                     .w(example_width)
                                     .overflow_hidden()
                                     .child(PanelRepoFooter::new_preview(
-                                        active_repository(3).clone(),
+                                        active_repository(3),
                                         Some(branch(no_remote_upstream)),
                                     ))
                                     .into_any_element(),
@@ -5044,7 +5035,7 @@ impl Component for PanelRepoFooter {
                                     .w(example_width)
                                     .overflow_hidden()
                                     .child(PanelRepoFooter::new_preview(
-                                        active_repository(4).clone(),
+                                        active_repository(4),
                                         Some(branch(not_ahead_or_behind_upstream)),
                                     ))
                                     .into_any_element(),
@@ -5055,7 +5046,7 @@ impl Component for PanelRepoFooter {
                                     .w(example_width)
                                     .overflow_hidden()
                                     .child(PanelRepoFooter::new_preview(
-                                        active_repository(5).clone(),
+                                        active_repository(5),
                                         Some(branch(behind_upstream)),
                                     ))
                                     .into_any_element(),
@@ -5066,7 +5057,7 @@ impl Component for PanelRepoFooter {
                                     .w(example_width)
                                     .overflow_hidden()
                                     .child(PanelRepoFooter::new_preview(
-                                        active_repository(6).clone(),
+                                        active_repository(6),
                                         Some(branch(ahead_of_upstream)),
                                     ))
                                     .into_any_element(),
@@ -5077,7 +5068,7 @@ impl Component for PanelRepoFooter {
                                     .w(example_width)
                                     .overflow_hidden()
                                     .child(PanelRepoFooter::new_preview(
-                                        active_repository(7).clone(),
+                                        active_repository(7),
                                         Some(branch(ahead_and_behind_upstream)),
                                     ))
                                     .into_any_element(),

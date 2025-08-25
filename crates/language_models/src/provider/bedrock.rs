@@ -917,7 +917,7 @@ pub fn map_to_language_model_completion_events(
                             Some(ContentBlockDelta::ReasoningContent(thinking)) => match thinking {
                                 ReasoningContentBlockDelta::Text(thoughts) => {
                                     Some(Ok(LanguageModelCompletionEvent::Thinking {
-                                        text: thoughts.clone(),
+                                        text: thoughts,
                                         signature: None,
                                     }))
                                 }
@@ -968,7 +968,7 @@ pub fn map_to_language_model_completion_events(
                                         id: tool_use.id.into(),
                                         name: tool_use.name.into(),
                                         is_input_complete: true,
-                                        raw_input: tool_use.input_json.clone(),
+                                        raw_input: tool_use.input_json,
                                         input,
                                     },
                                 ))
@@ -1086,21 +1086,18 @@ impl ConfigurationView {
             .access_key_id_editor
             .read(cx)
             .text(cx)
-            .to_string()
             .trim()
             .to_string();
         let secret_access_key = self
             .secret_access_key_editor
             .read(cx)
             .text(cx)
-            .to_string()
             .trim()
             .to_string();
         let session_token = self
             .session_token_editor
             .read(cx)
             .text(cx)
-            .to_string()
             .trim()
             .to_string();
         let session_token = if session_token.is_empty() {
@@ -1108,13 +1105,7 @@ impl ConfigurationView {
         } else {
             Some(session_token)
         };
-        let region = self
-            .region_editor
-            .read(cx)
-            .text(cx)
-            .to_string()
-            .trim()
-            .to_string();
+        let region = self.region_editor.read(cx).text(cx).trim().to_string();
         let region = if region.is_empty() {
             "us-east-1".to_string()
         } else {

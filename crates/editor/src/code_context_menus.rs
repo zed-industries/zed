@@ -514,7 +514,7 @@ impl CompletionsMenu {
         // Expand the range to resolve more completions than are predicted to be visible, to reduce
         // jank on navigation.
         let entry_indices = util::expanded_and_wrapped_usize_range(
-            entry_range.clone(),
+            entry_range,
             RESOLVE_BEFORE_ITEMS,
             RESOLVE_AFTER_ITEMS,
             entries.len(),

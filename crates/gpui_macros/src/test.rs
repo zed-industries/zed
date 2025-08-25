@@ -86,7 +86,7 @@ impl Parse for Args {
         Ok(Args {
             seeds,
             max_retries,
-            max_iterations: max_iterations,
+            max_iterations,
             on_failure_fn_name,
         })
     }

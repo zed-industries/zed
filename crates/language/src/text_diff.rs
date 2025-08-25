@@ -88,11 +88,11 @@ pub fn text_diff_with_options(
                 let new_offset = new_byte_range.start;
                 hunk_input.clear();
                 hunk_input.update_before(tokenize(
-                    &old_text[old_byte_range.clone()],
+                    &old_text[old_byte_range],
                     options.language_scope.clone(),
                 ));
                 hunk_input.update_after(tokenize(
-                    &new_text[new_byte_range.clone()],
+                    &new_text[new_byte_range],
                     options.language_scope.clone(),
                 ));
                 diff_internal(&hunk_input, |old_byte_range, new_byte_range, _, _| {
@@ -103,7 +103,7 @@ pub fn text_diff_with_options(
                     let replacement_text = if new_byte_range.is_empty() {
                         empty.clone()
                     } else {
-                        new_text[new_byte_range.clone()].into()
+                        new_text[new_byte_range].into()
                     };
                     edits.push((old_byte_range, replacement_text));
                 });
@@ -111,9 +111,9 @@ pub fn text_diff_with_options(
                 let replacement_text = if new_byte_range.is_empty() {
                     empty.clone()
                 } else {
-                    new_text[new_byte_range.clone()].into()
+                    new_text[new_byte_range].into()
                 };
-                edits.push((old_byte_range.clone(), replacement_text));
+                edits.push((old_byte_range, replacement_text));
             }
         },
     );
@@ -186,7 +186,7 @@ fn tokenize(text: &str, language_scope: Option<LanguageScope>) -> impl Iterator<
     let mut prev = None;
     let mut start_ix = 0;
     iter::from_fn(move || {
-        while let Some((ix, c)) = chars.next() {
+        for (ix, c) in chars.by_ref() {
             let mut token = None;
             let kind = classifier.kind(c);
             if let Some((prev_char, prev_kind)) = prev
