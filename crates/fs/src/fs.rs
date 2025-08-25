@@ -1,6 +1,7 @@
 #[cfg(target_os = "macos")]
 mod mac_watcher;
 
+pub mod encodings;
 #[cfg(not(target_os = "macos"))]
 pub mod fs_watcher;
 
@@ -60,6 +61,7 @@ use std::ffi::OsStr;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use fake_git_repo::{LOAD_HEAD_TEXT_TASK, LOAD_INDEX_TEXT_TASK};
+use crate::encodings::EncodingWrapper;
 
 pub trait Watcher: Send + Sync {
     fn add(&self, path: &Path) -> Result<()>;
@@ -115,6 +117,16 @@ pub trait Fs: Send + Sync {
     async fn load(&self, path: &Path) -> Result<String> {
         Ok(String::from_utf8(self.load_bytes(path).await?)?)
     }
+
+    /// Load a file with the specified encoding, returning a UTF-8 string.
+    async fn load_with_encoding(
+        &self,
+        path: PathBuf,
+        encoding: EncodingWrapper,
+    ) -> anyhow::Result<String> {
+        Ok(encodings::to_utf8(self.load_bytes(path.as_path()).await?, encoding).await?)
+    }
+
     async fn load_bytes(&self, path: &Path) -> Result<Vec<u8>>;
     async fn atomic_write(&self, path: PathBuf, text: String) -> Result<()>;
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()>;
@@ -599,9 +611,12 @@ impl Fs for RealFs {
 
     async fn load(&self, path: &Path) -> Result<String> {
         let path = path.to_path_buf();
-        self.executor
-            .spawn(async move { Ok(std::fs::read_to_string(path)?) })
-            .await
+        let encoding = EncodingWrapper::new(encoding::all::UTF_8);
+        let text =
+            smol::unblock(async || Ok(encodings::to_utf8(std::fs::read(path)?, encoding).await?))
+                .await
+                .await;
+        text
     }
 
     async fn load_bytes(&self, path: &Path) -> Result<Vec<u8>> {

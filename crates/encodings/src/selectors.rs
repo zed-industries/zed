@@ -19,6 +19,8 @@ pub mod save_or_reopen {
 
     use crate::selectors::encoding::{Action, EncodingSelector, EncodingSelectorDelegate};
 
+    /// A modal view that allows the user to select between saving with a different encoding or
+    /// reopening with a different encoding.
     pub struct EncodingSaveOrReopenSelector {
         picker: Entity<Picker<EncodingSaveOrReopenDelegate>>,
         pub current_selection: usize,
@@ -43,6 +45,8 @@ pub mod save_or_reopen {
             }
         }
 
+        /// Toggle the modal view for selecting between saving with a different encoding or
+        /// reopening with a different encoding.
         pub fn toggle(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
             let weak_workspace = workspace.weak_handle();
             workspace.toggle_modal(window, cx, |window, cx| {
@@ -100,6 +104,7 @@ pub mod save_or_reopen {
             (&self.actions[0].string, &self.actions[1].string)
         }
 
+        /// Handle the action selected by the user.
         pub fn post_selection(
             &self,
             cx: &mut Context<Picker<EncodingSaveOrReopenDelegate>>,
@@ -281,6 +286,7 @@ pub mod encoding {
 
     use crate::encoding_from_index;
 
+    /// A modal view that allows the user to select an encoding from a list of encodings.
     pub struct EncodingSelector {
         picker: Entity<Picker<EncodingSelectorDelegate>>,
         action: Action,
@@ -459,6 +465,7 @@ pub mod encoding {
         }
     }
 
+    /// The action to perform after selecting an encoding.
     pub enum Action {
         Save,
         Reopen,

@@ -53,6 +53,8 @@ ui.workspace = true
 util.workspace = true
 workspace.workspace = true
 itertools.workspace = true
+encoding = "0.2.33"
+
 
 [target.'cfg(windows)'.dependencies]
 async-std = { version = "1.12.0", features = ["unstable"] }
