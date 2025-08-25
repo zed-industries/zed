@@ -14,10 +14,11 @@ use workspace::{ItemHandle, StatusItemView, Workspace};
 
 use crate::selectors::save_or_reopen::{EncodingSaveOrReopenSelector, get_current_encoding};
 
+/// A status bar item that shows the current file encoding and allows changing it.
 pub struct EncodingIndicator {
     pub encoding: Option<&'static dyn Encoding>,
     pub workspace: WeakEntity<Workspace>,
-    observe: Option<Subscription>,
+    observe: Option<Subscription>, // Subscription to observe changes in the active editor
 }
 
 pub mod selectors;
@@ -93,6 +94,7 @@ impl StatusItemView for EncodingIndicator {
     }
 }
 
+/// Get a human-readable name for the given encoding.
 pub fn encoding_name(encoding: &'static dyn Encoding) -> String {
     let name = encoding.name();
 
@@ -140,6 +142,8 @@ pub fn encoding_name(encoding: &'static dyn Encoding) -> String {
     .to_string()
 }
 
+/// Get an encoding from its index in the predefined list.
+/// If the index is out of range, UTF-8 is returned as a default.
 pub fn encoding_from_index(index: usize) -> &'static dyn Encoding {
     match index {
         0 => UTF_8,
