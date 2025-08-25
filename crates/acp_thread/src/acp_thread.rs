@@ -1373,6 +1373,10 @@ impl AcpThread {
         })
     }
 
+    pub fn can_resume(&self, cx: &App) -> bool {
+        self.connection.resume(&self.session_id, cx).is_some()
+    }
+
     pub fn resume(&mut self, cx: &mut Context<Self>) -> BoxFuture<'static, Result<()>> {
         self.run_turn(cx, async move |this, cx| {
             this.update(cx, |this, cx| {
@@ -2659,7 +2663,7 @@ mod tests {
         fn truncate(
             &self,
             session_id: &acp::SessionId,
-            _cx: &mut App,
+            _cx: &App,
         ) -> Option<Rc<dyn AgentSessionTruncate>> {
             Some(Rc::new(FakeAgentSessionEditor {
                 _session_id: session_id.clone(),

@@ -936,7 +936,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
     fn resume(
         &self,
         session_id: &acp::SessionId,
-        _cx: &mut App,
+        _cx: &App,
     ) -> Option<Rc<dyn acp_thread::AgentSessionResume>> {
         Some(Rc::new(NativeAgentSessionResume {
             connection: self.clone(),
@@ -956,9 +956,9 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
     fn truncate(
         &self,
         session_id: &agent_client_protocol::SessionId,
-        cx: &mut App,
+        cx: &App,
     ) -> Option<Rc<dyn acp_thread::AgentSessionTruncate>> {
-        self.0.update(cx, |agent, _cx| {
+        self.0.read_with(cx, |agent, _cx| {
             agent.sessions.get(session_id).map(|session| {
                 Rc::new(NativeAgentSessionEditor {
                     thread: session.thread.clone(),
@@ -971,7 +971,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
     fn set_title(
         &self,
         session_id: &acp::SessionId,
-        _cx: &mut App,
+        _cx: &App,
     ) -> Option<Rc<dyn acp_thread::AgentSessionSetTitle>> {
         Some(Rc::new(NativeAgentSessionSetTitle {
             connection: self.clone(),
