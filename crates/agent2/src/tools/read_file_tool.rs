@@ -11,6 +11,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::{path::Path, sync::Arc};
+use util::markdown::MarkdownCodeBlock;
 
 use crate::{AgentTool, ToolCallEventStream};
 
@@ -243,6 +244,19 @@ impl AgentTool for ReadFileTool {
                         }]),
                         ..Default::default()
                     });
+                    if let Ok(LanguageModelToolResultContent::Text(text)) = &result {
+                        let markdown = MarkdownCodeBlock {
+                            tag: &input.path,
+                            text,
+                        }
+                        .to_string();
+                        event_stream.update_fields(ToolCallUpdateFields {
+                            content: Some(vec![acp::ToolCallContent::Content {
+                                content: markdown.into(),
+                            }]),
+                            ..Default::default()
+                        })
+                    }
                 }
             })?;
 
