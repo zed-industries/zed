@@ -1493,24 +1493,25 @@ impl PickerDelegate for DebugDelegate {
                 .indicator_border_color(Some(cx.theme().colors().border_transparent))
         });
 
-        let mut list_item =
+        Some(
             ListItem::new(SharedString::from(format!("debug-scenario-selection-{ix}")))
                 .inset(true)
                 .start_slot::<IconWithIndicator>(icon)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
-                .child(highlighted_location.render(window, cx));
-
-        if let Some(subtitle_text) = subtitle {
-            list_item = list_item.child(
-                div()
-                    .text_xs()
-                    .text_color(cx.theme().colors().text_muted)
-                    .child(subtitle_text),
-            );
-        }
-
-        Some(list_item)
+                .child(
+                    v_flex()
+                        .items_start()
+                        .child(highlighted_location.render(window, cx))
+                        .when_some(subtitle.clone(), |this, subtitle_text| {
+                            this.child(
+                                Label::new(subtitle_text)
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                        }),
+                ),
+        )
     }
 }
 
