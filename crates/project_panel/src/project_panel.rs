@@ -64,7 +64,7 @@ use ui::{
 use util::{ResultExt, TakeUntilExt, TryFutureExt, maybe, paths::compare_paths};
 use workspace::{
     DraggedSelection, OpenInTerminal, OpenOptions, OpenVisible, PreviewTabsSettings, SelectedEntry,
-    Workspace,
+    SplitDirection, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyTaskExt},
 };
@@ -264,6 +264,10 @@ actions!(
         Rename,
         /// Opens the selected file in the editor.
         Open,
+        /// Opens the selected file in a right editor.
+        OpenSplitRight,
+        /// Opens the selected file in an above editor.
+        OpenSplitUp,
         /// Opens the selected file in a permanent tab.
         OpenPermanent,
         /// Toggles focus on the project panel.
@@ -371,6 +375,7 @@ pub enum Event {
     },
     SplitEntry {
         entry_id: ProjectEntryId,
+        split_direction: Option<SplitDirection>,
     },
     Focus,
 }
@@ -700,15 +705,17 @@ impl ProjectPanel {
                             }
                         }
                 }
-                &Event::SplitEntry { entry_id } => {
+                &Event::SplitEntry { entry_id, split_direction } => {
                     if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx)
                         && let Some(entry) = worktree.read(cx).entry_for_id(entry_id) {
                             workspace
-                                .split_path(
+                                .split_path_preview(
                                     ProjectPath {
                                         worktree_id: worktree.read(cx).id(),
                                         path: entry.path.clone(),
                                     },
+                                    false,
+                                    split_direction,
                                     window, cx,
                                 )
                                 .detach_and_log_err(cx);
@@ -1303,8 +1310,38 @@ impl ProjectPanel {
         self.open_internal(true, !preview_tabs_enabled, window, cx);
     }
 
+    fn open_split_right(
+        &mut self,
+        _: &OpenSplitRight,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_split_internal(Some(SplitDirection::Right), window, cx);
+    }
+
+    fn open_split_up(&mut self, _: &OpenSplitUp, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_split_internal(Some(SplitDirection::Up), window, cx);
+    }
+
     fn open_permanent(&mut self, _: &OpenPermanent, window: &mut Window, cx: &mut Context<Self>) {
         self.open_internal(false, true, window, cx);
+    }
+
+    fn open_split_internal(
+        &mut self,
+        split_direction: Option<SplitDirection>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let split_direction = split_direction.or(Some(SplitDirection::Right));
+        if let Some((_, entry)) = self.selected_entry(cx) {
+            if entry.is_file() {
+                self.split_entry(entry.id, split_direction, cx);
+                cx.notify();
+            } else {
+                self.toggle_expanded(entry.id, window, cx);
+            }
+        }
     }
 
     fn open_internal(
@@ -1554,8 +1591,16 @@ impl ProjectPanel {
         });
     }
 
-    fn split_entry(&mut self, entry_id: ProjectEntryId, cx: &mut Context<Self>) {
-        cx.emit(Event::SplitEntry { entry_id });
+    fn split_entry(
+        &mut self,
+        entry_id: ProjectEntryId,
+        split_direction: Option<SplitDirection>,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(Event::SplitEntry {
+            entry_id,
+            split_direction,
+        });
     }
 
     fn new_file(&mut self, _: &NewFile, window: &mut Window, cx: &mut Context<Self>) {
@@ -4281,7 +4326,7 @@ impl ProjectPanel {
                         }
                     } else if event.modifiers().secondary() {
                         if event.click_count() > 1 {
-                            project_panel.split_entry(entry_id, cx);
+                            project_panel.split_entry(entry_id, None, cx);
                         } else {
                             project_panel.selection = Some(selection);
                             if let Some(position) = project_panel.marked_entries.iter().position(|e| *e == selection) {
@@ -5247,6 +5292,8 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::collapse_selected_entry))
                 .on_action(cx.listener(Self::collapse_all_entries))
                 .on_action(cx.listener(Self::open))
+                .on_action(cx.listener(Self::open_split_right))
+                .on_action(cx.listener(Self::open_split_up))
                 .on_action(cx.listener(Self::open_permanent))
                 .on_action(cx.listener(Self::confirm))
                 .on_action(cx.listener(Self::cancel))

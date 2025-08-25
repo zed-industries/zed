@@ -818,6 +818,8 @@
       "t": "project_panel::OpenPermanent",
       "v": "project_panel::OpenPermanent",
       "p": "project_panel::Open",
+      "ctrl-v": "project_panel::OpenSplitRight",
+      "ctrl-x": "project_panel::OpenSplitUp",
       "x": "project_panel::RevealInFileManager",
       "s": "workspace::OpenWithSystem",
       "z d": "project_panel::CompareMarkedFiles",
