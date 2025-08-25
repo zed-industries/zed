@@ -1706,11 +1706,6 @@ impl AcpThreadView {
             .size(IconSize::Small)
             .color(Color::Muted);
 
-        let in_progress = match &tool_call.status {
-            ToolCallStatus::InProgress => true,
-            _ => false,
-        };
-
         let failed_or_canceled = match &tool_call.status {
             ToolCallStatus::Rejected | ToolCallStatus::Canceled | ToolCallStatus::Failed => true,
             _ => false,
