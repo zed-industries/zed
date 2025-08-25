@@ -13,6 +13,7 @@ use zed_actions::agent::ReauthenticateAgent;
 
 use crate::acp::{AcpThreadHistory, ThreadHistoryEvent};
 use crate::agent_diff::AgentDiffThread;
+use crate::ui::AcpOnboardingModal;
 use crate::{
     AddContextServer, AgentDiffPane, ContinueThread, ContinueWithBurnMode,
     DeleteRecentlyOpenThread, ExpandMessageEditor, Follow, InlineAssistant, NewTextThread,
@@ -76,7 +77,10 @@ use workspace::{
 };
 use zed_actions::{
     DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize,
-    agent::{OpenOnboardingModal, OpenSettings, ResetOnboarding, ToggleModelSelector},
+    agent::{
+        OpenAcpOnboardingModal, OpenOnboardingModal, OpenSettings, ResetOnboarding,
+        ToggleModelSelector,
+    },
     assistant::{OpenRulesLibrary, ToggleFocus},
 };
 
@@ -199,6 +203,9 @@ pub fn init(cx: &mut App) {
                 })
                 .register_action(|workspace, _: &OpenOnboardingModal, window, cx| {
                     AgentOnboardingModal::toggle(workspace, window, cx)
+                })
+                .register_action(|workspace, _: &OpenAcpOnboardingModal, window, cx| {
+                    AcpOnboardingModal::toggle(workspace, window, cx)
                 })
                 .register_action(|_workspace, _: &ResetOnboarding, window, cx| {
                     window.dispatch_action(workspace::RestoreBanner.boxed_clone(), cx);
