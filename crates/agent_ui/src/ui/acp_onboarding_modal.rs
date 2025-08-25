@@ -47,7 +47,7 @@ impl AcpOnboardingModal {
     }
 
     fn view_docs(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        cx.open_url("https://zed.dev/docs"); // TODO: Add final link
+        cx.open_url("https://agentclientprotocol.com/");
         cx.notify();
 
         acp_onboarding_event!("Documentation Link Clicked");
