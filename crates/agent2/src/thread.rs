@@ -1088,7 +1088,7 @@ impl Thread {
         self.messages.push(Message::Resume);
         cx.notify();
 
-        log::info!("Total messages in thread: {}", self.messages.len());
+        log::debug!("Total messages in thread: {}", self.messages.len());
         self.run_turn(cx)
     }
 
@@ -1106,7 +1106,7 @@ impl Thread {
     {
         let model = self.model().context("No language model configured")?;
 
-        log::info!("Thread::send called with model: {:?}", model.name());
+        log::info!("Thread::send called with model: {}", model.name().0);
         self.advance_prompt_id();
 
         let content = content.into_iter().map(Into::into).collect::<Vec<_>>();
@@ -1116,7 +1116,7 @@ impl Thread {
             .push(Message::User(UserMessage { id, content }));
         cx.notify();
 
-        log::info!("Total messages in thread: {}", self.messages.len());
+        log::debug!("Total messages in thread: {}", self.messages.len());
         self.run_turn(cx)
     }
 
@@ -1140,7 +1140,7 @@ impl Thread {
             event_stream: event_stream.clone(),
             tools: self.enabled_tools(profile, &model, cx),
             _task: cx.spawn(async move |this, cx| {
-                log::info!("Starting agent turn execution");
+                log::debug!("Starting agent turn execution");
 
                 let turn_result: Result<()> = async {
                     let mut intent = CompletionIntent::UserPrompt;
@@ -1165,7 +1165,7 @@ impl Thread {
                             log::info!("Tool use limit reached, completing turn");
                             return Err(language_model::ToolUseLimitReachedError.into());
                         } else if end_turn {
-                            log::info!("No tool uses found, completing turn");
+                            log::debug!("No tool uses found, completing turn");
                             return Ok(());
                         } else {
                             intent = CompletionIntent::ToolResults;
@@ -1177,7 +1177,7 @@ impl Thread {
 
                 match turn_result {
                     Ok(()) => {
-                        log::info!("Turn execution completed");
+                        log::debug!("Turn execution completed");
                         event_stream.send_stop(acp::StopReason::EndTurn);
                     }
                     Err(error) => {
@@ -1227,7 +1227,7 @@ impl Thread {
                 attempt
             );
 
-            log::info!(
+            log::debug!(
                 "Calling model.stream_completion, attempt {}",
                 attempt.unwrap_or(0)
             );
@@ -1254,7 +1254,7 @@ impl Thread {
             }
 
             while let Some(tool_result) = tool_results.next().await {
-                log::info!("Tool finished {:?}", tool_result);
+                log::debug!("Tool finished {:?}", tool_result);
 
                 event_stream.update_tool_call_fields(
                     &tool_result.tool_use_id,
@@ -1528,7 +1528,7 @@ impl Thread {
         });
         let supports_images = self.model().is_some_and(|model| model.supports_images());
         let tool_result = tool.run(tool_use.input, tool_event_stream, cx);
-        log::info!("Running tool {}", tool_use.name);
+        log::debug!("Running tool {}", tool_use.name);
         Some(cx.foreground_executor().spawn(async move {
             let tool_result = tool_result.await.and_then(|output| {
                 if let LanguageModelToolResultContent::Image(_) = &output.llm_output
@@ -1640,7 +1640,7 @@ impl Thread {
                 summary.extend(lines.next());
             }
 
-            log::info!("Setting summary: {}", summary);
+            log::debug!("Setting summary: {}", summary);
             let summary = SharedString::from(summary);
 
             this.update(cx, |this, cx| {
@@ -1657,7 +1657,7 @@ impl Thread {
             return;
         };
 
-        log::info!(
+        log::debug!(
             "Generating title with model: {:?}",
             self.summarization_model.as_ref().map(|model| model.name())
         );
@@ -1799,8 +1799,8 @@ impl Thread {
         log::debug!("Completion mode: {:?}", self.completion_mode);
 
         let messages = self.build_request_messages(cx);
-        log::info!("Request will include {} messages", messages.len());
-        log::info!("Request includes {} tools", tools.len());
+        log::debug!("Request will include {} messages", messages.len());
+        log::debug!("Request includes {} tools", tools.len());
 
         let request = LanguageModelRequest {
             thread_id: Some(self.id.to_string()),
