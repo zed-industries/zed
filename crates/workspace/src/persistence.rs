@@ -605,6 +605,7 @@ impl Domain for WorkspaceDb {
 
             CREATE UNIQUE INDEX ix_workspaces_location ON workspaces(ssh_connection_id, paths);
         ),
+        // Fix any data from when workspaces.paths were briefly encoded as JSON arrays
         sql!(
             UPDATE workspaces
             SET paths = CASE
@@ -620,7 +621,8 @@ impl Domain for WorkspaceDb {
         ),
     ];
 
-    // Allow recovering from bad migration
+    // Allow recovering from bad migration that was initially shipped to nightly
+    // when introducing the ssh_connections table.
     fn should_allow_migration_change(_index: usize, old: &str, new: &str) -> bool {
         old.starts_with("CREATE TABLE ssh_connections")
             && new.starts_with("CREATE TABLE ssh_connections")
