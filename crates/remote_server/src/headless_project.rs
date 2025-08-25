@@ -1,5 +1,7 @@
 use ::proto::{FromProto, ToProto};
 use anyhow::{Context as _, Result, anyhow};
+use language_tools::lsp_log::{GlobalLogStore, LanguageServerKind};
+use lsp::LanguageServerId;
 
 use extension::ExtensionHostProxy;
 use extension_host::headless_host::HeadlessExtensionStore;
@@ -65,6 +67,7 @@ impl HeadlessProject {
         settings::init(cx);
         language::init(cx);
         project::Project::init_settings(cx);
+        language_tools::lsp_log::init(false, cx);
     }
 
     pub fn new(
@@ -80,7 +83,6 @@ impl HeadlessProject {
     ) -> Self {
         debug_adapter_extension::init(proxy.clone(), cx);
         languages::init(languages.clone(), node_runtime.clone(), cx);
-        language_tools::lsp_log::init(session.clone(), false, cx);
 
         let worktree_store = cx.new(|cx| {
             let mut store = WorktreeStore::local(true, fs.clone());
@@ -236,6 +238,7 @@ impl HeadlessProject {
         session.add_entity_request_handler(Self::handle_open_new_buffer);
         session.add_entity_request_handler(Self::handle_find_search_candidates);
         session.add_entity_request_handler(Self::handle_open_server_settings);
+        session.add_entity_message_handler(Self::handle_toggle_lsp_logs);
 
         session.add_entity_request_handler(BufferStore::handle_update_buffer);
         session.add_entity_message_handler(BufferStore::handle_close_buffer);
@@ -299,11 +302,38 @@ impl HeadlessProject {
 
     fn on_lsp_store_event(
         &mut self,
-        _lsp_store: Entity<LspStore>,
+        lsp_store: Entity<LspStore>,
         event: &LspStoreEvent,
         cx: &mut Context<Self>,
     ) {
         match event {
+            LspStoreEvent::LanguageServerAdded(id, name, worktree_id) => {
+                let log_store = cx
+                    .try_global::<GlobalLogStore>()
+                    .and_then(|lsp_logs| lsp_logs.0.upgrade());
+                if let Some(log_store) = log_store {
+                    log_store.update(cx, |log_store, cx| {
+                        log_store.add_language_server(
+                            LanguageServerKind::Global,
+                            *id,
+                            Some(name.clone()),
+                            *worktree_id,
+                            lsp_store.read(cx).language_server_for_id(*id),
+                            cx,
+                        );
+                    });
+                }
+            }
+            LspStoreEvent::LanguageServerRemoved(id) => {
+                let log_store = cx
+                    .try_global::<GlobalLogStore>()
+                    .and_then(|lsp_logs| lsp_logs.0.upgrade());
+                if let Some(log_store) = log_store {
+                    log_store.update(cx, |log_store, cx| {
+                        log_store.remove_language_server(*id, cx);
+                    });
+                }
+            }
             LspStoreEvent::LanguageServerUpdate {
                 language_server_id,
                 name,
@@ -498,6 +528,30 @@ impl HeadlessProject {
         Ok(proto::OpenBufferResponse {
             buffer_id: buffer_id.to_proto(),
         })
+    }
+
+    async fn handle_toggle_lsp_logs(
+        _: Entity<Self>,
+        envelope: TypedEnvelope<proto::ToggleLspLogs>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        let server_id = LanguageServerId::from_proto(envelope.payload.server_id);
+        let lsp_logs = cx
+            .update(|cx| {
+                cx.try_global::<GlobalLogStore>()
+                    .and_then(|lsp_logs| lsp_logs.0.upgrade())
+            })?
+            .context("lsp logs store is missing")?;
+
+        lsp_logs.update(&mut cx, |lsp_logs, _| {
+            // we do not support any other log toggling yet
+            if envelope.payload.enabled {
+                lsp_logs.enable_rpc_trace_for_language_server(server_id);
+            } else {
+                lsp_logs.disable_rpc_trace_for_language_server(server_id);
+            }
+        })?;
+        Ok(())
     }
 
     async fn handle_open_server_settings(

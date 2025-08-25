@@ -22,6 +22,7 @@ futures.workspace = true
 gpui.workspace = true
 itertools.workspace = true
 language.workspace = true
+log.workspace = true
 lsp.workspace = true
 project.workspace = true
 proto.workspace = true

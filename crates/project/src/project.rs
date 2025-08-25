@@ -1355,6 +1355,7 @@ impl Project {
             ssh_proto.subscribe_to_entity(SSH_PROJECT_ID, &this.settings_observer);
             ssh_proto.subscribe_to_entity(SSH_PROJECT_ID, &this.git_store);
 
+            ssh_proto.add_entity_message_handler(Self::handle_toggle_lsp_logs);
             ssh_proto.add_entity_message_handler(Self::handle_create_buffer_for_peer);
             ssh_proto.add_entity_message_handler(Self::handle_update_worktree);
             ssh_proto.add_entity_message_handler(Self::handle_update_project);
@@ -4627,6 +4628,16 @@ impl Project {
             }
             Ok(())
         })?
+    }
+
+    // TODO kb
+    async fn handle_toggle_lsp_logs(
+        _this: Entity<Self>,
+        _envelope: TypedEnvelope<proto::ToggleLspLogs>,
+        _cx: AsyncApp,
+    ) -> Result<()> {
+        log::error!("##########PPPPPPPPPPPPPPPproject##########################");
+        Ok(())
     }
 
     async fn handle_update_buffer_from_ssh(
