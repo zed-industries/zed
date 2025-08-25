@@ -216,8 +216,8 @@ mod test {
         assert_eq!(
             matches,
             &[
-                PathBuf::from("/root/apple/banana/carrot"),
-                PathBuf::from("/root/apple/bandana/carbonara")
+                PathBuf::from(path!("/root/apple/banana/carrot")),
+                PathBuf::from(path!("/root/apple/bandana/carbonara"))
             ]
         );
 
@@ -228,8 +228,8 @@ mod test {
         assert_eq!(
             matches,
             &[
-                PathBuf::from("/root/apple/banana/carrot"),
-                PathBuf::from("/root/apple/bandana/carbonara")
+                PathBuf::from(path!("/root/apple/banana/carrot")),
+                PathBuf::from(path!("/root/apple/bandana/carbonara"))
             ]
         );
     }
