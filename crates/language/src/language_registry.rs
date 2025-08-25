@@ -232,6 +232,7 @@ pub const QUERY_FILENAME_PREFIXES: &[(
     ("runnables", |q| &mut q.runnables),
     ("debugger", |q| &mut q.debugger),
     ("textobjects", |q| &mut q.text_objects),
+    // Rainbow queries are now loaded as part of brackets.scm
 ];
 
 /// Tree-sitter language queries for a given language.
