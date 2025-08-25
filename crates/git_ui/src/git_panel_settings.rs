@@ -75,6 +75,11 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: false
     pub collapse_untracked_diff: Option<bool>,
+
+    //// Whether to show a list of previous commits in the git panel.
+    ///
+    /// Default: false
+    pub commit_history: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq)]
@@ -87,6 +92,7 @@ pub struct GitPanelSettings {
     pub fallback_branch_name: String,
     pub sort_by_path: bool,
     pub collapse_untracked_diff: bool,
+    pub commit_history: bool,
 }
 
 impl Settings for GitPanelSettings {
