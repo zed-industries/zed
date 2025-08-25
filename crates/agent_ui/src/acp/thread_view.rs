@@ -4746,6 +4746,24 @@ impl AcpThreadView {
             }))
     }
 
+    pub(crate) fn reauthenticate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let agent = self.agent.clone();
+        let ThreadState::Ready { thread, .. } = &self.thread_state else {
+            return;
+        };
+
+        let connection = thread.read(cx).connection().clone();
+        let err = AuthRequired {
+            description: None,
+            provider_id: None,
+        };
+        self.clear_thread_error(cx);
+        let this = cx.weak_entity();
+        window.defer(cx, |window, cx| {
+            Self::handle_auth_required(this, err, agent, connection, window, cx);
+        })
+    }
+
     fn upgrade_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
         Button::new("upgrade", "Upgrade")
             .label_size(LabelSize::Small)
