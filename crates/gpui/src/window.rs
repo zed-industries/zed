@@ -12,8 +12,8 @@ use crate::{
     PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptButton, PromptLevel, Quad,
     Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
     SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubscriberSet, Subscription, TabHandles, TaffyLayoutEngine, Task,
-    TextStyle, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle,
+    StrikethroughStyle, Style, SubscriberSet, Subscription, SwipeDirection, TabHandles, TaffyLayoutEngine, Task, TextStyle,
+    TextStyleRefinement, TouchPadGestureEvent, TransformationMatrix, Underline, UnderlineStyle,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
     WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
     transparent_black,
@@ -3554,12 +3554,30 @@ impl Window {
                 }
             },
             PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
+            PlatformInput::TouchPad(TouchPadGestureEvent::Swipe(_)) => event,
         };
 
         if let Some(any_mouse_event) = event.mouse_event() {
             self.dispatch_mouse_event(any_mouse_event, cx);
         } else if let Some(any_key_event) = event.keyboard_event() {
             self.dispatch_key_event(any_key_event, cx);
+        } else if let Some(TouchPadGestureEvent::Swipe(direction)) = event.touchpad_event() {
+            // Eventually we want to read from a config what to do, while forward/back is default.
+            let action_name = match direction {
+                SwipeDirection::Right => Some("pane::GoForward"),
+                SwipeDirection::Left => Some("pane::GoBack"),
+                _ => None,
+            };
+
+            if let Ok(direction) = action_name
+                .ok_or_else(|| crate::ActionBuildError::NotFound {
+                    name: format!("swipe::{:?}", direction),
+                })
+                .and_then(|action_name| cx.build_action(action_name, None))
+                .map(|action| {
+                    self.dispatch_action(action, cx);
+                    direction
+                });
         }
 
         DispatchEventResult {
