@@ -553,7 +553,7 @@ impl Domain for WorkspaceDb {
                             WHEN workspaces.local_paths_array IS NULL OR workspaces.local_paths_array = "" THEN
                                 NULL
                             ELSE
-                                json('[' || '"' || replace(workspaces.local_paths_array, ',', '"' || "," || '"') || '"' || ']')
+                                replace(workspaces.local_paths_array, ',', '\0')
                         END
                 END as paths,
 
@@ -606,6 +606,12 @@ impl Domain for WorkspaceDb {
             CREATE UNIQUE INDEX ix_workspaces_location ON workspaces(ssh_connection_id, paths);
         ),
     ];
+
+    // Allow recovering from bad migration
+    fn should_allow_migration_change(_index: usize, old: &str, new: &str) -> bool {
+        old.starts_with("CREATE TABLE ssh_connections")
+            && new.starts_with("CREATE TABLE ssh_connections")
+    }
 }
 
 db::static_connection!(DB, WorkspaceDb, []);
@@ -1812,6 +1818,7 @@ mod tests {
                         ON DELETE CASCADE
                     ) STRICT;
                 )],
+                |_, _, _| false,
             )
             .unwrap();
         })
@@ -1860,6 +1867,7 @@ mod tests {
                                 REFERENCES workspaces(workspace_id)
                             ON DELETE CASCADE
                         ) STRICT;)],
+                |_, _, _| false,
             )
         })
         .await
