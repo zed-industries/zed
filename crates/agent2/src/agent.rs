@@ -26,7 +26,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
-use util::{ResultExt, maybe};
+use util::ResultExt;
 
 const RULES_FILE_NAMES: [&str; 9] = [
     ".rules",
@@ -240,13 +240,16 @@ impl NativeAgent {
         let title = thread.title();
         let project = thread.project.clone();
         let action_log = thread.action_log.clone();
-        let acp_thread = cx.new(|_cx| {
+        let prompt_capabilities_rx = thread.prompt_capabilities_rx.clone();
+        let acp_thread = cx.new(|cx| {
             acp_thread::AcpThread::new(
                 title,
                 connection,
                 project.clone(),
                 action_log.clone(),
                 session_id.clone(),
+                prompt_capabilities_rx,
+                cx,
             )
         });
         let subscriptions = vec![
@@ -923,28 +926,6 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 
             thread.update(cx, |thread, cx| thread.send(id, content, cx))
         })
-    }
-
-    fn prompt_capabilities(
-        &self,
-        session: &acp::SessionId,
-        cx: &mut App,
-    ) -> acp::PromptCapabilities {
-        let model = maybe!({
-            let thread = self
-                .0
-                .read(cx)
-                .sessions
-                .get(session)
-                .map(|session| session.thread.clone())?;
-            thread.read(cx).model().cloned()
-        });
-        let image = model.map_or(true, |model| model.supports_images());
-        acp::PromptCapabilities {
-            image,
-            audio: false,
-            embedded_context: true,
-        }
     }
 
     fn resume(

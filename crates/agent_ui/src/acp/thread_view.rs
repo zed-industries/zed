@@ -471,9 +471,8 @@ impl AcpThreadView {
                     Ok(thread) => {
                         let action_log = thread.read(cx).action_log().clone();
 
-                        let session = thread.read(cx).session_id().clone();
                         this.prompt_capabilities
-                            .set(connection.prompt_capabilities(&session, cx));
+                            .set(thread.read(cx).prompt_capabilities());
 
                         let count = thread.read(cx).entries().len();
                         this.list_state.splice(0..0, count);
@@ -1144,6 +1143,10 @@ impl AcpThreadView {
                         }
                     });
                 }
+            }
+            AcpThreadEvent::PromptCapabilitiesUpdated => {
+                self.prompt_capabilities
+                    .set(thread.read(cx).prompt_capabilities());
             }
             AcpThreadEvent::TokenUsageUpdated => {}
         }
@@ -5309,24 +5312,18 @@ pub(crate) mod tests {
                     project,
                     action_log,
                     SessionId("test".into()),
+                    watch::Receiver::constant(acp::PromptCapabilities {
+                        image: true,
+                        audio: true,
+                        embedded_context: true,
+                    }),
+                    cx,
                 )
             })))
         }
 
         fn auth_methods(&self) -> &[acp::AuthMethod] {
             &[]
-        }
-
-        fn prompt_capabilities(
-            &self,
-            _session: &acp::SessionId,
-            _cx: &mut App,
-        ) -> acp::PromptCapabilities {
-            acp::PromptCapabilities {
-                image: true,
-                audio: true,
-                embedded_context: true,
-            }
         }
 
         fn authenticate(

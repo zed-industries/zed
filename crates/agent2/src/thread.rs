@@ -575,11 +575,22 @@ pub struct Thread {
     templates: Arc<Templates>,
     model: Option<Arc<dyn LanguageModel>>,
     summarization_model: Option<Arc<dyn LanguageModel>>,
+    prompt_capabilities_tx: watch::Sender<acp::PromptCapabilities>,
+    pub(crate) prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
     pub(crate) project: Entity<Project>,
     pub(crate) action_log: Entity<ActionLog>,
 }
 
 impl Thread {
+    fn prompt_capabilities(model: Option<&dyn LanguageModel>) -> acp::PromptCapabilities {
+        let image = model.map_or(true, |model| model.supports_images());
+        acp::PromptCapabilities {
+            image,
+            audio: false,
+            embedded_context: true,
+        }
+    }
+
     pub fn new(
         project: Entity<Project>,
         project_context: Entity<ProjectContext>,
@@ -590,6 +601,8 @@ impl Thread {
     ) -> Self {
         let profile_id = AgentSettings::get_global(cx).default_profile.clone();
         let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
+        let (prompt_capabilities_tx, prompt_capabilities_rx) =
+            watch::channel(Self::prompt_capabilities(model.as_deref()));
         Self {
             id: acp::SessionId(uuid::Uuid::new_v4().to_string().into()),
             prompt_id: PromptId::new(),
@@ -617,6 +630,8 @@ impl Thread {
             templates,
             model,
             summarization_model: None,
+            prompt_capabilities_tx,
+            prompt_capabilities_rx,
             project,
             action_log,
         }
@@ -750,6 +765,8 @@ impl Thread {
                 .or_else(|| registry.default_model())
                 .map(|model| model.model)
         });
+        let (prompt_capabilities_tx, prompt_capabilities_rx) =
+            watch::channel(Self::prompt_capabilities(model.as_deref()));
 
         Self {
             id,
@@ -779,6 +796,8 @@ impl Thread {
             project,
             action_log,
             updated_at: db_thread.updated_at,
+            prompt_capabilities_tx,
+            prompt_capabilities_rx,
         }
     }
 
@@ -946,10 +965,12 @@ impl Thread {
     pub fn set_model(&mut self, model: Arc<dyn LanguageModel>, cx: &mut Context<Self>) {
         let old_usage = self.latest_token_usage();
         self.model = Some(model);
+        let new_caps = Self::prompt_capabilities(self.model.as_deref());
         let new_usage = self.latest_token_usage();
         if old_usage != new_usage {
             cx.emit(TokenUsageUpdated(new_usage));
         }
+        self.prompt_capabilities_tx.send(new_caps).log_err();
         cx.notify()
     }
 
