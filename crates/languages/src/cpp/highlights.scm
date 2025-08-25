@@ -25,15 +25,6 @@
     (module_name
       (identifier) @module)))
 
-(co_await_expression
-  operator: "co_await" @keyword.operator)
-
-(co_return_statement
-  "co_return" @keyword.operator)
-
-(co_yield_statement
-  "co_yield" @keyword.operator)
-
 (call_expression
   function: (qualified_identifier
     name: (identifier) @function))
@@ -119,6 +110,9 @@ type: (primitive_type) @type.builtin
   "case"
   "catch"
   "class"
+  "co_await"
+  "co_return"
+  "co_yield"
   "concept"
   "consteval"
   "constexpr"
@@ -167,12 +161,6 @@ type: (primitive_type) @type.builtin
   (storage_class_specifier)
   (type_qualifier)
 ] @keyword
-
-[
-  "co_await"
-  "co_return"
-  "co_yield"
-] @keyword.operator
 
 [
   "#define"
