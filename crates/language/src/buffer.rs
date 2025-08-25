@@ -1569,11 +1569,25 @@ impl Buffer {
         self.send_operation(op, true, cx);
     }
 
-    pub fn get_diagnostics(&self, server_id: LanguageServerId) -> Option<&DiagnosticSet> {
-        let Ok(idx) = self.diagnostics.binary_search_by_key(&server_id, |v| v.0) else {
-            return None;
-        };
-        Some(&self.diagnostics[idx].1)
+    /// Retrieve the diagnostics entries for the given language server, or all
+    /// diagnostics if `server_id` is `None`.
+    pub fn get_diagnostics(
+        &self,
+        server_id: Option<LanguageServerId>,
+    ) -> Option<Vec<&DiagnosticEntry<Anchor>>> {
+        if let Some(server_id) = server_id {
+            let Ok(idx) = self.diagnostics.binary_search_by_key(&server_id, |v| v.0) else {
+                return None;
+            };
+            Some(self.diagnostics[idx].1.iter().collect::<Vec<_>>())
+        } else {
+            let diag = self
+                .diagnostics
+                .iter()
+                .flat_map(|(_, diags)| (*diags).iter())
+                .collect::<Vec<_>>();
+            Some(diag)
+        }
     }
 
     fn request_autoindent(&mut self, cx: &mut Context<Self>) {

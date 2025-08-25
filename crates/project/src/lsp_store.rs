@@ -7588,9 +7588,8 @@ impl LspStore {
                 let snapshot = buffer_handle.read(cx).snapshot();
                 let buffer = buffer_handle.read(cx);
                 let reused_diagnostics = buffer
-                    .get_diagnostics(server_id)
-                    .into_iter()
-                    .flat_map(|diag| {
+                    .get_diagnostics(Some(server_id))
+                    .map(|diag| {
                         diag.iter()
                             .filter(|v| merge(buffer, &v.diagnostic, cx))
                             .map(|v| {
@@ -7601,8 +7600,9 @@ impl LspStore {
                                     diagnostic: v.diagnostic.clone(),
                                 }
                             })
+                            .collect::<Vec<_>>()
                     })
-                    .collect::<Vec<_>>();
+                    .unwrap_or_default();
 
                 self.as_local_mut()
                     .context("cannot merge diagnostics on a remote LspStore")?
