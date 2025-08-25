@@ -38,7 +38,7 @@ pub struct LogStore {
 }
 
 struct ProjectState {
-    _subscriptions: [gpui::Subscription; 3],
+    _subscriptions: [gpui::Subscription; 2],
 }
 
 trait Message: AsRef<str> {
@@ -259,13 +259,13 @@ impl LogStore {
 
         let copilot_subscription = Copilot::global(cx).map(|copilot| {
             let copilot = &copilot;
-            cx.subscribe(copilot, |this, copilot, edit_prediction_event, cx| {
+            cx.subscribe(copilot, |log_store, copilot, edit_prediction_event, cx| {
                 if let copilot::Event::CopilotLanguageServerStarted = edit_prediction_event
                     && let Some(server) = copilot.read(cx).language_server()
                 {
                     let server_id = server.server_id();
                     let weak_this = cx.weak_entity();
-                    this.copilot_log_subscription =
+                    log_store.copilot_log_subscription =
                         Some(server.on_notification::<copilot::request::LogMessage, _>(
                             move |params, cx| {
                                 weak_this
@@ -280,8 +280,9 @@ impl LogStore {
                                     .ok();
                             },
                         ));
+
                     let name = LanguageServerName::new_static("copilot");
-                    this.add_language_server(
+                    log_store.add_language_server(
                         LanguageServerKind::Global,
                         server.server_id(),
                         Some(name),
@@ -293,7 +294,7 @@ impl LogStore {
             })
         });
 
-        let this = Self {
+        let log_store = Self {
             copilot_log_subscription: None,
             _copilot_subscription: copilot_subscription,
             projects: HashMap::default(),
@@ -302,9 +303,9 @@ impl LogStore {
             io_tx,
         };
 
-        cx.spawn(async move |this, cx| {
+        cx.spawn(async move |log_store, cx| {
             while let Some((server_id, io_kind, message)) = io_rx.next().await {
-                if let Some(log_store) = this.upgrade() {
+                if let Some(log_store) = log_store.upgrade() {
                     log_store.update(cx, |log_store, cx| {
                         log_store.on_io(server_id, io_kind, &message, cx);
                     })?;
@@ -313,17 +314,11 @@ impl LogStore {
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
-        this
+        log_store
     }
 
     pub fn add_project(&mut self, project: &Entity<Project>, cx: &mut Context<Self>) {
-        log::error!(
-            "?????????????? ssh: {} local: {}",
-            project.read(cx).is_via_ssh(),
-            project.read(cx).is_local()
-        );
         let weak_project = project.downgrade();
-        let subscription_weak_project = weak_project.clone();
         self.projects.insert(
             project.downgrade(),
             ProjectState {
@@ -393,29 +388,6 @@ impl LogStore {
                                 }
                             }
                             _ => {}
-                        }
-                    }),
-                    cx.subscribe(&cx.entity(), move |_, _, e, cx| {
-                        log::error!("||??????????????????????????????????????||||||@@@@|| {e:?}");
-                        match e {
-                            Event::NewServerLogEntry { id, kind, text } => {
-                                subscription_weak_project
-                                    .update(cx, |project, cx| {
-                                        if let Some((client, project_id)) =
-                                            project.lsp_store().read(cx).downstream_client()
-                                        {
-                                            client
-                                                .send(proto::LanguageServerLog {
-                                                    project_id,
-                                                    language_server_id: id.to_proto(),
-                                                    message: text.clone(),
-                                                    log_type: Some(kind.to_proto()),
-                                                })
-                                                .log_err();
-                                        };
-                                    })
-                                    .ok();
-                            }
                         }
                     }),
                 ],
@@ -855,11 +827,28 @@ impl LspLogView {
 
                 cx.notify();
             });
+
+        let weak_lsp_store = project.read(cx).lsp_store().downgrade();
         let events_subscriptions =
             cx.subscribe_in(&log_store, window, move |log_view, _, e, window, cx| {
                 log::error!("||||||||@@@@|| {e:?}");
                 match e {
                     Event::NewServerLogEntry { id, kind, text } => {
+                        weak_lsp_store
+                            .update(cx, |lsp_store, _| {
+                                if let Some((client, project_id)) = lsp_store.downstream_client() {
+                                    client
+                                        .send(proto::LanguageServerLog {
+                                            project_id,
+                                            language_server_id: id.to_proto(),
+                                            message: text.clone(),
+                                            log_type: Some(kind.to_proto()),
+                                        })
+                                        .log_err();
+                                };
+                            })
+                            .ok();
+
                         if log_view.current_server_id == Some(*id)
                             && LogKind::from_server_log_type(kind) == log_view.active_entry_kind
                         {
@@ -904,7 +893,7 @@ impl LspLogView {
             window.focus(&log_view.editor.focus_handle(cx));
         });
 
-        let mut this = Self {
+        let mut lsp_log_view = Self {
             focus_handle,
             editor,
             editor_subscriptions,
@@ -919,9 +908,9 @@ impl LspLogView {
             ],
         };
         if let Some(server_id) = server_id {
-            this.show_logs_for_server(server_id, window, cx);
+            lsp_log_view.show_logs_for_server(server_id, window, cx);
         }
-        this
+        lsp_log_view
     }
 
     fn editor_for_logs(
@@ -1848,12 +1837,6 @@ const RPC_MESSAGES: &str = "RPC Messages";
 const SERVER_LOGS: &str = "Server Logs";
 const SERVER_TRACE: &str = "Server Trace";
 const SERVER_INFO: &str = "Server Info";
-
-impl Default for LspLogToolbarItemView {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 impl LspLogToolbarItemView {
     pub fn new() -> Self {
