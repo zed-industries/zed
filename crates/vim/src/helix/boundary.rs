@@ -94,13 +94,13 @@ trait BoundedObject {
         let inner_start = self
             .next_start(map, outer_range.start, false)
             .unwrap_or_else(|| {
-                todo!();
+                log::warn!("The motion might not have found the text object correctly");
                 outer_range.start
             });
         let inner_end = self
             .previous_end(map, outer_range.end, false)
             .unwrap_or_else(|| {
-                todo!();
+                log::warn!("The motion might not have found the text object correctly");
                 outer_range.end
             });
         inner_start..inner_end
