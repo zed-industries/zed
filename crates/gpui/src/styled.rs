@@ -2,7 +2,8 @@ use crate::{
     self as gpui, AbsoluteLength, AlignContent, AlignItems, BorderStyle, CursorStyle,
     DefiniteLength, Display, Fill, FlexDirection, FlexWrap, Font, FontStyle, FontWeight,
     GridPlacement, Hsla, JustifyContent, Length, SharedString, StrikethroughStyle, StyleRefinement,
-    TextAlign, TextOverflow, TextStyleRefinement, UnderlineStyle, WhiteSpace, px, relative, rems,
+    TextAlign, TextDirection, TextOverflow, TextStyleRefinement, UnderlineStyle, WhiteSpace, px,
+    relative, rems,
 };
 pub use gpui_macros::{
     border_style_methods, box_shadow_style_methods, cursor_style_methods, margin_style_methods,
@@ -74,9 +75,20 @@ pub trait Styled: Sized {
     /// Sets the truncate overflowing text with an ellipsis (…) if needed.
     /// [Docs](https://tailwindcss.com/docs/text-overflow#ellipsis)
     fn text_ellipsis(mut self) -> Self {
-        self.text_style()
-            .get_or_insert_with(Default::default)
-            .text_overflow = Some(TextOverflow::Truncate(ELLIPSIS));
+        let style = self.text_style().get_or_insert_with(Default::default);
+
+        style.text_overflow = Some(TextOverflow::Truncate(ELLIPSIS));
+        style.text_direction = Some(TextDirection::LeftToRight);
+        self
+    }
+
+    /// Sets the truncate overflowing text with an ellipsis (…) if needed.
+    /// [Docs](https://tailwindcss.com/docs/text-overflow#ellipsis)
+    fn text_ellipsis_start(mut self) -> Self {
+        let style = self.text_style().get_or_insert_with(Default::default);
+
+        style.text_overflow = Some(TextOverflow::Truncate(ELLIPSIS));
+        style.text_direction = Some(TextDirection::RightToLeft);
         self
     }
 
@@ -115,6 +127,14 @@ pub trait Styled: Sized {
     /// [Docs](https://tailwindcss.com/docs/text-overflow#truncate)
     fn truncate(mut self) -> Self {
         self.overflow_hidden().whitespace_nowrap().text_ellipsis()
+    }
+
+    /// Sets the truncate to prevent text from wrapping and truncate overflowing text with an ellipsis (…) if needed.
+    /// [Docs](https://tailwindcss.com/docs/text-overflow#truncate_start)
+    fn truncate_start(mut self) -> Self {
+        self.overflow_hidden()
+            .whitespace_nowrap()
+            .text_ellipsis_start()
     }
 
     /// Sets number of lines to show before truncating the text.

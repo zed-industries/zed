@@ -334,6 +334,17 @@ pub enum TextOverflow {
     Truncate(SharedString),
 }
 
+/// The direction to be considered for text.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum TextDirection {
+    /// The text is oriented left-to-right.
+    #[default]
+    LeftToRight,
+
+    /// The text is oriented right-to-left.
+    RightToLeft,
+}
+
 /// How to align text within the element
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum TextAlign {
@@ -391,6 +402,9 @@ pub struct TextStyle {
     /// The text should be truncated if it overflows the width of the element
     pub text_overflow: Option<TextOverflow>,
 
+    /// The direction of the text.
+    pub text_direction: TextDirection,
+
     /// How the text should be aligned within the element
     pub text_align: TextAlign,
 
@@ -421,6 +435,7 @@ impl Default for TextStyle {
             strikethrough: None,
             white_space: WhiteSpace::Normal,
             text_overflow: None,
+            text_direction: TextDirection::LeftToRight,
             text_align: TextAlign::default(),
             line_clamp: None,
         }

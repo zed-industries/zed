@@ -369,6 +369,7 @@ impl TextLayout {
                         text.clone(),
                         truncate_width,
                         &truncation_suffix,
+                        text_style.text_direction,
                         &mut runs,
                     )
                 } else {

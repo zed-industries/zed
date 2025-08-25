@@ -69,6 +69,11 @@ impl LabelCommon for HighlightedLabel {
         self
     }
 
+    fn truncate_start(mut self) -> Self {
+        self.base = self.base.truncate_start();
+        self
+    }
+
     fn single_line(mut self) -> Self {
         self.base = self.base.single_line();
         self

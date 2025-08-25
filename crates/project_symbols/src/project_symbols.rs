@@ -1,3 +1,5 @@
+mod project_symbols_settings;
+
 use editor::{Bias, Editor, SelectionEffects, scroll::Autoscroll, styled_runs_for_code_label};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
@@ -16,7 +18,11 @@ use workspace::{
     ui::{LabelLike, ListItem, ListItemSpacing, prelude::*},
 };
 
+use crate::project_symbols_settings::{EllipsisKind, ProjectSymbolsSettings};
+
 pub fn init(cx: &mut App) {
+    ProjectSymbolsSettings::register(cx);
+
     cx.observe_new(
         |workspace: &mut Workspace, _window, _: &mut Context<Workspace>| {
             workspace.register_action(
@@ -25,7 +31,13 @@ pub fn init(cx: &mut App) {
                     let handle = cx.entity().downgrade();
                     workspace.toggle_modal(window, cx, move |window, cx| {
                         let delegate = ProjectSymbolsDelegate::new(handle, project);
-                        Picker::uniform_list(delegate, window, cx).width(rems(34.))
+
+                        let width = {
+                            let settings = ProjectSymbolsSettings::get_global(&cx);
+                            rems(settings.width.unwrap_or_else(|| 34.0))
+                        };
+
+                        Picker::uniform_list(delegate, window, cx).width(width)
                     })
                 },
             );
@@ -260,6 +272,8 @@ impl PickerDelegate for ProjectSymbolsDelegate {
 
         let highlights = gpui::combine_highlights(custom_highlights, syntax_runs);
 
+        let ellipsis_type = ProjectSymbolsSettings::get_global(&cx).ellipsis_type;
+
         Some(
             ListItem::new(ix)
                 .inset(true)
@@ -267,10 +281,26 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                 .toggle_state(selected)
                 .child(
                     v_flex()
+                        .relative()
+                        .max_w_full()
+                        .w_full()
+                        .map(|this| match ellipsis_type {
+                            EllipsisKind::None => this.overflow_hidden().whitespace_nowrap(),
+                            _ => this,
+                        })
                         .child(LabelLike::new().child(
                             StyledText::new(label).with_default_highlights(&text_style, highlights),
                         ))
-                        .child(Label::new(path).size(LabelSize::Small).color(Color::Muted)),
+                        .child(
+                            Label::new(path)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted)
+                                .map(|this| match ellipsis_type {
+                                    EllipsisKind::End => this.truncate(),
+                                    EllipsisKind::Start => this.truncate_start(),
+                                    EllipsisKind::None => this,
+                                }),
+                        ),
                 ),
         )
     }

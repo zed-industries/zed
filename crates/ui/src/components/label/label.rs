@@ -179,6 +179,11 @@ impl LabelCommon for Label {
         self
     }
 
+    fn truncate_start(mut self) -> Self {
+        self.base = self.base.truncate_start();
+        self
+    }
+
     fn single_line(mut self) -> Self {
         self.label = SharedString::from(self.label.replace('\n', "⏎"));
         self.base = self.base.single_line();

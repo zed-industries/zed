@@ -1,4 +1,6 @@
-use crate::{FontId, FontRun, Pixels, PlatformTextSystem, SharedString, TextRun, px};
+use crate::{
+    FontId, FontRun, Pixels, PlatformTextSystem, SharedString, TextDirection, TextRun, px,
+};
 use collections::HashMap;
 use std::{iter, sync::Arc};
 
@@ -128,39 +130,80 @@ impl LineWrapper {
         })
     }
 
+    fn truncate_line_impl<T: Iterator<Item = (usize, char)>>(
+        &mut self,
+        truncate_width: Pixels,
+        truncation_suffix: &str,
+        mut char_indices: T,
+    ) -> Option<usize> {
+        let mut suffix_width: Pixels = truncation_suffix
+            .chars()
+            .map(|c| self.width_for_char(c))
+            .sum();
+
+        let mut width = px(0.0);
+
+        let mut truncation_ix = 0;
+        for (ix, c) in char_indices {
+            let char_width = self.width_for_char(c);
+
+            if (width + char_width + suffix_width).floor() >= truncate_width {
+                println!("Final width is {}", width.floor());
+                return Some(truncation_ix);
+            }
+
+            width += char_width;
+            truncation_ix = ix;
+        }
+
+        None
+    }
+
     /// Truncate a line of text to the given width with this wrapper's font and font size.
     pub fn truncate_line(
         &mut self,
         line: SharedString,
         truncate_width: Pixels,
         truncation_suffix: &str,
+        text_direction: TextDirection,
         runs: &mut Vec<TextRun>,
     ) -> SharedString {
-        let mut width = px(0.);
-        let mut suffix_width = truncation_suffix
-            .chars()
-            .map(|c| self.width_for_char(c))
-            .fold(px(0.0), |a, x| a + x);
-        let mut char_indices = line.char_indices();
-        let mut truncate_ix = 0;
-        for (ix, c) in char_indices {
-            if width + suffix_width < truncate_width {
-                truncate_ix = ix;
+        println!(" ==> Truncating line '{line}' {truncate_width}");
+        let truncation_index = match text_direction {
+            TextDirection::LeftToRight => {
+                self.truncate_line_impl(truncate_width, truncation_suffix, line.char_indices())
             }
+            TextDirection::RightToLeft => self.truncate_line_impl(
+                truncate_width,
+                truncation_suffix,
+                line.char_indices().rev(),
+            ),
+        };
 
-            let char_width = self.width_for_char(c);
-            width += char_width;
-
-            if width.floor() > truncate_width {
-                let result =
-                    SharedString::from(format!("{}{}", &line[..truncate_ix], truncation_suffix));
-                update_runs_after_truncation(&result, truncation_suffix, runs);
-
-                return result;
+        match (truncation_index, text_direction) {
+            (None, _) => line,
+            (Some(ix), TextDirection::LeftToRight) => {
+                let result = SharedString::from(format!("{}{}", &line[..ix], truncation_suffix));
+                update_runs_after_truncation(
+                    ix + truncation_suffix.len(),
+                    truncation_suffix.len(),
+                    runs,
+                );
+                println!("Truncated to {result}");
+                result
+            }
+            (Some(mut ix), TextDirection::RightToLeft) => {
+                ix += 1;
+                let result = SharedString::from(format!("{}{}", truncation_suffix, &line[ix..]));
+                update_runs_after_truncation(
+                    line.len() - ix + truncation_suffix.len(),
+                    truncation_suffix.len(),
+                    runs,
+                );
+                println!("Truncated to {result}");
+                result
             }
         }
-
-        line
     }
 
     pub(crate) fn is_word_char(c: char) -> bool {
@@ -223,14 +266,18 @@ impl LineWrapper {
     }
 }
 
-fn update_runs_after_truncation(result: &str, ellipsis: &str, runs: &mut Vec<TextRun>) {
-    let mut truncate_at = result.len() - ellipsis.len();
+fn update_runs_after_truncation(
+    result_length: usize,
+    ellipsis_length: usize,
+    runs: &mut Vec<TextRun>,
+) {
+    let mut truncate_at = result_length - ellipsis_length;
     let mut run_end = None;
     for (run_index, run) in runs.iter_mut().enumerate() {
         if run.len <= truncate_at {
             truncate_at -= run.len;
         } else {
-            run.len = truncate_at + ellipsis.len();
+            run.len = truncate_at + ellipsis_length;
             run_end = Some(run_index + 1);
             break;
         }
@@ -498,11 +545,12 @@ mod tests {
             text: &'static str,
             result: &'static str,
             ellipsis: &str,
+            direction: TextDirection,
         ) {
             let dummy_run_lens = vec![text.len()];
             let mut dummy_runs = generate_test_runs(&dummy_run_lens);
             assert_eq!(
-                wrapper.truncate_line(text.into(), px(220.), ellipsis, &mut dummy_runs),
+                wrapper.truncate_line(text.into(), px(220.), ellipsis, direction, &mut dummy_runs),
                 result
             );
             assert_eq!(dummy_runs.first().unwrap().len, result.len());
@@ -510,21 +558,45 @@ mod tests {
 
         perform_test(
             &mut wrapper,
-            "aa bbb cccc ddddd eeee ffff gggg",
-            "aa bbb cccc ddddd eeee",
+            "aaaa bbbb cccc dddd eeee ffff gggg",
+            "aaaa bbbb cccc dddd ee",
             "",
+            TextDirection::LeftToRight,
         );
         perform_test(
             &mut wrapper,
-            "aa bbb cccc ddddd eeee ffff gggg",
-            "aa bbb cccc ddddd eee…",
+            "aaaa bbbb cccc dddd eeee ffff gggg",
+            "cc dddd eeee ffff gggg",
+            "",
+            TextDirection::RightToLeft,
+        );
+        perform_test(
+            &mut wrapper,
+            "aaaa bbbb cccc dddd eeee ffff gggg",
+            "aaaa bbbb cccc dddd e…",
             "…",
+            TextDirection::LeftToRight,
         );
         perform_test(
             &mut wrapper,
-            "aa bbb cccc ddddd eeee ffff gggg",
-            "aa bbb cccc dddd......",
+            "aaaa bbbb cccc dddd eeee ffff gggg",
+            "…c dddd eeee ffff gggg",
+            "…",
+            TextDirection::RightToLeft,
+        );
+        perform_test(
+            &mut wrapper,
+            "aaaa bbbb cccc dddd eeee ffff gggg",
+            "aaaa bbbb cccc d......",
             "......",
+            TextDirection::LeftToRight,
+        );
+        perform_test(
+            &mut wrapper,
+            "aaaa bbbb cccc dddd eeee ffff gggg",
+            "......d eeee ffff gggg",
+            "......",
+            TextDirection::RightToLeft,
         );
     }
 
@@ -538,11 +610,12 @@ mod tests {
             result: &str,
             run_lens: &[usize],
             result_run_len: &[usize],
+            direction: TextDirection,
             line_width: Pixels,
         ) {
             let mut dummy_runs = generate_test_runs(run_lens);
             assert_eq!(
-                wrapper.truncate_line(text.into(), line_width, "…", &mut dummy_runs),
+                wrapper.truncate_line(text.into(), line_width, "…", direction, &mut dummy_runs),
                 result
             );
             for (run, result_len) in dummy_runs.iter().zip(result_run_len) {
@@ -555,7 +628,29 @@ mod tests {
         //
         // Truncate res: abcd… (truncate_at = 4)
         // Run res: Run0 { string: abcd…, len: 7, ... }
-        perform_test(&mut wrapper, "abcdefghijkl", "abcd…", &[12], &[7], px(50.));
+        perform_test(
+            &mut wrapper,
+            "abcdefghijkl",
+            "abcd…",
+            &[12],
+            &[7],
+            TextDirection::LeftToRight,
+            px(50.),
+        );
+        // Text: abcdefghijkl
+        // Runs: Run0 { len: 12, ... }
+        //
+        // Truncate res: …ijkl (truncate_at = 7)
+        // Run res: Run0 { string: …ijkl, len: 5, ... }
+        perform_test(
+            &mut wrapper,
+            "abcdefghijkl",
+            "…ijkl",
+            &[12],
+            &[7],
+            TextDirection::RightToLeft,
+            px(50.),
+        );
         // Case 1: Drop some runs
         // Text: abcdefghijkl
         // Runs: Run0 { len: 4, ... }, Run1 { len: 4, ... }, Run2 { len: 4, ... }
@@ -569,6 +664,22 @@ mod tests {
             "abcdef…",
             &[4, 4, 4],
             &[4, 5],
+            TextDirection::LeftToRight,
+            px(70.),
+        );
+        // Text: abcdefghijkl
+        // Runs: Run0 { len: 4, ... }, Run1 { len: 4, ... }, Run2 { len: 4, ... }
+        //
+        // Truncate res: …ghijkl (truncate_at = 6)
+        // Runs res: Run0 { string: abcd, len: 4, ... }, Run1 { string: ef…, len:
+        // 5, ... }
+        perform_test(
+            &mut wrapper,
+            "abcdefghijkl",
+            "…ghijkl",
+            &[4, 4, 4],
+            &[4, 5],
+            TextDirection::RightToLeft,
             px(70.),
         );
         // Case 2: Truncate at start of some run
@@ -584,6 +695,22 @@ mod tests {
             "abcdefgh…",
             &[4, 4, 4],
             &[4, 4, 3],
+            TextDirection::LeftToRight,
+            px(90.),
+        );
+        // Text: abcdefghijkl
+        // Runs: Run0 { len: 4, ... }, Run1 { len: 4, ... }, Run2 { len: 4, ... }
+        //
+        // Truncate res: abcdefgh… (truncate_at = 8)
+        // Runs res: Run0 { string: abcd, len: 4, ... }, Run1 { string: efgh, len:
+        // 4, ... }, Run2 { string: …, len: 3, ... }
+        perform_test(
+            &mut wrapper,
+            "abcdefghijkl",
+            "…efghijkl",
+            &[4, 4, 4],
+            &[4, 4, 3],
+            TextDirection::RightToLeft,
             px(90.),
         );
     }
@@ -592,7 +719,7 @@ mod tests {
     fn test_update_run_after_truncation() {
         fn perform_test(result: &str, run_lens: &[usize], result_run_lens: &[usize]) {
             let mut dummy_runs = generate_test_runs(run_lens);
-            update_runs_after_truncation(result, "…", &mut dummy_runs);
+            update_runs_after_truncation(result.len(), "…".len(), &mut dummy_runs);
             for (run, result_len) in dummy_runs.iter().zip(result_run_lens) {
                 assert_eq!(run.len, *result_len);
             }
@@ -604,6 +731,7 @@ mod tests {
         // Truncate res: abcd… (truncate_at = 4)
         // Run res: Run0 { string: abcd…, len: 7, ... }
         perform_test("abcd…", &[12], &[7]);
+        perform_test("…abcd", &[12], &[7]);
         // Case 1: Drop some runs
         // Text: abcdefghijkl
         // Runs: Run0 { len: 4, ... }, Run1 { len: 4, ... }, Run2 { len: 4, ... }

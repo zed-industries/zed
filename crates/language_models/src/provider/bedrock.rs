@@ -26,8 +26,8 @@ use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{
-    AnyView, App, AsyncApp, Context, Entity, FontStyle, FontWeight, Subscription, Task, TextStyle,
-    WhiteSpace,
+    AnyView, App, AsyncApp, Context, Entity, FontStyle, FontWeight, Subscription, Task,
+    TextDirection, TextStyle, WhiteSpace,
 };
 use gpui_tokio::Tokio;
 use http_client::HttpClient;
@@ -1165,6 +1165,7 @@ impl ConfigurationView {
             strikethrough: None,
             white_space: WhiteSpace::Normal,
             text_overflow: None,
+            text_direction: TextDirection::LeftToRight,
             text_align: Default::default(),
             line_clamp: None,
         }
