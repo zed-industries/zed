@@ -509,7 +509,7 @@ impl ContentBlock {
         "`Image`".into()
     }
 
-    fn to_markdown<'a>(&'a self, cx: &'a App) -> &'a str {
+    pub fn to_markdown<'a>(&'a self, cx: &'a App) -> &'a str {
         match self {
             ContentBlock::Empty => "",
             ContentBlock::Markdown { markdown } => markdown.read(cx).source(),
@@ -1371,6 +1371,10 @@ impl AcpThread {
             })?
             .await
         })
+    }
+
+    pub fn can_resume(&self, cx: &App) -> bool {
+        self.connection.resume(&self.session_id, cx).is_some()
     }
 
     pub fn resume(&mut self, cx: &mut Context<Self>) -> BoxFuture<'static, Result<()>> {
@@ -2659,7 +2663,7 @@ mod tests {
         fn truncate(
             &self,
             session_id: &acp::SessionId,
-            _cx: &mut App,
+            _cx: &App,
         ) -> Option<Rc<dyn AgentSessionTruncate>> {
             Some(Rc::new(FakeAgentSessionEditor {
                 _session_id: session_id.clone(),

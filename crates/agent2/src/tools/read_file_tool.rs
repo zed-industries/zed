@@ -10,7 +10,7 @@ use project::{AgentLocation, ImageItem, Project, WorktreeSettings, image_store};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 use crate::{AgentTool, ToolCallEventStream};
 
@@ -68,27 +68,12 @@ impl AgentTool for ReadFileTool {
     }
 
     fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString {
-        if let Ok(input) = input {
-            let path = &input.path;
-            match (input.start_line, input.end_line) {
-                (Some(start), Some(end)) => {
-                    format!(
-                        "[Read file `{}` (lines {}-{})](@selection:{}:({}-{}))",
-                        path, start, end, path, start, end
-                    )
-                }
-                (Some(start), None) => {
-                    format!(
-                        "[Read file `{}` (from line {})](@selection:{}:({}-{}))",
-                        path, start, path, start, start
-                    )
-                }
-                _ => format!("[Read file `{}`](@file:{})", path, path),
-            }
-            .into()
-        } else {
-            "Read file".into()
-        }
+        input
+            .ok()
+            .as_ref()
+            .and_then(|input| Path::new(&input.path).file_name())
+            .map(|file_name| file_name.to_string_lossy().to_string().into())
+            .unwrap_or_default()
     }
 
     fn run(
