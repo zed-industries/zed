@@ -324,7 +324,7 @@
     }
   },
   {
-    "context": "vim_mode == insert",
+    "context": "vim_mode == insert && !menu",
     "bindings": {
       "ctrl-c": "vim::NormalBefore",
       "ctrl-[": "vim::NormalBefore",
@@ -352,6 +352,15 @@
       "insert": "vim::ToggleReplace",
       "ctrl-o": "vim::TemporaryNormal",
       "ctrl-s": "editor::ShowSignatureHelp"
+    }
+  },
+  {
+    "context": "showing_completions",
+    "bindings": {
+      "ctrl-d": "vim::ScrollDown",
+      "ctrl-u": "vim::ScrollUp",
+      "ctrl-e": "vim::LineDown",
+      "ctrl-y": "vim::LineUp"
     }
   },
   {
