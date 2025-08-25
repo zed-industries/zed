@@ -1,4 +1,7 @@
+mod capabilities;
 mod input_handler;
+
+pub use capabilities::{EffectiveCapability, cap};
 
 pub use lsp_types::request::*;
 pub use lsp_types::*;
@@ -86,7 +89,8 @@ pub struct LanguageServer {
     name: LanguageServerName,
     process_name: Arc<str>,
     binary: LanguageServerBinary,
-    capabilities: RwLock<ServerCapabilities>,
+    static_capabilities: RwLock<ServerCapabilities>,
+    dynamic_capabilities: RwLock<DynamicCapabilities>,
     /// Configuration sent to the server, stored for display in the language server logs
     /// buffer. This is represented as the message sent to the LSP in order to avoid cloning it (can
     /// be large in cases like sending schemas to the json server).
@@ -301,6 +305,13 @@ pub struct AdapterServerCapabilities {
     pub code_action_kinds: Option<Vec<CodeActionKind>>,
 }
 
+#[derive(Debug, Default, Clone)]
+pub struct DynamicCapabilities {
+    pub text_document_sync_did_change:
+        Option<HashMap<String, TextDocumentChangeRegistrationOptions>>,
+    pub text_document_sync_did_save: Option<HashMap<String, TextDocumentSaveRegistrationOptions>>,
+}
+
 impl LanguageServer {
     /// Starts a language server process.
     pub fn new(
@@ -484,7 +495,8 @@ impl LanguageServer {
                 .map(|name| Arc::from(name.to_string_lossy()))
                 .unwrap_or_default(),
             binary,
-            capabilities: Default::default(),
+            static_capabilities: Default::default(),
+            dynamic_capabilities: Default::default(),
             configuration,
             code_action_kinds,
             next_id: Default::default(),
@@ -898,7 +910,7 @@ impl LanguageServer {
             if let Some(info) = response.server_info {
                 self.process_name = info.name.into();
             }
-            self.capabilities = RwLock::new(response.capabilities);
+            self.static_capabilities = RwLock::new(response.capabilities);
             self.configuration = configuration;
 
             self.notify::<notification::Initialized>(&InitializedParams {})?;
@@ -1130,7 +1142,18 @@ impl LanguageServer {
 
     /// Get the reported capabilities of the running language server.
     pub fn capabilities(&self) -> ServerCapabilities {
-        self.capabilities.read().clone()
+        self.static_capabilities.read().clone()
+    }
+
+    pub fn update_dynamic_capabilities(&self, update: impl FnOnce(&mut DynamicCapabilities)) {
+        update(self.dynamic_capabilities.write().deref_mut());
+    }
+
+    /// Get effective capabilities by combining static and dynamic capabilities.
+    pub fn effective_capability<Cap: EffectiveCapability>(&self) -> Cap::Value {
+        let static_capabilities = self.capabilities();
+        let dynamic_capabilities = self.dynamic_capabilities.read().clone();
+        Cap::compute(&static_capabilities, &dynamic_capabilities)
     }
 
     /// Get the reported capabilities of the running language server and
@@ -1143,7 +1166,7 @@ impl LanguageServer {
     }
 
     pub fn update_capabilities(&self, update: impl FnOnce(&mut ServerCapabilities)) {
-        update(self.capabilities.write().deref_mut());
+        update(self.static_capabilities.write().deref_mut());
     }
 
     pub fn configuration(&self) -> &Value {
