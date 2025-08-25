@@ -46,9 +46,10 @@
       // vscode save all action => ctrl-alt-s ctrl-k s
       // ctrl-alt-z => shift-alt-z or ctrl-shift-z
       // "ctrl-alt-z": "edit_prediction::RateCompletions",
-      "ctrl-shift-i": "edit_prediction::ToggleMenu"
+      "ctrl-shift-i": "edit_prediction::ToggleMenu",
       // todo(windows) (probably remove binding)
       // "ctrl-alt-l": "lsp_tool::ToggleMenu"
+      "shift-alt-l": "lsp_tool::ToggleMenu"
     }
   },
   {
@@ -150,7 +151,9 @@
       "ctrl-shift-.": "assistant::QuoteSelection",
       "ctrl-shift-,": "assistant::InsertIntoEditor",
       // todo(windows) (if vs code has a similar action, use that, otherwise remove this binding)
-      "ctrl-alt-e": "editor::SelectEnclosingSymbol",
+      // the closest equivalent in vs code is "editor.action.selectToBracket",
+      // no default shortcut
+      // "ctrl-alt-e": "editor::SelectEnclosingSymbol",
       "ctrl-shift-backspace": "editor::GoToPreviousChange",
       "ctrl-shift-alt-backspace": "editor::GoToNextChange",
       "alt-enter": "editor::OpenSelectionsInMultibuffer"
@@ -202,7 +205,9 @@
     "bindings": {
       "ctrl-k ctrl-r": "git::Restore",
       // todo(windows) (find something, look at what vs code does)
-      "ctrl-alt-y": "git::ToggleStaged",
+      // the closest equivalent in vs code is "git.stage",
+      // no default shortcut
+      // "ctrl-alt-y": "git::ToggleStaged",
       "alt-y": "git::StageAndNext",
       "shift-alt-y": "git::UnstageAndNext"
     }
@@ -252,24 +257,29 @@
     "bindings": {
       "ctrl-n": "agent::NewThread",
       // todo(windows)
-      "ctrl-alt-n": "agent::NewTextThread",
+      // "ctrl-alt-n": "agent::NewTextThread",
+      "shift-alt-n": "agent::NewTextThread",
       "ctrl-shift-h": "agent::OpenHistory",
       // todo(windows)
-      "ctrl-alt-c": "agent::OpenSettings",
+      // "ctrl-alt-c": "agent::OpenSettings",
+      "shift-alt-c": "agent::OpenSettings",
       // todo(windows)
-      "ctrl-alt-p": "agent::OpenRulesLibrary",
+      // "ctrl-alt-p": "agent::OpenRulesLibrary",
+      "shift-alt-p": "agent::OpenRulesLibrary",
       "ctrl-i": "agent::ToggleProfileSelector",
       // todo(windows)
-      "ctrl-alt-/": "agent::ToggleModelSelector",
+      // "ctrl-alt-/": "agent::ToggleModelSelector",
+      "shift-alt-/": "agent::ToggleModelSelector",
       "ctrl-shift-a": "agent::ToggleContextPicker",
       "ctrl-shift-j": "agent::ToggleNavigationMenu",
       "ctrl-shift-i": "agent::ToggleOptionsMenu",
       // todo(windows)
-      "ctrl-shift-alt-n": "agent::ToggleNewThreadMenu",
+      // "ctrl-shift-alt-n": "agent::ToggleNewThreadMenu",
       "shift-alt-escape": "agent::ExpandMessageEditor",
       "ctrl-shift-.": "assistant::QuoteSelection",
       // todo(windows)
-      "ctrl-alt-e": "agent::RemoveAllContext",
+      // "ctrl-alt-e": "agent::RemoveAllContext",
+      "shift-alt-e": "agent::RemoveAllContext",
       "ctrl-shift-e": "project_panel::ToggleFocus",
       "ctrl-shift-enter": "agent::ContinueThread",
       "super-ctrl-b": "agent::ToggleBurnMode",
@@ -297,7 +307,8 @@
     "bindings": {
       "ctrl-n": "agent::NewTextThread",
       // todo(windows)
-      "ctrl-alt-t": "agent::NewThread"
+      // "ctrl-alt-t": "agent::NewThread"
+      "shift-alt-t": "agent::NewThread"
     }
   },
   {
@@ -306,7 +317,8 @@
     "bindings": {
       "ctrl-n": "agent::NewExternalAgentThread",
       // todo(windows)
-      "ctrl-alt-t": "agent::NewThread"
+      // "ctrl-alt-t": "agent::NewThread"
+      "shift-alt-t": "agent::NewThread"
     }
   },
   {
@@ -429,9 +441,10 @@
       "ctrl-shift-f": "search::FocusSearch",
       "ctrl-shift-h": "search::ToggleReplace",
       // todo(windows)
-      "ctrl-alt-g": "search::ToggleRegex",
+      // "ctrl-alt-g": "search::ToggleRegex",
+      "alt-r": "search::ToggleRegex" // vscode
       // todo(windows)
-      "ctrl-alt-x": "search::ToggleRegex"
+      // "ctrl-alt-x": "search::ToggleRegex"
     }
   },
   {
@@ -457,9 +470,10 @@
       "escape": "project_search::ToggleFocus",
       "ctrl-shift-h": "search::ToggleReplace",
       // todo(windows)
-      "ctrl-alt-g": "search::ToggleRegex",
+      // "ctrl-alt-g": "search::ToggleRegex",
+      "alt-r": "search::ToggleRegex" // vscode
       // todo(windows)
-      "ctrl-alt-x": "search::ToggleRegex"
+      // "ctrl-alt-x": "search::ToggleRegex"
     }
   },
   {
@@ -483,9 +497,11 @@
       "ctrl-f4": ["pane::CloseActiveItem", { "close_pinned": false }],
       "ctrl-w": ["pane::CloseActiveItem", { "close_pinned": false }],
       // todo(windows)
-      "ctrl-alt-t": ["pane::CloseOtherItems", { "close_pinned": false }],
+      // no default for vscode
+      // "ctrl-alt-t": ["pane::CloseOtherItems", { "close_pinned": false }],
       // todo(windows)
-      "ctrl-shift-alt-w": "workspace::CloseInactiveTabsAndPanes",
+      // no such action for vscode
+      // "ctrl-shift-alt-w": "workspace::CloseInactiveTabsAndPanes",
       "ctrl-k e": ["pane::CloseItemsToTheLeft", { "close_pinned": false }],
       "ctrl-k t": ["pane::CloseItemsToTheRight", { "close_pinned": false }],
       "ctrl-k u": ["pane::CloseCleanItems", { "close_pinned": false }],
@@ -493,33 +509,46 @@
       "ctrl-k ctrl-w": "workspace::CloseAllItemsAndPanes",
       "back": "pane::GoBack",
       // todo(windows)
-      "ctrl-alt--": "pane::GoBack",
+      // vscode: alt-left
+      // "ctrl-alt--": "pane::GoBack",
+      "alt--": "pane::GoBack",
       // todo(windows)
-      "ctrl-shift-alt--": "pane::GoForward",
+      // vscode: alt-right
+      // "ctrl-shift-alt--": "pane::GoForward",
+      "shift-alt--": "pane::GoForward",
       "forward": "pane::GoForward",
       // todo(windows)
-      "ctrl-alt-g": "search::SelectNextMatch",
+      // vscode: Enter
+      // "ctrl-alt-g": "search::SelectNextMatch",
       "f3": "search::SelectNextMatch",
       // todo(windows)
-      "ctrl-shift-alt-g": "search::SelectPreviousMatch",
+      // vscode: shift-enter
+      // "ctrl-shift-alt-g": "search::SelectPreviousMatch",
       "shift-f3": "search::SelectPreviousMatch",
       "shift-find": "project_search::ToggleFocus",
       "ctrl-shift-f": "project_search::ToggleFocus",
       // todo(windows)
-      "ctrl-shift-alt-h": "search::ToggleReplace",
+      // no default shortcut for vscode
+      // "ctrl-shift-alt-h": "search::ToggleReplace",
+      "shift-alt-h": "search::ToggleReplace",
       // todo(windows)
-      "ctrl-shift-alt-l": "search::ToggleSelection",
+      // vscode: alt-l
+      // "ctrl-shift-alt-l": "search::ToggleSelection",
+      "alt-l": "search::ToggleSelection",
       "alt-enter": "search::SelectAllMatches",
       "alt-c": "search::ToggleCaseSensitive",
       "alt-w": "search::ToggleWholeWord",
       "alt-find": "project_search::ToggleFilters",
       // todo(windows)
-      "ctrl-alt-f": "project_search::ToggleFilters",
+      // no default for vscode
+      // "ctrl-alt-f": "project_search::ToggleFilters",
       // todo(windows)
-      "ctrl-shift-alt-r": "search::ToggleRegex",
-      // todo(windows)
-      "ctrl-shift-alt-x": "search::ToggleRegex",
+      // vscode: alt-r
+      // "ctrl-shift-alt-r": "search::ToggleRegex",
       "alt-r": "search::ToggleRegex",
+      // todo(windows)
+      // "ctrl-shift-alt-x": "search::ToggleRegex",
+      // "alt-r": "search::ToggleRegex",
       "ctrl-k shift-enter": "pane::TogglePinTab"
     }
   },
@@ -584,7 +613,9 @@
       "ctrl-k p": "editor::CopyPath",
       "ctrl-\\": "pane::SplitRight",
       // todo(windows)
-      "ctrl-shift-alt-c": "editor::DisplayCursorNames",
+      // vscode?
+      // "ctrl-shift-alt-c": "editor::DisplayCursorNames",
+      "shift-alt-c": "editor::DisplayCursorNames",
       "alt-.": "editor::GoToHunk",
       "alt-,": "editor::GoToPreviousHunk"
     }
@@ -621,19 +652,24 @@
       // Change the default action on `menu::Confirm` by setting the parameter
       // "alt-ctrl-o": ["projects::OpenRecent", { "create_new_window": true }],
       // todo(windows)
-      "ctrl-alt-o": ["projects::OpenRecent", { "create_new_window": false }],
+      // vscode: ctrl-r
+      // "ctrl-alt-o": ["projects::OpenRecent", { "create_new_window": false }],
+      "ctrl-r": ["projects::OpenRecent", { "create_new_window": false }],
       "shift-alt-open": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
       // Change to open path modal for existing remote connection by setting the parameter
       // "ctrl-shift-alt-o": "["projects::OpenRemote", { "from_existing_connection": true }]",
       // todo(windows)
-      "ctrl-shift-alt-o": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
+      // "ctrl-shift-alt-o": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
       // todo(windows)
-      "ctrl-shift-alt-b": "branches::OpenRecent",
+      // no such for vscode
+      // "ctrl-shift-alt-b": "branches::OpenRecent",
+      "shift-alt-b": "branches::OpenRecent",
       "shift-alt-enter": "toast::RunAction",
       "ctrl-shift-`": "workspace::NewTerminal",
       "save": "workspace::Save",
       "ctrl-s": "workspace::Save",
-      "ctrl-k s": "workspace::SaveWithoutFormat",
+      // vscode?
+      // "ctrl-k s": "workspace::SaveWithoutFormat",
       "shift-save": "workspace::SaveAs",
       "ctrl-shift-s": "workspace::SaveAs",
       "new": "workspace::NewFile",
@@ -652,23 +688,32 @@
       "alt-8": ["workspace::ActivatePane", 7],
       "alt-9": ["workspace::ActivatePane", 8],
       // todo(windows)
+      // this is the default for vscode
       "ctrl-alt-b": "workspace::ToggleRightDock",
       "ctrl-b": "workspace::ToggleLeftDock",
       "ctrl-j": "workspace::ToggleBottomDock",
       // todo(windows)
-      "ctrl-alt-y": "workspace::CloseAllDocks",
+      // vscode?
+      // "ctrl-alt-y": "workspace::CloseAllDocks",
+      "ctrl-shift-y": "workspace::CloseAllDocks",
       // todo(windows)
-      "ctrl-alt-0": "workspace::ResetActiveDockSize",
+      // vscode?
+      // "ctrl-alt-0": "workspace::ResetActiveDockSize",
+      "shift-alt-0": "workspace::ResetActiveDockSize",
       // For 0px parameter, uses UI font size value.
       // todo(windows)
-      "ctrl-alt--": ["workspace::DecreaseActiveDockSize", { "px": 0 }],
+      // "ctrl-alt--": ["workspace::DecreaseActiveDockSize", { "px": 0 }],
+      "shift-alt--": ["workspace::DecreaseActiveDockSize", { "px": 0 }],
       // todo(windows)
-      "ctrl-alt-=": ["workspace::IncreaseActiveDockSize", { "px": 0 }],
-      "ctrl-shift-alt-0": "workspace::ResetOpenDocksSize",
+      // "ctrl-alt-=": ["workspace::IncreaseActiveDockSize", { "px": 0 }],
+      "shift-alt-=": ["workspace::IncreaseActiveDockSize", { "px": 0 }],
       // todo(windows)
-      "ctrl-shift-alt--": ["workspace::DecreaseOpenDocksSize", { "px": 0 }],
+      // "ctrl-shift-alt-0": "workspace::ResetOpenDocksSize",
+      "ctrl-shift-0": "workspace::ResetOpenDocksSize",
       // todo(windows)
-      "ctrl-shift-alt-=": ["workspace::IncreaseOpenDocksSize", { "px": 0 }],
+      // "ctrl-shift-alt--": ["workspace::DecreaseOpenDocksSize", { "px": 0 }],
+      // todo(windows)
+      // "ctrl-shift-alt-=": ["workspace::IncreaseOpenDocksSize", { "px": 0 }],
       "shift-find": "pane::DeploySearch",
       "ctrl-shift-f": "pane::DeploySearch",
       "ctrl-shift-h": ["pane::DeploySearch", { "replace_enabled": true }],
@@ -691,7 +736,9 @@
       "ctrl-shift-/": "agent::ToggleFocus",
       "alt-save": "workspace::SaveAll",
       // todo(windows)
-      "ctrl-alt-s": "workspace::SaveAll",
+      // vscode: ctrl-k s
+      // "ctrl-alt-s": "workspace::SaveAll",
+      "ctrl-k s": "workspace::SaveAll",
       "ctrl-k m": "language_selector::Toggle",
       "escape": "workspace::Unfollow",
       "ctrl-k ctrl-left": "workspace::ActivatePaneLeft",
@@ -705,7 +752,8 @@
       "ctrl-shift-x": "zed::Extensions",
       "ctrl-shift-r": "task::Rerun",
       // todo(windows)
-      "ctrl-alt-r": "task::Rerun",
+      // no default for vscode
+      // "ctrl-alt-r": "task::Rerun",
       "alt-t": "task::Rerun",
       "shift-alt-t": "task::Spawn",
       "shift-alt-r": ["task::Spawn", { "reveal_target": "center" }],
@@ -751,18 +799,22 @@
       "ctrl-shift-j": "editor::JoinLines",
       "ctrl-alt-backspace": "editor::DeleteToPreviousSubwordStart",
       // todo(windows)
-      "ctrl-alt-h": "editor::DeleteToPreviousSubwordStart",
+      // deleteWordLeft
+      // "ctrl-alt-h": "editor::DeleteToPreviousSubwordStart",
       "ctrl-alt-delete": "editor::DeleteToNextSubwordEnd",
       // todo(windows)
-      "ctrl-alt-d": "editor::DeleteToNextSubwordEnd",
+      // deleteWordRight
+      // "ctrl-alt-d": "editor::DeleteToNextSubwordEnd",
       "ctrl-alt-left": "editor::MoveToPreviousSubwordStart",
       "ctrl-alt-right": "editor::MoveToNextSubwordEnd",
       "ctrl-shift-alt-left": "editor::SelectToPreviousSubwordStart",
       // todo(windows)
-      "ctrl-shift-alt-b": "editor::SelectToPreviousSubwordStart",
-      "ctrl-shift-alt-right": "editor::SelectToNextSubwordEnd",
+      // cursorWordLeftSelect
+      // no default for vscode
+      // "ctrl-shift-alt-b": "editor::SelectToPreviousSubwordStart",
+      "ctrl-shift-alt-right": "editor::SelectToNextSubwordEnd"
       // todo(windows)
-      "ctrl-shift-alt-f": "editor::SelectToNextSubwordEnd"
+      // "ctrl-shift-alt-f": "editor::SelectToNextSubwordEnd"
     }
   },
   // Bindings from Atom
@@ -848,10 +900,11 @@
     "use_key_equivalents": true,
     "bindings": {
       // todo(windows)
-      "ctrl-shift-alt-f": "workspace::FollowNextCollaborator",
+      // "ctrl-shift-alt-f": "workspace::FollowNextCollaborator",
       // Only available in debug builds: opens an element inspector for development.
       // todo(windows)
-      "ctrl-alt-i": "dev::ToggleInspector"
+      // "ctrl-alt-i": "dev::ToggleInspector"
+      "shift-alt-i": "dev::ToggleInspector"
     }
   },
   {
@@ -882,7 +935,8 @@
       "ctrl-[": "agent::CyclePreviousInlineAssist",
       "ctrl-]": "agent::CycleNextInlineAssist",
       // todo(windows)
-      "ctrl-alt-e": "agent::RemoveAllContext"
+      // "ctrl-alt-e": "agent::RemoveAllContext"
+      "shift-alt-e": "agent::RemoveAllContext"
     }
   },
   {
@@ -911,11 +965,14 @@
       "right": "outline_panel::ExpandSelectedEntry",
       "alt-copy": "outline_panel::CopyPath",
       // todo(windows)
+      // should be okay?
       "ctrl-alt-c": "outline_panel::CopyPath",
       "shift-alt-copy": "workspace::CopyRelativePath",
       // todo(windows)
+      // should be okay?
       "ctrl-shift-alt-c": "workspace::CopyRelativePath",
       // todo(windows)
+      // should be okay?
       "ctrl-alt-r": "outline_panel::RevealInFileManager",
       "space": "outline_panel::OpenSelectedEntry",
       "shift-down": "menu::SelectNext",
@@ -934,7 +991,9 @@
       "ctrl-n": "project_panel::NewFile",
       "alt-new": "project_panel::NewDirectory",
       // todo(windows)
-      "ctrl-alt-n": "project_panel::NewDirectory",
+      // no default for vscode
+      // "ctrl-alt-n": "project_panel::NewDirectory",
+      "alt-n": "project_panel::NewDirectory",
       "cut": "project_panel::Cut",
       "ctrl-x": "project_panel::Cut",
       "copy": "project_panel::Copy",
@@ -945,10 +1004,14 @@
       "ctrl-v": "project_panel::Paste",
       "alt-copy": "project_panel::CopyPath",
       // todo(windows)
-      "ctrl-alt-c": "project_panel::CopyPath",
+      // vscode: shift-alt-c
+      // "ctrl-alt-c": "project_panel::CopyPath",
+      "shift-alt-c": "project_panel::CopyPath",
       "shift-alt-copy": "workspace::CopyRelativePath",
       // todo(windows)
-      "ctrl-shift-alt-c": "workspace::CopyRelativePath",
+      // vscode: ctrl-k ctrl-shift-c
+      // "ctrl-shift-alt-c": "workspace::CopyRelativePath",
+      "ctrl-k ctrl-shift-c": "workspace::CopyRelativePath",
       "enter": "project_panel::Rename",
       "f2": "project_panel::Rename",
       "backspace": ["project_panel::Trash", { "skip_prompt": false }],
@@ -957,12 +1020,16 @@
       "ctrl-backspace": ["project_panel::Delete", { "skip_prompt": false }],
       "ctrl-delete": ["project_panel::Delete", { "skip_prompt": false }],
       // todo(windows)
-      "ctrl-alt-r": "project_panel::RevealInFileManager",
+      // vscode: shift-alt-r
+      // conflict with task::Spawn line 759
+      // "ctrl-alt-r": "project_panel::RevealInFileManager",
       "ctrl-shift-enter": "project_panel::OpenWithSystem",
       "alt-d": "project_panel::CompareMarkedFiles",
       "shift-find": "project_panel::NewSearchInDirectory",
       // todo(windows)
-      "ctrl-shift-alt-f": "project_panel::NewSearchInDirectory",
+      // no default for vscode
+      // "ctrl-shift-alt-f": "project_panel::NewSearchInDirectory",
+      "ctrl-k ctrl-shift-f": "project_panel::NewSearchInDirectory",
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrevious",
       "escape": "menu::Cancel"
@@ -985,7 +1052,8 @@
       "alt-y": "git::StageFile",
       "shift-alt-y": "git::UnstageFile",
       // todo(windows)
-      "ctrl-alt-y": "git::ToggleStaged",
+      // vscode?
+      // "ctrl-alt-y": "git::ToggleStaged",
       "space": "git::ToggleStaged",
       "shift-space": "git::StageRange",
       "tab": "git_panel::FocusEditor",
@@ -1083,7 +1151,8 @@
       "enter": "variable_list::EditVariable",
       "ctrl-c": "variable_list::CopyVariableValue",
       // todo(windows)
-      "ctrl-alt-c": "variable_list::CopyVariableName",
+      // "ctrl-alt-c": "variable_list::CopyVariableName",
+      "ctrl-shift-c": "variable_list::CopyVariableName",
       "delete": "variable_list::RemoveWatch",
       "backspace": "variable_list::RemoveWatch",
       "alt-enter": "variable_list::AddWatch"
@@ -1220,7 +1289,8 @@
       "ctrl-shift-space": "terminal::ToggleViMode",
       "ctrl-shift-r": "terminal::RerunTask",
       // todo(windows)
-      "ctrl-alt-r": "terminal::RerunTask",
+      // no default for vscode
+      // "ctrl-alt-r": "terminal::RerunTask",
       "alt-t": "terminal::RerunTask"
     }
   },
@@ -1285,7 +1355,9 @@
       "ctrl-f": "search::FocusSearch",
       "alt-find": "keymap_editor::ToggleKeystrokeSearch",
       // todo(windows)
-      "ctrl-alt-f": "keymap_editor::ToggleKeystrokeSearch",
+      // no such action for vscode
+      // "ctrl-alt-f": "keymap_editor::ToggleKeystrokeSearch",
+      "ctrl-shift-f": "keymap_editor::ToggleKeystrokeSearch",
       "alt-c": "keymap_editor::ToggleConflictFilter",
       "enter": "keymap_editor::EditBinding",
       "alt-enter": "keymap_editor::CreateBinding",
