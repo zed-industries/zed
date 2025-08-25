@@ -1675,15 +1675,16 @@ impl AcpThreadView {
             .into_any_element()
     }
 
-    fn render_tool_call_icon(
+    fn render_tool_call(
         &self,
-        group_name: SharedString,
         entry_ix: usize,
-        is_collapsible: bool,
-        is_open: bool,
         tool_call: &ToolCall,
+        window: &Window,
         cx: &Context<Self>,
     ) -> Div {
+        let header_id = SharedString::from(format!("outer-tool-call-header-{}", entry_ix));
+        let card_header_id = SharedString::from("inner-tool-call-header");
+
         let tool_icon =
             if tool_call.kind == acp::ToolKind::Edit && tool_call.locations.len() == 1 {
                 FileIcons::get_icon(&tool_call.locations[0].path, cx)
@@ -1691,7 +1692,7 @@ impl AcpThreadView {
                     .unwrap_or(Icon::new(IconName::ToolPencil))
             } else {
                 Icon::new(match tool_call.kind {
-                    acp::ToolKind::Read => IconName::ToolRead,
+                    acp::ToolKind::Read => IconName::ToolSearch,
                     acp::ToolKind::Edit => IconName::ToolPencil,
                     acp::ToolKind::Delete => IconName::ToolDeleteFile,
                     acp::ToolKind::Move => IconName::ArrowRightLeft,
@@ -1704,54 +1705,6 @@ impl AcpThreadView {
             }
             .size(IconSize::Small)
             .color(Color::Muted);
-
-        let base_container = h_flex().flex_shrink_0().size_4().justify_center();
-
-        if is_collapsible {
-            base_container
-                .child(
-                    div()
-                        .group_hover(&group_name, |s| s.invisible().w_0())
-                        .child(tool_icon),
-                )
-                .child(
-                    h_flex()
-                        .absolute()
-                        .inset_0()
-                        .invisible()
-                        .justify_center()
-                        .group_hover(&group_name, |s| s.visible())
-                        .child(
-                            Disclosure::new(("expand", entry_ix), is_open)
-                                .opened_icon(IconName::ChevronUp)
-                                .closed_icon(IconName::ChevronRight)
-                                .on_click(cx.listener({
-                                    let id = tool_call.id.clone();
-                                    move |this: &mut Self, _, _, cx: &mut Context<Self>| {
-                                        if is_open {
-                                            this.expanded_tool_calls.remove(&id);
-                                        } else {
-                                            this.expanded_tool_calls.insert(id.clone());
-                                        }
-                                        cx.notify();
-                                    }
-                                })),
-                        ),
-                )
-        } else {
-            base_container.child(tool_icon)
-        }
-    }
-
-    fn render_tool_call(
-        &self,
-        entry_ix: usize,
-        tool_call: &ToolCall,
-        window: &Window,
-        cx: &Context<Self>,
-    ) -> Div {
-        let header_id = SharedString::from(format!("outer-tool-call-header-{}", entry_ix));
-        let card_header_id = SharedString::from("inner-tool-call-header");
 
         let in_progress = match &tool_call.status {
             ToolCallStatus::InProgress => true,
@@ -1857,6 +1810,7 @@ impl AcpThreadView {
             .child(
                 h_flex()
                     .id(header_id)
+                    .group(&card_header_id)
                     .relative()
                     .w_full()
                     .max_w_full()
@@ -1874,19 +1828,11 @@ impl AcpThreadView {
                     })
                     .child(
                         h_flex()
-                            .group(&card_header_id)
                             .relative()
                             .w_full()
                             .h(window.line_height() - px(2.))
                             .text_size(self.tool_name_font_size())
-                            .child(self.render_tool_call_icon(
-                                card_header_id,
-                                entry_ix,
-                                is_collapsible,
-                                is_open,
-                                tool_call,
-                                cx,
-                            ))
+                            .child(tool_icon)
                             .child(if tool_call.locations.len() == 1 {
                                 let name = tool_call.locations[0]
                                     .path
@@ -1914,13 +1860,13 @@ impl AcpThreadView {
                                     })
                                     .child(name)
                                     .tooltip(Tooltip::text("Jump to File"))
+                                    .cursor(gpui::CursorStyle::PointingHand)
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         this.open_tool_call_location(entry_ix, 0, window, cx);
                                     }))
                                     .into_any_element()
                             } else {
                                 h_flex()
-                                    .id("non-card-label-container")
                                     .relative()
                                     .w_full()
                                     .max_w_full()
@@ -1931,47 +1877,39 @@ impl AcpThreadView {
                                         default_markdown_style(false, true, window, cx),
                                     )))
                                     .child(gradient_overlay(gradient_color))
-                                    .on_click(cx.listener({
-                                        let id = tool_call.id.clone();
-                                        move |this: &mut Self, _, _, cx: &mut Context<Self>| {
-                                            if is_open {
-                                                this.expanded_tool_calls.remove(&id);
-                                            } else {
-                                                this.expanded_tool_calls.insert(id.clone());
-                                            }
-                                            cx.notify();
-                                        }
-                                    }))
                                     .into_any()
                             }),
                     )
-                    .when(in_progress && use_card_layout && !is_open, |this| {
-                        this.child(
-                            div().absolute().right_2().child(
-                                Icon::new(IconName::ArrowCircle)
-                                    .color(Color::Muted)
-                                    .size(IconSize::Small)
-                                    .with_animation(
-                                        "running",
-                                        Animation::new(Duration::from_secs(3)).repeat(),
-                                        |icon, delta| {
-                                            icon.transform(Transformation::rotate(percentage(
-                                                delta,
-                                            )))
-                                        },
-                                    ),
-                            ),
-                        )
-                    })
-                    .when(failed_or_canceled, |this| {
-                        this.child(
-                            div().absolute().right_2().child(
-                                Icon::new(IconName::Close)
-                                    .color(Color::Error)
-                                    .size(IconSize::Small),
-                            ),
-                        )
-                    }),
+                    .child(
+                        h_flex()
+                            .gap_px()
+                            .when(is_collapsible, |this| {
+                                this.child(
+                                    Disclosure::new(("expand", entry_ix), is_open)
+                                        .opened_icon(IconName::ChevronUp)
+                                        .closed_icon(IconName::ChevronDown)
+                                        .visible_on_hover(&card_header_id)
+                                        .on_click(cx.listener({
+                                            let id = tool_call.id.clone();
+                                            move |this: &mut Self, _, _, cx: &mut Context<Self>| {
+                                                if is_open {
+                                                    this.expanded_tool_calls.remove(&id);
+                                                } else {
+                                                    this.expanded_tool_calls.insert(id.clone());
+                                                }
+                                                cx.notify();
+                                            }
+                                        })),
+                                )
+                            })
+                            .when(failed_or_canceled, |this| {
+                                this.child(
+                                    Icon::new(IconName::Close)
+                                        .color(Color::Error)
+                                        .size(IconSize::Small),
+                                )
+                            }),
+                    ),
             )
             .children(tool_output_display)
     }
