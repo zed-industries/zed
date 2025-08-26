@@ -42,6 +42,10 @@ impl AgentServer for NativeAgentServer {
         ui::IconName::ZedAgent
     }
 
+    fn install_command(&self) -> Option<&'static str> {
+        None
+    }
+
     fn connect(
         &self,
         _root_dir: &Path,

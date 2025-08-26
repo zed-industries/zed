@@ -56,7 +56,7 @@ impl AcpConnection {
         root_dir: &Path,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
-        let mut child = util::command::new_smol_command(&command.path)
+        let mut child = util::command::new_smol_command(command.path)
             .args(command.args.iter().map(|arg| arg.as_str()))
             .envs(command.env.iter().flatten())
             .current_dir(root_dir)

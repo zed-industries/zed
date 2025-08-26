@@ -2848,19 +2848,14 @@ impl AcpThreadView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let (message, action_slot): (SharedString, _) = match e {
-            LoadError::NotInstalled {
-                error_message: _,
-                install_message: _,
-                install_command,
-            } => {
-                return self.render_not_installed(install_command.clone(), false, window, cx);
+            LoadError::NotInstalled => {
+                return self.render_not_installed(None, window, cx);
             }
             LoadError::Unsupported {
-                error_message: _,
-                upgrade_message: _,
-                upgrade_command,
+                command: path,
+                current_version,
             } => {
-                return self.render_not_installed(upgrade_command.clone(), true, window, cx);
+                return self.render_not_installed(Some((path, current_version)), window, cx);
             }
             LoadError::Exited { .. } => ("Server exited with status {status}".into(), None),
             LoadError::Other(msg) => (
@@ -2878,8 +2873,11 @@ impl AcpThreadView {
             .into_any_element()
     }
 
-    fn install_agent(&self, install_command: String, window: &mut Window, cx: &mut Context<Self>) {
+    fn install_agent(&self, window: &mut Window, cx: &mut Context<Self>) {
         telemetry::event!("Agent Install CLI", agent = self.agent.telemetry_id());
+        let Some(install_command) = self.agent.install_command().map(|s| s.to_owned()) else {
+            return;
+        };
         let task = self
             .workspace
             .update(cx, |workspace, cx| {
@@ -2922,32 +2920,35 @@ impl AcpThreadView {
 
     fn render_not_installed(
         &self,
-        install_command: String,
-        is_upgrade: bool,
+        existing_version: Option<(&SharedString, &SharedString)>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let install_command = self.agent.install_command().unwrap_or_default();
+
         self.install_command_markdown.update(cx, |markdown, cx| {
             if !markdown.source().contains(&install_command) {
                 markdown.replace(format!("```\n{}\n```", install_command), cx);
             }
         });
 
-        let (heading_label, description_label, button_label, or_label) = if is_upgrade {
-            (
-                "Upgrade Gemini CLI in Zed",
-                "Get the latest version with support for Zed.",
-                "Upgrade Gemini CLI",
-                "Or, to upgrade it manually:",
-            )
-        } else {
-            (
-                "Get Started with Gemini CLI in Zed",
-                "Use Google's new coding agent directly in Zed.",
-                "Install Gemini CLI",
-                "Or, to install it manually:",
-            )
-        };
+        let (heading_label, description_label, button_label) =
+            if let Some((path, version)) = existing_version {
+                (
+                    format!("Upgrade {} to work with Zed", self.agent.name()),
+                    format!(
+                        "Currently using {}, which is only version {}",
+                        path, version
+                    ),
+                    format!("Upgrade {}", self.agent.name()),
+                )
+            } else {
+                (
+                    format!("Get Started with {} in Zed", self.agent.name()),
+                    "Use Google's new coding agent directly in Zed.".to_string(),
+                    format!("Install {}", self.agent.name()),
+                )
+            };
 
         v_flex()
             .w_full()
@@ -2977,12 +2978,10 @@ impl AcpThreadView {
                     .icon_color(Color::Muted)
                     .icon_size(IconSize::Small)
                     .icon_position(IconPosition::Start)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.install_agent(install_command.clone(), window, cx)
-                    })),
+                    .on_click(cx.listener(|this, _, window, cx| this.install_agent(window, cx))),
             )
             .child(
-                Label::new(or_label)
+                Label::new("Or, run the following command in your terminal:")
                     .size(LabelSize::Small)
                     .color(Color::Muted),
             )
@@ -5425,6 +5424,10 @@ pub(crate) mod tests {
 
         fn empty_state_message(&self) -> SharedString {
             "Test".into()
+        }
+
+        fn install_command(&self) -> Option<&'static str> {
+            None
         }
 
         fn connect(
