@@ -2,16 +2,26 @@ use gpui::App;
 use sqlez_macros::sql;
 use util::ResultExt as _;
 
-use crate::{define_connection, query, write_and_log};
+use crate::{
+    query,
+    sqlez::{domain::Domain, thread_safe_connection::ThreadSafeConnection},
+    write_and_log,
+};
 
-define_connection!(pub static ref KEY_VALUE_STORE: KeyValueStore<()> =
-    &[sql!(
+pub struct KeyValueStore(crate::sqlez::thread_safe_connection::ThreadSafeConnection);
+
+impl Domain for KeyValueStore {
+    const NAME: &str = stringify!(KeyValueStore);
+
+    const MIGRATIONS: &[&str] = &[sql!(
         CREATE TABLE IF NOT EXISTS kv_store(
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
         ) STRICT;
     )];
-);
+}
+
+crate::static_connection!(KEY_VALUE_STORE, KeyValueStore, []);
 
 pub trait Dismissable {
     const KEY: &'static str;
@@ -91,15 +101,19 @@ mod tests {
     }
 }
 
-define_connection!(pub static ref GLOBAL_KEY_VALUE_STORE: GlobalKeyValueStore<()> =
-    &[sql!(
+pub struct GlobalKeyValueStore(ThreadSafeConnection);
+
+impl Domain for GlobalKeyValueStore {
+    const NAME: &str = stringify!(GlobalKeyValueStore);
+    const MIGRATIONS: &[&str] = &[sql!(
         CREATE TABLE IF NOT EXISTS kv_store(
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
         ) STRICT;
     )];
-    global
-);
+}
+
+crate::static_connection!(GLOBAL_KEY_VALUE_STORE, GlobalKeyValueStore, [], global);
 
 impl GlobalKeyValueStore {
     query! {
