@@ -2063,7 +2063,9 @@ impl Pane {
                 let will_autosave = cx.update(|_window, cx| {
                     matches!(
                         item.workspace_settings(cx).autosave,
-                        AutosaveSetting::OnFocusChange | AutosaveSetting::OnWindowChange
+                        AutosaveSetting::OnFocusChange
+                            | AutosaveSetting::OnWindowChange
+                            | AutosaveSetting::AfterDelay { .. }
                     ) && item.can_autosave(cx)
                 })?;
                 if !will_autosave {
