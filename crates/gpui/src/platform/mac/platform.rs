@@ -163,6 +163,7 @@ pub(crate) struct MacPlatformState {
     metadata_pasteboard_type: id,
     reopen: Option<Box<dyn FnMut()>>,
     on_keyboard_layout_change: Option<Box<dyn FnMut()>>,
+    quit_when_last_window_closes: bool,
     quit: Option<Box<dyn FnMut()>>,
     menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
     validate_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,

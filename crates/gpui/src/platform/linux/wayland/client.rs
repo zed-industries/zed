@@ -353,7 +353,7 @@ impl WaylandClientStatePtr {
             }
             changed
         } else {
-            let changed: bool = &UNKNOWN_KEYBOARD_LAYOUT_NAME != state.keyboard_layout.name();
+            let changed = &UNKNOWN_KEYBOARD_LAYOUT_NAME != state.keyboard_layout.name();
             if changed {
                 state.keyboard_layout = LinuxKeyboardLayout::new(UNKNOWN_KEYBOARD_LAYOUT_NAME);
             }
