@@ -1684,7 +1684,7 @@ impl AcpThreadView {
                     div()
                         .relative()
                         .mt_1p5()
-                        .ml(px(7.))
+                        .ml(rems(0.4))
                         .pl_4()
                         .border_l_1()
                         .border_color(self.tool_card_border_color(cx))
@@ -1850,6 +1850,7 @@ impl AcpThreadView {
                             .w_full()
                             .h(window.line_height() - px(2.))
                             .text_size(self.tool_name_font_size())
+                            .gap_0p5()
                             .child(tool_icon)
                             .child(if tool_call.locations.len() == 1 {
                                 let name = tool_call.locations[0]
@@ -1968,7 +1969,7 @@ impl AcpThreadView {
 
         v_flex()
             .mt_1p5()
-            .ml(px(7.))
+            .ml(rems(0.4))
             .px_3p5()
             .gap_2()
             .border_l_1()
@@ -2025,7 +2026,7 @@ impl AcpThreadView {
         let button_id = SharedString::from(format!("item-{}", uri));
 
         div()
-            .ml(px(7.))
+            .ml(rems(0.4))
             .pl_2p5()
             .border_l_1()
             .border_color(self.tool_card_border_color(cx))
