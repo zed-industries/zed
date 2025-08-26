@@ -1444,9 +1444,9 @@ impl PickerDelegate for DebugDelegate {
                 directory_in_worktree,
                 ..
             }) => Some(directory_in_worktree.display().to_string()),
-            Some(TaskSourceKind::AbsPath { abs_path, .. }) => abs_path
-                .file_name()
-                .map(|n| format!("From Global {}", n.to_string_lossy())),
+            Some(TaskSourceKind::AbsPath { abs_path, .. }) => {
+                Some(abs_path.to_string_lossy().into_owned())
+            }
             Some(TaskSourceKind::Lsp { language_name, .. }) => {
                 Some(format!("LSP: {language_name}"))
             }
