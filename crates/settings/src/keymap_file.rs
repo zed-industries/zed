@@ -3,7 +3,8 @@ use collections::{BTreeMap, HashMap, IndexMap};
 use fs::Fs;
 use gpui::{
     Action, ActionBuildError, App, InvalidKeystrokeError, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
-    KeyBinding, KeyBindingContextPredicate, KeyBindingMetaIndex, Keystroke, NoAction, SharedString,
+    KeyBinding, KeyBindingContextPredicate, KeyBindingMetaIndex, KeybindingKeystroke, Keystroke,
+    NoAction, SharedString,
 };
 use schemars::{JsonSchema, json_schema};
 use serde::Deserialize;
@@ -211,9 +212,6 @@ impl KeymapFile {
     }
 
     pub fn load(content: &str, cx: &App) -> KeymapFileLoadResult {
-        let key_equivalents =
-            crate::key_equivalents::get_key_equivalents(cx.keyboard_layout().id());
-
         if content.is_empty() {
             return KeymapFileLoadResult::Success {
                 key_bindings: Vec::new(),
@@ -255,12 +253,6 @@ impl KeymapFile {
                 }
             };
 
-            let key_equivalents = if *use_key_equivalents {
-                key_equivalents.as_ref()
-            } else {
-                None
-            };
-
             let mut section_errors = String::new();
 
             if !unrecognized_fields.is_empty() {
@@ -278,7 +270,7 @@ impl KeymapFile {
                         keystrokes,
                         action,
                         context_predicate.clone(),
-                        key_equivalents,
+                        *use_key_equivalents,
                         cx,
                     );
                     match result {
@@ -336,7 +328,7 @@ impl KeymapFile {
         keystrokes: &str,
         action: &KeymapAction,
         context: Option<Rc<KeyBindingContextPredicate>>,
-        key_equivalents: Option<&HashMap<char, char>>,
+        use_key_equivalents: bool,
         cx: &App,
     ) -> std::result::Result<KeyBinding, String> {
         let (build_result, action_input_string) = match &action.0 {
@@ -404,8 +396,9 @@ impl KeymapFile {
             keystrokes,
             action,
             context,
-            key_equivalents,
+            use_key_equivalents,
             action_input_string.map(SharedString::from),
+            cx.keyboard_mapper().as_ref(),
         ) {
             Ok(key_binding) => key_binding,
             Err(InvalidKeystrokeError { keystroke }) => {
@@ -607,6 +600,7 @@ impl KeymapFile {
         mut operation: KeybindUpdateOperation<'a>,
         mut keymap_contents: String,
         tab_size: usize,
+        keyboard_mapper: &dyn gpui::PlatformKeyboardMapper,
     ) -> Result<String> {
         match operation {
             // if trying to replace a keybinding that is not user-defined, treat it as an add operation
@@ -646,7 +640,7 @@ impl KeymapFile {
                 .action_value()
                 .context("Failed to generate target action JSON value")?;
             let Some((index, keystrokes_str)) =
-                find_binding(&keymap, &target, &target_action_value)
+                find_binding(&keymap, &target, &target_action_value, keyboard_mapper)
             else {
                 anyhow::bail!("Failed to find keybinding to remove");
             };
@@ -681,7 +675,7 @@ impl KeymapFile {
                 .context("Failed to generate source action JSON value")?;
 
             if let Some((index, keystrokes_str)) =
-                find_binding(&keymap, &target, &target_action_value)
+                find_binding(&keymap, &target, &target_action_value, keyboard_mapper)
             {
                 if target.context == source.context {
                     // if we are only changing the keybinding (common case)
@@ -781,7 +775,7 @@ impl KeymapFile {
             }
             let use_key_equivalents = from.and_then(|from| {
                 let action_value = from.action_value().context("Failed to serialize action value. `use_key_equivalents` on new keybinding may be incorrect.").log_err()?;
-                let (index, _) = find_binding(&keymap, &from, &action_value)?;
+                let (index, _) = find_binding(&keymap, &from, &action_value, keyboard_mapper)?;
                 Some(keymap.0[index].use_key_equivalents)
             }).unwrap_or(false);
             if use_key_equivalents {
@@ -808,6 +802,7 @@ impl KeymapFile {
             keymap: &'b KeymapFile,
             target: &KeybindUpdateTarget<'a>,
             target_action_value: &Value,
+            keyboard_mapper: &dyn gpui::PlatformKeyboardMapper,
         ) -> Option<(usize, &'b str)> {
             let target_context_parsed =
                 KeyBindingContextPredicate::parse(target.context.unwrap_or("")).ok();
@@ -823,8 +818,11 @@ impl KeymapFile {
                 for (keystrokes_str, action) in bindings {
                     let Ok(keystrokes) = keystrokes_str
                         .split_whitespace()
-                        .map(Keystroke::parse)
-                        .collect::<Result<Vec<_>, _>>()
+                        .map(|source| {
+                            let keystroke = Keystroke::parse(source)?;
+                            Ok(KeybindingKeystroke::new(keystroke, false, keyboard_mapper))
+                        })
+                        .collect::<Result<Vec<_>, InvalidKeystrokeError>>()
                     else {
                         continue;
                     };
@@ -832,7 +830,7 @@ impl KeymapFile {
                         || !keystrokes
                             .iter()
                             .zip(target.keystrokes)
-                            .all(|(a, b)| a.should_match(b))
+                            .all(|(a, b)| a.inner.should_match(b))
                     {
                         continue;
                     }
@@ -847,7 +845,7 @@ impl KeymapFile {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum KeybindUpdateOperation<'a> {
     Replace {
         /// Describes the keybind to create
@@ -916,7 +914,7 @@ impl<'a> KeybindUpdateOperation<'a> {
 #[derive(Debug, Clone)]
 pub struct KeybindUpdateTarget<'a> {
     pub context: Option<&'a str>,
-    pub keystrokes: &'a [Keystroke],
+    pub keystrokes: &'a [KeybindingKeystroke],
     pub action_name: &'a str,
     pub action_arguments: Option<&'a str>,
 }
@@ -941,6 +939,9 @@ impl<'a> KeybindUpdateTarget<'a> {
     fn keystrokes_unparsed(&self) -> String {
         let mut keystrokes = String::with_capacity(self.keystrokes.len() * 8);
         for keystroke in self.keystrokes {
+            // The reason use `keystroke.unparse()` instead of `keystroke.inner.unparse()`
+            // here is that, we want the user to use `ctrl-shift-4` instead of `ctrl-$`
+            // by default on Windows.
             keystrokes.push_str(&keystroke.unparse());
             keystrokes.push(' ');
         }
@@ -959,7 +960,7 @@ impl<'a> KeybindUpdateTarget<'a> {
     }
 }
 
-#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum KeybindSource {
     User,
     Vim,
@@ -1020,7 +1021,7 @@ impl From<KeybindSource> for KeyBindingMetaIndex {
 
 #[cfg(test)]
 mod tests {
-    use gpui::Keystroke;
+    use gpui::{DummyKeyboardMapper, KeybindingKeystroke, Keystroke};
     use unindent::Unindent;
 
     use crate::{
@@ -1049,16 +1050,27 @@ mod tests {
         operation: KeybindUpdateOperation,
         expected: impl ToString,
     ) {
-        let result = KeymapFile::update_keybinding(operation, input.to_string(), 4)
-            .expect("Update succeeded");
+        let result = KeymapFile::update_keybinding(
+            operation,
+            input.to_string(),
+            4,
+            &gpui::DummyKeyboardMapper,
+        )
+        .expect("Update succeeded");
         pretty_assertions::assert_eq!(expected.to_string(), result);
     }
 
     #[track_caller]
-    fn parse_keystrokes(keystrokes: &str) -> Vec<Keystroke> {
+    fn parse_keystrokes(keystrokes: &str) -> Vec<KeybindingKeystroke> {
         keystrokes
             .split(' ')
-            .map(|s| Keystroke::parse(s).expect("Keystrokes valid"))
+            .map(|s| {
+                KeybindingKeystroke::new(
+                    Keystroke::parse(s).expect("Keystrokes valid"),
+                    false,
+                    &DummyKeyboardMapper,
+                )
+            })
             .collect()
     }
 
