@@ -62,6 +62,40 @@ impl SettingsUI for bool {
 }
 
 /*
+FOR DOC COMMENTS ON "Contents" TYPES:
+define trait: SettingsUIDocProvider with derive
+derive creates:
+impl SettingsUIDocProvider for Foo {
+    fn settings_ui_doc() -> Hashmap<&'static str, &'static str> {
+        Hashmap::from(Foo.fields.map(|field| (field.name, field.doc_comment)))
+    }
+}
+
+on derive settings_ui, have attr
+#[settings_ui(doc_from = "Foo")]
+
+and have derive(SettingsUI) do
+
+if doc_from {
+quote! {
+        doc_comments = doc_from.type::settings_ui_doc();
+        for fields {
+            field.doc_comment = doc_comments.get(field.name).unwrap()
+        }
+    }
+} else {
+ doc_comments = <Self as Settings>FileContent::settings_ui
+}
+
+FOR PATH:
+if derive attr also contains "Settings", then we can use <T as Settings>::KEY,
+otherwise we need a #[settings_ui(path = ...)].
+
+FOR BOTH OF ABOVE, we can check if derive() attr contains Settings, otherwise assert that both doc_from and path are present
+like so: #[settings_ui(doc_from = "Foo", path = "foo")]
+ */
+
+/*
 #[derive(SettingsUI)]
 #[settings_ui(group = "Foo")]
 struct Foo {
