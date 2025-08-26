@@ -2118,10 +2118,8 @@ impl AcpThreadView {
             .gap_1()
             .justify_between()
             .flex_wrap()
-            .when(!empty_content, |this| {
-                this.border_t_1()
-                    .border_color(self.tool_card_border_color(cx))
-            })
+            .border_t_1()
+            .border_color(self.tool_card_border_color(cx))
             .child(
                 div()
                     .min_w(rems_from_px(145.))
@@ -2219,6 +2217,8 @@ impl AcpThreadView {
 
         v_flex()
             .h_full()
+            .border_t_1()
+            .border_color(self.tool_card_border_color(cx))
             .child(
                 if let Some(entry) = self.entry_view_state.read(cx).entry(entry_ix)
                     && let Some(editor) = entry.editor_for_diff(diff)
