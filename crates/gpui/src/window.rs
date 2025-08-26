@@ -961,6 +961,7 @@ impl Window {
                 show,
                 display_id,
                 window_min_size,
+                #[cfg(target_os = "macos")]
                 tabbing_identifier,
             },
         )?;
