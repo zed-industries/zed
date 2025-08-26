@@ -20,11 +20,11 @@ use file_icons::FileIcons;
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt, AnyView, App, BorderStyle, ClickEvent, ClipboardItem,
-    EdgesRefinement, ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, Length, ListOffset,
-    ListState, MouseButton, PlatformDisplay, SharedString, Stateful, StyleRefinement, Subscription,
-    Task, TextStyle, TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, Window,
-    WindowHandle, div, ease_in_out, linear_color_stop, linear_gradient, list, percentage, point,
-    prelude::*, pulsating_between,
+    CursorStyle, EdgesRefinement, ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, Length,
+    ListOffset, ListState, MouseButton, PlatformDisplay, SharedString, Stateful, StyleRefinement,
+    Subscription, Task, TextStyle, TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity,
+    Window, WindowHandle, div, ease_in_out, linear_color_stop, linear_gradient, list, percentage,
+    point, prelude::*, pulsating_between,
 };
 use language::Buffer;
 
@@ -66,7 +66,6 @@ use crate::{
     KeepAll, OpenAgentDiff, OpenHistory, RejectAll, ToggleBurnMode, ToggleProfileSelector,
 };
 
-const RESPONSE_PADDING_X: Pixels = px(19.);
 pub const MIN_EDITOR_LINES: usize = 4;
 pub const MAX_EDITOR_LINES: usize = 8;
 
@@ -1533,7 +1532,7 @@ impl AcpThreadView {
             AgentThreadEntry::ToolCall(tool_call) => {
                 let has_terminals = tool_call.terminals().next().is_some();
 
-                div().w_full().py_1().px_5().map(|this| {
+                div().w_full().map(|this| {
                     if has_terminals {
                         this.children(tool_call.terminals().map(|terminal| {
                             self.render_terminal_tool_call(
@@ -1618,55 +1617,48 @@ impl AcpThreadView {
         let is_open = self.expanded_thinking_blocks.contains(&key);
 
         v_flex()
+            // .debug_bg_cyan()
             .child(
                 h_flex()
                     .id(header_id)
                     .group(&card_header_id)
+                    .pr_1() // Ensure disclosure button is aligned with tool call disclosures
                     .relative()
                     .w_full()
-                    .gap_1p5()
+                    .justify_between()
                     .child(
                         h_flex()
-                            .size_4()
-                            .justify_center()
+                            .h(window.line_height())
+                            .gap_1p5()
                             .child(
-                                div()
-                                    .group_hover(&card_header_id, |s| s.invisible().w_0())
-                                    .child(
-                                        Icon::new(IconName::ToolThink)
-                                            .size(IconSize::Small)
-                                            .color(Color::Muted),
-                                    ),
+                                // div().debug_bg_magenta().child(
+                                Icon::new(IconName::ToolThink)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                                // ),
                             )
                             .child(
-                                h_flex()
-                                    .absolute()
-                                    .inset_0()
-                                    .invisible()
-                                    .justify_center()
-                                    .group_hover(&card_header_id, |s| s.visible())
-                                    .child(
-                                        Disclosure::new(("expand", entry_ix), is_open)
-                                            .opened_icon(IconName::ChevronUp)
-                                            .closed_icon(IconName::ChevronRight)
-                                            .on_click(cx.listener({
-                                                move |this, _event, _window, cx| {
-                                                    if is_open {
-                                                        this.expanded_thinking_blocks.remove(&key);
-                                                    } else {
-                                                        this.expanded_thinking_blocks.insert(key);
-                                                    }
-                                                    cx.notify();
-                                                }
-                                            })),
-                                    ),
+                                div()
+                                    .text_size(self.tool_name_font_size())
+                                    .text_color(cx.theme().colors().text_muted)
+                                    .child("Thinking"),
                             ),
                     )
                     .child(
-                        div()
-                            .text_size(self.tool_name_font_size())
-                            .text_color(cx.theme().colors().text_muted)
-                            .child("Thinking"),
+                        Disclosure::new(("expand", entry_ix), is_open)
+                            .opened_icon(IconName::ChevronUp)
+                            .closed_icon(IconName::ChevronDown)
+                            .visible_on_hover(&card_header_id)
+                            .on_click(cx.listener({
+                                move |this, _event, _window, cx| {
+                                    if is_open {
+                                        this.expanded_thinking_blocks.remove(&key);
+                                    } else {
+                                        this.expanded_thinking_blocks.insert(key);
+                                    }
+                                    cx.notify();
+                                }
+                            })),
                     )
                     .on_click(cx.listener({
                         move |this, _event, _window, cx| {
@@ -1685,7 +1677,7 @@ impl AcpThreadView {
                         .relative()
                         .mt_1p5()
                         .ml(rems(0.4))
-                        .pl_4()
+                        .pl_3p5()
                         .border_l_1()
                         .border_color(self.tool_card_border_color(cx))
                         .text_ui_sm(cx)
