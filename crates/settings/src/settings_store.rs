@@ -32,8 +32,8 @@ pub type EditorconfigProperties = ec4rs::Properties;
 
 use crate::{
     ActiveSettingsProfileName, ParameterizedJsonSchema, SettingsJsonSchemaParams, SettingsUIItem,
-    VsCodeSettings, WorktreeId, parse_json_with_comments, settings_ui::SettingsUI,
-    update_value_in_json_text,
+    SettingsUIRender, VsCodeSettings, WorktreeId, parse_json_with_comments,
+    settings_ui::SettingsUI, update_value_in_json_text,
 };
 
 /// A value that can be defined as a user setting.
@@ -1508,7 +1508,7 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
     }
 
     fn settings_ui_item(&self) -> SettingsUIItem {
-        T::ui_item()
+        <T as SettingsUI>::settings_ui_item()
     }
 }
 

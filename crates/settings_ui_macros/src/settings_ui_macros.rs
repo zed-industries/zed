@@ -1,5 +1,5 @@
-use proc_macro::TokenStream;
-use quote::quote;
+use proc_macro2::TokenStream;
+use quote::{ToTokens, quote};
 use syn::{DeriveInput, LitStr, Token, parse_macro_input};
 
 /// Derive macro for the `SettingsUI` marker trait.
@@ -22,7 +22,7 @@ use syn::{DeriveInput, LitStr, Token, parse_macro_input};
 /// }
 /// ```
 #[proc_macro_derive(SettingsUI, attributes(settings_ui))]
-pub fn derive_settings_ui(input: TokenStream) -> TokenStream {
+pub fn derive_settings_ui(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
 
@@ -48,23 +48,84 @@ pub fn derive_settings_ui(input: TokenStream) -> TokenStream {
         }
     }
 
-    let ui_item_fn_body = if let Some(group_name) = group_name {
+    // let mut root_item = vec![];
+    // for field in struct {
+    //
+    // match field::settings_ui_render()
+    // Group(items) => {
+    // let item = items.map(|item| something);
+    // item
+    //     items.push(item::settings_ui_render());
+    // root_item.push(Group(items));
+    // },
+    // Leaf(item) => {
+    // root_item.push(item);
+    // }
+    // }
+    // }
+    //
+    // group.items = struct.fields.map((field_name, field_type) => quote! { SettingsUIItem::Item {path: #field_type::settings_ui_path().unwrap_or_else(|| #field_name), item:  if field.attrs.render { #render } else field::settings_ui_render()}})
+    // }
+
+    fn map_ui_item_to_render(path: &str, ty: TokenStream) -> TokenStream {
         quote! {
-            settings::SettingsUIItem { item: settings::SettingsUIItemVariant::Group{ path: #group_name, group: settings::SettingsUIItemGroup{ items: Default::default() } } }
+            settings::SettingsUIItem {
+                item: match #ty::settings_ui_render() {
+                    settings::SettingsUIRender::Group{title, items} => settings::SettingsUIItemVariant::Group {
+                        title,
+                        path: #path,
+                        group: settings::SettingsUIItemGroup { items },
+                    },
+                    settings::SettingsUIRender::Item(item) => settings::SettingsUIItemVariant::Item {
+                        path: #path,
+                        item,
+                    },
+                    settings::SettingsUIRender::None => settings::SettingsUIItemVariant::None,
+                }
+            }
+        }
+    }
+
+    let ui_render_fn_body = if let Some(group_name) = group_name {
+        let fields = match input.data {
+            syn::Data::Struct(data_struct) => data_struct
+                .fields
+                .iter()
+                .map(|field| {
+                    (
+                        field.ident.clone().expect("tuple fields").to_string(),
+                        field.ty.to_token_stream(),
+                    )
+                })
+                .collect(),
+            syn::Data::Enum(data_enum) => vec![], // todo! enums
+            syn::Data::Union(data_union) => unimplemented!("Derive SettingsUI for unions"),
+        };
+        let items = fields
+            .into_iter()
+            .map(|(name, ty)| map_ui_item_to_render(&name, ty));
+        quote! {
+            settings::SettingsUIRender::Group{ title: #group_name, items: vec![#(#items),*] }
         }
     } else {
         quote! {
-            settings::SettingsUIItem { item: settings::SettingsUIItemVariant::None }
+            settings::SettingsUIRender::None
         }
     };
 
+    let settings_ui_item_fn_body = map_ui_item_to_render("todo! define path", quote! { Self });
+
     let expanded = quote! {
         impl #impl_generics settings::SettingsUI for #name #ty_generics #where_clause {
-            fn ui_item() -> settings::SettingsUIItem {
-                #ui_item_fn_body
+            fn settings_ui_render() -> settings::SettingsUIRender {
+                #ui_render_fn_body
+            }
+
+            fn settings_ui_item() -> settings::SettingsUIItem {
+                #settings_ui_item_fn_body
             }
         }
     };
 
-    TokenStream::from(expanded)
+    proc_macro::TokenStream::from(expanded)
 }

@@ -126,11 +126,33 @@ impl Render for SettingsPage {
                     .settings_ui_items()
                     .into_iter()
                     .flat_map(|item| match item.item {
-                        settings::SettingsUIItemVariant::Group { path, group } => Some(path),
+                        settings::SettingsUIItemVariant::Group { title, path, group } => Some(
+                            div()
+                                .child(Label::new(title).size(LabelSize::Large))
+                                .children(group.items.iter().map(|item| {
+                                    match &item.item {
+                                        settings::SettingsUIItemVariant::Group {
+                                            path,
+                                            title,
+                                            group,
+                                        } => div()
+                                            .child(format!("Subgroup: {}", title))
+                                            .into_any_element(),
+                                        settings::SettingsUIItemVariant::Item { path, item } => {
+                                            div()
+                                                .child(format!("Item: {}", path))
+                                                .into_any_element()
+                                        }
+                                        settings::SettingsUIItemVariant::None => {
+                                            div().child("None").into_any_element()
+                                        }
+                                    }
+                                })),
+                        ),
+
                         settings::SettingsUIItemVariant::Item { path, item } => todo!(),
                         settings::SettingsUIItemVariant::None => None,
-                    })
-                    .map(|group_name| Label::new(group_name).size(LabelSize::Large)),
+                    }),
             )
             .child(Label::new("Settings").size(LabelSize::Large))
             .child(

@@ -1,13 +1,17 @@
 use std::fmt::{Display, Formatter};
 
-use crate::{Settings, SettingsSources, SettingsUI, VsCodeSettings};
+use crate as settings;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::{Settings, SettingsSources, VsCodeSettings};
+use settings_ui_macros::SettingsUI;
 
 /// Base key bindings scheme. Base keymaps can be overridden with user keymaps.
 ///
 /// Default: VSCode
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
+#[derive(
+    Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default, SettingsUI,
+)]
 pub enum BaseKeymap {
     #[default]
     VSCode,
@@ -95,8 +99,6 @@ impl BaseKeymap {
             .unwrap_or_default()
     }
 }
-
-impl SettingsUI for BaseKeymap {}
 
 impl Settings for BaseKeymap {
     const KEY: Option<&'static str> = Some("base_keymap");
