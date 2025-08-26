@@ -2804,9 +2804,14 @@ mod tests {
             search_bar.dismiss(&Dismiss, window, cx);
             search_bar.deploy(&deploy, window, cx);
             assert_eq!(
+                search_bar.configured_options,
+                SearchOptions::CASE_SENSITIVE,
+                "After a settings update, dismissing the bar should update the configured options"
+            );
+            assert_eq!(
                 search_bar.search_options,
                 SearchOptions::CASE_SENSITIVE,
-                "After a settings update, dismissing the bar should update the search options"
+                "After a settings update, dismissing the bar should update the active search options"
             );
         });
     }
