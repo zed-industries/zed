@@ -553,7 +553,7 @@ impl Domain for WorkspaceDb {
                             WHEN workspaces.local_paths_array IS NULL OR workspaces.local_paths_array = "" THEN
                                 NULL
                             ELSE
-                                replace(workspaces.local_paths_array, ',', "\n")
+                                replace(workspaces.local_paths_array, ',', CHAR(10))
                         END
                 END as paths,
 
