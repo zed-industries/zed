@@ -14,8 +14,9 @@ use language_model::{
 };
 use menu;
 use ollama::{
-    ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, KeepAlive, OLLAMA_API_URL,
-    OllamaFunctionTool, OllamaToolCall, get_models, show_model, stream_chat_completion,
+    ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, KeepAlive, OLLAMA_API_KEY_VAR,
+    OLLAMA_API_URL, OllamaFunctionTool, OllamaToolCall, get_models, show_model,
+    stream_chat_completion,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -33,7 +34,6 @@ use crate::ui::InstructionListItem;
 const OLLAMA_DOWNLOAD_URL: &str = "https://ollama.com/download";
 const OLLAMA_LIBRARY_URL: &str = "https://ollama.com/library";
 const OLLAMA_SITE: &str = "https://ollama.com/";
-const OLLAMA_API_KEY_VAR: &str = "OLLAMA_API_KEY";
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("ollama");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Ollama");
