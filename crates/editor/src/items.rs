@@ -685,7 +685,7 @@ impl Item for Editor {
                         .git_store()
                         .read(cx)
                         .repository_and_path_for_buffer_id(buffer_id, cx)?;
-                    let status = repo.read(cx).status_for_path(&repo_path)?.status;
+                    let status = repo.read(cx).status_for_path(&repo_path)?;
 
                     Some(entry_git_aware_label_color(
                         status.summary(),

@@ -3072,12 +3072,7 @@ async fn test_git_status_sync(
             .collect::<Vec<_>>();
         assert_eq!(repos.len(), 1);
         let repo = repos.into_iter().next().unwrap();
-        assert_eq!(
-            repo.read(cx)
-                .status_for_path(&file.into())
-                .map(|entry| entry.status),
-            status
-        );
+        assert_eq!(repo.read(cx).status_for_path(&file.into()), status);
     }
 
     project_local.read_with(cx_a, |project, cx| {

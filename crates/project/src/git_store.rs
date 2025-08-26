@@ -809,7 +809,7 @@ impl GitStore {
         cx: &App,
     ) -> Option<FileStatus> {
         let (repo, repo_path) = self.repository_and_path_for_project_path(project_path, cx)?;
-        Some(repo.read(cx).status_for_path(&repo_path)?.status)
+        Some(repo.read(cx).status_for_path(&repo_path)?)
     }
 
     pub fn checkpoint(&self, cx: &mut App) -> Task<Result<GitStoreCheckpoint>> {
@@ -1391,8 +1391,7 @@ impl GitStore {
 
     pub fn status_for_buffer_id(&self, buffer_id: BufferId, cx: &App) -> Option<FileStatus> {
         let (repo, path) = self.repository_and_path_for_buffer_id(buffer_id, cx)?;
-        let status = repo.read(cx).snapshot.status_for_path(&path)?;
-        Some(status.status)
+        repo.read(cx).snapshot.status_for_path(&path)
     }
 
     pub fn repository_and_path_for_buffer_id(
@@ -2844,10 +2843,10 @@ impl RepositorySnapshot {
         self.statuses_by_path.summary().item_summary
     }
 
-    pub fn status_for_path(&self, path: &RepoPath) -> Option<StatusEntry> {
+    pub fn status_for_path(&self, path: &RepoPath) -> Option<FileStatus> {
         self.statuses_by_path
             .get(&PathKey(path.0.clone()), &())
-            .cloned()
+            .map(|entry| entry.status.clone())
     }
 
     pub fn abs_path_to_repo_path(&self, abs_path: &Path) -> Option<RepoPath> {
@@ -2874,7 +2873,7 @@ impl RepositorySnapshot {
             self.merge.conflicted_paths.contains(repo_path);
         let has_conflict_currently = self
             .status_for_path(repo_path)
-            .is_some_and(|entry| entry.status.is_conflicted());
+            .is_some_and(|status| status.is_conflicted());
         had_conflict_on_last_merge_head_change || has_conflict_currently
     }
 

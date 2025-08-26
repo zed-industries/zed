@@ -8246,7 +8246,7 @@ async fn test_repository_subfolder_git_status(
 
         assert_eq!(repository.status_for_path(&C_TXT.into()), None);
         assert_eq!(
-            repository.status_for_path(&E_TXT.into()).unwrap().status,
+            repository.status_for_path(&E_TXT.into()).unwrap(),
             FileStatus::Untracked
         );
     });
@@ -8459,15 +8459,11 @@ async fn test_rename_work_directory(cx: &mut gpui::TestAppContext) {
             root_path.join("projects/project1").as_path()
         );
         assert_eq!(
-            repository
-                .status_for_path(&"a".into())
-                .map(|entry| entry.status),
+            repository.status_for_path(&"a".into()),
             Some(StatusCode::Modified.worktree()),
         );
         assert_eq!(
-            repository
-                .status_for_path(&"b".into())
-                .map(|entry| entry.status),
+            repository.status_for_path(&"b".into()),
             Some(FileStatus::Untracked),
         );
     });
@@ -8485,11 +8481,11 @@ async fn test_rename_work_directory(cx: &mut gpui::TestAppContext) {
             root_path.join("projects/project2").as_path()
         );
         assert_eq!(
-            repository.status_for_path(&"a".into()).unwrap().status,
+            repository.status_for_path(&"a".into()).unwrap(),
             StatusCode::Modified.worktree(),
         );
         assert_eq!(
-            repository.status_for_path(&"b".into()).unwrap().status,
+            repository.status_for_path(&"b".into()).unwrap(),
             FileStatus::Untracked,
         );
     });
@@ -8562,11 +8558,11 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
         );
 
         assert_eq!(
-            repository.status_for_path(&B_TXT.into()).unwrap().status,
+            repository.status_for_path(&B_TXT.into()).unwrap(),
             FileStatus::Untracked,
         );
         assert_eq!(
-            repository.status_for_path(&F_TXT.into()).unwrap().status,
+            repository.status_for_path(&F_TXT.into()).unwrap(),
             FileStatus::Untracked,
         );
     });
@@ -8582,7 +8578,7 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
     // The worktree detects that the file's git status has changed.
     repository.read_with(cx, |repository, _| {
         assert_eq!(
-            repository.status_for_path(&A_TXT.into()).unwrap().status,
+            repository.status_for_path(&A_TXT.into()).unwrap(),
             StatusCode::Modified.worktree(),
         );
     });
@@ -8600,7 +8596,7 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
     // The worktree detects that the files' git status have changed.
     repository.read_with(cx, |repository, _cx| {
         assert_eq!(
-            repository.status_for_path(&F_TXT.into()).unwrap().status,
+            repository.status_for_path(&F_TXT.into()).unwrap(),
             FileStatus::Untracked,
         );
         assert_eq!(repository.status_for_path(&B_TXT.into()), None);
@@ -8623,11 +8619,11 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
     repository.read_with(cx, |repository, _cx| {
         assert_eq!(repository.status_for_path(&A_TXT.into()), None);
         assert_eq!(
-            repository.status_for_path(&B_TXT.into()).unwrap().status,
+            repository.status_for_path(&B_TXT.into()).unwrap(),
             FileStatus::Untracked,
         );
         assert_eq!(
-            repository.status_for_path(&E_TXT.into()).unwrap().status,
+            repository.status_for_path(&E_TXT.into()).unwrap(),
             StatusCode::Modified.worktree(),
         );
     });
@@ -8666,8 +8662,7 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             repository
                 .status_for_path(&Path::new(renamed_dir_name).join(RENAMED_FILE).into())
-                .unwrap()
-                .status,
+                .unwrap(),
             FileStatus::Untracked,
         );
     });
@@ -8690,8 +8685,7 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             repository
                 .status_for_path(&Path::new(renamed_dir_name).join(RENAMED_FILE).into())
-                .unwrap()
-                .status,
+                .unwrap(),
             FileStatus::Untracked,
         );
     });
@@ -9000,7 +8994,7 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
     barrier.await.unwrap();
     worktree_repo.update(cx, |repo, _| {
         pretty_assertions::assert_eq!(
-            repo.status_for_path(&"src/b.txt".into()).unwrap().status,
+            repo.status_for_path(&"src/b.txt".into()).unwrap(),
             StatusCode::Modified.worktree(),
         );
     });
@@ -9039,7 +9033,7 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
     barrier.await.unwrap();
     submodule_repo.update(cx, |repo, _| {
         pretty_assertions::assert_eq!(
-            repo.status_for_path(&"c.txt".into()).unwrap().status,
+            repo.status_for_path(&"c.txt".into()).unwrap(),
             StatusCode::Modified.worktree(),
         );
     });
@@ -9300,9 +9294,7 @@ fn assert_entry_git_state(
     let entry = tree
         .entry_for_path(path)
         .unwrap_or_else(|| panic!("entry {path} not found"));
-    let status = repository
-        .status_for_path(&path.into())
-        .map(|entry| entry.status);
+    let status = repository.status_for_path(&path.into()).map(|entry| entry);
     let expected = index_status.map(|index_status| {
         TrackedStatus {
             index_status,
