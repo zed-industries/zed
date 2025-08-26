@@ -1644,19 +1644,6 @@ impl AcpThreadView {
         let key = (entry_ix, chunk_ix);
 
         let is_open = self.expanded_thinking_blocks.contains(&key);
-        let editor_bg = cx.theme().colors().editor_background;
-        let gradient_overlay = div()
-            .rounded_b_lg()
-            .h_full()
-            .absolute()
-            .w_full()
-            .bottom_0()
-            .left_0()
-            .bg(linear_gradient(
-                180.,
-                linear_color_stop(editor_bg, 1.),
-                linear_color_stop(editor_bg.opacity(0.2), 0.),
-            ));
 
         let scroll_handle = self
             .entry_view_state
@@ -1664,27 +1651,34 @@ impl AcpThreadView {
             .entry(entry_ix)
             .and_then(|entry| entry.scroll_handle_for_assistant_message_chunk(chunk_ix));
 
+        let thinking_content = {
+            div()
+                .id(("thinking-content", chunk_ix))
+                .when_some(scroll_handle, |this, scroll_handle| {
+                    this.track_scroll(&scroll_handle)
+                })
+                .when(!is_open, |this| this.max_h_12().opacity(0.6))
+                .text_ui_sm(cx)
+                .overflow_hidden()
+                .child(
+                    self.render_markdown(chunk, default_markdown_style(false, false, window, cx)),
+                )
+        };
+
         v_flex()
-            .rounded_md()
-            .border_1()
-            .border_color(self.tool_card_border_color(cx))
+            .gap_1()
             .child(
                 h_flex()
                     .id(header_id)
                     .group(&card_header_id)
                     .relative()
                     .w_full()
-                    .py_0p5()
-                    .px_1p5()
-                    .rounded_t_md()
-                    .bg(self.tool_card_header_bg(cx))
                     .justify_between()
-                    .border_b_1()
-                    .border_color(self.tool_card_border_color(cx))
                     .child(
                         h_flex()
                             .h(window.line_height())
                             .gap_1p5()
+                            .overflow_hidden()
                             .child(
                                 Icon::new(IconName::ToolThink)
                                     .size(IconSize::Small)
@@ -1698,7 +1692,7 @@ impl AcpThreadView {
                                         if pending {
                                             this.child("Thinking")
                                         } else {
-                                            this.child("Thought Process")
+                                            this.child("Thought")
                                         }
                                     }),
                             ),
@@ -1730,28 +1724,17 @@ impl AcpThreadView {
                         }
                     })),
             )
-            .child(
-                div()
-                    .relative()
-                    .bg(editor_bg)
-                    .rounded_b_lg()
-                    .child(
-                        div()
-                            .id(("thinking-content", chunk_ix))
-                            .when_some(scroll_handle, |this, scroll_handle| {
-                                this.track_scroll(&scroll_handle)
-                            })
-                            .p_2()
-                            .when(!is_open, |this| this.max_h_20())
-                            .text_ui_sm(cx)
-                            .overflow_hidden()
-                            .child(self.render_markdown(
-                                chunk,
-                                default_markdown_style(false, false, window, cx),
-                            )),
-                    )
-                    .when(!is_open && pending, |this| this.child(gradient_overlay)),
-            )
+            .when(is_open, |this| {
+                this.child(
+                    div()
+                        .relative()
+                        .ml_1p5()
+                        .pl_3p5()
+                        .border_l_1()
+                        .border_color(self.tool_card_border_color(cx))
+                        .child(thinking_content),
+                )
+            })
             .into_any_element()
     }
 
@@ -1924,7 +1907,7 @@ impl AcpThreadView {
                             .when(has_location || use_card_layout, |this| this.px_1())
                             .when(has_location, |this| {
                                 this.cursor(CursorStyle::PointingHand)
-                                    .rounded_sm()
+                                    .rounded(rems_from_px(3.)) // Concentric border radius
                                     .hover(|s| s.bg(cx.theme().colors().element_hover.opacity(0.5)))
                             })
                             .overflow_hidden()
@@ -4247,7 +4230,7 @@ impl AcpThreadView {
             return h_flex().id("thread-controls-container").child(
                 div()
                     .py_2()
-                    .px_5()
+                    .px(rems_from_px(22.))
                     .child(SpinnerLabel::new().size(LabelSize::Small)),
             );
         }
