@@ -99,7 +99,7 @@ impl Room {
         &self,
         cx: &mut AsyncApp,
     ) -> Result<(LocalTrackPublication, playback::AudioStream)> {
-        let (track, stream) = self.playback.capture_local_microphone_track()?;
+        let (track, stream) = self.playback.capture_local_microphone_track(&cx)?;
         let publication = self
             .local_participant()
             .publish_track(

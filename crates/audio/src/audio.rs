@@ -1,12 +1,15 @@
 use anyhow::{Context as _, Result, anyhow};
 use collections::HashMap;
 use gpui::{App, BorrowAppContext, Global};
-use rodio::{Decoder, OutputStream, OutputStreamBuilder, Source, source::Buffered};
+use libwebrtc::native::apm;
+use parking_lot::Mutex;
+use rodio::{Decoder, OutputStream, OutputStreamBuilder, Source, mixer::Mixer, source::Buffered};
 use settings::Settings;
-use std::io::Cursor;
+use std::{io::Cursor, sync::Arc};
 use util::ResultExt;
 
 mod audio_settings;
+mod rodio_ext;
 pub use audio_settings::AudioSettings;
 
 pub fn init(cx: &mut App) {
@@ -38,10 +41,24 @@ impl Sound {
     }
 }
 
-#[derive(Default)]
 pub struct Audio {
     output_handle: Option<OutputStream>,
+    output_mixer: Option<Mixer>,
+    echo_canceller: Arc<Mutex<apm::AudioProcessingModule>>,
     source_cache: HashMap<Sound, Buffered<Decoder<Cursor<Vec<u8>>>>>,
+}
+
+impl Default for Audio {
+    fn default() -> Self {
+        Self {
+            output_handle: Default::default(),
+            output_mixer: Default::default(),
+            echo_canceller: Arc::new(Mutex::new(apm::AudioProcessingModule::new(
+                true, false, false, false,
+            ))),
+            source_cache: Default::default(),
+        }
+    }
 }
 
 impl Global for Audio {}
@@ -50,6 +67,20 @@ impl Audio {
     fn ensure_output_exists(&mut self) -> Option<&OutputStream> {
         if self.output_handle.is_none() {
             self.output_handle = OutputStreamBuilder::open_default_stream().log_err();
+            if let Some(output_handle) = self.output_handle {
+                let config = output_handle.config();
+                let (mixer, source) =
+                    rodio::mixer::mixer(config.channel_count(), config.sample_rate());
+                self.output_mixer = Some(mixer);
+
+                let echo_canceller = Arc::clone(&self.echo_canceller);
+                let source = source.inspect_buffered(
+                    |buffer| echo_canceller.lock().process_reverse_stream(&mut buf),
+                    config.sample_rate().get() as i32,
+                    config.channel_count().get().into(),
+                );
+                output_handle.mixer().add(source);
+            }
         }
 
         self.output_handle.as_ref()
@@ -72,6 +103,7 @@ impl Audio {
         cx.update_default_global(|this: &mut Self, cx| {
             let source = this.sound_source(sound, cx).log_err()?;
             let output_handle = this.ensure_output_exists()?;
+
             output_handle.mixer().add(source);
             Some(())
         });

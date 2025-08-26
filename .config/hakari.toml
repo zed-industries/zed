@@ -26,7 +26,7 @@ third-party = [
     # build of remote_server should not include scap / its x11 dependency
     { name = "scap", git = "https://github.com/zed-industries/scap", rev = "808aa5c45b41e8f44729d02e38fd00a2fe2722e7" },
     # build of remote_server should not need to include on libalsa through rodio
-    { name = "rodio" },
+    # { name = "rodio" },
 ]
 
 [final-excludes]

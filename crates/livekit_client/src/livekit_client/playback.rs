@@ -1,12 +1,14 @@
 use anyhow::{Context as _, Result};
 
+use audio::AudioSettings;
 use cpal::Sample;
 use cpal::traits::{DeviceTrait, StreamTrait as _};
 use dasp_sample::ToSample;
 use futures::channel::mpsc::UnboundedSender;
 use futures::{Stream, StreamExt as _};
 use gpui::{
-    BackgroundExecutor, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, Task,
+    AsyncApp, BackgroundExecutor, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
+    Task,
 };
 use libwebrtc::native::{apm, audio_mixer, audio_resampler};
 use livekit::track;
@@ -19,9 +21,11 @@ use livekit::webrtc::{
     video_source::{RtcVideoSource, VideoResolution, native::NativeVideoSource},
     video_stream::native::NativeVideoStream,
 };
+use log::info;
 use parking_lot::Mutex;
 use rodio::Source;
 use rodio::source::{LimitSettings, UniformSourceIterator};
+use settings::Settings;
 use std::cell::RefCell;
 use std::num::NonZero;
 use std::sync::Weak;
@@ -45,8 +49,8 @@ pub(crate) struct AudioStack {
 // 16kHz, 32kHz and 48kHz. As 48 is the most common "next step up"
 // for audio output devices like speakers/bluetooth, we just hard-code
 // this; and downsample when we need to.
-const SAMPLE_RATE: u32 = 48000;
-const NUM_CHANNELS: u32 = 2;
+const SAMPLE_RATE: NonZero<u32> = NonZero::new(48000).expect("not zero");
+const NUM_CHANNELS: NonZero<u16> = NonZero::new(2).expect("not zero");
 
 pub(crate) fn play_remote_audio_track(
     track: &livekit::track::RemoteAudioTrack,
@@ -55,6 +59,7 @@ pub(crate) fn play_remote_audio_track(
     let stop_handle = Arc::new(AtomicBool::new(false));
     let stop_handle_clone = stop_handle.clone();
     let stream = source::LiveKitStream::new(cx.background_executor(), track)
+        .process_buffer(|| apm)
         .stoppable()
         .periodic_access(Duration::from_millis(50), move |s| {
             if stop_handle.load(Ordering::Relaxed) {
@@ -95,8 +100,8 @@ impl AudioStack {
         let next_ssrc = self.next_ssrc.fetch_add(1, Ordering::Relaxed);
         let source = AudioMixerSource {
             ssrc: next_ssrc,
-            sample_rate: SAMPLE_RATE,
-            num_channels: NUM_CHANNELS,
+            sample_rate: SAMPLE_RATE.get(),
+            num_channels: NUM_CHANNELS.get() as u32,
             buffer: Arc::default(),
         };
         self.mixer.lock().add_source(source.clone());
@@ -136,7 +141,7 @@ impl AudioStack {
             let apm = self.apm.clone();
             let mixer = self.mixer.clone();
             async move {
-                Self::play_output(apm, mixer, SAMPLE_RATE, NUM_CHANNELS)
+                Self::play_output(apm, mixer, SAMPLE_RATE.get(), NUM_CHANNELS.get().into())
                     .await
                     .log_err();
             }
@@ -147,12 +152,13 @@ impl AudioStack {
 
     pub(crate) fn capture_local_microphone_track(
         &self,
+        cx: &AsyncApp,
     ) -> Result<(crate::LocalAudioTrack, AudioStream)> {
         let source = NativeAudioSource::new(
             // n.b. this struct's options are always ignored, noise cancellation is provided by apm.
             AudioSourceOptions::default(),
-            SAMPLE_RATE,
-            NUM_CHANNELS,
+            SAMPLE_RATE.get(),
+            NUM_CHANNELS.get().into(),
             10,
         );
 
@@ -171,8 +177,16 @@ impl AudioStack {
                 }
             }
         });
+        let rodio_pipeline =
+            AudioSettings::try_read_global(cx, |setting| setting.rodio_audio).unwrap_or(false);
         let capture_task = self.executor.spawn(async move {
-            Self::capture_input(apm, frame_tx, SAMPLE_RATE, NUM_CHANNELS).await
+            if rodio_pipeline {
+                info!("Using experimental.rodio_audio audio pipeline");
+                Self::capture_input_rodio(apm, frame_tx).await
+            } else {
+                Self::capture_input(apm, frame_tx, SAMPLE_RATE.get(), NUM_CHANNELS.get().into())
+                    .await
+            }
         });
 
         let on_drop = util::defer(|| {
@@ -262,12 +276,11 @@ impl AudioStack {
     async fn capture_input_rodio(
         apm: Arc<Mutex<apm::AudioProcessingModule>>,
         frame_tx: UnboundedSender<AudioFrame<'static>>,
-        sample_rate: u32,
-        num_channels: u32,
     ) -> Result<()> {
         use crate::livekit_client::playback::source::RodioExt;
         const NUM_CHANNELS: usize = 1;
-        const LIVEKIT_BUFFER_SIZE: usize = (SAMPLE_RATE as usize / 100) * NUM_CHANNELS as usize;
+        const LIVEKIT_BUFFER_SIZE: usize =
+            (SAMPLE_RATE.get() as usize / 100) * NUM_CHANNELS as usize;
 
         let (stream_error_tx, stream_error_rx) = channel();
 
@@ -275,18 +288,31 @@ impl AudioStack {
             let stream = rodio::microphone::MicrophoneBuilder::new()
                 .default_device()?
                 .default_config()?
+                .prefer_sample_rates([
+                    SAMPLE_RATE,
+                    SAMPLE_RATE.saturating_mul(NonZero::new(2).expect("not zero")),
+                ])
+                .prefer_channel_counts([
+                    NonZero::new(1).expect("not zero"),
+                    NonZero::new(2).expect("not zero"),
+                ])
+                .prefer_buffer_sizes(512..)
                 .open_stream()?;
             let mut stream = UniformSourceIterator::new(
                 stream,
                 NonZero::new(1).expect("1 is not zero"),
-                NonZero::new(SAMPLE_RATE).expect("constant is not zero"),
+                SAMPLE_RATE,
             )
             .limit(LimitSettings::live_performance())
             .process_buffer::<LIVEKIT_BUFFER_SIZE, _>(|buffer| {
                 let mut int_buffer: [i16; _] = buffer.map(|s| s.to_sample());
                 if let Err(e) = apm
                     .lock()
-                    .process_stream(&mut int_buffer, SAMPLE_RATE as i32, NUM_CHANNELS as i32)
+                    .process_stream(
+                        &mut int_buffer,
+                        SAMPLE_RATE.get() as i32,
+                        NUM_CHANNELS as i32,
+                    )
                     .context("livekit audio processor error")
                 {
                     let _ = stream_error_tx.send(e);
@@ -299,7 +325,7 @@ impl AudioStack {
             .automatic_gain_control(1.0, 4.0, 0.0, 5.0);
 
             loop {
-                let sampled = stream
+                let sampled: Vec<_> = stream
                     .by_ref()
                     .take(LIVEKIT_BUFFER_SIZE)
                     .map(|s| s.to_sample())
@@ -315,10 +341,10 @@ impl AudioStack {
 
                 frame_tx
                     .unbounded_send(AudioFrame {
+                        sample_rate: SAMPLE_RATE.get(),
+                        num_channels: NUM_CHANNELS as u32,
+                        samples_per_channel: sampled.len() as u32 / NUM_CHANNELS as u32,
                         data: Cow::Owned(sampled),
-                        sample_rate,
-                        num_channels,
-                        samples_per_channel: sample_rate / 100,
                     })
                     .context("Failed to send audio frame")?
             }
@@ -418,6 +444,8 @@ impl AudioStack {
         }
     }
 }
+
+use crate::livekit_client::playback::source::RodioExt;
 
 use super::LocalVideoTrack;
 
