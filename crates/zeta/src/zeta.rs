@@ -1159,29 +1159,50 @@ and then another
         };
         let mut results = Vec::new();
         for ix in (0..self.recent_project_entries.len()).rev() {
-            let (id, last_active_at) = &self.recent_project_entries[ix];
-            let Some(project_path) = project.read(cx).path_for_entry(*id, cx) else {
+            let (entry_id, last_active_at) = &self.recent_project_entries[ix];
+            if let Some(worktree) = project.read(cx).worktree_for_entry(*entry_id, cx)
+                && let worktree = worktree.read(cx)
+                && let Some(entry) = worktree.entry_for_id(*entry_id)
+                && entry.is_file()
+                && entry.is_created()
+                && !entry.is_ignored
+                && !entry.is_private
+                && !entry.is_external
+                && !entry.is_fifo
+            {
+                let project_path = ProjectPath {
+                    worktree_id: worktree.id(),
+                    path: entry.path.clone(),
+                };
+                let Some(repo_path) = repository.project_path_to_repo_path(&project_path, cx)
+                else {
+                    // entry not removed since queries involving other repositories might occur later
+                    continue;
+                };
+                let Some(repo_path_str) = repo_path.to_str() else {
+                    // paths may not be valid UTF-8
+                    self.recent_project_entries.remove(ix);
+                    continue;
+                };
+                if let Some(file_status) = repository.status_for_path(&repo_path) {
+                    if file_status.is_ignored() || file_status.is_untracked() {
+                        // entry not removed because it may belong to a nested repository
+                        continue;
+                    }
+                }
+                let Ok(active_to_now_ms) =
+                    now.duration_since(*last_active_at).as_millis().try_into()
+                else {
+                    self.recent_project_entries.remove(ix);
+                    continue;
+                };
+                results.push(PredictEditsRecentFile {
+                    repo_path: repo_path_str.to_string(),
+                    active_to_now_ms,
+                });
+            } else {
                 self.recent_project_entries.remove(ix);
-                continue;
-            };
-            let Some(repo_path) = repository.project_path_to_repo_path(&project_path, cx) else {
-                // entry not removed since queries involving other repositories might occur later
-                continue;
-            };
-            let Some(repo_path) = repo_path.to_str() else {
-                // paths may not be valid UTF-8
-                self.recent_project_entries.remove(ix);
-                continue;
-            };
-            let Ok(active_to_now_ms) = now.duration_since(*last_active_at).as_millis().try_into()
-            else {
-                self.recent_project_entries.remove(ix);
-                continue;
-            };
-            results.push(PredictEditsRecentFile {
-                repo_path: repo_path.to_string(),
-                active_to_now_ms,
-            });
+            }
         }
         results
     }
