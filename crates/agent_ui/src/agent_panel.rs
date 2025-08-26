@@ -591,17 +591,6 @@ impl AgentPanel {
                 None
             };
 
-            // Wait for the Gemini/Native feature flag to be available.
-            let client = workspace.read_with(cx, |workspace, _| workspace.client().clone())?;
-            if !client.status().borrow().is_signed_out() {
-                cx.update(|_, cx| {
-                    cx.wait_for_flag_or_timeout::<feature_flags::GeminiAndNativeFeatureFlag>(
-                        Duration::from_secs(2),
-                    )
-                })?
-                .await;
-            }
-
             let panel = workspace.update_in(cx, |workspace, window, cx| {
                 let panel = cx.new(|cx| {
                     Self::new(
