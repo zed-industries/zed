@@ -1184,7 +1184,7 @@ impl Project {
     }
 
     pub fn remote(
-        ssh: Entity<RemoteClient>,
+        remote: Entity<RemoteClient>,
         client: Arc<Client>,
         node: NodeRuntime,
         user_store: Entity<UserStore>,
@@ -1200,12 +1200,12 @@ impl Project {
             let snippets =
                 SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
 
-            let (ssh_proto, path_style) =
-                ssh.read_with(cx, |ssh, _| (ssh.proto_client(), ssh.path_style()));
+            let (remote_proto, path_style) =
+                remote.read_with(cx, |remote, _| (remote.proto_client(), remote.path_style()));
             let worktree_store = cx.new(|_| {
                 WorktreeStore::remote(
                     false,
-                    ssh_proto.clone(),
+                    remote_proto.clone(),
                     REMOTE_SERVER_PROJECT_ID,
                     path_style,
                 )
@@ -1220,7 +1220,7 @@ impl Project {
             let buffer_store = cx.new(|cx| {
                 BufferStore::remote(
                     worktree_store.clone(),
-                    ssh.read(cx).proto_client(),
+                    remote.read(cx).proto_client(),
                     REMOTE_SERVER_PROJECT_ID,
                     cx,
                 )
@@ -1228,7 +1228,7 @@ impl Project {
             let image_store = cx.new(|cx| {
                 ImageStore::remote(
                     worktree_store.clone(),
-                    ssh.read(cx).proto_client(),
+                    remote.read(cx).proto_client(),
                     REMOTE_SERVER_PROJECT_ID,
                     cx,
                 )
@@ -1236,7 +1236,7 @@ impl Project {
             cx.subscribe(&buffer_store, Self::on_buffer_store_event)
                 .detach();
             let toolchain_store = cx.new(|cx| {
-                ToolchainStore::remote(REMOTE_SERVER_PROJECT_ID, ssh.read(cx).proto_client(), cx)
+                ToolchainStore::remote(REMOTE_SERVER_PROJECT_ID, remote.read(cx).proto_client(), cx)
             });
             let task_store = cx.new(|cx| {
                 TaskStore::remote(
@@ -1244,7 +1244,7 @@ impl Project {
                     buffer_store.downgrade(),
                     worktree_store.clone(),
                     toolchain_store.read(cx).as_language_toolchain_store(),
-                    ssh.read(cx).proto_client(),
+                    remote.read(cx).proto_client(),
                     REMOTE_SERVER_PROJECT_ID,
                     cx,
                 )
@@ -1268,7 +1268,7 @@ impl Project {
                     buffer_store.clone(),
                     worktree_store.clone(),
                     languages.clone(),
-                    ssh_proto.clone(),
+                    remote_proto.clone(),
                     REMOTE_SERVER_PROJECT_ID,
                     fs.clone(),
                     cx,
@@ -1277,12 +1277,12 @@ impl Project {
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
             let breakpoint_store =
-                cx.new(|_| BreakpointStore::remote(REMOTE_SERVER_PROJECT_ID, ssh_proto.clone()));
+                cx.new(|_| BreakpointStore::remote(REMOTE_SERVER_PROJECT_ID, remote_proto.clone()));
 
             let dap_store = cx.new(|cx| {
-                DapStore::new_ssh(
+                DapStore::new_remote(
                     REMOTE_SERVER_PROJECT_ID,
-                    ssh.clone(),
+                    remote.clone(),
                     breakpoint_store.clone(),
                     worktree_store.clone(),
                     cx,
@@ -1290,10 +1290,15 @@ impl Project {
             });
 
             let git_store = cx.new(|cx| {
-                GitStore::ssh(&worktree_store, buffer_store.clone(), ssh_proto.clone(), cx)
+                GitStore::ssh(
+                    &worktree_store,
+                    buffer_store.clone(),
+                    remote_proto.clone(),
+                    cx,
+                )
             });
 
-            cx.subscribe(&ssh, Self::on_remote_client_event).detach();
+            cx.subscribe(&remote, Self::on_remote_client_event).detach();
 
             let this = Self {
                 buffer_ordered_messages_tx: tx,
@@ -1336,7 +1341,7 @@ impl Project {
                 user_store,
                 settings_observer,
                 fs,
-                remote_client: Some(ssh.clone()),
+                remote_client: Some(remote.clone()),
                 buffers_needing_diff: Default::default(),
                 git_diff_debouncer: DebouncedDelay::new(),
                 terminals: Terminals {
@@ -1355,28 +1360,28 @@ impl Project {
             };
 
             // remote server -> local machine handlers
-            ssh_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &cx.entity());
-            ssh_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.buffer_store);
-            ssh_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.worktree_store);
-            ssh_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.lsp_store);
-            ssh_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.dap_store);
-            ssh_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.settings_observer);
-            ssh_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.git_store);
+            remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &cx.entity());
+            remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.buffer_store);
+            remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.worktree_store);
+            remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.lsp_store);
+            remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.dap_store);
+            remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.settings_observer);
+            remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.git_store);
 
-            ssh_proto.add_entity_message_handler(Self::handle_create_buffer_for_peer);
-            ssh_proto.add_entity_message_handler(Self::handle_update_worktree);
-            ssh_proto.add_entity_message_handler(Self::handle_update_project);
-            ssh_proto.add_entity_message_handler(Self::handle_toast);
-            ssh_proto.add_entity_request_handler(Self::handle_language_server_prompt_request);
-            ssh_proto.add_entity_message_handler(Self::handle_hide_toast);
-            ssh_proto.add_entity_request_handler(Self::handle_update_buffer_from_remote_server);
-            BufferStore::init(&ssh_proto);
-            LspStore::init(&ssh_proto);
-            SettingsObserver::init(&ssh_proto);
-            TaskStore::init(Some(&ssh_proto));
-            ToolchainStore::init(&ssh_proto);
-            DapStore::init(&ssh_proto, cx);
-            GitStore::init(&ssh_proto);
+            remote_proto.add_entity_message_handler(Self::handle_create_buffer_for_peer);
+            remote_proto.add_entity_message_handler(Self::handle_update_worktree);
+            remote_proto.add_entity_message_handler(Self::handle_update_project);
+            remote_proto.add_entity_message_handler(Self::handle_toast);
+            remote_proto.add_entity_request_handler(Self::handle_language_server_prompt_request);
+            remote_proto.add_entity_message_handler(Self::handle_hide_toast);
+            remote_proto.add_entity_request_handler(Self::handle_update_buffer_from_remote_server);
+            BufferStore::init(&remote_proto);
+            LspStore::init(&remote_proto);
+            SettingsObserver::init(&remote_proto);
+            TaskStore::init(Some(&remote_proto));
+            ToolchainStore::init(&remote_proto);
+            DapStore::init(&remote_proto, cx);
+            GitStore::init(&remote_proto);
 
             this
         })
