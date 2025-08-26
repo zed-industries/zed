@@ -770,7 +770,7 @@ impl MacWindow {
                     native_window.setLevel_(NSNormalWindowLevel);
                     native_window.setAcceptsMouseMovedEvents_(YES);
 
-                    if let Some(tabbing_identifier) = tabbing_identifier.clone() {
+                    if let Some(tabbing_identifier) = tabbing_identifier {
                         let tabbing_id = NSString::alloc(nil).init_str(tabbing_identifier.as_str());
                         let _: () = msg_send![native_window, setTabbingIdentifier: tabbing_id];
                     }

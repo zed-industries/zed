@@ -302,7 +302,7 @@ impl SystemWindowTabController {
 
         controller
             .tab_groups
-            .get(&group_ids[next_idx])
+            .get(group_ids[next_idx])
             .and_then(|tabs| {
                 tabs.iter()
                     .max_by_key(|tab| tab.last_active_at)
@@ -330,7 +330,7 @@ impl SystemWindowTabController {
 
         controller
             .tab_groups
-            .get(&group_ids[prev_idx])
+            .get(group_ids[prev_idx])
             .and_then(|tabs| {
                 tabs.iter()
                     .max_by_key(|tab| tab.last_active_at)

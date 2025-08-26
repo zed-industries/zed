@@ -944,6 +944,7 @@ impl Window {
             app_id,
             window_min_size,
             window_decorations,
+            #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
             tabbing_identifier,
         } = options;
 
