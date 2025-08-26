@@ -1308,11 +1308,11 @@ pub fn handle_keymap_file_changes(
     })
     .detach();
 
-    let mut current_mapping = settings::get_key_equivalents(cx.keyboard_layout().id());
+    let mut current_layout_id = cx.keyboard_layout().id().to_string();
     cx.on_keyboard_layout_change(move |cx| {
-        let next_mapping = settings::get_key_equivalents(cx.keyboard_layout().id());
-        if next_mapping != current_mapping {
-            current_mapping = next_mapping;
+        let next_layout_id = cx.keyboard_layout().id();
+        if next_layout_id != current_layout_id {
+            current_layout_id = next_layout_id.to_string();
             keyboard_layout_tx.unbounded_send(()).ok();
         }
     })
@@ -4729,7 +4729,7 @@ mod tests {
                 // and key strokes contain the given key
                 bindings
                     .into_iter()
-                    .any(|binding| binding.keystrokes().iter().any(|k| k.key == key)),
+                    .any(|binding| binding.keystrokes().iter().any(|k| k.display_key == key)),
                 "On {} Failed to find {} with key binding {}",
                 line,
                 action.name(),

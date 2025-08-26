@@ -351,6 +351,10 @@ impl Platform for WindowsPlatform {
         )
     }
 
+    fn keyboard_mapper(&self) -> Rc<dyn PlatformKeyboardMapper> {
+        Rc::new(WindowsKeyboardMapper::new())
+    }
+
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>) {
         self.state.borrow_mut().callbacks.keyboard_layout_change = Some(callback);
     }
