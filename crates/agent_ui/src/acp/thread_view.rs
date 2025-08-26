@@ -2927,8 +2927,6 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let install_command = install_command.clone();
-
         self.install_command_markdown.update(cx, |markdown, cx| {
             if !markdown.source().contains(&install_command) {
                 markdown.replace(format!("```\n{}\n```", install_command), cx);
