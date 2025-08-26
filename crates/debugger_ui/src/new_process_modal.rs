@@ -1503,7 +1503,7 @@ impl PickerDelegate for DebugDelegate {
                     v_flex()
                         .items_start()
                         .child(highlighted_location.render(window, cx))
-                        .when_some(subtitle.clone(), |this, subtitle_text| {
+                        .when_some(subtitle, |this, subtitle_text| {
                             this.child(
                                 Label::new(subtitle_text)
                                     .size(LabelSize::Small)
