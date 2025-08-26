@@ -732,7 +732,17 @@ impl Thread {
         stream.update_tool_call_fields(
             &tool_use.id,
             acp::ToolCallUpdateFields {
-                status: Some(acp::ToolCallStatus::Completed),
+                status: Some(
+                    tool_result
+                        .as_ref()
+                        .map_or(acp::ToolCallStatus::Failed, |result| {
+                            if result.is_error {
+                                acp::ToolCallStatus::Failed
+                            } else {
+                                acp::ToolCallStatus::Completed
+                            }
+                        }),
+                ),
                 raw_output: output,
                 ..Default::default()
             },
@@ -1557,7 +1567,7 @@ impl Thread {
                     tool_name: tool_use.name,
                     is_error: true,
                     content: LanguageModelToolResultContent::Text(Arc::from(error.to_string())),
-                    output: None,
+                    output: Some(error.to_string().into()),
                 },
             }
         }))
