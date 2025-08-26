@@ -423,8 +423,17 @@ impl Zeta {
         let llm_token = self.llm_token.clone();
         let app_version = AppVersion::global(cx);
 
+        let cursor_point = cursor.to_point(&snapshot);
+        let cursor_offset = cursor_point.to_offset(&snapshot);
         let git_info = if matches!(can_collect_data, CanCollectData(true)) {
-            self.gather_git_info(project.clone(), &buffer_snapshotted_at, &snapshot, cx)
+            self.gather_git_info(
+                cursor_point.clone(),
+                cursor_offset,
+                &buffer_snapshotted_at,
+                &snapshot,
+                project.clone(),
+                cx,
+            )
         } else {
             None
         };
@@ -434,8 +443,6 @@ impl Zeta {
             .map(|f| Arc::from(f.full_path(cx).as_path()))
             .unwrap_or_else(|| Arc::from(Path::new("untitled")));
         let full_path_str = full_path.to_string_lossy().to_string();
-        let cursor_point = cursor.to_point(&snapshot);
-        let cursor_offset = cursor_point.to_offset(&snapshot);
         let make_events_prompt = move || prompt_for_events(&events, MAX_EVENT_TOKENS);
         let gather_task = gather_context(
             project,
@@ -1132,9 +1139,11 @@ and then another
 
     fn gather_git_info(
         &mut self,
-        project: Option<&Entity<Project>>,
+        cursor_point: language::Point,
+        cursor_offset: usize,
         buffer_snapshotted_at: &Instant,
         snapshot: &BufferSnapshot,
+        project: Option<&Entity<Project>>,
         cx: &Context<Self>,
     ) -> Option<PredictEditsGitInfo> {
         let project = project?.read(cx);
@@ -1151,21 +1160,19 @@ and then another
         let repo_path_str = repo_path.to_str()?;
 
         let repository = repository.read(cx);
-        let head_sha = repository
-            .head_commit
-            .as_ref()
-            .map(|head_commit| head_commit.sha.to_string());
+        let head_sha = repository.head_commit.as_ref()?.sha.to_string();
         let remote_origin_url = repository.remote_origin_url.clone();
         let remote_upstream_url = repository.remote_upstream_url.clone();
-        if head_sha.is_none() && remote_origin_url.is_none() && remote_upstream_url.is_none() {
-            return None;
-        }
-
         let recent_files = self.recent_files(&buffer_snapshotted_at, repository, cx);
 
         Some(PredictEditsGitInfo {
             input_path: Some(repo_path_str.to_string()),
-            head_sha,
+            cursor_point: Some(cloud_llm_client::Point {
+                row: cursor_point.row,
+                column: cursor_point.column,
+            }),
+            cursor_offset: Some(cursor_offset),
+            head_sha: Some(head_sha),
             remote_origin_url,
             remote_upstream_url,
             recent_files: Some(recent_files),

@@ -159,6 +159,10 @@ pub struct PredictEditsGitInfo {
     /// Path within the repository that contains the input excerpt.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub input_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub cursor_point: Option<Point>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub cursor_offset: Option<usize>,
     /// SHA of git HEAD commit at time of prediction.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub head_sha: Option<String>,
@@ -171,6 +175,13 @@ pub struct PredictEditsGitInfo {
     /// Recently active files that may be within this repository.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub recent_files: Option<Vec<PredictEditsRecentFile>>,
+}
+
+/// A zero-indexed point in a text buffer consisting of a row and column.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Point {
+    pub row: u32,
+    pub column: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
