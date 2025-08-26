@@ -2936,7 +2936,7 @@ impl AcpThreadView {
         let (heading_label, description_label, button_label, or_label) = if is_upgrade {
             (
                 "Upgrade Gemini CLI in Zed",
-                "Get acces to the latest version with support for Zed.",
+                "Get access to the latest version with support for Zed.",
                 "Upgrade Gemini CLI",
                 "Or, to upgrade it manually:",
             )
