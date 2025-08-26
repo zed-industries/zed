@@ -4,7 +4,6 @@ use crate::{
     FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOption,
     SearchOptions, SearchSource, SelectAllMatches, SelectNextMatch, SelectPreviousMatch,
     ToggleCaseSensitive, ToggleRegex, ToggleReplace, ToggleSelection, ToggleWholeWord,
-    pattern_items::PatternItems,
     search_bar::{ActionButtonState, input_base_styles, render_action_button, render_text_input},
 };
 use any_vec::AnyVec;
@@ -112,10 +111,6 @@ pub struct BufferSearchBar {
     pending_search: Option<Task<()>>,
     search_options: SearchOptions,
     default_options: SearchOptions,
-    /// Pattern items that have been applied from the query to the search
-    /// options. Tracking these allows us to revert the search options to their
-    /// original state as pattern items are removed from the query.
-    pattern_items: PatternItems,
     configured_options: SearchOptions,
     query_error: Option<String>,
     dismissed: bool,
@@ -660,7 +655,6 @@ impl BufferSearchBar {
             default_options: search_options,
             configured_options: search_options,
             search_options,
-            pattern_items: Default::default(),
             pending_search: None,
             query_error: None,
             dismissed: true,
@@ -816,14 +810,9 @@ impl BufferSearchBar {
         });
     }
 
-    /// Returns the raw query string without any of the pattern items removed.
-    pub fn raw_query(&self, cx: &App) -> String {
-        self.query_editor.read(cx).text(cx)
-    }
-
     /// Returns the sanitized query string with pattern items removed.
     pub fn query(&self, cx: &App) -> String {
-        PatternItems::clean_query(&self.raw_query(cx))
+        self.query_editor.read(cx).text(cx)
     }
 
     pub fn replacement(&self, cx: &mut App) -> String {
@@ -1055,7 +1044,6 @@ impl BufferSearchBar {
             editor::EditorEvent::Blurred => self.query_editor_focused = false,
             editor::EditorEvent::Edited { .. } => {
                 self.smartcase(window, cx);
-                self.apply_pattern_items(cx);
                 self.clear_matches(window, cx);
                 let search = self.update_matches(false, window, cx);
 
@@ -1462,22 +1450,6 @@ impl BufferSearchBar {
                     self.toggle_search_option(SearchOptions::CASE_SENSITIVE, window, cx);
                 }
             }
-        }
-    }
-
-    // Determines which pattern items are present in the search query and
-    // updates the search options accordingly, only if the regex search option
-    // is enabled.
-    fn apply_pattern_items(&mut self, cx: &mut Context<Self>) {
-        if self.search_options.contains(SearchOptions::REGEX) {
-            // Determine what the search options were before the pattern items
-            // were applied, so we can reapply them and determine which ones
-            // actually have an effect on the search options, which are the ones
-            // we need to keep track of.
-            let query = self.raw_query(cx);
-            let search_options = self.pattern_items.revert(self.search_options);
-            self.pattern_items = PatternItems::from_search_options(search_options, &query);
-            self.set_search_options(self.pattern_items.apply(search_options), cx);
         }
     }
 
@@ -2863,156 +2835,6 @@ mod tests {
                 search_bar.search_options,
                 SearchOptions::CASE_SENSITIVE,
                 "After hiding and showing the search bar, default options should be used"
-            );
-        });
-    }
-
-    #[gpui::test]
-    async fn test_pattern_items(cx: &mut TestAppContext) {
-        let (_editor, search_bar, cx) = init_test(cx);
-
-        update_search_settings(
-            SearchSettings {
-                button: true,
-                whole_word: false,
-                case_sensitive: false,
-                include_ignored: false,
-                regex: false,
-            },
-            cx,
-        );
-
-        search_bar.update_in(cx, |search_bar, window, cx| {
-            search_bar.show(window, cx);
-            assert_eq!(
-                search_bar.search_options,
-                SearchOptions::NONE,
-                "Should have no search options enabled by default"
-            );
-
-            cx.focus_view(&search_bar.query_editor, window);
-        });
-
-        cx.simulate_input("test\\C");
-
-        search_bar.update_in(cx, |search_bar, _, _| {
-            assert_eq!(
-                search_bar.search_options,
-                SearchOptions::NONE,
-                "Should not apply pattern items if regex not enabled"
-            );
-        });
-
-        cx.simulate_keystrokes("backspace backspace");
-
-        search_bar.update_in(cx, |search_bar, window, cx| {
-            search_bar.toggle_search_option(SearchOptions::REGEX, window, cx);
-        });
-
-        cx.simulate_input("\\C");
-
-        search_bar.update_in(cx, |search_bar, _, _| {
-            assert_eq!(
-                search_bar.search_options,
-                SearchOptions::REGEX | SearchOptions::CASE_SENSITIVE,
-                "Should have case sensitivity enabled when \\C pattern item is present and regex is enabled"
-            );
-        });
-
-        // Remove `\\C` from the query to check if the search option is
-        // correctly reverted to its default state.
-        cx.simulate_keystrokes("backspace backspace");
-        search_bar.update_in(cx, |search_bar, window, cx| {
-            assert_eq!(search_bar.raw_query(cx), "test");
-            assert_eq!(
-                search_bar.search_options,
-                SearchOptions::REGEX,
-                "Should have case sensitivity disabled when \\C pattern item is removed"
-            );
-
-            search_bar.toggle_search_option(SearchOptions::CASE_SENSITIVE, window, cx);
-            assert_eq!(
-                search_bar.search_options,
-                SearchOptions::REGEX | SearchOptions::CASE_SENSITIVE,
-                "Should have case sensitivity enabled by default"
-            );
-        });
-        cx.run_until_parked();
-
-        cx.simulate_input("\\c");
-        cx.run_until_parked();
-        search_bar.update(cx, |search_bar, cx| {
-            assert_eq!(search_bar.raw_query(cx), "test\\c");
-            assert_eq!(
-                search_bar.search_options,
-                SearchOptions::REGEX,
-                "Should have no case sensitivity enabled when \\c pattern item is present"
-            );
-        });
-
-        cx.simulate_input("\\C");
-        cx.run_until_parked();
-        search_bar.update(cx, |search_bar, cx| {
-            assert_eq!(search_bar.raw_query(cx), "test\\c\\C");
-            assert_eq!(
-                search_bar.search_options,
-                SearchOptions::REGEX | SearchOptions::CASE_SENSITIVE,
-                "Should have case sensitivity enabled when \\C pattern item is present, even if preceded by \\c"
-            );
-        });
-
-        cx.simulate_input("\\c");
-        cx.run_until_parked();
-        search_bar.update(cx, |search_bar, cx| {
-            assert_eq!(search_bar.raw_query(cx), "test\\c\\C\\c");
-            assert_eq!(
-                search_bar.search_options,
-                SearchOptions::REGEX,
-                "Should have no case sensitivity enabled when \\c pattern item is present, even if preceded by \\C"
-            );
-        });
-
-        cx.simulate_keystrokes("backspace backspace");
-
-        search_bar.update(cx, |search_bar, cx| {
-            assert_eq!(search_bar.raw_query(cx), "test\\c\\C");
-            assert_eq!(
-                search_bar.search_options,
-                SearchOptions::REGEX | SearchOptions::CASE_SENSITIVE,
-                "Should have case sensitivity enabled when suffix \\c pattern item is removed"
-            );
-        });
-
-        cx.simulate_keystrokes("backspace backspace");
-
-        search_bar.update(cx, |search_bar, cx| {
-            assert_eq!(search_bar.raw_query(cx), "test\\c");
-            assert_eq!(
-                search_bar.search_options,
-                SearchOptions::REGEX,
-                "Should have case sensitivity disabled when suffix \\C pattern item is removed and a \\c pattern item is still present"
-            );
-        });
-
-        cx.simulate_keystrokes("backspace backspace");
-
-        search_bar.update(cx, |search_bar, cx| {
-            assert_eq!(search_bar.raw_query(cx), "test");
-            assert_eq!(
-                search_bar.search_options,
-                SearchOptions::REGEX | SearchOptions::CASE_SENSITIVE,
-                "Should have case sensitivity enabled when all pattern items are removed and original search options are restored"
-            );
-        });
-
-        cx.simulate_input("\\\\c");
-        cx.run_until_parked();
-        search_bar.update(cx, |search_bar, cx| {
-            assert_eq!(search_bar.raw_query(cx), "test\\\\c");
-            assert_eq!(
-                search_bar.search_options,
-                SearchOptions::REGEX | SearchOptions::CASE_SENSITIVE,
-                "Should still have case sensitivity enabled when pattern item is preceded by another \\"
             );
         });
     }
