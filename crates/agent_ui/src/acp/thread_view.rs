@@ -2225,6 +2225,12 @@ impl AcpThreadView {
             started_at.elapsed()
         };
 
+        let header_id =
+            SharedString::from(format!("terminal-tool-header-{}", terminal.entity_id()));
+        let header_group = SharedString::from(format!(
+            "terminal-tool-header-group-{}",
+            terminal.entity_id()
+        ));
         let header_bg = cx
             .theme()
             .colors()
@@ -2240,10 +2246,7 @@ impl AcpThreadView {
         let is_expanded = self.expanded_tool_calls.contains(&tool_call.id);
 
         let header = h_flex()
-            .id(SharedString::from(format!(
-                "terminal-tool-header-{}",
-                terminal.entity_id()
-            )))
+            .id(header_id)
             .flex_none()
             .gap_1()
             .justify_between()
@@ -2307,23 +2310,6 @@ impl AcpThreadView {
                             ),
                     )
             })
-            .when(tool_failed || command_failed, |header| {
-                header.child(
-                    div()
-                        .id(("terminal-tool-error-code-indicator", terminal.entity_id()))
-                        .child(
-                            Icon::new(IconName::Close)
-                                .size(IconSize::Small)
-                                .color(Color::Error),
-                        )
-                        .when_some(output.and_then(|o| o.exit_status), |this, status| {
-                            this.tooltip(Tooltip::text(format!(
-                                "Exited with code {}",
-                                status.code().unwrap_or(-1),
-                            )))
-                        }),
-                )
-            })
             .when(truncated_output, |header| {
                 let tooltip = if let Some(output) = output {
                     if output_line_count + 10 > terminal::MAX_SCROLL_HISTORY_LINES {
@@ -2376,6 +2362,7 @@ impl AcpThreadView {
                 )
                 .opened_icon(IconName::ChevronUp)
                 .closed_icon(IconName::ChevronDown)
+                .visible_on_hover(&header_group)
                 .on_click(cx.listener({
                     let id = tool_call.id.clone();
                     move |this, _event, _window, _cx| {
@@ -2384,8 +2371,26 @@ impl AcpThreadView {
                         } else {
                             this.expanded_tool_calls.insert(id.clone());
                         }
-                    }})),
-                );
+                    }
+                })),
+            )
+            .when(tool_failed || command_failed, |header| {
+                header.child(
+                    div()
+                        .id(("terminal-tool-error-code-indicator", terminal.entity_id()))
+                        .child(
+                            Icon::new(IconName::Close)
+                                .size(IconSize::Small)
+                                .color(Color::Error),
+                        )
+                        .when_some(output.and_then(|o| o.exit_status), |this, status| {
+                            this.tooltip(Tooltip::text(format!(
+                                "Exited with code {}",
+                                status.code().unwrap_or(-1),
+                            )))
+                        }),
+                )
+            });
 
         let terminal_view = self
             .entry_view_state
@@ -2395,7 +2400,8 @@ impl AcpThreadView {
         let show_output = is_expanded && terminal_view.is_some();
 
         v_flex()
-            .mb_2()
+            .my_2()
+            .mx_5()
             .border_1()
             .when(tool_failed || command_failed, |card| card.border_dashed())
             .border_color(border_color)
@@ -2403,9 +2409,10 @@ impl AcpThreadView {
             .overflow_hidden()
             .child(
                 v_flex()
+                    .group(&header_group)
                     .py_1p5()
-                    .pl_2()
                     .pr_1p5()
+                    .pl_2()
                     .gap_0p5()
                     .bg(header_bg)
                     .text_xs()
