@@ -5,18 +5,21 @@ mod tool_picker;
 
 use std::{sync::Arc, time::Duration};
 
-use agent_servers::{AgentServerCommand, AllAgentServersSettings, Gemini};
+use agent_servers::{AgentServerCommand, AgentServerSettings, AllAgentServersSettings, Gemini};
 use agent_settings::AgentSettings;
+use anyhow::Result;
 use assistant_tool::{ToolSource, ToolWorkingSet};
 use cloud_llm_client::Plan;
 use collections::HashMap;
 use context_server::ContextServerId;
+use editor::{Editor, SelectionEffects, scroll::Autoscroll};
 use extension::ExtensionManifest;
 use extension_host::ExtensionStore;
 use fs::Fs;
 use gpui::{
-    Action, Animation, AnimationExt as _, AnyView, App, Corner, Entity, EventEmitter, FocusHandle,
-    Focusable, Hsla, ScrollHandle, Subscription, Task, Transformation, WeakEntity, percentage,
+    Action, Animation, AnimationExt as _, AnyView, App, AsyncWindowContext, Corner, Entity,
+    EventEmitter, FocusHandle, Focusable, Hsla, ScrollHandle, Subscription, Task, Transformation,
+    WeakEntity, percentage,
 };
 use language::LanguageRegistry;
 use language_model::{
@@ -34,7 +37,7 @@ use ui::{
     Scrollbar, ScrollbarState, Switch, SwitchColor, SwitchField, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
-use workspace::Workspace;
+use workspace::{Workspace, create_and_open_local_file};
 use zed_actions::ExtensionCategoryFilter;
 
 pub(crate) use configure_context_server_modal::ConfigureContextServerModal;
@@ -1070,7 +1073,22 @@ impl AgentConfiguration {
                                             .icon(IconName::Plus)
                                             .icon_size(IconSize::Small)
                                             .icon_color(Color::Muted)
-                                            .label_size(LabelSize::Small),
+                                            .label_size(LabelSize::Small)
+                                            .on_click(
+                                                move |_, window, cx| {
+                                                    if let Some(workspace) = window.root().flatten() {
+                                                        let workspace = workspace.downgrade();
+                                                        window
+                                                            .spawn(cx, async |cx| {
+                                                                open_new_agent_servers_entry_in_settings_editor(
+                                                                    workspace,
+                                                                    cx,
+                                                                ).await
+                                                            })
+                                                            .detach_and_log_err(cx);
+                                                    }
+                                                }
+                                            ),
                                     )
                             )
                             .child(
@@ -1337,4 +1355,69 @@ fn show_unable_to_uninstall_extension_with_context_server(
     );
 
     workspace.toggle_status_toast(status_toast, cx);
+}
+
+async fn open_new_agent_servers_entry_in_settings_editor(
+    workspace: WeakEntity<Workspace>,
+    cx: &mut AsyncWindowContext,
+) -> Result<()> {
+    let settings_editor = workspace
+        .update_in(cx, |_, window, cx| {
+            create_and_open_local_file(paths::settings_file(), window, cx, || {
+                settings::initial_user_settings_content().as_ref().into()
+            })
+        })?
+        .await?
+        .downcast::<Editor>()
+        .unwrap();
+
+    settings_editor
+        .downgrade()
+        .update_in(cx, |item, window, cx| {
+            let text = item.buffer().read(cx).snapshot(cx).text();
+
+            let settings = cx.global::<SettingsStore>();
+
+            let edits = settings.edits_for_update::<AllAgentServersSettings>(&text, |file| {
+                let unique_server_name = (0..u8::MAX)
+                    .map(|i| {
+                        if i == 0 {
+                            "your_agent".into()
+                        } else {
+                            format!("your_agent_{}", i).into()
+                        }
+                    })
+                    .find(|name| !file.custom.contains_key(name));
+                if let Some(server_name) = unique_server_name {
+                    file.custom.insert(
+                        server_name,
+                        AgentServerSettings {
+                            command: AgentServerCommand {
+                                path: "path_to_executable".into(),
+                                args: vec![],
+                                env: Some(HashMap::default()),
+                            },
+                        },
+                    );
+                }
+            });
+
+            if !edits.is_empty() {
+                let ranges = edits
+                    .iter()
+                    .map(|(range, _)| range.clone())
+                    .collect::<Vec<_>>();
+
+                item.edit(edits, cx);
+
+                item.change_selections(
+                    SelectionEffects::scroll(Autoscroll::newest()),
+                    window,
+                    cx,
+                    |selections| {
+                        selections.select_ranges(ranges);
+                    },
+                );
+            }
+        })
 }
