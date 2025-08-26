@@ -596,7 +596,7 @@ impl FuzzyBoundary {
         );
         let boundaries = forwards
             .interleave(backwards)
-            .take(4)
+            .take(2)
             .filter_map(|(identifier, reach_boundary)| reach_boundary(identifier, map))
             .filter(|boundary| match boundary.cmp(&from) {
                 Ordering::Equal => true,
