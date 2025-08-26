@@ -3,7 +3,7 @@ mod configure_context_server_modal;
 mod manage_profiles_modal;
 mod tool_picker;
 
-use std::{sync::Arc, time::Duration};
+use std::{ops::Range, sync::Arc, time::Duration};
 
 use agent_servers::{AgentServerCommand, AgentServerSettings, AllAgentServersSettings, Gemini};
 use agent_settings::AgentSettings;
@@ -1378,8 +1378,9 @@ async fn open_new_agent_servers_entry_in_settings_editor(
 
             let settings = cx.global::<SettingsStore>();
 
+            let mut unique_server_name = None;
             let edits = settings.edits_for_update::<AllAgentServersSettings>(&text, |file| {
-                let unique_server_name = (0..u8::MAX)
+                let server_name: Option<SharedString> = (0..u8::MAX)
                     .map(|i| {
                         if i == 0 {
                             "your_agent".into()
@@ -1388,7 +1389,8 @@ async fn open_new_agent_servers_entry_in_settings_editor(
                         }
                     })
                     .find(|name| !file.custom.contains_key(name));
-                if let Some(server_name) = unique_server_name {
+                if let Some(server_name) = server_name {
+                    unique_server_name = Some(server_name.clone());
                     file.custom.insert(
                         server_name,
                         AgentServerSettings {
@@ -1402,22 +1404,61 @@ async fn open_new_agent_servers_entry_in_settings_editor(
                 }
             });
 
-            if !edits.is_empty() {
-                let ranges = edits
-                    .iter()
-                    .map(|(range, _)| range.clone())
-                    .collect::<Vec<_>>();
+            if edits.is_empty() {
+                return;
+            }
 
-                item.edit(edits, cx);
+            let ranges = edits
+                .iter()
+                .map(|(range, _)| range.clone())
+                .collect::<Vec<_>>();
 
-                item.change_selections(
-                    SelectionEffects::scroll(Autoscroll::newest()),
-                    window,
-                    cx,
-                    |selections| {
-                        selections.select_ranges(ranges);
-                    },
-                );
+            item.edit(edits, cx);
+            if let Some((unique_server_name, buffer)) =
+                unique_server_name.zip(item.buffer().read(cx).as_singleton())
+            {
+                let snapshot = buffer.read(cx).snapshot();
+                if let Some(range) =
+                    find_text_in_buffer(&unique_server_name, ranges[0].start, &snapshot)
+                {
+                    item.change_selections(
+                        SelectionEffects::scroll(Autoscroll::newest()),
+                        window,
+                        cx,
+                        |selections| {
+                            selections.select_ranges(vec![range]);
+                        },
+                    );
+                }
             }
         })
+}
+
+fn find_text_in_buffer(
+    text: &str,
+    start: usize,
+    snapshot: &language::BufferSnapshot,
+) -> Option<Range<usize>> {
+    let chars = text.chars().collect::<Vec<char>>();
+
+    let mut offset = start;
+    let mut char_offset = 0;
+    for c in snapshot.chars_at(start) {
+        if char_offset >= chars.len() {
+            break;
+        }
+        offset += 1;
+
+        if c == chars[char_offset] {
+            char_offset += 1;
+        } else {
+            char_offset = 0;
+        }
+    }
+
+    if char_offset == chars.len() {
+        Some(offset - chars.len()..offset)
+    } else {
+        None
+    }
 }
