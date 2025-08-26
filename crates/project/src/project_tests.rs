@@ -9,7 +9,8 @@ use buffer_diff::{
     BufferDiffEvent, CALCULATE_DIFF_TASK, DiffHunkSecondaryStatus, DiffHunkStatus,
     DiffHunkStatusKind, assert_hunks,
 };
-use fs::FakeFs;
+use encoding::all::UTF_8;
+use fs::{FakeFs, encodings::EncodingWrapper};
 use futures::{StreamExt, future};
 use git::{
     GitHostingProviderRegistry,
@@ -1452,10 +1453,14 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
     )
     .await
     .unwrap();
+
+    let encoding_wrapper = EncodingWrapper::new(UTF_8);
+
     fs.save(
         path!("/the-root/Cargo.lock").as_ref(),
         &"".into(),
         Default::default(),
+        encoding_wrapper.clone(),
     )
     .await
     .unwrap();
@@ -1463,6 +1468,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
         path!("/the-stdlib/LICENSE").as_ref(),
         &"".into(),
         Default::default(),
+        encoding_wrapper.clone(),
     )
     .await
     .unwrap();
@@ -1470,6 +1476,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
         path!("/the/stdlib/src/string.rs").as_ref(),
         &"".into(),
         Default::default(),
+        encoding_wrapper,
     )
     .await
     .unwrap();
@@ -3946,12 +3953,15 @@ async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext)
     // the next file change occurs.
     cx.executor().deprioritize(*language::BUFFER_DIFF_TASK);
 
+    let encoding_wrapper = EncodingWrapper::new(UTF_8);
+
     // Change the buffer's file on disk, and then wait for the file change
     // to be detected by the worktree, so that the buffer starts reloading.
     fs.save(
         path!("/dir/file1").as_ref(),
         &"the first contents".into(),
         Default::default(),
+        encoding_wrapper.clone(),
     )
     .await
     .unwrap();
@@ -3963,6 +3973,7 @@ async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext)
         path!("/dir/file1").as_ref(),
         &"the second contents".into(),
         Default::default(),
+        encoding_wrapper,
     )
     .await
     .unwrap();
@@ -4001,12 +4012,15 @@ async fn test_edit_buffer_while_it_reloads(cx: &mut gpui::TestAppContext) {
     // the next file change occurs.
     cx.executor().deprioritize(*language::BUFFER_DIFF_TASK);
 
+    let encoding_wrapper = EncodingWrapper::new(UTF_8);
+
     // Change the buffer's file on disk, and then wait for the file change
     // to be detected by the worktree, so that the buffer starts reloading.
     fs.save(
         path!("/dir/file1").as_ref(),
         &"the first contents".into(),
         Default::default(),
+        encoding_wrapper,
     )
     .await
     .unwrap();
@@ -4608,10 +4622,14 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
 
     let (new_contents, new_offsets) =
         marked_text_offsets("oneˇ\nthree ˇFOURˇ five\nsixtyˇ seven\n");
+
+    let encoding_wrapper = EncodingWrapper::new(UTF_8);
+
     fs.save(
         path!("/dir/the-file").as_ref(),
         &new_contents.as_str().into(),
         LineEnding::Unix,
+        encoding_wrapper,
     )
     .await
     .unwrap();
@@ -4639,11 +4657,14 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
         assert!(!buffer.has_conflict());
     });
 
+    let encoding_wrapper = EncodingWrapper::new(UTF_8);
+
     // Change the file on disk again, adding blank lines to the beginning.
     fs.save(
         path!("/dir/the-file").as_ref(),
         &"\n\n\nAAAA\naaa\nBB\nbbbbb\n".into(),
         LineEnding::Unix,
+        encoding_wrapper,
     )
     .await
     .unwrap();
@@ -4690,12 +4711,15 @@ async fn test_buffer_line_endings(cx: &mut gpui::TestAppContext) {
         assert_eq!(buffer.line_ending(), LineEnding::Windows);
     });
 
+    let encoding_wrapper = EncodingWrapper::new(UTF_8);
+
     // Change a file's line endings on disk from unix to windows. The buffer's
     // state updates correctly.
     fs.save(
         path!("/dir/file1").as_ref(),
         &"aaa\nb\nc\n".into(),
         LineEnding::Windows,
+        encoding_wrapper,
     )
     .await
     .unwrap();

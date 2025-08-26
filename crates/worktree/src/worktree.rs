@@ -835,9 +835,10 @@ impl Worktree {
         text: Rope,
         line_ending: LineEnding,
         cx: &Context<Worktree>,
+        encoding: &'static dyn Encoding,
     ) -> Task<Result<Arc<File>>> {
         match self {
-            Worktree::Local(this) => this.write_file(path, text, line_ending, cx),
+            Worktree::Local(this) => this.write_file(path, text, line_ending, cx, encoding),
             Worktree::Remote(_) => {
                 Task::ready(Err(anyhow!("remote worktree can't yet write files")))
             }
@@ -1648,6 +1649,7 @@ impl LocalWorktree {
         text: Rope,
         line_ending: LineEnding,
         cx: &Context<Worktree>,
+        encoding: &'static dyn Encoding,
     ) -> Task<Result<Arc<File>>> {
         let path = path.into();
         let fs = self.fs.clone();
@@ -1656,10 +1658,15 @@ impl LocalWorktree {
             return Task::ready(Err(anyhow!("invalid path {path:?}")));
         };
 
+        let encoding_wrapper = EncodingWrapper::new(encoding);
+
         let write = cx.background_spawn({
             let fs = fs.clone();
             let abs_path = abs_path.clone();
-            async move { fs.save(&abs_path, &text, line_ending).await }
+            async move {
+                fs.save(&abs_path, &text, line_ending, encoding_wrapper)
+                    .await
+            }
         });
 
         cx.spawn(async move |this, cx| {

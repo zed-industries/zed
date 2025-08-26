@@ -22,7 +22,7 @@ pub use clock::ReplicaId;
 use clock::{AGENT_REPLICA_ID, Lamport};
 use collections::HashMap;
 use encoding::Encoding;
-use fs::{Fs, MTime, RealFs};
+use fs::MTime;
 use futures::channel::oneshot;
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, HighlightStyle, SharedString, StyledText,
@@ -1298,7 +1298,7 @@ impl Buffer {
     /// Reloads the contents of the buffer from disk.
     pub fn reload(&mut self, cx: &Context<Self>) -> oneshot::Receiver<Option<Transaction>> {
         let (tx, rx) = futures::channel::oneshot::channel();
-        let encoding = self.encoding.clone();
+        let encoding = self.encoding;
         let prev_version = self.text.version();
         self.reload_task = Some(cx.spawn(async move |this, cx| {
             let Some((new_mtime, new_text)) = this.update(cx, |this, cx| {
@@ -5003,11 +5003,7 @@ impl LocalFile for TestFile {
         unimplemented!()
     }
 
-    fn load_with_encoding(
-        &self,
-        cx: &App,
-        encoding: &'static dyn Encoding,
-    ) -> Task<Result<String>> {
+    fn load_with_encoding(&self, _: &App, _: &'static dyn Encoding) -> Task<Result<String>> {
         unimplemented!()
     }
 }

@@ -1,3 +1,4 @@
+///! A crate for handling file encodings in the text editor.
 use editor::Editor;
 use encoding::Encoding;
 use encoding::all::{
@@ -12,7 +13,7 @@ use ui::{Button, ButtonCommon, Context, LabelSize, Render, Tooltip, Window, div}
 use ui::{Clickable, ParentElement};
 use workspace::{ItemHandle, StatusItemView, Workspace};
 
-use crate::selectors::save_or_reopen::{EncodingSaveOrReopenSelector, get_current_encoding};
+use crate::selectors::save_or_reopen::EncodingSaveOrReopenSelector;
 
 /// A status bar item that shows the current file encoding and allows changing it.
 pub struct EncodingIndicator {
@@ -44,8 +45,6 @@ impl Render for EncodingIndicator {
 }
 
 impl EncodingIndicator {
-    pub fn get_current_encoding(&self, cx: &mut Context<Self>, editor: WeakEntity<Editor>) {}
-
     pub fn new(
         encoding: Option<&'static dyn encoding::Encoding>,
         workspace: WeakEntity<Workspace>,
@@ -185,5 +184,50 @@ pub fn encoding_from_index(index: usize) -> &'static dyn Encoding {
         36 => BIG5_2003,
         37 => HZ,
         _ => UTF_8,
+    }
+}
+
+/// Get an encoding from its name.
+pub fn encoding_from_name(name: &str) -> &'static dyn Encoding {
+    match name {
+        "UTF-8" => UTF_8,
+        "UTF-16 LE" => UTF_16LE,
+        "UTF-16 BE" => UTF_16BE,
+        "IBM866" => IBM866,
+        "ISO 8859-1" => ISO_8859_1,
+        "ISO 8859-2" => ISO_8859_2,
+        "ISO 8859-3" => ISO_8859_3,
+        "ISO 8859-4" => ISO_8859_4,
+        "ISO 8859-5" => ISO_8859_5,
+        "ISO 8859-6" => ISO_8859_6,
+        "ISO 8859-7" => ISO_8859_7,
+        "ISO 8859-8" => ISO_8859_8,
+        "ISO 8859-10" => ISO_8859_10,
+        "ISO 8859-13" => ISO_8859_13,
+        "ISO 8859-14" => ISO_8859_14,
+        "ISO 8859-15" => ISO_8859_15,
+        "ISO 8859-16" => ISO_8859_16,
+        "KOI8-R" => KOI8_R,
+        "KOI8-U" => KOI8_U,
+        "MacRoman" => MAC_ROMAN,
+        "Mac Cyrillic" => MAC_CYRILLIC,
+        "Windows-874" => WINDOWS_874,
+        "Windows-1250" => WINDOWS_1250,
+        "Windows-1251" => WINDOWS_1251,
+        "Windows-1252" => WINDOWS_1252,
+        "Windows-1253" => WINDOWS_1253,
+        "Windows-1254" => WINDOWS_1254,
+        "Windows-1255" => WINDOWS_1255,
+        "Windows-1256" => WINDOWS_1256,
+        "Windows-1257" => WINDOWS_1257,
+        "Windows-1258" => WINDOWS_1258,
+        "Windows-949" => WINDOWS_949,
+        "EUC-JP" => EUC_JP,
+        "ISO 2022-JP" => ISO_2022_JP,
+        "GBK" => GBK,
+        "GB18030" => GB18030,
+        "Big5" => BIG5_2003,
+        "HZ-GB-2312" => HZ,
+        _ => UTF_8, // Default to UTF-8 for unknown names
     }
 }

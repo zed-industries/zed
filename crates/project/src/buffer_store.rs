@@ -372,6 +372,8 @@ impl LocalBufferStore {
         let version = buffer.version();
         let buffer_id = buffer.remote_id();
         let file = buffer.file().cloned();
+        let encoding = buffer.encoding;
+
         if file
             .as_ref()
             .is_some_and(|file| file.disk_state() == DiskState::New)
@@ -380,7 +382,7 @@ impl LocalBufferStore {
         }
 
         let save = worktree.update(cx, |worktree, cx| {
-            worktree.write_file(path.as_ref(), text, line_ending, cx)
+            worktree.write_file(path.as_ref(), text, line_ending, cx, encoding)
         });
 
         cx.spawn(async move |this, cx| {

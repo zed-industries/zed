@@ -31,7 +31,9 @@ anyhow.workspace = true
 async-trait.workspace = true
 clock.workspace = true
 collections.workspace = true
+diffy = "0.4.2"
 ec4rs.workspace = true
+encoding.workspace = true
 fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
@@ -69,8 +71,6 @@ unicase = "2.6"
 util.workspace = true
 watch.workspace = true
 workspace-hack.workspace = true
-diffy = "0.4.2"
-encoding = "0.2.33"
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }
