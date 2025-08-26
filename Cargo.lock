@@ -11104,6 +11104,7 @@ dependencies = [
  "base64 0.22.1",
  "futures 0.3.31",
  "gpui",
+ "log",
  "open_ai",
  "rand 0.9.1",
  "schemars 1.0.1",

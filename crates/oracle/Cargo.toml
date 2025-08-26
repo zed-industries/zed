@@ -32,3 +32,4 @@ rand.workspace = true
 sha2.workspace = true
 urlencoding.workspace = true
 tiny_http.workspace = true
+log.workspace = true

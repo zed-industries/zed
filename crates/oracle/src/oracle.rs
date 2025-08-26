@@ -1,11 +1,13 @@
 pub mod oauth;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
+use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
+use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use log;
 use open_ai::ReasoningEffort;
+use open_ai::{OpenAiError, Request, ResponseStreamEvent, ResponseStreamResult};
 use serde::{Deserialize, Serialize};
 use strum::EnumIter;
-
-pub use open_ai::stream_completion;
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
@@ -140,6 +142,90 @@ impl Model {
         match self {
             Self::FourPointOne | Self::O3 => true,
             Self::Grok3 | Self::Grok4 | Self::Llama4 | Model::Custom { .. } => false,
+        }
+    }
+}
+
+pub async fn stream_completion(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: &str,
+    request: Request,
+) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>> {
+    let uri = format!("{api_url}/chat/completions");
+    let client_name = "Zed";
+    let client_version = format!(
+        "{}/{}",
+        client_name,
+        option_env!("CARGO_PKG_VERSION").unwrap_or("unknown")
+    );
+
+    let request_builder = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("client", client_name)
+        .header("client-version", client_version.as_str())
+        .header("client-ide", client_name)
+        .header("client-ide-version", client_version)
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", api_key));
+
+    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+    let mut response = client.send(request).await?;
+    if response.status().is_success() {
+        let reader = BufReader::new(response.into_body());
+        Ok(reader
+            .lines()
+            .filter_map(|line| async move {
+                match line {
+                    Ok(line) => {
+                        let line = line.strip_prefix("data: ")?;
+                        if line == "[DONE]" {
+                            None
+                        } else {
+                            match serde_json::from_str(line) {
+                                Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
+                                Ok(ResponseStreamResult::Err { error }) => {
+                                    Some(Err(anyhow!(error.message)))
+                                }
+                                Err(error) => {
+                                    log::error!(
+                                        "Failed to parse OpenAI response into ResponseStreamResult: `{}`\n\
+                                        Response: `{}`",
+                                        error,
+                                        line,
+                                    );
+                                    Some(Err(anyhow!(error)))
+                                }
+                            }
+                        }
+                    }
+                    Err(error) => Some(Err(anyhow!(error))),
+                }
+            })
+            .boxed())
+    } else {
+        let mut body = String::new();
+        response.body_mut().read_to_string(&mut body).await?;
+
+        #[derive(Deserialize)]
+        struct OpenAiResponse {
+            error: OpenAiError,
+        }
+
+        match serde_json::from_str::<OpenAiResponse>(&body) {
+            Ok(response) if !response.error.message.is_empty() => Err(anyhow!(
+                "API request to {} failed: {}",
+                api_url,
+                response.error.message,
+            )),
+
+            _ => anyhow::bail!(
+                "API request to {} failed with status {}: {}",
+                api_url,
+                response.status(),
+                body,
+            ),
         }
     }
 }

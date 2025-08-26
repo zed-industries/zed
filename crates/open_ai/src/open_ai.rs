@@ -443,7 +443,7 @@ pub struct ChoiceDelta {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct OpenAiError {
-    message: String,
+    pub message: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
