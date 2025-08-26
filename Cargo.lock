@@ -5598,6 +5598,7 @@ dependencies = [
  "gpui",
  "language",
  "picker",
+ "settings",
  "ui",
  "util",
  "workspace",

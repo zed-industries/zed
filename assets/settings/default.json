@@ -1352,7 +1352,9 @@
     // Whether to show the cursor position button in the status bar.
     "cursor_position_button": true,
     // Whether to show active line endings button in the status bar.
-    "line_endings_button": false
+    "line_endings_button": false,
+    // Whether to show the encoding indicator in the status bar.
+    "encoding_indicator": true
   },
   // Settings specific to the terminal
   "terminal": {
