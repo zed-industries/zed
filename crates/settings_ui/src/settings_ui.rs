@@ -6,8 +6,8 @@ use command_palette_hooks::CommandPaletteFilter;
 use editor::EditorSettingsControls;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
 use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, ReadGlobal, actions};
-use settings::SettingsStore;
-use ui::prelude::*;
+use settings::{SettingsStore, SettingsUIItemSingle, SettingsUIItemVariant};
+use ui::{SwitchField, prelude::*};
 use workspace::item::{Item, ItemEvent};
 use workspace::{Workspace, with_active_or_new_workspace};
 
@@ -139,9 +139,22 @@ impl Render for SettingsPage {
                                             .child(format!("Subgroup: {}", title))
                                             .into_any_element(),
                                         settings::SettingsUIItemVariant::Item { path, item } => {
-                                            div()
-                                                .child(format!("Item: {}", path))
-                                                .into_any_element()
+                                            match item {
+                                                SettingsUIItemSingle::Custom(_) => div()
+                                                    .child(format!("Item: {}", path))
+                                                    .into_any_element(),
+                                                SettingsUIItemSingle::SwitchField => div()
+                                                    .child(SwitchField::new(
+                                                        ElementId::Name(SharedString::new_static(
+                                                            path,
+                                                        )),
+                                                        SharedString::new_static(path),
+                                                        None,
+                                                        ToggleState::Unselected,
+                                                        |_, _, _| {},
+                                                    ))
+                                                    .into_any_element(),
+                                            }
                                         }
                                         settings::SettingsUIItemVariant::None => {
                                             div().child("None").into_any_element()
