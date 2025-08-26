@@ -5,7 +5,8 @@ use std::any::TypeId;
 use command_palette_hooks::CommandPaletteFilter;
 use editor::EditorSettingsControls;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
-use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, actions};
+use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, ReadGlobal, actions};
+use settings::SettingsStore;
 use ui::prelude::*;
 use workspace::item::{Item, ItemEvent};
 use workspace::{Workspace, with_active_or_new_workspace};
@@ -72,7 +73,6 @@ pub fn init(cx: &mut App) {
         .detach();
     })
     .detach();
-
 }
 
 pub struct SettingsPage {
@@ -121,6 +121,17 @@ impl Render for SettingsPage {
             .p_4()
             .size_full()
             .gap_4()
+            .children(
+                SettingsStore::global(cx)
+                    .settings_ui_items()
+                    .into_iter()
+                    .flat_map(|item| match item.item {
+                        settings::SettingsUIItemVariant::Group { path, group } => Some(path),
+                        settings::SettingsUIItemVariant::Item { path, item } => todo!(),
+                        settings::SettingsUIItemVariant::None => None,
+                    })
+                    .map(|group_name| Label::new(group_name).size(LabelSize::Large)),
+            )
             .child(Label::new("Settings").size(LabelSize::Large))
             .child(
                 v_flex().gap_1().child(Label::new("Appearance")).child(

@@ -31,8 +31,9 @@ use util::{
 pub type EditorconfigProperties = ec4rs::Properties;
 
 use crate::{
-    ActiveSettingsProfileName, ParameterizedJsonSchema, SettingsJsonSchemaParams, VsCodeSettings,
-    WorktreeId, parse_json_with_comments, settings_ui::SettingsUI, update_value_in_json_text,
+    ActiveSettingsProfileName, ParameterizedJsonSchema, SettingsJsonSchemaParams, SettingsUIItem,
+    VsCodeSettings, WorktreeId, parse_json_with_comments, settings_ui::SettingsUI,
+    update_value_in_json_text,
 };
 
 /// A value that can be defined as a user setting.
@@ -272,6 +273,7 @@ trait AnySettingValue: 'static + Send + Sync {
         text: &mut String,
         edits: &mut Vec<(Range<usize>, String)>,
     );
+    fn settings_ui_item(&self) -> SettingsUIItem;
 }
 
 struct DeserializedSetting(Box<dyn Any>);
@@ -603,6 +605,12 @@ impl SettingsStore {
             .ok();
 
         rx
+    }
+
+    pub fn settings_ui_items(&self) -> impl IntoIterator<Item = SettingsUIItem> {
+        self.setting_values
+            .values()
+            .map(|item| item.settings_ui_item())
     }
 }
 
@@ -1497,6 +1505,10 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
             T::PRESERVED_KEYS.unwrap_or_default(),
             edits,
         );
+    }
+
+    fn settings_ui_item(&self) -> SettingsUIItem {
+        T::ui_item()
     }
 }
 

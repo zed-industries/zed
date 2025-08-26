@@ -1,9 +1,10 @@
 use db::anyhow;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{SettingsUI, Settings, SettingsSources};
+use settings::{Settings, SettingsSources, SettingsUI};
 
 #[derive(Copy, Clone, Deserialize, Debug, SettingsUI)]
+#[settings_ui(group = "Title Bar")]
 pub struct TitleBarSettings {
     pub show_branch_icon: bool,
     pub show_onboarding_banner: bool,
