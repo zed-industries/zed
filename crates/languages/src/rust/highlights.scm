@@ -6,9 +6,6 @@
 (self) @variable.special
 (field_identifier) @property
 
-(shorthand_field_initializer
-  (identifier) @property)
-
 (trait_item name: (type_identifier) @type.interface)
 (impl_item trait: (type_identifier) @type.interface)
 (abstract_type trait: (type_identifier) @type.interface)
@@ -41,19 +38,10 @@
     (identifier) @function.special
     (scoped_identifier
       name: (identifier) @function.special)
-  ]
-  "!" @function.special)
+  ])
 
 (macro_definition
   name: (identifier) @function.special.definition)
-
-(mod_item
-  name: (identifier) @module)
-
-(visibility_modifier [
-  (crate) @keyword
-  (super) @keyword
-])
 
 ; Identifier conventions
 
@@ -127,7 +115,9 @@
   "where"
   "while"
   "yield"
+  (crate)
   (mutable_specifier)
+  (super)
 ] @keyword
 
 [
@@ -199,7 +189,6 @@
 operator: "/" @operator
 
 (lifetime) @lifetime
-(lifetime (identifier) @lifetime)
 
 (parameter (identifier) @variable.parameter)
 
