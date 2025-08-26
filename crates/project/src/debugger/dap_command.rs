@@ -544,8 +544,8 @@ impl DapCommand for PauseCommand {
 #[derive(Debug, Hash, PartialEq, Eq)]
 pub(crate) struct DisconnectCommand {
     pub restart: Option<bool>,
-    pub terminate_debuggee: Option<bool>,
-    pub suspend_debuggee: Option<bool>,
+    pub terminate_debugger: Option<bool>,
+    pub suspend_debugger: Option<bool>,
 }
 
 impl LocalDapCommand for DisconnectCommand {
@@ -555,8 +555,8 @@ impl LocalDapCommand for DisconnectCommand {
     fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
         dap::DisconnectArguments {
             restart: self.restart,
-            terminate_debuggee: self.terminate_debuggee,
-            suspend_debuggee: self.suspend_debuggee,
+            terminate_debugger: self.terminate_debugger,
+            suspend_debugger: self.suspend_debugger,
         }
     }
 
@@ -579,8 +579,8 @@ impl DapCommand for DisconnectCommand {
     fn from_proto(request: &Self::ProtoRequest) -> Self {
         Self {
             restart: request.restart,
-            terminate_debuggee: request.terminate_debuggee,
-            suspend_debuggee: request.suspend_debuggee,
+            terminate_debugger: request.terminate_debugger,
+            suspend_debugger: request.suspend_debugger,
         }
     }
 
@@ -593,8 +593,8 @@ impl DapCommand for DisconnectCommand {
             project_id: upstream_project_id,
             client_id: debug_client_id.to_proto(),
             restart: self.restart,
-            terminate_debuggee: self.terminate_debuggee,
-            suspend_debuggee: self.suspend_debuggee,
+            terminate_debugger: self.terminate_debugger,
+            suspend_debugger: self.suspend_debugger,
         }
     }
 

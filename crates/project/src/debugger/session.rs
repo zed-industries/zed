@@ -1009,7 +1009,7 @@ impl Session {
 
         let supports_terminate = self
             .capabilities
-            .support_terminate_debuggee
+            .support_terminate_debugger
             .unwrap_or(false);
 
         cx.background_spawn(async move {
@@ -1024,8 +1024,8 @@ impl Session {
                 client
                     .request::<dap::requests::Disconnect>(dap::DisconnectArguments {
                         restart: Some(false),
-                        terminate_debuggee: Some(true),
-                        suspend_debuggee: Some(false),
+                        terminate_debugger: Some(true),
+                        suspend_debugger: Some(false),
                     })
                     .await
                     .ok();
@@ -2133,8 +2133,8 @@ impl Session {
                     self.request(
                         DisconnectCommand {
                             restart: Some(false),
-                            terminate_debuggee: Some(true),
-                            suspend_debuggee: Some(false),
+                            terminate_debugger: Some(true),
+                            suspend_debugger: Some(false),
                         },
                         Self::clear_active_debug_line_response,
                         cx,
@@ -2683,8 +2683,8 @@ impl Session {
     pub fn disconnect_client(&mut self, cx: &mut Context<Self>) {
         let command = DisconnectCommand {
             restart: Some(false),
-            terminate_debuggee: Some(false),
-            suspend_debuggee: Some(false),
+            terminate_debugger: Some(false),
+            suspend_debugger: Some(false),
         };
 
         self.request(command, Self::empty_response, cx).detach()

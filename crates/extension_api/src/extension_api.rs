@@ -205,7 +205,7 @@ pub trait Extension: Send + Sync {
         Err("`get_dap_binary` not implemented".to_string())
     }
 
-    /// Determines whether the specified adapter configuration should *launch* a new debuggee process
+    /// Determines whether the specified adapter configuration should *launch* a new debugger process
     /// or *attach* to an existing one. This function should not perform any further validation (outside of determining the kind of a request).
     /// This function should return an error when the kind cannot be determined (rather than fall back to a known default).
     fn dap_request_kind(

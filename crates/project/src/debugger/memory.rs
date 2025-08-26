@@ -1,4 +1,4 @@
-//! This module defines the format in which memory of debuggee is represented.
+//! This module defines the format in which memory of debugger is represented.
 //!
 //! Each byte in memory can either be mapped or unmapped. We try to mimic that twofold:
 //! - We assume that the memory is divided into pages of a fixed size.
@@ -59,13 +59,13 @@ impl MappedPageContents {
     }
 }
 /// We hope for the whole page to be mapped in a single chunk, but we do leave the possibility open
-/// of having interleaved read permissions in a single page; debuggee's execution environment might either
+/// of having interleaved read permissions in a single page; debugger's execution environment might either
 /// have a different page size OR it might not have paged memory layout altogether
 /// (which might be relevant to embedded systems).
 ///
 /// As stated previously, the concept of a page in this module has to do more
 /// with optimizing fetching of the memory and not with the underlying bits and pieces
-/// of the memory of a debuggee.
+/// of the memory of a debugger.
 
 #[derive(Default, Debug)]
 pub(super) struct MappedPageContents(

@@ -88,7 +88,7 @@ pub struct LaunchRequest {
     /// The current working directory of your project
     #[serde(default)]
     pub cwd: Option<PathBuf>,
-    /// Arguments to pass to a debuggee
+    /// Arguments to pass to a debugger
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
@@ -265,7 +265,7 @@ pub struct DebugScenario {
     pub adapter: SharedString,
     /// Name of the debug task
     pub label: SharedString,
-    /// A task to run prior to spawning the debuggee.
+    /// A task to run prior to spawning the debugger.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build: Option<BuildTaskDefinition>,
     /// The main arguments to be sent to the debug adapter

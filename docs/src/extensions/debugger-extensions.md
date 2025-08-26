@@ -32,7 +32,7 @@ This method should return the command to start up a debug adapter protocol serve
 
 If you need to download the DAP server from an external source—like GitHub Releases or npm—you can also do that in this function. Make sure to check for updates only periodically, as this function is called whenever a user spawns a new debug session with your debug adapter.
 
-You must also implement `dap_request_kind`. This function is used to determine whether a given debug scenario will _launch_ a new debuggee or _attach_ to an existing one.
+You must also implement `dap_request_kind`. This function is used to determine whether a given debug scenario will _launch_ a new debugger or _attach_ to an existing one.
 We also use it to determine that a given debug scenario requires running a _locator_.
 
 ```rust

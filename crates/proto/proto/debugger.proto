@@ -195,8 +195,8 @@ message DapDisconnectRequest {
     uint64 project_id = 1;
     uint64 client_id = 2;
     optional bool restart = 3;
-    optional bool terminate_debuggee = 4;
-    optional bool suspend_debuggee = 5;
+    optional bool terminate_debugger = 4;
+    optional bool suspend_debugger = 5;
 }
 
 message DapTerminateThreadsRequest {

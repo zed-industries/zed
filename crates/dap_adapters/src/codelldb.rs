@@ -208,7 +208,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                 },
                 "processCreateCommands": {
                     "type": "array",
-                    "description": "Commands that create the debuggee process",
+                    "description": "Commands that create the debugger process",
                     "items": {
                         "type": "string"
                     }
@@ -222,7 +222,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                 },
                 "preTerminateCommands": {
                     "type": "array",
-                    "description": "Commands executed just before the debuggee is terminated or disconnected from",
+                    "description": "Commands executed just before the debugger is terminated or disconnected from",
                     "items": {
                         "type": "string"
                     }
