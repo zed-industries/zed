@@ -571,7 +571,7 @@ impl FuzzyBoundary {
         let backwards = try_find_preceding_boundary_data(map, from, generate_boundary_data);
         let boundaries = [forwards, backwards]
             .into_iter()
-            .filter_map(|data| data)
+            .flatten()
             .filter_map(|(identifier, reach_boundary)| reach_boundary(identifier, map))
             .filter(|boundary| match boundary.cmp(&from) {
                 Ordering::Equal => true,
