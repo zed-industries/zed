@@ -24,10 +24,10 @@ You should start to see the responses stream in with indications of [which tools
 ### Creating New Threads
 
 The default view for the Agent Panel uses Zed's first-party agent.
-Every time that you hit {#kb agent::NewThread}, it creates a new thread using the currently selected agent and view.
+Every time that you hit {#kb agent::NewThread}, it creates a new thread using the currently selected agent.
 
 To change that, go to the plus button in the top-right of the Agent Panel and choose another option.
-You'll see the option to create a new [Text Thread](./text-threads.md) or, if you have [external agents](/.external-agents.md) connected, to chose new threads with them.
+You choose to create a new [Text Thread](./text-threads.md) or, if you have [external agents](/.external-agents.md) connected, you can create new threads with them.
 
 ### Editing Messages {#editing-messages}
 
