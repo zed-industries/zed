@@ -1202,10 +1202,9 @@ struct LspInlayHintData {
     allowed_hint_kinds: HashSet<Option<InlayHintKind>>,
     invalidate_debounce: Option<Duration>,
     append_debounce: Option<Duration>,
-    known_cache_version: Option<usize>,
-    // TODO kb use these for removing all hints in splices instead of accessing display_map entries.
-    inlays: Vec<InlayId>,
-    inlay_tasks: HashMap<BufferId, BTreeMap<Range<BufferRow>, Task<()>>>,
+    inlays_for_version: Option<clock::Global>,
+    inlays: HashMap<BufferId, Vec<InlayId>>,
+    inlay_tasks: HashMap<BufferId, HashMap<Range<BufferRow>, Task<()>>>,
 }
 
 impl LspInlayHintData {
@@ -1214,12 +1213,12 @@ impl LspInlayHintData {
             modifiers_override: false,
             enabled: settings.enabled,
             enabled_in_settings: settings.enabled,
-            inlays: Vec::new(),
+            inlays: HashMap::default(),
+            inlays_for_version: None,
             inlay_tasks: HashMap::default(),
             invalidate_debounce: debounce_value(settings.edit_debounce_ms),
             append_debounce: debounce_value(settings.scroll_debounce_ms),
             allowed_hint_kinds: settings.enabled_inlay_hint_kinds(),
-            known_cache_version: None,
         }
     }
 
@@ -1250,8 +1249,8 @@ impl LspInlayHintData {
     }
 
     fn clear(&mut self) {
-        self.known_cache_version = None;
         self.inlay_tasks.clear();
+        // TODO kb splice!?
         self.inlays.clear();
     }
 
@@ -1290,16 +1289,6 @@ impl LspInlayHintData {
                     ControlFlow::Break(None)
                 } else {
                     todo!("TODO kb")
-                    // let new_splice = self.new_allowed_hint_kinds_splice(
-                    //     multi_buffer,
-                    //     &visible_hints,
-                    //     &new_allowed_hint_kinds,
-                    //     cx,
-                    // );
-                    // if new_splice.is_some() {
-                    //     self.allowed_hint_kinds = new_allowed_hint_kinds;
-                    // }
-                    // ControlFlow::Break(new_splice)
                 }
             }
             (true, false) => {
@@ -1322,117 +1311,6 @@ impl LspInlayHintData {
             }
         }
     }
-
-    // fn new_allowed_hint_kinds_splice(
-    //     &self,
-    //     multi_buffer: &Entity<MultiBuffer>,
-    //     visible_hints: &[Inlay],
-    //     new_kinds: &HashSet<Option<InlayHintKind>>,
-    //     cx: &mut App,
-    // ) -> Option<InlaySplice> {
-    //     let old_kinds = &self.allowed_hint_kinds;
-    //     if new_kinds == old_kinds {
-    //         return None;
-    //     }
-
-    //     let mut to_remove = Vec::new();
-    //     let mut to_insert = Vec::new();
-    //     let mut shown_hints_to_remove = visible_hints.iter().fold(
-    //         HashMap::<ExcerptId, Vec<(Anchor, InlayId)>>::default(),
-    //         |mut current_hints, inlay| {
-    //             current_hints
-    //                 .entry(inlay.position.excerpt_id)
-    //                 .or_default()
-    //                 .push((inlay.position, inlay.id));
-    //             current_hints
-    //         },
-    //     );
-
-    //     let multi_buffer = multi_buffer.read(cx);
-    //     let multi_buffer_snapshot = multi_buffer.snapshot(cx);
-
-    //     for (excerpt_id, excerpt_cached_hints) in &self.hints {
-    //         let shown_excerpt_hints_to_remove =
-    //             shown_hints_to_remove.entry(*excerpt_id).or_default();
-    //         let excerpt_cached_hints = excerpt_cached_hints.read();
-    //         let mut excerpt_cache = excerpt_cached_hints.ordered_hints.iter().fuse().peekable();
-    //         shown_excerpt_hints_to_remove.retain(|(shown_anchor, shown_hint_id)| {
-    //             let Some(buffer) = shown_anchor
-    //                 .buffer_id
-    //                 .and_then(|buffer_id| multi_buffer.buffer(buffer_id))
-    //             else {
-    //                 return false;
-    //             };
-    //             let buffer_snapshot = buffer.read(cx).snapshot();
-    //             loop {
-    //                 match excerpt_cache.peek() {
-    //                     Some(&cached_hint_id) => {
-    //                         let cached_hint = &excerpt_cached_hints.hints_by_id[cached_hint_id];
-    //                         if cached_hint_id == shown_hint_id {
-    //                             excerpt_cache.next();
-    //                             return !new_kinds.contains(&cached_hint.kind);
-    //                         }
-
-    //                         match cached_hint
-    //                             .position
-    //                             .cmp(&shown_anchor.text_anchor, &buffer_snapshot)
-    //                         {
-    //                             cmp::Ordering::Less | cmp::Ordering::Equal => {
-    //                                 if !old_kinds.contains(&cached_hint.kind)
-    //                                     && new_kinds.contains(&cached_hint.kind)
-    //                                 {
-    //                                     if let Some(anchor) = multi_buffer_snapshot
-    //                                         .anchor_in_excerpt(*excerpt_id, cached_hint.position)
-    //                                     {
-    //                                         to_insert.push(Inlay::hint(
-    //                                             cached_hint_id.id(),
-    //                                             anchor,
-    //                                             cached_hint,
-    //                                         ));
-    //                                     }
-    //                                 }
-    //                                 excerpt_cache.next();
-    //                             }
-    //                             cmp::Ordering::Greater => return true,
-    //                         }
-    //                     }
-    //                     None => return true,
-    //                 }
-    //             }
-    //         });
-
-    //         for cached_hint_id in excerpt_cache {
-    //             let maybe_missed_cached_hint = &excerpt_cached_hints.hints_by_id[cached_hint_id];
-    //             let cached_hint_kind = maybe_missed_cached_hint.kind;
-    //             if !old_kinds.contains(&cached_hint_kind) && new_kinds.contains(&cached_hint_kind) {
-    //                 if let Some(anchor) = multi_buffer_snapshot
-    //                     .anchor_in_excerpt(*excerpt_id, maybe_missed_cached_hint.position)
-    //                 {
-    //                     to_insert.push(Inlay::hint(
-    //                         cached_hint_id.id(),
-    //                         anchor,
-    //                         maybe_missed_cached_hint,
-    //                     ));
-    //                 }
-    //             }
-    //         }
-    //     }
-
-    //     to_remove.extend(
-    //         shown_hints_to_remove
-    //             .into_values()
-    //             .flatten()
-    //             .map(|(_, hint_id)| hint_id),
-    //     );
-    //     if to_remove.is_empty() && to_insert.is_empty() {
-    //         None
-    //     } else {
-    //         Some(InlaySplice {
-    //             to_remove,
-    //             to_insert,
-    //         })
-    //     }
-    // }
 }
 
 fn debounce_value(debounce_ms: u64) -> Option<Duration> {
@@ -2129,9 +2007,9 @@ impl Editor {
                     }
                     project::Event::RefreshInlayHints(server_id) => {
                         editor.refresh_inlay_hints(
-                                InlayHintRefreshReason::RefreshRequested(*server_id),
-                                cx,
-                            );
+                            InlayHintRefreshReason::RefreshRequested(*server_id),
+                            cx,
+                        );
                     }
                     project::Event::LanguageServerAdded(..)
                     | project::Event::LanguageServerRemoved(..) => {
@@ -5559,29 +5437,47 @@ impl Editor {
     }
 
     fn refresh_inlay_hints_2(&mut self, reason: InlayHintRefreshReason, cx: &mut Context<Self>) {
-        if !self.mode.is_full() {
+        if !self.mode.is_full() || self.semantics_provider.is_none() {
             return;
         }
-        let Some((inlay_hints, semantics_provider)) = self
-            .inlay_hints
-            .as_mut()
-            .zip(self.semantics_provider.as_ref())
-        else {
-            return;
-        };
 
-        let reason_description = reason.description();
-        let ignore_debounce = matches!(
-            reason,
-            InlayHintRefreshReason::SettingsChange(_)
-                | InlayHintRefreshReason::Toggle(_)
-                | InlayHintRefreshReason::ExcerptsRemoved(_)
-                | InlayHintRefreshReason::ModifiersChanged(_)
-        );
-        let (invalidate_cache, required_languages) = match reason {
-            InlayHintRefreshReason::ModifiersChanged(enabled) => {
-                match inlay_hints.modifiers_override(enabled) {
-                    Some(enabled) => {
+        {
+            let Some(inlay_hints) = self.inlay_hints.as_mut() else {
+                return;
+            };
+
+            let reason_description = reason.description();
+            let ignore_debounce = matches!(
+                reason,
+                InlayHintRefreshReason::SettingsChange(_)
+                    | InlayHintRefreshReason::Toggle(_)
+                    | InlayHintRefreshReason::ExcerptsRemoved(_)
+                    | InlayHintRefreshReason::ModifiersChanged(_)
+            );
+            let (invalidate_cache, required_languages) = match reason {
+                InlayHintRefreshReason::ModifiersChanged(enabled) => {
+                    match inlay_hints.modifiers_override(enabled) {
+                        Some(enabled) => {
+                            if enabled {
+                                (InvalidationStrategy::RefreshRequested, None)
+                            } else {
+                                self.splice_inlays(
+                                    &self
+                                        .visible_inlay_hints(cx)
+                                        .iter()
+                                        .map(|inlay| inlay.id)
+                                        .collect::<Vec<InlayId>>(),
+                                    Vec::new(),
+                                    cx,
+                                );
+                                return;
+                            }
+                        }
+                        None => return,
+                    }
+                }
+                InlayHintRefreshReason::Toggle(enabled) => {
+                    if inlay_hints.toggle(enabled) {
                         if enabled {
                             (InvalidationStrategy::RefreshRequested, None)
                         } else {
@@ -5596,85 +5492,151 @@ impl Editor {
                             );
                             return;
                         }
-                    }
-                    None => return,
-                }
-            }
-            InlayHintRefreshReason::Toggle(enabled) => {
-                if inlay_hints.toggle(enabled) {
-                    if enabled {
-                        (InvalidationStrategy::RefreshRequested, None)
                     } else {
-                        self.splice_inlays(
-                            &self
-                                .visible_inlay_hints(cx)
-                                .iter()
-                                .map(|inlay| inlay.id)
-                                .collect::<Vec<InlayId>>(),
-                            Vec::new(),
-                            cx,
-                        );
                         return;
                     }
-                } else {
+                }
+                InlayHintRefreshReason::SettingsChange(new_settings) => {
                     return;
                 }
-            }
-            InlayHintRefreshReason::SettingsChange(new_settings) => {
-                // TODO kb
-                return;
-                // match inlay_hints.update_settings(
-                //     &self.buffer,
-                //     new_settings,
-                //     self.visible_inlay_hints(cx),
-                //     cx,
-                // ) {
-                //     ControlFlow::Break(Some(InlaySplice {
-                //         to_remove,
-                //         to_insert,
-                //     })) => {
-                //         self.splice_inlays(&to_remove, to_insert, cx);
-                //         return;
-                //     }
-                //     ControlFlow::Break(None) => return,
-                //     ControlFlow::Continue(()) => (InvalidationStrategy::RefreshRequested, None),
-                // }
-            }
-            InlayHintRefreshReason::ExcerptsRemoved(excerpts_removed) => {
-                if let Some(InlaySplice {
-                    to_remove,
-                    to_insert,
-                }) = self.inlay_hint_cache.remove_excerpts(&excerpts_removed)
-                {
-                    self.splice_inlays(&to_remove, to_insert, cx);
+                InlayHintRefreshReason::ExcerptsRemoved(excerpts_removed) => {
+                    if let Some(InlaySplice {
+                        to_remove,
+                        to_insert,
+                    }) = self.inlay_hint_cache.remove_excerpts(&excerpts_removed)
+                    {
+                        self.splice_inlays(&to_remove, to_insert, cx);
+                    }
+                    self.display_map.update(cx, |display_map, _| {
+                        display_map.remove_inlays_for_excerpts(&excerpts_removed)
+                    });
+                    return;
                 }
-                self.display_map.update(cx, |display_map, _| {
-                    display_map.remove_inlays_for_excerpts(&excerpts_removed)
-                });
-                return;
-            }
-            InlayHintRefreshReason::NewLinesShown => (InvalidationStrategy::None, None),
-            InlayHintRefreshReason::BufferEdited(buffer_languages) => {
-                (InvalidationStrategy::BufferEdited, Some(buffer_languages))
-            }
-            InlayHintRefreshReason::RefreshRequested(_) => {
-                (InvalidationStrategy::RefreshRequested, None)
-            }
-        };
+                InlayHintRefreshReason::NewLinesShown => (InvalidationStrategy::None, None),
+                InlayHintRefreshReason::BufferEdited(buffer_languages) => {
+                    (InvalidationStrategy::BufferEdited, Some(buffer_languages))
+                }
+                InlayHintRefreshReason::RefreshRequested(_) => {
+                    (InvalidationStrategy::RefreshRequested, None)
+                }
+            };
+        }
 
-        // TODO kb
-        // if let Some(InlaySplice {
-        //     to_remove,
-        //     to_insert,
-        // }) = self.inlay_hint_cache.spawn_hint_refresh(
-        //     reason_description,
-        //     self.visible_excerpts(required_languages.as_ref(), cx),
-        //     invalidate_cache,
-        //     ignore_debounce,
-        //     cx,
-        // ) {
-        //     self.splice_inlays(&to_remove, to_insert, cx);
-        // }
+        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
+        let Some(semantics_provider) = self.semantics_provider.clone() else {
+            return;
+        };
+        for (excerpt_id, (buffer, buffer_version, range)) in self.visible_excerpts(None, cx) {
+            let Some(excerpt_text_anchor_range) =
+                multi_buffer_snapshot.context_range_for_excerpt(excerpt_id)
+            else {
+                continue;
+            };
+            let buffer_id = buffer.read(cx).remote_id();
+            let buffer_snapshot = buffer.read(cx).snapshot();
+            let buffer_anchor_range =
+                buffer_snapshot.anchor_before(range.start)..buffer_snapshot.anchor_after(range.end);
+
+            let new_hints =
+                semantics_provider.inlay_hints_2(buffer, buffer_anchor_range.clone(), cx);
+            let Some(inlay_hints) = self.inlay_hints.as_mut() else {
+                return;
+            };
+            if let Some((hints_range, new_hints)) = new_hints {
+                let buffer_hints = inlay_hints.inlay_tasks.entry(buffer_id).or_default();
+                buffer_hints.insert(
+                    hints_range.clone(),
+                    cx.spawn(async move |editor, cx| {
+                        let new_hints = new_hints.await;
+                        editor
+                            .update(cx, |editor, cx| {
+                                let multi_buffer_snapshot = editor.buffer.read(cx).snapshot(cx);
+                                let Some(buffer_snapshot) =
+                                    multi_buffer_snapshot.buffer_for_excerpt(excerpt_id)
+                                else {
+                                    return;
+                                };
+
+                                let mut update_data = None;
+                                if let Some(inlay_hints) = editor.inlay_hints.as_mut() {
+                                    let inlay_tasks =
+                                        inlay_hints.inlay_tasks.entry(buffer_id).or_default();
+                                    match new_hints {
+                                        Ok(new_hints) => {
+                                            if inlay_hints.inlays_for_version.as_ref().is_some_and(
+                                                |inlays_for_version| {
+                                                    !inlays_for_version
+                                                        .changed_since(&buffer_version)
+                                                },
+                                            ) {
+                                                let hints_to_remove = if inlay_hints
+                                                    .inlays_for_version
+                                                    .as_ref()
+                                                    .is_some_and(|inlays_for_version| {
+                                                        buffer_version
+                                                            .changed_since(&inlays_for_version)
+                                                    }) {
+                                                    inlay_hints
+                                                        .inlays
+                                                        .remove(&buffer_id)
+                                                        .unwrap_or_default()
+                                                } else {
+                                                    Vec::new()
+                                                };
+                                                let hints_to_insert = new_hints
+                                                    .into_iter()
+                                                    .filter_map(|lsp_hint| {
+                                                        if buffer_anchor_range
+                                                            .start
+                                                            .cmp(
+                                                                &lsp_hint.position,
+                                                                buffer_snapshot,
+                                                            )
+                                                            .is_ge()
+                                                            && buffer_anchor_range
+                                                                .end
+                                                                .cmp(
+                                                                    &lsp_hint.position,
+                                                                    buffer_snapshot,
+                                                                )
+                                                                .is_le()
+                                                        {
+                                                            let position = multi_buffer_snapshot
+                                                                .anchor_in_excerpt(
+                                                                    excerpt_id,
+                                                                    lsp_hint.position,
+                                                                )?;
+                                                            return Some(Inlay::hint(
+                                                                post_inc(&mut editor.next_inlay_id),
+                                                                position,
+                                                                &lsp_hint,
+                                                            ));
+                                                        }
+                                                        None
+                                                    })
+                                                    .collect();
+                                                update_data =
+                                                    Some((hints_to_remove, hints_to_insert));
+                                                inlay_hints.inlays_for_version =
+                                                    Some(buffer_version);
+                                            }
+                                        }
+                                        // TODO kb who should log and clean up the errored state? Could we do that with `lsp_store_cx.spawn`?
+                                        Err(_) => {}
+                                    }
+
+                                    inlay_tasks.remove(&hints_range);
+                                }
+
+                                if let Some((hints_to_remove, hints_to_insert)) = update_data {
+                                    editor.splice_inlays(&hints_to_remove, hints_to_insert, cx);
+                                }
+                            })
+                            .ok();
+                    }),
+                );
+            }
+        }
     }
 
     fn visible_inlay_hints(&self, cx: &Context<Editor>) -> Vec<Inlay> {
@@ -23089,6 +23051,18 @@ pub trait SemanticsProvider {
         range: Range<text::Anchor>,
         cx: &mut App,
     ) -> Option<Task<anyhow::Result<Vec<InlayHint>>>>;
+
+    fn inlay_hints_2(
+        &self,
+        buffer: Entity<Buffer>,
+        range: Range<text::Anchor>,
+        cx: &mut App,
+    ) -> Option<(
+        Range<BufferRow>,
+        Shared<Task<Result<Vec<InlayHint>, Arc<anyhow::Error>>>>,
+    )> {
+        todo!("TODO kb")
+    }
 
     fn resolve_inlay_hint(
         &self,

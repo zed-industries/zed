@@ -24,12 +24,7 @@ pub struct BufferInlayHints {
 #[derive(Debug, Default)]
 struct HintChunks {
     hints_by_chunks: BTreeMap<Range<BufferRow>, Option<Vec<InlayHintId>>>,
-    chunk_updates: HashMap<Range<BufferRow>, Shared<Task<InlayHints>>>,
-}
-
-pub struct InlayHints {
-    pub cache_version: usize,
-    pub hints: Vec<InlayHint>,
+    chunk_updates: HashMap<Range<BufferRow>, Shared<Task<Vec<InlayHint>>>>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -54,7 +49,7 @@ impl BufferInlayHints {
         strategy: HintFetchStrategy,
         range: impl text::ToOffset,
         cx: &mut Context<Self>,
-    ) -> Option<(Range<BufferRow>, Shared<Task<InlayHints>>)> {
+    ) -> Option<(Range<BufferRow>, Shared<Task<Vec<InlayHint>>>)> {
         todo!("TODO kb")
     }
     // we want to store the cache version outbound, so they can query with it: we can return nothing (`Option`) if the version matches
