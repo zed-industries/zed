@@ -4297,7 +4297,7 @@ impl Project {
         self.active_entry
     }
 
-    pub fn entry_for_path(&self, path: &ProjectPath, cx: &App) -> Option<Entry> {
+    pub fn entry_for_path<'a>(&'a self, path: &ProjectPath, cx: &'a App) -> Option<&'a Entry> {
         self.worktree_store.read(cx).entry_for_path(path, cx)
     }
 
