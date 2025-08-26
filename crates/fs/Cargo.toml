@@ -16,6 +16,7 @@ anyhow.workspace = true
 async-tar.workspace = true
 async-trait.workspace = true
 collections.workspace = true
+encoding.workspace = true
 futures.workspace = true
 git.workspace = true
 gpui.workspace = true
@@ -34,7 +35,8 @@ text.workspace = true
 time.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
-encoding = "0.2.33"
+schemars.workspace = true
+
 
 
 [target.'cfg(target_os = "macos")'.dependencies]

@@ -3,7 +3,8 @@ use crate::{
     worktree_settings::WorktreeSettings,
 };
 use anyhow::Result;
-use fs::{FakeFs, Fs, RealFs, RemoveOptions};
+use encoding::all::UTF_8;
+use fs::{FakeFs, Fs, RealFs, RemoveOptions, encodings::EncodingWrapper};
 use git::GITIGNORE;
 use gpui::{AppContext as _, BackgroundExecutor, BorrowAppContext, Context, Task, TestAppContext};
 use parking_lot::Mutex;
@@ -642,9 +643,15 @@ async fn test_dirs_no_longer_ignored(cx: &mut TestAppContext) {
 
     // Update the gitignore so that node_modules is no longer ignored,
     // but a subdirectory is ignored
-    fs.save("/root/.gitignore".as_ref(), &"e".into(), Default::default())
-        .await
-        .unwrap();
+    let encoding_wrapper = fs::encodings::EncodingWrapper::new(UTF_8);
+    fs.save(
+        "/root/.gitignore".as_ref(),
+        &"e".into(),
+        Default::default(),
+        encoding_wrapper,
+    )
+    .await
+    .unwrap();
     cx.executor().run_until_parked();
 
     // All of the directories that are no longer ignored are now loaded.
@@ -715,6 +722,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
                 "hello".into(),
                 Default::default(),
                 cx,
+                UTF_8,
             )
         })
         .await
@@ -726,6 +734,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
                 "world".into(),
                 Default::default(),
                 cx,
+                UTF_8,
             )
         })
         .await
@@ -1746,8 +1755,13 @@ fn randomly_mutate_worktree(
                 })
             } else {
                 log::info!("overwriting file {:?} ({})", entry.path, entry.id.0);
-                let task =
-                    worktree.write_file(entry.path.clone(), "".into(), Default::default(), cx);
+                let task = worktree.write_file(
+                    entry.path.clone(),
+                    "".into(),
+                    Default::default(),
+                    cx,
+                    UTF_8,
+                );
                 cx.background_spawn(async move {
                     task.await?;
                     Ok(())
@@ -1834,10 +1848,12 @@ async fn randomly_mutate_fs(
             ignore_path.strip_prefix(root_path).unwrap(),
             ignore_contents
         );
+        let encoding_wrapper = EncodingWrapper::new(UTF_8);
         fs.save(
             &ignore_path,
             &ignore_contents.as_str().into(),
             Default::default(),
+            encoding_wrapper,
         )
         .await
         .unwrap();
