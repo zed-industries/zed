@@ -14,7 +14,6 @@ pub use search_status_button::SEARCH_ICON;
 use crate::project_search::ProjectSearchBar;
 
 pub mod buffer_search;
-pub mod pattern_items;
 pub mod project_search;
 pub(crate) mod search_bar;
 pub mod search_status_button;
