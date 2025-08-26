@@ -42,9 +42,7 @@ pub use manifest_tree::ManifestTree;
 
 use anyhow::{Context as _, Result, anyhow};
 use buffer_store::{BufferStore, BufferStoreEvent};
-use client::{
-    Client, Collaborator, PendingEntitySubscription, ProjectId, TypedEnvelope, UserStore, proto,
-};
+use client::{Client, Collaborator, PendingEntitySubscription, TypedEnvelope, UserStore, proto};
 use clock::ReplicaId;
 
 use dap::client::DebugAdapterClient;
@@ -1290,10 +1288,11 @@ impl Project {
             });
 
             let git_store = cx.new(|cx| {
-                GitStore::ssh(
+                GitStore::remote(
                     &worktree_store,
                     buffer_store.clone(),
                     remote_proto.clone(),
+                    REMOTE_SERVER_PROJECT_ID,
                     cx,
                 )
             });
@@ -1518,7 +1517,7 @@ impl Project {
                 &worktree_store,
                 buffer_store.clone(),
                 client.clone().into(),
-                ProjectId(remote_id),
+                remote_id,
                 cx,
             )
         })?;
