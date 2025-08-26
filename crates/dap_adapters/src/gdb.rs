@@ -109,7 +109,7 @@ impl DebugAdapter for GdbDebugAdapter {
                                 },
                                 "stopOnEntry": {
                                     "type": "boolean",
-                                    "description": "When true, GDB will set a temporary breakpoint at the program's first instruction, like the 'starti' command.",
+                                    "description": "When true, GDB will set a temporary breakpoint at the program's first instruction, like the 'start' command.",
                                     "default": false
                                 }
                             },

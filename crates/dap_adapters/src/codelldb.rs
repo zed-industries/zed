@@ -182,7 +182,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                 },
                 "stopOnEntry": {
                     "type": "boolean",
-                    "description": "Automatically stop debuggee after launch",
+                    "description": "Automatically stop debugger after launch",
                     "default": false
                 },
                 "initCommands": {
