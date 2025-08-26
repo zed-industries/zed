@@ -1133,7 +1133,6 @@ impl ProjectSearchView {
         }
     }
 
-    /// Returns the search query text without pattern items.
     pub fn search_query_text(&self, cx: &App) -> String {
         self.query_editor.read(cx).text(cx)
     }

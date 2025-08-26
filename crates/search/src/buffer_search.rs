@@ -810,7 +810,6 @@ impl BufferSearchBar {
         });
     }
 
-    /// Returns the sanitized query string with pattern items removed.
     pub fn query(&self, cx: &App) -> String {
         self.query_editor.read(cx).text(cx)
     }
@@ -906,17 +905,6 @@ impl BufferSearchBar {
         cx: &mut Context<Self>,
     ) {
         if !self.search_options.contains(search_option) {
-            self.toggle_search_option(search_option, window, cx)
-        }
-    }
-
-    pub fn disable_search_option(
-        &mut self,
-        search_option: SearchOptions,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.search_options.contains(search_option) {
             self.toggle_search_option(search_option, window, cx)
         }
     }
