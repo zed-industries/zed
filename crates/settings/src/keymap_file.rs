@@ -940,7 +940,7 @@ impl<'a> KeybindUpdateTarget<'a> {
         let mut keystrokes = String::with_capacity(self.keystrokes.len() * 8);
         for keystroke in self.keystrokes {
             // The reason use `keystroke.unparse()` instead of `keystroke.inner.unparse()`
-            // here is that, we want the user to use `ctrl-shift-4` instread of `ctrl-$`
+            // here is that, we want the user to use `ctrl-shift-4` instead of `ctrl-$`
             // by default on Windows.
             keystrokes.push_str(&keystroke.unparse());
             keystrokes.push(' ');
