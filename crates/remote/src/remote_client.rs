@@ -757,7 +757,7 @@ impl RemoteClient {
         args: &[String],
         env: &HashMap<String, String>,
         working_dir: Option<String>,
-        port_forward: Option<(u16, u16)>,
+        port_forward: Option<(u16, String, u16)>,
     ) -> Result<CommandTemplate> {
         let Some(connection) = self
             .state
@@ -998,7 +998,7 @@ pub(crate) trait RemoteConnection: Send + Sync {
         args: &[String],
         env: &HashMap<String, String>,
         working_dir: Option<String>,
-        port_forward: Option<(u16, u16)>,
+        port_forward: Option<(u16, String, u16)>,
     ) -> Result<CommandTemplate>;
     fn connection_options(&self) -> SshConnectionOptions;
     fn path_style(&self) -> PathStyle;
@@ -1364,7 +1364,7 @@ mod fake {
             args: &[String],
             env: &HashMap<String, String>,
             _: Option<String>,
-            _: Option<(u16, u16)>,
+            _: Option<(u16, String, u16)>,
         ) -> Result<CommandTemplate> {
             let ssh_program = program.unwrap_or_else(|| "sh".to_string());
             let mut ssh_args = Vec::new();

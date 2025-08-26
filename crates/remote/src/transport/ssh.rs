@@ -25,7 +25,6 @@ use smol::{
 };
 use std::{
     iter,
-    net::Ipv4Addr,
     path::{Path, PathBuf},
     sync::Arc,
     time::Instant,
@@ -114,7 +113,7 @@ impl RemoteConnection for SshRemoteConnection {
         input_args: &[String],
         input_env: &HashMap<String, String>,
         working_dir: Option<String>,
-        port_forward: Option<(u16, u16)>,
+        port_forward: Option<(u16, String, u16)>,
     ) -> Result<CommandTemplate> {
         use std::fmt::Write as _;
 
@@ -161,14 +160,9 @@ impl RemoteConnection for SshRemoteConnection {
         let mut args = Vec::new();
         args.extend(self.socket.ssh_args());
 
-        if let Some((local_port, remote_port)) = port_forward {
+        if let Some((local_port, host, remote_port)) = port_forward {
             args.push("-L".into());
-            args.push(format!(
-                "{}:{}:{}",
-                remote_port,
-                Ipv4Addr::LOCALHOST,
-                local_port
-            ));
+            args.push(format!("{local_port}:{host}:{remote_port}"));
         }
 
         args.push("-t".into());
