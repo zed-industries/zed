@@ -2459,6 +2459,30 @@ impl ToolCallEventStreamReceiver {
         }
     }
 
+    pub async fn expect_update_fields(&mut self) -> acp::ToolCallUpdateFields {
+        let event = self.0.next().await;
+        if let Some(Ok(ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(
+            update,
+        )))) = event
+        {
+            update.fields
+        } else {
+            panic!("Expected update fields but got: {:?}", event);
+        }
+    }
+
+    pub async fn expect_diff(&mut self) -> Entity<acp_thread::Diff> {
+        let event = self.0.next().await;
+        if let Some(Ok(ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateDiff(
+            update,
+        )))) = event
+        {
+            update.diff
+        } else {
+            panic!("Expected diff but got: {:?}", event);
+        }
+    }
+
     pub async fn expect_terminal(&mut self) -> Entity<acp_thread::Terminal> {
         let event = self.0.next().await;
         if let Some(Ok(ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateTerminal(
