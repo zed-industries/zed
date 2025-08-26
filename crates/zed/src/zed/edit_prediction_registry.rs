@@ -75,13 +75,10 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
             let new_provider = all_language_settings(None, cx).edit_predictions.provider;
 
             if new_provider != provider {
-                let tos_accepted = user_store.read(cx).has_accepted_terms_of_service();
-
                 telemetry::event!(
                     "Edit Prediction Provider Changed",
                     from = provider,
                     to = new_provider,
-                    zed_ai_tos_accepted = tos_accepted,
                 );
 
                 provider = new_provider;
@@ -92,28 +89,6 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                     user_store.clone(),
                     cx,
                 );
-
-                if !tos_accepted {
-                    match provider {
-                        EditPredictionProvider::Zed => {
-                            let Some(window) = cx.active_window() else {
-                                return;
-                            };
-
-                            window
-                                .update(cx, |_, window, cx| {
-                                    window.dispatch_action(
-                                        Box::new(zed_actions::OpenZedPredictOnboarding),
-                                        cx,
-                                    );
-                                })
-                                .ok();
-                        }
-                        EditPredictionProvider::None
-                        | EditPredictionProvider::Copilot
-                        | EditPredictionProvider::Supermaven => {}
-                    }
-                }
             }
         }
     })

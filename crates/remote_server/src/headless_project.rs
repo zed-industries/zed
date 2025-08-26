@@ -46,6 +46,9 @@ pub struct HeadlessProject {
     pub languages: Arc<LanguageRegistry>,
     pub extensions: Entity<HeadlessExtensionStore>,
     pub git_store: Entity<GitStore>,
+    // Used mostly to keep alive the toolchain store for RPC handlers.
+    // Local variant is used within LSP store, but that's a separate entity.
+    pub _toolchain_store: Entity<ToolchainStore>,
 }
 
 pub struct HeadlessAppState {
@@ -269,6 +272,7 @@ impl HeadlessProject {
             languages,
             extensions,
             git_store,
+            _toolchain_store: toolchain_store,
         }
     }
 

@@ -242,13 +242,9 @@ impl Render for EditPredictionButton {
                     IconName::ZedPredictDisabled
                 };
 
-                if zeta::should_show_upsell_modal(&self.user_store, cx) {
+                if zeta::should_show_upsell_modal() {
                     let tooltip_meta = if self.user_store.read(cx).current_user().is_some() {
-                        if self.user_store.read(cx).has_accepted_terms_of_service() {
-                            "Choose a Plan"
-                        } else {
-                            "Accept the Terms of Service"
-                        }
+                        "Choose a Plan"
                     } else {
                         "Sign In"
                     };

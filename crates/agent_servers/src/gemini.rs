@@ -4,10 +4,10 @@ use std::{any::Any, path::Path};
 use crate::{AgentServer, AgentServerCommand};
 use acp_thread::{AgentConnection, LoadError};
 use anyhow::Result;
-use gpui::{Entity, Task};
+use gpui::{App, Entity, SharedString, Task};
+use language_models::provider::google::GoogleLanguageModelProvider;
 use project::Project;
 use settings::SettingsStore;
-use ui::App;
 
 use crate::AllAgentServersSettings;
 
@@ -17,16 +17,20 @@ pub struct Gemini;
 const ACP_ARG: &str = "--experimental-acp";
 
 impl AgentServer for Gemini {
-    fn name(&self) -> &'static str {
-        "Gemini"
+    fn telemetry_id(&self) -> &'static str {
+        "gemini-cli"
     }
 
-    fn empty_state_headline(&self) -> &'static str {
-        "Welcome to Gemini"
+    fn name(&self) -> SharedString {
+        "Gemini CLI".into()
     }
 
-    fn empty_state_message(&self) -> &'static str {
-        "Ask questions, edit files, run commands"
+    fn empty_state_headline(&self) -> SharedString {
+        self.name()
+    }
+
+    fn empty_state_message(&self) -> SharedString {
+        "Ask questions, edit files, run commands".into()
     }
 
     fn logo(&self) -> ui::IconName {
@@ -47,15 +51,19 @@ impl AgentServer for Gemini {
                 settings.get::<AllAgentServersSettings>(None).gemini.clone()
             })?;
 
-            let Some(command) =
+            let Some(mut command) =
                 AgentServerCommand::resolve("gemini", &[ACP_ARG], None, settings, &project, cx).await
             else {
                 return Err(LoadError::NotInstalled {
                     error_message: "Failed to find Gemini CLI binary".into(),
                     install_message: "Install Gemini CLI".into(),
-                    install_command: "npm install -g @google/gemini-cli@latest".into()
+                    install_command: Self::install_command().into(),
                 }.into());
             };
+
+            if let Some(api_key)= cx.update(GoogleLanguageModelProvider::api_key)?.await.ok() {
+                command.env.get_or_insert_default().insert("GEMINI_API_KEY".to_owned(), api_key.key);
+            }
 
             let result = crate::acp::connect(server_name, command.clone(), &root_dir, cx).await;
             if result.is_err() {
@@ -84,7 +92,7 @@ impl AgentServer for Gemini {
                             current_version
                         ).into(),
                         upgrade_message: "Upgrade Gemini CLI to latest".into(),
-                        upgrade_command: "npm install -g @google/gemini-cli@latest".into(),
+                        upgrade_command: Self::upgrade_command().into(),
                     }.into())
                 }
             }
@@ -97,13 +105,27 @@ impl AgentServer for Gemini {
     }
 }
 
+impl Gemini {
+    pub fn binary_name() -> &'static str {
+        "gemini"
+    }
+
+    pub fn install_command() -> &'static str {
+        "npm install -g @google/gemini-cli@preview"
+    }
+
+    pub fn upgrade_command() -> &'static str {
+        "npm install -g @google/gemini-cli@preview"
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
     use crate::AgentServerCommand;
     use std::path::Path;
 
-    crate::common_e2e_tests!(Gemini, allow_option_id = "proceed_once");
+    crate::common_e2e_tests!(async |_, _, _| Gemini, allow_option_id = "proceed_once");
 
     pub fn local_command() -> AgentServerCommand {
         let cli_path = Path::new(env!("CARGO_MANIFEST_DIR"))

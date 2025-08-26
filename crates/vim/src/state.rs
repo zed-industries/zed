@@ -7,8 +7,10 @@ use crate::{motion::Motion, object::Object};
 use anyhow::Result;
 use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
-use db::define_connection;
-use db::sqlez_macros::sql;
+use db::{
+    sqlez::{domain::Domain, thread_safe_connection::ThreadSafeConnection},
+    sqlez_macros::sql,
+};
 use editor::display_map::{is_invisible, replacement};
 use editor::{Anchor, ClipboardSelection, Editor, MultiBuffer, ToPoint as EditorToPoint};
 use gpui::{
@@ -1668,8 +1670,12 @@ impl MarksView {
     }
 }
 
-define_connection! (
-    pub static ref DB: VimDb<WorkspaceDb> = &[
+pub struct VimDb(ThreadSafeConnection);
+
+impl Domain for VimDb {
+    const NAME: &str = stringify!(VimDb);
+
+    const MIGRATIONS: &[&str] = &[
         sql! (
             CREATE TABLE vim_marks (
               workspace_id INTEGER,
@@ -1689,7 +1695,9 @@ define_connection! (
             ON vim_global_marks_paths(workspace_id, mark_name);
         ),
     ];
-);
+}
+
+db::static_connection!(DB, VimDb, [WorkspaceDb]);
 
 struct SerializedMark {
     path: Arc<Path>,

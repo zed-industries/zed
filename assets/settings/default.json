@@ -162,6 +162,12 @@
   //  2. Always quit the application
   //         "on_last_window_closed": "quit_app",
   "on_last_window_closed": "platform_default",
+  // Whether to show padding for zoomed panels.
+  // When enabled, zoomed center panels (e.g. code editor) will have padding all around,
+  // while zoomed bottom/left/right panels will have padding to the top/right/left (respectively).
+  //
+  // Default: true
+  "zoomed_padding": true,
   // Whether to use the system provided dialogs for Open and Save As.
   // When set to false, Zed will use the built-in keyboard-first pickers.
   "use_system_path_prompts": true,
@@ -1133,11 +1139,6 @@
       // The minimum severity of the diagnostics to show inline.
       // Inherits editor's diagnostics' max severity settings when `null`.
       "max_severity": null
-    },
-    "cargo": {
-      // When enabled, Zed disables rust-analyzer's check on save and starts to query
-      // Cargo diagnostics separately.
-      "fetch_cargo_diagnostics": false
     }
   },
   // Files or globs of files that will be excluded by Zed entirely. They will be skipped during file
@@ -1503,6 +1504,11 @@
     //
     // Default: fallback
     "words": "fallback",
+    // Minimum number of characters required to automatically trigger word-based completions.
+    // Before that value, it's still possible to trigger the words-based completion manually with the corresponding editor command.
+    //
+    // Default: 3
+    "words_min_length": 3,
     // Whether to fetch LSP completions or not.
     //
     // Default: true
@@ -1629,6 +1635,9 @@
         "allowed": true
       }
     },
+    "Kotlin": {
+      "language_servers": ["kotlin-language-server", "!kotlin-lsp", "..."]
+    },
     "LaTeX": {
       "formatter": "language_server",
       "language_servers": ["texlab", "..."],
@@ -1642,9 +1651,6 @@
       "use_on_type_format": false,
       "allow_rewrap": "anywhere",
       "soft_wrap": "editor_width",
-      "completions": {
-        "words": "disabled"
-      },
       "prettier": {
         "allowed": true
       }
@@ -1658,9 +1664,6 @@
       }
     },
     "Plain Text": {
-      "completions": {
-        "words": "disabled"
-      },
       "allow_rewrap": "anywhere"
     },
     "Python": {

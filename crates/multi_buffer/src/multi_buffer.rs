@@ -835,7 +835,7 @@ impl MultiBuffer {
                 this.convert_edits_to_buffer_edits(edits, &snapshot, &original_indent_columns);
             drop(snapshot);
 
-            let mut buffer_ids = Vec::new();
+            let mut buffer_ids = Vec::with_capacity(buffer_edits.len());
             for (buffer_id, mut edits) in buffer_edits {
                 buffer_ids.push(buffer_id);
                 edits.sort_by_key(|edit| edit.range.start);
@@ -2194,6 +2194,15 @@ impl MultiBuffer {
                     excerpt.range.context.clone(),
                 )
             })
+    }
+
+    pub fn buffer_for_anchor(&self, anchor: Anchor, cx: &App) -> Option<Entity<Buffer>> {
+        if let Some(buffer_id) = anchor.buffer_id {
+            self.buffer(buffer_id)
+        } else {
+            let (_, buffer, _) = self.excerpt_containing(anchor, cx)?;
+            Some(buffer)
+        }
     }
 
     // If point is at the end of the buffer, the last excerpt is returned
@@ -5228,15 +5237,6 @@ impl MultiBufferSnapshot {
             excerpt_offset += ExcerptOffset::new(offset_in_transform);
         };
 
-        if let Some((excerpt_id, buffer_id, buffer)) = self.as_singleton() {
-            return Anchor {
-                buffer_id: Some(buffer_id),
-                excerpt_id: *excerpt_id,
-                text_anchor: buffer.anchor_at(excerpt_offset.value, bias),
-                diff_base_anchor,
-            };
-        }
-
         let mut excerpts = self
             .excerpts
             .cursor::<Dimensions<ExcerptOffset, Option<ExcerptId>>>(&());
@@ -5260,10 +5260,17 @@ impl MultiBufferSnapshot {
                 text_anchor,
                 diff_base_anchor,
             }
-        } else if excerpt_offset.is_zero() && bias == Bias::Left {
-            Anchor::min()
         } else {
-            Anchor::max()
+            let mut anchor = if excerpt_offset.is_zero() && bias == Bias::Left {
+                Anchor::min()
+            } else {
+                Anchor::max()
+            };
+            // TODO this is a hack, remove it
+            if let Some((excerpt_id, _, _)) = self.as_singleton() {
+                anchor.excerpt_id = *excerpt_id;
+            }
+            anchor
         }
     }
 
@@ -6305,6 +6312,14 @@ impl MultiBufferSnapshot {
         })
     }
 
+    pub fn buffer_id_for_anchor(&self, anchor: Anchor) -> Option<BufferId> {
+        if let Some(id) = anchor.buffer_id {
+            return Some(id);
+        }
+        let excerpt = self.excerpt_containing(anchor..anchor)?;
+        Some(excerpt.buffer_id())
+    }
+
     pub fn selections_in_range<'a>(
         &'a self,
         range: &'a Range<Anchor>,
@@ -6983,7 +6998,7 @@ impl Excerpt {
     }
 
     fn contains(&self, anchor: &Anchor) -> bool {
-        Some(self.buffer_id) == anchor.buffer_id
+        (anchor.buffer_id == None || anchor.buffer_id == Some(self.buffer_id))
             && self
                 .range
                 .context

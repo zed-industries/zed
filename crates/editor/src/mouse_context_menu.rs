@@ -190,14 +190,16 @@ pub fn deploy_context_menu(
             .all::<PointUtf16>(cx)
             .into_iter()
             .any(|s| !s.is_empty());
-        let has_git_repo = anchor.buffer_id.is_some_and(|buffer_id| {
-            project
-                .read(cx)
-                .git_store()
-                .read(cx)
-                .repository_and_path_for_buffer_id(buffer_id, cx)
-                .is_some()
-        });
+        let has_git_repo = buffer
+            .buffer_id_for_anchor(anchor)
+            .is_some_and(|buffer_id| {
+                project
+                    .read(cx)
+                    .git_store()
+                    .read(cx)
+                    .repository_and_path_for_buffer_id(buffer_id, cx)
+                    .is_some()
+            });
 
         let evaluate_selection = window.is_action_available(&EvaluateSelectedText, cx);
         let run_to_cursor = window.is_action_available(&RunToCursor, cx);

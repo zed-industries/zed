@@ -166,7 +166,7 @@ impl<T: AsRef<Path>> From<T> for SanitizedPath {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PathStyle {
     Posix,
     Windows,

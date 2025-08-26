@@ -60,6 +60,11 @@ pub trait Settings: 'static + Send + Sync {
 
     /// The logic for combining together values from one or more JSON files into the
     /// final value for this setting.
+    ///
+    /// # Warning
+    /// `Self::FileContent` deserialized field names should match with `Self` deserialized field names
+    /// otherwise the field won't be deserialized properly and you will get the error:
+    /// "A default setting must be added to the `default.json` file"
     fn load(sources: SettingsSources<Self::FileContent>, cx: &mut App) -> Result<Self>
     where
         Self: Sized;

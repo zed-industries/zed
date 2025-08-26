@@ -164,7 +164,6 @@ impl TaffyLayoutEngine {
         // for (a, b) in self.get_edges(id)? {
         //     println!("N{} --> N{}", u64::from(a), u64::from(b));
         // }
-        // println!("");
         //
 
         if !self.computed_layouts.insert(id) {
