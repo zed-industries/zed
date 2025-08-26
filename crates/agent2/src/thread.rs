@@ -4,7 +4,7 @@ use crate::{
     ListDirectoryTool, MovePathTool, NowTool, OpenTool, ReadFileTool, SystemPromptTemplate,
     Template, Templates, TerminalTool, ThinkingTool, WebSearchTool,
 };
-use acp_thread::{MentionUri, UserMessageId};
+use acp_thread::MentionUri;
 use action_log::ActionLog;
 use agent::thread::{GitState, ProjectSnapshot, WorktreeSnapshot};
 use agent_client_protocol as acp;
@@ -137,7 +137,7 @@ impl Message {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserMessage {
-    pub id: UserMessageId,
+    pub id: acp::PromptId,
     pub content: Vec<UserMessageContent>,
 }
 
@@ -564,7 +564,7 @@ pub struct Thread {
     pending_message: Option<AgentMessage>,
     tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
     tool_use_limit_reached: bool,
-    request_token_usage: HashMap<UserMessageId, language_model::TokenUsage>,
+    request_token_usage: HashMap<acp::PromptId, language_model::TokenUsage>,
     #[allow(unused)]
     cumulative_token_usage: TokenUsage,
     #[allow(unused)]
@@ -1070,7 +1070,7 @@ impl Thread {
         cx.notify();
     }
 
-    pub fn truncate(&mut self, message_id: UserMessageId, cx: &mut Context<Self>) -> Result<()> {
+    pub fn rewind(&mut self, message_id: acp::PromptId, cx: &mut Context<Self>) -> Result<()> {
         self.cancel(cx);
         let Some(position) = self.messages.iter().position(
             |msg| matches!(msg, Message::User(UserMessage { id, .. }) if id == &message_id),
@@ -1118,7 +1118,7 @@ impl Thread {
     /// The returned channel will report all the occurrences in which the model stops before erroring or ending its turn.
     pub fn send<T>(
         &mut self,
-        id: UserMessageId,
+        id: acp::PromptId,
         content: impl IntoIterator<Item = T>,
         cx: &mut Context<Self>,
     ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>>

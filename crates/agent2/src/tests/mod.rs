@@ -1,5 +1,5 @@
 use super::*;
-use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelList, UserMessageId};
+use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelList, new_prompt_id};
 use agent_client_protocol::{self as acp};
 use agent_settings::AgentProfileId;
 use anyhow::Result;
@@ -48,7 +48,7 @@ async fn test_echo(cx: &mut TestAppContext) {
 
     let events = thread
         .update(cx, |thread, cx| {
-            thread.send(UserMessageId::new(), ["Testing: Reply with 'Hello'"], cx)
+            thread.send(new_prompt_id(), ["Testing: Reply with 'Hello'"], cx)
         })
         .unwrap();
     cx.run_until_parked();
@@ -79,7 +79,7 @@ async fn test_thinking(cx: &mut TestAppContext) {
     let events = thread
         .update(cx, |thread, cx| {
             thread.send(
-                UserMessageId::new(),
+                new_prompt_id(),
                 [indoc! {"
                     Testing:
 
@@ -130,9 +130,7 @@ async fn test_system_prompt(cx: &mut TestAppContext) {
     });
     thread.update(cx, |thread, _| thread.add_tool(EchoTool));
     thread
-        .update(cx, |thread, cx| {
-            thread.send(UserMessageId::new(), ["abc"], cx)
-        })
+        .update(cx, |thread, cx| thread.send(new_prompt_id(), ["abc"], cx))
         .unwrap();
     cx.run_until_parked();
     let mut pending_completions = fake_model.pending_completions();
@@ -168,7 +166,7 @@ async fn test_prompt_caching(cx: &mut TestAppContext) {
     // Send initial user message and verify it's cached
     thread
         .update(cx, |thread, cx| {
-            thread.send(UserMessageId::new(), ["Message 1"], cx)
+            thread.send(new_prompt_id(), ["Message 1"], cx)
         })
         .unwrap();
     cx.run_until_parked();
@@ -191,7 +189,7 @@ async fn test_prompt_caching(cx: &mut TestAppContext) {
     // Send another user message and verify only the latest is cached
     thread
         .update(cx, |thread, cx| {
-            thread.send(UserMessageId::new(), ["Message 2"], cx)
+            thread.send(new_prompt_id(), ["Message 2"], cx)
         })
         .unwrap();
     cx.run_until_parked();
@@ -227,7 +225,7 @@ async fn test_prompt_caching(cx: &mut TestAppContext) {
     thread.update(cx, |thread, _| thread.add_tool(EchoTool));
     thread
         .update(cx, |thread, cx| {
-            thread.send(UserMessageId::new(), ["Use the echo tool"], cx)
+            thread.send(new_prompt_id(), ["Use the echo tool"], cx)
         })
         .unwrap();
     cx.run_until_parked();
@@ -304,7 +302,7 @@ async fn test_basic_tool_calls(cx: &mut TestAppContext) {
         .update(cx, |thread, cx| {
             thread.add_tool(EchoTool);
             thread.send(
-                UserMessageId::new(),
+                new_prompt_id(),
                 ["Now test the echo tool with 'Hello'. Does it work? Say 'Yes' or 'No'."],
                 cx,
             )
@@ -320,7 +318,7 @@ async fn test_basic_tool_calls(cx: &mut TestAppContext) {
             thread.remove_tool(&EchoTool::name());
             thread.add_tool(DelayTool);
             thread.send(
-                UserMessageId::new(),
+                new_prompt_id(),
                 [
                     "Now call the delay tool with 200ms.",
                     "When the timer goes off, then you echo the output of the tool.",
@@ -363,7 +361,7 @@ async fn test_streaming_tool_calls(cx: &mut TestAppContext) {
     let mut events = thread
         .update(cx, |thread, cx| {
             thread.add_tool(WordListTool);
-            thread.send(UserMessageId::new(), ["Test the word_list tool."], cx)
+            thread.send(new_prompt_id(), ["Test the word_list tool."], cx)
         })
         .unwrap();
 
@@ -414,7 +412,7 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
     let mut events = thread
         .update(cx, |thread, cx| {
             thread.add_tool(ToolRequiringPermission);
-            thread.send(UserMessageId::new(), ["abc"], cx)
+            thread.send(new_prompt_id(), ["abc"], cx)
         })
         .unwrap();
     cx.run_until_parked();
@@ -544,9 +542,7 @@ async fn test_tool_hallucination(cx: &mut TestAppContext) {
     let fake_model = model.as_fake();
 
     let mut events = thread
-        .update(cx, |thread, cx| {
-            thread.send(UserMessageId::new(), ["abc"], cx)
-        })
+        .update(cx, |thread, cx| thread.send(new_prompt_id(), ["abc"], cx))
         .unwrap();
     cx.run_until_parked();
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
@@ -575,7 +571,7 @@ async fn test_resume_after_tool_use_limit(cx: &mut TestAppContext) {
     let events = thread
         .update(cx, |thread, cx| {
             thread.add_tool(EchoTool);
-            thread.send(UserMessageId::new(), ["abc"], cx)
+            thread.send(new_prompt_id(), ["abc"], cx)
         })
         .unwrap();
     cx.run_until_parked();
@@ -684,7 +680,7 @@ async fn test_send_after_tool_use_limit(cx: &mut TestAppContext) {
     let events = thread
         .update(cx, |thread, cx| {
             thread.add_tool(EchoTool);
-            thread.send(UserMessageId::new(), ["abc"], cx)
+            thread.send(new_prompt_id(), ["abc"], cx)
         })
         .unwrap();
     cx.run_until_parked();
@@ -718,7 +714,7 @@ async fn test_send_after_tool_use_limit(cx: &mut TestAppContext) {
 
     thread
         .update(cx, |thread, cx| {
-            thread.send(UserMessageId::new(), vec!["ghi"], cx)
+            thread.send(new_prompt_id(), vec!["ghi"], cx)
         })
         .unwrap();
     cx.run_until_parked();
@@ -818,7 +814,7 @@ async fn test_concurrent_tool_calls(cx: &mut TestAppContext) {
         .update(cx, |thread, cx| {
             thread.add_tool(DelayTool);
             thread.send(
-                UserMessageId::new(),
+                new_prompt_id(),
                 [
                     "Call the delay tool twice in the same message.",
                     "Once with 100ms. Once with 300ms.",
@@ -898,7 +894,7 @@ async fn test_profiles(cx: &mut TestAppContext) {
     thread
         .update(cx, |thread, cx| {
             thread.set_profile(AgentProfileId("test-1".into()));
-            thread.send(UserMessageId::new(), ["test"], cx)
+            thread.send(new_prompt_id(), ["test"], cx)
         })
         .unwrap();
     cx.run_until_parked();
@@ -918,7 +914,7 @@ async fn test_profiles(cx: &mut TestAppContext) {
     thread
         .update(cx, |thread, cx| {
             thread.set_profile(AgentProfileId("test-2".into()));
-            thread.send(UserMessageId::new(), ["test2"], cx)
+            thread.send(new_prompt_id(), ["test2"], cx)
         })
         .unwrap();
     cx.run_until_parked();
@@ -986,7 +982,7 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
     );
 
     let events = thread.update(cx, |thread, cx| {
-        thread.send(UserMessageId::new(), ["Hey"], cx).unwrap()
+        thread.send(new_prompt_id(), ["Hey"], cx).unwrap()
     });
     cx.run_until_parked();
 
@@ -1028,7 +1024,7 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
     // Send again after adding the echo tool, ensuring the name collision is resolved.
     let events = thread.update(cx, |thread, cx| {
         thread.add_tool(EchoTool);
-        thread.send(UserMessageId::new(), ["Go"], cx).unwrap()
+        thread.send(new_prompt_id(), ["Go"], cx).unwrap()
     });
     cx.run_until_parked();
     let completion = fake_model.pending_completions().pop().unwrap();
@@ -1235,9 +1231,7 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
     );
 
     thread
-        .update(cx, |thread, cx| {
-            thread.send(UserMessageId::new(), ["Go"], cx)
-        })
+        .update(cx, |thread, cx| thread.send(new_prompt_id(), ["Go"], cx))
         .unwrap();
     cx.run_until_parked();
     let completion = fake_model.pending_completions().pop().unwrap();
@@ -1271,7 +1265,7 @@ async fn test_cancellation(cx: &mut TestAppContext) {
             thread.add_tool(InfiniteTool);
             thread.add_tool(EchoTool);
             thread.send(
-                UserMessageId::new(),
+                new_prompt_id(),
                 ["Call the echo tool, then call the infinite tool, then explain their output"],
                 cx,
             )
@@ -1327,7 +1321,7 @@ async fn test_cancellation(cx: &mut TestAppContext) {
     let events = thread
         .update(cx, |thread, cx| {
             thread.send(
-                UserMessageId::new(),
+                new_prompt_id(),
                 ["Testing: reply with 'Hello' then stop."],
                 cx,
             )
@@ -1353,7 +1347,7 @@ async fn test_in_progress_send_canceled_by_next_send(cx: &mut TestAppContext) {
 
     let events_1 = thread
         .update(cx, |thread, cx| {
-            thread.send(UserMessageId::new(), ["Hello 1"], cx)
+            thread.send(new_prompt_id(), ["Hello 1"], cx)
         })
         .unwrap();
     cx.run_until_parked();
@@ -1362,7 +1356,7 @@ async fn test_in_progress_send_canceled_by_next_send(cx: &mut TestAppContext) {
 
     let events_2 = thread
         .update(cx, |thread, cx| {
-            thread.send(UserMessageId::new(), ["Hello 2"], cx)
+            thread.send(new_prompt_id(), ["Hello 2"], cx)
         })
         .unwrap();
     cx.run_until_parked();
@@ -1384,7 +1378,7 @@ async fn test_subsequent_successful_sends_dont_cancel(cx: &mut TestAppContext) {
 
     let events_1 = thread
         .update(cx, |thread, cx| {
-            thread.send(UserMessageId::new(), ["Hello 1"], cx)
+            thread.send(new_prompt_id(), ["Hello 1"], cx)
         })
         .unwrap();
     cx.run_until_parked();
@@ -1396,7 +1390,7 @@ async fn test_subsequent_successful_sends_dont_cancel(cx: &mut TestAppContext) {
 
     let events_2 = thread
         .update(cx, |thread, cx| {
-            thread.send(UserMessageId::new(), ["Hello 2"], cx)
+            thread.send(new_prompt_id(), ["Hello 2"], cx)
         })
         .unwrap();
     cx.run_until_parked();
@@ -1416,9 +1410,7 @@ async fn test_refusal(cx: &mut TestAppContext) {
     let fake_model = model.as_fake();
 
     let events = thread
-        .update(cx, |thread, cx| {
-            thread.send(UserMessageId::new(), ["Hello"], cx)
-        })
+        .update(cx, |thread, cx| thread.send(new_prompt_id(), ["Hello"], cx))
         .unwrap();
     cx.run_until_parked();
     thread.read_with(cx, |thread, _| {
@@ -1464,7 +1456,7 @@ async fn test_truncate_first_message(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
 
-    let message_id = UserMessageId::new();
+    let message_id = new_prompt_id();
     thread
         .update(cx, |thread, cx| {
             thread.send(message_id.clone(), ["Hello"], cx)
@@ -1516,7 +1508,7 @@ async fn test_truncate_first_message(cx: &mut TestAppContext) {
     });
 
     thread
-        .update(cx, |thread, cx| thread.truncate(message_id, cx))
+        .update(cx, |thread, cx| thread.rewind(message_id, cx))
         .unwrap();
     cx.run_until_parked();
     thread.read_with(cx, |thread, _| {
@@ -1526,9 +1518,7 @@ async fn test_truncate_first_message(cx: &mut TestAppContext) {
 
     // Ensure we can still send a new message after truncation.
     thread
-        .update(cx, |thread, cx| {
-            thread.send(UserMessageId::new(), ["Hi"], cx)
-        })
+        .update(cx, |thread, cx| thread.send(new_prompt_id(), ["Hi"], cx))
         .unwrap();
     thread.update(cx, |thread, _cx| {
         assert_eq!(
@@ -1582,7 +1572,7 @@ async fn test_truncate_second_message(cx: &mut TestAppContext) {
 
     thread
         .update(cx, |thread, cx| {
-            thread.send(UserMessageId::new(), ["Message 1"], cx)
+            thread.send(new_prompt_id(), ["Message 1"], cx)
         })
         .unwrap();
     cx.run_until_parked();
@@ -1625,7 +1615,7 @@ async fn test_truncate_second_message(cx: &mut TestAppContext) {
 
     assert_first_message_state(cx);
 
-    let second_message_id = UserMessageId::new();
+    let second_message_id = new_prompt_id();
     thread
         .update(cx, |thread, cx| {
             thread.send(second_message_id.clone(), ["Message 2"], cx)
@@ -1677,7 +1667,7 @@ async fn test_truncate_second_message(cx: &mut TestAppContext) {
     });
 
     thread
-        .update(cx, |thread, cx| thread.truncate(second_message_id, cx))
+        .update(cx, |thread, cx| thread.rewind(second_message_id, cx))
         .unwrap();
     cx.run_until_parked();
 
@@ -1696,9 +1686,7 @@ async fn test_title_generation(cx: &mut TestAppContext) {
     });
 
     let send = thread
-        .update(cx, |thread, cx| {
-            thread.send(UserMessageId::new(), ["Hello"], cx)
-        })
+        .update(cx, |thread, cx| thread.send(new_prompt_id(), ["Hello"], cx))
         .unwrap();
     cx.run_until_parked();
 
@@ -1719,7 +1707,7 @@ async fn test_title_generation(cx: &mut TestAppContext) {
     // Send another message, ensuring no title is generated this time.
     let send = thread
         .update(cx, |thread, cx| {
-            thread.send(UserMessageId::new(), ["Hello again"], cx)
+            thread.send(new_prompt_id(), ["Hello again"], cx)
         })
         .unwrap();
     cx.run_until_parked();
@@ -1740,7 +1728,7 @@ async fn test_building_request_with_pending_tools(cx: &mut TestAppContext) {
         .update(cx, |thread, cx| {
             thread.add_tool(ToolRequiringPermission);
             thread.add_tool(EchoTool);
-            thread.send(UserMessageId::new(), ["Hey!"], cx)
+            thread.send(new_prompt_id(), ["Hey!"], cx)
         })
         .unwrap();
     cx.run_until_parked();
@@ -1892,7 +1880,9 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     let model = model.as_fake();
     assert_eq!(model.id().0, "fake", "should return default model");
 
-    let request = acp_thread.update(cx, |thread, cx| thread.send(vec!["abc".into()], cx));
+    let request = acp_thread.update(cx, |thread, cx| {
+        thread.send(new_prompt_id(), vec!["abc".into()], cx)
+    });
     cx.run_until_parked();
     model.send_last_completion_stream_text_chunk("def");
     cx.run_until_parked();
@@ -1922,8 +1912,8 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     let result = cx
         .update(|cx| {
             connection.prompt(
-                Some(acp_thread::UserMessageId::new()),
                 acp::PromptRequest {
+                    prompt_id: Some(new_prompt_id()),
                     session_id: session_id.clone(),
                     prompt: vec!["ghi".into()],
                 },
@@ -1946,9 +1936,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
     let fake_model = model.as_fake();
 
     let mut events = thread
-        .update(cx, |thread, cx| {
-            thread.send(UserMessageId::new(), ["Think"], cx)
-        })
+        .update(cx, |thread, cx| thread.send(new_prompt_id(), ["Think"], cx))
         .unwrap();
     cx.run_until_parked();
 
@@ -2049,7 +2037,7 @@ async fn test_send_no_retry_on_success(cx: &mut TestAppContext) {
     let mut events = thread
         .update(cx, |thread, cx| {
             thread.set_completion_mode(agent_settings::CompletionMode::Burn, cx);
-            thread.send(UserMessageId::new(), ["Hello!"], cx)
+            thread.send(new_prompt_id(), ["Hello!"], cx)
         })
         .unwrap();
     cx.run_until_parked();
@@ -2093,7 +2081,7 @@ async fn test_send_retry_on_error(cx: &mut TestAppContext) {
     let mut events = thread
         .update(cx, |thread, cx| {
             thread.set_completion_mode(agent_settings::CompletionMode::Burn, cx);
-            thread.send(UserMessageId::new(), ["Hello!"], cx)
+            thread.send(new_prompt_id(), ["Hello!"], cx)
         })
         .unwrap();
     cx.run_until_parked();
@@ -2159,7 +2147,7 @@ async fn test_send_retry_finishes_tool_calls_on_error(cx: &mut TestAppContext) {
         .update(cx, |thread, cx| {
             thread.set_completion_mode(agent_settings::CompletionMode::Burn, cx);
             thread.add_tool(EchoTool);
-            thread.send(UserMessageId::new(), ["Call the echo tool!"], cx)
+            thread.send(new_prompt_id(), ["Call the echo tool!"], cx)
         })
         .unwrap();
     cx.run_until_parked();
@@ -2234,7 +2222,7 @@ async fn test_send_max_retries_exceeded(cx: &mut TestAppContext) {
     let mut events = thread
         .update(cx, |thread, cx| {
             thread.set_completion_mode(agent_settings::CompletionMode::Burn, cx);
-            thread.send(UserMessageId::new(), ["Hello!"], cx)
+            thread.send(new_prompt_id(), ["Hello!"], cx)
         })
         .unwrap();
     cx.run_until_parked();

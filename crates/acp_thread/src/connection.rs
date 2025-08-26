@@ -5,19 +5,8 @@ use collections::IndexMap;
 use gpui::{Entity, SharedString, Task};
 use language_model::LanguageModelProviderId;
 use project::Project;
-use serde::{Deserialize, Serialize};
-use std::{any::Any, error::Error, fmt, path::Path, rc::Rc, sync::Arc};
+use std::{any::Any, error::Error, fmt, path::Path, rc::Rc};
 use ui::{App, IconName};
-use uuid::Uuid;
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
-pub struct UserMessageId(Arc<str>);
-
-impl UserMessageId {
-    pub fn new() -> Self {
-        Self(Uuid::new_v4().to_string().into())
-    }
-}
 
 pub trait AgentConnection {
     fn new_thread(
@@ -31,12 +20,8 @@ pub trait AgentConnection {
 
     fn authenticate(&self, method: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>>;
 
-    fn prompt(
-        &self,
-        user_message_id: Option<UserMessageId>,
-        params: acp::PromptRequest,
-        cx: &mut App,
-    ) -> Task<Result<acp::PromptResponse>>;
+    fn prompt(&self, params: acp::PromptRequest, cx: &mut App)
+    -> Task<Result<acp::PromptResponse>>;
 
     fn resume(
         &self,
@@ -48,11 +33,11 @@ pub trait AgentConnection {
 
     fn cancel(&self, session_id: &acp::SessionId, cx: &mut App);
 
-    fn truncate(
+    fn rewind(
         &self,
         _session_id: &acp::SessionId,
         _cx: &App,
-    ) -> Option<Rc<dyn AgentSessionTruncate>> {
+    ) -> Option<Rc<dyn AgentSessionRewind>> {
         None
     }
 
@@ -85,8 +70,8 @@ impl dyn AgentConnection {
     }
 }
 
-pub trait AgentSessionTruncate {
-    fn run(&self, message_id: UserMessageId, cx: &mut App) -> Task<Result<()>>;
+pub trait AgentSessionRewind {
+    fn rewind(&self, message_id: acp::PromptId, cx: &mut App) -> Task<Result<()>>;
 }
 
 pub trait AgentSessionResume {
@@ -362,7 +347,6 @@ mod test_support {
 
         fn prompt(
             &self,
-            _id: Option<UserMessageId>,
             params: acp::PromptRequest,
             cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {
@@ -432,11 +416,11 @@ mod test_support {
             }
         }
 
-        fn truncate(
+        fn rewind(
             &self,
             _session_id: &agent_client_protocol::SessionId,
             _cx: &App,
-        ) -> Option<Rc<dyn AgentSessionTruncate>> {
+        ) -> Option<Rc<dyn AgentSessionRewind>> {
             Some(Rc::new(StubAgentSessionEditor))
         }
 
@@ -447,8 +431,8 @@ mod test_support {
 
     struct StubAgentSessionEditor;
 
-    impl AgentSessionTruncate for StubAgentSessionEditor {
-        fn run(&self, _: UserMessageId, _: &mut App) -> Task<Result<()>> {
+    impl AgentSessionRewind for StubAgentSessionEditor {
+        fn rewind(&self, _: acp::PromptId, _: &mut App) -> Task<Result<()>> {
             Task::ready(Ok(()))
         }
     }

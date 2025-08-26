@@ -905,11 +905,10 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 
     fn prompt(
         &self,
-        id: Option<acp_thread::UserMessageId>,
         params: acp::PromptRequest,
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>> {
-        let id = id.expect("UserMessageId is required");
+        let id = params.prompt_id.expect("UserMessageId is required");
         let session_id = params.session_id.clone();
         log::info!("Received prompt request for session: {}", session_id);
         log::debug!("Prompt blocks count: {}", params.prompt.len());
@@ -948,11 +947,11 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         });
     }
 
-    fn truncate(
+    fn rewind(
         &self,
         session_id: &agent_client_protocol::SessionId,
         cx: &App,
-    ) -> Option<Rc<dyn acp_thread::AgentSessionTruncate>> {
+    ) -> Option<Rc<dyn acp_thread::AgentSessionRewind>> {
         self.0.read_with(cx, |agent, _cx| {
             agent.sessions.get(session_id).map(|session| {
                 Rc::new(NativeAgentSessionEditor {
@@ -1009,10 +1008,10 @@ struct NativeAgentSessionEditor {
     acp_thread: WeakEntity<AcpThread>,
 }
 
-impl acp_thread::AgentSessionTruncate for NativeAgentSessionEditor {
-    fn run(&self, message_id: acp_thread::UserMessageId, cx: &mut App) -> Task<Result<()>> {
+impl acp_thread::AgentSessionRewind for NativeAgentSessionEditor {
+    fn rewind(&self, message_id: acp::PromptId, cx: &mut App) -> Task<Result<()>> {
         match self.thread.update(cx, |thread, cx| {
-            thread.truncate(message_id.clone(), cx)?;
+            thread.rewind(message_id.clone(), cx)?;
             Ok(thread.latest_token_usage())
         }) {
             Ok(usage) => {
@@ -1065,6 +1064,7 @@ mod tests {
     use super::*;
     use acp_thread::{
         AgentConnection, AgentModelGroupName, AgentModelId, AgentModelInfo, MentionUri,
+        new_prompt_id,
     };
     use fs::FakeFs;
     use gpui::TestAppContext;
@@ -1311,6 +1311,7 @@ mod tests {
 
         let send = acp_thread.update(cx, |thread, cx| {
             thread.send(
+                new_prompt_id(),
                 vec![
                     "What does ".into(),
                     acp::ContentBlock::ResourceLink(acp::ResourceLink {

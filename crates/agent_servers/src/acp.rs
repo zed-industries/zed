@@ -29,6 +29,7 @@ pub struct AcpConnection {
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
     auth_methods: Vec<acp::AuthMethod>,
     prompt_capabilities: acp::PromptCapabilities,
+    supports_rewind: bool,
     _io_task: Task<Result<()>>,
 }
 
@@ -147,6 +148,7 @@ impl AcpConnection {
             server_name,
             sessions,
             prompt_capabilities: response.agent_capabilities.prompt_capabilities,
+            supports_rewind: response.agent_capabilities.rewind_session,
             _io_task: io_task,
         })
     }
@@ -225,9 +227,22 @@ impl AgentConnection for AcpConnection {
         })
     }
 
+    fn rewind(
+        &self,
+        session_id: &agent_client_protocol::SessionId,
+        _cx: &App,
+    ) -> Option<Rc<dyn acp_thread::AgentSessionRewind>> {
+        if !self.supports_rewind {
+            return None;
+        }
+        Some(Rc::new(AcpRewinder {
+            connection: self.connection.clone(),
+            session_id: session_id.clone(),
+        }) as _)
+    }
+
     fn prompt(
         &self,
-        _id: Option<acp_thread::UserMessageId>,
         params: acp::PromptRequest,
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>> {
@@ -299,6 +314,25 @@ impl AgentConnection for AcpConnection {
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
         self
+    }
+}
+
+struct AcpRewinder {
+    connection: Rc<acp::ClientSideConnection>,
+    session_id: acp::SessionId,
+}
+
+impl acp_thread::AgentSessionRewind for AcpRewinder {
+    fn rewind(&self, prompt_id: acp::PromptId, cx: &mut App) -> Task<Result<()>> {
+        let conn = self.connection.clone();
+        let params = acp::RewindRequest {
+            session_id: self.session_id.clone(),
+            prompt_id,
+        };
+        cx.foreground_executor().spawn(async move {
+            conn.rewind(params).await?;
+            Ok(())
+        })
     }
 }
 

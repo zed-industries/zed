@@ -1,5 +1,5 @@
 use crate::AgentServer;
-use acp_thread::{AcpThread, AgentThreadEntry, ToolCall, ToolCallStatus};
+use acp_thread::{AcpThread, AgentThreadEntry, ToolCall, ToolCallStatus, new_prompt_id};
 use agent_client_protocol as acp;
 use futures::{FutureExt, StreamExt, channel::mpsc, select};
 use gpui::{AppContext, Entity, TestAppContext};
@@ -77,6 +77,7 @@ where
     thread
         .update(cx, |thread, cx| {
             thread.send(
+                new_prompt_id(),
                 vec![
                     acp::ContentBlock::Text(acp::TextContent {
                         text: "Read the file ".into(),

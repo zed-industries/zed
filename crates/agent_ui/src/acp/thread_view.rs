@@ -1,7 +1,7 @@
 use acp_thread::{
     AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessage, AssistantMessageChunk,
     AuthRequired, LoadError, MentionUri, RetryStatus, ThreadStatus, ToolCall, ToolCallContent,
-    ToolCallStatus, UserMessageId,
+    ToolCallStatus, new_prompt_id,
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::ActionLog;
@@ -791,7 +791,7 @@ impl AcpThreadView {
                 if let Some(thread) = self.thread()
                     && let Some(AgentThreadEntry::UserMessage(user_message)) =
                         thread.read(cx).entries().get(event.entry_index)
-                    && user_message.id.is_some()
+                    && user_message.prompt_id.is_some()
                 {
                     self.editing_message = Some(event.entry_index);
                     cx.notify();
@@ -801,7 +801,7 @@ impl AcpThreadView {
                 if let Some(thread) = self.thread()
                     && let Some(AgentThreadEntry::UserMessage(user_message)) =
                         thread.read(cx).entries().get(event.entry_index)
-                    && user_message.id.is_some()
+                    && user_message.prompt_id.is_some()
                 {
                     if editor.read(cx).text(cx).as_str() == user_message.content.to_markdown(cx) {
                         self.editing_message = None;
@@ -942,7 +942,7 @@ impl AcpThreadView {
 
                 telemetry::event!("Agent Message Sent", agent = agent_telemetry_id);
 
-                thread.send(contents, cx)
+                thread.send(new_prompt_id(), contents, cx)
             })?;
             send.await
         });
@@ -1011,7 +1011,12 @@ impl AcpThreadView {
         }
 
         let Some(user_message_id) = thread.update(cx, |thread, _| {
-            thread.entries().get(entry_ix)?.user_message()?.id.clone()
+            thread
+                .entries()
+                .get(entry_ix)?
+                .user_message()?
+                .prompt_id
+                .clone()
         }) else {
             return;
         };
@@ -1316,7 +1321,7 @@ impl AcpThreadView {
         cx.notify();
     }
 
-    fn rewind(&mut self, message_id: &UserMessageId, cx: &mut Context<Self>) {
+    fn rewind(&mut self, message_id: &acp::PromptId, cx: &mut Context<Self>) {
         let Some(thread) = self.thread() else {
             return;
         };
@@ -1379,7 +1384,7 @@ impl AcpThreadView {
                     .gap_1p5()
                     .w_full()
                     .children(rules_item)
-                    .children(message.id.clone().and_then(|message_id| {
+                    .children(message.prompt_id.clone().and_then(|message_id| {
                         message.checkpoint.as_ref()?.show.then(|| {
                             h_flex()
                                 .px_3()
@@ -1416,7 +1421,7 @@ impl AcpThreadView {
                                     .map(|this|{
                                         if editing && editor_focus {
                                             this.border_color(focus_border)
-                                        } else if message.id.is_some() {
+                                        } else if message.prompt_id.is_some() {
                                             this.hover(|s| s.border_color(focus_border.opacity(0.8)))
                                         } else {
                                             this
@@ -1437,7 +1442,7 @@ impl AcpThreadView {
                                     .bg(cx.theme().colors().editor_background)
                                     .overflow_hidden();
 
-                                if message.id.is_some() {
+                                if message.prompt_id.is_some() {
                                     this.child(
                                         base_container
                                             .child(
@@ -5398,7 +5403,6 @@ pub(crate) mod tests {
 
         fn prompt(
             &self,
-            _id: Option<acp_thread::UserMessageId>,
             _params: acp::PromptRequest,
             _cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {
@@ -5544,7 +5548,7 @@ pub(crate) mod tests {
             let AgentThreadEntry::UserMessage(user_message) = &thread.entries()[2] else {
                 panic!();
             };
-            user_message.id.clone().unwrap()
+            user_message.prompt_id.clone().unwrap()
         });
 
         thread_view.read_with(cx, |view, cx| {
