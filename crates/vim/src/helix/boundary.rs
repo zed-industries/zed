@@ -568,35 +568,11 @@ impl FuzzyBoundary {
             reach_boundary.map(|reach_start| (point, reach_start))
         };
 
-        let forwards = std::iter::successors(
-            try_find_boundary_data(map, from, generate_boundary_data),
-            |(previous_identifier, _)| {
-                if *previous_identifier == map.max_point() {
-                    return None;
-                }
-                try_find_boundary_data(
-                    map,
-                    movement::right(map, *previous_identifier),
-                    generate_boundary_data,
-                )
-            },
-        );
-        let backwards = std::iter::successors(
-            try_find_preceding_boundary_data(map, from, generate_boundary_data),
-            |(previous_identifier, _)| {
-                if *previous_identifier == DisplayPoint::zero() {
-                    return None;
-                }
-                try_find_preceding_boundary_data(
-                    map,
-                    movement::left(map, *previous_identifier),
-                    generate_boundary_data,
-                )
-            },
-        );
-        let boundaries = forwards
-            .interleave(backwards)
-            .take(2)
+        let forwards = try_find_boundary_data(map, from, generate_boundary_data);
+        let backwards = try_find_preceding_boundary_data(map, from, generate_boundary_data);
+        let boundaries = [forwards, backwards]
+            .into_iter()
+            .filter_map(|data| data)
             .filter_map(|(identifier, reach_boundary)| reach_boundary(identifier, map))
             .filter(|boundary| match boundary.cmp(&from) {
                 Ordering::Equal => true,
