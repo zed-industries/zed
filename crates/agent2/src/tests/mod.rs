@@ -472,7 +472,7 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
                 tool_name: ToolRequiringPermission::name().into(),
                 is_error: true,
                 content: "Permission to run tool denied by user".into(),
-                output: None
+                output: Some("Permission to run tool denied by user".into())
             })
         ]
     );
