@@ -1146,8 +1146,9 @@ and then another
         }
 
         let git_store = project.git_store().read(cx);
-        let (repository, _repo_path) =
+        let (repository, repo_path) =
             git_store.repository_and_path_for_project_path(&project_path, cx)?;
+        let repo_path_str = repo_path.to_str()?;
 
         let repository = repository.read(cx);
         let head_sha = repository
@@ -1163,6 +1164,7 @@ and then another
         let recent_files = self.recent_files(&buffer_snapshotted_at, repository, cx);
 
         Some(PredictEditsGitInfo {
+            input_path: Some(repo_path_str.to_string()),
             head_sha,
             remote_origin_url,
             remote_upstream_url,
@@ -1231,7 +1233,7 @@ and then another
                     continue;
                 };
                 results.push(PredictEditsRecentFile {
-                    repo_path: repo_path_str.to_string(),
+                    path: repo_path_str.to_string(),
                     active_to_now_ms,
                 });
             } else {

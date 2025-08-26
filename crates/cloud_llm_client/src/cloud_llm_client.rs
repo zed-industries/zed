@@ -156,6 +156,9 @@ pub struct PredictEditsBody {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictEditsGitInfo {
+    /// Path within the repository that contains the input excerpt.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub input_path: Option<String>,
     /// SHA of git HEAD commit at time of prediction.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub head_sha: Option<String>,
@@ -165,13 +168,16 @@ pub struct PredictEditsGitInfo {
     /// URL of the remote called `upstream`.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub remote_upstream_url: Option<String>,
+    /// Recently active files that may be within this repository.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub recent_files: Option<Vec<PredictEditsRecentFile>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictEditsRecentFile {
-    pub repo_path: String,
+    /// Path to a file within the repository.
+    pub path: String,
+    /// Milliseconds between the editor for this file being active and the request time.
     pub active_to_now_ms: u32,
 }
 
