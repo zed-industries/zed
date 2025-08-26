@@ -2,12 +2,14 @@
 mod tab_switcher_tests;
 
 use collections::HashMap;
-use editor::items::entry_git_aware_label_color;
+use editor::items::{
+    entry_diagnostic_aware_icon_decoration_and_color, entry_git_aware_label_color,
+};
 use fuzzy::StringMatchCandidate;
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, Modifiers, ModifiersChangedEvent, MouseButton, MouseUpEvent, ParentElement, Render,
-    Styled, Task, WeakEntity, Window, actions, rems,
+    Focusable, Modifiers, ModifiersChangedEvent, MouseButton, MouseUpEvent, ParentElement, Point,
+    Render, Styled, Task, WeakEntity, Window, actions, rems,
 };
 use picker::{Picker, PickerDelegate};
 use project::Project;
@@ -15,11 +17,14 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
 use std::{cmp::Reverse, sync::Arc};
-use ui::{ListItem, ListItemSpacing, Tooltip, prelude::*};
+use ui::{
+    DecoratedIcon, IconDecoration, IconDecorationKind, ListItem, ListItemSpacing, Tooltip,
+    prelude::*,
+};
 use util::ResultExt;
 use workspace::{
     ModalView, Pane, SaveIntent, Workspace,
-    item::{ItemHandle, ItemSettings, TabContentParams},
+    item::{ItemHandle, ItemSettings, ShowDiagnostics, TabContentParams},
     pane::{Event as PaneEvent, render_item_indicator, tab_details},
 };
 
@@ -231,6 +236,77 @@ pub struct TabSwitcherDelegate {
     original_items: Vec<(Entity<Pane>, usize)>,
     is_all_panes: bool,
     restored_items: bool,
+}
+
+impl TabMatch {
+    fn icon(
+        &self,
+        project: &Entity<Project>,
+        selected: bool,
+        window: &Window,
+        cx: &App,
+    ) -> Option<DecoratedIcon> {
+        let icon = self.item.tab_icon(window, cx)?;
+        let item_settings = ItemSettings::get_global(cx);
+        let show_diagnostics = item_settings.show_diagnostics;
+        let git_status_color = item_settings
+            .git_status
+            .then(|| {
+                let path = self.item.project_path(cx)?;
+                let project = project.read(cx);
+                let entry = project.entry_for_path(&path, cx)?;
+                let git_status = project
+                    .project_path_git_status(&path, cx)
+                    .map(|status| status.summary())
+                    .unwrap_or_default();
+                Some(entry_git_aware_label_color(
+                    git_status,
+                    entry.is_ignored,
+                    selected,
+                ))
+            })
+            .flatten();
+        let colored_icon = icon.color(git_status_color.unwrap_or_default());
+
+        let most_sever_diagostic_level = if show_diagnostics == ShowDiagnostics::Off {
+            None
+        } else {
+            let buffer_store = project.read(cx).buffer_store().read(cx);
+            let buffer = self
+                .item
+                .project_path(cx)
+                .and_then(|path| buffer_store.get_by_path(&path))
+                .map(|buffer| buffer.read(cx));
+            buffer.and_then(|buffer| {
+                buffer
+                    .buffer_diagnostics(None)
+                    .iter()
+                    .map(|diagnostic_entry| diagnostic_entry.diagnostic.severity)
+                    .min()
+            })
+        };
+
+        let decorations =
+            entry_diagnostic_aware_icon_decoration_and_color(most_sever_diagostic_level)
+                .filter(|(d, _)| {
+                    *d != IconDecorationKind::Triangle
+                        || show_diagnostics != ShowDiagnostics::Errors
+                })
+                .map(|(icon, color)| {
+                    let knockout_item_color = if selected {
+                        cx.theme().colors().element_selected
+                    } else {
+                        cx.theme().colors().element_background
+                    };
+                    IconDecoration::new(icon, knockout_item_color, cx)
+                        .color(color.color(cx))
+                        .position(Point {
+                            x: px(-2.),
+                            y: px(-2.),
+                        })
+                });
+        Some(DecoratedIcon::new(colored_icon, decorations))
+    }
 }
 
 impl TabSwitcherDelegate {
@@ -574,31 +650,7 @@ impl PickerDelegate for TabSwitcherDelegate {
         };
         let label = tab_match.item.tab_content(params, window, cx);
 
-        let icon = tab_match.item.tab_icon(window, cx).map(|icon| {
-            let git_status_color = ItemSettings::get_global(cx)
-                .git_status
-                .then(|| {
-                    tab_match
-                        .item
-                        .project_path(cx)
-                        .as_ref()
-                        .and_then(|path| {
-                            let project = self.project.read(cx);
-                            let entry = project.entry_for_path(path, cx)?;
-                            let git_status = project
-                                .project_path_git_status(path, cx)
-                                .map(|status| status.summary())
-                                .unwrap_or_default();
-                            Some((entry, git_status))
-                        })
-                        .map(|(entry, git_status)| {
-                            entry_git_aware_label_color(git_status, entry.is_ignored, selected)
-                        })
-                })
-                .flatten();
-
-            icon.color(git_status_color.unwrap_or_default())
-        });
+        let icon = tab_match.icon(&self.project, selected, window, cx);
 
         let indicator = render_item_indicator(tab_match.item.boxed_clone(), cx);
         let indicator_color = if let Some(ref indicator) = indicator {
@@ -640,7 +692,7 @@ impl PickerDelegate for TabSwitcherDelegate {
                 .inset(true)
                 .toggle_state(selected)
                 .child(h_flex().w_full().child(label))
-                .start_slot::<Icon>(icon)
+                .start_slot::<DecoratedIcon>(icon)
                 .map(|el| {
                     if self.selected_index == ix {
                         el.end_slot::<AnyElement>(close_button)

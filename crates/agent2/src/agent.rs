@@ -180,7 +180,7 @@ impl NativeAgent {
         fs: Arc<dyn Fs>,
         cx: &mut AsyncApp,
     ) -> Result<Entity<NativeAgent>> {
-        log::info!("Creating new NativeAgent");
+        log::debug!("Creating new NativeAgent");
 
         let project_context = cx
             .update(|cx| Self::build_project_context(&project, prompt_store.as_ref(), cx))?
@@ -240,13 +240,16 @@ impl NativeAgent {
         let title = thread.title();
         let project = thread.project.clone();
         let action_log = thread.action_log.clone();
-        let acp_thread = cx.new(|_cx| {
+        let prompt_capabilities_rx = thread.prompt_capabilities_rx.clone();
+        let acp_thread = cx.new(|cx| {
             acp_thread::AcpThread::new(
                 title,
                 connection,
                 project.clone(),
                 action_log.clone(),
                 session_id.clone(),
+                prompt_capabilities_rx,
+                cx,
             )
         });
         let subscriptions = vec![
@@ -756,7 +759,7 @@ impl NativeAgentConnection {
                 }
             }
 
-            log::info!("Response stream completed");
+            log::debug!("Response stream completed");
             anyhow::Ok(acp::PromptResponse {
                 stop_reason: acp::StopReason::EndTurn,
             })
@@ -781,7 +784,7 @@ impl AgentModelSelector for NativeAgentConnection {
         model_id: acp_thread::AgentModelId,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        log::info!("Setting model for session {}: {}", session_id, model_id);
+        log::debug!("Setting model for session {}: {}", session_id, model_id);
         let Some(thread) = self
             .0
             .read(cx)
@@ -852,7 +855,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         cx: &mut App,
     ) -> Task<Result<Entity<acp_thread::AcpThread>>> {
         let agent = self.0.clone();
-        log::info!("Creating new thread for project at: {:?}", cwd);
+        log::debug!("Creating new thread for project at: {:?}", cwd);
 
         cx.spawn(async move |cx| {
             log::debug!("Starting thread creation in async context");
@@ -917,20 +920,12 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                 .into_iter()
                 .map(Into::into)
                 .collect::<Vec<_>>();
-            log::info!("Converted prompt to message: {} chars", content.len());
+            log::debug!("Converted prompt to message: {} chars", content.len());
             log::debug!("Message id: {:?}", id);
             log::debug!("Message content: {:?}", content);
 
             thread.update(cx, |thread, cx| thread.send(id, content, cx))
         })
-    }
-
-    fn prompt_capabilities(&self) -> acp::PromptCapabilities {
-        acp::PromptCapabilities {
-            image: true,
-            audio: false,
-            embedded_context: true,
-        }
     }
 
     fn resume(

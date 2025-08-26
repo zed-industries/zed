@@ -9,6 +9,8 @@ use agent_servers::AgentServerSettings;
 use agent2::{DbThreadMetadata, HistoryEntry};
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use serde::{Deserialize, Serialize};
+use zed_actions::OpenBrowser;
+use zed_actions::agent::ReauthenticateAgent;
 
 use crate::acp::{AcpThreadHistory, ThreadHistoryEvent};
 use crate::agent_diff::AgentDiffThread;
@@ -247,6 +249,7 @@ enum WhichFontSize {
     None,
 }
 
+// TODO unify this with ExternalAgent
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AgentType {
     #[default]
@@ -1031,6 +1034,8 @@ impl AgentPanel {
     }
 
     fn new_prompt_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        telemetry::event!("Agent Thread Started", agent = "zed-text");
+
         let context = self
             .context_store
             .update(cx, |context_store, cx| context_store.create(cx));
@@ -1122,6 +1127,8 @@ impl AgentPanel {
                     .agent
                 }
             };
+
+            telemetry::event!("Agent Thread Started", agent = ext_agent.name());
 
             let server = ext_agent.server(fs, history);
 
@@ -1480,6 +1487,7 @@ impl AgentPanel {
                 tools,
                 self.language_registry.clone(),
                 self.workspace.clone(),
+                self.project.downgrade(),
                 window,
                 cx,
             )
@@ -2211,6 +2219,8 @@ impl AgentPanel {
             "Enable Full Screen"
         };
 
+        let selected_agent = self.selected_agent.clone();
+
         PopoverMenu::new("agent-options-menu")
             .trigger_with_tooltip(
                 IconButton::new("agent-options-menu", IconName::Ellipsis)
@@ -2290,6 +2300,11 @@ impl AgentPanel {
                             .action("Settings", Box::new(OpenSettings))
                             .separator()
                             .action(full_screen_label, Box::new(ToggleZoom));
+
+                        if selected_agent == AgentType::Gemini {
+                            menu = menu.action("Reauthenticate", Box::new(ReauthenticateAgent))
+                        }
+
                         menu
                     }))
                 }
@@ -2324,6 +2339,8 @@ impl AgentPanel {
             .menu({
                 let menu = self.assistant_navigation_menu.clone();
                 move |window, cx| {
+                    telemetry::event!("View Thread History Clicked");
+
                     if let Some(menu) = menu.as_ref() {
                         menu.update(cx, |_, cx| {
                             cx.defer_in(window, |menu, window, cx| {
@@ -2502,6 +2519,8 @@ impl AgentPanel {
                 let workspace = self.workspace.clone();
 
                 move |window, cx| {
+                    telemetry::event!("New Thread Clicked");
+
                     let active_thread = active_thread.clone();
                     Some(ContextMenu::build(window, cx, |mut menu, _window, cx| {
                         menu = menu
@@ -2678,6 +2697,15 @@ impl AgentPanel {
                                 }
 
                                 menu
+                            })
+                            .when(cx.has_flag::<GeminiAndNativeFeatureFlag>(), |menu| {
+                                menu.separator().link(
+                                    "Add Your Own Agent",
+                                    OpenBrowser {
+                                        url: "https://agentclientprotocol.com/".into(),
+                                    }
+                                    .boxed_clone(),
+                                )
                             });
                         menu
                     }))
@@ -3758,6 +3786,11 @@ impl Render for AgentPanel {
                 }
             }))
             .on_action(cx.listener(Self::toggle_burn_mode))
+            .on_action(cx.listener(|this, _: &ReauthenticateAgent, window, cx| {
+                if let Some(thread_view) = this.active_thread_view() {
+                    thread_view.update(cx, |thread_view, cx| thread_view.reauthenticate(window, cx))
+                }
+            }))
             .child(self.render_toolbar(window, cx))
             .children(self.render_onboarding(window, cx))
             .map(|parent| match &self.active_view {
