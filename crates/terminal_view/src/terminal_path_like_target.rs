@@ -4,7 +4,7 @@ use editor::Editor;
 use gpui::{App, AppContext, Context, Task, WeakEntity, Window};
 use itertools::Itertools;
 use project::{Entry, Metadata};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use terminal::PathLikeTarget;
 use util::{ResultExt, debug_panic, paths::PathWithPosition};
 use workspace::{OpenOptions, OpenVisible, Workspace};
@@ -135,17 +135,17 @@ fn possible_open_target(
     // If we won't find paths "easily", we can traverse the entire worktree to look what ends with the potential path suffix.
     // That will be slow, though, so do the fast checks first.
     let mut worktree_paths_to_check = Vec::new();
-    let mut cwd_outside_of_all_worktrees = cwd.is_some();
-    let mut worktree_open_target = None;
+    let mut is_cwd_in_worktree = false;
+    let mut open_target = None;
     'worktree_loop: for worktree in &worktree_candidates {
         let worktree_root = worktree.read(cx).abs_path();
         let mut paths_to_check = Vec::with_capacity(potential_paths.len());
-        let worktree_rel_cwd = cwd
+        let relative_cwd = cwd
             .and_then(|cwd| cwd.strip_prefix(&worktree_root).ok())
-            .and_then(|stripped| {
-                (!stripped.as_os_str().is_empty()).then(|| {
-                    cwd_outside_of_all_worktrees = false;
-                    stripped
+            .and_then(|cwd_stripped| {
+                (cwd_stripped != Path::new("")).then(|| {
+                    is_cwd_in_worktree = true;
+                    cwd_stripped
                 })
             });
 
@@ -158,7 +158,7 @@ fn possible_open_target(
                 };
                 match worktree.read(cx).root_entry() {
                     Some(root_entry) => {
-                        worktree_open_target = Some(OpenTarget::Worktree(
+                        open_target = Some(OpenTarget::Worktree(
                             root_path_with_position,
                             root_entry.clone(),
                             #[cfg(test)]
@@ -182,15 +182,15 @@ fn possible_open_target(
 
             if path_to_check.path.is_relative()
                 && !worktree.read(cx).is_single_file()
-                && let Some(entry) = worktree_rel_cwd
-                    .and_then(|worktree_rel_cwd| {
+                && let Some(entry) = relative_cwd
+                    .and_then(|relative_cwd| {
                         worktree
                             .read(cx)
-                            .entry_for_path(&worktree_rel_cwd.join(&path_to_check.path))
+                            .entry_for_path(&relative_cwd.join(&path_to_check.path))
                     })
                     .or_else(|| worktree.read(cx).entry_for_path(&path_to_check.path))
             {
-                worktree_open_target = Some(OpenTarget::Worktree(
+                open_target = Some(OpenTarget::Worktree(
                     PathWithPosition {
                         path: worktree_root.join(&entry.path),
                         row: path_to_check.row,
@@ -212,27 +212,28 @@ fn possible_open_target(
     }
 
     let project_is_local = workspace.read(cx).project().read(cx).is_local();
-    if worktree_open_target.is_some() {
+    if open_target.is_some() {
         // We we want to prefer open targets found via background fs checks over worktree matches,
         // however we can return early if either:
         //   - This is a remote project, or
         //   - If the terminal working directory is inside of at least one worktree
-        if !project_is_local || !cwd_outside_of_all_worktrees {
-            return Task::ready(worktree_open_target);
+        if !project_is_local || is_cwd_in_worktree {
+            return Task::ready(open_target);
         }
     }
 
     // Before entire worktree traversal(s), make an attempt to do FS checks if available.
     let fs_paths_to_check =
         if project_is_local {
-            let fs_cwd_path_to_check = cwd
+            let fs_cwd_paths_to_check = cwd
                 .iter()
                 .flat_map(|cwd| {
                     let mut paths_to_check = Vec::new();
                     for path_to_check in &potential_paths {
+                        let maybe_path = &path_to_check.path;
                         if path_to_check.path.is_relative() {
                             paths_to_check.push(PathWithPosition {
-                                path: cwd.join(&path_to_check.path),
+                                path: cwd.join(&maybe_path),
                                 row: path_to_check.row,
                                 column: path_to_check.column,
                             });
@@ -241,7 +242,7 @@ fn possible_open_target(
                     paths_to_check
                 })
                 .collect::<Vec<_>>();
-            fs_cwd_path_to_check
+            fs_cwd_paths_to_check
                 .into_iter()
                 .chain(
                     potential_paths
@@ -268,13 +269,6 @@ fn possible_open_target(
                                     column: path_to_check.column,
                                 });
                                 if maybe_path.is_relative() {
-                                    if let Some(cwd) = &cwd {
-                                        paths_to_check.push(PathWithPosition {
-                                            path: cwd.join(maybe_path),
-                                            row: path_to_check.row,
-                                            column: path_to_check.column,
-                                        });
-                                    }
                                     for worktree in &worktree_candidates {
                                         if !worktree.read(cx).is_single_file() {
                                             paths_to_check.push(PathWithPosition {
@@ -317,17 +311,17 @@ fn possible_open_target(
         if let Some(fs_check_task) = fs_check_task
             && let Some(fs_open_target) = fs_check_task.await
         {
-            if worktree_open_target
+            if open_target
                 .as_ref()
-                .map(|worktree_open_target| worktree_open_target.path() != fs_open_target.path())
+                .map(|open_target| open_target.path() != fs_open_target.path())
                 .unwrap_or(true)
             {
                 return Some(fs_open_target);
             }
         }
 
-        if worktree_open_target.is_some() {
-            return worktree_open_target;
+        if open_target.is_some() {
+            return open_target;
         }
 
         for (worktree, worktree_paths_to_check) in worktree_paths_to_check {
