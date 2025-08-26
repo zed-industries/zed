@@ -43,7 +43,7 @@ use text::Anchor;
 use theme::ThemeSettings;
 use ui::{
     Callout, Disclosure, Divider, DividerColor, ElevationIndex, KeyBinding, PopoverMenuHandle,
-    Scrollbar, ScrollbarState, SpinnerLabel, Tooltip, prelude::*,
+    Scrollbar, ScrollbarState, SpinnerLabel, TintColor, Tooltip, prelude::*,
 };
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use workspace::{CollaboratorId, Workspace};
@@ -278,6 +278,7 @@ pub struct AcpThreadView {
     editing_message: Option<usize>,
     prompt_capabilities: Rc<Cell<PromptCapabilities>>,
     is_loading_contents: bool,
+    install_command_markdown: Entity<Markdown>,
     _cancel_task: Option<Task<()>>,
     _subscriptions: [Subscription; 3],
 }
@@ -391,6 +392,7 @@ impl AcpThreadView {
             hovered_recent_history_item: None,
             prompt_capabilities,
             is_loading_contents: false,
+            install_command_markdown: cx.new(|cx| Markdown::new("".into(), None, None, cx)),
             _subscriptions: subscriptions,
             _cancel_task: None,
             focus_handle: cx.focus_handle(),
@@ -666,7 +668,12 @@ impl AcpThreadView {
         match &self.thread_state {
             ThreadState::Ready { .. } | ThreadState::Unauthenticated { .. } => "New Thread".into(),
             ThreadState::Loading { .. } => "Loading…".into(),
-            ThreadState::LoadError(_) => "Failed to load".into(),
+            ThreadState::LoadError(error) => match error {
+                LoadError::NotInstalled { .. } => format!("Install {}", self.agent.name()).into(),
+                LoadError::Unsupported { .. } => format!("Upgrade {}", self.agent.name()).into(),
+                LoadError::Exited { .. } => format!("{} Exited", self.agent.name()).into(),
+                LoadError::Other(_) => format!("Error Loading {}", self.agent.name()).into(),
+            },
         }
     }
 
@@ -2834,125 +2841,26 @@ impl AcpThreadView {
         )
     }
 
-    fn render_load_error(&self, e: &LoadError, cx: &Context<Self>) -> AnyElement {
-        let (message, action_slot) = match e {
+    fn render_load_error(
+        &self,
+        e: &LoadError,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let (message, action_slot): (SharedString, _) = match e {
             LoadError::NotInstalled {
-                error_message,
-                install_message,
+                error_message: _,
+                install_message: _,
                 install_command,
             } => {
-                let install_command = install_command.clone();
-                let button = Button::new("install", install_message)
-                    .tooltip(Tooltip::text(install_command.clone()))
-                    .style(ButtonStyle::Outlined)
-                    .label_size(LabelSize::Small)
-                    .icon(IconName::Download)
-                    .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted)
-                    .icon_position(IconPosition::Start)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        telemetry::event!("Agent Install CLI", agent = this.agent.telemetry_id());
-
-                        let task = this
-                            .workspace
-                            .update(cx, |workspace, cx| {
-                                let project = workspace.project().read(cx);
-                                let cwd = project.first_project_directory(cx);
-                                let shell = project.terminal_settings(&cwd, cx).shell.clone();
-                                let spawn_in_terminal = task::SpawnInTerminal {
-                                    id: task::TaskId(install_command.clone()),
-                                    full_label: install_command.clone(),
-                                    label: install_command.clone(),
-                                    command: Some(install_command.clone()),
-                                    args: Vec::new(),
-                                    command_label: install_command.clone(),
-                                    cwd,
-                                    env: Default::default(),
-                                    use_new_terminal: true,
-                                    allow_concurrent_runs: true,
-                                    reveal: Default::default(),
-                                    reveal_target: Default::default(),
-                                    hide: Default::default(),
-                                    shell,
-                                    show_summary: true,
-                                    show_command: true,
-                                    show_rerun: false,
-                                };
-                                workspace.spawn_in_terminal(spawn_in_terminal, window, cx)
-                            })
-                            .ok();
-                        let Some(task) = task else { return };
-                        cx.spawn_in(window, async move |this, cx| {
-                            if let Some(Ok(_)) = task.await {
-                                this.update_in(cx, |this, window, cx| {
-                                    this.reset(window, cx);
-                                })
-                                .ok();
-                            }
-                        })
-                        .detach()
-                    }));
-
-                (error_message.clone(), Some(button.into_any_element()))
+                return self.render_not_installed(install_command.clone(), false, window, cx);
             }
             LoadError::Unsupported {
-                error_message,
-                upgrade_message,
+                error_message: _,
+                upgrade_message: _,
                 upgrade_command,
             } => {
-                let upgrade_command = upgrade_command.clone();
-                let button = Button::new("upgrade", upgrade_message)
-                    .tooltip(Tooltip::text(upgrade_command.clone()))
-                    .style(ButtonStyle::Outlined)
-                    .label_size(LabelSize::Small)
-                    .icon(IconName::Download)
-                    .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted)
-                    .icon_position(IconPosition::Start)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        telemetry::event!("Agent Upgrade CLI", agent = this.agent.telemetry_id());
-
-                        let task = this
-                            .workspace
-                            .update(cx, |workspace, cx| {
-                                let project = workspace.project().read(cx);
-                                let cwd = project.first_project_directory(cx);
-                                let shell = project.terminal_settings(&cwd, cx).shell.clone();
-                                let spawn_in_terminal = task::SpawnInTerminal {
-                                    id: task::TaskId(upgrade_command.to_string()),
-                                    full_label: upgrade_command.clone(),
-                                    label: upgrade_command.clone(),
-                                    command: Some(upgrade_command.clone()),
-                                    args: Vec::new(),
-                                    command_label: upgrade_command.clone(),
-                                    cwd,
-                                    env: Default::default(),
-                                    use_new_terminal: true,
-                                    allow_concurrent_runs: true,
-                                    reveal: Default::default(),
-                                    reveal_target: Default::default(),
-                                    hide: Default::default(),
-                                    shell,
-                                    show_summary: true,
-                                    show_command: true,
-                                    show_rerun: false,
-                                };
-                                workspace.spawn_in_terminal(spawn_in_terminal, window, cx)
-                            })
-                            .ok();
-                        let Some(task) = task else { return };
-                        cx.spawn_in(window, async move |this, cx| {
-                            if let Some(Ok(_)) = task.await {
-                                this.update_in(cx, |this, window, cx| {
-                                    this.reset(window, cx);
-                                })
-                                .ok();
-                            }
-                        })
-                        .detach()
-                    }));
-
-                (error_message.clone(), Some(button.into_any_element()))
+                return self.render_not_installed(upgrade_command.clone(), true, window, cx);
             }
             LoadError::Exited { .. } => ("Server exited with status {status}".into(), None),
             LoadError::Other(msg) => (
@@ -2967,6 +2875,121 @@ impl AcpThreadView {
             .title("Failed to Launch")
             .description(message)
             .actions_slot(div().children(action_slot))
+            .into_any_element()
+    }
+
+    fn install_agent(&self, install_command: String, window: &mut Window, cx: &mut Context<Self>) {
+        telemetry::event!("Agent Install CLI", agent = self.agent.telemetry_id());
+        let task = self
+            .workspace
+            .update(cx, |workspace, cx| {
+                let project = workspace.project().read(cx);
+                let cwd = project.first_project_directory(cx);
+                let shell = project.terminal_settings(&cwd, cx).shell.clone();
+                let spawn_in_terminal = task::SpawnInTerminal {
+                    id: task::TaskId(install_command.clone()),
+                    full_label: install_command.clone(),
+                    label: install_command.clone(),
+                    command: Some(install_command.clone()),
+                    args: Vec::new(),
+                    command_label: install_command.clone(),
+                    cwd,
+                    env: Default::default(),
+                    use_new_terminal: true,
+                    allow_concurrent_runs: true,
+                    reveal: Default::default(),
+                    reveal_target: Default::default(),
+                    hide: Default::default(),
+                    shell,
+                    show_summary: true,
+                    show_command: true,
+                    show_rerun: false,
+                };
+                workspace.spawn_in_terminal(spawn_in_terminal, window, cx)
+            })
+            .ok();
+        let Some(task) = task else { return };
+        cx.spawn_in(window, async move |this, cx| {
+            if let Some(Ok(_)) = task.await {
+                this.update_in(cx, |this, window, cx| {
+                    this.reset(window, cx);
+                })
+                .ok();
+            }
+        })
+        .detach()
+    }
+
+    fn render_not_installed(
+        &self,
+        install_command: String,
+        is_upgrade: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        self.install_command_markdown.update(cx, |markdown, cx| {
+            if !markdown.source().contains(&install_command) {
+                markdown.replace(format!("```\n{}\n```", install_command), cx);
+            }
+        });
+
+        let (heading_label, description_label, button_label, or_label) = if is_upgrade {
+            (
+                "Upgrade Gemini CLI in Zed",
+                "Get access to the latest version with support for Zed.",
+                "Upgrade Gemini CLI",
+                "Or, to upgrade it manually:",
+            )
+        } else {
+            (
+                "Get Started with Gemini CLI in Zed",
+                "Use Google's new coding agent directly in Zed.",
+                "Install Gemini CLI",
+                "Or, to install it manually:",
+            )
+        };
+
+        v_flex()
+            .w_full()
+            .p_3p5()
+            .gap_2p5()
+            .border_t_1()
+            .border_color(cx.theme().colors().border)
+            .bg(linear_gradient(
+                180.,
+                linear_color_stop(cx.theme().colors().editor_background.opacity(0.4), 4.),
+                linear_color_stop(cx.theme().status().info_background.opacity(0.), 0.),
+            ))
+            .child(
+                v_flex().gap_0p5().child(Label::new(heading_label)).child(
+                    Label::new(description_label)
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                ),
+            )
+            .child(
+                Button::new("install_gemini", button_label)
+                    .full_width()
+                    .size(ButtonSize::Medium)
+                    .style(ButtonStyle::Tinted(TintColor::Accent))
+                    .label_size(LabelSize::Small)
+                    .icon(IconName::TerminalGhost)
+                    .icon_color(Color::Muted)
+                    .icon_size(IconSize::Small)
+                    .icon_position(IconPosition::Start)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.install_agent(install_command.clone(), window, cx)
+                    })),
+            )
+            .child(
+                Label::new(or_label)
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
+            .child(MarkdownElement::new(
+                self.install_command_markdown.clone(),
+                default_markdown_style(false, false, window, cx),
+            ))
             .into_any_element()
     }
 
@@ -4943,7 +4966,7 @@ impl Render for AcpThreadView {
                     .size_full()
                     .items_center()
                     .justify_end()
-                    .child(self.render_load_error(e, cx)),
+                    .child(self.render_load_error(e, window, cx)),
                 ThreadState::Ready { .. } => v_flex().flex_1().map(|this| {
                     if has_messages {
                         this.child(
