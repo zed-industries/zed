@@ -74,4 +74,6 @@ If you have written (or are writing) a tool that speaks ACP, and you'd like to t
 }
 ```
 
-Zed has some support for debugging ACP connections, and you can open the debug view with `dev: open acp logs` from the command palette.
+## Debugging Agents
+
+When using external agents in Zed, you can access the debug via with `dev: open acp logs` from the Command Palette.
