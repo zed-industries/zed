@@ -2351,6 +2351,28 @@ impl AcpThreadView {
                             ),
                     )
             })
+            .child(
+                Disclosure::new(
+                    SharedString::from(format!(
+                        "terminal-tool-disclosure-{}",
+                        terminal.entity_id()
+                    )),
+                    is_expanded,
+                )
+                .opened_icon(IconName::ChevronUp)
+                .closed_icon(IconName::ChevronDown)
+                .visible_on_hover(&header_group)
+                .on_click(cx.listener({
+                    let id = tool_call.id.clone();
+                    move |this, _event, _window, _cx| {
+                        if is_expanded {
+                            this.expanded_tool_calls.remove(&id);
+                        } else {
+                            this.expanded_tool_calls.insert(id.clone());
+                        }
+                    }
+                })),
+            )
             .when(truncated_output, |header| {
                 let tooltip = if let Some(output) = output {
                     if output_line_count + 10 > terminal::MAX_SCROLL_HISTORY_LINES {
@@ -2393,28 +2415,6 @@ impl AcpThreadView {
                         .size(LabelSize::XSmall),
                 )
             })
-            .child(
-                Disclosure::new(
-                    SharedString::from(format!(
-                        "terminal-tool-disclosure-{}",
-                        terminal.entity_id()
-                    )),
-                    is_expanded,
-                )
-                .opened_icon(IconName::ChevronUp)
-                .closed_icon(IconName::ChevronDown)
-                .visible_on_hover(&header_group)
-                .on_click(cx.listener({
-                    let id = tool_call.id.clone();
-                    move |this, _event, _window, _cx| {
-                        if is_expanded {
-                            this.expanded_tool_calls.remove(&id);
-                        } else {
-                            this.expanded_tool_calls.insert(id.clone());
-                        }
-                    }
-                })),
-            )
             .when(tool_failed || command_failed, |header| {
                 header.child(
                     div()
