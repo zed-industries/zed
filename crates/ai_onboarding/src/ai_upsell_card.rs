@@ -12,11 +12,11 @@ use crate::{SignInStatus, YoungAccountBanner, plan_definitions::PlanDefinitions}
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct AiUpsellCard {
-    pub sign_in_status: SignInStatus,
-    pub sign_in: Arc<dyn Fn(&mut Window, &mut App)>,
-    pub account_too_young: bool,
-    pub user_plan: Option<Plan>,
-    pub tab_index: Option<isize>,
+    sign_in_status: SignInStatus,
+    sign_in: Arc<dyn Fn(&mut Window, &mut App)>,
+    account_too_young: bool,
+    user_plan: Option<Plan>,
+    tab_index: Option<isize>,
 }
 
 impl AiUpsellCard {
@@ -42,6 +42,11 @@ impl AiUpsellCard {
             account_too_young: store.account_too_young(),
             tab_index: None,
         }
+    }
+
+    pub fn tab_index(mut self, tab_index: Option<isize>) -> Self {
+        self.tab_index = tab_index;
+        self
     }
 }
 

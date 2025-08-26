@@ -247,9 +247,9 @@ impl ContextPickerCompletionProvider {
 
         let abs_path = project.read(cx).absolute_path(&symbol.path, cx)?;
         let uri = MentionUri::Symbol {
-            path: abs_path,
+            abs_path,
             name: symbol.name.clone(),
-            line_range: symbol.range.start.0.row..symbol.range.end.0.row,
+            line_range: symbol.range.start.0.row..=symbol.range.end.0.row,
         };
         let new_text = format!("{} ", uri.as_link());
         let new_text_len = new_text.len();

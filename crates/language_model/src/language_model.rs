@@ -643,11 +643,11 @@ pub trait LanguageModelProvider: 'static {
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>>;
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone)]
 pub enum ConfigurationViewTargetAgent {
     #[default]
     ZedAgent,
-    Other(&'static str),
+    Other(SharedString),
 }
 
 #[derive(PartialEq, Eq)]

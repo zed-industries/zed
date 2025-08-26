@@ -4,11 +4,10 @@ use std::{any::Any, path::Path};
 use crate::{AgentServer, AgentServerCommand};
 use acp_thread::{AgentConnection, LoadError};
 use anyhow::Result;
-use gpui::{Entity, Task};
+use gpui::{App, Entity, SharedString, Task};
 use language_models::provider::google::GoogleLanguageModelProvider;
 use project::Project;
 use settings::SettingsStore;
-use ui::App;
 
 use crate::AllAgentServersSettings;
 
@@ -18,16 +17,20 @@ pub struct Gemini;
 const ACP_ARG: &str = "--experimental-acp";
 
 impl AgentServer for Gemini {
-    fn name(&self) -> &'static str {
-        "Gemini CLI"
+    fn telemetry_id(&self) -> &'static str {
+        "gemini-cli"
     }
 
-    fn empty_state_headline(&self) -> &'static str {
+    fn name(&self) -> SharedString {
+        "Gemini CLI".into()
+    }
+
+    fn empty_state_headline(&self) -> SharedString {
         self.name()
     }
 
-    fn empty_state_message(&self) -> &'static str {
-        "Ask questions, edit files, run commands"
+    fn empty_state_message(&self) -> SharedString {
+        "Ask questions, edit files, run commands".into()
     }
 
     fn logo(&self) -> ui::IconName {
@@ -54,7 +57,7 @@ impl AgentServer for Gemini {
                 return Err(LoadError::NotInstalled {
                     error_message: "Failed to find Gemini CLI binary".into(),
                     install_message: "Install Gemini CLI".into(),
-                    install_command: "npm install -g @google/gemini-cli@preview".into()
+                    install_command: Self::install_command().into(),
                 }.into());
             };
 
@@ -89,7 +92,7 @@ impl AgentServer for Gemini {
                             current_version
                         ).into(),
                         upgrade_message: "Upgrade Gemini CLI to latest".into(),
-                        upgrade_command: "npm install -g @google/gemini-cli@preview".into(),
+                        upgrade_command: Self::upgrade_command().into(),
                     }.into())
                 }
             }
@@ -99,6 +102,20 @@ impl AgentServer for Gemini {
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
         self
+    }
+}
+
+impl Gemini {
+    pub fn binary_name() -> &'static str {
+        "gemini"
+    }
+
+    pub fn install_command() -> &'static str {
+        "npm install -g @google/gemini-cli@preview"
+    }
+
+    pub fn upgrade_command() -> &'static str {
+        "npm install -g @google/gemini-cli@preview"
     }
 }
 

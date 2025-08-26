@@ -1743,6 +1743,5 @@ pub enum Event {
 }
 
 impl EventEmitter<Event> for LogStore {}
-impl EventEmitter<Event> for LspLogView {}
 impl EventEmitter<EditorEvent> for LspLogView {}
 impl EventEmitter<SearchEvent> for LspLogView {}
