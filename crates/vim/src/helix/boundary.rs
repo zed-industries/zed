@@ -5,7 +5,6 @@ use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement,
 };
-use itertools::Itertools;
 use language::{CharClassifier, CharKind};
 use text::Bias;
 
