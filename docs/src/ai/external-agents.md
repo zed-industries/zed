@@ -52,9 +52,10 @@ For more information, see the [Gemini CLI docs](https://github.com/google-gemini
 
 Similar to Zed's first-party agent, you can use Gemini CLI to do anything that you need.
 
-You can @-mention files, recent conversations, symbols, or fetch the web.
+You can @-mention files, recent threads, symbols, or fetch the web.
 
-There are two features that don't yet work with Gemini CLI: editing past messages, which we hope to add support for soon; and resuming a conversation from history.
+Note that some first-party agent features don't yet work with Gemini CLI: editing past messages, resuming threads from history, and checkpointing.
+We hope to add these features in the near future.
 
 ## Add Custom Agents {#add-custom-agents}
 
