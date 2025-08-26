@@ -1,5 +1,5 @@
 ///! A crate for handling file encodings in the text editor.
-use editor::Editor;
+use editor::{Editor, EditorSettings};
 use encoding::Encoding;
 use encoding::all::{
     BIG5_2003, EUC_JP, GB18030, GBK, HZ, IBM866, ISO_2022_JP, ISO_8859_1, ISO_8859_2, ISO_8859_3,
@@ -9,6 +9,7 @@ use encoding::all::{
     WINDOWS_1253, WINDOWS_1254, WINDOWS_1255, WINDOWS_1256, WINDOWS_1257, WINDOWS_1258,
 };
 use gpui::{ClickEvent, Entity, Subscription, WeakEntity};
+use settings::Settings;
 use ui::{Button, ButtonCommon, Context, LabelSize, Render, Tooltip, Window, div};
 use ui::{Clickable, ParentElement};
 use workspace::{ItemHandle, StatusItemView, Workspace};
@@ -20,6 +21,7 @@ pub struct EncodingIndicator {
     pub encoding: Option<&'static dyn Encoding>,
     pub workspace: WeakEntity<Workspace>,
     observe: Option<Subscription>, // Subscription to observe changes in the active editor
+    show: bool,
 }
 
 pub mod selectors;
@@ -27,6 +29,12 @@ pub mod selectors;
 impl Render for EncodingIndicator {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         let status_element = div();
+
+        if (EditorSettings::get_global(cx).status_bar.encoding_indicator == false)
+            || (self.show == false)
+        {
+            return status_element;
+        }
 
         status_element.child(
             Button::new("encoding", encoding_name(self.encoding.unwrap_or(UTF_8)))
@@ -54,6 +62,7 @@ impl EncodingIndicator {
             encoding,
             workspace,
             observe,
+            show: true,
         }
     }
 
@@ -84,10 +93,12 @@ impl StatusItemView for EncodingIndicator {
             Some(editor) => {
                 self.observe = Some(cx.observe_in(&editor, window, Self::update));
                 self.update(editor, window, cx);
+                self.show = true;
             }
             None => {
                 self.encoding = None;
                 self.observe = None;
+                self.show = false;
             }
         }
     }
