@@ -78,4 +78,4 @@ This can also be useful if you're in the middle of developing a new agent that s
 
 When using external agents in Zed, you can access the debug view via with `dev: open acp logs` from the Command Palette. This lets you see the messages being sent and received between Zed and the agent.
 
-[screenshot here]
+![The debug view for ACP logs.](https://zed.dev/img/acp/acp-logs.webp)
