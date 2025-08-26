@@ -11,14 +11,20 @@ pub trait SettingsUI {
 }
 
 pub struct SettingsUIItem {
-    // TODO:
-    // path: SmallVec<[&'static str; 8]>,
+    // TODO: move this back here once there isn't a None variant
+    // pub path: &'static str,
     pub item: SettingsUIItemVariant,
 }
 
 pub enum SettingsUIItemVariant {
-    Group(SettingsUIItemGroup),
-    Item(SettingsUIItemSingle),
+    Group {
+        path: &'static str,
+        group: SettingsUIItemGroup,
+    },
+    Item {
+        path: &'static str,
+        item: SettingsUIItemSingle,
+    },
     // TODO: remove
     None,
 }
