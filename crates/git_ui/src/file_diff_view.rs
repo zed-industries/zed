@@ -358,10 +358,12 @@ impl Render for FileDiffView {
 mod tests {
     use super::*;
     use editor::test::editor_test_context::assert_state_with_diff;
+    use encoding::all::UTF_8;
     use gpui::TestAppContext;
     use language::Rope;
     use project::{FakeFs, Fs, Project};
     use settings::SettingsStore;
+    use project::{FakeFs, Fs, Project, encodings::EncodingWrapper};
     use std::path::PathBuf;
     use unindent::unindent;
     use util::path;
@@ -440,6 +442,7 @@ mod tests {
                 ",
             )),
             Default::default(),
+            EncodingWrapper::new(UTF_8),
         )
         .await
         .unwrap();
@@ -474,6 +477,7 @@ mod tests {
                 ",
             )),
             Default::default(),
+            EncodingWrapper::new(UTF_8),
         )
         .await
         .unwrap();

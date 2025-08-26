@@ -1,30 +1,28 @@
+/// This module contains the encoding selectors for saving or reopening files with a different encoding.
+/// It provides a modal view that allows the user to choose between saving with a different encoding
+/// or reopening with a different encoding, and then selecting the desired encoding from a list.
 pub mod save_or_reopen {
     use editor::Editor;
     use gpui::Styled;
     use gpui::{AppContext, ParentElement};
     use picker::Picker;
     use picker::PickerDelegate;
-    use std::cell::RefCell;
-    use std::ops::{Deref, DerefMut};
-    use std::rc::Rc;
-    use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
     use util::ResultExt;
 
     use fuzzy::{StringMatch, StringMatchCandidate};
     use gpui::{DismissEvent, Entity, EventEmitter, Focusable, WeakEntity};
 
-    use ui::{Context, HighlightedLabel, Label, ListItem, Render, Window, rems, v_flex};
+    use ui::{Context, HighlightedLabel, ListItem, Render, Window, rems, v_flex};
     use workspace::{ModalView, Workspace};
 
-    use crate::selectors::encoding::{Action, EncodingSelector, EncodingSelectorDelegate};
+    use crate::selectors::encoding::{Action, EncodingSelector};
 
     /// A modal view that allows the user to select between saving with a different encoding or
     /// reopening with a different encoding.
     pub struct EncodingSaveOrReopenSelector {
         picker: Entity<Picker<EncodingSaveOrReopenDelegate>>,
         pub current_selection: usize,
-        workspace: WeakEntity<Workspace>,
     }
 
     impl EncodingSaveOrReopenSelector {
@@ -41,7 +39,6 @@ pub mod save_or_reopen {
             Self {
                 picker,
                 current_selection: 0,
-                workspace,
             }
         }
 
@@ -119,9 +116,17 @@ pub mod save_or_reopen {
                         .read(cx)
                         .active_excerpt(cx)?;
 
+                    let weak_workspace = workspace.read(cx).weak_handle();
+
                     workspace.update(cx, |workspace, cx| {
                         workspace.toggle_modal(window, cx, |window, cx| {
-                            EncodingSelector::new(window, cx, Action::Save, buffer.downgrade())
+                            EncodingSelector::new(
+                                window,
+                                cx,
+                                Action::Save,
+                                buffer.downgrade(),
+                                weak_workspace,
+                            )
                         })
                     });
                 }
@@ -134,9 +139,17 @@ pub mod save_or_reopen {
                         .read(cx)
                         .active_excerpt(cx)?;
 
+                    let weak_workspace = workspace.read(cx).weak_handle();
+
                     workspace.update(cx, |workspace, cx| {
                         workspace.toggle_modal(window, cx, |window, cx| {
-                            EncodingSelector::new(window, cx, Action::Reopen, buffer.downgrade())
+                            EncodingSelector::new(
+                                window,
+                                cx,
+                                Action::Reopen,
+                                buffer.downgrade(),
+                                weak_workspace,
+                            )
                         })
                     });
                 }
@@ -165,7 +178,7 @@ pub mod save_or_reopen {
         ) {
             self.current_selection = ix;
             self.selector
-                .update(cx, |selector, cx| {
+                .update(cx, |selector, _cx| {
                     selector.current_selection = ix;
                 })
                 .log_err();
@@ -217,7 +230,7 @@ pub mod save_or_reopen {
                         .min(delegate.matches.len().saturating_sub(1));
                     delegate
                         .selector
-                        .update(cx, |selector, cx| {
+                        .update(cx, |selector, _cx| {
                             selector.current_selection = delegate.current_selection
                         })
                         .log_err();
@@ -263,33 +276,27 @@ pub mod save_or_reopen {
     }
 }
 
+/// This module contains the encoding selector for choosing an encoding to save or reopen a file with.
 pub mod encoding {
-    use std::{
-        ops::DerefMut,
-        rc::{Rc, Weak},
-        sync::{Arc, atomic::AtomicBool},
-    };
+    use std::sync::atomic::AtomicBool;
 
     use fuzzy::{StringMatch, StringMatchCandidate};
-    use gpui::{
-        AppContext, BackgroundExecutor, DismissEvent, Entity, EventEmitter, Focusable, Length,
-        WeakEntity, actions,
-    };
+    use gpui::{AppContext, DismissEvent, Entity, EventEmitter, Focusable, WeakEntity};
     use language::Buffer;
     use picker::{Picker, PickerDelegate};
     use ui::{
-        Context, DefiniteLength, HighlightedLabel, Label, ListItem, ListItemSpacing, ParentElement,
-        Render, Styled, Window, rems, v_flex,
+        Context, HighlightedLabel, ListItem, ListItemSpacing, ParentElement, Render, Styled,
+        Window, rems, v_flex,
     };
     use util::{ResultExt, TryFutureExt};
     use workspace::{ModalView, Workspace};
 
-    use crate::encoding_from_index;
+    use crate::encoding_from_name;
 
     /// A modal view that allows the user to select an encoding from a list of encodings.
     pub struct EncodingSelector {
         picker: Entity<Picker<EncodingSelectorDelegate>>,
-        action: Action,
+        workspace: WeakEntity<Workspace>,
     }
 
     pub struct EncodingSelectorDelegate {
@@ -298,12 +305,14 @@ pub mod encoding {
         matches: Vec<StringMatch>,
         selector: WeakEntity<EncodingSelector>,
         buffer: WeakEntity<Buffer>,
+        action: Action,
     }
 
     impl EncodingSelectorDelegate {
         pub fn new(
             selector: WeakEntity<EncodingSelector>,
             buffer: WeakEntity<Buffer>,
+            action: Action,
         ) -> EncodingSelectorDelegate {
             EncodingSelectorDelegate {
                 current_selection: 0,
@@ -350,6 +359,7 @@ pub mod encoding {
                 matches: Vec::new(),
                 selector,
                 buffer,
+                action,
             }
         }
     }
@@ -365,12 +375,7 @@ pub mod encoding {
             self.current_selection
         }
 
-        fn set_selected_index(
-            &mut self,
-            ix: usize,
-            window: &mut Window,
-            cx: &mut Context<Picker<Self>>,
-        ) {
+        fn set_selected_index(&mut self, ix: usize, _: &mut Window, _: &mut Context<Picker<Self>>) {
             self.current_selection = ix;
         }
 
@@ -427,21 +432,40 @@ pub mod encoding {
             })
         }
 
-        fn confirm(
-            &mut self,
-            secondary: bool,
-            window: &mut Window,
-            cx: &mut Context<Picker<Self>>,
-        ) {
+        fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
             if let Some(buffer) = self.buffer.upgrade() {
                 buffer.update(cx, |buffer, cx| {
-                    buffer.encoding = encoding_from_index(self.current_selection)
+                    buffer.encoding =
+                        encoding_from_name(self.matches[self.current_selection].string.as_str());
+                    if self.action == Action::Reopen {
+                        let executor = cx.background_executor().clone();
+                        executor.spawn(buffer.reload(cx)).detach();
+                    } else if self.action == Action::Save {
+                        let executor = cx.background_executor().clone();
+
+                        let workspace = self
+                            .selector
+                            .upgrade()
+                            .unwrap()
+                            .read(cx)
+                            .workspace
+                            .upgrade()
+                            .unwrap();
+
+                        executor
+                            .spawn(workspace.update(cx, |workspace, cx| {
+                                workspace
+                                    .save_active_item(workspace::SaveIntent::Save, window, cx)
+                                    .log_err()
+                            }))
+                            .detach();
+                    }
                 });
             }
             self.dismissed(window, cx);
         }
 
-        fn dismissed(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
             self.selector
                 .update(cx, |_, cx| cx.emit(DismissEvent))
                 .log_err();
@@ -450,9 +474,9 @@ pub mod encoding {
         fn render_match(
             &self,
             ix: usize,
-            selected: bool,
-            window: &mut Window,
-            cx: &mut Context<Picker<Self>>,
+            _: bool,
+            _: &mut Window,
+            _: &mut Context<Picker<Self>>,
         ) -> Option<Self::ListItem> {
             Some(
                 ListItem::new(ix)
@@ -466,6 +490,7 @@ pub mod encoding {
     }
 
     /// The action to perform after selecting an encoding.
+    #[derive(PartialEq, Clone)]
     pub enum Action {
         Save,
         Reopen,
@@ -477,11 +502,13 @@ pub mod encoding {
             cx: &mut Context<EncodingSelector>,
             action: Action,
             buffer: WeakEntity<Buffer>,
+            workspace: WeakEntity<Workspace>,
         ) -> EncodingSelector {
-            let delegate = EncodingSelectorDelegate::new(cx.entity().downgrade(), buffer);
+            let delegate =
+                EncodingSelectorDelegate::new(cx.entity().downgrade(), buffer, action.clone());
             let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
 
-            EncodingSelector { picker, action }
+            EncodingSelector { picker, workspace }
         }
     }
 

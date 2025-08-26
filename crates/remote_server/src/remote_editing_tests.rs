@@ -6,10 +6,10 @@ use agent::{AgentTool, ReadFileTool, ReadFileToolInput, ToolCallEventStream};
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
 use collections::{HashMap, HashSet};
-use language_model::LanguageModelToolResultContent;
+use encoding::all::UTF_8;
 
 use extension::ExtensionHostProxy;
-use fs::{FakeFs, Fs};
+use fs::{FakeFs, Fs, encodings::EncodingWrapper};
 use gpui::{AppContext as _, Entity, SemanticVersion, SharedString, TestAppContext};
 use http_client::{BlockedHttpClient, FakeHttpClient};
 use language::{
@@ -122,6 +122,7 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
         path!("/code/project1/src/main.rs").as_ref(),
         &Rope::from_str_small("fn main() {}"),
         Default::default(),
+        EncodingWrapper::new(UTF_8),
     )
     .await
     .unwrap();
@@ -768,6 +769,7 @@ async fn test_remote_reload(cx: &mut TestAppContext, server_cx: &mut TestAppCont
         &PathBuf::from(path!("/code/project1/src/lib.rs")),
         &Rope::from_str_small("bangles"),
         LineEnding::Unix,
+        EncodingWrapper::new(UTF_8),
     )
     .await
     .unwrap();
@@ -783,6 +785,7 @@ async fn test_remote_reload(cx: &mut TestAppContext, server_cx: &mut TestAppCont
         &PathBuf::from(path!("/code/project1/src/lib.rs")),
         &Rope::from_str_small("bloop"),
         LineEnding::Unix,
+        EncodingWrapper::new(UTF_8),
     )
     .await
     .unwrap();

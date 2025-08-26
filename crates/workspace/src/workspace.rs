@@ -19,6 +19,8 @@ mod workspace_settings;
 
 pub use crate::notifications::NotificationFrame;
 pub use dock::Panel;
+use encoding::all::UTF_8;
+use fs::encodings::EncodingWrapper;
 pub use path_list::PathList;
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
 
@@ -131,7 +133,6 @@ use crate::persistence::{
     model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
 };
 use crate::{item::ItemBufferKind, notifications::NotificationId};
-
 
 pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
 
@@ -7587,8 +7588,14 @@ pub fn create_and_open_local_file(
         let fs = workspace.read_with(cx, |workspace, _| workspace.app_state().fs.clone())?;
         if !fs.is_file(path).await {
             fs.create_file(path, Default::default()).await?;
-            fs.save(path, &default_content(cx), Default::default())
-                .await?;
+            let encoding_wrapper = EncodingWrapper::new(UTF_8);
+            fs.save(
+                path,
+                &default_content(),
+                Default::default(),
+                encoding_wrapper,
+            )
+            .await?;
         }
 
         let mut items = workspace

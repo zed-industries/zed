@@ -52,6 +52,7 @@ debugger_ui.workspace = true
 diagnostics.workspace = true
 editor.workspace = true
 zeta2_tools.workspace = true
+encoding.workspace = true
 encodings.workspace = true
 env_logger.workspace = true
 extension.workspace = true
@@ -166,7 +167,6 @@ zeta.workspace = true
 zeta2.workspace = true
 zlog.workspace = true
 zlog_settings.workspace = true
-encoding = "0.2.33"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true

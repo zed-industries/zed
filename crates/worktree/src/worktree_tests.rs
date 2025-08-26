@@ -3,7 +3,8 @@ use crate::{
     worktree_settings::WorktreeSettings,
 };
 use anyhow::Result;
-use fs::{FakeFs, Fs, RealFs, RemoveOptions};
+use encoding::all::UTF_8;
+use fs::{FakeFs, Fs, RealFs, RemoveOptions, encodings::EncodingWrapper};
 use git::GITIGNORE;
 use gpui::{AppContext as _, BackgroundExecutor, BorrowAppContext, Context, Task, TestAppContext};
 use parking_lot::Mutex;
@@ -651,6 +652,7 @@ async fn test_dirs_no_longer_ignored(cx: &mut TestAppContext) {
         "/root/.gitignore".as_ref(),
         &Rope::from_str("e", cx.background_executor()),
         Default::default(),
+        encoding_wrapper,
     )
     .await
     .unwrap();
@@ -724,6 +726,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
                 Rope::from_str("hello", cx.background_executor()),
                 Default::default(),
                 cx,
+                UTF_8,
             )
         })
         .await
@@ -735,6 +738,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
                 Rope::from_str("world", cx.background_executor()),
                 Default::default(),
                 cx,
+                UTF_8,
             )
         })
         .await
@@ -1769,6 +1773,7 @@ fn randomly_mutate_worktree(
                     Rope::default(),
                     Default::default(),
                     cx,
+                    UTF_8,
                 );
                 cx.background_spawn(async move {
                     task.await?;
@@ -1857,10 +1862,12 @@ async fn randomly_mutate_fs(
             ignore_path.strip_prefix(root_path).unwrap(),
             ignore_contents
         );
+        let encoding_wrapper = EncodingWrapper::new(UTF_8);
         fs.save(
             &ignore_path,
             &Rope::from_str(ignore_contents.as_str(), executor),
             Default::default(),
+            encoding_wrapper,
         )
         .await
         .unwrap();
