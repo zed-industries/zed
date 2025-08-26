@@ -783,14 +783,20 @@ impl Item for BufferDiagnosticsEditor {
     }
 
     // Builds the content to be displayed in the tab.
-    fn tab_content(&self, params: TabContentParams, _window: &Window, _app: &App) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, _window: &Window, _cx: &App) -> AnyElement {
         let error_count = self.summary.error_count;
         let warning_count = self.summary.warning_count;
-        let label = Label::new(self.project_path.path.to_sanitized_string());
+        let label = Label::new(
+            self.project_path
+                .path
+                .file_name()
+                .map(|f| f.to_sanitized_string())
+                .unwrap_or_else(|| self.project_path.path.to_sanitized_string()),
+        );
 
         h_flex()
             .gap_1()
-            .child(label.color(params.text_color()))
+            .child(label)
             .when(error_count == 0 && warning_count == 0, |parent| {
                 parent.child(
                     h_flex()
