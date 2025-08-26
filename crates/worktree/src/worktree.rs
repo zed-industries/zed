@@ -1221,6 +1221,11 @@ impl LocalWorktree {
         self.scan_requests_tx = scan_requests_tx;
         self.path_prefixes_to_scan_tx = path_prefixes_to_scan_tx;
 
+        // Because starting a new background scanner drops all the watcher
+        // registrations we have to register ".git" again
+        self.snapshot.git_repositories = Default::default();
+        self.snapshot.ignores_by_parent_abs_path = Default::default();
+
         self.start_background_scanner(scan_requests_rx, path_prefixes_to_scan_rx, cx);
         let always_included_entries = mem::take(&mut self.snapshot.always_included_entries);
         log::debug!(
@@ -2094,8 +2099,6 @@ impl LocalWorktree {
         cx: &Context<Worktree>,
     ) {
         if let Some(new_path) = new_path {
-            self.snapshot.git_repositories = Default::default();
-            self.snapshot.ignores_by_parent_abs_path = Default::default();
             let root_name = new_path
                 .as_path()
                 .file_name()
