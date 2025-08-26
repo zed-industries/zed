@@ -47,7 +47,7 @@ impl BlameRenderer for GitBlameRenderer {
         let name = util::truncate_and_trailoff(author_name, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED);
 
         let editor_for_mouse_down = editor.clone();
-        let editor_for_tooltip = editor.clone();
+        let editor_for_tooltip = editor;
 
         Some(
             h_flex()
