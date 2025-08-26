@@ -138,6 +138,9 @@ fn possible_open_target(
     for worktree in &worktree_candidates {
         let worktree_root = worktree.read(cx).abs_path();
         let mut paths_to_check = Vec::with_capacity(potential_paths.len());
+        let worktree_rel_cwd = cwd
+            .map(|cwd| cwd.strip_prefix(&worktree_root).ok())
+            .flatten();
 
         for path_with_position in &potential_paths {
             let path_to_check = if worktree_root.ends_with(&path_with_position.path) {
@@ -170,17 +173,15 @@ fn possible_open_target(
             };
 
             if path_to_check.path.is_relative()
-                && let Some(mut entry) = worktree.read(cx).entry_for_path(&path_to_check.path)
+                && let Some(entry) = worktree_rel_cwd
+                    .map(|worktree_rel_cwd| {
+                        worktree
+                            .read(cx)
+                            .entry_for_path(&worktree_rel_cwd.join(&path_to_check.path))
+                    })
+                    .flatten()
+                    .or_else(|| worktree.read(cx).entry_for_path(&path_to_check.path))
             {
-                if let Some(cwd) = cwd
-                    && let Ok(worktree_rel_cwd) = cwd.strip_prefix(&worktree_root)
-                    && let Some(cwd_rel_entry) = worktree
-                        .read(cx)
-                        .entry_for_path(&worktree_rel_cwd.join(&path_to_check.path))
-                {
-                    entry = cwd_rel_entry;
-                }
-
                 return Task::ready(Some(OpenTarget::Worktree(
                     PathWithPosition {
                         path: worktree_root.join(&entry.path),
@@ -706,18 +707,8 @@ mod tests {
                 vec![path!("/dir1")],
                 {
                     test!("C.py", "/dir1/dir 2/C.py", "/dir1", WorktreeBackground);
-                    test!(
-                        "C.py",
-                        "/dir1/dir 2/C.py",
-                        "/dir1/dir 2",
-                        FileSystemBackground
-                    );
-                    test!(
-                        "C.py",
-                        "/dir1/dir 3/C.py",
-                        "/dir1/dir 3",
-                        FileSystemBackground
-                    );
+                    test!("C.py", "/dir1/dir 2/C.py", "/dir1/dir 2");
+                    test!("C.py", "/dir1/dir 3/C.py", "/dir1/dir 3");
                 }
             )
         }
@@ -783,6 +774,8 @@ mod tests {
         }
 
         // https://github.com/zed-industries/zed/issues/28339
+        // TODO(davewa): These could all be found by WorktreeForeground if we used
+        // `fs::normalize_path(&maybe_path)`
         #[gpui::test]
         async fn issue_28339(cx: &mut TestAppContext) {
             test_path_likes!(
@@ -802,8 +795,7 @@ mod tests {
                     test!(
                         "foo/./bar.txt",
                         "/tmp/issue28339/foo/bar.txt",
-                        "/tmp/issue28339",
-                        FileSystemBackground
+                        "/tmp/issue28339"
                     );
                     test!(
                         "foo/../foo/bar.txt",
@@ -826,8 +818,7 @@ mod tests {
                     test!(
                         "./bar.txt",
                         "/tmp/issue28339/foo/bar.txt",
-                        "/tmp/issue28339/foo",
-                        FileSystemBackground
+                        "/tmp/issue28339/foo"
                     );
                     test!(
                         "../foo/bar.txt",
@@ -883,18 +874,8 @@ mod tests {
                 ),],
                 vec![path!("/test")],
                 {
-                    test!(
-                        "file.txt",
-                        "/test/sub1/file.txt",
-                        "/test/sub1",
-                        FileSystemBackground
-                    );
-                    test!(
-                        "file.txt",
-                        "/test/sub2/file.txt",
-                        "/test/sub2",
-                        FileSystemBackground
-                    );
+                    test!("file.txt", "/test/sub1/file.txt", "/test/sub1");
+                    test!("file.txt", "/test/sub2/file.txt", "/test/sub2");
                     test!("sub1/file.txt", "/test/sub1/file.txt", "/test/sub1");
                     test!("sub2/file.txt", "/test/sub2/file.txt", "/test/sub2");
                     test!("sub1/file.txt", "/test/sub1/file.txt", "/test/sub2");
@@ -930,14 +911,12 @@ mod tests {
                     test!(
                         "file.txt",
                         "/test/sub1/subsub1/file.txt",
-                        "/test/sub1/subsub1",
-                        FileSystemBackground
+                        "/test/sub1/subsub1"
                     );
                     test!(
                         "file.txt",
                         "/test/sub2/subsub1/file.txt",
-                        "/test/sub2/subsub1",
-                        FileSystemBackground
+                        "/test/sub2/subsub1"
                     );
                     test!(
                         "subsub1/file.txt",
@@ -954,23 +933,19 @@ mod tests {
                     test!(
                         "subsub1/file.txt",
                         "/test/sub1/subsub1/file.txt",
-                        "/test/sub1",
-                        FileSystemBackground
+                        "/test/sub1"
                     );
                     test!(
                         "subsub1/file.txt",
                         "/test/sub2/subsub1/file.txt",
-                        "/test/sub2",
-                        FileSystemBackground
+                        "/test/sub2"
                     );
-                    // TODO(davewa): Should be FileSystemBackground
                     test!(
                         "subsub1/file.txt",
                         "/test/sub1/subsub1/file.txt",
                         "/test/sub1/subsub1",
                         WorktreeBackground
                     );
-                    // TODO(davewa): Should be FileSystemBackground
                     test!(
                         "subsub1/file.txt",
                         "/test/sub2/subsub1/file.txt",
