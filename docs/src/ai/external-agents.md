@@ -1,10 +1,8 @@
 # External Agents
 
-Zed has support for integrating with existing terminal-based agentic coding tools through the [Agent Client Protocol (ACP)](https://agentclientprotocol.com).
+Zed supports terminal-based agentic coding tools through the [Agent Client Protocol (ACP)](https://agentclientprotocol.com).
 
-At the moment, Zed supports [Gemini CLI](https://github.com/google-gemini/gemini-cli) as a reference implementation of an external agent speaking ACP.
-
-You can also [configure your own](#custom-agents) agent if you'd like to add ACP support to an existing tool.
+Currently, [Gemini CLI](https://github.com/google-gemini/gemini-cli) serves as the reference implementation, and you can [add custom ACP-compatible agents](#add-custom-agents) as well.
 
 ## Gemini CLI {#gemini-cli}
 
@@ -58,9 +56,9 @@ You can @-mention files, recent conversations, symbols, or fetch the web.
 
 There are two features that don't yet work with Gemini CLI: editing past messages, which we hope to add support for soon; and resuming a conversation from history.
 
-## Custom Agents {#custom-agents}
+## Add Custom Agents {#add-custom-agents}
 
-If you have written (or are writing) a tool that speaks ACP, and you'd like to test it with Zed, you can add it to your settings:
+You can run any agent speaking ACP in Zed by changing your settings as follows:
 
 ```json
 {
@@ -74,6 +72,10 @@ If you have written (or are writing) a tool that speaks ACP, and you'd like to t
 }
 ```
 
+This can also be useful if you're in the middle of developing a new agent that speaks the protocol and you want to debug it.
+
 ## Debugging Agents
 
-When using external agents in Zed, you can access the debug via with `dev: open acp logs` from the Command Palette.
+When using external agents in Zed, you can access the debug view via with `dev: open acp logs` from the Command Palette. This lets you see the messages being sent and received between Zed and the agent.
+
+[screenshot here]
