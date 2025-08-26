@@ -4171,13 +4171,14 @@ impl AcpThreadView {
     ) -> impl IntoElement {
         let is_generating = matches!(thread.read(cx).status(), ThreadStatus::Generating);
         if is_generating {
-            return h_flex().id("thread-controls-container").ml_1().child(
+            return h_flex().id("thread-controls-container").child(
                 div()
                     .py_2()
-                    .px(rems_from_px(22.))
+                    .px_5()
                     .child(SpinnerLabel::new().size(LabelSize::Small)),
             );
         }
+
         let open_as_markdown = IconButton::new("open-as-markdown", IconName::FileMarkdown)
             .shape(ui::IconButtonShape::Square)
             .icon_size(IconSize::Small)
@@ -4203,12 +4204,10 @@ impl AcpThreadView {
             .id("thread-controls-container")
             .group("thread-controls-container")
             .w_full()
-            .mr_1()
-            .pt_1()
-            .pb_2()
-            .px(RESPONSE_PADDING_X)
+            .py_2()
+            .px_5()
             .gap_px()
-            .opacity(0.4)
+            .opacity(0.6)
             .hover(|style| style.opacity(1.))
             .flex_wrap()
             .justify_end();
@@ -4219,56 +4218,50 @@ impl AcpThreadView {
                 .is_some_and(|thread| thread.read(cx).connection().telemetry().is_some())
         {
             let feedback = self.thread_feedback.feedback;
-            container = container.child(
-                div().visible_on_hover("thread-controls-container").child(
-                    Label::new(
-                        match feedback {
+
+            container = container
+                .child(
+                    div().visible_on_hover("thread-controls-container").child(
+                        Label::new(match feedback {
                             Some(ThreadFeedback::Positive) => "Thanks for your feedback!",
-                            Some(ThreadFeedback::Negative) => "We appreciate your feedback and will use it to improve.",
-                            None => "Rating the thread sends all of your current conversation to the Zed team.",
-                        }
-                    )
-                    .color(Color::Muted)
-                    .size(LabelSize::XSmall)
-                    .truncate(),
-                ),
-            ).child(
-                h_flex()
-                    .child(
-                        IconButton::new("feedback-thumbs-up", IconName::ThumbsUp)
-                            .shape(ui::IconButtonShape::Square)
-                            .icon_size(IconSize::Small)
-                            .icon_color(match feedback {
-                                Some(ThreadFeedback::Positive) => Color::Accent,
-                                _ => Color::Ignored,
-                            })
-                            .tooltip(Tooltip::text("Helpful Response"))
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.handle_feedback_click(
-                                    ThreadFeedback::Positive,
-                                    window,
-                                    cx,
-                                );
-                            })),
-                    )
-                    .child(
-                        IconButton::new("feedback-thumbs-down", IconName::ThumbsDown)
-                            .shape(ui::IconButtonShape::Square)
-                            .icon_size(IconSize::Small)
-                            .icon_color(match feedback {
-                                Some(ThreadFeedback::Negative) => Color::Accent,
-                                _ => Color::Ignored,
-                            })
-                            .tooltip(Tooltip::text("Not Helpful"))
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.handle_feedback_click(
-                                    ThreadFeedback::Negative,
-                                    window,
-                                    cx,
-                                );
-                            })),
-                    )
-            )
+                            Some(ThreadFeedback::Negative) => {
+                                "We appreciate your feedback and will use it to improve."
+                            }
+                            None => {
+                                "Rating the thread sends all of your current conversation to the Zed team."
+                            }
+                        })
+                        .color(Color::Muted)
+                        .size(LabelSize::XSmall)
+                        .truncate(),
+                    ),
+                )
+                .child(
+                    IconButton::new("feedback-thumbs-up", IconName::ThumbsUp)
+                        .shape(ui::IconButtonShape::Square)
+                        .icon_size(IconSize::Small)
+                        .icon_color(match feedback {
+                            Some(ThreadFeedback::Positive) => Color::Accent,
+                            _ => Color::Ignored,
+                        })
+                        .tooltip(Tooltip::text("Helpful Response"))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.handle_feedback_click(ThreadFeedback::Positive, window, cx);
+                        })),
+                )
+                .child(
+                    IconButton::new("feedback-thumbs-down", IconName::ThumbsDown)
+                        .shape(ui::IconButtonShape::Square)
+                        .icon_size(IconSize::Small)
+                        .icon_color(match feedback {
+                            Some(ThreadFeedback::Negative) => Color::Accent,
+                            _ => Color::Ignored,
+                        })
+                        .tooltip(Tooltip::text("Not Helpful"))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.handle_feedback_click(ThreadFeedback::Negative, window, cx);
+                        })),
+                );
         }
 
         container.child(open_as_markdown).child(scroll_to_top)
