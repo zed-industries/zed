@@ -3348,12 +3348,15 @@ impl SerializableItem for KeymapEditor {
 }
 
 mod persistence {
-    use db::{define_connection, query, sqlez_macros::sql};
+    use db::{query, sqlez::domain::Domain, sqlez_macros::sql};
     use workspace::WorkspaceDb;
 
-    define_connection! {
-        pub static ref KEYBINDING_EDITORS: KeybindingEditorDb<WorkspaceDb> =
-            &[sql!(
+    pub struct KeybindingEditorDb(db::sqlez::thread_safe_connection::ThreadSafeConnection);
+
+    impl Domain for KeybindingEditorDb {
+        const NAME: &str = stringify!(KeybindingEditorDb);
+
+        const MIGRATIONS: &[&str] = &[sql!(
                 CREATE TABLE keybinding_editors (
                     workspace_id INTEGER,
                     item_id INTEGER UNIQUE,
@@ -3362,8 +3365,10 @@ mod persistence {
                     FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
                     ON DELETE CASCADE
                 ) STRICT;
-            )];
+        )];
     }
+
+    db::static_connection!(KEYBINDING_EDITORS, KeybindingEditorDb, [WorkspaceDb]);
 
     impl KeybindingEditorDb {
         query! {
