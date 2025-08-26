@@ -2808,13 +2808,7 @@ fn collect_search_matches(picker: &Picker<FileFinderDelegate>) -> SearchEntries 
                         .map(|path_match| {
                             Path::new(path_match.0.path_prefix.as_ref()).join(&path_match.0.path)
                         })
-                        .unwrap_or_else(|| {
-                            history_path
-                                .absolute
-                                .as_deref()
-                                .unwrap_or_else(|| &history_path.project.path)
-                                .to_path_buf()
-                        }),
+                        .unwrap_or_else(|| history_path.path().to_path_buf()),
                 );
                 search_entries
                     .history_found_paths
@@ -2858,7 +2852,7 @@ fn assert_match_at_position(
         .get(match_index)
         .unwrap_or_else(|| panic!("Finder has no match for index {match_index}"));
     let match_file_name = match &match_item {
-        Match::History { path, .. } => path.absolute.as_deref().unwrap().file_name(),
+        Match::History { path, .. } => path.path().file_name(),
         Match::Search(path_match) => path_match.0.path.file_name(),
         Match::CreateNew(project_path) => project_path.path.file_name(),
     }
