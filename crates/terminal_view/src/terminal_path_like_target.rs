@@ -289,34 +289,55 @@ fn possible_open_target(
             Vec::new()
         };
 
-    let fs_check_task = if !fs_paths_to_check.is_empty() {
-        let fs = workspace.read(cx).project().read(cx).fs().clone();
-        Some(cx.background_spawn(async move {
-            for mut path_to_check in fs_paths_to_check {
-                if let Some(fs_path_to_check) = fs.canonicalize(&path_to_check.path).await.ok()
-                    && let Some(metadata) = fs.metadata(&fs_path_to_check).await.ok().flatten()
+    let worktree_check_task = cx.spawn(async move |cx| {
+        for (worktree, worktree_paths_to_check) in worktree_paths_to_check {
+            let found_entry = worktree
+                .update(cx, |worktree, _| {
+                    let worktree_root = worktree.abs_path();
+                    let traversal = worktree.traverse_from_path(true, true, false, "".as_ref());
+                    for entry in traversal {
+                        if let Some(path_in_worktree) = worktree_paths_to_check
+                            .iter()
+                            .find(|path_to_check| entry.path.ends_with(&path_to_check.path))
+                        {
+                            return Some(OpenTarget::Worktree(
+                                PathWithPosition {
+                                    path: worktree_root.join(&entry.path),
+                                    row: path_in_worktree.row,
+                                    column: path_in_worktree.column,
+                                },
+                                entry.clone(),
+                                #[cfg(test)]
+                                OpenTargetFoundBy::WorktreeBackground,
+                            ));
+                        }
+                    }
+                    None
+                })
+                .ok()?;
+            if let Some(found_entry) = found_entry {
+                return Some(found_entry);
+            }
+        }
+        None
+    });
+
+    let fs = workspace.read(cx).project().read(cx).fs().clone();
+    cx.background_spawn(async move {
+        for mut path_to_check in fs_paths_to_check {
+            if let Some(fs_path_to_check) = fs.canonicalize(&path_to_check.path).await.ok()
+                && let Some(metadata) = fs.metadata(&fs_path_to_check).await.ok().flatten()
+            {
+                if open_target
+                    .as_ref()
+                    .map(|open_target| open_target.path().path != fs_path_to_check)
+                    .unwrap_or(true)
                 {
                     path_to_check.path = fs_path_to_check;
                     return Some(OpenTarget::File(path_to_check, metadata));
                 }
-            }
 
-            None
-        }))
-    } else {
-        None
-    };
-
-    cx.spawn(async move |cx| {
-        if let Some(fs_check_task) = fs_check_task
-            && let Some(fs_open_target) = fs_check_task.await
-        {
-            if open_target
-                .as_ref()
-                .map(|open_target| open_target.path() != fs_open_target.path())
-                .unwrap_or(true)
-            {
-                return Some(fs_open_target);
+                break;
             }
         }
 
@@ -324,36 +345,7 @@ fn possible_open_target(
             return open_target;
         }
 
-        for (worktree, worktree_paths_to_check) in worktree_paths_to_check {
-            let found_entry: Result<Option<OpenTarget>, _> = worktree.update(cx, |worktree, _| {
-                let worktree_root = worktree.abs_path();
-                let traversal = worktree.traverse_from_path(true, true, false, "".as_ref());
-                for entry in traversal {
-                    if let Some(path_in_worktree) = worktree_paths_to_check
-                        .iter()
-                        .find(|path_to_check| entry.path.ends_with(&path_to_check.path))
-                    {
-                        return Some(OpenTarget::Worktree(
-                            PathWithPosition {
-                                path: worktree_root.join(&entry.path),
-                                row: path_in_worktree.row,
-                                column: path_in_worktree.column,
-                            },
-                            entry.clone(),
-                            #[cfg(test)]
-                            OpenTargetFoundBy::WorktreeBackground,
-                        ));
-                    }
-                }
-                None
-            });
-
-            let found_entry = found_entry.ok()?;
-            if let Some(found_entry) = found_entry {
-                return Some(found_entry);
-            }
-        }
-        None
+        worktree_check_task.await
     })
 }
 
