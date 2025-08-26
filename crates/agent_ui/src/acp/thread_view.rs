@@ -1377,14 +1377,14 @@ impl AcpThreadView {
                     .id(("user_message", entry_ix))
                     .map(|this| {
                         if entry_ix == 0 && !has_checkpoint_button && rules_item.is_none()  {
-                            this.pt_4()
+                            this.pt(rems_from_px(18.))
                         } else if rules_item.is_some() {
                             this.pt_3()
                         } else {
                             this.pt_2()
                         }
                     })
-                    .pb_4()
+                    .pb_3()
                     .px_2()
                     .gap_1p5()
                     .w_full()
@@ -1548,7 +1548,7 @@ impl AcpThreadView {
 
                 v_flex()
                     .px_5()
-                    .py_1()
+                    .py_1p5()
                     .when(is_last, |this| this.pb_4())
                     .w_full()
                     .text_ui(cx)
@@ -1673,10 +1673,11 @@ impl AcpThreadView {
                     .group(&card_header_id)
                     .relative()
                     .w_full()
+                    .pr_1()
                     .justify_between()
                     .child(
                         h_flex()
-                            .h(window.line_height())
+                            .h(window.line_height() - px(2.))
                             .gap_1p5()
                             .overflow_hidden()
                             .child(
@@ -1863,7 +1864,7 @@ impl AcpThreadView {
         v_flex()
             .map(|this| {
                 if use_card_layout {
-                    this.my_2()
+                    this.my_1p5()
                         .rounded_md()
                         .border_1()
                         .border_color(self.tool_card_border_color(cx))
@@ -1890,7 +1891,7 @@ impl AcpThreadView {
                     .justify_between()
                     .when(use_card_layout, |this| {
                         this.p_0p5()
-                            .rounded_t_md()
+                            .rounded_t(rems_from_px(5.))
                             .bg(self.tool_card_header_bg(cx))
                             .when(is_open && !failed_or_canceled, |this| {
                                 this.border_b_1()
@@ -1901,7 +1902,7 @@ impl AcpThreadView {
                         h_flex()
                             .relative()
                             .w_full()
-                            .h(window.line_height())
+                            .h(window.line_height() - px(2.))
                             .text_size(self.tool_name_font_size())
                             .gap_1p5()
                             .when(has_location || use_card_layout, |this| this.px_1())
@@ -2440,7 +2441,7 @@ impl AcpThreadView {
         let show_output = is_expanded && terminal_view.is_some();
 
         v_flex()
-            .my_2()
+            .my_1p5()
             .mx_5()
             .border_1()
             .when(tool_failed || command_failed, |card| card.border_dashed())
