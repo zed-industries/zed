@@ -28,6 +28,7 @@ actions!(
 #[derive(Clone)]
 pub struct DraggedWindowTab {
     pub id: WindowId,
+    pub ix: usize,
     pub handle: AnyWindowHandle,
     pub title: String,
     pub width: Pixels,
@@ -142,6 +143,7 @@ impl SystemWindowTabs {
             .on_drag(
                 DraggedWindowTab {
                     id: item.id,
+                    ix,
                     handle: item.handle,
                     title: item.title.to_string(),
                     width,
@@ -156,15 +158,30 @@ impl SystemWindowTabs {
                     cx.new(|_| tab.clone())
                 },
             )
-            .drag_over::<DraggedWindowTab>(|element, _, _, cx| {
-                element.bg(cx.theme().colors().drop_target_background)
+            .drag_over::<DraggedWindowTab>({
+                let tab_ix = ix;
+                move |element, dragged_tab: &DraggedWindowTab, _, cx| {
+                    let mut styled_tab = element
+                        .bg(cx.theme().colors().drop_target_background)
+                        .border_color(cx.theme().colors().drop_target_border)
+                        .border_0();
+
+                    if tab_ix < dragged_tab.ix {
+                        styled_tab = styled_tab.border_l_2();
+                    } else if tab_ix > dragged_tab.ix {
+                        styled_tab = styled_tab.border_r_2();
+                    }
+
+                    styled_tab
+                }
             })
-            .on_drop(
+            .on_drop({
+                let tab_ix = ix;
                 cx.listener(move |this, dragged_tab: &DraggedWindowTab, _window, cx| {
                     this.last_dragged_tab = None;
-                    Self::handle_tab_drop(dragged_tab, ix, cx);
-                }),
-            )
+                    Self::handle_tab_drop(dragged_tab, tab_ix, cx);
+                })
+            })
             .on_click(move |_, _, cx| {
                 let _ = item.handle.update(cx, |_, window, _| {
                     window.activate_window();
