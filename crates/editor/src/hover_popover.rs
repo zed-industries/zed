@@ -9,8 +9,8 @@ use anyhow::Context as _;
 use gpui::{
     AnyElement, AsyncWindowContext, Context, Entity, Focusable as _, FontWeight, Hsla,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, ScrollHandle, Size,
-    Stateful, StatefulInteractiveElement, StyleRefinement, Styled, Subscription, Task,
-    TextStyleRefinement, Window, div, px,
+    StatefulInteractiveElement, StyleRefinement, Styled, Subscription, Task, TextStyleRefinement,
+    Window, div, px,
 };
 use itertools::Itertools;
 use language::{DiagnosticEntry, Language, LanguageRegistry};
@@ -23,7 +23,7 @@ use std::{borrow::Cow, cell::RefCell};
 use std::{ops::Range, sync::Arc, time::Duration};
 use std::{path::PathBuf, rc::Rc};
 use theme::ThemeSettings;
-use ui::{Scrollbar, ScrollbarState, prelude::*, theme_is_transparent};
+use ui::{Scrollbars, WithScrollbar, prelude::*, theme_is_transparent};
 use url::Url;
 use util::TryFutureExt;
 use workspace::{OpenOptions, OpenVisible, Workspace};
@@ -184,7 +184,6 @@ pub fn hover_at_inlay(
                 let hover_popover = InfoPopover {
                     symbol_range: RangeInEditor::Inlay(inlay_hover.range.clone()),
                     parsed_content,
-                    scrollbar_state: ScrollbarState::new(scroll_handle.clone()),
                     scroll_handle,
                     keyboard_grace: Rc::new(RefCell::new(false)),
                     anchor: None,
@@ -387,7 +386,6 @@ fn show_hover(
                     local_diagnostic,
                     markdown,
                     border_color,
-                    scrollbar_state: ScrollbarState::new(scroll_handle.clone()),
                     scroll_handle,
                     background_color,
                     keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
@@ -457,7 +455,6 @@ fn show_hover(
                 info_popovers.push(InfoPopover {
                     symbol_range: RangeInEditor::Text(range),
                     parsed_content,
-                    scrollbar_state: ScrollbarState::new(scroll_handle.clone()),
                     scroll_handle,
                     keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
                     anchor: Some(anchor),
@@ -507,7 +504,6 @@ fn show_hover(
                 info_popovers.push(InfoPopover {
                     symbol_range: RangeInEditor::Text(range),
                     parsed_content,
-                    scrollbar_state: ScrollbarState::new(scroll_handle.clone()),
                     scroll_handle,
                     keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
                     anchor: Some(anchor),
@@ -846,7 +842,6 @@ pub struct InfoPopover {
     pub symbol_range: RangeInEditor,
     pub parsed_content: Option<Entity<Markdown>>,
     pub scroll_handle: ScrollHandle,
-    pub scrollbar_state: ScrollbarState,
     pub keyboard_grace: Rc<RefCell<bool>>,
     pub anchor: Option<Anchor>,
     _subscription: Option<Subscription>,
@@ -891,7 +886,12 @@ impl InfoPopover {
                                 .on_url_click(open_markdown_url),
                         ),
                 )
-                .child(self.render_vertical_scrollbar(cx))
+                .custom_scrollbars(
+                    Scrollbars::for_settings::<EditorSettings>()
+                        .tracked_scroll_handle(self.scroll_handle.clone()),
+                    window,
+                    cx,
+                )
             })
             .into_any_element()
     }
@@ -905,39 +905,6 @@ impl InfoPopover {
         cx.notify();
         self.scroll_handle.set_offset(current);
     }
-
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Editor>) -> Stateful<Div> {
-        div()
-            .occlude()
-            .id("info-popover-vertical-scroll")
-            .on_mouse_move(cx.listener(|_, _, _, cx| {
-                cx.notify();
-                cx.stop_propagation()
-            }))
-            .on_hover(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_any_mouse_down(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|_, _, _, cx| {
-                    cx.stop_propagation();
-                }),
-            )
-            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                cx.notify();
-            }))
-            .h_full()
-            .absolute()
-            .right_1()
-            .top_1()
-            .bottom_0()
-            .w(px(12.))
-            .cursor_default()
-            .children(Scrollbar::vertical(self.scrollbar_state.clone()))
-    }
 }
 
 pub struct DiagnosticPopover {
@@ -949,7 +916,6 @@ pub struct DiagnosticPopover {
     pub anchor: Anchor,
     _subscription: Subscription,
     pub scroll_handle: ScrollHandle,
-    pub scrollbar_state: ScrollbarState,
 }
 
 impl DiagnosticPopover {
@@ -1013,42 +979,14 @@ impl DiagnosticPopover {
                                 ),
                             ),
                     )
-                    .child(self.render_vertical_scrollbar(cx)),
+                    .custom_scrollbars(
+                        Scrollbars::for_settings::<EditorSettings>()
+                            .tracked_scroll_handle(self.scroll_handle.clone()),
+                        window,
+                        cx,
+                    ),
             )
             .into_any_element()
-    }
-
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Editor>) -> Stateful<Div> {
-        div()
-            .occlude()
-            .id("diagnostic-popover-vertical-scroll")
-            .on_mouse_move(cx.listener(|_, _, _, cx| {
-                cx.notify();
-                cx.stop_propagation()
-            }))
-            .on_hover(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_any_mouse_down(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|_, _, _, cx| {
-                    cx.stop_propagation();
-                }),
-            )
-            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                cx.notify();
-            }))
-            .h_full()
-            .absolute()
-            .right_1()
-            .top_1()
-            .bottom_0()
-            .w(px(12.))
-            .cursor_default()
-            .children(Scrollbar::vertical(self.scrollbar_state.clone()))
     }
 }
 
