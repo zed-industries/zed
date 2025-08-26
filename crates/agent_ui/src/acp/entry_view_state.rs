@@ -1,7 +1,7 @@
-use std::ops::Range;
+use std::{cell::Cell, ops::Range, rc::Rc};
 
 use acp_thread::{AcpThread, AgentThreadEntry};
-use agent_client_protocol::ToolCallId;
+use agent_client_protocol::{PromptCapabilities, ToolCallId};
 use agent2::HistoryStore;
 use collections::HashMap;
 use editor::{Editor, EditorMode, MinimapVisibility};
@@ -27,6 +27,7 @@ pub struct EntryViewState {
     prompt_store: Option<Entity<PromptStore>>,
     entries: Vec<Entry>,
     prevent_slash_commands: bool,
+    prompt_capabilities: Rc<Cell<PromptCapabilities>>,
 }
 
 impl EntryViewState {
@@ -35,6 +36,7 @@ impl EntryViewState {
         project: Entity<Project>,
         history_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
+        prompt_capabilities: Rc<Cell<PromptCapabilities>>,
         prevent_slash_commands: bool,
     ) -> Self {
         Self {
@@ -44,6 +46,7 @@ impl EntryViewState {
             prompt_store,
             entries: Vec::new(),
             prevent_slash_commands,
+            prompt_capabilities,
         }
     }
 
@@ -81,6 +84,7 @@ impl EntryViewState {
                             self.project.clone(),
                             self.history_store.clone(),
                             self.prompt_store.clone(),
+                            self.prompt_capabilities.clone(),
                             "Edit message － @ to include context",
                             self.prevent_slash_commands,
                             editor::EditorMode::AutoHeight {
@@ -403,6 +407,7 @@ mod tests {
                 project.clone(),
                 history_store,
                 None,
+                Default::default(),
                 false,
             )
         });

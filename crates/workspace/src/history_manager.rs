@@ -5,7 +5,9 @@ use smallvec::SmallVec;
 use ui::App;
 use util::{ResultExt, paths::PathExt};
 
-use crate::{NewWindow, SerializedWorkspaceLocation, WORKSPACE_DB, WorkspaceId};
+use crate::{
+    NewWindow, SerializedWorkspaceLocation, WORKSPACE_DB, WorkspaceId, path_list::PathList,
+};
 
 pub fn init(cx: &mut App) {
     let manager = cx.new(|_| HistoryManager::new());
@@ -44,7 +46,13 @@ impl HistoryManager {
                 .unwrap_or_default()
                 .into_iter()
                 .rev()
-                .map(|(id, location)| HistoryManagerEntry::new(id, &location))
+                .filter_map(|(id, location, paths)| {
+                    if matches!(location, SerializedWorkspaceLocation::Local) {
+                        Some(HistoryManagerEntry::new(id, &paths))
+                    } else {
+                        None
+                    }
+                })
                 .collect::<Vec<_>>();
             this.update(cx, |this, cx| {
                 this.history = recent_folders;
@@ -118,9 +126,9 @@ impl HistoryManager {
 }
 
 impl HistoryManagerEntry {
-    pub fn new(id: WorkspaceId, location: &SerializedWorkspaceLocation) -> Self {
-        let path = location
-            .sorted_paths()
+    pub fn new(id: WorkspaceId, paths: &PathList) -> Self {
+        let path = paths
+            .paths()
             .iter()
             .map(|path| path.compact())
             .collect::<SmallVec<[PathBuf; 2]>>();

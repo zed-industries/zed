@@ -344,7 +344,17 @@ pub fn initialize_workspace(
 
         if let Some(specs) = window.gpu_specs() {
             log::info!("Using GPU: {:?}", specs);
-            show_software_emulation_warning_if_needed(specs, window, cx);
+            show_software_emulation_warning_if_needed(specs.clone(), window, cx);
+            if let Some((crash_server, message)) = crashes::CRASH_HANDLER
+                .get()
+                .zip(bincode::serialize(&specs).ok())
+                && let Err(err) = crash_server.send_message(3, message)
+            {
+                log::warn!(
+                    "Failed to store active gpu info for crash reporting: {}",
+                    err
+                );
+            }
         }
 
         let edit_prediction_menu_handle = PopoverMenuHandle::default();

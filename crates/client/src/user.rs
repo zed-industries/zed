@@ -1,5 +1,5 @@
 use super::{Client, Status, TypedEnvelope, proto};
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use chrono::{DateTime, Utc};
 use cloud_api_client::websocket_protocol::MessageToClient;
 use cloud_api_client::{GetAuthenticatedUserResponse, PlanInfo};
@@ -45,11 +45,6 @@ impl ProjectId {
         self.0
     }
 }
-
-#[derive(
-    Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, serde::Serialize, serde::Deserialize,
-)]
-pub struct DevServerProjectId(pub u64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ParticipantIndex(pub u32);
@@ -116,7 +111,6 @@ pub struct UserStore {
     edit_prediction_usage: Option<EditPredictionUsage>,
     plan_info: Option<PlanInfo>,
     current_user: watch::Receiver<Option<Arc<User>>>,
-    accepted_tos_at: Option<Option<cloud_api_client::Timestamp>>,
     contacts: Vec<Arc<Contact>>,
     incoming_contact_requests: Vec<Arc<User>>,
     outgoing_contact_requests: Vec<Arc<User>>,
@@ -194,7 +188,6 @@ impl UserStore {
             plan_info: None,
             model_request_usage: None,
             edit_prediction_usage: None,
-            accepted_tos_at: None,
             contacts: Default::default(),
             incoming_contact_requests: Default::default(),
             participant_indices: Default::default(),
@@ -271,7 +264,6 @@ impl UserStore {
                         Status::SignedOut => {
                             current_user_tx.send(None).await.ok();
                             this.update(cx, |this, cx| {
-                                this.accepted_tos_at = None;
                                 cx.emit(Event::PrivateUserInfoUpdated);
                                 cx.notify();
                                 this.clear_contacts()
@@ -791,19 +783,6 @@ impl UserStore {
                 .set_authenticated_user_info(Some(response.user.metrics_id.clone()), staff);
         }
 
-        let accepted_tos_at = {
-            #[cfg(debug_assertions)]
-            if std::env::var("ZED_IGNORE_ACCEPTED_TOS").is_ok() {
-                None
-            } else {
-                response.user.accepted_tos_at
-            }
-
-            #[cfg(not(debug_assertions))]
-            response.user.accepted_tos_at
-        };
-
-        self.accepted_tos_at = Some(accepted_tos_at);
         self.model_request_usage = Some(ModelRequestUsage(RequestUsage {
             limit: response.plan.usage.model_requests.limit,
             amount: response.plan.usage.model_requests.used as i32,
@@ -844,32 +823,6 @@ impl UserStore {
 
     pub fn watch_current_user(&self) -> watch::Receiver<Option<Arc<User>>> {
         self.current_user.clone()
-    }
-
-    pub fn has_accepted_terms_of_service(&self) -> bool {
-        self.accepted_tos_at
-            .is_some_and(|accepted_tos_at| accepted_tos_at.is_some())
-    }
-
-    pub fn accept_terms_of_service(&self, cx: &Context<Self>) -> Task<Result<()>> {
-        if self.current_user().is_none() {
-            return Task::ready(Err(anyhow!("no current user")));
-        };
-
-        let client = self.client.clone();
-        cx.spawn(async move |this, cx| -> anyhow::Result<()> {
-            let client = client.upgrade().context("client not found")?;
-            let response = client
-                .cloud_client()
-                .accept_terms_of_service()
-                .await
-                .context("error accepting tos")?;
-            this.update(cx, |this, cx| {
-                this.accepted_tos_at = Some(response.user.accepted_tos_at);
-                cx.emit(Event::PrivateUserInfoUpdated);
-            })?;
-            Ok(())
-        })
     }
 
     fn load_users(
