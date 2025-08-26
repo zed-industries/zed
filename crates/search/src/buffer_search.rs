@@ -2748,20 +2748,52 @@ mod tests {
             search_bar.deploy(&deploy, window, cx);
             assert_eq!(
                 search_bar.search_options,
-                SearchOptions::WHOLE_WORD,
-                "After hiding and showing the search bar, options should be preserved"
+                SearchOptions::NONE,
+                "After hiding and showing the search bar, default options should be used"
             );
 
             search_bar.toggle_search_option(SearchOptions::REGEX, window, cx);
             search_bar.toggle_search_option(SearchOptions::WHOLE_WORD, window, cx);
             assert_eq!(
                 search_bar.search_options,
-                SearchOptions::REGEX,
+                SearchOptions::REGEX | SearchOptions::WHOLE_WORD,
                 "Should enable the options toggled"
             );
             assert!(
                 !search_bar.dismissed,
                 "Search bar should be present and visible"
+            );
+        });
+
+        update_search_settings(
+            SearchSettings {
+                button: true,
+                whole_word: false,
+                case_sensitive: true,
+                include_ignored: false,
+                regex: false,
+            },
+            cx,
+        );
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::REGEX | SearchOptions::WHOLE_WORD,
+                "Should have no search options enabled by default"
+            );
+
+            search_bar.deploy(&deploy, window, cx);
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::REGEX | SearchOptions::WHOLE_WORD,
+                "Toggling a non-dismissed search bar with custom options should not change the default options"
+            );
+            search_bar.dismiss(&Dismiss, window, cx);
+            search_bar.deploy(&deploy, window, cx);
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::CASE_SENSITIVE,
+                "After hiding and showing the search bar, default options should be used"
             );
         });
     }
