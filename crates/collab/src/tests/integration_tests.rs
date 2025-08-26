@@ -12,7 +12,8 @@ use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus, assert_hunks};
 use call::{ActiveCall, ParticipantLocation, Room, room};
 use client::{RECEIVE_TIMEOUT, User};
 use collections::{HashMap, HashSet};
-use fs::{FakeFs, Fs as _, RemoveOptions};
+use encoding::all::UTF_8;
+use fs::{FakeFs, Fs as _, RemoveOptions, encodings::EncodingWrapper};
 use futures::{StreamExt as _, channel::mpsc};
 use git::status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
 use gpui::{
@@ -3706,6 +3707,7 @@ async fn test_buffer_reloading(
             path!("/dir/a.txt").as_ref(),
             &new_contents,
             LineEnding::Windows,
+            EncodingWrapper::new(UTF_8),
         )
         .await
         .unwrap();
@@ -4472,6 +4474,7 @@ async fn test_reloading_buffer_manually(
             path!("/a/a.rs").as_ref(),
             &Rope::from("let seven = 7;"),
             LineEnding::Unix,
+            EncodingWrapper::new(UTF_8),
         )
         .await
         .unwrap();
