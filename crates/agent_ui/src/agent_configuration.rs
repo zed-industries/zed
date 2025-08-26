@@ -1093,7 +1093,7 @@ impl AgentConfiguration {
                             )
                             .child(
                                 Label::new(
-                                    "Bring the agent of your choice to Zed via our new Agent Client Protocol",
+                                    "Bring the agent of your choice to Zed via our new Agent Client Protocol.",
                                 )
                                 .color(Color::Muted),
                             ),

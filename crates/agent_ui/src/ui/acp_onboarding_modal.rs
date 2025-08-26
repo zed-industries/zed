@@ -1,3 +1,4 @@
+use client::zed_urls;
 use gpui::{
     ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, MouseDownEvent, Render,
     linear_color_stop, linear_gradient,
@@ -47,7 +48,7 @@ impl AcpOnboardingModal {
     }
 
     fn view_docs(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        cx.open_url("https://agentclientprotocol.com/");
+        cx.open_url(&zed_urls::external_agents_docs(cx));
         cx.notify();
 
         acp_onboarding_event!("Documentation Link Clicked");
@@ -191,7 +192,7 @@ impl Render for AcpOnboardingModal {
             )
             .child(Headline::new("Bring Your Own Agent to Zed").size(HeadlineSize::Large));
 
-        let copy = "Bring the agent of your choice to Zed via our new Agent Client Protocol, starting with Google's Gemini CLI integration.";
+        let copy = "Bring the agent of your choice to Zed via our new Agent Client Protocol (ACP), starting with Google's Gemini CLI integration.";
 
         let open_panel_button = Button::new("open-panel", "Start with Gemini CLI")
             .icon_size(IconSize::Indicator)
@@ -199,7 +200,7 @@ impl Render for AcpOnboardingModal {
             .full_width()
             .on_click(cx.listener(Self::open_panel));
 
-        let docs_button = Button::new("add-agent", "Add Your Own Agent")
+        let docs_button = Button::new("add-other-agents", "Add Other Agents")
             .icon(IconName::ArrowUpRight)
             .icon_size(IconSize::Indicator)
             .icon_color(Color::Muted)
@@ -219,7 +220,7 @@ impl Render for AcpOnboardingModal {
             .id("acp-onboarding")
             .key_context("AcpOnboardingModal")
             .relative()
-            .w(rems(32.))
+            .w(rems(34.))
             .h_full()
             .elevation_3(cx)
             .track_focus(&self.focus_handle(cx))
