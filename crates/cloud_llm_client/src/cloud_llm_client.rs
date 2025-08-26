@@ -156,13 +156,12 @@ pub struct PredictEditsBody {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictEditsGitInfo {
-    /// Path within the repository that contains the input excerpt.
+    /// Path to the file in the repository that contains the input excerpt.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub input_path: Option<String>,
+    /// Cursor position within the file that contains the input excerpt.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub cursor_point: Option<Point>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub cursor_offset: Option<usize>,
     /// SHA of git HEAD commit at time of prediction.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub head_sha: Option<String>,

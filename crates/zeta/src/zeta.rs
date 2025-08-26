@@ -431,7 +431,6 @@ impl Zeta {
         let git_info = if matches!(can_collect_data, CanCollectData(true)) {
             self.gather_git_info(
                 cursor_point.clone(),
-                cursor_offset,
                 &buffer_snapshotted_at,
                 &snapshot,
                 project.clone(),
@@ -1143,7 +1142,6 @@ and then another
     fn gather_git_info(
         &mut self,
         cursor_point: language::Point,
-        cursor_offset: usize,
         buffer_snapshotted_at: &Instant,
         snapshot: &BufferSnapshot,
         project: Option<&Entity<Project>>,
