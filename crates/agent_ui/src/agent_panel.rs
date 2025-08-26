@@ -14,6 +14,7 @@ use zed_actions::agent::ReauthenticateAgent;
 
 use crate::acp::{AcpThreadHistory, ThreadHistoryEvent};
 use crate::agent_diff::AgentDiffThread;
+use crate::ui::AcpOnboardingModal;
 use crate::{
     AddContextServer, AgentDiffPane, ContinueThread, ContinueWithBurnMode,
     DeleteRecentlyOpenThread, ExpandMessageEditor, Follow, InlineAssistant, NewTextThread,
@@ -77,7 +78,10 @@ use workspace::{
 };
 use zed_actions::{
     DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize,
-    agent::{OpenOnboardingModal, OpenSettings, ResetOnboarding, ToggleModelSelector},
+    agent::{
+        OpenAcpOnboardingModal, OpenOnboardingModal, OpenSettings, ResetOnboarding,
+        ToggleModelSelector,
+    },
     assistant::{OpenRulesLibrary, ToggleFocus},
 };
 
@@ -200,6 +204,9 @@ pub fn init(cx: &mut App) {
                 })
                 .register_action(|workspace, _: &OpenOnboardingModal, window, cx| {
                     AgentOnboardingModal::toggle(workspace, window, cx)
+                })
+                .register_action(|workspace, _: &OpenAcpOnboardingModal, window, cx| {
+                    AcpOnboardingModal::toggle(workspace, window, cx)
                 })
                 .register_action(|_workspace, _: &ResetOnboarding, window, cx| {
                     window.dispatch_action(workspace::RestoreBanner.boxed_clone(), cx);
@@ -1841,19 +1848,6 @@ impl AgentPanel {
         menu
     }
 
-    pub fn set_selected_agent(
-        &mut self,
-        agent: AgentType,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.selected_agent != agent {
-            self.selected_agent = agent.clone();
-            self.serialize(cx);
-        }
-        self.new_agent_thread(agent, window, cx);
-    }
-
     pub fn selected_agent(&self) -> AgentType {
         self.selected_agent.clone()
     }
@@ -1864,6 +1858,11 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.selected_agent != agent {
+            self.selected_agent = agent.clone();
+            self.serialize(cx);
+        }
+
         match agent {
             AgentType::Zed => {
                 window.dispatch_action(
@@ -2544,7 +2543,7 @@ impl AgentPanel {
                                                         workspace.panel::<AgentPanel>(cx)
                                                     {
                                                         panel.update(cx, |panel, cx| {
-                                                            panel.set_selected_agent(
+                                                            panel.new_agent_thread(
                                                                 AgentType::NativeAgent,
                                                                 window,
                                                                 cx,
@@ -2570,7 +2569,7 @@ impl AgentPanel {
                                                         workspace.panel::<AgentPanel>(cx)
                                                     {
                                                         panel.update(cx, |panel, cx| {
-                                                            panel.set_selected_agent(
+                                                            panel.new_agent_thread(
                                                                 AgentType::TextThread,
                                                                 window,
                                                                 cx,
@@ -2598,7 +2597,7 @@ impl AgentPanel {
                                                             workspace.panel::<AgentPanel>(cx)
                                                         {
                                                             panel.update(cx, |panel, cx| {
-                                                                panel.set_selected_agent(
+                                                                panel.new_agent_thread(
                                                                     AgentType::Gemini,
                                                                     window,
                                                                     cx,
@@ -2625,7 +2624,7 @@ impl AgentPanel {
                                                             workspace.panel::<AgentPanel>(cx)
                                                         {
                                                             panel.update(cx, |panel, cx| {
-                                                                panel.set_selected_agent(
+                                                                panel.new_agent_thread(
                                                                     AgentType::ClaudeCode,
                                                                     window,
                                                                     cx,
@@ -2658,7 +2657,7 @@ impl AgentPanel {
                                                                 workspace.panel::<AgentPanel>(cx)
                                                             {
                                                                 panel.update(cx, |panel, cx| {
-                                                                    panel.set_selected_agent(
+                                                                    panel.new_agent_thread(
                                                                         AgentType::Custom {
                                                                             name: agent_name
                                                                                 .clone(),
@@ -2682,9 +2681,9 @@ impl AgentPanel {
                             })
                             .when(cx.has_flag::<GeminiAndNativeFeatureFlag>(), |menu| {
                                 menu.separator().link(
-                                    "Add Your Own Agent",
+                                    "Add Other Agents",
                                     OpenBrowser {
-                                        url: "https://agentclientprotocol.com/".into(),
+                                        url: zed_urls::external_agents_docs(cx),
                                     }
                                     .boxed_clone(),
                                 )
