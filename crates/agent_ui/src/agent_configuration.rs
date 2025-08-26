@@ -1457,7 +1457,7 @@ fn find_text_in_buffer(
     }
 
     if char_offset == chars.len() {
-        Some(offset - chars.len()..offset)
+        Some(offset.saturating_sub(chars.len())..offset)
     } else {
         None
     }
