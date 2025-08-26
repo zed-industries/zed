@@ -304,7 +304,7 @@ impl KeystrokeInput {
         }
 
         let mut keystroke =
-            KeybindingKeystroke::new(keystroke.clone(), false, cx.keyboard_mapper());
+            KeybindingKeystroke::new(keystroke.clone(), false, cx.keyboard_mapper().as_ref());
         if let Some(last) = self.keystrokes.last()
             && last.display_key.is_empty()
             && (!self.search || self.previous_modifiers.modified())

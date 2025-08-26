@@ -398,7 +398,7 @@ impl KeymapFile {
             context,
             use_key_equivalents,
             action_input_string.map(SharedString::from),
-            cx.keyboard_mapper(),
+            cx.keyboard_mapper().as_ref(),
         ) {
             Ok(key_binding) => key_binding,
             Err(InvalidKeystrokeError { keystroke }) => {
@@ -600,6 +600,7 @@ impl KeymapFile {
         mut operation: KeybindUpdateOperation<'a>,
         mut keymap_contents: String,
         tab_size: usize,
+        keyboard_mapper: &dyn gpui::PlatformKeyboardMapper,
     ) -> Result<String> {
         match operation {
             // if trying to replace a keybinding that is not user-defined, treat it as an add operation
@@ -639,7 +640,7 @@ impl KeymapFile {
                 .action_value()
                 .context("Failed to generate target action JSON value")?;
             let Some((index, keystrokes_str)) =
-                find_binding(&keymap, &target, &target_action_value)
+                find_binding(&keymap, &target, &target_action_value, keyboard_mapper)
             else {
                 anyhow::bail!("Failed to find keybinding to remove");
             };
@@ -674,7 +675,7 @@ impl KeymapFile {
                 .context("Failed to generate source action JSON value")?;
 
             if let Some((index, keystrokes_str)) =
-                find_binding(&keymap, &target, &target_action_value)
+                find_binding(&keymap, &target, &target_action_value, keyboard_mapper)
             {
                 if target.context == source.context {
                     // if we are only changing the keybinding (common case)
@@ -774,7 +775,7 @@ impl KeymapFile {
             }
             let use_key_equivalents = from.and_then(|from| {
                 let action_value = from.action_value().context("Failed to serialize action value. `use_key_equivalents` on new keybinding may be incorrect.").log_err()?;
-                let (index, _) = find_binding(&keymap, &from, &action_value)?;
+                let (index, _) = find_binding(&keymap, &from, &action_value, keyboard_mapper)?;
                 Some(keymap.0[index].use_key_equivalents)
             }).unwrap_or(false);
             if use_key_equivalents {
@@ -801,6 +802,7 @@ impl KeymapFile {
             keymap: &'b KeymapFile,
             target: &KeybindUpdateTarget<'a>,
             target_action_value: &Value,
+            keyboard_mapper: &dyn gpui::PlatformKeyboardMapper,
         ) -> Option<(usize, &'b str)> {
             let target_context_parsed =
                 KeyBindingContextPredicate::parse(target.context.unwrap_or("")).ok();
@@ -816,8 +818,11 @@ impl KeymapFile {
                 for (keystrokes_str, action) in bindings {
                     let Ok(keystrokes) = keystrokes_str
                         .split_whitespace()
-                        .map(Keystroke::parse)
-                        .collect::<Result<Vec<_>, _>>()
+                        .map(|source| {
+                            let keystroke = Keystroke::parse(source)?;
+                            Ok(KeybindingKeystroke::new(keystroke, false, keyboard_mapper))
+                        })
+                        .collect::<Result<Vec<_>, InvalidKeystrokeError>>()
                     else {
                         continue;
                     };
@@ -825,7 +830,7 @@ impl KeymapFile {
                         || !keystrokes
                             .iter()
                             .zip(target.keystrokes)
-                            .all(|(a, b)| a.should_match(b))
+                            .all(|(a, b)| a.inner.should_match(b))
                     {
                         continue;
                     }
@@ -840,7 +845,7 @@ impl KeymapFile {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum KeybindUpdateOperation<'a> {
     Replace {
         /// Describes the keybind to create
@@ -934,7 +939,10 @@ impl<'a> KeybindUpdateTarget<'a> {
     fn keystrokes_unparsed(&self) -> String {
         let mut keystrokes = String::with_capacity(self.keystrokes.len() * 8);
         for keystroke in self.keystrokes {
-            keystrokes.push_str(&keystroke.inner.unparse());
+            // The reason use `keystroke.unparse()` instead of `keystroke.inner.unparse()`
+            // here is that, we want the user to use `ctrl-shift-4` instread of `ctrl-$`
+            // by default on Windows.
+            keystrokes.push_str(&keystroke.unparse());
             keystrokes.push(' ');
         }
         keystrokes.pop();
@@ -952,7 +960,7 @@ impl<'a> KeybindUpdateTarget<'a> {
     }
 }
 
-#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum KeybindSource {
     User,
     Vim,
@@ -1042,8 +1050,13 @@ mod tests {
         operation: KeybindUpdateOperation,
         expected: impl ToString,
     ) {
-        let result = KeymapFile::update_keybinding(operation, input.to_string(), 4)
-            .expect("Update succeeded");
+        let result = KeymapFile::update_keybinding(
+            operation,
+            input.to_string(),
+            4,
+            &gpui::DummyKeyboardMapper,
+        )
+        .expect("Update succeeded");
         pretty_assertions::assert_eq!(expected.to_string(), result);
     }
 

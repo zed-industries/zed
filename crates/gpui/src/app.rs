@@ -429,8 +429,8 @@ impl App {
     }
 
     /// Get the current keyboard mapper.
-    pub fn keyboard_mapper(&self) -> &dyn PlatformKeyboardMapper {
-        self.keyboard_mapper.as_ref()
+    pub fn keyboard_mapper(&self) -> &Rc<dyn PlatformKeyboardMapper> {
+        &self.keyboard_mapper
     }
 
     /// Invokes a handler when the current keyboard layout changes

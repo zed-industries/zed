@@ -14,9 +14,9 @@ use gpui::{
     Action, AppContext as _, AsyncApp, Axis, ClickEvent, Context, DismissEvent, Entity,
     EventEmitter, FocusHandle, Focusable, Global, IsZero,
     KeyBindingContextPredicate::{And, Descendant, Equal, Identifier, Not, NotEqual, Or},
-    KeyContext, KeybindingKeystroke, Keystroke, MouseButton, Point, ScrollStrategy,
-    ScrollWheelEvent, Stateful, StyledText, Subscription, Task, TextStyleRefinement, WeakEntity,
-    actions, anchored, deferred, div,
+    KeyContext, KeybindingKeystroke, Keystroke, MouseButton, PlatformKeyboardMapper, Point,
+    ScrollStrategy, ScrollWheelEvent, Stateful, StyledText, Subscription, Task,
+    TextStyleRefinement, WeakEntity, actions, anchored, deferred, div,
 };
 use language::{Language, LanguageConfig, ToOffset as _};
 use notifications::status_toast::{StatusToast, ToastIcon};
@@ -1206,8 +1206,11 @@ impl KeymapEditor {
                 .read(cx)
                 .get_scrollbar_offset(Axis::Vertical),
         ));
-        cx.spawn(async move |_, _| remove_keybinding(to_remove, &fs, tab_size).await)
-            .detach_and_notify_err(window, cx);
+        let keyboard_mapper = cx.keyboard_mapper().clone();
+        cx.spawn(async move |_, _| {
+            remove_keybinding(to_remove, &fs, tab_size, keyboard_mapper.as_ref()).await
+        })
+        .detach_and_notify_err(window, cx);
     }
 
     fn copy_context_to_clipboard(
@@ -2320,6 +2323,7 @@ impl KeybindingEditorModal {
         }).unwrap_or(Ok(()))?;
 
         let create = self.creating;
+        let keyboard_mapper = cx.keyboard_mapper().clone();
 
         cx.spawn(async move |this, cx| {
             let action_name = existing_keybind.action().name;
@@ -2332,6 +2336,7 @@ impl KeybindingEditorModal {
                 new_action_args.as_deref(),
                 &fs,
                 tab_size,
+                keyboard_mapper.as_ref(),
             )
             .await
             {
@@ -3006,6 +3011,7 @@ async fn save_keybinding_update(
     new_args: Option<&str>,
     fs: &Arc<dyn Fs>,
     tab_size: usize,
+    keyboard_mapper: &dyn PlatformKeyboardMapper,
 ) -> anyhow::Result<()> {
     let keymap_contents = settings::KeymapFile::load_keymap_file(fs)
         .await
@@ -3048,9 +3054,13 @@ async fn save_keybinding_update(
 
     let (new_keybinding, removed_keybinding, source) = operation.generate_telemetry();
 
-    let updated_keymap_contents =
-        settings::KeymapFile::update_keybinding(operation, keymap_contents, tab_size)
-            .map_err(|err| anyhow::anyhow!("Could not save updated keybinding: {}", err))?;
+    let updated_keymap_contents = settings::KeymapFile::update_keybinding(
+        operation,
+        keymap_contents,
+        tab_size,
+        keyboard_mapper,
+    )
+    .map_err(|err| anyhow::anyhow!("Could not save updated keybinding: {}", err))?;
     fs.write(
         paths::keymap_file().as_path(),
         updated_keymap_contents.as_bytes(),
@@ -3071,6 +3081,7 @@ async fn remove_keybinding(
     existing: ProcessedBinding,
     fs: &Arc<dyn Fs>,
     tab_size: usize,
+    keyboard_mapper: &dyn PlatformKeyboardMapper,
 ) -> anyhow::Result<()> {
     let Some(keystrokes) = existing.keystrokes() else {
         anyhow::bail!("Cannot remove a keybinding that does not exist");
@@ -3094,9 +3105,13 @@ async fn remove_keybinding(
     };
 
     let (new_keybinding, removed_keybinding, source) = operation.generate_telemetry();
-    let updated_keymap_contents =
-        settings::KeymapFile::update_keybinding(operation, keymap_contents, tab_size)
-            .context("Failed to update keybinding")?;
+    let updated_keymap_contents = settings::KeymapFile::update_keybinding(
+        operation,
+        keymap_contents,
+        tab_size,
+        keyboard_mapper,
+    )
+    .context("Failed to update keybinding")?;
     fs.write(
         paths::keymap_file().as_path(),
         updated_keymap_contents.as_bytes(),

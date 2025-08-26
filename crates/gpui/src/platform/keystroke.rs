@@ -219,31 +219,7 @@ impl Keystroke {
 
     /// Produces a representation of this key that Parse can understand.
     pub fn unparse(&self) -> String {
-        let mut str = String::new();
-        if self.modifiers.function {
-            str.push_str("fn-");
-        }
-        if self.modifiers.control {
-            str.push_str("ctrl-");
-        }
-        if self.modifiers.alt {
-            str.push_str("alt-");
-        }
-        if self.modifiers.platform {
-            #[cfg(target_os = "macos")]
-            str.push_str("cmd-");
-
-            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-            str.push_str("super-");
-
-            #[cfg(target_os = "windows")]
-            str.push_str("win-");
-        }
-        if self.modifiers.shift {
-            str.push_str("shift-");
-        }
-        str.push_str(&self.key);
-        str
+        unparse(&self.modifiers, &self.key)
     }
 
     /// Returns true if this keystroke left
@@ -303,6 +279,11 @@ impl KeybindingKeystroke {
             display_modifiers: modifiers,
             display_key: key,
         }
+    }
+
+    /// Produces a representation of this key that Parse can understand.
+    pub fn unparse(&self) -> String {
+        unparse(&self.display_modifiers, &self.display_key)
     }
 }
 
@@ -667,4 +648,33 @@ fn display_key(key: &str, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         key => return f.write_str(key),
     };
     f.write_char(key)
+}
+
+#[inline]
+fn unparse(modifiers: &Modifiers, key: &str) -> String {
+    let mut result = String::new();
+    if modifiers.function {
+        result.push_str("fn-");
+    }
+    if modifiers.control {
+        result.push_str("ctrl-");
+    }
+    if modifiers.alt {
+        result.push_str("alt-");
+    }
+    if modifiers.platform {
+        #[cfg(target_os = "macos")]
+        result.push_str("cmd-");
+
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        result.push_str("super-");
+
+        #[cfg(target_os = "windows")]
+        result.push_str("win-");
+    }
+    if modifiers.shift {
+        result.push_str("shift-");
+    }
+    result.push_str(&key);
+    result
 }
