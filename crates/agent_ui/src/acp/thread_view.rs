@@ -1333,6 +1333,10 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &Context<Self>,
     ) -> AnyElement {
+        let is_generating = self
+            .thread()
+            .is_some_and(|thread| thread.read(cx).status() != ThreadStatus::Idle);
+
         let primary = match &entry {
             AgentThreadEntry::UserMessage(message) => {
                 let Some(editor) = self
@@ -1492,6 +1496,20 @@ impl AcpThreadView {
                     .into_any()
             }
             AgentThreadEntry::AssistantMessage(AssistantMessage { chunks }) => {
+                let is_last = entry_ix + 1 == total_entries;
+                let pending_thinking_chunk_ix = if is_generating && is_last {
+                    chunks
+                        .iter()
+                        .enumerate()
+                        .next_back()
+                        .filter(|(_, segment)| {
+                            matches!(segment, AssistantMessageChunk::Thought { .. })
+                        })
+                        .map(|(index, _)| index)
+                } else {
+                    None
+                };
+
                 let style = default_markdown_style(false, false, window, cx);
                 let message_body = v_flex()
                     .w_full()
@@ -1510,6 +1528,7 @@ impl AcpThreadView {
                                         entry_ix,
                                         chunk_ix,
                                         md.clone(),
+                                        Some(chunk_ix) == pending_thinking_chunk_ix,
                                         window,
                                         cx,
                                     )
@@ -1523,7 +1542,7 @@ impl AcpThreadView {
                 v_flex()
                     .px_5()
                     .py_1()
-                    .when(entry_ix + 1 == total_entries, |this| this.pb_4())
+                    .when(is_last, |this| this.pb_4())
                     .w_full()
                     .text_ui(cx)
                     .child(message_body)
@@ -1608,13 +1627,30 @@ impl AcpThreadView {
         entry_ix: usize,
         chunk_ix: usize,
         chunk: Entity<Markdown>,
+        pending: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
         let header_id = SharedString::from(format!("thinking-block-header-{}", entry_ix));
         let card_header_id = SharedString::from("inner-card-header");
+
         let key = (entry_ix, chunk_ix);
+
         let is_open = self.expanded_thinking_blocks.contains(&key);
+        let editor_bg = cx.theme().colors().editor_background;
+        let gradient_overlay = div()
+            .rounded_b_lg()
+            .h_full()
+            .absolute()
+            .w_full()
+            .bottom_0()
+            .left_0()
+            .bg(linear_gradient(
+                180.,
+                linear_color_stop(editor_bg, 1.),
+                linear_color_stop(editor_bg.opacity(0.2), 0.),
+            ));
+
         let scroll_handle = self
             .entry_view_state
             .read(cx)
@@ -1622,16 +1658,22 @@ impl AcpThreadView {
             .and_then(|entry| entry.scroll_handle_for_assistant_message_chunk(chunk_ix));
 
         v_flex()
+            .rounded_md()
             .border_1()
-            .border_color(cx.theme().colors().border)
+            .border_color(self.tool_card_border_color(cx))
             .child(
                 h_flex()
                     .id(header_id)
                     .group(&card_header_id)
-                    .pr_1() // Ensure disclosure button is aligned with tool call disclosures
                     .relative()
                     .w_full()
+                    .py_0p5()
+                    .px_1p5()
+                    .rounded_t_md()
+                    .bg(self.tool_card_header_bg(cx))
                     .justify_between()
+                    .border_b_1()
+                    .border_color(self.tool_card_border_color(cx))
                     .child(
                         h_flex()
                             .h(window.line_height())
@@ -1645,7 +1687,13 @@ impl AcpThreadView {
                                 div()
                                     .text_size(self.tool_name_font_size())
                                     .text_color(cx.theme().colors().text_muted)
-                                    .child("Thinking"),
+                                    .map(|this| {
+                                        if pending {
+                                            this.child("Thinking")
+                                        } else {
+                                            this.child("Thought Process")
+                                        }
+                                    }),
                             ),
                     )
                     .child(
@@ -1675,58 +1723,28 @@ impl AcpThreadView {
                         }
                     })),
             )
-            .map(|this| {
-                this.child(if is_open {
-                    div()
-                        .relative()
-                        .mt_1p5()
-                        .ml(rems(0.4))
-                        .pl_3p5()
-                        .border_l_1()
-                        .border_color(self.tool_card_border_color(cx))
-                        .text_ui_sm(cx)
-                        .child(self.render_markdown(
-                            chunk,
-                            default_markdown_style(false, false, window, cx),
-                        ))
-                } else {
-                    let editor_bg = cx.theme().colors().editor_background;
-                    let gradient_overlay = div()
-                        .rounded_b_lg()
-                        .h_full()
-                        .absolute()
-                        .w_full()
-                        .bottom_0()
-                        .left_0()
-                        .bg(linear_gradient(
-                            180.,
-                            linear_color_stop(editor_bg, 1.),
-                            linear_color_stop(editor_bg.opacity(0.2), 0.),
-                        ));
-
-                    div()
-                        .relative()
-                        .bg(editor_bg)
-                        .rounded_b_lg()
-                        .mt_2()
-                        .pl_4()
-                        .child(
-                            div()
-                                .id(("thinking-content", chunk_ix))
-                                .max_h_20()
-                                .when_some(scroll_handle, |this, scroll_handle| {
-                                    this.track_scroll(&scroll_handle)
-                                })
-                                .text_ui_sm(cx)
-                                .overflow_hidden()
-                                .child(self.render_markdown(
-                                    chunk,
-                                    default_markdown_style(false, false, window, cx),
-                                )),
-                        )
-                        .child(gradient_overlay)
-                })
-            })
+            .child(
+                div()
+                    .relative()
+                    .bg(editor_bg)
+                    .rounded_b_lg()
+                    .child(
+                        div()
+                            .id(("thinking-content", chunk_ix))
+                            .when_some(scroll_handle, |this, scroll_handle| {
+                                this.track_scroll(&scroll_handle)
+                            })
+                            .p_2()
+                            .when(!is_open, |this| this.max_h_20())
+                            .text_ui_sm(cx)
+                            .overflow_hidden()
+                            .child(self.render_markdown(
+                                chunk,
+                                default_markdown_style(false, false, window, cx),
+                            )),
+                    )
+                    .when(!is_open && pending, |this| this.child(gradient_overlay)),
+            )
             .into_any_element()
     }
 
