@@ -1657,7 +1657,6 @@ impl AcpThreadView {
                 .when_some(scroll_handle, |this, scroll_handle| {
                     this.track_scroll(&scroll_handle)
                 })
-                .when(!is_open, |this| this.max_h_12().opacity(0.6))
                 .text_ui_sm(cx)
                 .overflow_hidden()
                 .child(
@@ -1728,7 +1727,6 @@ impl AcpThreadView {
             .when(is_open, |this| {
                 this.child(
                     div()
-                        .relative()
                         .ml_1p5()
                         .pl_3p5()
                         .border_l_1()
@@ -1900,10 +1898,6 @@ impl AcpThreadView {
                         this.p_0p5()
                             .rounded_t(rems_from_px(5.))
                             .bg(self.tool_card_header_bg(cx))
-                            .when(is_open && !failed_or_canceled, |this| {
-                                this.border_b_1()
-                                    .border_color(self.tool_card_border_color(cx))
-                            })
                     })
                     .child(
                         h_flex()
@@ -2036,8 +2030,6 @@ impl AcpThreadView {
 
         v_flex()
             .mt_1p5()
-            .ml(rems(0.4))
-            .px_3p5()
             .gap_2()
             .when(!card_layout, |this| {
                 this.ml(rems(0.4))
