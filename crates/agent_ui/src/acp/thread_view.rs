@@ -1340,10 +1340,6 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let is_generating = self
-            .thread()
-            .is_some_and(|thread| thread.read(cx).status() != ThreadStatus::Idle);
-
         let primary = match &entry {
             AgentThreadEntry::UserMessage(message) => {
                 let Some(editor) = self
@@ -1377,14 +1373,14 @@ impl AcpThreadView {
                     .id(("user_message", entry_ix))
                     .map(|this| {
                         if entry_ix == 0 && !has_checkpoint_button && rules_item.is_none()  {
-                            this.pt_4()
+                            this.pt(rems_from_px(18.))
                         } else if rules_item.is_some() {
                             this.pt_3()
                         } else {
                             this.pt_2()
                         }
                     })
-                    .pb_4()
+                    .pb_3()
                     .px_2()
                     .gap_1p5()
                     .w_full()
@@ -1504,18 +1500,6 @@ impl AcpThreadView {
             }
             AgentThreadEntry::AssistantMessage(AssistantMessage { chunks }) => {
                 let is_last = entry_ix + 1 == total_entries;
-                let pending_thinking_chunk_ix = if is_generating && is_last {
-                    chunks
-                        .iter()
-                        .enumerate()
-                        .next_back()
-                        .filter(|(_, segment)| {
-                            matches!(segment, AssistantMessageChunk::Thought { .. })
-                        })
-                        .map(|(index, _)| index)
-                } else {
-                    None
-                };
 
                 let style = default_markdown_style(false, false, window, cx);
                 let message_body = v_flex()
@@ -1535,7 +1519,6 @@ impl AcpThreadView {
                                         entry_ix,
                                         chunk_ix,
                                         md.clone(),
-                                        Some(chunk_ix) == pending_thinking_chunk_ix,
                                         window,
                                         cx,
                                     )
@@ -1548,7 +1531,7 @@ impl AcpThreadView {
 
                 v_flex()
                     .px_5()
-                    .py_1()
+                    .py_1p5()
                     .when(is_last, |this| this.pb_4())
                     .w_full()
                     .text_ui(cx)
@@ -1634,7 +1617,6 @@ impl AcpThreadView {
         entry_ix: usize,
         chunk_ix: usize,
         chunk: Entity<Markdown>,
-        pending: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -1657,7 +1639,6 @@ impl AcpThreadView {
                 .when_some(scroll_handle, |this, scroll_handle| {
                     this.track_scroll(&scroll_handle)
                 })
-                .when(!is_open, |this| this.max_h_12().opacity(0.6))
                 .text_ui_sm(cx)
                 .overflow_hidden()
                 .child(
@@ -1673,10 +1654,11 @@ impl AcpThreadView {
                     .group(&card_header_id)
                     .relative()
                     .w_full()
+                    .pr_1()
                     .justify_between()
                     .child(
                         h_flex()
-                            .h(window.line_height())
+                            .h(window.line_height() - px(2.))
                             .gap_1p5()
                             .overflow_hidden()
                             .child(
@@ -1688,13 +1670,7 @@ impl AcpThreadView {
                                 div()
                                     .text_size(self.tool_name_font_size())
                                     .text_color(cx.theme().colors().text_muted)
-                                    .map(|this| {
-                                        if pending {
-                                            this.child("Thinking")
-                                        } else {
-                                            this.child("Thought")
-                                        }
-                                    }),
+                                    .child("Thinking"),
                             ),
                     )
                     .child(
@@ -1727,7 +1703,6 @@ impl AcpThreadView {
             .when(is_open, |this| {
                 this.child(
                     div()
-                        .relative()
                         .ml_1p5()
                         .pl_3p5()
                         .border_l_1()
@@ -1815,25 +1790,27 @@ impl AcpThreadView {
 
         let tool_output_display = if is_open {
             match &tool_call.status {
-                ToolCallStatus::WaitingForConfirmation { options, .. } => {
-                    v_flex()
-                        .w_full()
-                        .children(tool_call.content.iter().map(|content| {
-                            div()
-                                .child(self.render_tool_call_content(
-                                    entry_ix, content, tool_call, window, cx,
-                                ))
-                                .into_any_element()
-                        }))
-                        .child(self.render_permission_buttons(
-                            options,
-                            entry_ix,
-                            tool_call.id.clone(),
-                            tool_call.content.is_empty(),
-                            cx,
-                        ))
-                        .into_any()
-                }
+                ToolCallStatus::WaitingForConfirmation { options, .. } => v_flex()
+                    .w_full()
+                    .children(tool_call.content.iter().map(|content| {
+                        div()
+                            .child(self.render_tool_call_content(
+                                entry_ix,
+                                content,
+                                tool_call,
+                                use_card_layout,
+                                window,
+                                cx,
+                            ))
+                            .into_any_element()
+                    }))
+                    .child(self.render_permission_buttons(
+                        options,
+                        entry_ix,
+                        tool_call.id.clone(),
+                        cx,
+                    ))
+                    .into_any(),
                 ToolCallStatus::Pending | ToolCallStatus::InProgress
                     if is_edit
                         && tool_call.content.is_empty()
@@ -1848,9 +1825,14 @@ impl AcpThreadView {
                 | ToolCallStatus::Canceled => v_flex()
                     .w_full()
                     .children(tool_call.content.iter().map(|content| {
-                        div().child(
-                            self.render_tool_call_content(entry_ix, content, tool_call, window, cx),
-                        )
+                        div().child(self.render_tool_call_content(
+                            entry_ix,
+                            content,
+                            tool_call,
+                            use_card_layout,
+                            window,
+                            cx,
+                        ))
                     }))
                     .into_any(),
                 ToolCallStatus::Rejected => Empty.into_any(),
@@ -1863,7 +1845,7 @@ impl AcpThreadView {
         v_flex()
             .map(|this| {
                 if use_card_layout {
-                    this.my_2()
+                    this.my_1p5()
                         .rounded_md()
                         .border_1()
                         .border_color(self.tool_card_border_color(cx))
@@ -1890,18 +1872,14 @@ impl AcpThreadView {
                     .justify_between()
                     .when(use_card_layout, |this| {
                         this.p_0p5()
-                            .rounded_t_md()
+                            .rounded_t(rems_from_px(5.))
                             .bg(self.tool_card_header_bg(cx))
-                            .when(is_open && !failed_or_canceled, |this| {
-                                this.border_b_1()
-                                    .border_color(self.tool_card_border_color(cx))
-                            })
                     })
                     .child(
                         h_flex()
                             .relative()
                             .w_full()
-                            .h(window.line_height())
+                            .h(window.line_height() - px(2.))
                             .text_size(self.tool_name_font_size())
                             .gap_1p5()
                             .when(has_location || use_card_layout, |this| this.px_1())
@@ -1989,6 +1967,7 @@ impl AcpThreadView {
         entry_ix: usize,
         content: &ToolCallContent,
         tool_call: &ToolCall,
+        card_layout: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -1997,7 +1976,13 @@ impl AcpThreadView {
                 if let Some(resource_link) = content.resource_link() {
                     self.render_resource_link(resource_link, cx)
                 } else if let Some(markdown) = content.markdown() {
-                    self.render_markdown_output(markdown.clone(), tool_call.id.clone(), window, cx)
+                    self.render_markdown_output(
+                        markdown.clone(),
+                        tool_call.id.clone(),
+                        card_layout,
+                        window,
+                        cx,
+                    )
                 } else {
                     Empty.into_any_element()
                 }
@@ -2013,6 +1998,7 @@ impl AcpThreadView {
         &self,
         markdown: Entity<Markdown>,
         tool_call_id: acp::ToolCallId,
+        card_layout: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -2020,26 +2006,35 @@ impl AcpThreadView {
 
         v_flex()
             .mt_1p5()
-            .ml(rems(0.4))
-            .px_3p5()
             .gap_2()
-            .border_l_1()
-            .border_color(self.tool_card_border_color(cx))
+            .when(!card_layout, |this| {
+                this.ml(rems(0.4))
+                    .px_3p5()
+                    .border_l_1()
+                    .border_color(self.tool_card_border_color(cx))
+            })
+            .when(card_layout, |this| {
+                this.p_2()
+                    .border_t_1()
+                    .border_color(self.tool_card_border_color(cx))
+            })
             .text_sm()
             .text_color(cx.theme().colors().text_muted)
             .child(self.render_markdown(markdown, default_markdown_style(false, false, window, cx)))
-            .child(
-                IconButton::new(button_id, IconName::ChevronUp)
-                    .full_width()
-                    .style(ButtonStyle::Outlined)
-                    .icon_color(Color::Muted)
-                    .on_click(cx.listener({
-                        move |this: &mut Self, _, _, cx: &mut Context<Self>| {
-                            this.expanded_tool_calls.remove(&tool_call_id);
-                            cx.notify();
-                        }
-                    })),
-            )
+            .when(!card_layout, |this| {
+                this.child(
+                    IconButton::new(button_id, IconName::ChevronUp)
+                        .full_width()
+                        .style(ButtonStyle::Outlined)
+                        .icon_color(Color::Muted)
+                        .on_click(cx.listener({
+                            move |this: &mut Self, _, _, cx: &mut Context<Self>| {
+                                this.expanded_tool_calls.remove(&tool_call_id);
+                                cx.notify();
+                            }
+                        })),
+                )
+            })
             .into_any_element()
     }
 
@@ -2107,7 +2102,6 @@ impl AcpThreadView {
         options: &[acp::PermissionOption],
         entry_ix: usize,
         tool_call_id: acp::ToolCallId,
-        empty_content: bool,
         cx: &Context<Self>,
     ) -> Div {
         h_flex()
@@ -2117,10 +2111,8 @@ impl AcpThreadView {
             .gap_1()
             .justify_between()
             .flex_wrap()
-            .when(!empty_content, |this| {
-                this.border_t_1()
-                    .border_color(self.tool_card_border_color(cx))
-            })
+            .border_t_1()
+            .border_color(self.tool_card_border_color(cx))
             .child(
                 div()
                     .min_w(rems_from_px(145.))
@@ -2218,6 +2210,8 @@ impl AcpThreadView {
 
         v_flex()
             .h_full()
+            .border_t_1()
+            .border_color(self.tool_card_border_color(cx))
             .child(
                 if let Some(entry) = self.entry_view_state.read(cx).entry(entry_ix)
                     && let Some(editor) = entry.editor_for_diff(diff)
@@ -2350,6 +2344,28 @@ impl AcpThreadView {
                             ),
                     )
             })
+            .child(
+                Disclosure::new(
+                    SharedString::from(format!(
+                        "terminal-tool-disclosure-{}",
+                        terminal.entity_id()
+                    )),
+                    is_expanded,
+                )
+                .opened_icon(IconName::ChevronUp)
+                .closed_icon(IconName::ChevronDown)
+                .visible_on_hover(&header_group)
+                .on_click(cx.listener({
+                    let id = tool_call.id.clone();
+                    move |this, _event, _window, _cx| {
+                        if is_expanded {
+                            this.expanded_tool_calls.remove(&id);
+                        } else {
+                            this.expanded_tool_calls.insert(id.clone());
+                        }
+                    }
+                })),
+            )
             .when(truncated_output, |header| {
                 let tooltip = if let Some(output) = output {
                     if output_line_count + 10 > terminal::MAX_SCROLL_HISTORY_LINES {
@@ -2392,28 +2408,6 @@ impl AcpThreadView {
                         .size(LabelSize::XSmall),
                 )
             })
-            .child(
-                Disclosure::new(
-                    SharedString::from(format!(
-                        "terminal-tool-disclosure-{}",
-                        terminal.entity_id()
-                    )),
-                    is_expanded,
-                )
-                .opened_icon(IconName::ChevronUp)
-                .closed_icon(IconName::ChevronDown)
-                .visible_on_hover(&header_group)
-                .on_click(cx.listener({
-                    let id = tool_call.id.clone();
-                    move |this, _event, _window, _cx| {
-                        if is_expanded {
-                            this.expanded_tool_calls.remove(&id);
-                        } else {
-                            this.expanded_tool_calls.insert(id.clone());
-                        }
-                    }
-                })),
-            )
             .when(tool_failed || command_failed, |header| {
                 header.child(
                     div()
@@ -2440,7 +2434,7 @@ impl AcpThreadView {
         let show_output = is_expanded && terminal_view.is_some();
 
         v_flex()
-            .my_2()
+            .my_1p5()
             .mx_5()
             .border_1()
             .when(tool_failed || command_failed, |card| card.border_dashed())
