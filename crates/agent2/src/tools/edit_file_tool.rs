@@ -1572,6 +1572,30 @@ mod tests {
             )
         });
 
+        // Ensure the diff is finalized after the edit completes.
+        {
+            let tool = Arc::new(EditFileTool::new(thread.downgrade(), languages.clone()));
+            let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+            let edit = cx.update(|cx| {
+                tool.run(
+                    EditFileToolInput {
+                        display_description: "Edit file".into(),
+                        path: "/main.rs".into(),
+                        mode: EditFileMode::Edit,
+                    },
+                    stream_tx,
+                    cx,
+                )
+            });
+            stream_rx.expect_update_fields().await;
+            let diff = stream_rx.expect_diff().await;
+            diff.read_with(cx, |diff, _| assert!(matches!(diff, Diff::Pending(_))));
+            cx.run_until_parked();
+            model.end_last_completion_stream();
+            edit.await.unwrap();
+            diff.read_with(cx, |diff, _| assert!(matches!(diff, Diff::Finalized(_))));
+        }
+
         // Ensure the diff is finalized if an error occurs while editing.
         {
             model.forbid_requests();
