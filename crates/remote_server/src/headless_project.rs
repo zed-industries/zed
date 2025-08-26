@@ -314,7 +314,9 @@ impl HeadlessProject {
                 if let Some(log_store) = log_store {
                     log_store.update(cx, |log_store, cx| {
                         log_store.add_language_server(
-                            LanguageServerKind::Global,
+                            LanguageServerKind::LocalSsh {
+                                lsp_store: self.lsp_store.downgrade(),
+                            },
                             *id,
                             Some(name.clone()),
                             *worktree_id,
