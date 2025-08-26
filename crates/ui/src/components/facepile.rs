@@ -78,7 +78,7 @@ impl RenderOnce for Facepile {
     }
 }
 
-pub const EXAMPLE_FACES: [&'static str; 6] = [
+pub const EXAMPLE_FACES: [&str; 6] = [
     "https://avatars.githubusercontent.com/u/326587?s=60&v=4",
     "https://avatars.githubusercontent.com/u/2280405?s=60&v=4",
     "https://avatars.githubusercontent.com/u/1789?s=60&v=4",

@@ -310,15 +310,27 @@ mod windows {
                 &rust_binding_path,
             );
         }
+
+        {
+            let shader_path = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap())
+                .join("src/platform/windows/color_text_raster.hlsl");
+            compile_shader_for_module(
+                "emoji_rasterization",
+                &out_dir,
+                &fxc_path,
+                shader_path.to_str().unwrap(),
+                &rust_binding_path,
+            );
+        }
     }
 
     /// You can set the `GPUI_FXC_PATH` environment variable to specify the path to the fxc.exe compiler.
     fn find_fxc_compiler() -> String {
         // Check environment variable
-        if let Ok(path) = std::env::var("GPUI_FXC_PATH") {
-            if Path::new(&path).exists() {
-                return path;
-            }
+        if let Ok(path) = std::env::var("GPUI_FXC_PATH")
+            && Path::new(&path).exists()
+        {
+            return path;
         }
 
         // Try to find in PATH
@@ -326,11 +338,10 @@ mod windows {
         if let Ok(output) = std::process::Command::new("where.exe")
             .arg("fxc.exe")
             .output()
+            && output.status.success()
         {
-            if output.status.success() {
-                let path = String::from_utf8_lossy(&output.stdout);
-                return path.trim().to_string();
-            }
+            let path = String::from_utf8_lossy(&output.stdout);
+            return path.trim().to_string();
         }
 
         // Check the default path
@@ -362,7 +373,7 @@ mod windows {
             shader_path,
             "vs_4_1",
         );
-        generate_rust_binding(&const_name, &output_file, &rust_binding_path);
+        generate_rust_binding(&const_name, &output_file, rust_binding_path);
 
         // Compile fragment shader
         let output_file = format!("{}/{}_ps.h", out_dir, module);
@@ -375,7 +386,7 @@ mod windows {
             shader_path,
             "ps_4_1",
         );
-        generate_rust_binding(&const_name, &output_file, &rust_binding_path);
+        generate_rust_binding(&const_name, &output_file, rust_binding_path);
     }
 
     fn compile_shader_impl(

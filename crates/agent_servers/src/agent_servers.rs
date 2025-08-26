@@ -1,14 +1,14 @@
+mod acp;
 mod claude;
-mod codex;
+mod custom;
 mod gemini;
-mod mcp_server;
 mod settings;
 
-#[cfg(test)]
-mod e2e_tests;
+#[cfg(any(test, feature = "test-support"))]
+pub mod e2e_tests;
 
 pub use claude::*;
-pub use codex::*;
+pub use custom::*;
 pub use gemini::*;
 pub use settings::*;
 
@@ -20,6 +20,7 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
+    any::Any,
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -32,17 +33,25 @@ pub fn init(cx: &mut App) {
 
 pub trait AgentServer: Send {
     fn logo(&self) -> ui::IconName;
-    fn name(&self) -> &'static str;
-    fn empty_state_headline(&self) -> &'static str;
-    fn empty_state_message(&self) -> &'static str;
+    fn name(&self) -> SharedString;
+    fn empty_state_headline(&self) -> SharedString;
+    fn empty_state_message(&self) -> SharedString;
+    fn telemetry_id(&self) -> &'static str;
 
     fn connect(
         &self,
-        // these will go away when old_acp is fully removed
         root_dir: &Path,
         project: &Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn AgentConnection>>>;
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any>;
+}
+
+impl dyn AgentServer {
+    pub fn downcast<T: 'static + AgentServer + Sized>(self: Rc<Self>) -> Option<Rc<T>> {
+        self.into_any().downcast().ok()
+    }
 }
 
 impl std::fmt::Debug for AgentServerCommand {
@@ -89,15 +98,16 @@ pub struct AgentServerCommand {
 }
 
 impl AgentServerCommand {
-    pub(crate) async fn resolve(
+    pub async fn resolve(
         path_bin_name: &'static str,
         extra_args: &[&'static str],
+        fallback_path: Option<&Path>,
         settings: Option<AgentServerSettings>,
         project: &Entity<Project>,
         cx: &mut AsyncApp,
     ) -> Option<Self> {
         if let Some(agent_settings) = settings {
-            return Some(Self {
+            Some(Self {
                 path: agent_settings.command.path,
                 args: agent_settings
                     .command
@@ -106,15 +116,26 @@ impl AgentServerCommand {
                     .chain(extra_args.iter().map(|arg| arg.to_string()))
                     .collect(),
                 env: agent_settings.command.env,
-            });
+            })
         } else {
-            find_bin_in_path(path_bin_name, project, cx)
-                .await
-                .map(|path| Self {
+            match find_bin_in_path(path_bin_name, project, cx).await {
+                Some(path) => Some(Self {
                     path,
                     args: extra_args.iter().map(|arg| arg.to_string()).collect(),
                     env: None,
-                })
+                }),
+                None => fallback_path.and_then(|path| {
+                    if path.exists() {
+                        Some(Self {
+                            path: path.to_path_buf(),
+                            args: extra_args.iter().map(|arg| arg.to_string()).collect(),
+                            env: None,
+                        })
+                    } else {
+                        None
+                    }
+                }),
+            }
         }
     }
 }

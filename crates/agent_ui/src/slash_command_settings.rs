@@ -7,20 +7,9 @@ use settings::{Settings, SettingsSources};
 /// Settings for slash commands.
 #[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema)]
 pub struct SlashCommandSettings {
-    /// Settings for the `/docs` slash command.
-    #[serde(default)]
-    pub docs: DocsCommandSettings,
     /// Settings for the `/cargo-workspace` slash command.
     #[serde(default)]
     pub cargo_workspace: CargoWorkspaceCommandSettings,
-}
-
-/// Settings for the `/docs` slash command.
-#[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema)]
-pub struct DocsCommandSettings {
-    /// Whether `/docs` is enabled.
-    #[serde(default)]
-    pub enabled: bool,
 }
 
 /// Settings for the `/cargo-workspace` slash command.

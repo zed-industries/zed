@@ -115,14 +115,14 @@ impl LspCommand for ExpandMacro {
         message: Self::ProtoRequest,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncApp,
+        cx: AsyncApp,
     ) -> anyhow::Result<Self> {
         let position = message
             .position
             .and_then(deserialize_anchor)
             .context("invalid position")?;
         Ok(Self {
-            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -249,14 +249,14 @@ impl LspCommand for OpenDocs {
         message: Self::ProtoRequest,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncApp,
+        cx: AsyncApp,
     ) -> anyhow::Result<Self> {
         let position = message
             .position
             .and_then(deserialize_anchor)
             .context("invalid position")?;
         Ok(Self {
-            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -462,14 +462,14 @@ impl LspCommand for GoToParentModule {
         request: Self::ProtoRequest,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncApp,
+        cx: AsyncApp,
     ) -> anyhow::Result<Self> {
         let position = request
             .position
             .and_then(deserialize_anchor)
             .context("bad request with bad position")?;
         Ok(Self {
-            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 

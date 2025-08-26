@@ -16,9 +16,9 @@ pub use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{
     ExtensionContextServerProxy, ExtensionDebugAdapterProviderProxy, ExtensionEvents,
-    ExtensionGrammarProxy, ExtensionHostProxy, ExtensionIndexedDocsProviderProxy,
-    ExtensionLanguageProxy, ExtensionLanguageServerProxy, ExtensionSlashCommandProxy,
-    ExtensionSnippetProxy, ExtensionThemeProxy,
+    ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy,
+    ExtensionLanguageServerProxy, ExtensionSlashCommandProxy, ExtensionSnippetProxy,
+    ExtensionThemeProxy,
 };
 use fs::{Fs, RemoveOptions};
 use futures::future::join_all;
@@ -93,10 +93,9 @@ pub fn is_version_compatible(
         .wasm_api_version
         .as_ref()
         .and_then(|wasm_api_version| SemanticVersion::from_str(wasm_api_version).ok())
+        && !is_supported_wasm_api_version(release_channel, wasm_api_version)
     {
-        if !is_supported_wasm_api_version(release_channel, wasm_api_version) {
-            return false;
-        }
+        return false;
     }
 
     true
@@ -292,19 +291,17 @@ impl ExtensionStore {
         // it must be asynchronously rebuilt.
         let mut extension_index = ExtensionIndex::default();
         let mut extension_index_needs_rebuild = true;
-        if let Ok(index_content) = index_content {
-            if let Some(index) = serde_json::from_str(&index_content).log_err() {
-                extension_index = index;
-                if let (Ok(Some(index_metadata)), Ok(Some(extensions_metadata))) =
-                    (index_metadata, extensions_metadata)
-                {
-                    if index_metadata
-                        .mtime
-                        .bad_is_greater_than(extensions_metadata.mtime)
-                    {
-                        extension_index_needs_rebuild = false;
-                    }
-                }
+        if let Ok(index_content) = index_content
+            && let Some(index) = serde_json::from_str(&index_content).log_err()
+        {
+            extension_index = index;
+            if let (Ok(Some(index_metadata)), Ok(Some(extensions_metadata))) =
+                (index_metadata, extensions_metadata)
+                && index_metadata
+                    .mtime
+                    .bad_is_greater_than(extensions_metadata.mtime)
+            {
+                extension_index_needs_rebuild = false;
             }
         }
 
@@ -392,10 +389,9 @@ impl ExtensionStore {
 
                         if let Some(path::Component::Normal(extension_dir_name)) =
                             event_path.components().next()
+                            && let Some(extension_id) = extension_dir_name.to_str()
                         {
-                            if let Some(extension_id) = extension_dir_name.to_str() {
-                                reload_tx.unbounded_send(Some(extension_id.into())).ok();
-                            }
+                            reload_tx.unbounded_send(Some(extension_id.into())).ok();
                         }
                     }
                 }
@@ -566,12 +562,12 @@ impl ExtensionStore {
                 extensions
                     .into_iter()
                     .filter(|extension| {
-                        this.extension_index.extensions.get(&extension.id).map_or(
-                            true,
-                            |installed_extension| {
+                        this.extension_index
+                            .extensions
+                            .get(&extension.id)
+                            .is_none_or(|installed_extension| {
                                 installed_extension.manifest.version != extension.manifest.version
-                            },
-                        )
+                            })
                     })
                     .collect()
             })
@@ -763,8 +759,8 @@ impl ExtensionStore {
             if let ExtensionOperation::Install = operation {
                 this.update( cx, |this, cx| {
                     cx.emit(Event::ExtensionInstalled(extension_id.clone()));
-                    if let Some(events) = ExtensionEvents::try_global(cx) {
-                        if let Some(manifest) = this.extension_manifest_for_id(&extension_id) {
+                    if let Some(events) = ExtensionEvents::try_global(cx)
+                        && let Some(manifest) = this.extension_manifest_for_id(&extension_id) {
                             events.update(cx, |this, cx| {
                                 this.emit(
                                     extension::Event::ExtensionInstalled(manifest.clone()),
@@ -772,7 +768,6 @@ impl ExtensionStore {
                                 )
                             });
                         }
-                    }
                 })
                 .ok();
             }
@@ -912,12 +907,12 @@ impl ExtensionStore {
 
             extension_store.update(cx, |_, cx| {
                 cx.emit(Event::ExtensionUninstalled(extension_id.clone()));
-                if let Some(events) = ExtensionEvents::try_global(cx) {
-                    if let Some(manifest) = extension_manifest {
-                        events.update(cx, |this, cx| {
-                            this.emit(extension::Event::ExtensionUninstalled(manifest.clone()), cx)
-                        });
-                    }
+                if let Some(events) = ExtensionEvents::try_global(cx)
+                    && let Some(manifest) = extension_manifest
+                {
+                    events.update(cx, |this, cx| {
+                        this.emit(extension::Event::ExtensionUninstalled(manifest.clone()), cx)
+                    });
                 }
             })?;
 
@@ -997,12 +992,12 @@ impl ExtensionStore {
             this.update(cx, |this, cx| this.reload(None, cx))?.await;
             this.update(cx, |this, cx| {
                 cx.emit(Event::ExtensionInstalled(extension_id.clone()));
-                if let Some(events) = ExtensionEvents::try_global(cx) {
-                    if let Some(manifest) = this.extension_manifest_for_id(&extension_id) {
-                        events.update(cx, |this, cx| {
-                            this.emit(extension::Event::ExtensionInstalled(manifest.clone()), cx)
-                        });
-                    }
+                if let Some(events) = ExtensionEvents::try_global(cx)
+                    && let Some(manifest) = this.extension_manifest_for_id(&extension_id)
+                {
+                    events.update(cx, |this, cx| {
+                        this.emit(extension::Event::ExtensionInstalled(manifest.clone()), cx)
+                    });
                 }
             })?;
 
@@ -1118,15 +1113,17 @@ impl ExtensionStore {
             extensions_to_unload.len() - reload_count
         );
 
-        for extension_id in &extensions_to_load {
-            if let Some(extension) = new_index.extensions.get(extension_id) {
-                telemetry::event!(
-                    "Extension Loaded",
-                    extension_id,
-                    version = extension.manifest.version
-                );
-            }
-        }
+        let extension_ids = extensions_to_load
+            .iter()
+            .filter_map(|id| {
+                Some((
+                    id.clone(),
+                    new_index.extensions.get(id)?.manifest.version.clone(),
+                ))
+            })
+            .collect::<Vec<_>>();
+
+        telemetry::event!("Extensions Loaded", id_and_versions = extension_ids);
 
         let themes_to_remove = old_index
             .themes
@@ -1178,21 +1175,17 @@ impl ExtensionStore {
                 }
             }
 
-            for (server_id, _) in &extension.manifest.context_servers {
+            for server_id in extension.manifest.context_servers.keys() {
                 self.proxy.unregister_context_server(server_id.clone(), cx);
             }
-            for (adapter, _) in &extension.manifest.debug_adapters {
+            for adapter in extension.manifest.debug_adapters.keys() {
                 self.proxy.unregister_debug_adapter(adapter.clone());
             }
-            for (locator, _) in &extension.manifest.debug_locators {
+            for locator in extension.manifest.debug_locators.keys() {
                 self.proxy.unregister_debug_locator(locator.clone());
             }
-            for (command_name, _) in &extension.manifest.slash_commands {
+            for command_name in extension.manifest.slash_commands.keys() {
                 self.proxy.unregister_slash_command(command_name.clone());
-            }
-            for (provider_id, _) in &extension.manifest.indexed_docs_providers {
-                self.proxy
-                    .unregister_indexed_docs_provider(provider_id.clone());
             }
         }
 
@@ -1277,6 +1270,7 @@ impl ExtensionStore {
                         queries,
                         context_provider,
                         toolchain_provider: None,
+                        manifest_name: None,
                     })
                 }),
             );
@@ -1342,7 +1336,7 @@ impl ExtensionStore {
                     &extension_path,
                     &extension.manifest,
                     wasm_host.clone(),
-                    &cx,
+                    cx,
                 )
                 .await
                 .with_context(|| format!("Loading extension from {extension_path:?}"));
@@ -1392,14 +1386,9 @@ impl ExtensionStore {
                         );
                     }
 
-                    for (id, _context_server_entry) in &manifest.context_servers {
+                    for id in manifest.context_servers.keys() {
                         this.proxy
                             .register_context_server(extension.clone(), id.clone(), cx);
-                    }
-
-                    for (provider_id, _provider) in &manifest.indexed_docs_providers {
-                        this.proxy
-                            .register_indexed_docs_provider(extension.clone(), provider_id.clone());
                     }
 
                     for (debug_adapter, meta) in &manifest.debug_adapters {
@@ -1462,7 +1451,7 @@ impl ExtensionStore {
 
                     if extension_dir
                         .file_name()
-                        .map_or(false, |file_name| file_name == ".DS_Store")
+                        .is_some_and(|file_name| file_name == ".DS_Store")
                     {
                         continue;
                     }
@@ -1686,9 +1675,8 @@ impl ExtensionStore {
                 let schema_path = &extension::build_debug_adapter_schema_path(adapter_name, meta);
 
                 if fs.is_file(&src_dir.join(schema_path)).await {
-                    match schema_path.parent() {
-                        Some(parent) => fs.create_dir(&tmp_dir.join(parent)).await?,
-                        None => {}
+                    if let Some(parent) = schema_path.parent() {
+                        fs.create_dir(&tmp_dir.join(parent)).await?
                     }
                     fs.copy_file(
                         &src_dir.join(schema_path),
@@ -1782,7 +1770,7 @@ impl ExtensionStore {
         })?;
 
         for client in clients {
-            Self::sync_extensions_over_ssh(&this, client, cx)
+            Self::sync_extensions_over_ssh(this, client, cx)
                 .await
                 .log_err();
         }
@@ -1794,10 +1782,10 @@ impl ExtensionStore {
         let connection_options = client.read(cx).connection_options();
         let ssh_url = connection_options.ssh_url();
 
-        if let Some(existing_client) = self.ssh_clients.get(&ssh_url) {
-            if existing_client.upgrade().is_some() {
-                return;
-            }
+        if let Some(existing_client) = self.ssh_clients.get(&ssh_url)
+            && existing_client.upgrade().is_some()
+        {
+            return;
         }
 
         self.ssh_clients.insert(ssh_url, client.downgrade());

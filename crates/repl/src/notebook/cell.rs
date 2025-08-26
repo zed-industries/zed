@@ -38,7 +38,7 @@ pub enum CellControlType {
 impl CellControlType {
     fn icon_name(&self) -> IconName {
         match self {
-            CellControlType::RunCell => IconName::Play,
+            CellControlType::RunCell => IconName::PlayFilled,
             CellControlType::RerunCell => IconName::ArrowCircle,
             CellControlType::ClearCell => IconName::ListX,
             CellControlType::CellOptions => IconName::Ellipsis,
@@ -91,7 +91,7 @@ fn convert_outputs(
     cx: &mut App,
 ) -> Vec<Output> {
     outputs
-        .into_iter()
+        .iter()
         .map(|output| match output {
             nbformat::v4::Output::Stream { text, .. } => Output::Stream {
                 content: cx.new(|cx| TerminalOutput::from(&text.0, window, cx)),

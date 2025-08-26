@@ -44,7 +44,7 @@ impl BaseKeymap {
         ("Sublime Text", Self::SublimeText),
         ("Emacs (beta)", Self::Emacs),
         ("TextMate", Self::TextMate),
-        ("Cursor (beta)", Self::Cursor),
+        ("Cursor", Self::Cursor),
     ];
 
     #[cfg(not(target_os = "macos"))]
@@ -54,7 +54,7 @@ impl BaseKeymap {
         ("JetBrains", Self::JetBrains),
         ("Sublime Text", Self::SublimeText),
         ("Emacs (beta)", Self::Emacs),
-        ("Cursor (beta)", Self::Cursor),
+        ("Cursor", Self::Cursor),
     ];
 
     pub fn asset_path(&self) -> Option<&'static str> {

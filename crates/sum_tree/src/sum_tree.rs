@@ -94,44 +94,37 @@ impl<'a, S: Summary, D: Dimension<'a, S> + Ord> SeekTarget<'a, S, D> for D {
 }
 
 impl<'a, T: Summary> Dimension<'a, T> for () {
-    fn zero(_: &T::Context) -> Self {
-        ()
-    }
+    fn zero(_: &T::Context) -> Self {}
 
     fn add_summary(&mut self, _: &'a T, _: &T::Context) {}
 }
 
-impl<'a, T: Summary, D1: Dimension<'a, T>, D2: Dimension<'a, T>> Dimension<'a, T> for (D1, D2) {
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Dimensions<D1, D2, D3 = ()>(pub D1, pub D2, pub D3);
+
+impl<'a, T: Summary, D1: Dimension<'a, T>, D2: Dimension<'a, T>, D3: Dimension<'a, T>>
+    Dimension<'a, T> for Dimensions<D1, D2, D3>
+{
     fn zero(cx: &T::Context) -> Self {
-        (D1::zero(cx), D2::zero(cx))
+        Dimensions(D1::zero(cx), D2::zero(cx), D3::zero(cx))
     }
 
     fn add_summary(&mut self, summary: &'a T, cx: &T::Context) {
         self.0.add_summary(summary, cx);
         self.1.add_summary(summary, cx);
+        self.2.add_summary(summary, cx);
     }
 }
 
-impl<'a, S, D1, D2> SeekTarget<'a, S, (D1, D2)> for D1
-where
-    S: Summary,
-    D1: SeekTarget<'a, S, D1> + Dimension<'a, S>,
-    D2: Dimension<'a, S>,
-{
-    fn cmp(&self, cursor_location: &(D1, D2), cx: &S::Context) -> Ordering {
-        self.cmp(&cursor_location.0, cx)
-    }
-}
-
-impl<'a, S, D1, D2, D3> SeekTarget<'a, S, ((D1, D2), D3)> for D1
+impl<'a, S, D1, D2, D3> SeekTarget<'a, S, Dimensions<D1, D2, D3>> for D1
 where
     S: Summary,
     D1: SeekTarget<'a, S, D1> + Dimension<'a, S>,
     D2: Dimension<'a, S>,
     D3: Dimension<'a, S>,
 {
-    fn cmp(&self, cursor_location: &((D1, D2), D3), cx: &S::Context) -> Ordering {
-        self.cmp(&cursor_location.0.0, cx)
+    fn cmp(&self, cursor_location: &Dimensions<D1, D2, D3>, cx: &S::Context) -> Ordering {
+        self.cmp(&cursor_location.0, cx)
     }
 }
 
@@ -679,11 +672,11 @@ impl<T: KeyedItem> SumTree<T> {
         *self = {
             let mut cursor = self.cursor::<T::Key>(cx);
             let mut new_tree = cursor.slice(&item.key(), Bias::Left);
-            if let Some(cursor_item) = cursor.item() {
-                if cursor_item.key() == item.key() {
-                    replaced = Some(cursor_item.clone());
-                    cursor.next();
-                }
+            if let Some(cursor_item) = cursor.item()
+                && cursor_item.key() == item.key()
+            {
+                replaced = Some(cursor_item.clone());
+                cursor.next();
             }
             new_tree.push(item, cx);
             new_tree.append(cursor.suffix(), cx);
@@ -697,11 +690,11 @@ impl<T: KeyedItem> SumTree<T> {
         *self = {
             let mut cursor = self.cursor::<T::Key>(cx);
             let mut new_tree = cursor.slice(key, Bias::Left);
-            if let Some(item) = cursor.item() {
-                if item.key() == *key {
-                    removed = Some(item.clone());
-                    cursor.next();
-                }
+            if let Some(item) = cursor.item()
+                && item.key() == *key
+            {
+                removed = Some(item.clone());
+                cursor.next();
             }
             new_tree.append(cursor.suffix(), cx);
             new_tree
@@ -733,7 +726,7 @@ impl<T: KeyedItem> SumTree<T> {
 
                 if old_item
                     .as_ref()
-                    .map_or(false, |old_item| old_item.key() < new_key)
+                    .is_some_and(|old_item| old_item.key() < new_key)
                 {
                     new_tree.extend(buffered_items.drain(..), cx);
                     let slice = cursor.slice(&new_key, Bias::Left);
@@ -741,11 +734,11 @@ impl<T: KeyedItem> SumTree<T> {
                     old_item = cursor.item();
                 }
 
-                if let Some(old_item) = old_item {
-                    if old_item.key() == new_key {
-                        removed.push(old_item.clone());
-                        cursor.next();
-                    }
+                if let Some(old_item) = old_item
+                    && old_item.key() == new_key
+                {
+                    removed.push(old_item.clone());
+                    cursor.next();
                 }
 
                 match edit {

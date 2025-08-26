@@ -116,7 +116,7 @@ impl TabMap {
                             state.new.end = edit.new.end;
                             Some(None) // Skip this edit, it's merged
                         } else {
-                            let new_state = edit.clone();
+                            let new_state = edit;
                             let result = Some(Some(state.clone())); // Yield the previous edit
                             **state = new_state;
                             result
@@ -611,7 +611,7 @@ mod tests {
     fn test_expand_tabs(cx: &mut gpui::App) {
         let buffer = MultiBuffer::build_simple("", cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
 
@@ -628,7 +628,7 @@ mod tests {
 
         let buffer = MultiBuffer::build_simple(input, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, mut tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
 
@@ -675,7 +675,7 @@ mod tests {
 
         let buffer = MultiBuffer::build_simple(input, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, mut tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
 
@@ -689,7 +689,7 @@ mod tests {
 
         let buffer = MultiBuffer::build_simple(input, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
 
@@ -749,7 +749,7 @@ mod tests {
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         log::info!("Buffer text: {:?}", buffer_snapshot.text());
 
-        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         log::info!("InlayMap text: {:?}", inlay_snapshot.text());
         let (mut fold_map, _) = FoldMap::new(inlay_snapshot.clone());
         fold_map.randomly_mutate(&mut rng);
@@ -758,7 +758,7 @@ mod tests {
         let (inlay_snapshot, _) = inlay_map.randomly_mutate(&mut 0, &mut rng);
         log::info!("InlayMap text: {:?}", inlay_snapshot.text());
 
-        let (mut tab_map, _) = TabMap::new(fold_snapshot.clone(), tab_size);
+        let (mut tab_map, _) = TabMap::new(fold_snapshot, tab_size);
         let tabs_snapshot = tab_map.set_max_expansion_column(32);
 
         let text = text::Rope::from(tabs_snapshot.text().as_str());

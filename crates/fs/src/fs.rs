@@ -12,7 +12,7 @@ use gpui::BackgroundExecutor;
 use gpui::Global;
 use gpui::ReadGlobal as _;
 use std::borrow::Cow;
-use util::command::new_std_command;
+use util::command::{new_smol_command, new_std_command};
 
 #[cfg(unix)]
 use std::os::fd::{AsFd, AsRawFd};
@@ -134,6 +134,7 @@ pub trait Fs: Send + Sync {
     fn home_dir(&self) -> Option<PathBuf>;
     fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<dyn GitRepository>>;
     fn git_init(&self, abs_work_directory: &Path, fallback_branch_name: String) -> Result<()>;
+    async fn git_clone(&self, repo_url: &str, abs_work_directory: &Path) -> Result<()>;
     fn is_fake(&self) -> bool;
     async fn is_case_sensitive(&self) -> Result<bool>;
 
@@ -419,18 +420,19 @@ impl Fs for RealFs {
 
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()> {
         #[cfg(windows)]
-        if let Ok(Some(metadata)) = self.metadata(path).await {
-            if metadata.is_symlink && metadata.is_dir {
-                self.remove_dir(
-                    path,
-                    RemoveOptions {
-                        recursive: false,
-                        ignore_if_not_exists: true,
-                    },
-                )
-                .await?;
-                return Ok(());
-            }
+        if let Ok(Some(metadata)) = self.metadata(path).await
+            && metadata.is_symlink
+            && metadata.is_dir
+        {
+            self.remove_dir(
+                path,
+                RemoveOptions {
+                    recursive: false,
+                    ignore_if_not_exists: true,
+                },
+            )
+            .await?;
+            return Ok(());
         }
 
         match smol::fs::remove_file(path).await {
@@ -466,11 +468,11 @@ impl Fs for RealFs {
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
-        if let Ok(Some(metadata)) = self.metadata(path).await {
-            if metadata.is_symlink {
-                // TODO: trash_file does not support trashing symlinks yet - https://github.com/bilelmoussaoui/ashpd/issues/255
-                return self.remove_file(path, RemoveOptions::default()).await;
-            }
+        if let Ok(Some(metadata)) = self.metadata(path).await
+            && metadata.is_symlink
+        {
+            // TODO: trash_file does not support trashing symlinks yet - https://github.com/bilelmoussaoui/ashpd/issues/255
+            return self.remove_file(path, RemoveOptions::default()).await;
         }
         let file = smol::fs::File::open(path).await?;
         match trash::trash_file(&file.as_fd()).await {
@@ -623,13 +625,13 @@ impl Fs for RealFs {
     async fn is_file(&self, path: &Path) -> bool {
         smol::fs::metadata(path)
             .await
-            .map_or(false, |metadata| metadata.is_file())
+            .is_ok_and(|metadata| metadata.is_file())
     }
 
     async fn is_dir(&self, path: &Path) -> bool {
         smol::fs::metadata(path)
             .await
-            .map_or(false, |metadata| metadata.is_dir())
+            .is_ok_and(|metadata| metadata.is_dir())
     }
 
     async fn metadata(&self, path: &Path) -> Result<Option<Metadata>> {
@@ -765,24 +767,23 @@ impl Fs for RealFs {
         let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
         let watcher = Arc::new(fs_watcher::FsWatcher::new(tx, pending_paths.clone()));
 
-        if watcher.add(path).is_err() {
-            // If the path doesn't exist yet (e.g. settings.json), watch the parent dir to learn when it's created.
-            if let Some(parent) = path.parent() {
-                if let Err(e) = watcher.add(parent) {
-                    log::warn!("Failed to watch: {e}");
-                }
-            }
+        // If the path doesn't exist yet (e.g. settings.json), watch the parent dir to learn when it's created.
+        if watcher.add(path).is_err()
+            && let Some(parent) = path.parent()
+            && let Err(e) = watcher.add(parent)
+        {
+            log::warn!("Failed to watch: {e}");
         }
 
         // Check if path is a symlink and follow the target parent
-        if let Some(mut target) = self.read_link(&path).await.ok() {
+        if let Some(mut target) = self.read_link(path).await.ok() {
             // Check if symlink target is relative path, if so make it absolute
-            if target.is_relative() {
-                if let Some(parent) = path.parent() {
-                    target = parent.join(target);
-                    if let Ok(canonical) = self.canonicalize(&target).await {
-                        target = SanitizedPath::from(canonical).as_path().to_path_buf();
-                    }
+            if target.is_relative()
+                && let Some(parent) = path.parent()
+            {
+                target = parent.join(target);
+                if let Ok(canonical) = self.canonicalize(&target).await {
+                    target = SanitizedPath::from(canonical).as_path().to_path_buf();
                 }
             }
             watcher.add(&target).ok();
@@ -835,6 +836,23 @@ impl Fs for RealFs {
             .args(&["init", "-b"])
             .arg(branch_name.trim())
             .output()?;
+
+        Ok(())
+    }
+
+    async fn git_clone(&self, repo_url: &str, abs_work_directory: &Path) -> Result<()> {
+        let output = new_smol_command("git")
+            .current_dir(abs_work_directory)
+            .args(&["clone", repo_url])
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            anyhow::bail!(
+                "git clone failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
 
         Ok(())
     }
@@ -906,7 +924,7 @@ pub struct FakeFs {
 
 #[cfg(any(test, feature = "test-support"))]
 struct FakeFsState {
-    root: Arc<Mutex<FakeFsEntry>>,
+    root: FakeFsEntry,
     next_inode: u64,
     next_mtime: SystemTime,
     git_event_tx: smol::channel::Sender<PathBuf>,
@@ -921,7 +939,7 @@ struct FakeFsState {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum FakeFsEntry {
     File {
         inode: u64,
@@ -935,12 +953,73 @@ enum FakeFsEntry {
         inode: u64,
         mtime: MTime,
         len: u64,
-        entries: BTreeMap<String, Arc<Mutex<FakeFsEntry>>>,
+        entries: BTreeMap<String, FakeFsEntry>,
         git_repo_state: Option<Arc<Mutex<FakeGitRepositoryState>>>,
     },
     Symlink {
         target: PathBuf,
     },
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl PartialEq for FakeFsEntry {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::File {
+                    inode: l_inode,
+                    mtime: l_mtime,
+                    len: l_len,
+                    content: l_content,
+                    git_dir_path: l_git_dir_path,
+                },
+                Self::File {
+                    inode: r_inode,
+                    mtime: r_mtime,
+                    len: r_len,
+                    content: r_content,
+                    git_dir_path: r_git_dir_path,
+                },
+            ) => {
+                l_inode == r_inode
+                    && l_mtime == r_mtime
+                    && l_len == r_len
+                    && l_content == r_content
+                    && l_git_dir_path == r_git_dir_path
+            }
+            (
+                Self::Dir {
+                    inode: l_inode,
+                    mtime: l_mtime,
+                    len: l_len,
+                    entries: l_entries,
+                    git_repo_state: l_git_repo_state,
+                },
+                Self::Dir {
+                    inode: r_inode,
+                    mtime: r_mtime,
+                    len: r_len,
+                    entries: r_entries,
+                    git_repo_state: r_git_repo_state,
+                },
+            ) => {
+                let same_repo_state = match (l_git_repo_state.as_ref(), r_git_repo_state.as_ref()) {
+                    (Some(l), Some(r)) => Arc::ptr_eq(l, r),
+                    (None, None) => true,
+                    _ => false,
+                };
+                l_inode == r_inode
+                    && l_mtime == r_mtime
+                    && l_len == r_len
+                    && l_entries == r_entries
+                    && same_repo_state
+            }
+            (Self::Symlink { target: l_target }, Self::Symlink { target: r_target }) => {
+                l_target == r_target
+            }
+            _ => false,
+        }
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -957,25 +1036,9 @@ impl FakeFsState {
         inode
     }
 
-    fn read_path(&self, target: &Path) -> Result<Arc<Mutex<FakeFsEntry>>> {
-        Ok(self
-            .try_read_path(target, true)
-            .ok_or_else(|| {
-                anyhow!(io::Error::new(
-                    io::ErrorKind::NotFound,
-                    format!("not found: {target:?}")
-                ))
-            })?
-            .0)
-    }
-
-    fn try_read_path(
-        &self,
-        target: &Path,
-        follow_symlink: bool,
-    ) -> Option<(Arc<Mutex<FakeFsEntry>>, PathBuf)> {
-        let mut path = target.to_path_buf();
+    fn canonicalize(&self, target: &Path, follow_symlink: bool) -> Option<PathBuf> {
         let mut canonical_path = PathBuf::new();
+        let mut path = target.to_path_buf();
         let mut entry_stack = Vec::new();
         'outer: loop {
             let mut path_components = path.components().peekable();
@@ -985,7 +1048,7 @@ impl FakeFsState {
                     Component::Prefix(prefix_component) => prefix = Some(prefix_component),
                     Component::RootDir => {
                         entry_stack.clear();
-                        entry_stack.push(self.root.clone());
+                        entry_stack.push(&self.root);
                         canonical_path.clear();
                         match prefix {
                             Some(prefix_component) => {
@@ -1002,20 +1065,18 @@ impl FakeFsState {
                         canonical_path.pop();
                     }
                     Component::Normal(name) => {
-                        let current_entry = entry_stack.last().cloned()?;
-                        let current_entry = current_entry.lock();
-                        if let FakeFsEntry::Dir { entries, .. } = &*current_entry {
-                            let entry = entries.get(name.to_str().unwrap()).cloned()?;
-                            if path_components.peek().is_some() || follow_symlink {
-                                let entry = entry.lock();
-                                if let FakeFsEntry::Symlink { target, .. } = &*entry {
-                                    let mut target = target.clone();
-                                    target.extend(path_components);
-                                    path = target;
-                                    continue 'outer;
-                                }
+                        let current_entry = *entry_stack.last()?;
+                        if let FakeFsEntry::Dir { entries, .. } = current_entry {
+                            let entry = entries.get(name.to_str().unwrap())?;
+                            if (path_components.peek().is_some() || follow_symlink)
+                                && let FakeFsEntry::Symlink { target, .. } = entry
+                            {
+                                let mut target = target.clone();
+                                target.extend(path_components);
+                                path = target;
+                                continue 'outer;
                             }
-                            entry_stack.push(entry.clone());
+                            entry_stack.push(entry);
                             canonical_path = canonical_path.join(name);
                         } else {
                             return None;
@@ -1025,19 +1086,74 @@ impl FakeFsState {
             }
             break;
         }
-        Some((entry_stack.pop()?, canonical_path))
+
+        if entry_stack.is_empty() {
+            None
+        } else {
+            Some(canonical_path)
+        }
     }
 
-    fn write_path<Fn, T>(&self, path: &Path, callback: Fn) -> Result<T>
+    fn try_entry(
+        &mut self,
+        target: &Path,
+        follow_symlink: bool,
+    ) -> Option<(&mut FakeFsEntry, PathBuf)> {
+        let canonical_path = self.canonicalize(target, follow_symlink)?;
+
+        let mut components = canonical_path
+            .components()
+            .skip_while(|component| matches!(component, Component::Prefix(_)));
+        let Some(Component::RootDir) = components.next() else {
+            panic!(
+                "the path {:?} was not canonicalized properly {:?}",
+                target, canonical_path
+            )
+        };
+
+        let mut entry = &mut self.root;
+        for component in components {
+            match component {
+                Component::Normal(name) => {
+                    if let FakeFsEntry::Dir { entries, .. } = entry {
+                        entry = entries.get_mut(name.to_str().unwrap())?;
+                    } else {
+                        return None;
+                    }
+                }
+                _ => {
+                    panic!(
+                        "the path {:?} was not canonicalized properly {:?}",
+                        target, canonical_path
+                    )
+                }
+            }
+        }
+
+        Some((entry, canonical_path))
+    }
+
+    fn entry(&mut self, target: &Path) -> Result<&mut FakeFsEntry> {
+        Ok(self
+            .try_entry(target, true)
+            .ok_or_else(|| {
+                anyhow!(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("not found: {target:?}")
+                ))
+            })?
+            .0)
+    }
+
+    fn write_path<Fn, T>(&mut self, path: &Path, callback: Fn) -> Result<T>
     where
-        Fn: FnOnce(btree_map::Entry<String, Arc<Mutex<FakeFsEntry>>>) -> Result<T>,
+        Fn: FnOnce(btree_map::Entry<String, FakeFsEntry>) -> Result<T>,
     {
         let path = normalize_path(path);
         let filename = path.file_name().context("cannot overwrite the root")?;
         let parent_path = path.parent().unwrap();
 
-        let parent = self.read_path(parent_path)?;
-        let mut parent = parent.lock();
+        let parent = self.entry(parent_path)?;
         let new_entry = parent
             .dir_entries(parent_path)?
             .entry(filename.to_str().unwrap().into());
@@ -1087,13 +1203,13 @@ impl FakeFs {
             this: this.clone(),
             executor: executor.clone(),
             state: Arc::new(Mutex::new(FakeFsState {
-                root: Arc::new(Mutex::new(FakeFsEntry::Dir {
+                root: FakeFsEntry::Dir {
                     inode: 0,
                     mtime: MTime(UNIX_EPOCH),
                     len: 0,
                     entries: Default::default(),
                     git_repo_state: None,
-                })),
+                },
                 git_event_tx: tx,
                 next_mtime: UNIX_EPOCH + Self::SYSTEMTIME_INTERVAL,
                 next_inode: 1,
@@ -1143,15 +1259,15 @@ impl FakeFs {
             .write_path(path, move |entry| {
                 match entry {
                     btree_map::Entry::Vacant(e) => {
-                        e.insert(Arc::new(Mutex::new(FakeFsEntry::File {
+                        e.insert(FakeFsEntry::File {
                             inode: new_inode,
                             mtime: new_mtime,
                             content: Vec::new(),
                             len: 0,
                             git_dir_path: None,
-                        })));
+                        });
                     }
-                    btree_map::Entry::Occupied(mut e) => match &mut *e.get_mut().lock() {
+                    btree_map::Entry::Occupied(mut e) => match &mut *e.get_mut() {
                         FakeFsEntry::File { mtime, .. } => *mtime = new_mtime,
                         FakeFsEntry::Dir { mtime, .. } => *mtime = new_mtime,
                         FakeFsEntry::Symlink { .. } => {}
@@ -1170,7 +1286,7 @@ impl FakeFs {
     pub async fn insert_symlink(&self, path: impl AsRef<Path>, target: PathBuf) {
         let mut state = self.state.lock();
         let path = path.as_ref();
-        let file = Arc::new(Mutex::new(FakeFsEntry::Symlink { target }));
+        let file = FakeFsEntry::Symlink { target };
         state
             .write_path(path.as_ref(), move |e| match e {
                 btree_map::Entry::Vacant(e) => {
@@ -1203,13 +1319,13 @@ impl FakeFs {
             match entry {
                 btree_map::Entry::Vacant(e) => {
                     kind = Some(PathEventKind::Created);
-                    e.insert(Arc::new(Mutex::new(FakeFsEntry::File {
+                    e.insert(FakeFsEntry::File {
                         inode: new_inode,
                         mtime: new_mtime,
                         len: new_len,
                         content: new_content,
                         git_dir_path: None,
-                    })));
+                    });
                 }
                 btree_map::Entry::Occupied(mut e) => {
                     kind = Some(PathEventKind::Changed);
@@ -1219,7 +1335,7 @@ impl FakeFs {
                         len,
                         content,
                         ..
-                    } = &mut *e.get_mut().lock()
+                    } = e.get_mut()
                     {
                         *mtime = new_mtime;
                         *content = new_content;
@@ -1241,9 +1357,8 @@ impl FakeFs {
     pub fn read_file_sync(&self, path: impl AsRef<Path>) -> Result<Vec<u8>> {
         let path = path.as_ref();
         let path = normalize_path(path);
-        let state = self.state.lock();
-        let entry = state.read_path(&path)?;
-        let entry = entry.lock();
+        let mut state = self.state.lock();
+        let entry = state.entry(&path)?;
         entry.file_content(&path).cloned()
     }
 
@@ -1251,9 +1366,8 @@ impl FakeFs {
         let path = path.as_ref();
         let path = normalize_path(path);
         self.simulate_random_delay().await;
-        let state = self.state.lock();
-        let entry = state.read_path(&path)?;
-        let entry = entry.lock();
+        let mut state = self.state.lock();
+        let entry = state.entry(&path)?;
         entry.file_content(&path).cloned()
     }
 
@@ -1272,6 +1386,25 @@ impl FakeFs {
 
     pub fn flush_events(&self, count: usize) {
         self.state.lock().flush_events(count);
+    }
+
+    pub(crate) fn entry(&self, target: &Path) -> Result<FakeFsEntry> {
+        self.state.lock().entry(target).cloned()
+    }
+
+    pub(crate) fn insert_entry(&self, target: &Path, new_entry: FakeFsEntry) -> Result<()> {
+        let mut state = self.state.lock();
+        state.write_path(target, |entry| {
+            match entry {
+                btree_map::Entry::Vacant(vacant_entry) => {
+                    vacant_entry.insert(new_entry);
+                }
+                btree_map::Entry::Occupied(mut occupied_entry) => {
+                    occupied_entry.insert(new_entry);
+                }
+            }
+            Ok(())
+        })
     }
 
     #[must_use]
@@ -1343,20 +1476,19 @@ impl FakeFs {
         F: FnOnce(&mut FakeGitRepositoryState, &Path, &Path) -> T,
     {
         let mut state = self.state.lock();
-        let entry = state.read_path(dot_git).context("open .git")?;
-        let mut entry = entry.lock();
+        let git_event_tx = state.git_event_tx.clone();
+        let entry = state.entry(dot_git).context("open .git")?;
 
-        if let FakeFsEntry::Dir { git_repo_state, .. } = &mut *entry {
+        if let FakeFsEntry::Dir { git_repo_state, .. } = entry {
             let repo_state = git_repo_state.get_or_insert_with(|| {
                 log::debug!("insert git state for {dot_git:?}");
-                Arc::new(Mutex::new(FakeGitRepositoryState::new(
-                    state.git_event_tx.clone(),
-                )))
+                Arc::new(Mutex::new(FakeGitRepositoryState::new(git_event_tx)))
             });
             let mut repo_state = repo_state.lock();
 
             let result = f(&mut repo_state, dot_git, dot_git);
 
+            drop(repo_state);
             if emit_git_event {
                 state.emit_event([(dot_git, None)]);
             }
@@ -1380,21 +1512,20 @@ impl FakeFs {
                 }
             }
             .clone();
-            drop(entry);
-            let Some((git_dir_entry, canonical_path)) = state.try_read_path(&path, true) else {
+            let Some((git_dir_entry, canonical_path)) = state.try_entry(&path, true) else {
                 anyhow::bail!("pointed-to git dir {path:?} not found")
             };
             let FakeFsEntry::Dir {
                 git_repo_state,
                 entries,
                 ..
-            } = &mut *git_dir_entry.lock()
+            } = git_dir_entry
             else {
                 anyhow::bail!("gitfile points to a non-directory")
             };
             let common_dir = if let Some(child) = entries.get("commondir") {
                 Path::new(
-                    std::str::from_utf8(child.lock().file_content("commondir".as_ref())?)
+                    std::str::from_utf8(child.file_content("commondir".as_ref())?)
                         .context("commondir content")?,
                 )
                 .to_owned()
@@ -1402,15 +1533,14 @@ impl FakeFs {
                 canonical_path.clone()
             };
             let repo_state = git_repo_state.get_or_insert_with(|| {
-                Arc::new(Mutex::new(FakeGitRepositoryState::new(
-                    state.git_event_tx.clone(),
-                )))
+                Arc::new(Mutex::new(FakeGitRepositoryState::new(git_event_tx)))
             });
             let mut repo_state = repo_state.lock();
 
             let result = f(&mut repo_state, &canonical_path, &common_dir);
 
             if emit_git_event {
+                drop(repo_state);
                 state.emit_event([(canonical_path, None)]);
             }
 
@@ -1438,10 +1568,10 @@ impl FakeFs {
 
     pub fn insert_branches(&self, dot_git: &Path, branches: &[&str]) {
         self.with_git_state(dot_git, true, |state| {
-            if let Some(first) = branches.first() {
-                if state.current_branch_name.is_none() {
-                    state.current_branch_name = Some(first.to_string())
-                }
+            if let Some(first) = branches.first()
+                && state.current_branch_name.is_none()
+            {
+                state.current_branch_name = Some(first.to_string())
             }
             state
                 .branches
@@ -1549,7 +1679,7 @@ impl FakeFs {
     /// by mutating the head, index, and unmerged state.
     pub fn set_status_for_repo(&self, dot_git: &Path, statuses: &[(&Path, FileStatus)]) {
         let workdir_path = dot_git.parent().unwrap();
-        let workdir_contents = self.files_with_contents(&workdir_path);
+        let workdir_contents = self.files_with_contents(workdir_path);
         self.with_git_state(dot_git, true, |state| {
             state.index_contents.clear();
             state.head_contents.clear();
@@ -1637,14 +1767,12 @@ impl FakeFs {
     pub fn paths(&self, include_dot_git: bool) -> Vec<PathBuf> {
         let mut result = Vec::new();
         let mut queue = collections::VecDeque::new();
-        queue.push_back((
-            PathBuf::from(util::path!("/")),
-            self.state.lock().root.clone(),
-        ));
+        let state = &*self.state.lock();
+        queue.push_back((PathBuf::from(util::path!("/")), &state.root));
         while let Some((path, entry)) = queue.pop_front() {
-            if let FakeFsEntry::Dir { entries, .. } = &*entry.lock() {
+            if let FakeFsEntry::Dir { entries, .. } = entry {
                 for (name, entry) in entries {
-                    queue.push_back((path.join(name), entry.clone()));
+                    queue.push_back((path.join(name), entry));
                 }
             }
             if include_dot_git
@@ -1661,14 +1789,12 @@ impl FakeFs {
     pub fn directories(&self, include_dot_git: bool) -> Vec<PathBuf> {
         let mut result = Vec::new();
         let mut queue = collections::VecDeque::new();
-        queue.push_back((
-            PathBuf::from(util::path!("/")),
-            self.state.lock().root.clone(),
-        ));
+        let state = &*self.state.lock();
+        queue.push_back((PathBuf::from(util::path!("/")), &state.root));
         while let Some((path, entry)) = queue.pop_front() {
-            if let FakeFsEntry::Dir { entries, .. } = &*entry.lock() {
+            if let FakeFsEntry::Dir { entries, .. } = entry {
                 for (name, entry) in entries {
-                    queue.push_back((path.join(name), entry.clone()));
+                    queue.push_back((path.join(name), entry));
                 }
                 if include_dot_git
                     || !path
@@ -1685,17 +1811,14 @@ impl FakeFs {
     pub fn files(&self) -> Vec<PathBuf> {
         let mut result = Vec::new();
         let mut queue = collections::VecDeque::new();
-        queue.push_back((
-            PathBuf::from(util::path!("/")),
-            self.state.lock().root.clone(),
-        ));
+        let state = &*self.state.lock();
+        queue.push_back((PathBuf::from(util::path!("/")), &state.root));
         while let Some((path, entry)) = queue.pop_front() {
-            let e = entry.lock();
-            match &*e {
+            match entry {
                 FakeFsEntry::File { .. } => result.push(path),
                 FakeFsEntry::Dir { entries, .. } => {
                     for (name, entry) in entries {
-                        queue.push_back((path.join(name), entry.clone()));
+                        queue.push_back((path.join(name), entry));
                     }
                 }
                 FakeFsEntry::Symlink { .. } => {}
@@ -1707,13 +1830,10 @@ impl FakeFs {
     pub fn files_with_contents(&self, prefix: &Path) -> Vec<(PathBuf, Vec<u8>)> {
         let mut result = Vec::new();
         let mut queue = collections::VecDeque::new();
-        queue.push_back((
-            PathBuf::from(util::path!("/")),
-            self.state.lock().root.clone(),
-        ));
+        let state = &*self.state.lock();
+        queue.push_back((PathBuf::from(util::path!("/")), &state.root));
         while let Some((path, entry)) = queue.pop_front() {
-            let e = entry.lock();
-            match &*e {
+            match entry {
                 FakeFsEntry::File { content, .. } => {
                     if path.starts_with(prefix) {
                         result.push((path, content.clone()));
@@ -1721,7 +1841,7 @@ impl FakeFs {
                 }
                 FakeFsEntry::Dir { entries, .. } => {
                     for (name, entry) in entries {
-                        queue.push_back((path.join(name), entry.clone()));
+                        queue.push_back((path.join(name), entry));
                     }
                 }
                 FakeFsEntry::Symlink { .. } => {}
@@ -1787,10 +1907,7 @@ impl FakeFsEntry {
         }
     }
 
-    fn dir_entries(
-        &mut self,
-        path: &Path,
-    ) -> Result<&mut BTreeMap<String, Arc<Mutex<FakeFsEntry>>>> {
+    fn dir_entries(&mut self, path: &Path) -> Result<&mut BTreeMap<String, FakeFsEntry>> {
         if let Self::Dir { entries, .. } = self {
             Ok(entries)
         } else {
@@ -1837,13 +1954,13 @@ struct FakeHandle {
 impl FileHandle for FakeHandle {
     fn current_path(&self, fs: &Arc<dyn Fs>) -> Result<PathBuf> {
         let fs = fs.as_fake();
-        let state = fs.state.lock();
-        let Some(target) = state.moves.get(&self.inode) else {
+        let mut state = fs.state.lock();
+        let Some(target) = state.moves.get(&self.inode).cloned() else {
             anyhow::bail!("fake fd not moved")
         };
 
-        if state.try_read_path(&target, false).is_some() {
-            return Ok(target.clone());
+        if state.try_entry(&target, false).is_some() {
+            return Ok(target);
         }
         anyhow::bail!("fake fd target not found")
     }
@@ -1870,13 +1987,13 @@ impl Fs for FakeFs {
             state.write_path(&cur_path, |entry| {
                 entry.or_insert_with(|| {
                     created_dirs.push((cur_path.clone(), Some(PathEventKind::Created)));
-                    Arc::new(Mutex::new(FakeFsEntry::Dir {
+                    FakeFsEntry::Dir {
                         inode,
                         mtime,
                         len: 0,
                         entries: Default::default(),
                         git_repo_state: None,
-                    }))
+                    }
                 });
                 Ok(())
             })?
@@ -1891,13 +2008,13 @@ impl Fs for FakeFs {
         let mut state = self.state.lock();
         let inode = state.get_and_increment_inode();
         let mtime = state.get_and_increment_mtime();
-        let file = Arc::new(Mutex::new(FakeFsEntry::File {
+        let file = FakeFsEntry::File {
             inode,
             mtime,
             len: 0,
             content: Vec::new(),
             git_dir_path: None,
-        }));
+        };
         let mut kind = Some(PathEventKind::Created);
         state.write_path(path, |entry| {
             match entry {
@@ -1921,7 +2038,7 @@ impl Fs for FakeFs {
 
     async fn create_symlink(&self, path: &Path, target: PathBuf) -> Result<()> {
         let mut state = self.state.lock();
-        let file = Arc::new(Mutex::new(FakeFsEntry::Symlink { target }));
+        let file = FakeFsEntry::Symlink { target };
         state
             .write_path(path.as_ref(), move |e| match e {
                 btree_map::Entry::Vacant(e) => {
@@ -1984,7 +2101,7 @@ impl Fs for FakeFs {
             }
         })?;
 
-        let inode = match *moved_entry.lock() {
+        let inode = match moved_entry {
             FakeFsEntry::File { inode, .. } => inode,
             FakeFsEntry::Dir { inode, .. } => inode,
             _ => 0,
@@ -2033,8 +2150,8 @@ impl Fs for FakeFs {
         let mut state = self.state.lock();
         let mtime = state.get_and_increment_mtime();
         let inode = state.get_and_increment_inode();
-        let source_entry = state.read_path(&source)?;
-        let content = source_entry.lock().file_content(&source)?.clone();
+        let source_entry = state.entry(&source)?;
+        let content = source_entry.file_content(&source)?.clone();
         let mut kind = Some(PathEventKind::Created);
         state.write_path(&target, |e| match e {
             btree_map::Entry::Occupied(e) => {
@@ -2048,13 +2165,13 @@ impl Fs for FakeFs {
                 }
             }
             btree_map::Entry::Vacant(e) => Ok(Some(
-                e.insert(Arc::new(Mutex::new(FakeFsEntry::File {
+                e.insert(FakeFsEntry::File {
                     inode,
                     mtime,
                     len: content.len() as u64,
                     content,
                     git_dir_path: None,
-                })))
+                })
                 .clone(),
             )),
         })?;
@@ -2070,8 +2187,7 @@ impl Fs for FakeFs {
         let base_name = path.file_name().context("cannot remove the root")?;
 
         let mut state = self.state.lock();
-        let parent_entry = state.read_path(parent_path)?;
-        let mut parent_entry = parent_entry.lock();
+        let parent_entry = state.entry(parent_path)?;
         let entry = parent_entry
             .dir_entries(parent_path)?
             .entry(base_name.to_str().unwrap().into());
@@ -2082,15 +2198,14 @@ impl Fs for FakeFs {
                     anyhow::bail!("{path:?} does not exist");
                 }
             }
-            btree_map::Entry::Occupied(e) => {
+            btree_map::Entry::Occupied(mut entry) => {
                 {
-                    let mut entry = e.get().lock();
-                    let children = entry.dir_entries(&path)?;
+                    let children = entry.get_mut().dir_entries(&path)?;
                     if !options.recursive && !children.is_empty() {
                         anyhow::bail!("{path:?} is not empty");
                     }
                 }
-                e.remove();
+                entry.remove();
             }
         }
         state.emit_event([(path, Some(PathEventKind::Removed))]);
@@ -2104,8 +2219,7 @@ impl Fs for FakeFs {
         let parent_path = path.parent().context("cannot remove the root")?;
         let base_name = path.file_name().unwrap();
         let mut state = self.state.lock();
-        let parent_entry = state.read_path(parent_path)?;
-        let mut parent_entry = parent_entry.lock();
+        let parent_entry = state.entry(parent_path)?;
         let entry = parent_entry
             .dir_entries(parent_path)?
             .entry(base_name.to_str().unwrap().into());
@@ -2115,9 +2229,9 @@ impl Fs for FakeFs {
                     anyhow::bail!("{path:?} does not exist");
                 }
             }
-            btree_map::Entry::Occupied(e) => {
-                e.get().lock().file_content(&path)?;
-                e.remove();
+            btree_map::Entry::Occupied(mut entry) => {
+                entry.get_mut().file_content(&path)?;
+                entry.remove();
             }
         }
         state.emit_event([(path, Some(PathEventKind::Removed))]);
@@ -2131,12 +2245,10 @@ impl Fs for FakeFs {
 
     async fn open_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>> {
         self.simulate_random_delay().await;
-        let state = self.state.lock();
-        let entry = state.read_path(&path)?;
-        let entry = entry.lock();
-        let inode = match *entry {
-            FakeFsEntry::File { inode, .. } => inode,
-            FakeFsEntry::Dir { inode, .. } => inode,
+        let mut state = self.state.lock();
+        let inode = match state.entry(path)? {
+            FakeFsEntry::File { inode, .. } => *inode,
+            FakeFsEntry::Dir { inode, .. } => *inode,
             _ => unreachable!(),
         };
         Ok(Arc::new(FakeHandle { inode }))
@@ -2144,7 +2256,7 @@ impl Fs for FakeFs {
 
     async fn load(&self, path: &Path) -> Result<String> {
         let content = self.load_internal(path).await?;
-        Ok(String::from_utf8(content.clone())?)
+        Ok(String::from_utf8(content)?)
     }
 
     async fn load_bytes(&self, path: &Path) -> Result<Vec<u8>> {
@@ -2154,6 +2266,9 @@ impl Fs for FakeFs {
     async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
         self.simulate_random_delay().await;
         let path = normalize_path(path.as_path());
+        if let Some(path) = path.parent() {
+            self.create_dir(path).await?;
+        }
         self.write_file_internal(path, data.into_bytes(), true)?;
         Ok(())
     }
@@ -2183,8 +2298,8 @@ impl Fs for FakeFs {
         let path = normalize_path(path);
         self.simulate_random_delay().await;
         let state = self.state.lock();
-        let (_, canonical_path) = state
-            .try_read_path(&path, true)
+        let canonical_path = state
+            .canonicalize(&path, true)
             .with_context(|| format!("path does not exist: {path:?}"))?;
         Ok(canonical_path)
     }
@@ -2192,9 +2307,9 @@ impl Fs for FakeFs {
     async fn is_file(&self, path: &Path) -> bool {
         let path = normalize_path(path);
         self.simulate_random_delay().await;
-        let state = self.state.lock();
-        if let Some((entry, _)) = state.try_read_path(&path, true) {
-            entry.lock().is_file()
+        let mut state = self.state.lock();
+        if let Some((entry, _)) = state.try_entry(&path, true) {
+            entry.is_file()
         } else {
             false
         }
@@ -2211,17 +2326,16 @@ impl Fs for FakeFs {
         let path = normalize_path(path);
         let mut state = self.state.lock();
         state.metadata_call_count += 1;
-        if let Some((mut entry, _)) = state.try_read_path(&path, false) {
-            let is_symlink = entry.lock().is_symlink();
+        if let Some((mut entry, _)) = state.try_entry(&path, false) {
+            let is_symlink = entry.is_symlink();
             if is_symlink {
-                if let Some(e) = state.try_read_path(&path, true).map(|e| e.0) {
+                if let Some(e) = state.try_entry(&path, true).map(|e| e.0) {
                     entry = e;
                 } else {
                     return Ok(None);
                 }
             }
 
-            let entry = entry.lock();
             Ok(Some(match &*entry {
                 FakeFsEntry::File {
                     inode, mtime, len, ..
@@ -2253,12 +2367,11 @@ impl Fs for FakeFs {
     async fn read_link(&self, path: &Path) -> Result<PathBuf> {
         self.simulate_random_delay().await;
         let path = normalize_path(path);
-        let state = self.state.lock();
+        let mut state = self.state.lock();
         let (entry, _) = state
-            .try_read_path(&path, false)
+            .try_entry(&path, false)
             .with_context(|| format!("path does not exist: {path:?}"))?;
-        let entry = entry.lock();
-        if let FakeFsEntry::Symlink { target } = &*entry {
+        if let FakeFsEntry::Symlink { target } = entry {
             Ok(target.clone())
         } else {
             anyhow::bail!("not a symlink: {path:?}")
@@ -2273,8 +2386,7 @@ impl Fs for FakeFs {
         let path = normalize_path(path);
         let mut state = self.state.lock();
         state.read_dir_call_count += 1;
-        let entry = state.read_path(&path)?;
-        let mut entry = entry.lock();
+        let entry = state.entry(&path)?;
         let children = entry.dir_entries(&path)?;
         let paths = children
             .keys()
@@ -2300,19 +2412,18 @@ impl Fs for FakeFs {
             tx,
             original_path: path.to_owned(),
             fs_state: self.state.clone(),
-            prefixes: Mutex::new(vec![path.to_owned()]),
+            prefixes: Mutex::new(vec![path]),
         });
         (
             Box::pin(futures::StreamExt::filter(rx, {
                 let watcher = watcher.clone();
                 move |events| {
                     let result = events.iter().any(|evt_path| {
-                        let result = watcher
+                        watcher
                             .prefixes
                             .lock()
                             .iter()
-                            .any(|prefix| evt_path.path.starts_with(prefix));
-                        result
+                            .any(|prefix| evt_path.path.starts_with(prefix))
                     });
                     let executor = executor.clone();
                     async move {
@@ -2338,6 +2449,7 @@ impl Fs for FakeFs {
                     dot_git_path: abs_dot_git.to_path_buf(),
                     repository_dir_path: repository_dir_path.to_owned(),
                     common_dir_path: common_dir_path.to_owned(),
+                    checkpoints: Arc::default(),
                 }) as _
             },
         )
@@ -2350,6 +2462,10 @@ impl Fs for FakeFs {
         _fallback_branch_name: String,
     ) -> Result<()> {
         smol::block_on(self.create_dir(&abs_work_directory_path.join(".git")))
+    }
+
+    async fn git_clone(&self, _repo_url: &str, _abs_work_directory: &Path) -> Result<()> {
+        anyhow::bail!("Git clone is not supported in fake Fs")
     }
 
     fn is_fake(&self) -> bool {
