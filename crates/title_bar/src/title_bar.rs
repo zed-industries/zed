@@ -275,11 +275,11 @@ impl TitleBar {
 
         let banner = cx.new(|cx| {
             OnboardingBanner::new(
-                "Debugger Onboarding",
-                IconName::Debug,
-                "The Debugger",
-                None,
-                zed_actions::debugger::OpenOnboardingModal.boxed_clone(),
+                "ACP Onboarding",
+                IconName::Sparkle,
+                "Bring Your Own Agent",
+                Some("Introducing:".into()),
+                zed_actions::agent::OpenAcpOnboardingModal.boxed_clone(),
                 cx,
             )
         });

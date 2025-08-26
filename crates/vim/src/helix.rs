@@ -23,6 +23,8 @@ actions!(
         HelixInsert,
         /// Appends at the end of the selection.
         HelixAppend,
+        /// Goes to the location of the last modification.
+        HelixGotoLastModification,
     ]
 );
 
@@ -31,6 +33,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::helix_insert);
     Vim::action(editor, cx, Vim::helix_append);
     Vim::action(editor, cx, Vim::helix_yank);
+    Vim::action(editor, cx, Vim::helix_goto_last_modification);
 }
 
 impl Vim {
@@ -430,6 +433,15 @@ impl Vim {
         });
         self.switch_mode(Mode::HelixNormal, true, window, cx);
     }
+
+    pub fn helix_goto_last_modification(
+        &mut self,
+        _: &HelixGotoLastModification,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.jump(".".into(), false, false, window, cx);
+    }
 }
 
 #[cfg(test)]
@@ -441,6 +453,7 @@ mod test {
     #[gpui::test]
     async fn test_word_motions(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
         // «
         // ˇ
         // »
@@ -502,6 +515,7 @@ mod test {
     #[gpui::test]
     async fn test_delete(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
 
         // test delete a selection
         cx.set_state(
@@ -582,6 +596,7 @@ mod test {
     #[gpui::test]
     async fn test_f_and_t(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
 
         cx.set_state(
             indoc! {"
@@ -635,6 +650,7 @@ mod test {
     #[gpui::test]
     async fn test_newline_char(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
 
         cx.set_state("aa«\nˇ»bb cc", Mode::HelixNormal);
 
@@ -652,6 +668,7 @@ mod test {
     #[gpui::test]
     async fn test_insert_selected(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
         cx.set_state(
             indoc! {"
             «The ˇ»quick brown
@@ -674,6 +691,7 @@ mod test {
     #[gpui::test]
     async fn test_append(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
         // test from the end of the selection
         cx.set_state(
             indoc! {"
@@ -716,6 +734,7 @@ mod test {
     #[gpui::test]
     async fn test_replace(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
 
         // No selection (single character)
         cx.set_state("ˇaa", Mode::HelixNormal);
@@ -762,5 +781,73 @@ mod test {
         cx.simulate_keystrokes("y");
         cx.shared_clipboard().assert_eq("worl");
         cx.assert_state("hello «worlˇ»d", Mode::HelixNormal);
+    }
+    #[gpui::test]
+    async fn test_shift_r_paste(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // First copy some text to clipboard
+        cx.set_state("«hello worldˇ»", Mode::HelixNormal);
+        cx.simulate_keystrokes("y");
+
+        // Test paste with shift-r on single cursor
+        cx.set_state("foo ˇbar", Mode::HelixNormal);
+        cx.simulate_keystrokes("shift-r");
+
+        cx.assert_state("foo hello worldˇbar", Mode::HelixNormal);
+
+        // Test paste with shift-r on selection
+        cx.set_state("foo «barˇ» baz", Mode::HelixNormal);
+        cx.simulate_keystrokes("shift-r");
+
+        cx.assert_state("foo hello worldˇ baz", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_insert_mode_stickiness(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // Make a modification at a specific location
+        cx.set_state("ˇhello", Mode::HelixNormal);
+        assert_eq!(cx.mode(), Mode::HelixNormal);
+        cx.simulate_keystrokes("i");
+        assert_eq!(cx.mode(), Mode::Insert);
+        cx.simulate_keystrokes("escape");
+        assert_eq!(cx.mode(), Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_goto_last_modification(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // Make a modification at a specific location
+        cx.set_state("line one\nline ˇtwo\nline three", Mode::HelixNormal);
+        cx.assert_state("line one\nline ˇtwo\nline three", Mode::HelixNormal);
+        cx.simulate_keystrokes("i");
+        cx.simulate_keystrokes("escape");
+        cx.simulate_keystrokes("i");
+        cx.simulate_keystrokes("m o d i f i e d space");
+        cx.simulate_keystrokes("escape");
+
+        // TODO: this fails, because state is no longer helix
+        cx.assert_state(
+            "line one\nline modified ˇtwo\nline three",
+            Mode::HelixNormal,
+        );
+
+        // Move cursor away from the modification
+        cx.simulate_keystrokes("up");
+
+        // Use "g ." to go back to last modification
+        cx.simulate_keystrokes("g .");
+
+        // Verify we're back at the modification location and still in HelixNormal mode
+        cx.assert_state(
+            "line one\nline modifiedˇ two\nline three",
+            Mode::HelixNormal,
+        );
     }
 }

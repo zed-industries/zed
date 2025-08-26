@@ -1,6 +1,5 @@
 mod base_keymap_setting;
 mod editable_setting_control;
-mod key_equivalents;
 mod keymap_file;
 mod settings_file;
 mod settings_json;
@@ -14,7 +13,6 @@ use util::asset_str;
 
 pub use base_keymap_setting::*;
 pub use editable_setting_control::*;
-pub use key_equivalents::*;
 pub use keymap_file::{
     KeyBindingValidator, KeyBindingValidatorRegistration, KeybindSource, KeybindUpdateOperation,
     KeybindUpdateTarget, KeymapFile, KeymapFileLoadResult,
@@ -89,7 +87,10 @@ pub fn default_settings() -> Cow<'static, str> {
 #[cfg(target_os = "macos")]
 pub const DEFAULT_KEYMAP_PATH: &str = "keymaps/default-macos.json";
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+pub const DEFAULT_KEYMAP_PATH: &str = "keymaps/default-windows.json";
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub const DEFAULT_KEYMAP_PATH: &str = "keymaps/default-linux.json";
 
 pub fn default_keymap() -> Cow<'static, str> {

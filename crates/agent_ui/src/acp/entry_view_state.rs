@@ -6,7 +6,7 @@ use agent2::HistoryStore;
 use collections::HashMap;
 use editor::{Editor, EditorMode, MinimapVisibility};
 use gpui::{
-    AnyEntity, App, AppContext as _, Entity, EntityId, EventEmitter, Focusable,
+    AnyEntity, App, AppContext as _, Entity, EntityId, EventEmitter, Focusable, ScrollHandle,
     TextStyleRefinement, WeakEntity, Window,
 };
 use language::language_settings::SoftWrap;
@@ -154,10 +154,22 @@ impl EntryViewState {
                     });
                 }
             }
-            AgentThreadEntry::AssistantMessage(_) => {
-                if index == self.entries.len() {
-                    self.entries.push(Entry::empty())
-                }
+            AgentThreadEntry::AssistantMessage(message) => {
+                let entry = if let Some(Entry::AssistantMessage(entry)) =
+                    self.entries.get_mut(index)
+                {
+                    entry
+                } else {
+                    self.set_entry(
+                        index,
+                        Entry::AssistantMessage(AssistantMessageEntry::default()),
+                    );
+                    let Some(Entry::AssistantMessage(entry)) = self.entries.get_mut(index) else {
+                        unreachable!()
+                    };
+                    entry
+                };
+                entry.sync(message);
             }
         };
     }
@@ -177,7 +189,7 @@ impl EntryViewState {
     pub fn settings_changed(&mut self, cx: &mut App) {
         for entry in self.entries.iter() {
             match entry {
-                Entry::UserMessage { .. } => {}
+                Entry::UserMessage { .. } | Entry::AssistantMessage { .. } => {}
                 Entry::Content(response_views) => {
                     for view in response_views.values() {
                         if let Ok(diff_editor) = view.clone().downcast::<Editor>() {
@@ -208,9 +220,29 @@ pub enum ViewEvent {
     MessageEditorEvent(Entity<MessageEditor>, MessageEditorEvent),
 }
 
+#[derive(Default, Debug)]
+pub struct AssistantMessageEntry {
+    scroll_handles_by_chunk_index: HashMap<usize, ScrollHandle>,
+}
+
+impl AssistantMessageEntry {
+    pub fn scroll_handle_for_chunk(&self, ix: usize) -> Option<ScrollHandle> {
+        self.scroll_handles_by_chunk_index.get(&ix).cloned()
+    }
+
+    pub fn sync(&mut self, message: &acp_thread::AssistantMessage) {
+        if let Some(acp_thread::AssistantMessageChunk::Thought { .. }) = message.chunks.last() {
+            let ix = message.chunks.len() - 1;
+            let handle = self.scroll_handles_by_chunk_index.entry(ix).or_default();
+            handle.scroll_to_bottom();
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum Entry {
     UserMessage(Entity<MessageEditor>),
+    AssistantMessage(AssistantMessageEntry),
     Content(HashMap<EntityId, AnyEntity>),
 }
 
@@ -218,7 +250,7 @@ impl Entry {
     pub fn message_editor(&self) -> Option<&Entity<MessageEditor>> {
         match self {
             Self::UserMessage(editor) => Some(editor),
-            Entry::Content(_) => None,
+            Self::AssistantMessage(_) | Self::Content(_) => None,
         }
     }
 
@@ -239,6 +271,16 @@ impl Entry {
             .map(|entity| entity.downcast::<TerminalView>().unwrap())
     }
 
+    pub fn scroll_handle_for_assistant_message_chunk(
+        &self,
+        chunk_ix: usize,
+    ) -> Option<ScrollHandle> {
+        match self {
+            Self::AssistantMessage(message) => message.scroll_handle_for_chunk(chunk_ix),
+            Self::UserMessage(_) | Self::Content(_) => None,
+        }
+    }
+
     fn content_map(&self) -> Option<&HashMap<EntityId, AnyEntity>> {
         match self {
             Self::Content(map) => Some(map),
@@ -254,7 +296,7 @@ impl Entry {
     pub fn has_content(&self) -> bool {
         match self {
             Self::Content(map) => !map.is_empty(),
-            Self::UserMessage(_) => false,
+            Self::UserMessage(_) | Self::AssistantMessage(_) => false,
         }
     }
 }
