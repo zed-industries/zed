@@ -999,7 +999,7 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> Element for ScrollbarEl
                     let width = self.state.read(cx).width.to_pixels();
 
                     let additional_padding = if thumb_ranges.len() == 2 {
-                        width + SCROLLBAR_PADDING
+                        width
                     } else {
                         Pixels::ZERO
                     };
