@@ -42,7 +42,7 @@
       "shift-f11": "debugger::StepOut",
       "f11": "zed::ToggleFullScreen",
       // todo(windows)
-      // win -> but nealy none app use this
+      // win -> but nearly none app use this
       // vscode save all action => ctrl-alt-s ctrl-k s
       // ctrl-alt-z => shift-alt-z or ctrl-shift-z
       // "ctrl-alt-z": "edit_prediction::RateCompletions",
