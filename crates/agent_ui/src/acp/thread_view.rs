@@ -1705,7 +1705,6 @@ impl AcpThreadView {
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
-        let header_id = SharedString::from(format!("outer-tool-call-header-{}", entry_ix));
         let card_header_id = SharedString::from("inner-tool-call-header");
 
         let tool_icon =
@@ -1734,11 +1733,7 @@ impl AcpThreadView {
             _ => false,
         };
 
-        let failed_tool_call = matches!(
-            tool_call.status,
-            ToolCallStatus::Rejected | ToolCallStatus::Canceled | ToolCallStatus::Failed
-        );
-
+        let has_location = tool_call.locations.len() == 1;
         let needs_confirmation = matches!(
             tool_call.status,
             ToolCallStatus::WaitingForConfirmation { .. }
@@ -1751,23 +1746,31 @@ impl AcpThreadView {
 
         let is_open = needs_confirmation || self.expanded_tool_calls.contains(&tool_call.id);
 
-        let gradient_overlay = |color: Hsla| {
+        let gradient_overlay = {
             div()
                 .absolute()
                 .top_0()
                 .right_0()
                 .w_12()
                 .h_full()
-                .bg(linear_gradient(
-                    90.,
-                    linear_color_stop(color, 1.),
-                    linear_color_stop(color.opacity(0.2), 0.),
-                ))
-        };
-        let gradient_color = if use_card_layout {
-            self.tool_card_header_bg(cx)
-        } else {
-            cx.theme().colors().panel_background
+                .map(|this| {
+                    if use_card_layout {
+                        this.bg(linear_gradient(
+                            90.,
+                            linear_color_stop(self.tool_card_header_bg(cx), 1.),
+                            linear_color_stop(self.tool_card_header_bg(cx).opacity(0.2), 0.),
+                        ))
+                    } else {
+                        this.bg(linear_gradient(
+                            90.,
+                            linear_color_stop(cx.theme().colors().panel_background, 1.),
+                            linear_color_stop(
+                                cx.theme().colors().panel_background.opacity(0.2),
+                                0.,
+                            ),
+                        ))
+                    }
+                })
         };
 
         let tool_output_display = if is_open {
@@ -1818,41 +1821,58 @@ impl AcpThreadView {
         };
 
         v_flex()
-            .when(use_card_layout, |this| {
-                this.rounded_md()
-                    .border_1()
-                    .border_color(self.tool_card_border_color(cx))
-                    .bg(cx.theme().colors().editor_background)
-                    .overflow_hidden()
+            .map(|this| {
+                if use_card_layout {
+                    this.my_2()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(self.tool_card_border_color(cx))
+                        .bg(cx.theme().colors().editor_background)
+                        .overflow_hidden()
+                } else {
+                    this.my_1()
+                }
             })
+            .map(|this| {
+                if has_location && !use_card_layout {
+                    this.ml_4()
+                } else {
+                    this.ml_5()
+                }
+            })
+            .mr_5()
             .child(
                 h_flex()
-                    .id(header_id)
                     .group(&card_header_id)
                     .relative()
                     .w_full()
-                    .max_w_full()
                     .gap_1()
+                    .justify_between()
                     .when(use_card_layout, |this| {
-                        this.pl_1p5()
-                            .pr_1()
-                            .py_0p5()
+                        this.p_0p5()
                             .rounded_t_md()
-                            .when(is_open && !failed_tool_call, |this| {
+                            .bg(self.tool_card_header_bg(cx))
+                            .when(is_open && !failed_or_canceled, |this| {
                                 this.border_b_1()
                                     .border_color(self.tool_card_border_color(cx))
                             })
-                            .bg(self.tool_card_header_bg(cx))
                     })
                     .child(
                         h_flex()
                             .relative()
                             .w_full()
-                            .h(window.line_height() - px(2.))
+                            .h(window.line_height())
                             .text_size(self.tool_name_font_size())
-                            .gap_0p5()
+                            .gap_1p5()
+                            .when(has_location || use_card_layout, |this| this.px_1())
+                            .when(has_location, |this| {
+                                this.cursor(CursorStyle::PointingHand)
+                                    .rounded_sm()
+                                    .hover(|s| s.bg(cx.theme().colors().element_hover.opacity(0.5)))
+                            })
+                            .overflow_hidden()
                             .child(tool_icon)
-                            .child(if tool_call.locations.len() == 1 {
+                            .child(if has_location {
                                 let name = tool_call.locations[0]
                                     .path
                                     .file_name()
@@ -1863,13 +1883,6 @@ impl AcpThreadView {
                                 h_flex()
                                     .id(("open-tool-call-location", entry_ix))
                                     .w_full()
-                                    .max_w_full()
-                                    .px_1p5()
-                                    .rounded_sm()
-                                    .overflow_x_scroll()
-                                    .hover(|label| {
-                                        label.bg(cx.theme().colors().element_hover.opacity(0.5))
-                                    })
                                     .map(|this| {
                                         if use_card_layout {
                                             this.text_color(cx.theme().colors().text)
@@ -1879,31 +1892,28 @@ impl AcpThreadView {
                                     })
                                     .child(name)
                                     .tooltip(Tooltip::text("Jump to File"))
-                                    .cursor(gpui::CursorStyle::PointingHand)
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         this.open_tool_call_location(entry_ix, 0, window, cx);
                                     }))
                                     .into_any_element()
                             } else {
                                 h_flex()
-                                    .relative()
                                     .w_full()
-                                    .max_w_full()
-                                    .ml_1p5()
-                                    .overflow_hidden()
-                                    .child(h_flex().pr_8().child(self.render_markdown(
+                                    .child(self.render_markdown(
                                         tool_call.label.clone(),
                                         default_markdown_style(false, true, window, cx),
-                                    )))
-                                    .child(gradient_overlay(gradient_color))
+                                    ))
                                     .into_any()
-                            }),
+                            })
+                            .when(!has_location, |this| this.child(gradient_overlay)),
                     )
-                    .child(
-                        h_flex()
-                            .gap_px()
-                            .when(is_collapsible, |this| {
-                                this.child(
+                    .when(is_collapsible || failed_or_canceled, |this| {
+                        this.child(
+                            h_flex()
+                                .px_1()
+                                .gap_px()
+                                .when(is_collapsible, |this| {
+                                    this.child(
                                     Disclosure::new(("expand", entry_ix), is_open)
                                         .opened_icon(IconName::ChevronUp)
                                         .closed_icon(IconName::ChevronDown)
@@ -1920,15 +1930,16 @@ impl AcpThreadView {
                                             }
                                         })),
                                 )
-                            })
-                            .when(failed_or_canceled, |this| {
-                                this.child(
-                                    Icon::new(IconName::Close)
-                                        .color(Color::Error)
-                                        .size(IconSize::Small),
-                                )
-                            }),
-                    ),
+                                })
+                                .when(failed_or_canceled, |this| {
+                                    this.child(
+                                        Icon::new(IconName::Close)
+                                            .color(Color::Error)
+                                            .size(IconSize::Small),
+                                    )
+                                }),
+                        )
+                    }),
             )
             .children(tool_output_display)
     }
