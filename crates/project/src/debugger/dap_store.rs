@@ -5,11 +5,8 @@ use super::{
     session::{self, Session, SessionStateEvent},
 };
 use crate::{
-    InlayHint, InlayHintLabel, ProjectEnvironment, ResolveState,
-    debugger::session::SessionQuirks,
-    project_settings::ProjectSettings,
-    terminals::{SshCommand, wrap_for_ssh},
-    worktree_store::WorktreeStore,
+    InlayHint, InlayHintLabel, ProjectEnvironment, ResolveState, debugger::session::SessionQuirks,
+    project_settings::ProjectSettings, worktree_store::WorktreeStore,
 };
 use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
@@ -34,7 +31,7 @@ use http_client::HttpClient;
 use language::{Buffer, LanguageToolchainStore, language_settings::InlayHintKind};
 use node_runtime::NodeRuntime;
 
-use remote::{RemoteClient, SshArgs, SshInfo};
+use remote::RemoteClient;
 use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self},
@@ -256,52 +253,38 @@ impl DapStore {
                 cx.spawn(async move |_, cx| {
                     let response = request.await?;
                     let binary = DebugAdapterBinary::from_proto(response)?;
-                    let (mut ssh_command, envs, path_style, ssh_shell) =
-                        remote.read_with(cx, |ssh, _| {
-                            let SshInfo {
-                                args: SshArgs { arguments, envs },
-                                path_style,
-                                shell,
-                            } = ssh.ssh_info().context("SSH arguments not found")?;
-                            anyhow::Ok((
-                                SshCommand { arguments },
-                                envs.unwrap_or_default(),
-                                path_style,
-                                shell,
-                            ))
-                        })??;
 
-                    let mut connection = None;
+                    let port_forwarding;
+                    let connection;
                     if let Some(c) = binary.connection {
-                        let local_bind_addr = Ipv4Addr::LOCALHOST;
-                        let port =
-                            dap::transport::TcpTransport::unused_port(local_bind_addr).await?;
+                        let host = Ipv4Addr::LOCALHOST;
+                        let port = dap::transport::TcpTransport::unused_port(host).await?;
 
-                        ssh_command.add_port_forwarding(port, c.host.to_string(), c.port);
+                        port_forwarding = Some((port, c.port));
                         connection = Some(TcpArguments {
                             port,
-                            host: local_bind_addr,
+                            host,
                             timeout: c.timeout,
                         })
+                    } else {
+                        port_forwarding = None;
+                        connection = None;
                     }
 
-                    let (program, args) = wrap_for_ssh(
-                        &ssh_shell,
-                        &ssh_command,
-                        binary
-                            .command
-                            .as_ref()
-                            .map(|command| (command, &binary.arguments)),
-                        binary.cwd.as_deref(),
-                        binary.envs,
-                        None,
-                        path_style,
-                    );
+                    let command = remote.read_with(cx, |remote, _cx| {
+                        remote.build_command(
+                            binary.command,
+                            &binary.arguments,
+                            &binary.envs,
+                            binary.cwd.map(|path| path.display().to_string()),
+                            port_forwarding,
+                        )
+                    })??;
 
                     Ok(DebugAdapterBinary {
-                        command: Some(program),
-                        arguments: args,
-                        envs,
+                        command: Some(command.program),
+                        arguments: command.args,
+                        envs: command.env,
                         cwd: None,
                         connection,
                         request_args: binary.request_args,

@@ -8,4 +8,4 @@ pub use remote_client::{
     ConnectionIdentifier, ConnectionState, RemoteClient, RemoteClientDelegate, RemoteClientEvent,
     RemotePlatform,
 };
-pub use transport::ssh::{SshArgs, SshConnectionOptions, SshInfo, SshPortForwardOption};
+pub use transport::ssh::{SshConnectionOptions, SshPortForwardOption};

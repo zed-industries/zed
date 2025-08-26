@@ -1,8 +1,6 @@
 use crate::{
-    SshConnectionOptions,
-    protocol::MessageId,
-    proxy::ProxyLaunchError,
-    transport::ssh::{SshArgs, SshInfo, SshRemoteConnection},
+    SshConnectionOptions, protocol::MessageId, proxy::ProxyLaunchError,
+    transport::ssh::SshRemoteConnection,
 };
 use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
@@ -47,6 +45,13 @@ use util::{
 pub struct RemotePlatform {
     pub os: &'static str,
     pub arch: &'static str,
+}
+
+#[derive(Clone, Debug)]
+pub struct CommandTemplate {
+    pub program: String,
+    pub args: Vec<String>,
+    pub env: HashMap<String, String>,
 }
 
 pub trait RemoteClientDelegate: Send + Sync {
@@ -119,11 +124,11 @@ impl fmt::Display for State {
 }
 
 impl State {
-    fn remote_connection(&self) -> Option<&dyn RemoteConnection> {
+    fn remote_connection(&self) -> Option<Arc<dyn RemoteConnection>> {
         match self {
-            Self::Connected { ssh_connection, .. } => Some(ssh_connection.as_ref()),
-            Self::HeartbeatMissed { ssh_connection, .. } => Some(ssh_connection.as_ref()),
-            Self::ReconnectFailed { ssh_connection, .. } => Some(ssh_connection.as_ref()),
+            Self::Connected { ssh_connection, .. } => Some(ssh_connection.clone()),
+            Self::HeartbeatMissed { ssh_connection, .. } => Some(ssh_connection.clone()),
+            Self::ReconnectFailed { ssh_connection, .. } => Some(ssh_connection.clone()),
             _ => None,
         }
     }
@@ -742,15 +747,26 @@ impl RemoteClient {
         cx.notify();
     }
 
-    pub fn ssh_info(&self) -> Option<SshInfo> {
-        self.state
+    pub fn shell(&self) -> Option<String> {
+        Some(self.state.as_ref()?.remote_connection()?.shell())
+    }
+
+    pub fn build_command(
+        &self,
+        program: Option<String>,
+        args: &[String],
+        env: &HashMap<String, String>,
+        working_dir: Option<String>,
+        port_forward: Option<(u16, u16)>,
+    ) -> Result<CommandTemplate> {
+        let Some(connection) = self
+            .state
             .as_ref()
             .and_then(|state| state.remote_connection())
-            .map(|ssh_connection| SshInfo {
-                args: ssh_connection.ssh_args(),
-                path_style: ssh_connection.path_style(),
-                shell: ssh_connection.shell(),
-            })
+        else {
+            return Err(anyhow!("no connection"));
+        };
+        connection.build_command(program, args, env, working_dir, port_forward)
     }
 
     pub fn upload_directory(
@@ -771,6 +787,10 @@ impl RemoteClient {
 
     pub fn proto_client(&self) -> AnyProtoClient {
         self.client.clone().into()
+    }
+
+    pub fn host(&self) -> String {
+        self.connection_options().host.clone()
     }
 
     pub fn connection_options(&self) -> SshConnectionOptions {
@@ -972,9 +992,14 @@ pub(crate) trait RemoteConnection: Send + Sync {
     ) -> Task<Result<()>>;
     async fn kill(&self) -> Result<()>;
     fn has_been_killed(&self) -> bool;
-    /// On Windows, we need to use `SSH_ASKPASS` to provide the password to ssh.
-    /// On Linux, we use the `ControlPath` option to create a socket file that ssh can use to
-    fn ssh_args(&self) -> SshArgs;
+    fn build_command(
+        &self,
+        program: Option<String>,
+        args: &[String],
+        env: &HashMap<String, String>,
+        working_dir: Option<String>,
+        port_forward: Option<(u16, u16)>,
+    ) -> Result<CommandTemplate>;
     fn connection_options(&self) -> SshConnectionOptions;
     fn path_style(&self) -> PathStyle;
     fn shell(&self) -> String;
@@ -1281,10 +1306,11 @@ impl ProtoClient for ChannelClient {
 
 #[cfg(any(test, feature = "test-support"))]
 mod fake {
-    use super::{ChannelClient, RemoteClientDelegate, RemoteConnection, RemotePlatform, SshArgs};
-    use crate::SshConnectionOptions;
+    use super::{ChannelClient, RemoteClientDelegate, RemoteConnection, RemotePlatform};
+    use crate::{SshConnectionOptions, remote_client::CommandTemplate};
     use anyhow::Result;
     use async_trait::async_trait;
+    use collections::HashMap;
     use futures::{
         FutureExt, SinkExt, StreamExt,
         channel::{
@@ -1332,11 +1358,23 @@ mod fake {
             false
         }
 
-        fn ssh_args(&self) -> SshArgs {
-            SshArgs {
-                arguments: Vec::new(),
-                envs: None,
-            }
+        fn build_command(
+            &self,
+            program: Option<String>,
+            args: &[String],
+            env: &HashMap<String, String>,
+            _: Option<String>,
+            _: Option<(u16, u16)>,
+        ) -> Result<CommandTemplate> {
+            let ssh_program = program.unwrap_or_else(|| "sh".to_string());
+            let mut ssh_args = Vec::new();
+            ssh_args.push(ssh_program);
+            ssh_args.extend(args.iter().cloned());
+            Ok(CommandTemplate {
+                program: "ssh".into(),
+                args: ssh_args,
+                env: env.clone(),
+            })
         }
 
         fn upload_directory(

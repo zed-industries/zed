@@ -2,7 +2,7 @@ use crate::{
     RemoteClientDelegate, RemotePlatform,
     json_log::LogRecord,
     protocol::{MESSAGE_LEN_SIZE, message_len_from_buffer, read_message_with_len, write_message},
-    remote_client::RemoteConnection,
+    remote_client::{CommandTemplate, RemoteConnection},
 };
 use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
@@ -25,6 +25,7 @@ use smol::{
 };
 use std::{
     iter,
+    net::Ipv4Addr,
     path::{Path, PathBuf},
     sync::Arc,
     time::Instant,
@@ -70,21 +71,7 @@ struct SshSocket {
     connection_options: SshConnectionOptions,
     #[cfg(not(target_os = "windows"))]
     socket_path: PathBuf,
-    #[cfg(target_os = "windows")]
     envs: HashMap<String, String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SshArgs {
-    pub arguments: Vec<String>,
-    pub envs: Option<HashMap<String, String>>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SshInfo {
-    pub args: SshArgs,
-    pub path_style: PathStyle,
-    pub shell: String,
 }
 
 macro_rules! shell_script {
@@ -113,16 +100,85 @@ impl RemoteConnection for SshRemoteConnection {
         self.master_process.lock().is_none()
     }
 
-    fn ssh_args(&self) -> SshArgs {
-        self.socket.ssh_args()
-    }
-
     fn connection_options(&self) -> SshConnectionOptions {
         self.socket.connection_options.clone()
     }
 
     fn shell(&self) -> String {
         self.ssh_shell.clone()
+    }
+
+    fn build_command(
+        &self,
+        input_program: Option<String>,
+        input_args: &[String],
+        input_env: &HashMap<String, String>,
+        working_dir: Option<String>,
+        port_forward: Option<(u16, u16)>,
+    ) -> Result<CommandTemplate> {
+        use std::fmt::Write as _;
+
+        let mut script = String::new();
+        if let Some(working_dir) = working_dir {
+            let working_dir =
+                RemotePathBuf::new(working_dir.into(), self.ssh_path_style).to_string();
+
+            // shlex will wrap the command in single quotes (''), disabling ~ expansion,
+            // replace ith with something that works
+            const TILDE_PREFIX: &'static str = "~/";
+            if working_dir.starts_with(TILDE_PREFIX) {
+                let working_dir = working_dir.trim_start_matches("~").trim_start_matches("/");
+                write!(&mut script, "cd \"$HOME/{working_dir}\"; ").unwrap();
+            } else {
+                write!(&mut script, "cd \"{working_dir}\"; ").unwrap();
+            }
+        } else {
+            write!(&mut script, "cd; ").unwrap();
+        };
+
+        for (k, v) in input_env.iter() {
+            if let Some((k, v)) = shlex::try_quote(k).ok().zip(shlex::try_quote(v).ok()) {
+                write!(&mut script, "{}={} ", k, v).unwrap();
+            }
+        }
+
+        let shell = &self.ssh_shell;
+
+        if let Some(input_program) = input_program {
+            let command = shlex::try_quote(&input_program)?;
+            script.push_str(&command);
+            for arg in input_args {
+                let arg = shlex::try_quote(&arg)?;
+                script.push_str(" ");
+                script.push_str(&arg);
+            }
+        } else {
+            write!(&mut script, "exec {shell} -l").unwrap();
+        };
+
+        let shell_invocation = format!("{shell} -c {}", shlex::try_quote(&script).unwrap());
+
+        let mut args = Vec::new();
+        args.extend(self.socket.ssh_args());
+
+        if let Some((local_port, remote_port)) = port_forward {
+            args.push("-L".into());
+            args.push(format!(
+                "{}:{}:{}",
+                remote_port,
+                Ipv4Addr::LOCALHOST.to_string(),
+                local_port
+            ));
+        }
+
+        args.push("-t".into());
+        args.push(shell_invocation);
+
+        Ok(CommandTemplate {
+            program: "ssh".into(),
+            args,
+            env: self.socket.envs.clone(),
+        })
     }
 
     fn upload_directory(
@@ -1045,7 +1101,7 @@ impl SshSocket {
     // On Windows, we need to use `SSH_ASKPASS` to provide the password to ssh.
     // On Linux, we use the `ControlPath` option to create a socket file that ssh can use to
     #[cfg(not(target_os = "windows"))]
-    fn ssh_args(&self) -> SshArgs {
+    fn ssh_args(&self) -> Vec<String> {
         let mut arguments = self.connection_options.additional_args();
         arguments.extend(vec![
             "-o".to_string(),
@@ -1054,20 +1110,14 @@ impl SshSocket {
             format!("ControlPath={}", self.socket_path.display()),
             self.connection_options.ssh_url(),
         ]);
-        SshArgs {
-            arguments,
-            envs: None,
-        }
+        arguments
     }
 
     #[cfg(target_os = "windows")]
-    fn ssh_args(&self) -> SshArgs {
+    fn ssh_args(&self) -> Vec<String> {
         let mut arguments = self.connection_options.additional_args();
         arguments.push(self.connection_options.ssh_url());
-        SshArgs {
-            arguments,
-            envs: Some(self.envs.clone()),
-        }
+        arguments
     }
 
     async fn platform(&self) -> Result<RemotePlatform> {
