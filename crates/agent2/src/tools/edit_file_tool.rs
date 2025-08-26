@@ -1580,7 +1580,7 @@ mod tests {
                 tool.run(
                     EditFileToolInput {
                         display_description: "Edit file".into(),
-                        path: "/main.rs".into(),
+                        path: path!("/main.rs").into(),
                         mode: EditFileMode::Edit,
                     },
                     stream_tx,
@@ -1605,7 +1605,7 @@ mod tests {
                 tool.run(
                     EditFileToolInput {
                         display_description: "Edit file".into(),
-                        path: "/main.rs".into(),
+                        path: path!("/main.rs").into(),
                         mode: EditFileMode::Edit,
                     },
                     stream_tx,
@@ -1628,7 +1628,7 @@ mod tests {
                 tool.run(
                     EditFileToolInput {
                         display_description: "Edit file".into(),
-                        path: "/main.rs".into(),
+                        path: path!("/main.rs").into(),
                         mode: EditFileMode::Edit,
                     },
                     stream_tx,
