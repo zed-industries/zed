@@ -1615,9 +1615,15 @@ impl AcpThreadView {
         let card_header_id = SharedString::from("inner-card-header");
         let key = (entry_ix, chunk_ix);
         let is_open = self.expanded_thinking_blocks.contains(&key);
+        let scroll_handle = self
+            .entry_view_state
+            .read(cx)
+            .entry(entry_ix)
+            .and_then(|entry| entry.scroll_handle_for_assistant_message_chunk(chunk_ix));
 
         v_flex()
-            // .debug_bg_cyan()
+            .border_1()
+            .border_color(cx.theme().colors().border)
             .child(
                 h_flex()
                     .id(header_id)
@@ -1631,11 +1637,9 @@ impl AcpThreadView {
                             .h(window.line_height())
                             .gap_1p5()
                             .child(
-                                // div().debug_bg_magenta().child(
                                 Icon::new(IconName::ToolThink)
                                     .size(IconSize::Small)
                                     .color(Color::Muted),
-                                // ),
                             )
                             .child(
                                 div()
@@ -1671,8 +1675,8 @@ impl AcpThreadView {
                         }
                     })),
             )
-            .when(is_open, |this| {
-                this.child(
+            .map(|this| {
+                this.child(if is_open {
                     div()
                         .relative()
                         .mt_1p5()
@@ -1684,8 +1688,44 @@ impl AcpThreadView {
                         .child(self.render_markdown(
                             chunk,
                             default_markdown_style(false, false, window, cx),
-                        )),
-                )
+                        ))
+                } else {
+                    let editor_bg = cx.theme().colors().editor_background;
+                    let gradient_overlay = div()
+                        .rounded_b_lg()
+                        .h_full()
+                        .absolute()
+                        .w_full()
+                        .bottom_0()
+                        .left_0()
+                        .bg(linear_gradient(
+                            180.,
+                            linear_color_stop(editor_bg, 1.),
+                            linear_color_stop(editor_bg.opacity(0.2), 0.),
+                        ));
+
+                    div()
+                        .relative()
+                        .bg(editor_bg)
+                        .rounded_b_lg()
+                        .mt_2()
+                        .pl_4()
+                        .child(
+                            div()
+                                .id(("thinking-content", chunk_ix))
+                                .max_h_20()
+                                .when_some(scroll_handle, |this, scroll_handle| {
+                                    this.track_scroll(&scroll_handle)
+                                })
+                                .text_ui_sm(cx)
+                                .overflow_hidden()
+                                .child(self.render_markdown(
+                                    chunk,
+                                    default_markdown_style(false, false, window, cx),
+                                )),
+                        )
+                        .child(gradient_overlay)
+                })
             })
             .into_any_element()
     }
