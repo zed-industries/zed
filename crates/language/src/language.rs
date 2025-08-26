@@ -206,7 +206,7 @@ impl CachedLspAdapter {
     }
 
     pub fn name(&self) -> LanguageServerName {
-        self.adapter.name().clone()
+        self.adapter.name()
     }
 
     pub async fn get_language_server_command(
@@ -331,7 +331,7 @@ pub trait LspAdapter: 'static + Send + Sync {
             // for each worktree we might have open.
             if binary_options.allow_path_lookup
                 && let Some(binary) = self.check_if_user_installed(delegate.as_ref(), toolchains, cx).await {
-                    log::info!(
+                    log::debug!(
                         "found user-installed language server for {}. path: {:?}, arguments: {:?}",
                         self.name().0,
                         binary.path,
@@ -601,7 +601,7 @@ async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>
     }
 
     let name = adapter.name();
-    log::info!("fetching latest version of language server {:?}", name.0);
+    log::debug!("fetching latest version of language server {:?}", name.0);
     delegate.update_status(name.clone(), BinaryStatus::CheckingForUpdate);
 
     let latest_version = adapter
@@ -612,7 +612,7 @@ async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>
         .check_if_version_installed(latest_version.as_ref(), &container_dir, delegate.as_ref())
         .await
     {
-        log::info!("language server {:?} is already installed", name.0);
+        log::debug!("language server {:?} is already installed", name.0);
         delegate.update_status(name.clone(), BinaryStatus::None);
         Ok(binary)
     } else {
@@ -1513,9 +1513,8 @@ impl Language {
             .map(|ix| {
                 let mut config = BracketsPatternConfig::default();
                 for setting in query.property_settings(ix) {
-                    match setting.key.as_ref() {
-                        "newline.only" => config.newline_only = true,
-                        _ => {}
+                    if setting.key.as_ref() == "newline.only" {
+                        config.newline_only = true
                     }
                 }
                 config

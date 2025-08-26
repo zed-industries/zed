@@ -149,7 +149,7 @@ impl acp_old::Client for OldAcpClientDelegate {
 
         Ok(acp_old::RequestToolCallConfirmationResponse {
             id: acp_old::ToolCallId(old_acp_id),
-            outcome: outcome,
+            outcome,
         })
     }
 
@@ -266,7 +266,7 @@ impl acp_old::Client for OldAcpClientDelegate {
 
 fn into_new_tool_call(id: acp::ToolCallId, request: acp_old::PushToolCallParams) -> acp::ToolCall {
     acp::ToolCall {
-        id: id,
+        id,
         title: request.label,
         kind: acp_kind_from_old_icon(request.icon),
         status: acp::ToolCallStatus::InProgress,
@@ -496,6 +496,14 @@ impl AgentConnection for AcpConnection {
                 stop_reason: acp::StopReason::EndTurn,
             })
         })
+    }
+
+    fn prompt_capabilities(&self) -> acp::PromptCapabilities {
+        acp::PromptCapabilities {
+            image: false,
+            audio: false,
+            embedded_context: false,
+        }
     }
 
     fn cancel(&self, _session_id: &acp::SessionId, cx: &mut App) {

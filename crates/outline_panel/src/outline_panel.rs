@@ -503,16 +503,16 @@ impl SearchData {
             && multi_buffer_snapshot
                 .chars_at(extended_context_left_border)
                 .last()
-                .map_or(false, |c| !c.is_whitespace());
+                .is_some_and(|c| !c.is_whitespace());
         let truncated_right = entire_context_text
             .chars()
             .last()
-            .map_or(true, |c| !c.is_whitespace())
+            .is_none_or(|c| !c.is_whitespace())
             && extended_context_right_border > context_right_border
             && multi_buffer_snapshot
                 .chars_at(extended_context_right_border)
                 .next()
-                .map_or(false, |c| !c.is_whitespace());
+                .is_some_and(|c| !c.is_whitespace());
         search_match_indices.iter_mut().for_each(|range| {
             range.start = multi_buffer_snapshot.clip_offset(
                 range.start.saturating_sub(left_whitespaces_offset),
@@ -733,7 +733,8 @@ impl OutlinePanel {
     ) -> Entity<Self> {
         let project = workspace.project().clone();
         let workspace_handle = cx.entity().downgrade();
-        let outline_panel = cx.new(|cx| {
+
+        cx.new(|cx| {
             let filter_editor = cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
                 editor.set_placeholder_text("Filter...", cx);
@@ -912,9 +913,7 @@ impl OutlinePanel {
                 outline_panel.replace_active_editor(item, editor, window, cx);
             }
             outline_panel
-        });
-
-        outline_panel
+        })
     }
 
     fn serialization_key(workspace: &Workspace) -> Option<String> {
@@ -1259,7 +1258,7 @@ impl OutlinePanel {
                                 dirs_worktree_id == worktree_id
                                     && dirs
                                         .last()
-                                        .map_or(false, |dir| dir.path.as_ref() == parent_path)
+                                        .is_some_and(|dir| dir.path.as_ref() == parent_path)
                             }
                             _ => false,
                         })
@@ -1453,9 +1452,7 @@ impl OutlinePanel {
         if self
             .unfolded_dirs
             .get(&directory_worktree)
-            .map_or(true, |unfolded_dirs| {
-                !unfolded_dirs.contains(&directory_entry.id)
-            })
+            .is_none_or(|unfolded_dirs| !unfolded_dirs.contains(&directory_entry.id))
         {
             return false;
         }
@@ -2156,7 +2153,7 @@ impl OutlinePanel {
                 ExcerptOutlines::Invalidated(outlines) => Some(outlines),
                 ExcerptOutlines::NotFetched => None,
             })
-            .map_or(false, |outlines| !outlines.is_empty());
+            .is_some_and(|outlines| !outlines.is_empty());
         let is_expanded = !self
             .collapsed_entries
             .contains(&CollapsedEntry::Excerpt(excerpt.buffer_id, excerpt.id));
@@ -2626,7 +2623,7 @@ impl OutlinePanel {
     }
 
     fn entry_name(&self, worktree_id: &WorktreeId, entry: &Entry, cx: &App) -> String {
-        let name = match self.project.read(cx).worktree_for_id(*worktree_id, cx) {
+        match self.project.read(cx).worktree_for_id(*worktree_id, cx) {
             Some(worktree) => {
                 let worktree = worktree.read(cx);
                 match worktree.snapshot().root_entry() {
@@ -2647,8 +2644,7 @@ impl OutlinePanel {
                 }
             }
             None => file_name(entry.path.as_ref()),
-        };
-        name
+        }
     }
 
     fn update_fs_entries(
@@ -2683,7 +2679,8 @@ impl OutlinePanel {
                 new_collapsed_entries = outline_panel.collapsed_entries.clone();
                 new_unfolded_dirs = outline_panel.unfolded_dirs.clone();
                 let multi_buffer_snapshot = active_multi_buffer.read(cx).snapshot(cx);
-                let buffer_excerpts = multi_buffer_snapshot.excerpts().fold(
+
+                multi_buffer_snapshot.excerpts().fold(
                     HashMap::default(),
                     |mut buffer_excerpts, (excerpt_id, buffer_snapshot, excerpt_range)| {
                         let buffer_id = buffer_snapshot.remote_id();
@@ -2730,8 +2727,7 @@ impl OutlinePanel {
                         );
                         buffer_excerpts
                     },
-                );
-                buffer_excerpts
+                )
             }) else {
                 return;
             };
@@ -2953,7 +2949,7 @@ impl OutlinePanel {
                                                         .map(|(parent_dir_id, _)| {
                                                             new_unfolded_dirs
                                                                 .get(&directory.worktree_id)
-                                                                .map_or(true, |unfolded_dirs| {
+                                                                .is_none_or(|unfolded_dirs| {
                                                                     unfolded_dirs
                                                                         .contains(parent_dir_id)
                                                                 })
@@ -3444,9 +3440,8 @@ impl OutlinePanel {
     }
 
     fn is_singleton_active(&self, cx: &App) -> bool {
-        self.active_editor().map_or(false, |active_editor| {
-            active_editor.read(cx).buffer().read(cx).is_singleton()
-        })
+        self.active_editor()
+            .is_some_and(|active_editor| active_editor.read(cx).buffer().read(cx).is_singleton())
     }
 
     fn invalidate_outlines(&mut self, ids: &[ExcerptId]) {
@@ -3664,7 +3659,7 @@ impl OutlinePanel {
                             let is_root = project
                                 .read(cx)
                                 .worktree_for_id(directory_entry.worktree_id, cx)
-                                .map_or(false, |worktree| {
+                                .is_some_and(|worktree| {
                                     worktree.read(cx).root_entry() == Some(&directory_entry.entry)
                                 });
                             let folded = auto_fold_dirs
@@ -3672,7 +3667,7 @@ impl OutlinePanel {
                                 && outline_panel
                                     .unfolded_dirs
                                     .get(&directory_entry.worktree_id)
-                                    .map_or(true, |unfolded_dirs| {
+                                    .is_none_or(|unfolded_dirs| {
                                         !unfolded_dirs.contains(&directory_entry.entry.id)
                                     });
                             let fs_depth = outline_panel
@@ -3752,7 +3747,7 @@ impl OutlinePanel {
                                                 .iter()
                                                 .rev()
                                                 .nth(folded_dirs.entries.len() + 1)
-                                                .map_or(true, |parent| parent.expanded);
+                                                .is_none_or(|parent| parent.expanded);
                                         if start_of_collapsed_dir_sequence
                                             || parent_expanded
                                             || query.is_some()
@@ -3812,7 +3807,7 @@ impl OutlinePanel {
                                             .iter()
                                             .all(|entry| entry.path != parent.path)
                                     })
-                                    .map_or(true, |parent| parent.expanded);
+                                    .is_none_or(|parent| parent.expanded);
                                 if !is_singleton && (parent_expanded || query.is_some()) {
                                     outline_panel.push_entry(
                                         &mut generation_state,
@@ -3837,7 +3832,7 @@ impl OutlinePanel {
                                             .iter()
                                             .all(|entry| entry.path != parent.path)
                                     })
-                                    .map_or(true, |parent| parent.expanded);
+                                    .is_none_or(|parent| parent.expanded);
                                 if !is_singleton && (parent_expanded || query.is_some()) {
                                     outline_panel.push_entry(
                                         &mut generation_state,
@@ -3958,7 +3953,7 @@ impl OutlinePanel {
                                 .iter()
                                 .all(|entry| entry.path != parent.path)
                         })
-                        .map_or(true, |parent| parent.expanded);
+                        .is_none_or(|parent| parent.expanded);
                     if parent_expanded || query.is_some() {
                         outline_panel.push_entry(
                             &mut generation_state,
@@ -4398,12 +4393,13 @@ impl OutlinePanel {
             })
             .filter(|(match_range, _)| {
                 let editor = active_editor.read(cx);
-                if let Some(buffer_id) = match_range.start.buffer_id
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                if let Some(buffer_id) = snapshot.buffer_id_for_anchor(match_range.start)
                     && editor.is_buffer_folded(buffer_id, cx)
                 {
                     return false;
                 }
-                if let Some(buffer_id) = match_range.start.buffer_id
+                if let Some(buffer_id) = snapshot.buffer_id_for_anchor(match_range.end)
                     && editor.is_buffer_folded(buffer_id, cx)
                 {
                     return false;
@@ -4438,7 +4434,7 @@ impl OutlinePanel {
     }
 
     fn should_replace_active_item(&self, new_active_item: &dyn ItemHandle) -> bool {
-        self.active_item().map_or(true, |active_item| {
+        self.active_item().is_none_or(|active_item| {
             !self.pinned && active_item.item_id() != new_active_item.item_id()
         })
     }
@@ -4810,7 +4806,7 @@ impl OutlinePanel {
                             .with_compute_indents_fn(cx.entity(), |outline_panel, range, _, _| {
                                 let entries = outline_panel.cached_entries.get(range);
                                 if let Some(entries) = entries {
-                                    entries.into_iter().map(|item| item.depth).collect()
+                                    entries.iter().map(|item| item.depth).collect()
                                 } else {
                                     smallvec::SmallVec::new()
                                 }
@@ -5096,7 +5092,7 @@ impl Panel for OutlinePanel {
 
 impl Focusable for OutlinePanel {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.filter_editor.focus_handle(cx).clone()
+        self.filter_editor.focus_handle(cx)
     }
 }
 
@@ -5343,7 +5339,7 @@ fn subscribe_for_editor_events(
                 }
                 EditorEvent::Reparsed(buffer_id) => {
                     if let Some(excerpts) = outline_panel.excerpts.get_mut(buffer_id) {
-                        for (_, excerpt) in excerpts {
+                        for excerpt in excerpts.values_mut() {
                             excerpt.invalidate_outlines();
                         }
                     }

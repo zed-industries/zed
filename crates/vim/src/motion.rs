@@ -719,21 +719,14 @@ impl Vim {
                         target: Some(SurroundsType::Motion(motion)),
                     });
                 } else {
-                    self.normal_motion(
-                        motion.clone(),
-                        active_operator.clone(),
-                        count,
-                        forced_motion,
-                        window,
-                        cx,
-                    )
+                    self.normal_motion(motion, active_operator, count, forced_motion, window, cx)
                 }
             }
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
-                self.visual_motion(motion.clone(), count, window, cx)
+                self.visual_motion(motion, count, window, cx)
             }
 
-            Mode::HelixNormal => self.helix_normal_motion(motion.clone(), count, window, cx),
+            Mode::HelixNormal => self.helix_normal_motion(motion, count, window, cx),
         }
         self.clear_operator(window, cx);
         if let Some(operator) = waiting_operator {
@@ -816,10 +809,7 @@ impl Motion {
     }
 
     fn skip_exclusive_special_case(&self) -> bool {
-        match self {
-            Motion::WrappingLeft | Motion::WrappingRight => true,
-            _ => false,
-        }
+        matches!(self, Motion::WrappingLeft | Motion::WrappingRight)
     }
 
     pub(crate) fn push_to_jump_list(&self) -> bool {
@@ -1330,7 +1320,7 @@ impl Motion {
     pub fn range(
         &self,
         map: &DisplaySnapshot,
-        selection: Selection<DisplayPoint>,
+        mut selection: Selection<DisplayPoint>,
         times: Option<usize>,
         text_layout_details: &TextLayoutDetails,
         forced_motion: bool,
@@ -1375,7 +1365,6 @@ impl Motion {
             (None, true) => Some((selection.head(), selection.goal)),
         }?;
 
-        let mut selection = selection.clone();
         selection.set_head(new_head, goal);
 
         let mut kind = match (self.default_kind(), forced_motion) {
@@ -1621,10 +1610,20 @@ fn up_down_buffer_rows(
         map.line_len(begin_folded_line.row())
     };
 
-    (
-        map.clip_point(DisplayPoint::new(begin_folded_line.row(), new_col), bias),
-        goal,
-    )
+    let point = DisplayPoint::new(begin_folded_line.row(), new_col);
+    let mut clipped_point = map.clip_point(point, bias);
+
+    // When navigating vertically in vim mode with inlay hints present,
+    // we need to handle the case where clipping moves us to a different row.
+    // This can happen when moving down (Bias::Right) and hitting an inlay hint.
+    // Re-clip with opposite bias to stay on the intended line.
+    //
+    // See: https://github.com/zed-industries/zed/issues/29134
+    if clipped_point.row() > point.row() {
+        clipped_point = map.clip_point(point, Bias::Left);
+    }
+
+    (clipped_point, goal)
 }
 
 fn down_display(
@@ -2375,7 +2374,7 @@ fn matching_tag(map: &DisplaySnapshot, head: DisplayPoint) -> Option<DisplayPoin
         }
     }
 
-    return None;
+    None
 }
 
 fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint {
@@ -2404,9 +2403,7 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
     let line_range = map.prev_line_boundary(point).0..line_end;
     let visible_line_range =
         line_range.start..Point::new(line_range.end.row, line_range.end.column.saturating_sub(1));
-    let ranges = map
-        .buffer_snapshot
-        .bracket_ranges(visible_line_range.clone());
+    let ranges = map.buffer_snapshot.bracket_ranges(visible_line_range);
     if let Some(ranges) = ranges {
         let line_range = line_range.start.to_offset(&map.buffer_snapshot)
             ..line_range.end.to_offset(&map.buffer_snapshot);
@@ -2517,7 +2514,7 @@ fn unmatched_forward(
         }
         display_point = new_point;
     }
-    return display_point;
+    display_point
 }
 
 fn unmatched_backward(
@@ -3856,6 +3853,84 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_visual_mode_with_inlay_hints_on_empty_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Test the exact scenario from issue #29134
+        cx.set_state(
+            indoc! {"
+                fn main() {
+                    let this_is_a_long_name = Vec::<u32>::new();
+                    let new_oneˇ = this_is_a_long_name
+                        .iter()
+                        .map(|i| i + 1)
+                        .map(|i| i * 2)
+                        .collect::<Vec<_>>();
+                }
+            "},
+            Mode::Normal,
+        );
+
+        // Add type hint inlay on the empty line (line 3, after "this_is_a_long_name")
+        cx.update_editor(|editor, _window, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            // The empty line is at line 3 (0-indexed)
+            let line_start = snapshot.anchor_after(Point::new(3, 0));
+            let inlay_text = ": Vec<u32>";
+            let inlay = Inlay::edit_prediction(1, line_start, inlay_text);
+            editor.splice_inlays(&[], vec![inlay], cx);
+        });
+
+        // Enter visual mode
+        cx.simulate_keystrokes("v");
+        cx.assert_state(
+            indoc! {"
+                fn main() {
+                    let this_is_a_long_name = Vec::<u32>::new();
+                    let new_one« ˇ»= this_is_a_long_name
+                        .iter()
+                        .map(|i| i + 1)
+                        .map(|i| i * 2)
+                        .collect::<Vec<_>>();
+                }
+            "},
+            Mode::Visual,
+        );
+
+        // Move down - should go to the beginning of line 4, not skip to line 5
+        cx.simulate_keystrokes("j");
+        cx.assert_state(
+            indoc! {"
+                fn main() {
+                    let this_is_a_long_name = Vec::<u32>::new();
+                    let new_one« = this_is_a_long_name
+                      ˇ»  .iter()
+                        .map(|i| i + 1)
+                        .map(|i| i * 2)
+                        .collect::<Vec<_>>();
+                }
+            "},
+            Mode::Visual,
+        );
+
+        // Test with multiple movements
+        cx.set_state("let aˇ = 1;\nlet b = 2;\n\nlet c = 3;", Mode::Normal);
+
+        // Add type hint on the empty line
+        cx.update_editor(|editor, _window, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let empty_line_start = snapshot.anchor_after(Point::new(2, 0));
+            let inlay_text = ": i32";
+            let inlay = Inlay::edit_prediction(2, empty_line_start, inlay_text);
+            editor.splice_inlays(&[], vec![inlay], cx);
+        });
+
+        // Enter visual mode and move down twice
+        cx.simulate_keystrokes("v j j");
+        cx.assert_state("let a« = 1;\nlet b = 2;\n\nˇ»let c = 3;", Mode::Visual);
+    }
+
+    #[gpui::test]
     async fn test_go_to_percentage(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         // Normal mode
@@ -4099,7 +4174,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
              ˇhe quick brown fox
              jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
             the quick bˇrown fox
@@ -4109,7 +4184,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             ˇown fox
             jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
             the quick brown foˇx
@@ -4119,7 +4194,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             ˇ
             jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
     }
 
     #[gpui::test]
@@ -4134,7 +4209,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
              ˇbrown fox
              jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
             the quick bˇrown fox
@@ -4144,7 +4219,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             the quickˇown fox
             jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
             the quick brown foˇx
@@ -4154,7 +4229,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             the quicˇk
             jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
             ˇthe quick brown fox
@@ -4164,7 +4239,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             ˇ fox
             jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
             ˇthe quick brown fox
@@ -4174,7 +4249,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             ˇuick brown fox
             jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
     }
 
     #[gpui::test]
@@ -4189,7 +4264,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
              the quick brown foˇx
              jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
              ˇthe quick brown fox
@@ -4199,7 +4274,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
              ˇx
              jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
     }
 
     #[gpui::test]
@@ -4215,7 +4290,7 @@ mod test {
                the quick brown fox
                ˇthe quick brown fox
                jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
               the quick bˇrown fox
@@ -4226,7 +4301,7 @@ mod test {
               the quick brˇrown fox
               jumped overown fox
               jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
              the quick brown foˇx
@@ -4237,7 +4312,7 @@ mod test {
              the quick brown foxˇx
              jumped over the la
              jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
              the quick brown fox
@@ -4248,7 +4323,7 @@ mod test {
             thˇhe quick brown fox
             je quick brown fox
             jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
     }
 
     #[gpui::test]
@@ -4263,7 +4338,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
               ˇe quick brown fox
               jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
               the quick bˇrown fox
@@ -4273,7 +4348,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
               the quick bˇn fox
               jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
              the quick brown foˇx
@@ -4282,6 +4357,6 @@ mod test {
         cx.simulate_shared_keystrokes("d v e").await;
         cx.shared_state().await.assert_eq(indoc! {"
         the quick brown foˇd over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
     }
 }

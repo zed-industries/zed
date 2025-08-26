@@ -275,7 +275,7 @@ impl ToolUseState {
     pub fn message_has_tool_results(&self, assistant_message_id: MessageId) -> bool {
         self.tool_uses_by_assistant_message
             .get(&assistant_message_id)
-            .map_or(false, |results| !results.is_empty())
+            .is_some_and(|results| !results.is_empty())
     }
 
     pub fn tool_result(

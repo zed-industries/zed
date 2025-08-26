@@ -19,14 +19,27 @@ self-hosted-runner:
     - namespace-profile-16x32-ubuntu-2004-arm
     - namespace-profile-32x64-ubuntu-2004-arm
     # Namespace Ubuntu 22.04 (Everything else)
-    - namespace-profile-2x4-ubuntu-2204
     - namespace-profile-4x8-ubuntu-2204
     - namespace-profile-8x16-ubuntu-2204
     - namespace-profile-16x32-ubuntu-2204
     - namespace-profile-32x64-ubuntu-2204
+    # Namespace Ubuntu 24.04 (like ubuntu-latest)
+    - namespace-profile-2x4-ubuntu-2404
     # Namespace Limited Preview
     - namespace-profile-8x16-ubuntu-2004-arm-m4
     - namespace-profile-8x32-ubuntu-2004-arm-m4
     # Self Hosted Runners
     - self-mini-macos
     - self-32vcpu-windows-2022
+
+# Disable shellcheck because it doesn't like powershell
+# This should have been triggered with initial rollout of actionlint
+# but https://github.com/zed-industries/zed/pull/36693
+# somehow caused actionlint to actually check those windows jobs
+# where previously they were being skipped. Likely caused by an
+# unknown bug in actionlint where parsing of `runs-on: [ ]`
+# breaks something else. (yuck)
+paths:
+  .github/workflows/{ci,release_nightly}.yml:
+    ignore:
+      - "shellcheck"

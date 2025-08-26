@@ -486,7 +486,7 @@ impl TerminalBuilder {
         //And connect them together
         let event_loop = EventLoop::new(
             term.clone(),
-            ZedListener(events_tx.clone()),
+            ZedListener(events_tx),
             pty,
             pty_options.drain_on_exit,
             false,
@@ -1299,23 +1299,19 @@ impl Terminal {
                 let selection = Selection::new(selection_type, point, side);
                 self.events
                     .push_back(InternalEvent::SetSelection(Some((selection, point))));
-                return;
             }
 
             "escape" => {
                 self.events.push_back(InternalEvent::SetSelection(None));
-                return;
             }
 
             "y" => {
                 self.copy(Some(false));
-                return;
             }
 
             "i" => {
                 self.scroll_to_bottom();
                 self.toggle_vi_mode();
-                return;
             }
             _ => {}
         }
@@ -1665,7 +1661,7 @@ impl Terminal {
                 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
                 MouseButton::Middle => {
                     if let Some(item) = _cx.read_from_primary() {
-                        let text = item.text().unwrap_or_default().to_string();
+                        let text = item.text().unwrap_or_default();
                         self.input(text.into_bytes());
                     }
                 }
@@ -1891,11 +1887,11 @@ impl Terminal {
         let e: Option<ExitStatus> = error_code.map(|code| {
             #[cfg(unix)]
             {
-                return std::os::unix::process::ExitStatusExt::from_raw(code);
+                std::os::unix::process::ExitStatusExt::from_raw(code)
             }
             #[cfg(windows)]
             {
-                return std::os::windows::process::ExitStatusExt::from_raw(code as u32);
+                std::os::windows::process::ExitStatusExt::from_raw(code as u32)
             }
         });
 

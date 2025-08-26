@@ -406,10 +406,7 @@ impl LogStore {
             server_state.worktree_id = Some(worktree_id);
         }
 
-        if let Some(server) = server
-            .clone()
-            .filter(|_| server_state.io_logs_subscription.is_none())
-        {
+        if let Some(server) = server.filter(|_| server_state.io_logs_subscription.is_none()) {
             let io_tx = self.io_tx.clone();
             let server_id = server.server_id();
             server_state.io_logs_subscription = Some(server.on_io(move |io_kind, message| {
@@ -930,7 +927,7 @@ impl LspLogView {
                         let state = log_store.language_servers.get(&server_id)?;
                         Some(LogMenuItem {
                             server_id,
-                            server_name: name.clone(),
+                            server_name: name,
                             server_kind: state.kind.clone(),
                             worktree_root_name: "supplementary".to_string(),
                             rpc_trace_enabled: state.rpc_state.is_some(),
@@ -1527,7 +1524,7 @@ impl Render for LspLogToolbarItemView {
                                             .icon_color(Color::Muted),
                                         )
                                         .menu({
-                                            let log_view = log_view.clone();
+                                            let log_view = log_view;
 
                                             move |window, cx| {
                                                 let id = log_view.read(cx).current_server_id?;
@@ -1595,7 +1592,7 @@ impl Render for LspLogToolbarItemView {
                                             .icon_color(Color::Muted),
                                         )
                                         .menu({
-                                            let log_view = log_view.clone();
+                                            let log_view = log_view;
 
                                             move |window, cx| {
                                                 let id = log_view.read(cx).current_server_id?;
@@ -1746,6 +1743,5 @@ pub enum Event {
 }
 
 impl EventEmitter<Event> for LogStore {}
-impl EventEmitter<Event> for LspLogView {}
 impl EventEmitter<EditorEvent> for LspLogView {}
 impl EventEmitter<SearchEvent> for LspLogView {}

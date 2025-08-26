@@ -8,7 +8,7 @@ use std::convert::TryFrom;
 pub const OPEN_ROUTER_API_URL: &str = "https://openrouter.ai/api/v1";
 
 fn is_none_or_empty<T: AsRef<[U]>, U>(opt: &Option<T>) -> bool {
-    opt.as_ref().map_or(true, |v| v.as_ref().is_empty())
+    opt.as_ref().is_none_or(|v| v.as_ref().is_empty())
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]

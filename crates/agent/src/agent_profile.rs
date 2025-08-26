@@ -90,7 +90,7 @@ impl AgentProfile {
             return false;
         };
 
-        return Self::is_enabled(settings, source, tool_name);
+        Self::is_enabled(settings, source, tool_name)
     }
 
     fn is_enabled(settings: &AgentProfileSettings, source: ToolSource, name: String) -> bool {
@@ -132,7 +132,7 @@ mod tests {
         });
         let tool_set = default_tool_set(cx);
 
-        let profile = AgentProfile::new(id.clone(), tool_set);
+        let profile = AgentProfile::new(id, tool_set);
 
         let mut enabled_tools = cx
             .read(|cx| profile.enabled_tools(cx))
@@ -169,7 +169,7 @@ mod tests {
         });
         let tool_set = default_tool_set(cx);
 
-        let profile = AgentProfile::new(id.clone(), tool_set);
+        let profile = AgentProfile::new(id, tool_set);
 
         let mut enabled_tools = cx
             .read(|cx| profile.enabled_tools(cx))
@@ -202,7 +202,7 @@ mod tests {
         });
         let tool_set = default_tool_set(cx);
 
-        let profile = AgentProfile::new(id.clone(), tool_set);
+        let profile = AgentProfile::new(id, tool_set);
 
         let mut enabled_tools = cx
             .read(|cx| profile.enabled_tools(cx))

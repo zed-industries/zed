@@ -161,7 +161,7 @@ impl SlashCommandOutput {
     }
 
     /// Returns this [`SlashCommandOutput`] as a stream of [`SlashCommandEvent`]s.
-    pub fn to_event_stream(mut self) -> BoxStream<'static, Result<SlashCommandEvent>> {
+    pub fn into_event_stream(mut self) -> BoxStream<'static, Result<SlashCommandEvent>> {
         self.ensure_valid_section_ranges();
 
         let mut events = Vec::new();
@@ -363,7 +363,7 @@ mod tests {
                 run_commands_in_text: false,
             };
 
-            let events = output.clone().to_event_stream().collect::<Vec<_>>().await;
+            let events = output.clone().into_event_stream().collect::<Vec<_>>().await;
             let events = events
                 .into_iter()
                 .filter_map(|event| event.ok())
@@ -386,7 +386,7 @@ mod tests {
             );
 
             let new_output =
-                SlashCommandOutput::from_event_stream(output.clone().to_event_stream())
+                SlashCommandOutput::from_event_stream(output.clone().into_event_stream())
                     .await
                     .unwrap();
 
@@ -415,7 +415,7 @@ mod tests {
                 run_commands_in_text: false,
             };
 
-            let events = output.clone().to_event_stream().collect::<Vec<_>>().await;
+            let events = output.clone().into_event_stream().collect::<Vec<_>>().await;
             let events = events
                 .into_iter()
                 .filter_map(|event| event.ok())
@@ -452,7 +452,7 @@ mod tests {
             );
 
             let new_output =
-                SlashCommandOutput::from_event_stream(output.clone().to_event_stream())
+                SlashCommandOutput::from_event_stream(output.clone().into_event_stream())
                     .await
                     .unwrap();
 
@@ -493,7 +493,7 @@ mod tests {
                 run_commands_in_text: false,
             };
 
-            let events = output.clone().to_event_stream().collect::<Vec<_>>().await;
+            let events = output.clone().into_event_stream().collect::<Vec<_>>().await;
             let events = events
                 .into_iter()
                 .filter_map(|event| event.ok())
@@ -562,7 +562,7 @@ mod tests {
             );
 
             let new_output =
-                SlashCommandOutput::from_event_stream(output.clone().to_event_stream())
+                SlashCommandOutput::from_event_stream(output.clone().into_event_stream())
                     .await
                     .unwrap();
 

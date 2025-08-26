@@ -85,7 +85,7 @@ where
             .menu(move |_window, _cx| Some(picker.clone()))
             .trigger_with_tooltip(self.trigger, self.tooltip)
             .anchor(self.anchor)
-            .when_some(self.handle.clone(), |menu, handle| menu.with_handle(handle))
+            .when_some(self.handle, |menu, handle| menu.with_handle(handle))
             .offset(gpui::Point {
                 x: px(0.0),
                 y: px(-2.0),

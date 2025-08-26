@@ -554,7 +554,7 @@ pub fn into_anthropic(
                     .into_iter()
                     .filter_map(|content| match content {
                         MessageContent::Text(text) => {
-                            let text = if text.chars().last().map_or(false, |c| c.is_whitespace()) {
+                            let text = if text.chars().last().is_some_and(|c| c.is_whitespace()) {
                                 text.trim_end().to_string()
                             } else {
                                 text
@@ -813,7 +813,7 @@ impl AnthropicEventMapper {
                             ))];
                         }
                     }
-                    return vec![];
+                    vec![]
                 }
             },
             Event::ContentBlockStop { index } => {
@@ -1041,9 +1041,9 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new(format!("To use {}, you need to add an API key. Follow these steps:", match self.target_agent {
-                    ConfigurationViewTargetAgent::ZedAgent => "Zed's agent with Anthropic",
-                    ConfigurationViewTargetAgent::Other(agent) => agent,
+                .child(Label::new(format!("To use {}, you need to add an API key. Follow these steps:", match &self.target_agent {
+                    ConfigurationViewTargetAgent::ZedAgent => "Zed's agent with Anthropic".into(),
+                    ConfigurationViewTargetAgent::Other(agent) => agent.clone(),
                 })))
                 .child(
                     List::new()

@@ -103,7 +103,7 @@ fn main() {
     let languages: HashSet<String> = args.languages.into_iter().collect();
 
     let http_client = Arc::new(ReqwestClient::new());
-    let app = Application::headless().with_http_client(http_client.clone());
+    let app = Application::headless().with_http_client(http_client);
     let all_threads = examples::all(&examples_dir);
 
     app.run(move |cx| {
@@ -112,7 +112,7 @@ fn main() {
         let telemetry = app_state.client.telemetry();
         telemetry.start(system_id, installation_id, session_id, cx);
 
-        let enable_telemetry = env::var("ZED_EVAL_TELEMETRY").map_or(false, |value| value == "1")
+        let enable_telemetry = env::var("ZED_EVAL_TELEMETRY").is_ok_and(|value| value == "1")
             && telemetry.has_checksum_seed();
         if enable_telemetry {
             println!("Telemetry enabled");
@@ -416,11 +416,7 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
 
     language::init(cx);
     debug_adapter_extension::init(extension_host_proxy.clone(), cx);
-    language_extension::init(
-        LspAccess::Noop,
-        extension_host_proxy.clone(),
-        languages.clone(),
-    );
+    language_extension::init(LspAccess::Noop, extension_host_proxy, languages.clone());
     language_model::init(client.clone(), cx);
     language_models::init(user_store.clone(), client.clone(), cx);
     languages::init(languages.clone(), node_runtime.clone(), cx);
@@ -530,7 +526,7 @@ async fn judge_example(
             example_name = example.name.clone(),
             example_repetition = example.repetition,
             diff_evaluation = judge_output.diff.clone(),
-            thread_evaluation = judge_output.thread.clone(),
+            thread_evaluation = judge_output.thread,
             tool_metrics = run_output.tool_metrics,
             response_count = run_output.response_count,
             token_usage = run_output.token_usage,
@@ -710,7 +706,7 @@ fn print_report(
             println!("Average thread score: {average_thread_score}%");
         }
 
-        println!("");
+        println!();
 
         print_h2("CUMULATIVE TOOL METRICS");
         println!("{}", cumulative_tool_metrics);

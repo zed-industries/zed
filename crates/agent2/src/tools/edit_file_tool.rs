@@ -34,25 +34,21 @@ const DEFAULT_UI_TEXT: &str = "Editing file";
 ///    - Use the `list_directory` tool to verify the parent directory exists and is the correct location
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EditFileToolInput {
-    /// A one-line, user-friendly markdown description of the edit. This will be
-    /// shown in the UI and also passed to another model to perform the edit.
+    /// A one-line, user-friendly markdown description of the edit. This will be shown in the UI and also passed to another model to perform the edit.
     ///
-    /// Be terse, but also descriptive in what you want to achieve with this
-    /// edit. Avoid generic instructions.
+    /// Be terse, but also descriptive in what you want to achieve with this edit. Avoid generic instructions.
     ///
     /// NEVER mention the file path in this description.
     ///
     /// <example>Fix API endpoint URLs</example>
     /// <example>Update copyright year in `page_footer`</example>
     ///
-    /// Make sure to include this field before all the others in the input object
-    /// so that we can display it immediately.
+    /// Make sure to include this field before all the others in the input object so that we can display it immediately.
     pub display_description: String,
 
     /// The full path of the file to create or modify in the project.
     ///
-    /// WARNING: When specifying which file path need changing, you MUST
-    /// start each path with one of the project's root directories.
+    /// WARNING: When specifying which file path need changing, you MUST start each path with one of the project's root directories.
     ///
     /// The following examples assume we have two root directories in the project:
     /// - /a/b/backend
@@ -61,22 +57,19 @@ pub struct EditFileToolInput {
     /// <example>
     /// `backend/src/main.rs`
     ///
-    /// Notice how the file path starts with `backend`. Without that, the path
-    /// would be ambiguous and the call would fail!
+    /// Notice how the file path starts with `backend`. Without that, the path would be ambiguous and the call would fail!
     /// </example>
     ///
     /// <example>
     /// `frontend/db.js`
     /// </example>
     pub path: PathBuf,
-
     /// The mode of operation on the file. Possible values:
     /// - 'edit': Make granular edits to an existing file.
     /// - 'create': Create a new file if it doesn't exist.
     /// - 'overwrite': Replace the entire contents of an existing file.
     ///
-    /// When a file already exists or you just created it, prefer editing
-    /// it as opposed to recreating it from scratch.
+    /// When a file already exists or you just created it, prefer editing it as opposed to recreating it from scratch.
     pub mode: EditFileMode,
 }
 
@@ -193,11 +186,11 @@ impl AgentTool for EditFileTool {
     type Input = EditFileToolInput;
     type Output = EditFileToolOutput;
 
-    fn name(&self) -> SharedString {
-        "edit_file".into()
+    fn name() -> &'static str {
+        "edit_file"
     }
 
-    fn kind(&self) -> acp::ToolKind {
+    fn kind() -> acp::ToolKind {
         acp::ToolKind::Edit
     }
 
@@ -427,7 +420,7 @@ impl AgentTool for EditFileTool {
 
             Ok(EditFileToolOutput {
                 input_path: input.path,
-                new_text: new_text.clone(),
+                new_text,
                 old_text,
                 diff: unified_diff,
                 edit_agent_output,
@@ -524,7 +517,6 @@ fn resolve_path(
 mod tests {
     use super::*;
     use crate::{ContextServerRegistry, Templates};
-    use action_log::ActionLog;
     use client::TelemetrySettings;
     use fs::Fs;
     use gpui::{TestAppContext, UpdateGlobal};
@@ -542,7 +534,6 @@ mod tests {
         fs.insert_tree("/root", json!({})).await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
@@ -551,10 +542,8 @@ mod tests {
                 project,
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
-                action_log,
                 Templates::new(),
                 Some(model),
-                None,
                 cx,
             )
         });
@@ -656,8 +645,7 @@ mod tests {
             mode: mode.clone(),
         };
 
-        let result = cx.update(|cx| resolve_path(&input, project, cx));
-        result
+        cx.update(|cx| resolve_path(&input, project, cx))
     }
 
     fn assert_resolved_path_eq(path: anyhow::Result<ProjectPath>, expected: &str) {
@@ -744,7 +732,6 @@ mod tests {
             }
         });
 
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
@@ -753,10 +740,8 @@ mod tests {
                 project,
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
-                action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
-                None,
                 cx,
             )
         });
@@ -811,7 +796,9 @@ mod tests {
             "Code should be formatted when format_on_save is enabled"
         );
 
-        let stale_buffer_count = action_log.read_with(cx, |log, cx| log.stale_buffers(cx).count());
+        let stale_buffer_count = thread
+            .read_with(cx, |thread, _cx| thread.action_log.clone())
+            .read_with(cx, |log, cx| log.stale_buffers(cx).count());
 
         assert_eq!(
             stale_buffer_count, 0,
@@ -889,17 +876,14 @@ mod tests {
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let model = Arc::new(FakeLanguageModel::default());
         let thread = cx.new(|cx| {
             Thread::new(
                 project,
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
-                action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
-                None,
                 cx,
             )
         });
@@ -1019,17 +1003,14 @@ mod tests {
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let model = Arc::new(FakeLanguageModel::default());
         let thread = cx.new(|cx| {
             Thread::new(
                 project,
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
-                action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
-                None,
                 cx,
             )
         });
@@ -1158,17 +1139,14 @@ mod tests {
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let model = Arc::new(FakeLanguageModel::default());
         let thread = cx.new(|cx| {
             Thread::new(
                 project,
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
-                action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
-                None,
                 cx,
             )
         });
@@ -1267,7 +1245,6 @@ mod tests {
         )
         .await;
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
@@ -1276,10 +1253,8 @@ mod tests {
                 project.clone(),
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry.clone(),
-                action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
-                None,
                 cx,
             )
         });
@@ -1350,7 +1325,6 @@ mod tests {
         .await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
@@ -1359,10 +1333,8 @@ mod tests {
                 project.clone(),
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry.clone(),
-                action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
-                None,
                 cx,
             )
         });
@@ -1436,7 +1408,6 @@ mod tests {
         .await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
@@ -1445,10 +1416,8 @@ mod tests {
                 project.clone(),
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry.clone(),
-                action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
-                None,
                 cx,
             )
         });
@@ -1519,7 +1488,6 @@ mod tests {
         let fs = project::FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
@@ -1528,10 +1496,8 @@ mod tests {
                 project.clone(),
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
-                action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
-                None,
                 cx,
             )
         });

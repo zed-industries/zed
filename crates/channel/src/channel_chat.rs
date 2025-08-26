@@ -340,7 +340,7 @@ impl ChannelChat {
                         return ControlFlow::Break(
                             if cursor
                                 .item()
-                                .map_or(false, |message| message.id == message_id)
+                                .is_some_and(|message| message.id == message_id)
                             {
                                 Some(cursor.start().1.0)
                             } else {
@@ -362,7 +362,7 @@ impl ChannelChat {
         if let ChannelMessageId::Saved(latest_message_id) = self.messages.summary().max_id
             && self
                 .last_acknowledged_id
-                .map_or(true, |acknowledged_id| acknowledged_id < latest_message_id)
+                .is_none_or(|acknowledged_id| acknowledged_id < latest_message_id)
         {
             self.rpc
                 .send(proto::AckChannelMessage {
@@ -612,7 +612,7 @@ impl ChannelChat {
                 while let Some(message) = old_cursor.item() {
                     let message_ix = old_cursor.start().1.0;
                     if nonces.contains(&message.nonce) {
-                        if ranges.last().map_or(false, |r| r.end == message_ix) {
+                        if ranges.last().is_some_and(|r| r.end == message_ix) {
                             ranges.last_mut().unwrap().end += 1;
                         } else {
                             ranges.push(message_ix..message_ix + 1);

@@ -108,7 +108,7 @@ impl From<SharedString> for Arc<str> {
     fn from(val: SharedString) -> Self {
         match val.0 {
             ArcCow::Borrowed(borrowed) => Arc::from(borrowed),
-            ArcCow::Owned(owned) => owned.clone(),
+            ArcCow::Owned(owned) => owned,
         }
     }
 }

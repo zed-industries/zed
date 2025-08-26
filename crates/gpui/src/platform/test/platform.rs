@@ -187,14 +187,14 @@ impl TestPlatform {
             .push_back(TestPrompt {
                 msg: msg.to_string(),
                 detail: detail.map(|s| s.to_string()),
-                answers: answers.clone(),
+                answers,
                 tx,
             });
         rx
     }
 
     pub(crate) fn set_active_window(&self, window: Option<TestWindow>) {
-        let executor = self.foreground_executor().clone();
+        let executor = self.foreground_executor();
         let previous_window = self.active_window.borrow_mut().take();
         self.active_window.borrow_mut().clone_from(&window);
 

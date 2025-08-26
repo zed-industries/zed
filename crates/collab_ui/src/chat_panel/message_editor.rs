@@ -397,11 +397,10 @@ impl MessageEditor {
     ) -> Option<(Anchor, String, &'static [StringMatchCandidate])> {
         static EMOJI_FUZZY_MATCH_CANDIDATES: LazyLock<Vec<StringMatchCandidate>> =
             LazyLock::new(|| {
-                let emojis = emojis::iter()
+                emojis::iter()
                     .flat_map(|s| s.shortcodes())
                     .map(|emoji| StringMatchCandidate::new(0, emoji))
-                    .collect::<Vec<_>>();
-                emojis
+                    .collect::<Vec<_>>()
             });
 
         let end_offset = end_anchor.to_offset(buffer.read(cx));

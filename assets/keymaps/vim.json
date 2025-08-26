@@ -819,7 +819,7 @@
       "v": "project_panel::OpenPermanent",
       "p": "project_panel::Open",
       "x": "project_panel::RevealInFileManager",
-      "s": "project_panel::OpenWithSystem",
+      "s": "workspace::OpenWithSystem",
       "z d": "project_panel::CompareMarkedFiles",
       "] c": "project_panel::SelectNextGitEntry",
       "[ c": "project_panel::SelectPrevGitEntry",

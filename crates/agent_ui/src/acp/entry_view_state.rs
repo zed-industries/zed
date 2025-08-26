@@ -1,7 +1,8 @@
-use std::ops::Range;
+use std::{cell::Cell, ops::Range, rc::Rc};
 
 use acp_thread::{AcpThread, AgentThreadEntry};
-use agent::{TextThreadStore, ThreadStore};
+use agent_client_protocol::{PromptCapabilities, ToolCallId};
+use agent2::HistoryStore;
 use collections::HashMap;
 use editor::{Editor, EditorMode, MinimapVisibility};
 use gpui::{
@@ -10,6 +11,7 @@ use gpui::{
 };
 use language::language_settings::SoftWrap;
 use project::Project;
+use prompt_store::PromptStore;
 use settings::Settings as _;
 use terminal_view::TerminalView;
 use theme::ThemeSettings;
@@ -21,27 +23,30 @@ use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
 pub struct EntryViewState {
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
-    thread_store: Entity<ThreadStore>,
-    text_thread_store: Entity<TextThreadStore>,
+    history_store: Entity<HistoryStore>,
+    prompt_store: Option<Entity<PromptStore>>,
     entries: Vec<Entry>,
     prevent_slash_commands: bool,
+    prompt_capabilities: Rc<Cell<PromptCapabilities>>,
 }
 
 impl EntryViewState {
     pub fn new(
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
-        thread_store: Entity<ThreadStore>,
-        text_thread_store: Entity<TextThreadStore>,
+        history_store: Entity<HistoryStore>,
+        prompt_store: Option<Entity<PromptStore>>,
+        prompt_capabilities: Rc<Cell<PromptCapabilities>>,
         prevent_slash_commands: bool,
     ) -> Self {
         Self {
             workspace,
             project,
-            thread_store,
-            text_thread_store,
+            history_store,
+            prompt_store,
             entries: Vec::new(),
             prevent_slash_commands,
+            prompt_capabilities,
         }
     }
 
@@ -77,8 +82,9 @@ impl EntryViewState {
                         let mut editor = MessageEditor::new(
                             self.workspace.clone(),
                             self.project.clone(),
-                            self.thread_store.clone(),
-                            self.text_thread_store.clone(),
+                            self.history_store.clone(),
+                            self.prompt_store.clone(),
+                            self.prompt_capabilities.clone(),
                             "Edit message － @ to include context",
                             self.prevent_slash_commands,
                             editor::EditorMode::AutoHeight {
@@ -105,6 +111,7 @@ impl EntryViewState {
                 }
             }
             AgentThreadEntry::ToolCall(tool_call) => {
+                let id = tool_call.id.clone();
                 let terminals = tool_call.terminals().cloned().collect::<Vec<_>>();
                 let diffs = tool_call.diffs().cloned().collect::<Vec<_>>();
 
@@ -120,21 +127,31 @@ impl EntryViewState {
 
                 for terminal in terminals {
                     views.entry(terminal.entity_id()).or_insert_with(|| {
-                        create_terminal(
+                        let element = create_terminal(
                             self.workspace.clone(),
                             self.project.clone(),
                             terminal.clone(),
                             window,
                             cx,
                         )
-                        .into_any()
+                        .into_any();
+                        cx.emit(EntryViewEvent {
+                            entry_index: index,
+                            view_event: ViewEvent::NewTerminal(id.clone()),
+                        });
+                        element
                     });
                 }
 
                 for diff in diffs {
-                    views
-                        .entry(diff.entity_id())
-                        .or_insert_with(|| create_editor_diff(diff.clone(), window, cx).into_any());
+                    views.entry(diff.entity_id()).or_insert_with(|| {
+                        let element = create_editor_diff(diff.clone(), window, cx).into_any();
+                        cx.emit(EntryViewEvent {
+                            entry_index: index,
+                            view_event: ViewEvent::NewDiff(id.clone()),
+                        });
+                        element
+                    });
                 }
             }
             AgentThreadEntry::AssistantMessage(_) => {
@@ -186,9 +203,12 @@ pub struct EntryViewEvent {
 }
 
 pub enum ViewEvent {
+    NewDiff(ToolCallId),
+    NewTerminal(ToolCallId),
     MessageEditorEvent(Entity<MessageEditor>, MessageEditorEvent),
 }
 
+#[derive(Debug)]
 pub enum Entry {
     UserMessage(Entity<MessageEditor>),
     Content(HashMap<EntityId, AnyEntity>),
@@ -312,9 +332,10 @@ mod tests {
     use std::{path::Path, rc::Rc};
 
     use acp_thread::{AgentConnection, StubAgentConnection};
-    use agent::{TextThreadStore, ThreadStore};
     use agent_client_protocol as acp;
     use agent_settings::AgentSettings;
+    use agent2::HistoryStore;
+    use assistant_context::ContextStore;
     use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
     use editor::{EditorSettings, RowInfo};
     use fs::FakeFs;
@@ -377,15 +398,16 @@ mod tests {
             connection.send_update(session_id, acp::SessionUpdate::ToolCall(tool_call), cx)
         });
 
-        let thread_store = cx.new(|cx| ThreadStore::fake(project.clone(), cx));
-        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+        let context_store = cx.new(|cx| ContextStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
 
         let view_state = cx.new(|_cx| {
             EntryViewState::new(
                 workspace.downgrade(),
                 project.clone(),
-                thread_store,
-                text_thread_store,
+                history_store,
+                None,
+                Default::default(),
                 false,
             )
         });

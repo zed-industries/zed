@@ -64,7 +64,7 @@ mod any_image_cache {
         cx: &mut App,
     ) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
         let image_cache = image_cache.clone().downcast::<I>().unwrap();
-        return image_cache.update(cx, |image_cache, cx| image_cache.load(resource, window, cx));
+        image_cache.update(cx, |image_cache, cx| image_cache.load(resource, window, cx))
     }
 }
 

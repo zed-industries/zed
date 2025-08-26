@@ -270,9 +270,7 @@ impl PlatformDispatcher for TestDispatcher {
     fn dispatch(&self, runnable: Runnable, label: Option<TaskLabel>) {
         {
             let mut state = self.state.lock();
-            if label.map_or(false, |label| {
-                state.deprioritized_task_labels.contains(&label)
-            }) {
+            if label.is_some_and(|label| state.deprioritized_task_labels.contains(&label)) {
                 state.deprioritized_background.push(runnable);
             } else {
                 state.background.push(runnable);

@@ -304,7 +304,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                                         let worktree = worktree.read(cx);
                                         worktree.is_visible()
                                             && worktree.entries(false, 0).any(|e| e.is_file())
-                                            && worktree.root_entry().map_or(false, |e| e.is_dir())
+                                            && worktree.root_entry().is_some_and(|e| e.is_dir())
                                     })
                                     .choose(rng)
                             });
@@ -643,7 +643,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                 );
 
                 let project = project.await?;
-                client.dev_server_projects_mut().push(project.clone());
+                client.dev_server_projects_mut().push(project);
             }
 
             ClientOperation::CreateWorktreeEntry {

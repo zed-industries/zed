@@ -609,7 +609,7 @@ impl PlatformTextSystem for NoopTextSystem {
     }
 
     fn font_id(&self, _descriptor: &Font) -> Result<FontId> {
-        return Ok(FontId(1));
+        Ok(FontId(1))
     }
 
     fn font_metrics(&self, _font_id: FontId) -> FontMetrics {
@@ -690,7 +690,7 @@ impl PlatformTextSystem for NoopTextSystem {
             }
         }
         let mut runs = Vec::default();
-        if glyphs.len() > 0 {
+        if !glyphs.is_empty() {
             runs.push(ShapedRun {
                 font_id: FontId(0),
                 glyphs,

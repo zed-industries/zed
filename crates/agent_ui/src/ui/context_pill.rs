@@ -499,7 +499,7 @@ impl AddedContext {
                 let thread = handle.thread.clone();
                 Some(Rc::new(move |_, cx| {
                     let text = thread.read(cx).latest_detailed_summary_or_text();
-                    ContextPillHover::new_text(text.clone(), cx).into()
+                    ContextPillHover::new_text(text, cx).into()
                 }))
             },
             handle: AgentContextHandle::Thread(handle),
@@ -574,7 +574,7 @@ impl AddedContext {
             .unwrap_or_else(|| "Unnamed Rule".into());
         Some(AddedContext {
             kind: ContextKind::Rules,
-            name: title.clone(),
+            name: title,
             parent: None,
             tooltip: None,
             icon_path: None,

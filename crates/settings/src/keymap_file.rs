@@ -653,7 +653,7 @@ impl KeymapFile {
             let is_only_binding = keymap.0[index]
                 .bindings
                 .as_ref()
-                .map_or(true, |bindings| bindings.len() == 1);
+                .is_none_or(|bindings| bindings.len() == 1);
             let key_path: &[&str] = if is_only_binding {
                 &[]
             } else {
@@ -703,7 +703,7 @@ impl KeymapFile {
                 } else if keymap.0[index]
                     .bindings
                     .as_ref()
-                    .map_or(true, |bindings| bindings.len() == 1)
+                    .is_none_or(|bindings| bindings.len() == 1)
                 {
                     // if we are replacing the only binding in the section,
                     // just update the section in place, updating the context
@@ -1056,10 +1056,10 @@ mod tests {
 
     #[track_caller]
     fn parse_keystrokes(keystrokes: &str) -> Vec<Keystroke> {
-        return keystrokes
+        keystrokes
             .split(' ')
             .map(|s| Keystroke::parse(s).expect("Keystrokes valid"))
-            .collect();
+            .collect()
     }
 
     #[test]

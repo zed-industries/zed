@@ -103,26 +103,21 @@ impl ActivityIndicator {
             cx.subscribe_in(
                 &workspace_handle,
                 window,
-                |activity_indicator, _, event, window, cx| match event {
-                    workspace::Event::ClearActivityIndicator { .. } => {
-                        if activity_indicator.statuses.pop().is_some() {
-                            activity_indicator.dismiss_error_message(
-                                &DismissErrorMessage,
-                                window,
-                                cx,
-                            );
-                            cx.notify();
-                        }
+                |activity_indicator, _, event, window, cx| {
+                    if let workspace::Event::ClearActivityIndicator = event
+                        && activity_indicator.statuses.pop().is_some()
+                    {
+                        activity_indicator.dismiss_error_message(&DismissErrorMessage, window, cx);
+                        cx.notify();
                     }
-                    _ => {}
                 },
             )
             .detach();
 
             cx.subscribe(
                 &project.read(cx).lsp_store(),
-                |activity_indicator, _, event, cx| match event {
-                    LspStoreEvent::LanguageServerUpdate { name, message, .. } => {
+                |activity_indicator, _, event, cx| {
+                    if let LspStoreEvent::LanguageServerUpdate { name, message, .. } = event {
                         if let proto::update_language_server::Variant::StatusUpdate(status_update) =
                             message
                         {
@@ -191,7 +186,6 @@ impl ActivityIndicator {
                         }
                         cx.notify()
                     }
-                    _ => {}
                 },
             )
             .detach();
@@ -206,9 +200,10 @@ impl ActivityIndicator {
 
             cx.subscribe(
                 &project.read(cx).git_store().clone(),
-                |_, _, event: &GitStoreEvent, cx| match event {
-                    project::git_store::GitStoreEvent::JobsUpdated => cx.notify(),
-                    _ => {}
+                |_, _, event: &GitStoreEvent, cx| {
+                    if let project::git_store::GitStoreEvent::JobsUpdated = event {
+                        cx.notify()
+                    }
                 },
             )
             .detach();

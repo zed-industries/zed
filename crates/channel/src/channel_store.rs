@@ -568,16 +568,14 @@ impl ChannelStore {
         self.channel_index
             .by_id()
             .get(&channel_id)
-            .map_or(false, |channel| channel.is_root_channel())
+            .is_some_and(|channel| channel.is_root_channel())
     }
 
     pub fn is_public_channel(&self, channel_id: ChannelId) -> bool {
         self.channel_index
             .by_id()
             .get(&channel_id)
-            .map_or(false, |channel| {
-                channel.visibility == ChannelVisibility::Public
-            })
+            .is_some_and(|channel| channel.visibility == ChannelVisibility::Public)
     }
 
     pub fn channel_capability(&self, channel_id: ChannelId) -> Capability {
@@ -1075,7 +1073,7 @@ impl ChannelStore {
 
                 if let Some(this) = this.upgrade() {
                     this.update(cx, |this, cx| {
-                        for (_, buffer) in &this.opened_buffers {
+                        for buffer in this.opened_buffers.values() {
                             if let OpenEntityHandle::Open(buffer) = &buffer
                                 && let Some(buffer) = buffer.upgrade()
                             {

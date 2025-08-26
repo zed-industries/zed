@@ -232,15 +232,12 @@ impl X11ClientStatePtr {
         };
         let mut state = client.0.borrow_mut();
 
-        if let Some(window_ref) = state.windows.remove(&x_window) {
-            match window_ref.refresh_state {
-                Some(RefreshState::PeriodicRefresh {
-                    event_loop_token, ..
-                }) => {
-                    state.loop_handle.remove(event_loop_token);
-                }
-                _ => {}
-            }
+        if let Some(window_ref) = state.windows.remove(&x_window)
+            && let Some(RefreshState::PeriodicRefresh {
+                event_loop_token, ..
+            }) = window_ref.refresh_state
+        {
+            state.loop_handle.remove(event_loop_token);
         }
         if state.mouse_focused_window == Some(x_window) {
             state.mouse_focused_window = None;
@@ -459,7 +456,7 @@ impl X11Client {
                 move |event, _, client| match event {
                     XDPEvent::WindowAppearance(appearance) => {
                         client.with_common(|common| common.appearance = appearance);
-                        for (_, window) in &mut client.0.borrow_mut().windows {
+                        for window in client.0.borrow_mut().windows.values_mut() {
                             window.window.set_appearance(appearance);
                         }
                     }
@@ -876,22 +873,19 @@ impl X11Client {
                 let Some(reply) = reply else {
                     return Some(());
                 };
-                match str::from_utf8(&reply.value) {
-                    Ok(file_list) => {
-                        let paths: SmallVec<[_; 2]> = file_list
-                            .lines()
-                            .filter_map(|path| Url::parse(path).log_err())
-                            .filter_map(|url| url.to_file_path().log_err())
-                            .collect();
-                        let input = PlatformInput::FileDrop(FileDropEvent::Entered {
-                            position: state.xdnd_state.position,
-                            paths: crate::ExternalPaths(paths),
-                        });
-                        drop(state);
-                        window.handle_input(input);
-                        self.0.borrow_mut().xdnd_state.retrieved = true;
-                    }
-                    Err(_) => {}
+                if let Ok(file_list) = str::from_utf8(&reply.value) {
+                    let paths: SmallVec<[_; 2]> = file_list
+                        .lines()
+                        .filter_map(|path| Url::parse(path).log_err())
+                        .filter_map(|url| url.to_file_path().log_err())
+                        .collect();
+                    let input = PlatformInput::FileDrop(FileDropEvent::Entered {
+                        position: state.xdnd_state.position,
+                        paths: crate::ExternalPaths(paths),
+                    });
+                    drop(state);
+                    window.handle_input(input);
+                    self.0.borrow_mut().xdnd_state.retrieved = true;
                 }
             }
             Event::ConfigureNotify(event) => {
@@ -1335,7 +1329,7 @@ impl X11Client {
         state.composing = false;
         drop(state);
         if let Some(mut keystroke) = keystroke {
-            keystroke.key_char = Some(text.clone());
+            keystroke.key_char = Some(text);
             window.handle_input(PlatformInput::KeyDown(crate::KeyDownEvent {
                 keystroke,
                 is_held: false,
@@ -1586,11 +1580,11 @@ impl LinuxClient for X11Client {
 
     fn read_from_primary(&self) -> Option<crate::ClipboardItem> {
         let state = self.0.borrow_mut();
-        return state
+        state
             .clipboard
             .get_any(clipboard::ClipboardKind::Primary)
             .context("X11: Failed to read from clipboard (primary)")
-            .log_with_level(log::Level::Debug);
+            .log_with_level(log::Level::Debug)
     }
 
     fn read_from_clipboard(&self) -> Option<crate::ClipboardItem> {
@@ -1603,11 +1597,11 @@ impl LinuxClient for X11Client {
         {
             return state.clipboard_item.clone();
         }
-        return state
+        state
             .clipboard
             .get_any(clipboard::ClipboardKind::Clipboard)
             .context("X11: Failed to read from clipboard (clipboard)")
-            .log_with_level(log::Level::Debug);
+            .log_with_level(log::Level::Debug)
     }
 
     fn run(&self) {
@@ -2010,12 +2004,12 @@ fn check_gtk_frame_extents_supported(
 }
 
 fn xdnd_is_atom_supported(atom: u32, atoms: &XcbAtoms) -> bool {
-    return atom == atoms.TEXT
+    atom == atoms.TEXT
         || atom == atoms.STRING
         || atom == atoms.UTF8_STRING
         || atom == atoms.TEXT_PLAIN
         || atom == atoms.TEXT_PLAIN_UTF8
-        || atom == atoms.TextUriList;
+        || atom == atoms.TextUriList
 }
 
 fn xdnd_get_supported_atom(
@@ -2043,7 +2037,7 @@ fn xdnd_get_supported_atom(
             }
         }
     }
-    return 0;
+    0
 }
 
 fn xdnd_send_finished(
@@ -2114,7 +2108,7 @@ fn current_pointer_device_states(
                     .classes
                     .iter()
                     .filter_map(|class| class.data.as_scroll())
-                    .map(|class| *class)
+                    .copied()
                     .rev()
                     .collect::<Vec<_>>();
                 let old_state = scroll_values_to_preserve.get(&info.deviceid);
@@ -2144,7 +2138,7 @@ fn current_pointer_device_states(
     if pointer_device_states.is_empty() {
         log::error!("Found no xinput mouse pointers.");
     }
-    return Some(pointer_device_states);
+    Some(pointer_device_states)
 }
 
 /// Returns true if the device is a pointer device. Does not include pointer device groups.

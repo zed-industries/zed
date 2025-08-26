@@ -235,12 +235,10 @@ fn adjust_lightness_for_contrast(
             } else {
                 high = mid;
             }
+        } else if should_go_darker {
+            high = mid;
         } else {
-            if should_go_darker {
-                high = mid;
-            } else {
-                low = mid;
-            }
+            low = mid;
         }
 
         // If we're close enough to the target, stop

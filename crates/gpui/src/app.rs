@@ -2006,8 +2006,8 @@ impl App {
             .unwrap_or_else(|| {
                 is_first = true;
                 let future = A::load(source.clone(), self);
-                let task = self.background_executor().spawn(future).shared();
-                task
+
+                self.background_executor().spawn(future).shared()
             });
 
         self.loading_assets.insert(asset_id, Box::new(task.clone()));

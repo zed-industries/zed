@@ -46,7 +46,7 @@ impl ZedPredictModal {
                         user_store.clone(),
                         client.clone(),
                         copilot::Copilot::global(cx)
-                            .map_or(false, |copilot| copilot.read(cx).status().is_configured()),
+                            .is_some_and(|copilot| copilot.read(cx).status().is_configured()),
                         Arc::new({
                             let this = weak_entity.clone();
                             move |_window, cx| {

@@ -120,7 +120,6 @@ impl Vim {
                 });
             })
         });
-        return;
     }
 
     fn open_path_mark(

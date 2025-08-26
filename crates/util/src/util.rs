@@ -301,7 +301,7 @@ pub fn get_shell_safe_zed_path() -> anyhow::Result<String> {
     let zed_path_escaped =
         shlex::try_quote(&zed_path).context("Failed to shell-escape Zed executable path.")?;
 
-    return Ok(zed_path_escaped.to_string());
+    Ok(zed_path_escaped.to_string())
 }
 
 #[cfg(unix)]
@@ -825,7 +825,7 @@ mod rng {
         pub fn new(rng: T) -> Self {
             Self {
                 rng,
-                simple_text: std::env::var("SIMPLE_TEXT").map_or(false, |v| !v.is_empty()),
+                simple_text: std::env::var("SIMPLE_TEXT").is_ok_and(|v| !v.is_empty()),
             }
         }
 

@@ -103,7 +103,7 @@ impl PythonLspAdapter {
 #[async_trait(?Send)]
 impl LspAdapter for PythonLspAdapter {
     fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
+        Self::SERVER_NAME
     }
 
     async fn initialization_options(
@@ -711,7 +711,7 @@ impl Default for PythonToolchainProvider {
     }
 }
 
-static ENV_PRIORITY_LIST: &'static [PythonEnvironmentKind] = &[
+static ENV_PRIORITY_LIST: &[PythonEnvironmentKind] = &[
     // Prioritize non-Conda environments.
     PythonEnvironmentKind::Poetry,
     PythonEnvironmentKind::Pipenv,
@@ -828,7 +828,7 @@ impl ToolchainLister for PythonToolchainProvider {
                         .get_env_var("CONDA_PREFIX".to_string())
                         .map(|conda_prefix| {
                             let is_match = |exe: &Option<PathBuf>| {
-                                exe.as_ref().map_or(false, |e| e.starts_with(&conda_prefix))
+                                exe.as_ref().is_some_and(|e| e.starts_with(&conda_prefix))
                             };
                             match (is_match(&lhs.executable), is_match(&rhs.executable)) {
                                 (true, false) => Ordering::Less,
@@ -1026,7 +1026,7 @@ const BINARY_DIR: &str = if cfg!(target_os = "windows") {
 #[async_trait(?Send)]
 impl LspAdapter for PyLspAdapter {
     fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
+        Self::SERVER_NAME
     }
 
     async fn check_if_user_installed(
@@ -1318,7 +1318,7 @@ impl BasedPyrightLspAdapter {
 #[async_trait(?Send)]
 impl LspAdapter for BasedPyrightLspAdapter {
     fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
+        Self::SERVER_NAME
     }
 
     async fn initialization_options(

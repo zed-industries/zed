@@ -115,8 +115,7 @@ impl MarkdownPreviewView {
                         pane.activate_item(existing_follow_view_idx, true, true, window, cx);
                     });
                 } else {
-                    let view =
-                        Self::create_following_markdown_view(workspace, editor.clone(), window, cx);
+                    let view = Self::create_following_markdown_view(workspace, editor, window, cx);
                     workspace.active_pane().update(cx, |pane, cx| {
                         pane.add_item(Box::new(view.clone()), true, true, None, window, cx)
                     });

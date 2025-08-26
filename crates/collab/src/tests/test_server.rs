@@ -370,8 +370,8 @@ impl TestServer {
         let client = TestClient {
             app_state,
             username: name.to_string(),
-            channel_store: cx.read(ChannelStore::global).clone(),
-            notification_store: cx.read(NotificationStore::global).clone(),
+            channel_store: cx.read(ChannelStore::global),
+            notification_store: cx.read(NotificationStore::global),
             state: Default::default(),
         };
         client.wait_for_current_user(cx).await;
@@ -897,7 +897,7 @@ impl TestClient {
         let window = cx.update(|cx| cx.active_window().unwrap().downcast::<Workspace>().unwrap());
 
         let entity = window.root(cx).unwrap();
-        let cx = VisualTestContext::from_window(*window.deref(), cx).as_mut();
+        let cx = VisualTestContext::from_window(*window.deref(), cx).into_mut();
         // it might be nice to try and cleanup these at the end of each test.
         (entity, cx)
     }

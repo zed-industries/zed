@@ -26,6 +26,7 @@ use std::thread;
 use std::time::Duration;
 use util::ResultExt;
 use util::paths::PathWithPosition;
+use workspace::PathList;
 use workspace::item::ItemHandle;
 use workspace::{AppState, OpenOptions, SerializedWorkspaceLocation, Workspace};
 
@@ -102,11 +103,8 @@ impl OpenRequest {
             self.open_paths.is_empty(),
             "cannot open both local and ssh paths"
         );
-        let mut connection_options = SshSettings::get_global(cx).connection_options_for(
-            host.clone(),
-            port,
-            username.clone(),
-        );
+        let mut connection_options =
+            SshSettings::get_global(cx).connection_options_for(host, port, username);
         if let Some(password) = url.password() {
             connection_options.password = Some(password.to_string());
         }
@@ -364,12 +362,14 @@ async fn open_workspaces(
         if open_new_workspace == Some(true) {
             Vec::new()
         } else {
-            let locations = restorable_workspace_locations(cx, &app_state).await;
-            locations.unwrap_or_default()
+            restorable_workspace_locations(cx, &app_state)
+                .await
+                .unwrap_or_default()
         }
     } else {
-        vec![SerializedWorkspaceLocation::from_local_paths(
-            paths.into_iter().map(PathBuf::from),
+        vec![(
+            SerializedWorkspaceLocation::Local,
+            PathList::new(&paths.into_iter().map(PathBuf::from).collect::<Vec<_>>()),
         )]
     };
 
@@ -397,9 +397,9 @@ async fn open_workspaces(
         // If there are paths to open, open a workspace for each grouping of paths
         let mut errored = false;
 
-        for location in grouped_locations {
+        for (location, workspace_paths) in grouped_locations {
             match location {
-                SerializedWorkspaceLocation::Local(workspace_paths, _) => {
+                SerializedWorkspaceLocation::Local => {
                     let workspace_paths = workspace_paths
                         .paths()
                         .iter()
@@ -432,7 +432,7 @@ async fn open_workspaces(
                         cx.spawn(async move |cx| {
                             open_ssh_project(
                                 connection_options,
-                                ssh.paths.into_iter().map(PathBuf::from).collect(),
+                                workspace_paths.paths().to_vec(),
                                 app_state,
                                 OpenOptions::default(),
                                 cx,

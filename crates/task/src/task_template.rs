@@ -183,6 +183,10 @@ impl TaskTemplate {
                 &mut substituted_variables,
             )?
         } else {
+            #[allow(
+                clippy::redundant_clone,
+                reason = "We want to clone the full_label to avoid borrowing it in the fold closure"
+            )]
             full_label.clone()
         }
         .lines()
@@ -453,7 +457,7 @@ mod tests {
             TaskTemplate {
                 label: "".to_string(),
                 command: "".to_string(),
-                ..task_with_all_properties.clone()
+                ..task_with_all_properties
             },
         ] {
             assert_eq!(
@@ -521,7 +525,7 @@ mod tests {
         );
 
         let cx = TaskContext {
-            cwd: Some(context_cwd.clone()),
+            cwd: Some(context_cwd),
             task_variables: TaskVariables::default(),
             project_env: HashMap::default(),
         };
@@ -768,7 +772,7 @@ mod tests {
                     "test_env_key".to_string(),
                     format!("test_env_var_{}", VariableName::Symbol.template_value()),
                 )]),
-                ..task_with_all_properties.clone()
+                ..task_with_all_properties
             },
         ]
         .into_iter()
@@ -871,7 +875,7 @@ mod tests {
 
         let context = TaskContext {
             cwd: None,
-            task_variables: TaskVariables::from_iter(all_variables.clone()),
+            task_variables: TaskVariables::from_iter(all_variables),
             project_env,
         };
 

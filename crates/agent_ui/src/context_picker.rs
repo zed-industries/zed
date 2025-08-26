@@ -385,12 +385,11 @@ impl ContextPicker {
     }
 
     pub fn select_first(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match &self.mode {
-            ContextPickerState::Default(entity) => entity.update(cx, |entity, cx| {
+        // Other variants already select their first entry on open automatically
+        if let ContextPickerState::Default(entity) = &self.mode {
+            entity.update(cx, |entity, cx| {
                 entity.select_first(&Default::default(), window, cx)
-            }),
-            // Other variants already select their first entry on open automatically
-            _ => {}
+            })
         }
     }
 
@@ -610,9 +609,7 @@ pub(crate) fn available_context_picker_entries(
         .read(cx)
         .active_item(cx)
         .and_then(|item| item.downcast::<Editor>())
-        .map_or(false, |editor| {
-            editor.update(cx, |editor, cx| editor.has_non_empty_selection(cx))
-        });
+        .is_some_and(|editor| editor.update(cx, |editor, cx| editor.has_non_empty_selection(cx)));
     if has_selection {
         entries.push(ContextPickerEntry::Action(
             ContextPickerAction::AddSelections,
@@ -680,7 +677,7 @@ pub(crate) fn recent_context_picker_entries(
             .filter(|(_, abs_path)| {
                 abs_path
                     .as_ref()
-                    .map_or(true, |path| !exclude_paths.contains(path.as_path()))
+                    .is_none_or(|path| !exclude_paths.contains(path.as_path()))
             })
             .take(4)
             .filter_map(|(project_path, _)| {
@@ -821,13 +818,8 @@ pub fn crease_for_mention(
 
     let render_trailer = move |_row, _unfold, _window: &mut Window, _cx: &mut App| Empty.into_any();
 
-    Crease::inline(
-        range,
-        placeholder.clone(),
-        fold_toggle("mention"),
-        render_trailer,
-    )
-    .with_metadata(CreaseMetadata { icon_path, label })
+    Crease::inline(range, placeholder, fold_toggle("mention"), render_trailer)
+        .with_metadata(CreaseMetadata { icon_path, label })
 }
 
 fn render_fold_icon_button(

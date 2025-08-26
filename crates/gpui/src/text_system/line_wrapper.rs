@@ -44,7 +44,7 @@ impl LineWrapper {
         let mut prev_c = '\0';
         let mut index = 0;
         let mut candidates = fragments
-            .into_iter()
+            .iter()
             .flat_map(move |fragment| fragment.wrap_boundary_candidates())
             .peekable();
         iter::from_fn(move || {

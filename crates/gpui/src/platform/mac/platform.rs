@@ -797,7 +797,7 @@ impl Platform for MacPlatform {
                                         .to_owned();
                                         result.set_file_name(&new_filename);
                                     }
-                                    return result;
+                                    result
                                 })
                             }
                         }

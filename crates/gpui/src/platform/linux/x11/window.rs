@@ -95,7 +95,7 @@ fn query_render_extent(
 }
 
 impl ResizeEdge {
-    fn to_moveresize(&self) -> u32 {
+    fn to_moveresize(self) -> u32 {
         match self {
             ResizeEdge::TopLeft => 0,
             ResizeEdge::Top => 1,

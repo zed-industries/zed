@@ -58,13 +58,7 @@ pub trait FluentBuilder {
     where
         Self: Sized,
     {
-        self.map(|this| {
-            if let Some(_) = option {
-                this
-            } else {
-                then(this)
-            }
-        })
+        self.map(|this| if option.is_some() { this } else { then(this) })
     }
 }
 

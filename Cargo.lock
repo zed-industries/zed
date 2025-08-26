@@ -7,7 +7,6 @@ name = "acp_thread"
 version = "0.1.0"
 dependencies = [
  "action_log",
- "agent",
  "agent-client-protocol",
  "anyhow",
  "buffer_diff",
@@ -37,6 +36,26 @@ dependencies = [
  "util",
  "uuid",
  "watch",
+ "workspace-hack",
+]
+
+[[package]]
+name = "acp_tools"
+version = "0.1.0"
+dependencies = [
+ "agent-client-protocol",
+ "collections",
+ "gpui",
+ "language",
+ "markdown",
+ "project",
+ "serde",
+ "serde_json",
+ "settings",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
  "workspace-hack",
 ]
 
@@ -172,11 +191,12 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.0.26"
+version = "0.0.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "160971bb53ca0b2e70ebc857c21e24eb448745f1396371015f4c59e9a9e51ed0"
+checksum = "289eb34ee17213dadcca47eedadd386a5e7678094095414e475965d1bcca2860"
 dependencies = [
  "anyhow",
+ "async-broadcast",
  "futures 0.3.31",
  "log",
  "parking_lot",
@@ -196,6 +216,7 @@ dependencies = [
  "agent_servers",
  "agent_settings",
  "anyhow",
+ "assistant_context",
  "assistant_tool",
  "assistant_tools",
  "chrono",
@@ -205,6 +226,7 @@ dependencies = [
  "collections",
  "context_server",
  "ctor",
+ "db",
  "editor",
  "env_logger 0.11.8",
  "fs",
@@ -223,6 +245,7 @@ dependencies = [
  "log",
  "lsp",
  "open",
+ "parking_lot",
  "paths",
  "portable-pty",
  "pretty_assertions",
@@ -235,11 +258,14 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "sqlez",
  "task",
+ "telemetry",
  "tempfile",
  "terminal",
  "text",
  "theme",
+ "thiserror 2.0.12",
  "tree-sitter-rust",
  "ui",
  "unindent",
@@ -251,6 +277,7 @@ dependencies = [
  "workspace-hack",
  "worktree",
  "zlog",
+ "zstd",
 ]
 
 [[package]]
@@ -258,16 +285,19 @@ name = "agent_servers"
 version = "0.1.0"
 dependencies = [
  "acp_thread",
+ "acp_tools",
  "action_log",
  "agent-client-protocol",
  "agent_settings",
- "agentic-coding-protocol",
  "anyhow",
+ "client",
  "collections",
  "context_server",
  "env_logger 0.11.8",
+ "fs",
  "futures 0.3.31",
  "gpui",
+ "gpui_tokio",
  "indoc",
  "itertools 0.14.0",
  "language",
@@ -279,7 +309,9 @@ dependencies = [
  "paths",
  "project",
  "rand 0.8.5",
+ "reqwest_client",
  "schemars",
+ "semver",
  "serde",
  "serde_json",
  "settings",
@@ -371,6 +403,7 @@ dependencies = [
  "parking_lot",
  "paths",
  "picker",
+ "postage",
  "pretty_assertions",
  "project",
  "prompt_store",
@@ -408,24 +441,6 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
-]
-
-[[package]]
-name = "agentic-coding-protocol"
-version = "0.0.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3e6ae951b36fa2f8d9dd6e1af6da2fcaba13d7c866cf6a9e65deda9dc6c5fe4"
-dependencies = [
- "anyhow",
- "chrono",
- "derive_more 2.0.1",
- "futures 0.3.31",
- "log",
- "parking_lot",
- "schemars",
- "semver",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -843,7 +858,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "collections",
- "derive_more 0.99.19",
+ "derive_more",
  "extension",
  "futures 0.3.31",
  "gpui",
@@ -906,7 +921,7 @@ dependencies = [
  "clock",
  "collections",
  "ctor",
- "derive_more 0.99.19",
+ "derive_more",
  "gpui",
  "icons",
  "indoc",
@@ -943,7 +958,7 @@ dependencies = [
  "cloud_llm_client",
  "collections",
  "component",
- "derive_more 0.99.19",
+ "derive_more",
  "diffy",
  "editor",
  "feature_flags",
@@ -1369,10 +1384,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "derive_more 0.99.19",
  "gpui",
- "parking_lot",
  "rodio",
+ "schemars",
+ "serde",
+ "settings",
  "util",
  "workspace-hack",
 ]
@@ -3055,7 +3071,7 @@ dependencies = [
  "cocoa 0.26.0",
  "collections",
  "credentials_provider",
- "derive_more 0.99.19",
+ "derive_more",
  "feature_flags",
  "fs",
  "futures 0.3.31",
@@ -3487,7 +3503,7 @@ name = "command_palette_hooks"
 version = "0.1.0"
 dependencies = [
  "collections",
- "derive_more 0.99.19",
+ "derive_more",
  "gpui",
  "workspace-hack",
 ]
@@ -3868,7 +3884,7 @@ dependencies = [
  "jni",
  "js-sys",
  "libc",
- "mach2",
+ "mach2 0.4.2",
  "ndk",
  "ndk-context",
  "num-derive",
@@ -4018,7 +4034,7 @@ checksum = "031ed29858d90cfdf27fe49fae28028a1f20466db97962fa2f4ea34809aeebf3"
 dependencies = [
  "cfg-if",
  "libc",
- "mach2",
+ "mach2 0.4.2",
 ]
 
 [[package]]
@@ -4030,7 +4046,7 @@ dependencies = [
  "cfg-if",
  "crash-context",
  "libc",
- "mach2",
+ "mach2 0.4.2",
  "parking_lot",
 ]
 
@@ -4038,14 +4054,17 @@ dependencies = [
 name = "crashes"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "crash-handler",
  "log",
+ "mach2 0.5.0",
  "minidumper",
  "paths",
  "release_channel",
  "serde",
  "serde_json",
  "smol",
+ "system_specs",
  "workspace-hack",
 ]
 
@@ -4648,27 +4667,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "derive_more"
-version = "2.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "093242cf7570c207c83073cf82f79706fe7b8317e98620a47d5be7c3d8497678"
-dependencies = [
- "derive_more-impl",
-]
-
-[[package]]
-name = "derive_more-impl"
-version = "2.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bda628edc44c4bb645fbe0f758797143e4e07926f7ebf4e9bdfbd3d2ce621df3"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.101",
- "unicode-xid",
-]
-
-[[package]]
 name = "derive_refineable"
 version = "0.1.0"
 dependencies = [
@@ -4688,7 +4686,6 @@ dependencies = [
  "component",
  "ctor",
  "editor",
- "futures 0.3.31",
  "gpui",
  "indoc",
  "language",
@@ -5725,14 +5722,10 @@ dependencies = [
 name = "feedback"
 version = "0.1.0"
 dependencies = [
- "client",
  "editor",
  "gpui",
- "human_bytes",
  "menu",
- "release_channel",
- "serde",
- "sysinfo",
+ "system_specs",
  "ui",
  "urlencoding",
  "util",
@@ -6408,7 +6401,7 @@ dependencies = [
  "askpass",
  "async-trait",
  "collections",
- "derive_more 0.99.19",
+ "derive_more",
  "futures 0.3.31",
  "git2",
  "gpui",
@@ -7438,7 +7431,7 @@ dependencies = [
  "core-video",
  "cosmic-text",
  "ctor",
- "derive_more 0.99.19",
+ "derive_more",
  "embed-resource",
  "env_logger 0.11.8",
  "etagere",
@@ -7526,6 +7519,7 @@ dependencies = [
 name = "gpui_tokio"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "gpui",
  "tokio",
  "util",
@@ -7962,7 +7956,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytes 1.10.1",
- "derive_more 0.99.19",
+ "derive_more",
  "futures 0.3.31",
  "http 1.3.1",
  "http-body 1.0.1",
@@ -8474,6 +8468,7 @@ dependencies = [
  "theme",
  "ui",
  "util",
+ "util_macros",
  "workspace",
  "workspace-hack",
  "zed_actions",
@@ -9610,6 +9605,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "audio",
  "collections",
  "core-foundation 0.10.0",
  "core-video",
@@ -9632,6 +9628,7 @@ dependencies = [
  "scap",
  "serde",
  "serde_json",
+ "settings",
  "sha2",
  "simplelog",
  "smallvec",
@@ -9858,6 +9855,15 @@ name = "mach2"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19b955cdeb2a02b9117f121ce63aa52d08ade45de53e48fe6a38b39c10f6f709"
+dependencies = [
+ "libc",
+]
+
+[[package]]
+name = "mach2"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a1b95cd5421ec55b445b5ae102f5ea0e768de1f82bd3001e11f426c269c3aea"
 dependencies = [
  "libc",
 ]
@@ -10198,7 +10204,7 @@ dependencies = [
  "goblin",
  "libc",
  "log",
- "mach2",
+ "mach2 0.4.2",
  "memmap2",
  "memoffset",
  "minidump-common",
@@ -11608,6 +11614,12 @@ dependencies = [
  "digest",
  "hmac",
 ]
+
+[[package]]
+name = "pciid-parser"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0008e816fcdaf229cdd540e9b6ca2dc4a10d65c31624abb546c6420a02846e61"
 
 [[package]]
 name = "pem"
@@ -13509,6 +13521,7 @@ dependencies = [
  "smol",
  "sysinfo",
  "telemetry_events",
+ "thiserror 2.0.12",
  "toml 0.8.20",
  "unindent",
  "util",
@@ -14348,12 +14361,10 @@ version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fe8c9d1c68d67dd9f97ecbc6f932b60eb289c5dbddd8aa1405484a8fd2fcd984"
 dependencies = [
- "chrono",
  "dyn-clone",
  "indexmap",
  "ref-cast",
  "schemars_derive",
- "semver",
  "serde",
  "serde_json",
 ]
@@ -16130,6 +16141,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "system_specs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "gpui",
+ "human_bytes",
+ "pciid-parser",
+ "release_channel",
+ "serde",
+ "sysinfo",
+ "workspace-hack",
+]
+
+[[package]]
 name = "tab_switcher"
 version = "0.1.0"
 dependencies = [
@@ -16422,7 +16448,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "derive_more 0.99.19",
+ "derive_more",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -18288,7 +18314,7 @@ dependencies = [
  "indexmap",
  "libc",
  "log",
- "mach2",
+ "mach2 0.4.2",
  "memfd",
  "object",
  "once_cell",
@@ -19763,7 +19789,6 @@ dependencies = [
  "any_vec",
  "anyhow",
  "async-recursion",
- "bincode",
  "call",
  "client",
  "clock",
@@ -19782,6 +19807,7 @@ dependencies = [
  "node_runtime",
  "parking_lot",
  "postage",
+ "pretty_assertions",
  "project",
  "remote",
  "schemars",
@@ -19937,7 +19963,6 @@ dependencies = [
  "rustix 1.0.7",
  "rustls 0.23.26",
  "rustls-webpki 0.103.1",
- "schemars",
  "scopeguard",
  "sea-orm",
  "sea-query-binder",
@@ -20371,8 +20396,9 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.201.0"
+version = "0.202.0"
 dependencies = [
+ "acp_tools",
  "activity_indicator",
  "agent",
  "agent_servers",
@@ -20388,6 +20414,7 @@ dependencies = [
  "auto_update",
  "auto_update_ui",
  "backtrace",
+ "bincode",
  "breadcrumbs",
  "call",
  "channel",
@@ -20486,6 +20513,7 @@ dependencies = [
  "supermaven",
  "svg_preview",
  "sysinfo",
+ "system_specs",
  "tab_switcher",
  "task",
  "tasks_ui",

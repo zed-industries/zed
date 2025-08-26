@@ -96,7 +96,7 @@ impl<T: LocalLanguageToolchainStore> LanguageToolchainStore for T {
 }
 
 type DefaultIndex = usize;
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct ToolchainList {
     pub toolchains: Vec<Toolchain>,
     pub default: Option<DefaultIndex>,

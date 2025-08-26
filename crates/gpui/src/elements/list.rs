@@ -938,9 +938,10 @@ impl Element for List {
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
 
         // If the width of the list has changed, invalidate all cached item heights
-        if state.last_layout_bounds.map_or(true, |last_bounds| {
-            last_bounds.size.width != bounds.size.width
-        }) {
+        if state
+            .last_layout_bounds
+            .is_none_or(|last_bounds| last_bounds.size.width != bounds.size.width)
+        {
             let new_items = SumTree::from_iter(
                 state.items.iter().map(|item| ListItem::Unmeasured {
                     focus_handle: item.focus_handle(),

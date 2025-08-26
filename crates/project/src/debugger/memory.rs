@@ -3,6 +3,7 @@
 //! Each byte in memory can either be mapped or unmapped. We try to mimic that twofold:
 //! - We assume that the memory is divided into pages of a fixed size.
 //! - We assume that each page can be either mapped or unmapped.
+//!
 //! These two assumptions drive the shape of the memory representation.
 //! In particular, we want the unmapped pages to be represented without allocating any memory, as *most*
 //! of the memory in a program space is usually unmapped.
@@ -165,8 +166,8 @@ impl Memory {
 /// - If it succeeds/fails wholesale, cool; we have no unknown memory regions in this page.
 /// - If it succeeds partially, we know # of mapped bytes.
 ///   We might also know the # of unmapped bytes.
-/// However, we're still unsure about what's *after* the unreadable region.
 ///
+/// However, we're still unsure about what's *after* the unreadable region.
 /// This is where this builder comes in. It lets us track the state of figuring out contents of a single page.
 pub(super) struct MemoryPageBuilder {
     chunks: MappedPageContents,
@@ -329,7 +330,7 @@ impl Iterator for MemoryIterator {
         }
         if !self.fetch_next_page() {
             self.start += 1;
-            return Some(MemoryCell(None));
+            Some(MemoryCell(None))
         } else {
             self.next()
         }

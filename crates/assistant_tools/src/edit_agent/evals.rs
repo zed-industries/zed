@@ -1153,8 +1153,7 @@ impl EvalInput {
             .expect("Conversation must end with an edit_file tool use")
             .clone();
 
-        let edit_file_input: EditFileToolInput =
-            serde_json::from_value(tool_use.input.clone()).unwrap();
+        let edit_file_input: EditFileToolInput = serde_json::from_value(tool_use.input).unwrap();
 
         EvalInput {
             conversation,
@@ -1460,7 +1459,7 @@ impl EditAgentTest {
     async fn new(cx: &mut TestAppContext) -> Self {
         cx.executor().allow_parking();
 
-        let fs = FakeFs::new(cx.executor().clone());
+        let fs = FakeFs::new(cx.executor());
         cx.update(|cx| {
             settings::init(cx);
             gpui_tokio::init(cx);
@@ -1475,7 +1474,7 @@ impl EditAgentTest {
             Project::init_settings(cx);
             language::init(cx);
             language_model::init(client.clone(), cx);
-            language_models::init(user_store.clone(), client.clone(), cx);
+            language_models::init(user_store, client.clone(), cx);
             crate::init(client.http_client(), cx);
         });
 
@@ -1586,7 +1585,7 @@ impl EditAgentTest {
         let has_system_prompt = eval
             .conversation
             .first()
-            .map_or(false, |msg| msg.role == Role::System);
+            .is_some_and(|msg| msg.role == Role::System);
         let messages = if has_system_prompt {
             eval.conversation
         } else {

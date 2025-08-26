@@ -224,7 +224,7 @@ impl Vim {
                     .search
                     .prior_selections
                     .last()
-                    .map_or(true, |range| range.start != new_head);
+                    .is_none_or(|range| range.start != new_head);
 
                 if is_different_head {
                     count = count.saturating_sub(1)

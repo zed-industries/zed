@@ -491,7 +491,7 @@ fn render_markdown_code_block(
             .on_click({
                 let active_thread = active_thread.clone();
                 let parsed_markdown = parsed_markdown.clone();
-                let code_block_range = metadata.content_range.clone();
+                let code_block_range = metadata.content_range;
                 move |_event, _window, cx| {
                     active_thread.update(cx, |this, cx| {
                         this.copied_code_block_ids.insert((message_id, ix));
@@ -532,7 +532,6 @@ fn render_markdown_code_block(
                 "Expand Code"
             }))
             .on_click({
-                let active_thread = active_thread.clone();
                 move |_event, _window, cx| {
                     active_thread.update(cx, |this, cx| {
                         this.toggle_codeblock_expanded(message_id, ix);
@@ -780,13 +779,11 @@ impl ActiveThread {
 
         let list_state = ListState::new(0, ListAlignment::Bottom, px(2048.));
 
-        let workspace_subscription = if let Some(workspace) = workspace.upgrade() {
-            Some(cx.observe_release(&workspace, |this, _, cx| {
+        let workspace_subscription = workspace.upgrade().map(|workspace| {
+            cx.observe_release(&workspace, |this, _, cx| {
                 this.dismiss_notifications(cx);
-            }))
-        } else {
-            None
-        };
+            })
+        });
 
         let mut this = Self {
             language_registry,
@@ -916,7 +913,7 @@ impl ActiveThread {
     ) {
         let rendered = self
             .rendered_tool_uses
-            .entry(tool_use_id.clone())
+            .entry(tool_use_id)
             .or_insert_with(|| RenderedToolUse {
                 label: cx.new(|cx| {
                     Markdown::new("".into(), Some(self.language_registry.clone()), None, cx)
@@ -1218,7 +1215,7 @@ impl ActiveThread {
         match AgentSettings::get_global(cx).notify_when_agent_waiting {
             NotifyWhenAgentWaiting::PrimaryScreen => {
                 if let Some(primary) = cx.primary_display() {
-                    self.pop_up(icon, caption.into(), title.clone(), window, primary, cx);
+                    self.pop_up(icon, caption.into(), title, window, primary, cx);
                 }
             }
             NotifyWhenAgentWaiting::AllScreens => {
@@ -1373,12 +1370,12 @@ impl ActiveThread {
             editor.focus_handle(cx).focus(window);
             editor.move_to_end(&editor::actions::MoveToEnd, window, cx);
         });
-        let buffer_edited_subscription = cx.subscribe(&editor, |this, _, event, cx| match event {
-            EditorEvent::BufferEdited => {
-                this.update_editing_message_token_count(true, cx);
-            }
-            _ => {}
-        });
+        let buffer_edited_subscription =
+            cx.subscribe(&editor, |this, _, event: &EditorEvent, cx| {
+                if event == &EditorEvent::BufferEdited {
+                    this.update_editing_message_token_count(true, cx);
+                }
+            });
 
         let context_picker_menu_handle = PopoverMenuHandle::default();
         let context_strip = cx.new(|cx| {
@@ -1598,11 +1595,6 @@ impl ActiveThread {
             return;
         };
 
-        if model.provider.must_accept_terms(cx) {
-            cx.notify();
-            return;
-        }
-
         let edited_text = state.editor.read(cx).text(cx);
 
         let creases = state.editor.update(cx, extract_message_creases);
@@ -1765,7 +1757,7 @@ impl ActiveThread {
                 .thread
                 .read(cx)
                 .message(message_id)
-                .map(|msg| msg.to_string())
+                .map(|msg| msg.to_message_content())
                 .unwrap_or_default();
 
             telemetry::event!(
@@ -2112,7 +2104,7 @@ impl ActiveThread {
                                         .gap_1()
                                         .children(message_content)
                                         .when_some(editing_message_state, |this, state| {
-                                            let focus_handle = state.editor.focus_handle(cx).clone();
+                                            let focus_handle = state.editor.focus_handle(cx);
 
                                             this.child(
                                                 h_flex()
@@ -2173,7 +2165,6 @@ impl ActiveThread {
                                                                 .icon_color(Color::Muted)
                                                                 .icon_size(IconSize::Small)
                                                                 .tooltip({
-                                                                    let focus_handle = focus_handle.clone();
                                                                     move |window, cx| {
                                                                         Tooltip::for_action_in(
                                                                             "Regenerate",
@@ -2246,9 +2237,7 @@ impl ActiveThread {
         let after_editing_message = self
             .editing_message
             .as_ref()
-            .map_or(false, |(editing_message_id, _)| {
-                message_id > *editing_message_id
-            });
+            .is_some_and(|(editing_message_id, _)| message_id > *editing_message_id);
 
         let backdrop = div()
             .id(("backdrop", ix))
@@ -2314,7 +2303,7 @@ impl ActiveThread {
                             .into_any_element()
                     } else if let Some(error) = error {
                         restore_checkpoint_button
-                            .tooltip(Tooltip::text(error.to_string()))
+                            .tooltip(Tooltip::text(error))
                             .into_any_element()
                     } else {
                         restore_checkpoint_button.into_any_element()
@@ -2355,7 +2344,6 @@ impl ActiveThread {
                                     this.submit_feedback_message(message_id, cx);
                                     cx.notify();
                                 }))
-                                .on_action(cx.listener(Self::confirm_editing_message))
                                 .mb_2()
                                 .mx_4()
                                 .p_2()

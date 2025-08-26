@@ -308,7 +308,6 @@ impl TitleBar {
 
         let nickname = options
             .nickname
-            .clone()
             .map(|nick| nick.into())
             .unwrap_or_else(|| host.clone());
 
@@ -354,11 +353,7 @@ impl TitleBar {
                             .indicator_border_color(Some(cx.theme().colors().title_bar_background))
                             .into_any_element(),
                         )
-                        .child(
-                            Label::new(nickname.clone())
-                                .size(LabelSize::Small)
-                                .truncate(),
-                        ),
+                        .child(Label::new(nickname).size(LabelSize::Small).truncate()),
                 )
                 .tooltip(move |window, cx| {
                     Tooltip::with_meta(
@@ -571,8 +566,8 @@ impl TitleBar {
         match status {
             client::Status::ConnectionError
             | client::Status::ConnectionLost
-            | client::Status::Reauthenticating { .. }
-            | client::Status::Reconnecting { .. }
+            | client::Status::Reauthenticating
+            | client::Status::Reconnecting
             | client::Status::ReconnectionError { .. } => Some(
                 div()
                     .id("disconnected")

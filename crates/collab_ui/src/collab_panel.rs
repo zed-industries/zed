@@ -664,9 +664,7 @@ impl CollabPanel {
 
                 let has_children = channel_store
                     .channel_at_index(mat.candidate_id + 1)
-                    .map_or(false, |next_channel| {
-                        next_channel.parent_path.ends_with(&[channel.id])
-                    });
+                    .is_some_and(|next_channel| next_channel.parent_path.ends_with(&[channel.id]));
 
                 match &self.channel_editing_state {
                     Some(ChannelEditingState::Create {
@@ -1125,7 +1123,7 @@ impl CollabPanel {
     }
 
     fn has_subchannels(&self, ix: usize) -> bool {
-        self.entries.get(ix).map_or(false, |entry| {
+        self.entries.get(ix).is_some_and(|entry| {
             if let ListEntry::Channel { has_children, .. } = entry {
                 *has_children
             } else {
@@ -1823,10 +1821,10 @@ impl CollabPanel {
     }
 
     fn select_channel_editor(&mut self) {
-        self.selection = self.entries.iter().position(|entry| match entry {
-            ListEntry::ChannelEditor { .. } => true,
-            _ => false,
-        });
+        self.selection = self
+            .entries
+            .iter()
+            .position(|entry| matches!(entry, ListEntry::ChannelEditor { .. }));
     }
 
     fn new_subchannel(
@@ -2509,7 +2507,7 @@ impl CollabPanel {
 
         let button = match section {
             Section::ActiveCall => channel_link.map(|channel_link| {
-                let channel_link_copy = channel_link.clone();
+                let channel_link_copy = channel_link;
                 IconButton::new("channel-link", IconName::Copy)
                     .icon_size(IconSize::Small)
                     .size(ButtonSize::None)
@@ -2693,7 +2691,7 @@ impl CollabPanel {
                 h_flex()
                     .w_full()
                     .justify_between()
-                    .child(Label::new(github_login.clone()))
+                    .child(Label::new(github_login))
                     .child(h_flex().children(controls)),
             )
             .start_slot(Avatar::new(user.avatar_uri.clone()))
@@ -2907,6 +2905,8 @@ impl CollabPanel {
                 h_flex().absolute().right(rems(0.)).h_full().child(
                     h_flex()
                         .h_full()
+                        .bg(cx.theme().colors().background)
+                        .rounded_l_sm()
                         .gap_1()
                         .px_1()
                         .child(
@@ -2922,8 +2922,7 @@ impl CollabPanel {
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.join_channel_chat(channel_id, window, cx)
                                 }))
-                                .tooltip(Tooltip::text("Open channel chat"))
-                                .visible_on_hover(""),
+                                .tooltip(Tooltip::text("Open channel chat")),
                         )
                         .child(
                             IconButton::new("channel_notes", IconName::Reader)
@@ -2938,9 +2937,9 @@ impl CollabPanel {
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.open_channel_notes(channel_id, window, cx)
                                 }))
-                                .tooltip(Tooltip::text("Open channel notes"))
-                                .visible_on_hover(""),
-                        ),
+                                .tooltip(Tooltip::text("Open channel notes")),
+                        )
+                        .visible_on_hover(""),
                 ),
             )
             .tooltip({
@@ -3127,7 +3126,7 @@ impl Panel for CollabPanel {
 
 impl Focusable for CollabPanel {
     fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
-        self.filter_editor.focus_handle(cx).clone()
+        self.filter_editor.focus_handle(cx)
     }
 }
 

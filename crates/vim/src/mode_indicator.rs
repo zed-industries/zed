@@ -74,11 +74,7 @@ impl ModeIndicator {
                     .map(|count| format!("{}", count)),
             )
             .chain(vim.selected_register.map(|reg| format!("\"{reg}")))
-            .chain(
-                vim.operator_stack
-                    .iter()
-                    .map(|item| item.status().to_string()),
-            )
+            .chain(vim.operator_stack.iter().map(|item| item.status()))
             .chain(
                 cx.global::<VimGlobals>()
                     .post_count

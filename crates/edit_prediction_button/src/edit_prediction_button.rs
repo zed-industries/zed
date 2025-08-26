@@ -168,7 +168,7 @@ impl Render for EditPredictionButton {
                         let account_status = agent.account_status.clone();
                         match account_status {
                             AccountStatus::NeedsActivation { activate_url } => {
-                                SupermavenButtonStatus::NeedsActivation(activate_url.clone())
+                                SupermavenButtonStatus::NeedsActivation(activate_url)
                             }
                             AccountStatus::Unknown => SupermavenButtonStatus::Initializing,
                             AccountStatus::Ready => SupermavenButtonStatus::Ready,
@@ -185,7 +185,7 @@ impl Render for EditPredictionButton {
                 let this = cx.entity();
                 let fs = self.fs.clone();
 
-                return div().child(
+                div().child(
                     PopoverMenu::new("supermaven")
                         .menu(move |window, cx| match &status {
                             SupermavenButtonStatus::NeedsActivation(activate_url) => {
@@ -230,7 +230,7 @@ impl Render for EditPredictionButton {
                             },
                         )
                         .with_handle(self.popover_menu_handle.clone()),
-                );
+                )
             }
 
             EditPredictionProvider::Zed => {
@@ -242,13 +242,9 @@ impl Render for EditPredictionButton {
                     IconName::ZedPredictDisabled
                 };
 
-                if zeta::should_show_upsell_modal(&self.user_store, cx) {
+                if zeta::should_show_upsell_modal() {
                     let tooltip_meta = if self.user_store.read(cx).current_user().is_some() {
-                        if self.user_store.read(cx).has_accepted_terms_of_service() {
-                            "Choose a Plan"
-                        } else {
-                            "Accept the Terms of Service"
-                        }
+                        "Choose a Plan"
                     } else {
                         "Sign In"
                     };
@@ -343,7 +339,7 @@ impl Render for EditPredictionButton {
                 let is_refreshing = self
                     .edit_prediction_provider
                     .as_ref()
-                    .map_or(false, |provider| provider.is_refreshing(cx));
+                    .is_some_and(|provider| provider.is_refreshing(cx));
 
                 if is_refreshing {
                     popover_menu = popover_menu.trigger(

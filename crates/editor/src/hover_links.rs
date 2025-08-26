@@ -271,7 +271,7 @@ impl Editor {
             Task::ready(Ok(Navigated::No))
         };
         self.select(SelectPhase::End, window, cx);
-        return navigate_task;
+        navigate_task
     }
 }
 
@@ -321,7 +321,10 @@ pub fn update_inlay_link_and_hover_points(
             if let Some(cached_hint) = inlay_hint_cache.hint_by_id(excerpt_id, hovered_hint.id) {
                 match cached_hint.resolve_state {
                     ResolveState::CanResolve(_, _) => {
-                        if let Some(buffer_id) = previous_valid_anchor.buffer_id {
+                        if let Some(buffer_id) = snapshot
+                            .buffer_snapshot
+                            .buffer_id_for_anchor(previous_valid_anchor)
+                        {
                             inlay_hint_cache.spawn_hint_resolve(
                                 buffer_id,
                                 excerpt_id,
@@ -559,7 +562,7 @@ pub fn show_link_definition(
                             provider.definitions(&buffer, buffer_position, preferred_kind, cx)
                         })?;
                         if let Some(task) = task {
-                            task.await.ok().map(|definition_result| {
+                            task.await.ok().flatten().map(|definition_result| {
                                 (
                                     definition_result.iter().find_map(|link| {
                                         link.origin.as_ref().and_then(|origin| {
@@ -871,7 +874,7 @@ fn surrounding_filename(
         .peekable();
     while let Some(ch) = forwards.next() {
         // Skip escaped whitespace
-        if ch == '\\' && forwards.peek().map_or(false, |ch| ch.is_whitespace()) {
+        if ch == '\\' && forwards.peek().is_some_and(|ch| ch.is_whitespace()) {
             token_end += ch.len_utf8();
             let whitespace = forwards.next().unwrap();
             token_end += whitespace.len_utf8();

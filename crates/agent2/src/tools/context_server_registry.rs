@@ -176,15 +176,13 @@ impl AnyAgentTool for ContextServerTool {
             return Task::ready(Err(anyhow!("Context server not found")));
         };
         let tool_name = self.tool.name.clone();
-        let server_clone = server.clone();
-        let input_clone = input.clone();
 
         cx.spawn(async move |_cx| {
-            let Some(protocol) = server_clone.client() else {
+            let Some(protocol) = server.client() else {
                 bail!("Context server not initialized");
             };
 
-            let arguments = if let serde_json::Value::Object(map) = input_clone {
+            let arguments = if let serde_json::Value::Object(map) = input {
                 Some(map.into_iter().collect())
             } else {
                 None

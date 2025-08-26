@@ -73,7 +73,7 @@ fn get_dismissed(source: &str) -> bool {
     db::kvp::KEY_VALUE_STORE
         .read_kvp(&dismissed_at)
         .log_err()
-        .map_or(false, |dismissed| dismissed.is_some())
+        .is_some_and(|dismissed| dismissed.is_some())
 }
 
 fn persist_dismissed(source: &str, cx: &mut App) {

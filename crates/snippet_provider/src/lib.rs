@@ -71,16 +71,16 @@ async fn process_updates(
 ) -> Result<()> {
     let fs = this.read_with(&cx, |this, _| this.fs.clone())?;
     for entry_path in entries {
-        if !entry_path
+        if entry_path
             .extension()
-            .map_or(false, |extension| extension == "json")
+            .is_none_or(|extension| extension != "json")
         {
             continue;
         }
         let entry_metadata = fs.metadata(&entry_path).await;
         // Entry could have been removed, in which case we should no longer show completions for it.
         let entry_exists = entry_metadata.is_ok();
-        if entry_metadata.map_or(false, |entry| entry.map_or(false, |e| e.is_dir)) {
+        if entry_metadata.is_ok_and(|entry| entry.is_some_and(|e| e.is_dir)) {
             // Don't process dirs.
             continue;
         }

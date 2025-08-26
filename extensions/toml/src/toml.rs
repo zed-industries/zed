@@ -40,7 +40,7 @@ impl TomlExtension {
         }
 
         if let Some(path) = &self.cached_binary_path
-            && fs::metadata(path).map_or(false, |stat| stat.is_file())
+            && fs::metadata(path).is_ok_and(|stat| stat.is_file())
         {
             return Ok(TaploBinary {
                 path: path.clone(),
@@ -93,7 +93,7 @@ impl TomlExtension {
             }
         );
 
-        if !fs::metadata(&binary_path).map_or(false, |stat| stat.is_file()) {
+        if !fs::metadata(&binary_path).is_ok_and(|stat| stat.is_file()) {
             zed::set_language_server_installation_status(
                 language_server_id,
                 &zed::LanguageServerInstallationStatus::Downloading,

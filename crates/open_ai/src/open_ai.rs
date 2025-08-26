@@ -9,7 +9,7 @@ use strum::EnumIter;
 pub const OPEN_AI_API_URL: &str = "https://api.openai.com/v1";
 
 fn is_none_or_empty<T: AsRef<[U]>, U>(opt: &Option<T>) -> bool {
-    opt.as_ref().map_or(true, |v| v.as_ref().is_empty())
+    opt.as_ref().is_none_or(|v| v.as_ref().is_empty())
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -241,7 +241,7 @@ impl Model {
     ///
     /// If the model does not support the parameter, do not pass it up.
     pub fn supports_prompt_cache_key(&self) -> bool {
-        return true;
+        true
     }
 }
 
@@ -446,7 +446,6 @@ pub enum ResponseStreamResult {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ResponseStreamEvent {
-    pub model: String,
     pub choices: Vec<ChoiceDelta>,
     pub usage: Option<Usage>,
 }

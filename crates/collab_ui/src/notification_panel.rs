@@ -289,7 +289,7 @@ impl NotificationPanel {
                         .gap_1()
                         .size_full()
                         .overflow_hidden()
-                        .child(Label::new(text.clone()))
+                        .child(Label::new(text))
                         .child(
                             h_flex()
                                 .child(
@@ -497,7 +497,7 @@ impl NotificationPanel {
                 panel.is_scrolled_to_bottom()
                     && panel
                         .active_chat()
-                        .map_or(false, |chat| chat.read(cx).channel_id.0 == *channel_id)
+                        .is_some_and(|chat| chat.read(cx).channel_id.0 == *channel_id)
             } else {
                 false
             };

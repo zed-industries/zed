@@ -213,8 +213,8 @@ impl GitBlame {
         let project_subscription = cx.subscribe(&project, {
             let buffer = buffer.clone();
 
-            move |this, _, event, cx| match event {
-                project::Event::WorktreeUpdatedEntries(_, updated) => {
+            move |this, _, event, cx| {
+                if let project::Event::WorktreeUpdatedEntries(_, updated) = event {
                     let project_entry_id = buffer.read(cx).entry_id(cx);
                     if updated
                         .iter()
@@ -224,7 +224,6 @@ impl GitBlame {
                         this.generate(cx);
                     }
                 }
-                _ => {}
             }
         });
 
@@ -292,7 +291,7 @@ impl GitBlame {
 
         let buffer_id = self.buffer_snapshot.remote_id();
         let mut cursor = self.entries.cursor::<u32>(&());
-        rows.into_iter().map(move |info| {
+        rows.iter().map(move |info| {
             let row = info
                 .buffer_row
                 .filter(|_| info.buffer_id == Some(buffer_id))?;
@@ -415,7 +414,7 @@ impl GitBlame {
             let old_end = cursor.end();
             if row_edits
                 .peek()
-                .map_or(true, |next_edit| next_edit.old.start >= old_end)
+                .is_none_or(|next_edit| next_edit.old.start >= old_end)
                 && let Some(entry) = cursor.item()
             {
                 if old_end > edit.old.end {

@@ -243,14 +243,14 @@ impl FocusId {
     pub fn contains_focused(&self, window: &Window, cx: &App) -> bool {
         window
             .focused(cx)
-            .map_or(false, |focused| self.contains(focused.id, window))
+            .is_some_and(|focused| self.contains(focused.id, window))
     }
 
     /// Obtains whether the element associated with this handle is contained within the
     /// focused element or is itself focused.
     pub fn within_focused(&self, window: &Window, cx: &App) -> bool {
         let focused = window.focused(cx);
-        focused.map_or(false, |focused| focused.id.contains(*self, window))
+        focused.is_some_and(|focused| focused.id.contains(*self, window))
     }
 
     /// Obtains whether this handle contains the given handle in the most recently rendered frame.
@@ -504,7 +504,7 @@ impl HitboxId {
                 return true;
             }
         }
-        return false;
+        false
     }
 
     /// Checks if the hitbox with this ID contains the mouse and should handle scroll events.
@@ -634,7 +634,7 @@ impl TooltipId {
         window
             .tooltip_bounds
             .as_ref()
-            .map_or(false, |tooltip_bounds| {
+            .is_some_and(|tooltip_bounds| {
                 tooltip_bounds.id == *self
                     && tooltip_bounds.bounds.contains(&window.mouse_position())
             })
@@ -2521,7 +2521,7 @@ impl Window {
     /// time.
     pub fn get_asset<A: Asset>(&mut self, source: &A::Source, cx: &mut App) -> Option<A::Output> {
         let (task, _) = cx.fetch_asset::<A>(source);
-        task.clone().now_or_never()
+        task.now_or_never()
     }
     /// Obtain the current element offset. This method should only be called during the
     /// prepaint phase of element drawing.
@@ -3112,7 +3112,7 @@ impl Window {
 
         let tile = self
             .sprite_atlas
-            .get_or_insert_with(&params.clone().into(), &mut || {
+            .get_or_insert_with(&params.into(), &mut || {
                 Ok(Some((
                     data.size(frame_index),
                     Cow::Borrowed(
@@ -3799,7 +3799,7 @@ impl Window {
                 self.dispatch_keystroke_observers(
                     event,
                     Some(binding.action),
-                    match_result.context_stack.clone(),
+                    match_result.context_stack,
                     cx,
                 );
                 self.pending_input_changed(cx);
@@ -4546,7 +4546,7 @@ impl Window {
                         if let Some((_, inspector_id)) =
                             self.hovered_inspector_hitbox(inspector, &self.rendered_frame)
                         {
-                            inspector.set_active_element_id(inspector_id.clone(), self);
+                            inspector.set_active_element_id(inspector_id, self);
                         }
                     }
                 });
@@ -4570,7 +4570,7 @@ impl Window {
                 }
             }
         }
-        return None;
+        None
     }
 }
 
@@ -4687,7 +4687,7 @@ impl<V: 'static + Render> WindowHandle<V> {
     where
         C: AppContext,
     {
-        cx.read_window(self, |root_view, _cx| root_view.clone())
+        cx.read_window(self, |root_view, _cx| root_view)
     }
 
     /// Check if this window is 'active'.

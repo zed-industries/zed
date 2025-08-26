@@ -49,7 +49,7 @@ impl LanguageName {
     pub fn from_proto(s: String) -> Self {
         Self(SharedString::from(s))
     }
-    pub fn to_proto(self) -> String {
+    pub fn to_proto(&self) -> String {
         self.0.to_string()
     }
     pub fn lsp_id(&self) -> String {
@@ -432,7 +432,7 @@ impl LanguageRegistry {
             let mut state = self.state.write();
             state
                 .lsp_adapters
-                .entry(language_name.clone())
+                .entry(language_name)
                 .or_default()
                 .push(adapter.clone());
             state.all_lsp_adapters.insert(adapter.name(), adapter);
@@ -454,7 +454,7 @@ impl LanguageRegistry {
         let cached_adapter = CachedLspAdapter::new(Arc::new(adapter));
         state
             .lsp_adapters
-            .entry(language_name.clone())
+            .entry(language_name)
             .or_default()
             .push(cached_adapter.clone());
         state
@@ -773,7 +773,7 @@ impl LanguageRegistry {
             };
 
             let content_matches = || {
-                config.first_line_pattern.as_ref().map_or(false, |pattern| {
+                config.first_line_pattern.as_ref().is_some_and(|pattern| {
                     content
                         .as_ref()
                         .is_some_and(|content| pattern.is_match(content))
@@ -1167,8 +1167,7 @@ impl LanguageRegistryState {
                 soft_wrap: language.config.soft_wrap,
                 auto_indent_on_paste: language.config.auto_indent_on_paste,
                 ..Default::default()
-            }
-            .clone(),
+            },
         );
         self.languages.push(language);
         self.version += 1;

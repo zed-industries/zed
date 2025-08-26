@@ -15,6 +15,8 @@ pub use crate::agent_profile::*;
 
 pub const SUMMARIZE_THREAD_PROMPT: &str =
     include_str!("../../agent/src/prompts/summarize_thread_prompt.txt");
+pub const SUMMARIZE_THREAD_DETAILED_PROMPT: &str =
+    include_str!("../../agent/src/prompts/summarize_thread_detailed_prompt.txt");
 
 pub fn init(cx: &mut App) {
     AgentSettings::register(cx);
@@ -503,9 +505,8 @@ impl Settings for AgentSettings {
             }
         }
 
-        debug_assert_eq!(
-            sources.default.always_allow_tool_actions.unwrap_or(false),
-            false,
+        debug_assert!(
+            !sources.default.always_allow_tool_actions.unwrap_or(false),
             "For security, agent.always_allow_tool_actions should always be false in default.json. If it's true, that is a bug that should be fixed!"
         );
 

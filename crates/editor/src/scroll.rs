@@ -675,7 +675,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if matches!(self.mode, EditorMode::SingleLine { .. }) {
+        if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate();
             return;
         }

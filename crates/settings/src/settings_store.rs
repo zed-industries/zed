@@ -60,6 +60,11 @@ pub trait Settings: 'static + Send + Sync {
 
     /// The logic for combining together values from one or more JSON files into the
     /// final value for this setting.
+    ///
+    /// # Warning
+    /// `Self::FileContent` deserialized field names should match with `Self` deserialized field names
+    /// otherwise the field won't be deserialized properly and you will get the error:
+    /// "A default setting must be added to the `default.json` file"
     fn load(sources: SettingsSources<Self::FileContent>, cx: &mut App) -> Result<Self>
     where
         Self: Sized;
@@ -1233,8 +1238,7 @@ impl SettingsStore {
 
                         // If a local settings file changed, then avoid recomputing local
                         // settings for any path outside of that directory.
-                        if changed_local_path.map_or(
-                            false,
+                        if changed_local_path.is_some_and(
                             |(changed_root_id, changed_local_path)| {
                                 *root_id != changed_root_id
                                     || !directory_path.starts_with(changed_local_path)

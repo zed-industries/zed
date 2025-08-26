@@ -1207,7 +1207,7 @@ async fn test_remote_rename_entry(cx: &mut TestAppContext, server_cx: &mut TestA
         })
         .await
         .unwrap()
-        .to_included()
+        .into_included()
         .unwrap();
 
     cx.run_until_parked();

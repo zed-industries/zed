@@ -2501,8 +2501,8 @@ pub(crate) fn parse_completion_text_edit(
     };
 
     Some(ParsedCompletionEdit {
-        insert_range: insert_range,
-        replace_range: replace_range,
+        insert_range,
+        replace_range,
         new_text: new_text.clone(),
     })
 }
@@ -2595,11 +2595,9 @@ impl LspCommand for GetCodeActions {
         server_id: LanguageServerId,
         cx: AsyncApp,
     ) -> Result<Vec<CodeAction>> {
-        let requested_kinds_set = if let Some(kinds) = self.kinds {
-            Some(kinds.into_iter().collect::<HashSet<_>>())
-        } else {
-            None
-        };
+        let requested_kinds_set = self
+            .kinds
+            .map(|kinds| kinds.into_iter().collect::<HashSet<_>>());
 
         let language_server = cx.update(|cx| {
             lsp_store
@@ -2739,7 +2737,7 @@ impl GetCodeActions {
             Some(lsp::CodeActionProviderCapability::Options(CodeActionOptions {
                 code_action_kinds: Some(supported_action_kinds),
                 ..
-            })) => Some(supported_action_kinds.clone()),
+            })) => Some(supported_action_kinds),
             _ => capabilities.code_action_kinds,
         }
     }
@@ -3446,10 +3444,7 @@ impl LspCommand for GetCodeLens {
         capabilities
             .server_capabilities
             .code_lens_provider
-            .as_ref()
-            .map_or(false, |code_lens_options| {
-                code_lens_options.resolve_provider.unwrap_or(false)
-            })
+            .is_some()
     }
 
     fn to_lsp(
@@ -3795,7 +3790,7 @@ impl GetDocumentDiagnostics {
                         },
                         uri: lsp::Url::parse(&info.location_url.unwrap()).unwrap(),
                     },
-                    message: info.message.clone(),
+                    message: info.message,
                 }
             })
             .collect::<Vec<_>>();
@@ -3823,12 +3818,11 @@ impl GetDocumentDiagnostics {
                 _ => None,
             },
             code,
-            code_description: match diagnostic.code_description {
-                Some(code_description) => Some(CodeDescription {
+            code_description: diagnostic
+                .code_description
+                .map(|code_description| CodeDescription {
                     href: Some(lsp::Url::parse(&code_description).unwrap()),
                 }),
-                None => None,
-            },
             related_information: Some(related_information),
             tags: Some(tags),
             source: diagnostic.source.clone(),
@@ -4493,9 +4487,8 @@ mod tests {
             data: Some(json!({"detail": "test detail"})),
         };
 
-        let proto_diagnostic =
-            GetDocumentDiagnostics::serialize_lsp_diagnostic(lsp_diagnostic.clone())
-                .expect("Failed to serialize diagnostic");
+        let proto_diagnostic = GetDocumentDiagnostics::serialize_lsp_diagnostic(lsp_diagnostic)
+            .expect("Failed to serialize diagnostic");
 
         let start = proto_diagnostic.start.unwrap();
         let end = proto_diagnostic.end.unwrap();

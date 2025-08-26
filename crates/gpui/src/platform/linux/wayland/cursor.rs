@@ -67,7 +67,7 @@ impl Cursor {
         {
             self.loaded_theme = Some(LoadedTheme {
                 theme,
-                name: theme_name.map(|name| name.to_string()),
+                name: theme_name,
                 scaled_size: self.scaled_size,
             });
         }

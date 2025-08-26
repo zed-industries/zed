@@ -50,11 +50,11 @@ impl WorktreeId {
         Self(id as usize)
     }
 
-    pub fn to_proto(&self) -> u64 {
+    pub fn to_proto(self) -> u64 {
         self.0 as u64
     }
 
-    pub fn to_usize(&self) -> usize {
+    pub fn to_usize(self) -> usize {
         self.0
     }
 }

@@ -1113,8 +1113,8 @@ impl ProjectSearchView {
                     .await
                     .log_err();
                 }
-                let should_search = result != 2;
-                should_search
+
+                result != 2
             } else {
                 true
             };
@@ -3716,7 +3716,7 @@ pub mod tests {
                 window
                     .update(cx, |_, _, cx| {
                         search_view.update(cx, |search_view, cx| {
-                            search_view.query_editor.read(cx).text(cx).to_string()
+                            search_view.query_editor.read(cx).text(cx)
                         })
                     })
                     .unwrap()
@@ -3883,7 +3883,6 @@ pub mod tests {
         // Add a project search item to the second pane
         window
             .update(cx, {
-                let search_bar = search_bar.clone();
                 |workspace, window, cx| {
                     assert_eq!(workspace.panes().len(), 2);
                     second_pane.update(cx, |pane, cx| {
@@ -3906,7 +3905,7 @@ pub mod tests {
                 assert_eq!(workspace.active_pane(), &second_pane);
                 second_pane.update(cx, |this, cx| {
                     assert_eq!(this.active_item_index(), 1);
-                    this.activate_prev_item(false, window, cx);
+                    this.activate_previous_item(&Default::default(), window, cx);
                     assert_eq!(this.active_item_index(), 0);
                 });
                 workspace.activate_pane_in_direction(workspace::SplitDirection::Left, window, cx);
@@ -3941,7 +3940,9 @@ pub mod tests {
         // Focus the second pane's non-search item
         window
             .update(cx, |_workspace, window, cx| {
-                second_pane.update(cx, |pane, cx| pane.activate_next_item(true, window, cx));
+                second_pane.update(cx, |pane, cx| {
+                    pane.activate_next_item(&Default::default(), window, cx)
+                });
             })
             .unwrap();
 

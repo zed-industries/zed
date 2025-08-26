@@ -192,7 +192,7 @@ impl BreakpointStore {
     }
 
     pub(crate) fn shared(&mut self, project_id: u64, downstream_client: AnyProtoClient) {
-        self.downstream_client = Some((downstream_client.clone(), project_id));
+        self.downstream_client = Some((downstream_client, project_id));
     }
 
     pub(crate) fn unshared(&mut self, cx: &mut Context<Self>) {
@@ -450,9 +450,9 @@ impl BreakpointStore {
                     });
 
                     if let Some(found_bp) = found_bp {
-                        found_bp.message = Some(log_message.clone());
+                        found_bp.message = Some(log_message);
                     } else {
-                        breakpoint.bp.message = Some(log_message.clone());
+                        breakpoint.bp.message = Some(log_message);
                         // We did not remove any breakpoint, hence let's toggle one.
                         breakpoint_set
                             .breakpoints
@@ -482,9 +482,9 @@ impl BreakpointStore {
                     });
 
                     if let Some(found_bp) = found_bp {
-                        found_bp.hit_condition = Some(hit_condition.clone());
+                        found_bp.hit_condition = Some(hit_condition);
                     } else {
-                        breakpoint.bp.hit_condition = Some(hit_condition.clone());
+                        breakpoint.bp.hit_condition = Some(hit_condition);
                         // We did not remove any breakpoint, hence let's toggle one.
                         breakpoint_set
                             .breakpoints
@@ -514,9 +514,9 @@ impl BreakpointStore {
                     });
 
                     if let Some(found_bp) = found_bp {
-                        found_bp.condition = Some(condition.clone());
+                        found_bp.condition = Some(condition);
                     } else {
-                        breakpoint.bp.condition = Some(condition.clone());
+                        breakpoint.bp.condition = Some(condition);
                         // We did not remove any breakpoint, hence let's toggle one.
                         breakpoint_set
                             .breakpoints
@@ -591,7 +591,7 @@ impl BreakpointStore {
         cx: &mut Context<Self>,
     ) {
         if let Some(breakpoints) = self.breakpoints.remove(&old_path) {
-            self.breakpoints.insert(new_path.clone(), breakpoints);
+            self.breakpoints.insert(new_path, breakpoints);
 
             cx.notify();
         }
@@ -831,7 +831,6 @@ impl BreakpointStore {
                     new_breakpoints.insert(path, breakpoints_for_file);
                 }
                 this.update(cx, |this, cx| {
-                    log::info!("Finish deserializing breakpoints & initializing breakpoint store");
                     for (path, count) in new_breakpoints.iter().map(|(path, bp_in_file)| {
                         (path.to_string_lossy(), bp_in_file.breakpoints.len())
                     }) {
@@ -905,7 +904,7 @@ impl BreakpointState {
     }
 
     #[inline]
-    pub fn to_int(&self) -> i32 {
+    pub fn to_int(self) -> i32 {
         match self {
             BreakpointState::Enabled => 0,
             BreakpointState::Disabled => 1,

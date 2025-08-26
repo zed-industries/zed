@@ -41,7 +41,7 @@ pub fn remote_server_dir_relative() -> &'static Path {
 /// # Arguments
 ///
 /// * `dir` - The path to use as the custom data directory. This will be used as the base
-///           directory for all user data, including databases, extensions, and logs.
+///   directory for all user data, including databases, extensions, and logs.
 ///
 /// # Returns
 ///

@@ -236,7 +236,7 @@ mod test {
 
     #[gpui::test]
     async fn test_verify_access_token(cx: &mut gpui::TestAppContext) {
-        let test_db = crate::db::TestDb::sqlite(cx.executor().clone());
+        let test_db = crate::db::TestDb::sqlite(cx.executor());
         let db = test_db.db();
 
         let user = db

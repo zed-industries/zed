@@ -703,7 +703,7 @@ impl MacWindow {
                     .and_then(|titlebar| titlebar.traffic_light_position),
                 transparent_titlebar: titlebar
                     .as_ref()
-                    .map_or(true, |titlebar| titlebar.appears_transparent),
+                    .is_none_or(|titlebar| titlebar.appears_transparent),
                 previous_modifiers_changed_event: None,
                 keystroke_for_do_command: None,
                 do_command_handled: None,
@@ -743,7 +743,7 @@ impl MacWindow {
                 });
             }
 
-            if titlebar.map_or(true, |titlebar| titlebar.appears_transparent) {
+            if titlebar.is_none_or(|titlebar| titlebar.appears_transparent) {
                 native_window.setTitlebarAppearsTransparent_(YES);
                 native_window.setTitleVisibility_(NSWindowTitleVisibility::NSWindowTitleHidden);
             }
@@ -1260,7 +1260,7 @@ impl PlatformWindow for MacWindow {
                         NSView::removeFromSuperview(blur_view);
                         this.blurred_view = None;
                     }
-                } else if this.blurred_view == None {
+                } else if this.blurred_view.is_none() {
                     let content_view = this.native_window.contentView();
                     let frame = NSView::bounds(content_view);
                     let mut blur_view: id = msg_send![BLURRED_VIEW_CLASS, alloc];
@@ -2315,8 +2315,8 @@ fn screen_point_to_gpui_point(this: &Object, position: NSPoint) -> Point<Pixels>
     let frame = get_frame(this);
     let window_x = position.x - frame.origin.x;
     let window_y = frame.size.height - (position.y - frame.origin.y);
-    let position = point(px(window_x as f32), px(window_y as f32));
-    position
+
+    point(px(window_x as f32), px(window_y as f32))
 }
 
 extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {

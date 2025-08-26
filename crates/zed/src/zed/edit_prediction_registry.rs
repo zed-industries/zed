@@ -60,36 +60,25 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     cx.subscribe(&user_store, {
         let editors = editors.clone();
         let client = client.clone();
-        move |user_store, event, cx| match event {
-            client::user::Event::PrivateUserInfoUpdated => {
-                assign_edit_prediction_providers(
-                    &editors,
-                    provider,
-                    &client,
-                    user_store.clone(),
-                    cx,
-                );
+
+        move |user_store, event, cx| {
+            if let client::user::Event::PrivateUserInfoUpdated = event {
+                assign_edit_prediction_providers(&editors, provider, &client, user_store, cx);
             }
-            _ => {}
         }
     })
     .detach();
 
     cx.observe_global::<SettingsStore>({
-        let editors = editors.clone();
-        let client = client.clone();
         let user_store = user_store.clone();
         move |cx| {
             let new_provider = all_language_settings(None, cx).edit_predictions.provider;
 
             if new_provider != provider {
-                let tos_accepted = user_store.read(cx).has_accepted_terms_of_service();
-
                 telemetry::event!(
                     "Edit Prediction Provider Changed",
                     from = provider,
                     to = new_provider,
-                    zed_ai_tos_accepted = tos_accepted,
                 );
 
                 provider = new_provider;
@@ -100,28 +89,6 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                     user_store.clone(),
                     cx,
                 );
-
-                if !tos_accepted {
-                    match provider {
-                        EditPredictionProvider::Zed => {
-                            let Some(window) = cx.active_window() else {
-                                return;
-                            };
-
-                            window
-                                .update(cx, |_, window, cx| {
-                                    window.dispatch_action(
-                                        Box::new(zed_actions::OpenZedPredictOnboarding),
-                                        cx,
-                                    );
-                                })
-                                .ok();
-                        }
-                        EditPredictionProvider::None
-                        | EditPredictionProvider::Copilot
-                        | EditPredictionProvider::Supermaven => {}
-                    }
-                }
             }
         }
     })

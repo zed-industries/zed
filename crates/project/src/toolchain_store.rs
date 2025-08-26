@@ -34,7 +34,10 @@ enum ToolchainStoreInner {
         Entity<LocalToolchainStore>,
         #[allow(dead_code)] Subscription,
     ),
-    Remote(Entity<RemoteToolchainStore>),
+    Remote(
+        Entity<RemoteToolchainStore>,
+        #[allow(dead_code)] Subscription,
+    ),
 }
 
 impl EventEmitter<ToolchainStoreEvent> for ToolchainStore {}
@@ -65,10 +68,12 @@ impl ToolchainStore {
         Self(ToolchainStoreInner::Local(entity, subscription))
     }
 
-    pub(super) fn remote(project_id: u64, client: AnyProtoClient, cx: &mut App) -> Self {
-        Self(ToolchainStoreInner::Remote(
-            cx.new(|_| RemoteToolchainStore { client, project_id }),
-        ))
+    pub(super) fn remote(project_id: u64, client: AnyProtoClient, cx: &mut Context<Self>) -> Self {
+        let entity = cx.new(|_| RemoteToolchainStore { client, project_id });
+        let _subscription = cx.subscribe(&entity, |_, _, e: &ToolchainStoreEvent, cx| {
+            cx.emit(e.clone())
+        });
+        Self(ToolchainStoreInner::Remote(entity, _subscription))
     }
     pub(crate) fn activate_toolchain(
         &self,
@@ -80,8 +85,8 @@ impl ToolchainStore {
             ToolchainStoreInner::Local(local, _) => {
                 local.update(cx, |this, cx| this.activate_toolchain(path, toolchain, cx))
             }
-            ToolchainStoreInner::Remote(remote) => {
-                remote.read(cx).activate_toolchain(path, toolchain, cx)
+            ToolchainStoreInner::Remote(remote, _) => {
+                remote.update(cx, |this, cx| this.activate_toolchain(path, toolchain, cx))
             }
         }
     }
@@ -95,7 +100,7 @@ impl ToolchainStore {
             ToolchainStoreInner::Local(local, _) => {
                 local.update(cx, |this, cx| this.list_toolchains(path, language_name, cx))
             }
-            ToolchainStoreInner::Remote(remote) => {
+            ToolchainStoreInner::Remote(remote, _) => {
                 remote.read(cx).list_toolchains(path, language_name, cx)
             }
         }
@@ -112,7 +117,7 @@ impl ToolchainStore {
                 &path.path,
                 language_name,
             )),
-            ToolchainStoreInner::Remote(remote) => {
+            ToolchainStoreInner::Remote(remote, _) => {
                 remote.read(cx).active_toolchain(path, language_name, cx)
             }
         }
@@ -234,13 +239,13 @@ impl ToolchainStore {
     pub fn as_language_toolchain_store(&self) -> Arc<dyn LanguageToolchainStore> {
         match &self.0 {
             ToolchainStoreInner::Local(local, _) => Arc::new(LocalStore(local.downgrade())),
-            ToolchainStoreInner::Remote(remote) => Arc::new(RemoteStore(remote.downgrade())),
+            ToolchainStoreInner::Remote(remote, _) => Arc::new(RemoteStore(remote.downgrade())),
         }
     }
     pub fn as_local_store(&self) -> Option<&Entity<LocalToolchainStore>> {
         match &self.0 {
             ToolchainStoreInner::Local(local, _) => Some(local),
-            ToolchainStoreInner::Remote(_) => None,
+            ToolchainStoreInner::Remote(_, _) => None,
         }
     }
 }
@@ -415,6 +420,8 @@ impl LocalToolchainStore {
             .cloned()
     }
 }
+
+impl EventEmitter<ToolchainStoreEvent> for RemoteToolchainStore {}
 struct RemoteToolchainStore {
     client: AnyProtoClient,
     project_id: u64,
@@ -425,27 +432,37 @@ impl RemoteToolchainStore {
         &self,
         project_path: ProjectPath,
         toolchain: Toolchain,
-        cx: &App,
+        cx: &mut Context<Self>,
     ) -> Task<Option<()>> {
         let project_id = self.project_id;
         let client = self.client.clone();
-        cx.background_spawn(async move {
-            let path = PathBuf::from(toolchain.path.to_string());
-            let _ = client
-                .request(proto::ActivateToolchain {
-                    project_id,
-                    worktree_id: project_path.worktree_id.to_proto(),
-                    language_name: toolchain.language_name.into(),
-                    toolchain: Some(proto::Toolchain {
-                        name: toolchain.name.into(),
-                        path: path.to_proto(),
-                        raw_json: toolchain.as_json.to_string(),
-                    }),
-                    path: Some(project_path.path.to_string_lossy().into_owned()),
+        cx.spawn(async move |this, cx| {
+            let did_activate = cx
+                .background_spawn(async move {
+                    let path = PathBuf::from(toolchain.path.to_string());
+                    let _ = client
+                        .request(proto::ActivateToolchain {
+                            project_id,
+                            worktree_id: project_path.worktree_id.to_proto(),
+                            language_name: toolchain.language_name.into(),
+                            toolchain: Some(proto::Toolchain {
+                                name: toolchain.name.into(),
+                                path: path.to_proto(),
+                                raw_json: toolchain.as_json.to_string(),
+                            }),
+                            path: Some(project_path.path.to_string_lossy().into_owned()),
+                        })
+                        .await
+                        .log_err()?;
+                    Some(())
                 })
-                .await
-                .log_err()?;
-            Some(())
+                .await;
+            did_activate.and_then(|_| {
+                this.update(cx, |_, cx| {
+                    cx.emit(ToolchainStoreEvent::ToolchainActivated);
+                })
+                .ok()
+            })
         })
     }
 

@@ -189,7 +189,7 @@ fn extract_cfg_attributes(attrs: &[Attribute]) -> Vec<Attribute> {
 fn is_called_from_gpui_crate(_span: Span) -> bool {
     // Check if we're being called from within the gpui crate by examining the call site
     // This is a heuristic approach - we check if the current crate name is "gpui"
-    std::env::var("CARGO_PKG_NAME").map_or(false, |name| name == "gpui")
+    std::env::var("CARGO_PKG_NAME").is_ok_and(|name| name == "gpui")
 }
 
 struct MacroExpander;
