@@ -178,40 +178,39 @@ impl EventStream {
                     flags.contains(StreamFlags::USER_DROPPED)
                         || flags.contains(StreamFlags::KERNEL_DROPPED)
                 })
+                && let Some(last_valid_event_id) = state.last_valid_event_id.take()
             {
-                if let Some(last_valid_event_id) = state.last_valid_event_id.take() {
-                    fs::FSEventStreamStop(state.stream);
-                    fs::FSEventStreamInvalidate(state.stream);
-                    fs::FSEventStreamRelease(state.stream);
+                fs::FSEventStreamStop(state.stream);
+                fs::FSEventStreamInvalidate(state.stream);
+                fs::FSEventStreamRelease(state.stream);
 
-                    let stream_context = fs::FSEventStreamContext {
-                        version: 0,
-                        info,
-                        retain: None,
-                        release: None,
-                        copy_description: None,
-                    };
-                    let stream = fs::FSEventStreamCreate(
-                        cf::kCFAllocatorDefault,
-                        Self::trampoline,
-                        &stream_context,
-                        state.paths,
-                        last_valid_event_id,
-                        state.latency.as_secs_f64(),
-                        fs::kFSEventStreamCreateFlagFileEvents
-                            | fs::kFSEventStreamCreateFlagNoDefer
-                            | fs::kFSEventStreamCreateFlagWatchRoot,
-                    );
+                let stream_context = fs::FSEventStreamContext {
+                    version: 0,
+                    info,
+                    retain: None,
+                    release: None,
+                    copy_description: None,
+                };
+                let stream = fs::FSEventStreamCreate(
+                    cf::kCFAllocatorDefault,
+                    Self::trampoline,
+                    &stream_context,
+                    state.paths,
+                    last_valid_event_id,
+                    state.latency.as_secs_f64(),
+                    fs::kFSEventStreamCreateFlagFileEvents
+                        | fs::kFSEventStreamCreateFlagNoDefer
+                        | fs::kFSEventStreamCreateFlagWatchRoot,
+                );
 
-                    state.stream = stream;
-                    fs::FSEventStreamScheduleWithRunLoop(
-                        state.stream,
-                        cf::CFRunLoopGetCurrent(),
-                        cf::kCFRunLoopDefaultMode,
-                    );
-                    fs::FSEventStreamStart(state.stream);
-                    stream_restarted = true;
-                }
+                state.stream = stream;
+                fs::FSEventStreamScheduleWithRunLoop(
+                    state.stream,
+                    cf::CFRunLoopGetCurrent(),
+                    cf::kCFRunLoopDefaultMode,
+                );
+                fs::FSEventStreamStart(state.stream);
+                stream_restarted = true;
             }
 
             if !stream_restarted {

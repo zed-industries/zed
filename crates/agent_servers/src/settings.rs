@@ -1,6 +1,7 @@
 use crate::AgentServerCommand;
 use anyhow::Result;
-use gpui::App;
+use collections::HashMap;
+use gpui::{App, SharedString};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -13,10 +14,13 @@ pub fn init(cx: &mut App) {
 pub struct AllAgentServersSettings {
     pub gemini: Option<AgentServerSettings>,
     pub claude: Option<AgentServerSettings>,
-    pub codex: Option<AgentServerSettings>,
+
+    /// Custom agent servers configured by the user
+    #[serde(flatten)]
+    pub custom: HashMap<SharedString, AgentServerSettings>,
 }
 
-#[derive(Deserialize, Serialize, Clone, JsonSchema, Debug)]
+#[derive(Deserialize, Serialize, Clone, JsonSchema, Debug, PartialEq)]
 pub struct AgentServerSettings {
     #[serde(flatten)]
     pub command: AgentServerCommand,
@@ -33,7 +37,7 @@ impl settings::Settings for AllAgentServersSettings {
         for AllAgentServersSettings {
             gemini,
             claude,
-            codex,
+            custom,
         } in sources.defaults_and_customizations()
         {
             if gemini.is_some() {
@@ -42,8 +46,13 @@ impl settings::Settings for AllAgentServersSettings {
             if claude.is_some() {
                 settings.claude = claude.clone();
             }
-            if codex.is_some() {
-                settings.codex = codex.clone();
+
+            // Merge custom agents
+            for (name, config) in custom {
+                // Skip built-in agent names to avoid conflicts
+                if name != "gemini" && name != "claude" {
+                    settings.custom.insert(name.clone(), config.clone());
+                }
             }
         }
 

@@ -3,6 +3,7 @@ use std::sync::Arc;
 use gpui::{BackgroundExecutor, TestAppContext};
 use notifications::NotificationEvent;
 use parking_lot::Mutex;
+use pretty_assertions::assert_eq;
 use rpc::{Notification, proto};
 
 use crate::tests::TestServer;
@@ -16,6 +17,9 @@ async fn test_notifications(
     let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
+
+    // Wait for authentication/connection to Collab to be established.
+    executor.run_until_parked();
 
     let notification_events_a = Arc::new(Mutex::new(Vec::new()));
     let notification_events_b = Arc::new(Mutex::new(Vec::new()));

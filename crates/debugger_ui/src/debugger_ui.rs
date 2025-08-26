@@ -272,7 +272,6 @@ pub fn init(cx: &mut App) {
                     }
                 })
                 .on_action({
-                    let active_item = active_item.clone();
                     move |_: &ToggleIgnoreBreakpoints, _, cx| {
                         active_item
                             .update(cx, |item, cx| item.toggle_ignore_breakpoints(cx))
@@ -293,65 +292,81 @@ pub fn init(cx: &mut App) {
                     let Some(debug_panel) = workspace.read(cx).panel::<DebugPanel>(cx) else {
                         return;
                     };
-                    let Some(active_session) = debug_panel
-                        .clone()
-                        .update(cx, |panel, _| panel.active_session())
+                    let Some(active_session) =
+                        debug_panel.update(cx, |panel, _| panel.active_session())
                     else {
                         return;
                     };
+
+                    let session = active_session
+                        .read(cx)
+                        .running_state
+                        .read(cx)
+                        .session()
+                        .read(cx);
+
+                    if session.is_terminated() {
+                        return;
+                    }
+
                     let editor = cx.entity().downgrade();
-                    window.on_action(TypeId::of::<editor::actions::RunToCursor>(), {
-                        let editor = editor.clone();
-                        let active_session = active_session.clone();
-                        move |_, phase, _, cx| {
-                            if phase != DispatchPhase::Bubble {
-                                return;
-                            }
-                            maybe!({
-                                let (buffer, position, _) = editor
-                                    .update(cx, |editor, cx| {
-                                        let cursor_point: language::Point =
-                                            editor.selections.newest(cx).head();
 
-                                        editor
-                                            .buffer()
-                                            .read(cx)
-                                            .point_to_buffer_point(cursor_point, cx)
-                                    })
-                                    .ok()??;
+                    window.on_action_when(
+                        session.any_stopped_thread(),
+                        TypeId::of::<editor::actions::RunToCursor>(),
+                        {
+                            let editor = editor.clone();
+                            let active_session = active_session.clone();
+                            move |_, phase, _, cx| {
+                                if phase != DispatchPhase::Bubble {
+                                    return;
+                                }
+                                maybe!({
+                                    let (buffer, position, _) = editor
+                                        .update(cx, |editor, cx| {
+                                            let cursor_point: language::Point =
+                                                editor.selections.newest(cx).head();
 
-                                let path =
+                                            editor
+                                                .buffer()
+                                                .read(cx)
+                                                .point_to_buffer_point(cursor_point, cx)
+                                        })
+                                        .ok()??;
+
+                                    let path =
                                 debugger::breakpoint_store::BreakpointStore::abs_path_from_buffer(
                                     &buffer, cx,
                                 )?;
 
-                                let source_breakpoint = SourceBreakpoint {
-                                    row: position.row,
-                                    path,
-                                    message: None,
-                                    condition: None,
-                                    hit_condition: None,
-                                    state: debugger::breakpoint_store::BreakpointState::Enabled,
-                                };
+                                    let source_breakpoint = SourceBreakpoint {
+                                        row: position.row,
+                                        path,
+                                        message: None,
+                                        condition: None,
+                                        hit_condition: None,
+                                        state: debugger::breakpoint_store::BreakpointState::Enabled,
+                                    };
 
-                                active_session.update(cx, |session, cx| {
-                                    session.running_state().update(cx, |state, cx| {
-                                        if let Some(thread_id) = state.selected_thread_id() {
-                                            state.session().update(cx, |session, cx| {
-                                                session.run_to_position(
-                                                    source_breakpoint,
-                                                    thread_id,
-                                                    cx,
-                                                );
-                                            })
-                                        }
+                                    active_session.update(cx, |session, cx| {
+                                        session.running_state().update(cx, |state, cx| {
+                                            if let Some(thread_id) = state.selected_thread_id() {
+                                                state.session().update(cx, |session, cx| {
+                                                    session.run_to_position(
+                                                        source_breakpoint,
+                                                        thread_id,
+                                                        cx,
+                                                    );
+                                                })
+                                            }
+                                        });
                                     });
-                                });
 
-                                Some(())
-                            });
-                        }
-                    });
+                                    Some(())
+                                });
+                            }
+                        },
+                    );
 
                     window.on_action(
                         TypeId::of::<editor::actions::EvaluateSelectedText>(),

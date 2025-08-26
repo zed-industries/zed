@@ -883,6 +883,7 @@ impl FakeTransport {
                                         break Err(anyhow!("exit in response to request"));
                                     }
                                 };
+                                let success = response.success;
                                 let message =
                                     serde_json::to_string(&Message::Response(response)).unwrap();
 
@@ -893,6 +894,25 @@ impl FakeTransport {
                                     )
                                     .await
                                     .unwrap();
+
+                                if request.command == dap_types::requests::Initialize::COMMAND
+                                    && success
+                                {
+                                    let message = serde_json::to_string(&Message::Event(Box::new(
+                                        dap_types::messages::Events::Initialized(Some(
+                                            Default::default(),
+                                        )),
+                                    )))
+                                    .unwrap();
+                                    writer
+                                        .write_all(
+                                            TransportDelegate::build_rpc_message(message)
+                                                .as_bytes(),
+                                        )
+                                        .await
+                                        .unwrap();
+                                }
+
                                 writer.flush().await.unwrap();
                             }
                         }

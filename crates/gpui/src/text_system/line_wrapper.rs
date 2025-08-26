@@ -44,7 +44,7 @@ impl LineWrapper {
         let mut prev_c = '\0';
         let mut index = 0;
         let mut candidates = fragments
-            .into_iter()
+            .iter()
             .flat_map(move |fragment| fragment.wrap_boundary_candidates())
             .peekable();
         iter::from_fn(move || {
@@ -327,7 +327,7 @@ mod tests {
     fn build_wrapper() -> LineWrapper {
         let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
         let cx = TestAppContext::build(dispatcher, None);
-        let id = cx.text_system().font_id(&font("Zed Plex Mono")).unwrap();
+        let id = cx.text_system().resolve_font(&font(".ZedMono"));
         LineWrapper::new(id, px(16.), cx.text_system().platform_text_system.clone())
     }
 

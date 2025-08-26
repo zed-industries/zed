@@ -20,7 +20,7 @@ use crate::application_menu::{
 
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
-use client::{Client, CloudUserStore, UserStore, zed_urls};
+use client::{Client, UserStore, zed_urls};
 use cloud_llm_client::Plan;
 use gpui::{
     Action, AnyElement, App, Context, Corner, Element, Entity, Focusable, InteractiveElement,
@@ -126,7 +126,6 @@ pub struct TitleBar {
     platform_titlebar: Entity<PlatformTitleBar>,
     project: Entity<Project>,
     user_store: Entity<UserStore>,
-    cloud_user_store: Entity<CloudUserStore>,
     client: Arc<Client>,
     workspace: WeakEntity<Workspace>,
     application_menu: Option<Entity<ApplicationMenu>>,
@@ -180,11 +179,9 @@ impl Render for TitleBar {
             children.push(self.banner.clone().into_any_element())
         }
 
-        let is_authenticated = self.cloud_user_store.read(cx).is_authenticated();
         let status = self.client.status();
         let status = &*status.borrow();
-
-        let show_sign_in = !is_authenticated || !matches!(status, client::Status::Connected { .. });
+        let user = self.user_store.read(cx).current_user();
 
         children.push(
             h_flex()
@@ -194,10 +191,10 @@ impl Render for TitleBar {
                 .children(self.render_call_controls(window, cx))
                 .children(self.render_connection_status(status, cx))
                 .when(
-                    show_sign_in && TitleBarSettings::get_global(cx).show_sign_in,
+                    user.is_none() && TitleBarSettings::get_global(cx).show_sign_in,
                     |el| el.child(self.render_sign_in_button(cx)),
                 )
-                .when(is_authenticated, |parent| {
+                .when(user.is_some(), |parent| {
                     parent.child(self.render_user_menu_button(cx))
                 })
                 .into_any_element(),
@@ -248,7 +245,6 @@ impl TitleBar {
     ) -> Self {
         let project = workspace.project().clone();
         let user_store = workspace.app_state().user_store.clone();
-        let cloud_user_store = workspace.app_state().cloud_user_store.clone();
         let client = workspace.app_state().client.clone();
         let active_call = ActiveCall::global(cx);
 
@@ -296,7 +292,6 @@ impl TitleBar {
             workspace: workspace.weak_handle(),
             project,
             user_store,
-            cloud_user_store,
             client,
             _subscriptions: subscriptions,
             banner,
@@ -310,7 +305,6 @@ impl TitleBar {
 
         let nickname = options
             .nickname
-            .clone()
             .map(|nick| nick.into())
             .unwrap_or_else(|| host.clone());
 
@@ -349,18 +343,14 @@ impl TitleBar {
                         .child(
                             IconWithIndicator::new(
                                 Icon::new(IconName::Server)
-                                    .size(IconSize::XSmall)
+                                    .size(IconSize::Small)
                                     .color(icon_color),
                                 Some(Indicator::dot().color(indicator_color)),
                             )
                             .indicator_border_color(Some(cx.theme().colors().title_bar_background))
                             .into_any_element(),
                         )
-                        .child(
-                            Label::new(nickname.clone())
-                                .size(LabelSize::Small)
-                                .truncate(),
-                        ),
+                        .child(Label::new(nickname).size(LabelSize::Small).truncate()),
                 )
                 .tooltip(move |window, cx| {
                     Tooltip::with_meta(
@@ -483,7 +473,7 @@ impl TitleBar {
             repo.branch
                 .as_ref()
                 .map(|branch| branch.name())
-                .map(|name| util::truncate_and_trailoff(&name, MAX_BRANCH_NAME_LENGTH))
+                .map(|name| util::truncate_and_trailoff(name, MAX_BRANCH_NAME_LENGTH))
                 .or_else(|| {
                     repo.head_commit.as_ref().map(|commit| {
                         commit
@@ -573,8 +563,8 @@ impl TitleBar {
         match status {
             client::Status::ConnectionError
             | client::Status::ConnectionLost
-            | client::Status::Reauthenticating { .. }
-            | client::Status::Reconnecting { .. }
+            | client::Status::Reauthenticating
+            | client::Status::Reconnecting
             | client::Status::ReconnectionError { .. } => Some(
                 div()
                     .id("disconnected")
@@ -598,11 +588,11 @@ impl TitleBar {
                     Button::new("connection-status", label)
                         .label_size(LabelSize::Small)
                         .on_click(|_, window, cx| {
-                            if let Some(auto_updater) = auto_update::AutoUpdater::get(cx) {
-                                if auto_updater.read(cx).status().is_updated() {
-                                    workspace::reload(&Default::default(), cx);
-                                    return;
-                                }
+                            if let Some(auto_updater) = auto_update::AutoUpdater::get(cx)
+                                && auto_updater.read(cx).status().is_updated()
+                            {
+                                workspace::reload(cx);
+                                return;
                             }
                             auto_update::check(&Default::default(), window, cx);
                         })
@@ -622,9 +612,8 @@ impl TitleBar {
                 window
                     .spawn(cx, async move |cx| {
                         client
-                            .authenticate_and_connect(true, &cx)
+                            .sign_in_with_optional_connect(true, cx)
                             .await
-                            .into_response()
                             .notify_async_err(cx);
                     })
                     .detach();
@@ -632,15 +621,15 @@ impl TitleBar {
     }
 
     pub fn render_user_menu_button(&mut self, cx: &mut Context<Self>) -> impl Element {
-        let cloud_user_store = self.cloud_user_store.read(cx);
-        if let Some(user) = cloud_user_store.authenticated_user() {
-            let has_subscription_period = cloud_user_store.subscription_period().is_some();
-            let plan = cloud_user_store.plan().filter(|_| {
+        let user_store = self.user_store.read(cx);
+        if let Some(user) = user_store.current_user() {
+            let has_subscription_period = user_store.subscription_period().is_some();
+            let plan = user_store.plan().filter(|_| {
                 // Since the user might be on the legacy free plan we filter based on whether we have a subscription period.
                 has_subscription_period
             });
 
-            let user_avatar = user.avatar_url.clone();
+            let user_avatar = user.avatar_uri.clone();
             let free_chip_bg = cx
                 .theme()
                 .colors()
@@ -688,6 +677,10 @@ impl TitleBar {
                         )
                         .separator()
                         .action("Settings", zed_actions::OpenSettings.boxed_clone())
+                        .action(
+                            "Settings Profiles",
+                            zed_actions::settings_profile_selector::Toggle.boxed_clone(),
+                        )
                         .action("Key Bindings", Box::new(keybindings::OpenKeymapEditor))
                         .action(
                             "Themes…",
@@ -732,6 +725,10 @@ impl TitleBar {
                 .menu(|window, cx| {
                     ContextMenu::build(window, cx, |menu, _, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
+                            .action(
+                                "Settings Profiles",
+                                zed_actions::settings_profile_selector::Toggle.boxed_clone(),
+                            )
                             .action("Key Bindings", Box::new(keybindings::OpenKeymapEditor))
                             .action(
                                 "Themes…",

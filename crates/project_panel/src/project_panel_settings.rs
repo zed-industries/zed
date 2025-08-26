@@ -43,9 +43,11 @@ pub struct ProjectPanelSettings {
     pub sticky_scroll: bool,
     pub auto_reveal_entries: bool,
     pub auto_fold_dirs: bool,
+    pub starts_open: bool,
     pub scrollbar: ScrollbarSettings,
     pub show_diagnostics: ShowDiagnostics,
     pub hide_root: bool,
+    pub drag_and_drop: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -139,6 +141,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub auto_fold_dirs: Option<bool>,
+    /// Whether the project panel should open on startup.
+    ///
+    /// Default: true
+    pub starts_open: Option<bool>,
     /// Scrollbar-related settings
     pub scrollbar: Option<ScrollbarSettingsContent>,
     /// Which files containing diagnostic errors/warnings to mark in the project panel.
@@ -155,6 +161,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub sticky_scroll: Option<bool>,
+    /// Whether to enable drag-and-drop operations in the project panel.
+    ///
+    /// Default: true
+    pub drag_and_drop: Option<bool>,
 }
 
 impl Settings for ProjectPanelSettings {

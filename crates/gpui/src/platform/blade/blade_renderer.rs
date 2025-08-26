@@ -434,24 +434,24 @@ impl BladeRenderer {
     }
 
     fn wait_for_gpu(&mut self) {
-        if let Some(last_sp) = self.last_sync_point.take() {
-            if !self.gpu.wait_for(&last_sp, MAX_FRAME_TIME_MS) {
-                log::error!("GPU hung");
-                #[cfg(target_os = "linux")]
-                if self.gpu.device_information().driver_name == "radv" {
-                    log::error!(
-                        "there's a known bug with amdgpu/radv, try setting ZED_PATH_SAMPLE_COUNT=0 as a workaround"
-                    );
-                    log::error!(
-                        "if that helps you're running into https://github.com/zed-industries/zed/issues/26143"
-                    );
-                }
+        if let Some(last_sp) = self.last_sync_point.take()
+            && !self.gpu.wait_for(&last_sp, MAX_FRAME_TIME_MS)
+        {
+            log::error!("GPU hung");
+            #[cfg(target_os = "linux")]
+            if self.gpu.device_information().driver_name == "radv" {
                 log::error!(
-                    "your device information is: {:?}",
-                    self.gpu.device_information()
+                    "there's a known bug with amdgpu/radv, try setting ZED_PATH_SAMPLE_COUNT=0 as a workaround"
                 );
-                while !self.gpu.wait_for(&last_sp, MAX_FRAME_TIME_MS) {}
+                log::error!(
+                    "if that helps you're running into https://github.com/zed-industries/zed/issues/26143"
+                );
             }
+            log::error!(
+                "your device information is: {:?}",
+                self.gpu.device_information()
+            );
+            while !self.gpu.wait_for(&last_sp, MAX_FRAME_TIME_MS) {}
         }
     }
 
@@ -606,7 +606,7 @@ impl BladeRenderer {
                     xy_position: v.xy_position,
                     st_position: v.st_position,
                     color: path.color,
-                    bounds: path.bounds.intersect(&path.content_mask.bounds),
+                    bounds: path.clipped_bounds(),
                 }));
             }
             let vertex_buf = unsafe { self.instance_belt.alloc_typed(&vertices, &self.gpu) };
@@ -735,13 +735,13 @@ impl BladeRenderer {
                         paths
                             .iter()
                             .map(|path| PathSprite {
-                                bounds: path.bounds,
+                                bounds: path.clipped_bounds(),
                             })
                             .collect()
                     } else {
-                        let mut bounds = first_path.bounds;
+                        let mut bounds = first_path.clipped_bounds();
                         for path in paths.iter().skip(1) {
-                            bounds = bounds.union(&path.bounds);
+                            bounds = bounds.union(&path.clipped_bounds());
                         }
                         vec![PathSprite { bounds }]
                     };

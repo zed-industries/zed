@@ -93,6 +93,8 @@ actions!(
         Init,
         /// Opens all modified files in the editor.
         OpenModifiedFiles,
+        /// Clones a repository.
+        Clone,
     ]
 );
 
@@ -115,6 +117,13 @@ impl Oid {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         let oid = libgit::Oid::from_bytes(bytes).context("failed to parse bytes into git oid")?;
         Ok(Self(oid))
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn random(rng: &mut impl rand::Rng) -> Self {
+        let mut bytes = [0; 20];
+        rng.fill(&mut bytes);
+        Self::from_bytes(&bytes).unwrap()
     }
 
     pub fn as_bytes(&self) -> &[u8] {

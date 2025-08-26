@@ -156,7 +156,10 @@ pub mod workspace {
             #[action(deprecated_aliases = ["editor::CopyPath", "outline_panel::CopyPath", "project_panel::CopyPath"])]
             CopyPath,
             #[action(deprecated_aliases = ["editor::CopyRelativePath", "outline_panel::CopyRelativePath", "project_panel::CopyRelativePath"])]
-            CopyRelativePath
+            CopyRelativePath,
+            /// Opens the selected file with the system's default application.
+            #[action(deprecated_aliases = ["project_panel::OpenWithSystem"])]
+            OpenWithSystem,
         ]
     );
 }
@@ -285,13 +288,11 @@ pub mod agent {
             ResetOnboarding,
             /// Starts a chat conversation with the agent.
             Chat,
-            /// Displays the previous message in the history.
-            PreviousHistoryMessage,
-            /// Displays the next message in the history.
-            NextHistoryMessage,
             /// Toggles the language model selector dropdown.
             #[action(deprecated_aliases = ["assistant::ToggleModelSelector", "assistant2::ToggleModelSelector"])]
-            ToggleModelSelector
+            ToggleModelSelector,
+            /// Triggers re-authentication on Gemini
+            ReauthenticateAgent
         ]
     );
 }

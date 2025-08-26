@@ -256,7 +256,7 @@ pub(crate) fn deserialize_pane_layout(
             Some(Member::Axis(PaneAxis::load(
                 if should_invert { axis.invert() } else { axis },
                 members,
-                flexes.clone(),
+                flexes,
             )))
         }
         SerializedPaneLayout::Pane(serialized_pane) => {
@@ -341,7 +341,7 @@ impl SerializedPaneLayout {
     pub(crate) fn in_order(&self) -> Vec<SerializedPaneLayout> {
         let mut panes = vec![];
 
-        Self::inner_in_order(&self, &mut panes);
+        Self::inner_in_order(self, &mut panes);
         panes
     }
 

@@ -1,17 +1,13 @@
-use anyhow::anyhow;
-use std::cell::RefCell;
-use std::path::Path;
 use std::rc::Rc;
-use util::ResultExt as _;
+use std::{any::Any, path::Path};
 
-use crate::{AgentServer, AgentServerCommand, AgentServerVersion};
-use acp_thread::{AgentConnection, LoadError, OldAcpAgentConnection, OldAcpClientDelegate};
-use agentic_coding_protocol as acp_old;
-use anyhow::{Context as _, Result};
-use gpui::{AppContext as _, AsyncApp, Entity, Task, WeakEntity};
+use crate::{AgentServer, AgentServerCommand};
+use acp_thread::{AgentConnection, LoadError};
+use anyhow::Result;
+use gpui::{App, Entity, SharedString, Task};
+use language_models::provider::google::GoogleLanguageModelProvider;
 use project::Project;
 use settings::SettingsStore;
-use ui::App;
 
 use crate::AllAgentServersSettings;
 
@@ -21,16 +17,20 @@ pub struct Gemini;
 const ACP_ARG: &str = "--experimental-acp";
 
 impl AgentServer for Gemini {
-    fn name(&self) -> &'static str {
-        "Gemini"
+    fn telemetry_id(&self) -> &'static str {
+        "gemini-cli"
     }
 
-    fn empty_state_headline(&self) -> &'static str {
-        "Welcome to Gemini"
+    fn name(&self) -> SharedString {
+        "Gemini CLI".into()
     }
 
-    fn empty_state_message(&self) -> &'static str {
-        "Ask questions, edit files, run commands.\nBe specific for the best results."
+    fn empty_state_headline(&self) -> SharedString {
+        self.name()
+    }
+
+    fn empty_state_message(&self) -> SharedString {
+        "Ask questions, edit files, run commands".into()
     }
 
     fn logo(&self) -> ui::IconName {
@@ -43,143 +43,79 @@ impl AgentServer for Gemini {
         project: &Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn AgentConnection>>> {
-        let root_dir = root_dir.to_path_buf();
         let project = project.clone();
-        let this = self.clone();
-        let name = self.name();
-
+        let root_dir = root_dir.to_path_buf();
+        let server_name = self.name();
         cx.spawn(async move |cx| {
-            let command = this.command(&project, cx).await?;
+            let settings = cx.read_global(|settings: &SettingsStore, _| {
+                settings.get::<AllAgentServersSettings>(None).gemini.clone()
+            })?;
 
-            let mut child = util::command::new_smol_command(&command.path)
-                .args(command.args.iter())
-                .current_dir(root_dir)
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::inherit())
-                .kill_on_drop(true)
-                .spawn()?;
+            let Some(mut command) =
+                AgentServerCommand::resolve("gemini", &[ACP_ARG], None, settings, &project, cx).await
+            else {
+                return Err(LoadError::NotInstalled {
+                    error_message: "Failed to find Gemini CLI binary".into(),
+                    install_message: "Install Gemini CLI".into(),
+                    install_command: Self::install_command().into(),
+                }.into());
+            };
 
-            let stdin = child.stdin.take().unwrap();
-            let stdout = child.stdout.take().unwrap();
+            if let Some(api_key)= cx.update(GoogleLanguageModelProvider::api_key)?.await.ok() {
+                command.env.get_or_insert_default().insert("GEMINI_API_KEY".to_owned(), api_key.key);
+            }
 
-            let foreground_executor = cx.foreground_executor().clone();
+            let result = crate::acp::connect(server_name, command.clone(), &root_dir, cx).await;
+            if result.is_err() {
+                let version_fut = util::command::new_smol_command(&command.path)
+                    .args(command.args.iter())
+                    .arg("--version")
+                    .kill_on_drop(true)
+                    .output();
 
-            let thread_rc = Rc::new(RefCell::new(WeakEntity::new_invalid()));
+                let help_fut = util::command::new_smol_command(&command.path)
+                    .args(command.args.iter())
+                    .arg("--help")
+                    .kill_on_drop(true)
+                    .output();
 
-            let (connection, io_fut) = acp_old::AgentConnection::connect_to_agent(
-                OldAcpClientDelegate::new(thread_rc.clone(), cx.clone()),
-                stdin,
-                stdout,
-                move |fut| foreground_executor.spawn(fut).detach(),
-            );
+                let (version_output, help_output) = futures::future::join(version_fut, help_fut).await;
 
-            let io_task = cx.background_spawn(async move {
-                io_fut.await.log_err();
-            });
+                let current_version = String::from_utf8(version_output?.stdout)?;
+                let supported = String::from_utf8(help_output?.stdout)?.contains(ACP_ARG);
 
-            let child_status = cx.background_spawn(async move {
-                let result = match child.status().await {
-                    Err(e) => Err(anyhow!(e)),
-                    Ok(result) if result.success() => Ok(()),
-                    Ok(result) => {
-                        if let Some(AgentServerVersion::Unsupported {
-                            error_message,
-                            upgrade_message,
-                            upgrade_command,
-                        }) = this.version(&command).await.log_err()
-                        {
-                            Err(anyhow!(LoadError::Unsupported {
-                                error_message,
-                                upgrade_message,
-                                upgrade_command
-                            }))
-                        } else {
-                            Err(anyhow!(LoadError::Exited(result.code().unwrap_or(-127))))
-                        }
-                    }
-                };
-                drop(io_task);
-                result
-            });
-
-            let connection: Rc<dyn AgentConnection> = Rc::new(OldAcpAgentConnection {
-                name,
-                connection,
-                child_status,
-                current_thread: thread_rc,
-            });
-
-            Ok(connection)
+                if !supported {
+                    return Err(LoadError::Unsupported {
+                        error_message: format!(
+                            "Your installed version of Gemini CLI ({}, version {}) doesn't support the Agentic Coding Protocol (ACP).",
+                            command.path.to_string_lossy(),
+                            current_version
+                        ).into(),
+                        upgrade_message: "Upgrade Gemini CLI to latest".into(),
+                        upgrade_command: Self::upgrade_command().into(),
+                    }.into())
+                }
+            }
+            result
         })
+    }
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+        self
     }
 }
 
 impl Gemini {
-    async fn command(
-        &self,
-        project: &Entity<Project>,
-        cx: &mut AsyncApp,
-    ) -> Result<AgentServerCommand> {
-        let settings = cx.read_global(|settings: &SettingsStore, _| {
-            settings.get::<AllAgentServersSettings>(None).gemini.clone()
-        })?;
-
-        if let Some(command) =
-            AgentServerCommand::resolve("gemini", &[ACP_ARG], settings, &project, cx).await
-        {
-            return Ok(command);
-        };
-
-        let (fs, node_runtime) = project.update(cx, |project, _| {
-            (project.fs().clone(), project.node_runtime().cloned())
-        })?;
-        let node_runtime = node_runtime.context("gemini not found on path")?;
-
-        let directory = ::paths::agent_servers_dir().join("gemini");
-        fs.create_dir(&directory).await?;
-        node_runtime
-            .npm_install_packages(&directory, &[("@google/gemini-cli", "latest")])
-            .await?;
-        let path = directory.join("node_modules/.bin/gemini");
-
-        Ok(AgentServerCommand {
-            path,
-            args: vec![ACP_ARG.into()],
-            env: None,
-        })
+    pub fn binary_name() -> &'static str {
+        "gemini"
     }
 
-    async fn version(&self, command: &AgentServerCommand) -> Result<AgentServerVersion> {
-        let version_fut = util::command::new_smol_command(&command.path)
-            .args(command.args.iter())
-            .arg("--version")
-            .kill_on_drop(true)
-            .output();
+    pub fn install_command() -> &'static str {
+        "npm install -g @google/gemini-cli@preview"
+    }
 
-        let help_fut = util::command::new_smol_command(&command.path)
-            .args(command.args.iter())
-            .arg("--help")
-            .kill_on_drop(true)
-            .output();
-
-        let (version_output, help_output) = futures::future::join(version_fut, help_fut).await;
-
-        let current_version = String::from_utf8(version_output?.stdout)?;
-        let supported = String::from_utf8(help_output?.stdout)?.contains(ACP_ARG);
-
-        if supported {
-            Ok(AgentServerVersion::Supported)
-        } else {
-            Ok(AgentServerVersion::Unsupported {
-                error_message: format!(
-                    "Your installed version of Gemini {} doesn't support the Agentic Coding Protocol (ACP).",
-                    current_version
-                ).into(),
-                upgrade_message: "Upgrade Gemini to Latest".into(),
-                upgrade_command: "npm install -g @google/gemini-cli@latest".into(),
-            })
-        }
+    pub fn upgrade_command() -> &'static str {
+        "npm install -g @google/gemini-cli@preview"
     }
 }
 
@@ -189,7 +125,7 @@ pub(crate) mod tests {
     use crate::AgentServerCommand;
     use std::path::Path;
 
-    crate::common_e2e_tests!(Gemini, allow_option_id = "0");
+    crate::common_e2e_tests!(async |_, _, _| Gemini, allow_option_id = "proceed_once");
 
     pub fn local_command() -> AgentServerCommand {
         let cli_path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -199,7 +135,7 @@ pub(crate) mod tests {
 
         AgentServerCommand {
             path: "node".into(),
-            args: vec![cli_path, ACP_ARG.into()],
+            args: vec![cli_path],
             env: None,
         }
     }

@@ -371,13 +371,13 @@ impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
 
 impl From<Box<dyn SearchableItemHandle>> for AnyView {
     fn from(this: Box<dyn SearchableItemHandle>) -> Self {
-        this.to_any().clone()
+        this.to_any()
     }
 }
 
 impl From<&Box<dyn SearchableItemHandle>> for AnyView {
     fn from(this: &Box<dyn SearchableItemHandle>) -> Self {
-        this.to_any().clone()
+        this.to_any()
     }
 }
 

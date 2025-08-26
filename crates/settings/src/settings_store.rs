@@ -2,7 +2,11 @@ use anyhow::{Context as _, Result};
 use collections::{BTreeMap, HashMap, btree_map, hash_map};
 use ec4rs::{ConfigParser, PropertiesSource, Section};
 use fs::Fs;
-use futures::{FutureExt, StreamExt, channel::mpsc, future::LocalBoxFuture};
+use futures::{
+    FutureExt, StreamExt,
+    channel::{mpsc, oneshot},
+    future::LocalBoxFuture,
+};
 use gpui::{App, AsyncApp, BorrowAppContext, Global, Task, UpdateGlobal};
 
 use paths::{EDITORCONFIG_NAME, local_settings_file_relative_path, task_file_name};
@@ -12,6 +16,7 @@ use serde_json::{Value, json};
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId, type_name},
+    env,
     fmt::Debug,
     ops::Range,
     path::{Path, PathBuf},
@@ -55,6 +60,11 @@ pub trait Settings: 'static + Send + Sync {
 
     /// The logic for combining together values from one or more JSON files into the
     /// final value for this setting.
+    ///
+    /// # Warning
+    /// `Self::FileContent` deserialized field names should match with `Self` deserialized field names
+    /// otherwise the field won't be deserialized properly and you will get the error:
+    /// "A default setting must be added to the `default.json` file"
     fn load(sources: SettingsSources<Self::FileContent>, cx: &mut App) -> Result<Self>
     where
         Self: Sized;
@@ -122,6 +132,8 @@ pub struct SettingsSources<'a, T> {
     pub user: Option<&'a T>,
     /// The user settings for the current release channel.
     pub release_channel: Option<&'a T>,
+    /// The user settings for the current operating system.
+    pub operating_system: Option<&'a T>,
     /// The settings associated with an enabled settings profile
     pub profile: Option<&'a T>,
     /// The server's settings.
@@ -143,6 +155,7 @@ impl<'a, T: Serialize> SettingsSources<'a, T> {
             .chain(self.extensions)
             .chain(self.user)
             .chain(self.release_channel)
+            .chain(self.operating_system)
             .chain(self.profile)
             .chain(self.server)
             .chain(self.project.iter().copied())
@@ -332,15 +345,19 @@ impl SettingsStore {
                     .log_err();
             }
 
+            let mut os_settings_value = None;
+            if let Some(os_settings) = &self.raw_user_settings.get(env::consts::OS) {
+                os_settings_value = setting_value.deserialize_setting(os_settings).log_err();
+            }
+
             let mut profile_value = None;
-            if let Some(active_profile) = cx.try_global::<ActiveSettingsProfileName>() {
-                if let Some(profiles) = self.raw_user_settings.get("profiles") {
-                    if let Some(profile_settings) = profiles.get(&active_profile.0) {
-                        profile_value = setting_value
-                            .deserialize_setting(profile_settings)
-                            .log_err();
-                    }
-                }
+            if let Some(active_profile) = cx.try_global::<ActiveSettingsProfileName>()
+                && let Some(profiles) = self.raw_user_settings.get("profiles")
+                && let Some(profile_settings) = profiles.get(&active_profile.0)
+            {
+                profile_value = setting_value
+                    .deserialize_setting(profile_settings)
+                    .log_err();
             }
 
             let server_value = self
@@ -362,6 +379,7 @@ impl SettingsStore {
                         extensions: extension_value.as_ref(),
                         user: user_value.as_ref(),
                         release_channel: release_channel_value.as_ref(),
+                        operating_system: os_settings_value.as_ref(),
                         profile: profile_value.as_ref(),
                         server: server_value.as_ref(),
                         project: &[],
@@ -468,10 +486,10 @@ impl SettingsStore {
         match fs.load(paths::settings_file()).await {
             result @ Ok(_) => result,
             Err(err) => {
-                if let Some(e) = err.downcast_ref::<std::io::Error>() {
-                    if e.kind() == std::io::ErrorKind::NotFound {
-                        return Ok(crate::initial_user_settings_content().to_string());
-                    }
+                if let Some(e) = err.downcast_ref::<std::io::Error>()
+                    && e.kind() == std::io::ErrorKind::NotFound
+                {
+                    return Ok(crate::initial_user_settings_content().to_string());
                 }
                 Err(err)
             }
@@ -482,10 +500,10 @@ impl SettingsStore {
         match fs.load(paths::global_settings_file()).await {
             result @ Ok(_) => result,
             Err(err) => {
-                if let Some(e) = err.downcast_ref::<std::io::Error>() {
-                    if e.kind() == std::io::ErrorKind::NotFound {
-                        return Ok("{}".to_string());
-                    }
+                if let Some(e) = err.downcast_ref::<std::io::Error>()
+                    && e.kind() == std::io::ErrorKind::NotFound
+                {
+                    return Ok("{}".to_string());
                 }
                 Err(err)
             }
@@ -531,39 +549,60 @@ impl SettingsStore {
             .ok();
     }
 
-    pub fn import_vscode_settings(&self, fs: Arc<dyn Fs>, vscode_settings: VsCodeSettings) {
+    pub fn import_vscode_settings(
+        &self,
+        fs: Arc<dyn Fs>,
+        vscode_settings: VsCodeSettings,
+    ) -> oneshot::Receiver<Result<()>> {
+        let (tx, rx) = oneshot::channel::<Result<()>>();
         self.setting_file_updates_tx
             .unbounded_send(Box::new(move |cx: AsyncApp| {
                 async move {
-                    let old_text = Self::load_settings(&fs).await?;
-                    let new_text = cx.read_global(|store: &SettingsStore, _cx| {
-                        store.get_vscode_edits(old_text, &vscode_settings)
-                    })?;
-                    let settings_path = paths::settings_file().as_path();
-                    if fs.is_file(settings_path).await {
-                        let resolved_path =
-                            fs.canonicalize(settings_path).await.with_context(|| {
-                                format!("Failed to canonicalize settings path {:?}", settings_path)
-                            })?;
+                    let res = async move {
+                        let old_text = Self::load_settings(&fs).await?;
+                        let new_text = cx.read_global(|store: &SettingsStore, _cx| {
+                            store.get_vscode_edits(old_text, &vscode_settings)
+                        })?;
+                        let settings_path = paths::settings_file().as_path();
+                        if fs.is_file(settings_path).await {
+                            let resolved_path =
+                                fs.canonicalize(settings_path).await.with_context(|| {
+                                    format!(
+                                        "Failed to canonicalize settings path {:?}",
+                                        settings_path
+                                    )
+                                })?;
 
-                        fs.atomic_write(resolved_path.clone(), new_text)
-                            .await
-                            .with_context(|| {
-                                format!("Failed to write settings to file {:?}", resolved_path)
-                            })?;
-                    } else {
-                        fs.atomic_write(settings_path.to_path_buf(), new_text)
-                            .await
-                            .with_context(|| {
-                                format!("Failed to write settings to file {:?}", settings_path)
-                            })?;
+                            fs.atomic_write(resolved_path.clone(), new_text)
+                                .await
+                                .with_context(|| {
+                                    format!("Failed to write settings to file {:?}", resolved_path)
+                                })?;
+                        } else {
+                            fs.atomic_write(settings_path.to_path_buf(), new_text)
+                                .await
+                                .with_context(|| {
+                                    format!("Failed to write settings to file {:?}", settings_path)
+                                })?;
+                        }
+
+                        anyhow::Ok(())
                     }
+                    .await;
 
-                    anyhow::Ok(())
+                    let new_res = match &res {
+                        Ok(_) => anyhow::Ok(()),
+                        Err(e) => Err(anyhow::anyhow!("Failed to write settings to file {:?}", e)),
+                    };
+
+                    _ = tx.send(new_res);
+                    res
                 }
                 .boxed_local()
             }))
             .ok();
+
+        rx
     }
 }
 
@@ -920,13 +959,13 @@ impl SettingsStore {
             let mut setting_schema = setting_value.json_schema(&mut generator);
 
             if let Some(key) = setting_value.key() {
-                if let Some(properties) = combined_schema.get_mut("properties") {
-                    if let Some(properties_obj) = properties.as_object_mut() {
-                        if let Some(target) = properties_obj.get_mut(key) {
-                            merge_schema(target, setting_schema.to_value());
-                        } else {
-                            properties_obj.insert(key.to_string(), setting_schema.to_value());
-                        }
+                if let Some(properties) = combined_schema.get_mut("properties")
+                    && let Some(properties_obj) = properties.as_object_mut()
+                {
+                    if let Some(target) = properties_obj.get_mut(key) {
+                        merge_schema(target, setting_schema.to_value());
+                    } else {
+                        properties_obj.insert(key.to_string(), setting_schema.to_value());
                     }
                 }
             } else {
@@ -1003,16 +1042,15 @@ impl SettingsStore {
                     | "additionalProperties" => {
                         if let Some(old_value) =
                             target_obj.insert(source_key.clone(), source_value.clone())
+                            && old_value != source_value
                         {
-                            if old_value != source_value {
-                                log::error!(
-                                    "bug: while merging JSON schemas, \
+                            log::error!(
+                                "bug: while merging JSON schemas, \
                                     mismatch `\"{}\": {}` (before was `{}`)",
-                                    source_key,
-                                    old_value,
-                                    source_value
-                                );
-                            }
+                                source_key,
+                                old_value,
+                                source_value
+                            );
                         }
                     }
                     _ => {
@@ -1067,7 +1105,7 @@ impl SettingsStore {
             "$schema": meta_schema,
             "title": "Zed Settings",
             "unevaluatedProperties": false,
-            // ZedSettings + settings overrides for each release stage / profiles
+            // ZedSettings + settings overrides for each release stage / OS / profiles
             "allOf": [
                 zed_settings_ref,
                 {
@@ -1076,9 +1114,12 @@ impl SettingsStore {
                         "nightly": zed_settings_override_ref,
                         "stable": zed_settings_override_ref,
                         "preview": zed_settings_override_ref,
+                        "linux": zed_settings_override_ref,
+                        "macos": zed_settings_override_ref,
+                        "windows": zed_settings_override_ref,
                         "profiles": {
                             "type": "object",
-                            "description": "Configures any number of settings profiles that are temporarily applied when selected from `settings profile selector: toggle`.",
+                            "description": "Configures any number of settings profiles.",
                             "additionalProperties": zed_settings_override_ref
                         }
                     }
@@ -1130,28 +1171,31 @@ impl SettingsStore {
             if let Some(release_settings) = &self
                 .raw_user_settings
                 .get(release_channel::RELEASE_CHANNEL.dev_name())
-            {
-                if let Some(release_settings) = setting_value
+                && let Some(release_settings) = setting_value
                     .deserialize_setting(release_settings)
                     .log_err()
-                {
-                    release_channel_settings = Some(release_settings);
-                }
+            {
+                release_channel_settings = Some(release_settings);
+            }
+
+            let mut os_settings = None;
+            if let Some(settings) = &self.raw_user_settings.get(env::consts::OS)
+                && let Some(settings) = setting_value.deserialize_setting(settings).log_err()
+            {
+                os_settings = Some(settings);
             }
 
             let mut profile_settings = None;
-            if let Some(active_profile) = cx.try_global::<ActiveSettingsProfileName>() {
-                if let Some(profiles) = self.raw_user_settings.get("profiles") {
-                    if let Some(profile_json) = profiles.get(&active_profile.0) {
-                        profile_settings =
-                            setting_value.deserialize_setting(profile_json).log_err();
-                    }
-                }
+            if let Some(active_profile) = cx.try_global::<ActiveSettingsProfileName>()
+                && let Some(profiles) = self.raw_user_settings.get("profiles")
+                && let Some(profile_json) = profiles.get(&active_profile.0)
+            {
+                profile_settings = setting_value.deserialize_setting(profile_json).log_err();
             }
 
             // If the global settings file changed, reload the global value for the field.
-            if changed_local_path.is_none() {
-                if let Some(value) = setting_value
+            if changed_local_path.is_none()
+                && let Some(value) = setting_value
                     .load_setting(
                         SettingsSources {
                             default: &default_settings,
@@ -1159,6 +1203,7 @@ impl SettingsStore {
                             extensions: extension_settings.as_ref(),
                             user: user_settings.as_ref(),
                             release_channel: release_channel_settings.as_ref(),
+                            operating_system: os_settings.as_ref(),
                             profile: profile_settings.as_ref(),
                             server: server_settings.as_ref(),
                             project: &[],
@@ -1166,9 +1211,8 @@ impl SettingsStore {
                         cx,
                     )
                     .log_err()
-                {
-                    setting_value.set_global_value(value);
-                }
+            {
+                setting_value.set_global_value(value);
             }
 
             // Reload the local values for the setting.
@@ -1177,12 +1221,12 @@ impl SettingsStore {
             for ((root_id, directory_path), local_settings) in &self.raw_local_settings {
                 // Build a stack of all of the local values for that setting.
                 while let Some(prev_entry) = paths_stack.last() {
-                    if let Some((prev_root_id, prev_path)) = prev_entry {
-                        if root_id != prev_root_id || !directory_path.starts_with(prev_path) {
-                            paths_stack.pop();
-                            project_settings_stack.pop();
-                            continue;
-                        }
+                    if let Some((prev_root_id, prev_path)) = prev_entry
+                        && (root_id != prev_root_id || !directory_path.starts_with(prev_path))
+                    {
+                        paths_stack.pop();
+                        project_settings_stack.pop();
+                        continue;
                     }
                     break;
                 }
@@ -1194,8 +1238,7 @@ impl SettingsStore {
 
                         // If a local settings file changed, then avoid recomputing local
                         // settings for any path outside of that directory.
-                        if changed_local_path.map_or(
-                            false,
+                        if changed_local_path.is_some_and(
                             |(changed_root_id, changed_local_path)| {
                                 *root_id != changed_root_id
                                     || !directory_path.starts_with(changed_local_path)
@@ -1212,6 +1255,7 @@ impl SettingsStore {
                                     extensions: extension_settings.as_ref(),
                                     user: user_settings.as_ref(),
                                     release_channel: release_channel_settings.as_ref(),
+                                    operating_system: os_settings.as_ref(),
                                     profile: profile_settings.as_ref(),
                                     server: server_settings.as_ref(),
                                     project: &project_settings_stack.iter().collect::<Vec<_>>(),
@@ -1337,6 +1381,9 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
                     .map(|value| value.0.downcast_ref::<T::FileContent>().unwrap()),
                 release_channel: values
                     .release_channel
+                    .map(|value| value.0.downcast_ref::<T::FileContent>().unwrap()),
+                operating_system: values
+                    .operating_system
                     .map(|value| value.0.downcast_ref::<T::FileContent>().unwrap()),
                 profile: values
                     .profile

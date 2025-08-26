@@ -22,9 +22,9 @@ pub(super) struct RootPathTrie<Label> {
 /// Label presence is a marker that allows to optimize searches within [RootPathTrie]; node label can be:
 /// - Present; we know there's definitely a project root at this node.
 /// - Known Absent - we know there's definitely no project root at this node and none of it's ancestors are Present (descendants can be present though!).
-/// The distinction is there to optimize searching; when we encounter a node with unknown status, we don't need to look at it's full path
-/// to the root of the worktree; it's sufficient to explore only the path between last node with a KnownAbsent state and the directory of a path, since we run searches
-/// from the leaf up to the root of the worktree.
+///   The distinction is there to optimize searching; when we encounter a node with unknown status, we don't need to look at it's full path
+///   to the root of the worktree; it's sufficient to explore only the path between last node with a KnownAbsent state and the directory of a path, since we run searches
+///   from the leaf up to the root of the worktree.
 ///
 /// In practical terms, it means that by storing label presence we don't need to do a project discovery on a given folder more than once
 /// (unless the node is invalidated, which can happen when FS entries are renamed/removed).
@@ -84,11 +84,11 @@ impl<Label: Ord + Clone> RootPathTrie<Label> {
     ) {
         let mut current = self;
         for key in path.0.iter() {
-            if !current.labels.is_empty() {
-                if (callback)(&current.worktree_relative_path, &current.labels).is_break() {
-                    return;
-                };
-            }
+            if !current.labels.is_empty()
+                && (callback)(&current.worktree_relative_path, &current.labels).is_break()
+            {
+                return;
+            };
             current = match current.children.get(key) {
                 Some(child) => child,
                 None => return,

@@ -1,4 +1,5 @@
 mod timestamp;
+pub mod websocket_protocol;
 
 use serde::{Deserialize, Serialize};
 
@@ -39,6 +40,11 @@ pub struct PlanInfo {
 pub struct SubscriptionPeriod {
     pub started_at: Timestamp,
     pub ended_at: Timestamp,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct AcceptTermsOfServiceResponse {
+    pub user: AuthenticatedUser,
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
