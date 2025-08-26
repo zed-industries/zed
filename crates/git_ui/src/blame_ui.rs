@@ -102,20 +102,23 @@ impl BlameRenderer for GitBlameRenderer {
                         )
                     }
                 })
-                .when(!editor_for_tooltip.read(cx).has_mouse_context_menu(), |el| {
-                    el.hoverable_tooltip(move |_window, cx| {
-                        cx.new(|cx| {
-                            CommitTooltip::blame_entry(
-                                &blame_entry,
-                                details.clone(),
-                                repository.clone(),
-                                workspace.clone(),
-                                cx,
-                            )
+                .when(
+                    !editor_for_tooltip.read(cx).has_mouse_context_menu(),
+                    |el| {
+                        el.hoverable_tooltip(move |_window, cx| {
+                            cx.new(|cx| {
+                                CommitTooltip::blame_entry(
+                                    &blame_entry,
+                                    details.clone(),
+                                    repository.clone(),
+                                    workspace.clone(),
+                                    cx,
+                                )
+                            })
+                            .into()
                         })
-                        .into()
-                    })
-                })
+                    },
+                )
                 .into_any(),
         )
     }

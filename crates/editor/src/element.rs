@@ -2533,9 +2533,9 @@ impl EditorElement {
         });
 
         if let Some(mut element) = maybe_element {
-            let has_mouse_context_menu = self.editor.read_with(cx, |editor, _| {
-                editor.mouse_context_menu.is_some()
-            });
+            let has_mouse_context_menu = self
+                .editor
+                .read_with(cx, |editor, _| editor.mouse_context_menu.is_some());
 
             if !has_mouse_context_menu {
                 let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
