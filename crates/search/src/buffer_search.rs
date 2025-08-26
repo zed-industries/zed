@@ -111,6 +111,7 @@ pub struct BufferSearchBar {
     pending_search: Option<Task<()>>,
     search_options: SearchOptions,
     default_options: SearchOptions,
+    configured_options: SearchOptions,
     query_error: Option<String>,
     dismissed: bool,
     search_history: SearchHistory,
@@ -652,6 +653,7 @@ impl BufferSearchBar {
             active_match_index: None,
             searchable_items_with_matches: Default::default(),
             default_options: search_options,
+            configured_options: search_options,
             search_options,
             pending_search: None,
             query_error: None,
@@ -746,6 +748,15 @@ impl BufferSearchBar {
         let Some(handle) = self.active_searchable_item.as_ref() else {
             return false;
         };
+
+        let configured_options =
+            SearchOptions::from_settings(&EditorSettings::get_global(cx).search);
+        let settings_changed = configured_options != self.configured_options;
+
+        if self.dismissed && settings_changed {
+            self.search_options = configured_options;
+            self.default_options = configured_options;
+        }
 
         self.dismissed = false;
         self.adjust_query_regex_language(cx);
@@ -2748,21 +2759,22 @@ mod tests {
             search_bar.deploy(&deploy, window, cx);
             assert_eq!(
                 search_bar.search_options,
-                SearchOptions::NONE,
-                "After hiding and showing the search bar, default options should be used"
+                SearchOptions::WHOLE_WORD,
+                "After hiding and showing the search bar, search options should be preserved"
             );
 
             search_bar.toggle_search_option(SearchOptions::REGEX, window, cx);
             search_bar.toggle_search_option(SearchOptions::WHOLE_WORD, window, cx);
             assert_eq!(
                 search_bar.search_options,
-                SearchOptions::REGEX | SearchOptions::WHOLE_WORD,
+                SearchOptions::REGEX,
                 "Should enable the options toggled"
             );
             assert!(
                 !search_bar.dismissed,
                 "Search bar should be present and visible"
             );
+            search_bar.toggle_search_option(SearchOptions::WHOLE_WORD, window, cx);
         });
 
         update_search_settings(
@@ -2793,7 +2805,7 @@ mod tests {
             assert_eq!(
                 search_bar.search_options,
                 SearchOptions::CASE_SENSITIVE,
-                "After hiding and showing the search bar, default options should be used"
+                "After a settings update, dismissing the bar should update the search options"
             );
         });
     }
