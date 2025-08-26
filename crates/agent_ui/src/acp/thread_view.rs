@@ -1340,10 +1340,6 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let is_generating = self
-            .thread()
-            .is_some_and(|thread| thread.read(cx).status() != ThreadStatus::Idle);
-
         let primary = match &entry {
             AgentThreadEntry::UserMessage(message) => {
                 let Some(editor) = self
@@ -1504,18 +1500,6 @@ impl AcpThreadView {
             }
             AgentThreadEntry::AssistantMessage(AssistantMessage { chunks }) => {
                 let is_last = entry_ix + 1 == total_entries;
-                let pending_thinking_chunk_ix = if is_generating && is_last {
-                    chunks
-                        .iter()
-                        .enumerate()
-                        .next_back()
-                        .filter(|(_, segment)| {
-                            matches!(segment, AssistantMessageChunk::Thought { .. })
-                        })
-                        .map(|(index, _)| index)
-                } else {
-                    None
-                };
 
                 let style = default_markdown_style(false, false, window, cx);
                 let message_body = v_flex()
@@ -1535,7 +1519,6 @@ impl AcpThreadView {
                                         entry_ix,
                                         chunk_ix,
                                         md.clone(),
-                                        Some(chunk_ix) == pending_thinking_chunk_ix,
                                         window,
                                         cx,
                                     )
@@ -1634,7 +1617,6 @@ impl AcpThreadView {
         entry_ix: usize,
         chunk_ix: usize,
         chunk: Entity<Markdown>,
-        pending: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -1688,13 +1670,7 @@ impl AcpThreadView {
                                 div()
                                     .text_size(self.tool_name_font_size())
                                     .text_color(cx.theme().colors().text_muted)
-                                    .map(|this| {
-                                        if pending {
-                                            this.child("Thinking")
-                                        } else {
-                                            this.child("Thought")
-                                        }
-                                    }),
+                                    .child("Thinking"),
                             ),
                     )
                     .child(
