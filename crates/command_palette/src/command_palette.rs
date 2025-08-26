@@ -402,7 +402,6 @@ impl PickerDelegate for CommandPaletteDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<String> {
-        dbg!(self.selected_ix);
         if self.selected_ix != 0 {
             return None;
         }
