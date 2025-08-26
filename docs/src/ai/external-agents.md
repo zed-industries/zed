@@ -4,7 +4,7 @@ Zed has support for integrating with existing terminal-based agentic coding tool
 
 At the moment, Zed supports [Gemini CLI](https://github.com/google-gemini/gemini-cli) as a reference implementation of an external agent speaking ACP.
 
-You can also [configure your own](#custom-agents) if you'd like to add ACP support to an existing tool.
+You can also [configure your own](#custom-agents) agent if you'd like to add ACP support to an existing tool.
 
 ## Gemini CLI {#gemini-cli}
 
@@ -52,7 +52,7 @@ For more information, see the [Gemini CLI docs](https://github.com/google-gemini
 
 ### Usage
 
-Similar to the built-in agent in [the agent panel](./agent-panel.md), you can use Gemini CLI to do anything that you need.
+Similar to Zed's first-party agent, you can use Gemini CLI to do anything that you need.
 
 You can @-mention files, recent conversations, symbols, or fetch the web.
 
@@ -65,15 +65,13 @@ If you have written (or are writing) a tool that speaks ACP, and you'd like to t
 ```json
 {
   "agent_servers": {
-    "Claude Code": {
+    "Custom Agent": {
       "command": "node",
-      "args": [
-        "/Users/conrad/projects/claude-code-acp/index.js",
-        "--acp"
-      ]
+      "args": ["~/projects/agent/index.js", "--acp"],
+      "env": {}
     }
   }
 }
 ```
 
-Zed has some support for debugging acp connections, and you can open the debug view with `dev: open acp logs` from the command line.
+Zed has some support for debugging ACP connections, and you can open the debug view with `dev: open acp logs` from the command palette.
