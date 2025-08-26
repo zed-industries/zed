@@ -43,7 +43,7 @@ use language::{
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
 use release_channel::ReleaseChannel;
-use remote::SshRemoteClient;
+use remote::RemoteClient;
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -117,7 +117,7 @@ pub struct ExtensionStore {
     pub wasm_host: Arc<WasmHost>,
     pub wasm_extensions: Vec<(Arc<ExtensionManifest>, WasmExtension)>,
     pub tasks: Vec<Task<()>>,
-    pub ssh_clients: HashMap<String, WeakEntity<SshRemoteClient>>,
+    pub remote_clients: HashMap<String, WeakEntity<RemoteClient>>,
     pub ssh_registered_tx: UnboundedSender<()>,
 }
 
@@ -270,7 +270,7 @@ impl ExtensionStore {
             reload_tx,
             tasks: Vec::new(),
 
-            ssh_clients: HashMap::default(),
+            remote_clients: HashMap::default(),
             ssh_registered_tx: connection_registered_tx,
         };
 
@@ -1693,7 +1693,7 @@ impl ExtensionStore {
 
     async fn sync_extensions_over_ssh(
         this: &WeakEntity<Self>,
-        client: WeakEntity<SshRemoteClient>,
+        client: WeakEntity<RemoteClient>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
         let extensions = this.update(cx, |this, _cx| {
@@ -1765,8 +1765,8 @@ impl ExtensionStore {
 
     pub async fn update_ssh_clients(this: &WeakEntity<Self>, cx: &mut AsyncApp) -> Result<()> {
         let clients = this.update(cx, |this, _cx| {
-            this.ssh_clients.retain(|_k, v| v.upgrade().is_some());
-            this.ssh_clients.values().cloned().collect::<Vec<_>>()
+            this.remote_clients.retain(|_k, v| v.upgrade().is_some());
+            this.remote_clients.values().cloned().collect::<Vec<_>>()
         })?;
 
         for client in clients {
@@ -1778,17 +1778,17 @@ impl ExtensionStore {
         anyhow::Ok(())
     }
 
-    pub fn register_ssh_client(&mut self, client: Entity<SshRemoteClient>, cx: &mut Context<Self>) {
+    pub fn register_remote_client(&mut self, client: Entity<RemoteClient>, cx: &mut Context<Self>) {
         let connection_options = client.read(cx).connection_options();
         let ssh_url = connection_options.ssh_url();
 
-        if let Some(existing_client) = self.ssh_clients.get(&ssh_url)
+        if let Some(existing_client) = self.remote_clients.get(&ssh_url)
             && existing_client.upgrade().is_some()
         {
             return;
         }
 
-        self.ssh_clients.insert(ssh_url, client.downgrade());
+        self.remote_clients.insert(ssh_url, client.downgrade());
         self.ssh_registered_tx.unbounded_send(()).ok();
     }
 }

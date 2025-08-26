@@ -44,7 +44,9 @@ use parking_lot::Mutex;
 use postage::stream::Stream as _;
 use rpc::{
     AnyProtoClient, TypedEnvelope,
-    proto::{self, FromProto, SSH_PROJECT_ID, ToProto, git_reset, split_repository_update},
+    proto::{
+        self, FromProto, REMOTE_SERVER_PROJECT_ID, ToProto, git_reset, split_repository_update,
+    },
 };
 use serde::Deserialize;
 use std::{
@@ -380,7 +382,7 @@ impl GitStore {
             buffer_store,
             GitStoreState::Ssh {
                 upstream_client,
-                upstream_project_id: ProjectId(SSH_PROJECT_ID),
+                upstream_project_id: ProjectId(REMOTE_SERVER_PROJECT_ID),
                 downstream: None,
             },
             cx,

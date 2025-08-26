@@ -918,7 +918,7 @@ impl RunningState {
         let weak_workspace = workspace.downgrade();
         let ssh_info = project
             .read(cx)
-            .ssh_client()
+            .remote_client()
             .and_then(|it| it.read(cx).ssh_info());
 
         cx.spawn_in(window, async move |this, cx| {

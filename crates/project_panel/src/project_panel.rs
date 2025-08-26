@@ -653,7 +653,7 @@ impl ProjectPanel {
                             let file_path = entry.path.clone();
                             let worktree_id = worktree.read(cx).id();
                             let entry_id = entry.id;
-                            let is_via_ssh = project.read(cx).is_via_ssh();
+                            let is_via_ssh = project.read(cx).is_via_remote_server();
 
                             workspace
                                 .open_path_preview(
@@ -5295,7 +5295,7 @@ impl Render for ProjectPanel {
                         .on_action(cx.listener(Self::open_system))
                         .on_action(cx.listener(Self::open_in_terminal))
                 })
-                .when(project.is_via_ssh(), |el| {
+                .when(project.is_via_remote_server(), |el| {
                     el.on_action(cx.listener(Self::open_in_terminal))
                 })
                 .on_mouse_down(

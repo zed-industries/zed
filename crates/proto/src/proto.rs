@@ -16,8 +16,8 @@ pub use typed_envelope::*;
 
 include!(concat!(env!("OUT_DIR"), "/zed.messages.rs"));
 
-pub const SSH_PEER_ID: PeerId = PeerId { owner_id: 0, id: 0 };
-pub const SSH_PROJECT_ID: u64 = 0;
+pub const REMOTE_SERVER_PEER_ID: PeerId = PeerId { owner_id: 0, id: 0 };
+pub const REMOTE_SERVER_PROJECT_ID: u64 = 0;
 
 messages!(
     (Ack, Foreground),

@@ -918,7 +918,7 @@ fn register_actions(
             capture_audio(workspace, window, cx);
         });
 
-    if workspace.project().read(cx).is_via_ssh() {
+    if workspace.project().read(cx).is_via_remote_server() {
         workspace.register_action({
             move |workspace, _: &OpenServerSettings, window, cx| {
                 let open_server_settings = workspace
@@ -1543,7 +1543,7 @@ pub fn open_new_ssh_project_from_project(
     cx: &mut Context<Workspace>,
 ) -> Task<anyhow::Result<()>> {
     let app_state = workspace.app_state().clone();
-    let Some(ssh_client) = workspace.project().read(cx).ssh_client() else {
+    let Some(ssh_client) = workspace.project().read(cx).remote_client() else {
         return Task::ready(Err(anyhow::anyhow!("Not an ssh project")));
     };
     let connection_options = ssh_client.read(cx).connection_options();

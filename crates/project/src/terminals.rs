@@ -4,7 +4,7 @@ use collections::HashMap;
 use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity};
 use itertools::Itertools;
 use language::LanguageName;
-use remote::{SshInfo, ssh_session::SshArgs};
+use remote::{SshArgs, SshInfo};
 use settings::{Settings, SettingsLocation};
 use smol::channel::bounded;
 use std::{
@@ -87,7 +87,7 @@ impl Project {
     }
 
     pub fn ssh_details(&self, cx: &App) -> Option<SshDetails> {
-        if let Some(ssh_client) = &self.ssh_client {
+        if let Some(ssh_client) = &self.remote_client {
             let ssh_client = ssh_client.read(cx);
             if let Some(SshInfo {
                 args: SshArgs { arguments, envs },

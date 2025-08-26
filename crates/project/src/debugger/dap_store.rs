@@ -34,7 +34,7 @@ use http_client::HttpClient;
 use language::{Buffer, LanguageToolchainStore, language_settings::InlayHintKind};
 use node_runtime::NodeRuntime;
 
-use remote::{SshInfo, SshRemoteClient, ssh_session::SshArgs};
+use remote::{RemoteClient, SshArgs, SshInfo};
 use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self},
@@ -81,7 +81,7 @@ pub struct LocalDapStore {
 }
 
 pub struct SshDapStore {
-    ssh_client: Entity<SshRemoteClient>,
+    ssh_client: Entity<RemoteClient>,
     upstream_client: AnyProtoClient,
     upstream_project_id: u64,
 }
@@ -149,7 +149,7 @@ impl DapStore {
 
     pub fn new_ssh(
         project_id: u64,
-        ssh_client: Entity<SshRemoteClient>,
+        ssh_client: Entity<RemoteClient>,
         breakpoint_store: Entity<BreakpointStore>,
         worktree_store: Entity<WorktreeStore>,
         cx: &mut Context<Self>,

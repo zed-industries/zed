@@ -484,7 +484,9 @@ impl TerminalPanel {
         let Ok((ssh_client, false)) = self.workspace.update(cx, |workspace, cx| {
             let project = workspace.project().read(cx);
             (
-                project.ssh_client().and_then(|it| it.read(cx).ssh_info()),
+                project
+                    .remote_client()
+                    .and_then(|it| it.read(cx).ssh_info()),
                 project.is_via_collab(),
             )
         }) else {

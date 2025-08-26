@@ -64,8 +64,8 @@ impl DisconnectedOverlay {
                 }
                 let handle = cx.entity().downgrade();
 
-                let ssh_connection_options = project.read(cx).ssh_connection_options(cx);
-                let host = if let Some(ssh_connection_options) = ssh_connection_options {
+                let remote_connection_options = project.read(cx).remote_connection_options(cx);
+                let host = if let Some(ssh_connection_options) = remote_connection_options {
                     Host::SshRemoteProject(ssh_connection_options)
                 } else {
                     Host::RemoteProject

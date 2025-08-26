@@ -19,7 +19,7 @@ use project::project_settings::ProjectSettings;
 
 use proto::CrashReport;
 use release_channel::{AppVersion, RELEASE_CHANNEL, ReleaseChannel};
-use remote::SshRemoteClient;
+use remote::RemoteClient;
 use remote::{
     json_log::LogRecord,
     protocol::{read_message, write_message},
@@ -394,7 +394,7 @@ fn start_server(
     })
     .detach();
 
-    SshRemoteClient::proto_client_from_channels(incoming_rx, outgoing_tx, cx, "server")
+    RemoteClient::proto_client_from_channels(incoming_rx, outgoing_tx, cx, "server")
 }
 
 fn init_paths() -> anyhow::Result<()> {
