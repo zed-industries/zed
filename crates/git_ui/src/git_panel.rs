@@ -4466,7 +4466,7 @@ fn current_language_model(cx: &Context<'_, GitPanel>) -> Option<Arc<dyn Language
     is_enabled
         .then(|| {
             let ConfiguredModel { provider, model } =
-                LanguageModelRegistry::read_global(cx).commit_message_model(cx)?;
+                LanguageModelRegistry::read_global(cx).commit_message_model()?;
 
             provider.is_authenticated(cx).then(|| model)
         })
