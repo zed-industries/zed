@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{DeriveSettingsUI as SettingsUI, Settings, SettingsSources};
+use settings::{SettingsUI, Settings, SettingsSources};
 use util::paths::PathMatcher;
 
 #[derive(Clone, PartialEq, Eq, SettingsUI)]

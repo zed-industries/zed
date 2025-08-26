@@ -40,7 +40,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_derive::Serialize;
 use settings::{
-    DeriveSettingsUI as SettingsUI, Settings, SettingsSources, SettingsStore, update_settings_file,
+    SettingsUI, Settings, SettingsSources, SettingsStore, update_settings_file,
 };
 use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
 use std::{mem, ops::Range, sync::Arc};

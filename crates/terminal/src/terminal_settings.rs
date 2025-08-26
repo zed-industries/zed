@@ -6,7 +6,7 @@ use gpui::{AbsoluteLength, App, FontFallbacks, FontFeatures, FontWeight, Pixels,
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 
-use settings::{DeriveSettingsUI as SettingsUI, SettingsSources};
+use settings::{SettingsSources, SettingsUI};
 use std::path::PathBuf;
 use task::Shell;
 use theme::FontFamilyName;

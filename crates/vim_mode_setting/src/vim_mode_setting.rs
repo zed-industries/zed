@@ -6,7 +6,7 @@
 
 use anyhow::Result;
 use gpui::App;
-use settings::{DeriveSettingsUI as SettingsUI, Settings, SettingsSources};
+use settings::{Settings, SettingsSources, SettingsUI};
 
 /// Initializes the `vim_mode_setting` crate.
 pub fn init(cx: &mut App) {

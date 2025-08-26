@@ -5,7 +5,7 @@ use editor::{Editor, SelectionEffects};
 use gpui::{App, AppContext as _, Context, Window, actions};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{DeriveSettingsUI as SettingsUI, Settings, SettingsSources};
+use settings::{SettingsUI, Settings, SettingsSources};
 use std::{
     fs::OpenOptions,
     path::{Path, PathBuf},

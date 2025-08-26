@@ -5,7 +5,7 @@ use git::GitHostingProviderRegistry;
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{DeriveSettingsUI as SettingsUI, Settings, SettingsStore};
+use settings::{SettingsUI, Settings, SettingsStore};
 use url::Url;
 use util::ResultExt as _;
 

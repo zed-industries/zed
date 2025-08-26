@@ -1,7 +1,7 @@
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{DeriveSettingsUI as SettingsUI, Settings, SettingsSources};
+use settings::{SettingsUI, Settings, SettingsSources};
 use workspace::dock::DockPosition;
 
 #[derive(Deserialize, Debug, SettingsUI)]

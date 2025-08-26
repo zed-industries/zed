@@ -10,7 +10,7 @@ use paths::remote_servers_dir;
 use release_channel::{AppCommitSha, ReleaseChannel};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{DeriveSettingsUI as SettingsUI, Settings, SettingsSources, SettingsStore};
+use settings::{SettingsUI, Settings, SettingsSources, SettingsStore};
 use smol::{fs, io::AsyncReadExt};
 use smol::{fs::File, process::Command};
 use std::{

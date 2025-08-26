@@ -12,9 +12,6 @@ use workspace::{Workspace, with_active_or_new_workspace};
 
 use crate::appearance_settings_controls::AppearanceSettingsControls;
 
-pub mod keybindings;
-pub mod ui_components;
-
 pub struct SettingsUiFeatureFlag;
 
 impl FeatureFlag for SettingsUiFeatureFlag {
@@ -76,7 +73,6 @@ pub fn init(cx: &mut App) {
     })
     .detach();
 
-    keybindings::init(cx);
 }
 
 pub struct SettingsPage {

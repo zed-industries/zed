@@ -18,7 +18,7 @@ use rpc::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    DeriveSettingsUI as SettingsUI, InvalidSettingsError, LocalSettingsKind, Settings,
+    SettingsUI, InvalidSettingsError, LocalSettingsKind, Settings,
     SettingsLocation, SettingsSources, SettingsStore, parse_json_with_comments, watch_config_file,
 };
 use std::{

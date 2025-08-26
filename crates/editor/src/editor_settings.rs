@@ -6,7 +6,7 @@ use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{DeriveSettingsUI as SettingsUI, Settings, SettingsSources, VsCodeSettings};
+use settings::{SettingsUI, Settings, SettingsSources, VsCodeSettings};
 use util::serde::default_true;
 
 /// Imports from the VSCode settings at

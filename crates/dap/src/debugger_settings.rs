@@ -2,7 +2,7 @@ use dap_types::SteppingGranularity;
 use gpui::{App, Global};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{DeriveSettingsUI as SettingsUI, Settings, SettingsSources};
+use settings::{SettingsUI, Settings, SettingsSources};
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

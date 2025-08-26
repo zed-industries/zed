@@ -1,7 +1,7 @@
 use db::anyhow;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{DeriveSettingsUI as SettingsUI, Settings, SettingsSources};
+use settings::{SettingsUI, Settings, SettingsSources};
 
 #[derive(Copy, Clone, Deserialize, Debug, SettingsUI)]
 pub struct TitleBarSettings {

@@ -2,7 +2,7 @@ use anyhow::Result;
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{DeriveSettingsUI as SettingsUI, Settings, SettingsSources};
+use settings::{SettingsUI, Settings, SettingsSources};
 
 /// Settings for slash commands.
 #[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema, SettingsUI)]

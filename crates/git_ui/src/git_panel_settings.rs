@@ -2,7 +2,7 @@ use editor::ShowScrollbar;
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
-use settings::{DeriveSettingsUI as SettingsUI, Settings, SettingsSources};
+use settings::{SettingsUI, Settings, SettingsSources};
 use workspace::dock::DockPosition;
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]

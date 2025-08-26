@@ -17,7 +17,7 @@ use gpui::{
 use project::{Project, ProjectEntryId, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{DeriveSettingsUI as SettingsUI, Settings, SettingsLocation, SettingsSources};
+use settings::{SettingsUI, Settings, SettingsLocation, SettingsSources};
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},

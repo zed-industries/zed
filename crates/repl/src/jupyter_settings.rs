@@ -4,7 +4,7 @@ use editor::EditorSettings;
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{DeriveSettingsUI as SettingsUI, Settings, SettingsSources};
+use settings::{SettingsUI, Settings, SettingsSources};
 
 #[derive(Debug, Default, SettingsUI)]
 pub struct JupyterSettings {

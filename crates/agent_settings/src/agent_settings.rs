@@ -8,7 +8,7 @@ use gpui::{App, Pixels, SharedString};
 use language_model::LanguageModel;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
-use settings::{DeriveSettingsUI as SettingsUI, Settings, SettingsSources};
+use settings::{SettingsUI, Settings, SettingsSources};
 use std::borrow::Cow;
 
 pub use crate::agent_profile::*;

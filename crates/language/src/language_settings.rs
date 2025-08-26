@@ -17,8 +17,7 @@ use serde::{
 };
 
 use settings::{
-    DeriveSettingsUI as SettingsUI, ParameterizedJsonSchema, Settings, SettingsLocation,
-    SettingsSources, SettingsStore,
+    ParameterizedJsonSchema, Settings, SettingsLocation, SettingsSources, SettingsStore, SettingsUI,
 };
 use shellexpand;
 use std::{borrow::Cow, num::NonZeroU32, path::Path, slice, sync::Arc};

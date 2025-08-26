@@ -13,9 +13,7 @@ use gpui::{
 use refineable::Refineable;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
-use settings::{
-    DeriveSettingsUI as SettingsUI, ParameterizedJsonSchema, Settings, SettingsSources,
-};
+use settings::{ParameterizedJsonSchema, Settings, SettingsSources, SettingsUI};
 use std::sync::Arc;
 use util::ResultExt as _;
 use util::schemars::replace_subschema;

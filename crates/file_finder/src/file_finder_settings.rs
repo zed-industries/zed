@@ -1,7 +1,7 @@
 use anyhow::Result;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
-use settings::{DeriveSettingsUI as SettingsUI, Settings, SettingsSources};
+use settings::{SettingsUI, Settings, SettingsSources};
 
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq, SettingsUI)]
 pub struct FileFinderSettings {

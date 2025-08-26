@@ -19,7 +19,7 @@ use remote::ssh_session::{ConnectionIdentifier, SshPortForwardOption};
 use remote::{SshConnectionOptions, SshPlatform, SshRemoteClient};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{DeriveSettingsUI as SettingsUI, Settings, SettingsSources};
+use settings::{SettingsUI, Settings, SettingsSources};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Color, Context, Icon, IconName, IconSize, InteractiveElement, IntoElement, Label,

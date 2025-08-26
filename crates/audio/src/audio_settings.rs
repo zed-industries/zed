@@ -2,7 +2,7 @@ use anyhow::Result;
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{DeriveSettingsUI as SettingsUI, Settings, SettingsSources};
+use settings::{SettingsUI, Settings, SettingsSources};
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUI)]
 pub struct AudioSettings {

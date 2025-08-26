@@ -3,7 +3,7 @@ use anyhow::Result;
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{DeriveSettingsUI as SettingsUI, Settings, SettingsStore};
+use settings::{SettingsUI, Settings, SettingsStore};
 
 pub fn init(cx: &mut App) {
     ZlogSettings::register(cx);

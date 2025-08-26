@@ -4,7 +4,7 @@ use collections::HashMap;
 use gpui::{App, SharedString};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{DeriveSettingsUI as SettingsUI, Settings, SettingsSources};
+use settings::{SettingsUI, Settings, SettingsSources};
 
 pub fn init(cx: &mut App) {
     AllAgentServersSettings::register(cx);

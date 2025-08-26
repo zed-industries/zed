@@ -2,7 +2,7 @@ use editor::ShowScrollbar;
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
-use settings::{DeriveSettingsUI as SettingsUI, Settings, SettingsSources};
+use settings::{SettingsUI, Settings, SettingsSources};
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Copy, PartialEq)]
 #[serde(rename_all = "snake_case")]
