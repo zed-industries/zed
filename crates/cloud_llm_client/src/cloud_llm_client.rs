@@ -187,6 +187,8 @@ pub struct Point {
 pub struct PredictEditsRecentFile {
     /// Path to a file within the repository.
     pub path: String,
+    /// Most recent cursor position with the file.
+    pub cursor_point: Point,
     /// Milliseconds between the editor for this file being active and the request time.
     pub active_to_now_ms: u32,
 }

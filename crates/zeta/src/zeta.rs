@@ -10,6 +10,7 @@ use arrayvec::ArrayVec;
 pub(crate) use completion_diff_element::*;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use edit_prediction::DataCollectionState;
+use editor::Editor;
 pub use init::*;
 use license_detection::LicenseDetectionWatcher;
 use project::git_store::Repository;
@@ -34,7 +35,7 @@ use language::{
     Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, ToOffset, ToPoint, text_diff,
 };
 use language_model::{LlmApiToken, RefreshLlmTokenListener};
-use project::{Project, ProjectEntryId, ProjectPath};
+use project::{Project, ProjectPath};
 use release_channel::AppVersion;
 use settings::WorktreeId;
 use std::str::FromStr;
@@ -51,7 +52,7 @@ use std::{
 };
 use telemetry_events::EditPredictionRating;
 use thiserror::Error;
-use util::ResultExt;
+use util::{ResultExt, maybe};
 use uuid::Uuid;
 use workspace::Workspace;
 use workspace::notifications::{ErrorMessagePrompt, NotificationId};
@@ -239,7 +240,12 @@ pub struct Zeta {
     update_required: bool,
     user_store: Entity<UserStore>,
     license_detection_watchers: HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
-    recent_project_entries: VecDeque<(ProjectEntryId, Instant)>,
+    recent_editors: VecDeque<RecentEditor>,
+}
+
+struct RecentEditor {
+    editor: WeakEntity<Editor>,
+    last_active_at: Instant,
 }
 
 impl Zeta {
@@ -292,15 +298,12 @@ impl Zeta {
         let data_collection_choice = cx.new(|_| data_collection_choice);
 
         if let Some(workspace) = &workspace {
-            cx.subscribe(
-                &workspace.read(cx).project().clone(),
-                |this, _workspace, event, _cx| match event {
-                    project::Event::ActiveEntryChanged(Some(project_entry_id)) => {
-                        this.push_recent_project_entry(*project_entry_id)
-                    }
-                    _ => {}
-                },
-            )
+            cx.subscribe(workspace, |this, _workspace, event, cx| match event {
+                workspace::Event::ActiveItemChanged => {
+                    this.handle_active_workspace_item_changed(cx)
+                }
+                _ => {}
+            })
             .detach();
         }
 
@@ -331,7 +334,7 @@ impl Zeta {
             update_required: false,
             license_detection_watchers: HashMap::default(),
             user_store,
-            recent_project_entries: VecDeque::with_capacity(MAX_RECENT_PROJECT_ENTRIES_COUNT),
+            recent_editors: VecDeque::with_capacity(MAX_RECENT_PROJECT_ENTRIES_COUNT),
         }
     }
 
@@ -1145,7 +1148,7 @@ and then another
         buffer_snapshotted_at: &Instant,
         snapshot: &BufferSnapshot,
         project: Option<&Entity<Project>>,
-        cx: &Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<PredictEditsGitInfo> {
         let project = project?.read(cx);
         let file = snapshot.file()?;
@@ -1160,56 +1163,67 @@ and then another
             git_store.repository_and_path_for_project_path(&project_path, cx)?;
         let repo_path_str = repo_path.to_str()?;
 
-        let repository = repository.read(cx);
-        let head_sha = repository.head_commit.as_ref()?.sha.to_string();
-        let remote_origin_url = repository.remote_origin_url.clone();
-        let remote_upstream_url = repository.remote_upstream_url.clone();
-        let recent_files = self.recent_files(&buffer_snapshotted_at, repository, cx);
+        repository.update(cx, |repository, cx| {
+            let head_sha = repository.head_commit.as_ref()?.sha.to_string();
+            let remote_origin_url = repository.remote_origin_url.clone();
+            let remote_upstream_url = repository.remote_upstream_url.clone();
+            let recent_files = self.recent_files(&buffer_snapshotted_at, repository, cx);
 
-        Some(PredictEditsGitInfo {
-            input_path: Some(repo_path_str.to_string()),
-            cursor_point: Some(cloud_llm_client::Point {
-                row: cursor_point.row,
-                column: cursor_point.column,
-            }),
-            cursor_offset: Some(cursor_offset),
-            head_sha: Some(head_sha),
-            remote_origin_url,
-            remote_upstream_url,
-            recent_files: Some(recent_files),
+            Some(PredictEditsGitInfo {
+                input_path: Some(repo_path_str.to_string()),
+                cursor_point: Some(to_cloud_llm_client_point(cursor_point)),
+                head_sha: Some(head_sha),
+                remote_origin_url,
+                remote_upstream_url,
+                recent_files: Some(recent_files),
+            })
         })
     }
 
-    fn push_recent_project_entry(&mut self, project_entry_id: ProjectEntryId) {
-        let now = Instant::now();
-        if let Some(existing_ix) = self
-            .recent_project_entries
-            .iter()
-            .rposition(|(id, _)| *id == project_entry_id)
+    fn handle_active_workspace_item_changed(&mut self, cx: &Context<Self>) {
+        if let Some(active_editor) = self
+            .workspace
+            .read_with(cx, |workspace, cx| {
+                workspace
+                    .active_item(cx)
+                    .and_then(|item| item.act_as::<Editor>(cx))
+            })
+            .ok()
+            .flatten()
         {
-            self.recent_project_entries.remove(existing_ix);
+            let now = Instant::now();
+            let new_recent = RecentEditor {
+                editor: active_editor.downgrade(),
+                last_active_at: now,
+            };
+            if let Some(existing_ix) = self
+                .recent_editors
+                .iter()
+                .rposition(|recent| &recent.editor == &new_recent.editor)
+            {
+                self.recent_editors.remove(existing_ix);
+            }
+            // filter out rapid changes in active item, particularly since this can happen rapidly when
+            // a workspace is loaded.
+            if let Some(previous_recent) = self.recent_editors.back_mut()
+                && now.duration_since(previous_recent.last_active_at)
+                    < MIN_TIME_BETWEEN_RECENT_PROJECT_ENTRIES
+            {
+                *previous_recent = new_recent;
+                return;
+            }
+            if self.recent_editors.len() >= MAX_RECENT_PROJECT_ENTRIES_COUNT {
+                self.recent_editors.pop_front();
+            }
+            self.recent_editors.push_back(new_recent);
         }
-        // filter out rapid changes in active item, particularly since this can happen rapidly when
-        // a workspace is loaded.
-        if let Some(most_recent) = self.recent_project_entries.back_mut()
-            && now.duration_since(most_recent.1) > MIN_TIME_BETWEEN_RECENT_PROJECT_ENTRIES
-        {
-            most_recent.0 = project_entry_id;
-            most_recent.1 = now;
-            return;
-        }
-        if self.recent_project_entries.len() >= MAX_RECENT_PROJECT_ENTRIES_COUNT {
-            self.recent_project_entries.pop_front();
-        }
-        self.recent_project_entries
-            .push_back((project_entry_id, now));
     }
 
     fn recent_files(
         &mut self,
         now: &Instant,
         repository: &Repository,
-        cx: &Context<Self>,
+        cx: &mut App,
     ) -> Vec<PredictEditsRecentFile> {
         let Ok(project) = self
             .workspace
@@ -1217,47 +1231,61 @@ and then another
         else {
             return Vec::new();
         };
-        let mut results = Vec::new();
-        for ix in (0..self.recent_project_entries.len()).rev() {
-            let (entry_id, last_active_at) = &self.recent_project_entries[ix];
-            if let Some(worktree) = project.read(cx).worktree_for_entry(*entry_id, cx)
-                && let worktree = worktree.read(cx)
-                && let Some(entry) = worktree.entry_for_id(*entry_id)
-                && worktree_entry_eligible_for_collection(entry)
-            {
-                let project_path = ProjectPath {
-                    worktree_id: worktree.id(),
-                    path: entry.path.clone(),
-                };
-                let Some(repo_path) = repository.project_path_to_repo_path(&project_path, cx)
-                else {
-                    // entry not removed since queries involving other repositories might occur later
-                    continue;
-                };
-                let Some(repo_path_str) = repo_path.to_str() else {
-                    // paths may not be valid UTF-8
-                    self.recent_project_entries.remove(ix);
-                    continue;
-                };
-                if repo_path_str.len() > MAX_RECENT_FILE_PATH_LENGTH {
-                    self.recent_project_entries.remove(ix);
-                    continue;
-                }
-                let Ok(active_to_now_ms) =
-                    now.duration_since(*last_active_at).as_millis().try_into()
-                else {
-                    self.recent_project_entries.remove(ix);
-                    continue;
-                };
-                results.push(PredictEditsRecentFile {
-                    path: repo_path_str.to_string(),
-                    active_to_now_ms,
-                });
-            } else {
-                self.recent_project_entries.remove(ix);
+        let mut results = Vec::with_capacity(self.recent_editors.len());
+        for ix in (0..self.recent_editors.len()).rev() {
+            let recent_editor = &self.recent_editors[ix];
+            let keep_entry = recent_editor
+                .editor
+                .update(cx, |editor, cx| {
+                    maybe!({
+                        let (buffer, cursor_point, _) = editor.cursor_buffer_point(cx)?;
+                        let file = buffer.read(cx).file()?;
+                        let project_path = ProjectPath {
+                            worktree_id: file.worktree_id(cx),
+                            path: file.path().clone(),
+                        };
+                        let entry = project.read(cx).entry_for_path(&project_path, cx)?;
+                        if !worktree_entry_eligible_for_collection(entry) {
+                            return None;
+                        }
+                        let Some(repo_path) =
+                            repository.project_path_to_repo_path(&project_path, cx)
+                        else {
+                            // entry not removed since later queries may involve other repositories
+                            return Some(());
+                        };
+                        // paths may not be valid UTF-8
+                        let repo_path_str = repo_path.to_str()?;
+                        if repo_path_str.len() > MAX_RECENT_FILE_PATH_LENGTH {
+                            return None;
+                        }
+                        let active_to_now_ms = now
+                            .duration_since(recent_editor.last_active_at)
+                            .as_millis()
+                            .try_into()
+                            .ok()?;
+                        results.push(PredictEditsRecentFile {
+                            path: repo_path_str.to_string(),
+                            cursor_point: to_cloud_llm_client_point(cursor_point),
+                            active_to_now_ms,
+                        });
+                        Some(())
+                    })
+                })
+                .ok()
+                .flatten();
+            if keep_entry.is_none() {
+                self.recent_editors.remove(ix);
             }
         }
         results
+    }
+}
+
+fn to_cloud_llm_client_point(point: language::Point) -> cloud_llm_client::Point {
+    cloud_llm_client::Point {
+        row: point.row,
+        column: point.column,
     }
 }
 

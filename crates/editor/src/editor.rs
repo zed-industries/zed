@@ -2746,6 +2746,11 @@ impl Editor {
         self.buffer.read(cx).read(cx).file_at(point).cloned()
     }
 
+    pub fn cursor_buffer_point(&self, cx: &mut App) -> Option<(Entity<Buffer>, Point, ExcerptId)> {
+        let cursor = self.selections.newest::<Point>(cx).head();
+        self.buffer.read(cx).point_to_buffer_point(cursor, cx)
+    }
+
     pub fn active_excerpt(
         &self,
         cx: &App,
