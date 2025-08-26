@@ -111,7 +111,6 @@ pub struct BufferSearchBar {
     pending_search: Option<Task<()>>,
     search_options: SearchOptions,
     default_options: SearchOptions,
-    configured_options: SearchOptions,
     query_error: Option<String>,
     dismissed: bool,
     search_history: SearchHistory,
@@ -653,7 +652,6 @@ impl BufferSearchBar {
             active_match_index: None,
             searchable_items_with_matches: Default::default(),
             default_options: search_options,
-            configured_options: search_options,
             search_options,
             pending_search: None,
             query_error: None,
@@ -748,16 +746,6 @@ impl BufferSearchBar {
         let Some(handle) = self.active_searchable_item.as_ref() else {
             return false;
         };
-
-        self.configured_options =
-            SearchOptions::from_settings(&EditorSettings::get_global(cx).search);
-        if self.dismissed
-            && (self.configured_options != self.default_options
-                || self.configured_options != self.search_options)
-        {
-            self.search_options = self.configured_options;
-            self.default_options = self.configured_options;
-        }
 
         self.dismissed = false;
         self.adjust_query_regex_language(cx);
@@ -2751,11 +2739,6 @@ mod tests {
             );
             search_bar.deploy(&deploy, window, cx);
             assert_eq!(
-                search_bar.configured_options,
-                SearchOptions::NONE,
-                "Should have configured search options matching the settings"
-            );
-            assert_eq!(
                 search_bar.search_options,
                 SearchOptions::WHOLE_WORD,
                 "After (re)deploying, the option should still be enabled"
@@ -2800,11 +2783,6 @@ mod tests {
             );
 
             search_bar.deploy(&deploy, window, cx);
-            assert_eq!(
-                search_bar.configured_options,
-                SearchOptions::CASE_SENSITIVE,
-                "Should have configured search options matching the settings"
-            );
             assert_eq!(
                 search_bar.search_options,
                 SearchOptions::REGEX | SearchOptions::WHOLE_WORD,
