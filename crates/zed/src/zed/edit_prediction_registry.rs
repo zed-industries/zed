@@ -204,10 +204,7 @@ fn assign_edit_prediction_provider(
                     }
                 }
 
-                let workspace = window
-                    .root::<Workspace>()
-                    .flatten()
-                    .map(|workspace| workspace.downgrade());
+                let workspace = window.root::<Workspace>().flatten();
 
                 let zeta =
                     zeta::Zeta::register(workspace, worktree, client.clone(), user_store, cx);

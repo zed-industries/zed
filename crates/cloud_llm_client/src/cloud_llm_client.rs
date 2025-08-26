@@ -152,6 +152,8 @@ pub struct PredictEditsBody {
     /// Info about the git repository state, only present when can_collect_data is true.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub git_info: Option<PredictEditsGitInfo>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub recent_files: Option<Vec<PredictEditsRecentFile>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -165,6 +167,12 @@ pub struct PredictEditsGitInfo {
     /// URL of the remote called `upstream`.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub remote_upstream_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PredictEditsRecentFile {
+    pub repo_path: String,
+    pub active_to_now_ms: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
