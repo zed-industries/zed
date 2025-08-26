@@ -1058,7 +1058,21 @@ impl AgentConfiguration {
                     .child(
                         v_flex()
                             .gap_0p5()
-                            .child(Headline::new("External Agents"))
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .gap_2()
+                                    .justify_between()
+                                    .child(Headline::new("External Agents"))
+                                    .child(
+                                        Button::new("add-agent", "Add Agent")
+                                            .icon_position(IconPosition::Start)
+                                            .icon(IconName::Plus)
+                                            .icon_size(IconSize::Small)
+                                            .icon_color(Color::Muted)
+                                            .label_size(LabelSize::Small),
+                                    )
+                            )
                             .child(
                                 Label::new(
                                     "Use the full power of Zed's UI with your favorite agent, connected via the Agent Client Protocol.",
