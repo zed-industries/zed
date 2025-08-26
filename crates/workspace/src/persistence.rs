@@ -599,6 +599,13 @@ impl Domain for WorkspaceDb {
                 ssh_projects ON
                 workspaces.ssh_project_id = ssh_projects.id;
 
+            DELETE FROM workspaces_2
+            WHERE workspace_id NOT IN (
+                SELECT MAX(workspace_id)
+                FROM workspaces_2
+                GROUP BY ssh_connection_id, paths
+            );
+
             DROP TABLE ssh_projects;
             DROP TABLE workspaces;
             ALTER TABLE workspaces_2 RENAME TO workspaces;
