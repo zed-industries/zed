@@ -7,9 +7,9 @@ use std::{
 
 use crate::PlatformKeyboardMapper;
 
-/// TODO:
+/// This is a helper trait so that we can simplify the implementation of some functions
 pub trait AsKeystroke {
-    /// TODO:
+    /// Returns the GPUI representation of the keystroke.
     fn as_keystroke(&self) -> &Keystroke;
 }
 
@@ -32,14 +32,14 @@ pub struct Keystroke {
     pub key_char: Option<String>,
 }
 
-/// TODO:
+/// Represents a keystroke that can be used in keybindings and displayed to the user.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct KeybindingKeystroke {
-    /// TODO:
+    /// The GPUI representation of the keystroke.
     pub inner: Keystroke,
-    /// TODO:
+    /// The modifiers to display.
     pub display_modifiers: Modifiers,
-    /// TODO:
+    /// The key to display.
     pub display_key: String,
 }
 
