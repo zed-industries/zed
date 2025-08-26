@@ -75,6 +75,9 @@ const MAX_EVENT_COUNT: usize = 16;
 /// Maximum number of recent files to track.
 const MAX_RECENT_PROJECT_ENTRIES_COUNT: usize = 16;
 
+/// Minimum number of milliseconds between recent project entries to keep them
+const MIN_TIME_BETWEEN_RECENT_PROJECT_ENTRIES: Duration = Duration::from_millis(100);
+
 /// Maximum file path length to include in recent files list.
 const MAX_RECENT_FILE_PATH_LENGTH: usize = 512;
 
@@ -1187,6 +1190,15 @@ and then another
             .rposition(|(id, _)| *id == project_entry_id)
         {
             self.recent_project_entries.remove(existing_ix);
+        }
+        // filter out rapid changes in active item, particularly since this can happen rapidly when
+        // a workspace is loaded.
+        if let Some(most_recent) = self.recent_project_entries.back_mut()
+            && now.duration_since(most_recent.1) > MIN_TIME_BETWEEN_RECENT_PROJECT_ENTRIES
+        {
+            most_recent.0 = project_entry_id;
+            most_recent.1 = now;
+            return;
         }
         if self.recent_project_entries.len() >= MAX_RECENT_PROJECT_ENTRIES_COUNT {
             self.recent_project_entries.pop_front();
