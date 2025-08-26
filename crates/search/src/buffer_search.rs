@@ -754,6 +754,7 @@ impl BufferSearchBar {
         let settings_changed = configured_options != self.configured_options;
 
         if self.dismissed && settings_changed {
+            self.configured_options = configured_options;
             self.search_options = configured_options;
             self.default_options = configured_options;
         }
