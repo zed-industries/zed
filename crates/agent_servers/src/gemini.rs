@@ -1,6 +1,7 @@
 use std::rc::Rc;
 use std::{any::Any, path::Path};
 
+use crate::acp::AcpConnection;
 use crate::{AgentServer, AgentServerCommand};
 use acp_thread::{AgentConnection, LoadError};
 use anyhow::Result;
@@ -66,34 +67,58 @@ impl AgentServer for Gemini {
             }
 
             let result = crate::acp::connect(server_name, command.clone(), &root_dir, cx).await;
-            if result.is_err() {
-                let version_fut = util::command::new_smol_command(&command.path)
-                    .args(command.args.iter())
-                    .arg("--version")
-                    .kill_on_drop(true)
-                    .output();
+            match &result {
+                Ok(connection) => {
+                    if let Some(connection) = connection.clone().downcast::<AcpConnection>()
+                    && !connection.prompt_capabilities().image {
+                        let version_output = util::command::new_smol_command(&command.path)
+                            .args(command.args.iter())
+                            .arg("--version")
+                            .kill_on_drop(true)
+                            .output().await;
+                        let current_version = String::from_utf8(version_output?.stdout)?;
+                        if !connection.prompt_capabilities().image {
+                            return Err(LoadError::Unsupported {
+                                                        error_message: format!(
+                                                            "Your installed version of Gemini CLI ({}, version {}) doesn't support the latest Agentic Coding Protocol (ACP).",
+                                                            command.path.to_string_lossy(),
+                                                            current_version
+                                                        ).into(),
+                                                        upgrade_message: "Upgrade Gemini CLI to latest".into(),
+                                                        upgrade_command: Self::upgrade_command().into(),
+                                                    }.into())
+                        }
+                    }
+                }
+                Err(_) => {
+                    let version_fut = util::command::new_smol_command(&command.path)
+                        .args(command.args.iter())
+                        .arg("--version")
+                        .kill_on_drop(true)
+                        .output();
 
-                let help_fut = util::command::new_smol_command(&command.path)
-                    .args(command.args.iter())
-                    .arg("--help")
-                    .kill_on_drop(true)
-                    .output();
+                    let help_fut = util::command::new_smol_command(&command.path)
+                        .args(command.args.iter())
+                        .arg("--help")
+                        .kill_on_drop(true)
+                        .output();
 
-                let (version_output, help_output) = futures::future::join(version_fut, help_fut).await;
+                    let (version_output, help_output) = futures::future::join(version_fut, help_fut).await;
 
-                let current_version = String::from_utf8(version_output?.stdout)?;
-                let supported = String::from_utf8(help_output?.stdout)?.contains(ACP_ARG);
+                    let current_version = String::from_utf8(version_output?.stdout)?;
+                    let supported = String::from_utf8(help_output?.stdout)?.contains(ACP_ARG);
 
-                if !supported {
-                    return Err(LoadError::Unsupported {
-                        error_message: format!(
-                            "Your installed version of Gemini CLI ({}, version {}) doesn't support the Agentic Coding Protocol (ACP).",
-                            command.path.to_string_lossy(),
-                            current_version
-                        ).into(),
-                        upgrade_message: "Upgrade Gemini CLI to latest".into(),
-                        upgrade_command: Self::upgrade_command().into(),
-                    }.into())
+                    if !supported {
+                        return Err(LoadError::Unsupported {
+                            error_message: format!(
+                                "Your installed version of Gemini CLI ({}, version {}) doesn't support the Agentic Coding Protocol (ACP).",
+                                command.path.to_string_lossy(),
+                                current_version
+                            ).into(),
+                            upgrade_message: "Upgrade Gemini CLI to latest".into(),
+                            upgrade_command: Self::upgrade_command().into(),
+                        }.into())
+                    }
                 }
             }
             result

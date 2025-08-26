@@ -150,6 +150,10 @@ impl AcpConnection {
             _io_task: io_task,
         })
     }
+
+    pub fn prompt_capabilities(&self) -> &acp::PromptCapabilities {
+        &self.prompt_capabilities
+    }
 }
 
 impl AgentConnection for AcpConnection {
