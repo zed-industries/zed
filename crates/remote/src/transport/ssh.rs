@@ -166,7 +166,7 @@ impl RemoteConnection for SshRemoteConnection {
             args.push(format!(
                 "{}:{}:{}",
                 remote_port,
-                Ipv4Addr::LOCALHOST.to_string(),
+                Ipv4Addr::LOCALHOST,
                 local_port
             ));
         }
@@ -1022,6 +1022,7 @@ impl SshSocket {
     fn new(options: SshConnectionOptions, socket_path: PathBuf) -> Result<Self> {
         Ok(Self {
             connection_options: options,
+            envs: HashMap::default(),
             socket_path,
         })
     }

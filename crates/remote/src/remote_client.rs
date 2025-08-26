@@ -790,7 +790,7 @@ impl RemoteClient {
     }
 
     pub fn host(&self) -> String {
-        self.connection_options().host.clone()
+        self.connection_options.host.clone()
     }
 
     pub fn connection_options(&self) -> SshConnectionOptions {
