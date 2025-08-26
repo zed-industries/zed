@@ -75,6 +75,9 @@ const MAX_EVENT_COUNT: usize = 16;
 /// Maximum number of recent files to track.
 const MAX_RECENT_PROJECT_ENTRIES_COUNT: usize = 16;
 
+/// Maximum file path length to include in recent files list.
+const MAX_RECENT_FILE_PATH_LENGTH: usize = 512;
+
 /// Maximum number of edit predictions to store for feedback.
 const MAX_SHOWN_COMPLETION_COUNT: usize = 50;
 
@@ -1184,6 +1187,10 @@ and then another
                     self.recent_project_entries.remove(ix);
                     continue;
                 };
+                if repo_path_str.len() > MAX_RECENT_FILE_PATH_LENGTH {
+                    self.recent_project_entries.remove(ix);
+                    continue;
+                }
                 if let Some(file_status) = repository.status_for_path(&repo_path) {
                     if file_status.is_ignored() || file_status.is_untracked() {
                         // entry not removed because it may belong to a nested repository
