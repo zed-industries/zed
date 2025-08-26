@@ -18,7 +18,7 @@ use std::process::exit;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-use zeta::{GatherContextOutput, PerformPredictEditsParams, Zeta, gather_context};
+use zeta::{CanCollectData, GatherContextOutput, PerformPredictEditsParams, Zeta, gather_context};
 
 use crate::headless::ZetaCliAppState;
 
@@ -172,9 +172,7 @@ async fn get_context(
         None => String::new(),
     };
     // Enable gathering extra data not currently needed for edit predictions
-    let can_collect_data = true;
     let git_info = None;
-    let recent_files = None;
     let mut gather_context_output = cx
         .update(|cx| {
             gather_context(
@@ -183,9 +181,8 @@ async fn get_context(
                 &snapshot,
                 clipped_cursor,
                 move || events,
-                can_collect_data,
+                CanCollectData(true),
                 git_info,
-                recent_files,
                 cx,
             )
         })?
