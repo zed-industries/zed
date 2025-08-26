@@ -300,7 +300,10 @@ impl ActiveView {
                 MessageEditorEvent::Changed | MessageEditorEvent::EstimatedTokenCount => {
                     cx.notify();
                 }
-                MessageEditorEvent::DismissOnboarding => {}
+                MessageEditorEvent::DismissOnboarding => {
+                    OnboardingUpsell::set_dismissed(true, cx);
+                    cx.notify();
+                }
                 MessageEditorEvent::ScrollThreadToBottom => match &this.active_view {
                     ActiveView::Thread { thread, .. } => {
                         thread.update(cx, |thread, cx| {
@@ -656,32 +659,6 @@ impl AgentPanel {
             )
         });
 
-        let message_editor = cx.new(|cx| {
-            MessageEditor::new(
-                fs.clone(),
-                workspace.clone(),
-                message_editor_context_store.clone(),
-                prompt_store.clone(),
-                thread_store.downgrade(),
-                context_store.downgrade(),
-                Some(history_store.downgrade()),
-                thread.clone(),
-                window,
-                cx,
-            )
-        });
-
-        cx.subscribe(&message_editor, |_, _, event, cx| match event {
-            // todo!: I don't like how this is writing to the db everything time the user types
-            //this also doens't work for text threads and newly openned threads??
-            MessageEditorEvent::DismissOnboarding => {
-                OnboardingUpsell::set_dismissed(true, cx);
-                cx.notify();
-            }
-            _ => {}
-        })
-        .detach();
-
         let acp_history_store = cx.new(|cx| agent2::HistoryStore::new(context_store.clone(), cx));
         let acp_history = cx.new(|cx| AcpThreadHistory::new(acp_history_store.clone(), window, cx));
         cx.subscribe_in(
@@ -722,7 +699,24 @@ impl AgentPanel {
 
         let panel_type = AgentSettings::get_global(cx).default_view;
         let active_view = match panel_type {
-            DefaultView::Thread => ActiveView::thread(active_thread, message_editor, window, cx),
+            DefaultView::Thread => {
+                let message_editor = cx.new(|cx| {
+                    MessageEditor::new(
+                        fs.clone(),
+                        workspace.clone(),
+                        message_editor_context_store.clone(),
+                        prompt_store.clone(),
+                        thread_store.downgrade(),
+                        context_store.downgrade(),
+                        Some(history_store.downgrade()),
+                        thread.clone(),
+                        window,
+                        cx,
+                    )
+                });
+
+                ActiveView::thread(active_thread, message_editor, window, cx)
+            }
             DefaultView::TextThread => {
                 let context =
                     context_store.update(cx, |context_store, cx| context_store.create(cx));
@@ -1869,6 +1863,8 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        OnboardingUpsell::set_dismissed(true, cx);
+
         match agent {
             AgentType::Zed => {
                 window.dispatch_action(
