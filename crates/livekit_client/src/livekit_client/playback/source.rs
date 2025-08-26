@@ -103,7 +103,7 @@ where
     next: usize,
 }
 
-impl<const N: usize, S, F> Iterator for ProcessBuffer<S, F, N>
+impl<const N: usize, S, F> Iterator for ProcessBuffer<N, S, F>
 where
     S: Source + Sized,
     F: FnMut(&mut [rodio::Sample; N]),
@@ -127,13 +127,13 @@ where
     }
 }
 
-// TODO dvdsk this should be a spanless Source
 impl<const N: usize, S, F> Source for ProcessBuffer<N, S, F>
 where
     S: Source + Sized,
     F: FnMut(&mut [rodio::Sample; N]),
 {
     fn current_span_len(&self) -> Option<usize> {
+        // TODO dvdsk this should be a spanless Source
         None
     }
 
