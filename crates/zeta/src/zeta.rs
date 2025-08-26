@@ -432,13 +432,7 @@ impl Zeta {
         let cursor_point = cursor.to_point(&snapshot);
         let cursor_offset = cursor_point.to_offset(&snapshot);
         let git_info = if matches!(can_collect_data, CanCollectData(true)) {
-            self.gather_git_info(
-                cursor_point.clone(),
-                &buffer_snapshotted_at,
-                &snapshot,
-                project.clone(),
-                cx,
-            )
+            self.gather_git_info(cursor_point, &buffer_snapshotted_at, &snapshot, project, cx)
         } else {
             None
         };

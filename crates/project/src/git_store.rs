@@ -809,7 +809,7 @@ impl GitStore {
         cx: &App,
     ) -> Option<FileStatus> {
         let (repo, repo_path) = self.repository_and_path_for_project_path(project_path, cx)?;
-        Some(repo.read(cx).status_for_path(&repo_path)?)
+        repo.read(cx).status_for_path(&repo_path)
     }
 
     pub fn checkpoint(&self, cx: &mut App) -> Task<Result<GitStoreCheckpoint>> {
@@ -2846,7 +2846,7 @@ impl RepositorySnapshot {
     pub fn status_for_path(&self, path: &RepoPath) -> Option<FileStatus> {
         self.statuses_by_path
             .get(&PathKey(path.0.clone()), &())
-            .map(|entry| entry.status.clone())
+            .map(|entry| entry.status)
     }
 
     pub fn abs_path_to_repo_path(&self, abs_path: &Path) -> Option<RepoPath> {

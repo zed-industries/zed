@@ -2693,7 +2693,7 @@ impl OutlinePanel {
                         let status = git_store
                             .read(cx)
                             .repository_and_path_for_buffer_id(buffer_id, cx)
-                            .and_then(|(repo, path)| Some(repo.read(cx).status_for_path(&path)?));
+                            .and_then(|(repo, path)| repo.read(cx).status_for_path(&path));
                         buffer_excerpts
                             .entry(buffer_id)
                             .or_insert_with(|| {
