@@ -50,6 +50,7 @@ trait Message: AsRef<str> {
     }
 }
 
+#[derive(Debug)]
 pub(super) struct LogMessage {
     message: String,
     typ: MessageType,
@@ -77,6 +78,7 @@ impl Message for LogMessage {
     }
 }
 
+#[derive(Debug)]
 pub(super) struct TraceMessage {
     message: String,
     is_verbose: bool,
@@ -125,6 +127,21 @@ pub struct LanguageServerState {
     trace_level: TraceValue,
     log_level: MessageType,
     io_logs_subscription: Option<lsp::Subscription>,
+}
+
+impl std::fmt::Debug for LanguageServerState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LanguageServerState")
+            .field("name", &self.name)
+            .field("worktree_id", &self.worktree_id)
+            .field("kind", &self.kind)
+            .field("log_messages", &self.log_messages)
+            .field("trace_messages", &self.trace_messages)
+            .field("rpc_state", &self.rpc_state)
+            .field("trace_level", &self.trace_level)
+            .field("log_level", &self.log_level)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(PartialEq, Clone)]
