@@ -49,13 +49,25 @@ impl PartialEq for Toolchain {
 
 #[async_trait]
 pub trait ToolchainLister: Send + Sync {
+    /// List all available toolchains for a given path.
     async fn list(
         &self,
         worktree_root: PathBuf,
         subroot_relative_path: Option<Arc<Path>>,
         project_env: Option<HashMap<String, String>>,
     ) -> ToolchainList;
-    // Returns a term which we should use in UI to refer to a toolchain.
+
+    /// Given a user-created toolchain, resolve lister-specific details.
+    /// Put another way: fill in the details of the toolchain so the user does not have to.
+    async fn resolve(
+        &self,
+        worktree_root: PathBuf,
+        subroot_relative_path: Option<Arc<Path>>,
+        project_env: Option<HashMap<String, String>>,
+        path: PathBuf,
+    ) -> anyhow::Result<Toolchain>;
+
+    /// Returns a term which we should use in UI to refer to a toolchain.
     fn term(&self) -> SharedString;
     /// Returns the name of the manifest file for this toolchain.
     fn manifest_name(&self) -> ManifestName;

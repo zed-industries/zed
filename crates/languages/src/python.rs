@@ -891,6 +891,15 @@ impl ToolchainLister for PythonToolchainProvider {
     fn term(&self) -> SharedString {
         self.term.clone()
     }
+    async fn resolve(
+        &self,
+        _: PathBuf,
+        _: Option<Arc<Path>>,
+        _: Option<HashMap<String, String>>,
+        _: PathBuf,
+    ) -> anyhow::Result<Toolchain> {
+        Err(anyhow!("not implemented"))
+    }
 }
 
 pub struct EnvironmentApi<'a> {

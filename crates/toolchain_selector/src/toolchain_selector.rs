@@ -11,7 +11,7 @@ use language::{LanguageName, Toolchain, ToolchainList};
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectPath, WorktreeId};
 use std::{borrow::Cow, path::Path, sync::Arc};
-use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
+use ui::{Divider, HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
 
@@ -28,9 +28,89 @@ pub fn init(cx: &mut App) {
 }
 
 pub struct ToolchainSelector {
+    state: State,
+    create_search_state: Arc<dyn Fn(&mut Window, &mut Context<Self>) -> SearchState + 'static>,
+}
+
+#[derive(Clone)]
+struct SearchState {
     picker: Entity<Picker<ToolchainSelectorDelegate>>,
 }
 
+#[derive(Clone)]
+struct AddToolchainState {
+    path: Entity<Editor>,
+    weak: WeakEntity<ToolchainSelector>,
+}
+
+impl AddToolchainState {
+    fn new(window: &mut Window, cx: &mut Context<ToolchainSelector>) -> Self {
+        let path = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("Enter path", cx);
+            editor
+        });
+        Self {
+            path,
+            weak: cx.weak_entity(),
+        }
+    }
+}
+impl Focusable for State {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        match self {
+            State::Search(state) => state.picker.focus_handle(cx),
+            State::AddToolchain(state) => state.path.focus_handle(cx),
+        }
+    }
+}
+impl RenderOnce for AddToolchainState {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = cx.theme();
+        let weak = self.weak.upgrade();
+        v_flex()
+            .size_full()
+            .p_3()
+            .rounded_md()
+            .gap_1()
+            .when_some(weak, |this, weak| {
+                this.on_action(window.listener_for(
+                    &weak,
+                    |this: &mut ToolchainSelector, _: &menu::Cancel, window, cx| {
+                        this.state = State::Search((this.create_search_state)(window, cx));
+                        this.state.focus_handle(cx).focus(window);
+                        cx.notify();
+                    },
+                ))
+            })
+            .bg(theme.colors().background)
+            .child(Label::new("Path"))
+            .child(
+                h_flex()
+                    .bg(theme.colors().editor_background)
+                    .p_1()
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(theme.colors().border)
+                    .child(self.path),
+            )
+    }
+}
+
+#[derive(Clone)]
+enum State {
+    Search(SearchState),
+    AddToolchain(AddToolchainState),
+}
+
+impl RenderOnce for State {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        match self {
+            State::Search(state) => state.picker.into_any_element(),
+            State::AddToolchain(state) => state.render(window, cx).into_any_element(),
+        }
+    }
+}
 impl ToolchainSelector {
     fn register(
         workspace: &mut Workspace,
@@ -105,35 +185,44 @@ impl ToolchainSelector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let toolchain_selector = cx.entity().downgrade();
-        let picker = cx.new(|cx| {
-            let delegate = ToolchainSelectorDelegate::new(
-                active_toolchain,
-                toolchain_selector,
-                workspace,
-                worktree_id,
-                worktree_root,
-                project,
-                relative_path,
-                language_name,
-                window,
-                cx,
-            );
-            Picker::uniform_list(delegate, window, cx)
+        let create_search_state = Arc::new(move |window: &mut Window, cx: &mut Context<Self>| {
+            let toolchain_selector = cx.entity().downgrade();
+            let picker = cx.new(|cx| {
+                let delegate = ToolchainSelectorDelegate::new(
+                    active_toolchain.clone(),
+                    toolchain_selector,
+                    workspace.clone(),
+                    worktree_id,
+                    worktree_root.clone(),
+                    project.clone(),
+                    relative_path.clone(),
+                    language_name.clone(),
+                    window,
+                    cx,
+                );
+                Picker::uniform_list(delegate, window, cx)
+            });
+            SearchState { picker }
         });
-        Self { picker }
+
+        Self {
+            state: State::Search(create_search_state(window, cx)),
+            create_search_state,
+        }
     }
 }
 
 impl Render for ToolchainSelector {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().w(rems(34.)).child(self.picker.clone())
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .w(rems(34.))
+            .child(self.state.clone().render(window, cx))
     }
 }
 
 impl Focusable for ToolchainSelector {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.picker.focus_handle(cx)
+        self.state.focus_handle(cx)
     }
 }
 
@@ -168,6 +257,7 @@ impl ToolchainSelectorDelegate {
     ) -> Self {
         let _fetch_candidates_task = cx.spawn_in(window, {
             async move |this, cx| {
+                let x = std::time::Instant::now();
                 let term = project
                     .read_with(cx, |this, _| {
                         Project::toolchain_term(this.languages().clone(), language_name.clone())
@@ -410,6 +500,40 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                         .size(LabelSize::Small)
                         .color(Color::Muted),
                 ),
+        )
+    }
+    fn render_footer(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
+        Some(
+            v_flex()
+                // .bg(cx.theme().colors().background.clone())
+                .rounded_b_md()
+                .child(Divider::horizontal())
+                .child(
+                    h_flex().p_1().child(
+                        Button::new("xd", "Add Toolchain")
+                            .icon(IconName::Plus)
+                            .style(ButtonStyle::Filled)
+                            .icon_position(IconPosition::Start)
+                            .on_click(cx.listener(|picker, _, window, cx| {
+                                picker
+                                    .delegate
+                                    .toolchain_selector
+                                    .update(cx, |this, cx| {
+                                        this.state =
+                                            State::AddToolchain(AddToolchainState::new(window, cx));
+                                        this.state.focus_handle(cx).focus(window);
+
+                                        cx.notify();
+                                    })
+                                    .ok();
+                            })),
+                    ),
+                )
+                .into_any_element(),
         )
     }
 }
