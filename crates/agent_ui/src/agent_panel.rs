@@ -618,6 +618,10 @@ impl AgentPanel {
                         }
                         cx.notify();
                     });
+                } else {
+                    panel.update(cx, |panel, cx| {
+                        panel.new_agent_thread(AgentType::NativeAgent, window, cx);
+                    });
                 }
                 panel
             })?;
