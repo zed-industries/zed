@@ -637,8 +637,9 @@ fn register_actions(
         .register_action(|_, _: &Zoom, window, _| {
             window.zoom_window();
         })
-        .register_action(|_, _: &ToggleFullScreen, window, _| {
+        .register_action(|workspace, _: &ToggleFullScreen, window, _| {
             window.toggle_fullscreen();
+            workspace.toggle_titlebar_visibility();
         })
         .register_action(|_, action: &OpenZedUrl, _, cx| {
             OpenListener::global(cx).open(RawOpenRequest {
