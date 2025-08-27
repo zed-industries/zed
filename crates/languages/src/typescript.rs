@@ -510,7 +510,7 @@ fn eslint_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 fn replace_test_name_parameters(test_name: &str) -> String {
     let pattern = regex::Regex::new(r"(%|\$)[0-9a-zA-Z]+").unwrap();
 
-    regex::escape(&pattern.replace_all(test_name, "(.+?)"))
+    regex::escape(&pattern.replace_all(test_name, "__ZED_GLOB__")).replace("__ZED_GLOB__", "(.+?)")
 }
 
 pub struct TypeScriptLspAdapter {
