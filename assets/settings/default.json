@@ -223,6 +223,8 @@
   "current_line_highlight": "all",
   // Whether to highlight all occurrences of the selected text in an editor.
   "selection_highlight": true,
+  // Whether the text selection should have rounded corners.
+  "rounded_selection": true,
   // The debounce delay before querying highlights from the language
   // server based on the current cursor location.
   "lsp_highlight_debounce": 75,

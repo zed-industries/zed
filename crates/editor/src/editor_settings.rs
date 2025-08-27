@@ -17,6 +17,7 @@ pub struct EditorSettings {
     pub cursor_shape: Option<CursorShape>,
     pub current_line_highlight: CurrentLineHighlight,
     pub selection_highlight: bool,
+    pub rounded_selection: bool,
     pub lsp_highlight_debounce: u64,
     pub hover_popover_enabled: bool,
     pub hover_popover_delay: u64,
@@ -439,6 +440,10 @@ pub struct EditorSettingsContent {
     ///
     /// Default: true
     pub selection_highlight: Option<bool>,
+    /// Whether the text selection should have rounded corners.
+    ///
+    /// Default: true
+    pub rounded_selection: Option<bool>,
     /// The debounce delay before querying highlights from the language
     /// server based on the current cursor location.
     ///
@@ -781,6 +786,7 @@ impl Settings for EditorSettings {
             "editor.selectionHighlight",
             &mut current.selection_highlight,
         );
+        vscode.bool_setting("editor.roundedSelection", &mut current.rounded_selection);
         vscode.bool_setting("editor.hover.enabled", &mut current.hover_popover_enabled);
         vscode.u64_setting("editor.hover.delay", &mut current.hover_popover_delay);
 
