@@ -19,14 +19,14 @@ use project::project_settings::ProjectSettings;
 
 use proto::CrashReport;
 use release_channel::{AppVersion, RELEASE_CHANNEL, ReleaseChannel};
-use remote::SshRemoteClient;
+use remote::RemoteClient;
 use remote::{
     json_log::LogRecord,
     protocol::{read_message, write_message},
     proxy::ProxyLaunchError,
 };
 use reqwest_client::ReqwestClient;
-use rpc::proto::{self, Envelope, SSH_PROJECT_ID};
+use rpc::proto::{self, Envelope, REMOTE_SERVER_PROJECT_ID};
 use rpc::{AnyProtoClient, TypedEnvelope};
 use settings::{Settings, SettingsStore, watch_config_file};
 use smol::channel::{Receiver, Sender};
@@ -396,7 +396,7 @@ fn start_server(
     })
     .detach();
 
-    SshRemoteClient::proto_client_from_channels(incoming_rx, outgoing_tx, cx, "server")
+    RemoteClient::proto_client_from_channels(incoming_rx, outgoing_tx, cx, "server")
 }
 
 fn init_paths() -> anyhow::Result<()> {
@@ -867,32 +867,19 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    use remote::protocol::read_message_raw;
+    use remote::protocol::{read_message_raw, write_size_prefixed_buffer};
 
     let mut buffer = Vec::new();
     loop {
         read_message_raw(&mut reader, &mut buffer)
             .await
             .with_context(|| format!("failed to read message from {}", socket_name))?;
-
         write_size_prefixed_buffer(&mut writer, &mut buffer)
             .await
             .with_context(|| format!("failed to write message to {}", socket_name))?;
-
         writer.flush().await?;
-
         buffer.clear();
     }
-}
-
-async fn write_size_prefixed_buffer<S: AsyncWrite + Unpin>(
-    stream: &mut S,
-    buffer: &mut Vec<u8>,
-) -> Result<()> {
-    let len = buffer.len() as u32;
-    stream.write_all(len.to_le_bytes().as_slice()).await?;
-    stream.write_all(buffer).await?;
-    Ok(())
 }
 
 fn initialize_settings(
@@ -910,7 +897,7 @@ fn initialize_settings(
 
                 session
                     .send(proto::Toast {
-                        project_id: SSH_PROJECT_ID,
+                        project_id: REMOTE_SERVER_PROJECT_ID,
                         notification_id: "server-settings-failed".to_string(),
                         message: format!(
                             "Error in settings on remote host {:?}: {}",
@@ -922,7 +909,7 @@ fn initialize_settings(
             } else {
                 session
                     .send(proto::HideToast {
-                        project_id: SSH_PROJECT_ID,
+                        project_id: REMOTE_SERVER_PROJECT_ID,
                         notification_id: "server-settings-failed".to_string(),
                     })
                     .log_err();
