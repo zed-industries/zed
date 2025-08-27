@@ -8982,7 +8982,6 @@ impl LspStore {
         envelope: TypedEnvelope<proto::LanguageServerLog>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        log::error!("########################################### {envelope:?}");
         let language_server_id = LanguageServerId(envelope.payload.language_server_id as usize);
         let log_type = envelope
             .payload

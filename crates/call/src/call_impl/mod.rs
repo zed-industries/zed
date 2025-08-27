@@ -394,16 +394,6 @@ impl ActiveCall {
         }
     }
 
-    #[cfg(not(feature = "call"))]
-    pub fn unshare_project(
-        &mut self,
-        _project: Entity<Project>,
-        _cx: &mut Context<Self>,
-    ) -> Result<()> {
-        Ok(())
-    }
-
-    #[cfg(feature = "call")]
     pub fn unshare_project(
         &mut self,
         project: Entity<Project>,
