@@ -39,7 +39,7 @@ impl AgentServer for Gemini {
     }
 
     fn install_command(&self) -> Option<&'static str> {
-        Some("npm install -g @google/gemini-cli@latest")
+        Some("npm install --engine-strict -g @google/gemini-cli@latest")
     }
 
     fn connect(
@@ -141,7 +141,7 @@ impl Gemini {
     }
 
     pub fn install_command() -> &'static str {
-        "npm install -g @google/gemini-cli@latest"
+        "npm install --engine-strict -g @google/gemini-cli@latest"
     }
 
     pub fn upgrade_command() -> &'static str {
