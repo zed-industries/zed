@@ -3,7 +3,8 @@ mod remote_servers;
 mod ssh_config;
 mod ssh_connections;
 
-pub use ssh_connections::{is_connecting_over_ssh, open_ssh_project};
+use remote::RemoteConnectionOptions;
+pub use ssh_connections::{is_connecting_over_ssh, open_remote_project};
 
 use disconnected_overlay::DisconnectedOverlay;
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -290,7 +291,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     if workspace.database_id() == Some(*candidate_workspace_id) {
                         Task::ready(Ok(()))
                     } else {
-                        match candidate_workspace_location {
+                        match candidate_workspace_location.clone() {
                             SerializedWorkspaceLocation::Local => {
                                 let paths = candidate_workspace_paths.paths().to_vec();
                                 if replace_current_window {
@@ -320,7 +321,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     workspace.open_workspace_for_paths(false, paths, window, cx)
                                 }
                             }
-                            SerializedWorkspaceLocation::Ssh(connection) => {
+                            SerializedWorkspaceLocation::Remote(mut connection) => {
                                 let app_state = workspace.app_state().clone();
 
                                 let replace_window = if replace_current_window {
@@ -334,18 +335,16 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     ..Default::default()
                                 };
 
-                                let connection_options = SshSettings::get_global(cx)
-                                    .connection_options_for(
-                                        connection.host.clone(),
-                                        connection.port,
-                                        connection.user.clone(),
-                                    );
+                                if let RemoteConnectionOptions::Ssh(connection) = &mut connection {
+                                    SshSettings::get_global(cx)
+                                        .fill_connection_options_from_settings(connection);
+                                };
 
                                 let paths = candidate_workspace_paths.paths().to_vec();
 
                                 cx.spawn_in(window, async move |_, cx| {
-                                    open_ssh_project(
-                                        connection_options,
+                                    open_remote_project(
+                                        connection.clone(),
                                         paths,
                                         app_state,
                                         open_options,
@@ -418,9 +417,11 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 SerializedWorkspaceLocation::Local => Icon::new(IconName::Screen)
                                     .color(Color::Muted)
                                     .into_any_element(),
-                                SerializedWorkspaceLocation::Ssh(_) => Icon::new(IconName::Server)
-                                    .color(Color::Muted)
-                                    .into_any_element(),
+                                SerializedWorkspaceLocation::Remote(_) => {
+                                    Icon::new(IconName::Server)
+                                        .color(Color::Muted)
+                                        .into_any_element()
+                                }
                             })
                         })
                         .child({

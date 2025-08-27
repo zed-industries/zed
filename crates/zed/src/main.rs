@@ -23,13 +23,14 @@ use http_client::{Url, read_proxy_from_env};
 use language::LanguageRegistry;
 use onboarding::{FIRST_OPEN, show_onboarding_view};
 use prompt_store::PromptBuilder;
+use remote::RemoteConnectionOptions;
 use reqwest_client::ReqwestClient;
 
 use assets::Assets;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use parking_lot::Mutex;
 use project::project_settings::ProjectSettings;
-use recent_projects::{SshSettings, open_ssh_project};
+use recent_projects::{SshSettings, open_remote_project};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
 use settings::{BaseKeymap, Settings, SettingsStore, watch_config_file};
@@ -794,8 +795,8 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
     if let Some(connection_options) = request.ssh_connection {
         cx.spawn(async move |cx| {
             let paths: Vec<PathBuf> = request.open_paths.into_iter().map(PathBuf::from).collect();
-            open_ssh_project(
-                connection_options,
+            open_remote_project(
+                connection_options.into(),
                 paths,
                 app_state,
                 workspace::OpenOptions::default(),
@@ -966,31 +967,24 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                     });
                     tasks.push(task);
                 }
-                SerializedWorkspaceLocation::Ssh(ssh) => {
+                SerializedWorkspaceLocation::Remote(mut connection_options) => {
                     let app_state = app_state.clone();
-                    let ssh_host = ssh.host.clone();
-                    let task = cx.spawn(async move |cx| {
-                        let connection_options = cx.update(|cx| {
+                    if let RemoteConnectionOptions::Ssh(options) = &mut connection_options {
+                        cx.update(|cx| {
                             SshSettings::get_global(cx)
-                                .connection_options_for(ssh.host, ssh.port, ssh.user)
-                        });
-
-                        match connection_options {
-                            Ok(connection_options) => recent_projects::open_ssh_project(
-                                connection_options,
-                                paths.paths().into_iter().map(PathBuf::from).collect(),
-                                app_state,
-                                workspace::OpenOptions::default(),
-                                cx,
-                            )
-                            .await
-                            .map_err(|e| anyhow::anyhow!(e)),
-                            Err(e) => Err(anyhow::anyhow!(
-                                "Failed to get SSH connection options for {}: {}",
-                                ssh_host,
-                                e
-                            )),
-                        }
+                                .fill_connection_options_from_settings(options)
+                        })?;
+                    }
+                    let task = cx.spawn(async move |cx| {
+                        recent_projects::open_remote_project(
+                            connection_options.into(),
+                            paths.paths().into_iter().map(PathBuf::from).collect(),
+                            app_state,
+                            workspace::OpenOptions::default(),
+                            cx,
+                        )
+                        .await
+                        .map_err(|e| anyhow::anyhow!(e))
                     });
                     tasks.push(task);
                 }

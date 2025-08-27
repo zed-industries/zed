@@ -29,6 +29,7 @@ use gpui::{
 };
 use onboarding_banner::OnboardingBanner;
 use project::Project;
+use remote::RemoteConnectionOptions;
 use settings::Settings as _;
 use settings_ui::keybindings;
 use std::sync::Arc;
@@ -301,12 +302,14 @@ impl TitleBar {
 
     fn render_remote_project_connection(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let options = self.project.read(cx).remote_connection_options(cx)?;
-        let host: SharedString = options.connection_string().into();
+        let host: SharedString = options.display_name().into();
 
-        let nickname = options
-            .nickname
-            .map(|nick| nick.into())
-            .unwrap_or_else(|| host.clone());
+        let nickname = if let RemoteConnectionOptions::Ssh(options) = options {
+            options.nickname.map(|nick| nick.into())
+        } else {
+            None
+        };
+        let nickname = nickname.unwrap_or_else(|| host.clone());
 
         let (indicator_color, meta) = match self.project.read(cx).remote_connection_state(cx)? {
             remote::ConnectionState::Connecting => (Color::Info, format!("Connecting to: {host}")),

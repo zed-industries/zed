@@ -17,7 +17,8 @@ use gpui::{App, AsyncApp, Global, WindowHandle};
 use language::Point;
 use onboarding::FIRST_OPEN;
 use onboarding::show_onboarding_view;
-use recent_projects::{SshSettings, open_ssh_project};
+use recent_projects::{SshSettings, open_remote_project};
+use remote::RemoteConnectionOptions;
 use remote::SshConnectionOptions;
 use settings::Settings;
 use std::path::{Path, PathBuf};
@@ -422,30 +423,26 @@ async fn open_workspaces(
                         errored = true
                     }
                 }
-                SerializedWorkspaceLocation::Ssh(ssh) => {
+                SerializedWorkspaceLocation::Remote(mut connection) => {
                     let app_state = app_state.clone();
-                    let connection_options = cx.update(|cx| {
-                        SshSettings::get_global(cx)
-                            .connection_options_for(ssh.host, ssh.port, ssh.user)
-                    });
-                    if let Ok(connection_options) = connection_options {
-                        cx.spawn(async move |cx| {
-                            open_ssh_project(
-                                connection_options,
-                                workspace_paths.paths().to_vec(),
-                                app_state,
-                                OpenOptions::default(),
-                                cx,
-                            )
-                            .await
-                            .log_err();
-                        })
-                        .detach();
-                        // We don't set `errored` here if `open_ssh_project` fails, because for ssh projects, the
-                        // error is displayed in the window.
-                    } else {
-                        errored = false;
+                    if let RemoteConnectionOptions::Ssh(options) = &mut connection {
+                        cx.update(|cx| {
+                            SshSettings::get_global(cx)
+                                .fill_connection_options_from_settings(options)
+                        })?;
                     }
+                    cx.spawn(async move |cx| {
+                        open_remote_project(
+                            connection,
+                            workspace_paths.paths().to_vec(),
+                            app_state,
+                            OpenOptions::default(),
+                            cx,
+                        )
+                        .await
+                        .log_err();
+                    })
+                    .detach();
                 }
             }
         }

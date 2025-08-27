@@ -12,7 +12,7 @@ use db::sqlez::{
 use gpui::{AsyncWindowContext, Entity, WeakEntity};
 
 use project::{Project, debugger::breakpoint_store::SourceBreakpoint};
-use serde::{Deserialize, Serialize};
+use remote::RemoteConnectionOptions;
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -24,19 +24,12 @@ use uuid::Uuid;
 #[derive(
     Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, serde::Serialize, serde::Deserialize,
 )]
-pub(crate) struct SshConnectionId(pub u64);
-
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-pub struct SerializedSshConnection {
-    pub host: String,
-    pub port: Option<u16>,
-    pub user: Option<String>,
-}
+pub(crate) struct RemoteConnectionId(pub u64);
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum SerializedWorkspaceLocation {
     Local,
-    Ssh(SerializedSshConnection),
+    Remote(RemoteConnectionOptions),
 }
 
 impl SerializedWorkspaceLocation {

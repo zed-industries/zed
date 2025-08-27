@@ -87,7 +87,7 @@ use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 pub use prettier_store::PrettierStore;
 use project_settings::{ProjectSettings, SettingsObserver, SettingsObserverEvent};
-use remote::{RemoteClient, SshConnectionOptions};
+use remote::{RemoteClient, RemoteConnectionOptions};
 use rpc::{
     AnyProtoClient, ErrorCode,
     proto::{FromProto, LanguageServerPromptResponse, REMOTE_SERVER_PROJECT_ID, ToProto},
@@ -1902,7 +1902,7 @@ impl Project {
             .map(|remote| remote.read(cx).connection_state())
     }
 
-    pub fn remote_connection_options(&self, cx: &App) -> Option<SshConnectionOptions> {
+    pub fn remote_connection_options(&self, cx: &App) -> Option<RemoteConnectionOptions> {
         self.remote_client
             .as_ref()
             .map(|remote| remote.read(cx).connection_options())

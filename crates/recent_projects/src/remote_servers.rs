@@ -28,6 +28,7 @@ use paths::user_ssh_config_file;
 use picker::Picker;
 use project::Fs;
 use project::Project;
+use remote::RemoteConnectionOptions;
 use remote::remote_client::ConnectionIdentifier;
 use remote::{RemoteClient, SshConnectionOptions};
 use settings::Settings;
@@ -50,7 +51,7 @@ use workspace::Toast;
 use workspace::notifications::NotificationId;
 use workspace::{
     ModalView, Workspace, notifications::DetachAndPromptErr,
-    open_ssh_project_with_existing_connection,
+    open_remote_project_with_existing_connection,
 };
 
 use crate::ssh_config::parse_ssh_config_hosts;
@@ -62,7 +63,7 @@ use crate::ssh_connections::SshProject;
 use crate::ssh_connections::SshPrompt;
 use crate::ssh_connections::SshSettings;
 use crate::ssh_connections::connect_over_ssh;
-use crate::ssh_connections::open_ssh_project;
+use crate::ssh_connections::open_remote_project;
 
 mod navigation_base {}
 pub struct RemoteServerProjects {
@@ -222,8 +223,13 @@ impl ProjectPicker {
                         })
                         .log_err()?;
 
-                    open_ssh_project_with_existing_connection(
-                        connection, project, paths, app_state, window, cx,
+                    open_remote_project_with_existing_connection(
+                        RemoteConnectionOptions::Ssh(connection),
+                        project,
+                        paths,
+                        app_state,
+                        window,
+                        cx,
                     )
                     .await
                     .log_err();
@@ -898,8 +904,8 @@ impl RemoteServerProjects {
                 };
 
                 cx.spawn_in(window, async move |_, cx| {
-                    let result = open_ssh_project(
-                        server.into(),
+                    let result = open_remote_project(
+                        RemoteConnectionOptions::Ssh(server.into()),
                         project.paths.into_iter().map(PathBuf::from).collect(),
                         app_state,
                         OpenOptions {

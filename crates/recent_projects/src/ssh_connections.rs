@@ -16,7 +16,8 @@ use language::CursorShape;
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use release_channel::ReleaseChannel;
 use remote::{
-    ConnectionIdentifier, RemoteClient, RemotePlatform, SshConnectionOptions, SshPortForwardOption,
+    ConnectionIdentifier, RemoteClient, RemoteConnectionOptions, RemotePlatform,
+    SshConnectionOptions, SshPortForwardOption,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -42,32 +43,35 @@ impl SshSettings {
         self.ssh_connections.clone().into_iter().flatten()
     }
 
+    pub fn fill_connection_options_from_settings(&self, options: &mut SshConnectionOptions) {
+        for conn in self.ssh_connections() {
+            if conn.host == options.host
+                && conn.username == options.username
+                && conn.port == options.port
+            {
+                options.nickname = conn.nickname;
+                options.upload_binary_over_ssh = conn.upload_binary_over_ssh.unwrap_or_default();
+                options.args = Some(conn.args);
+                options.port_forwards = conn.port_forwards;
+                break;
+            }
+        }
+    }
+
     pub fn connection_options_for(
         &self,
         host: String,
         port: Option<u16>,
         username: Option<String>,
     ) -> SshConnectionOptions {
-        for conn in self.ssh_connections() {
-            if conn.host == host && conn.username == username && conn.port == port {
-                return SshConnectionOptions {
-                    nickname: conn.nickname,
-                    upload_binary_over_ssh: conn.upload_binary_over_ssh.unwrap_or_default(),
-                    args: Some(conn.args),
-                    host,
-                    port,
-                    username,
-                    port_forwards: conn.port_forwards,
-                    password: None,
-                };
-            }
-        }
-        SshConnectionOptions {
+        let mut options = SshConnectionOptions {
             host,
             port,
             username,
             ..Default::default()
-        }
+        };
+        self.fill_connection_options_from_settings(&mut options);
+        options
     }
 }
 
@@ -563,8 +567,8 @@ pub fn connect_over_ssh(
     )
 }
 
-pub async fn open_ssh_project(
-    connection_options: SshConnectionOptions,
+pub async fn open_remote_project(
+    connection_options: RemoteConnectionOptions,
     paths: Vec<PathBuf>,
     app_state: Arc<AppState>,
     open_options: workspace::OpenOptions,
@@ -575,13 +579,7 @@ pub async fn open_ssh_project(
     } else {
         let workspace_position = cx
             .update(|cx| {
-                workspace::ssh_workspace_position_from_db(
-                    connection_options.host.clone(),
-                    connection_options.port,
-                    connection_options.username.clone(),
-                    &paths,
-                    cx,
-                )
+                workspace::remote_workspace_position_from_db(connection_options.clone(), &paths, cx)
             })?
             .await
             .context("fetching ssh workspace position from db")?;
@@ -610,38 +608,40 @@ pub async fn open_ssh_project(
 
     loop {
         let (cancel_tx, cancel_rx) = oneshot::channel();
-        let delegate = window.update(cx, {
-            let connection_options = connection_options.clone();
-            let paths = paths.clone();
-            move |workspace, window, cx| {
-                window.activate_window();
-                workspace.toggle_modal(window, cx, |window, cx| {
-                    SshConnectionModal::new(&connection_options, paths, window, cx)
-                });
+        let delegate = match connection_options.clone() {
+            RemoteConnectionOptions::Ssh(options) => window.update(cx, {
+                let paths = paths.clone();
+                move |workspace, window, cx| {
+                    window.activate_window();
+                    workspace.toggle_modal(window, cx, |window, cx| {
+                        SshConnectionModal::new(&options, paths, window, cx)
+                    });
 
-                let ui = workspace
-                    .active_modal::<SshConnectionModal>(cx)?
-                    .read(cx)
-                    .prompt
-                    .clone();
+                    let ui = workspace
+                        .active_modal::<SshConnectionModal>(cx)?
+                        .read(cx)
+                        .prompt
+                        .clone();
 
-                ui.update(cx, |ui, _cx| {
-                    ui.set_cancellation_tx(cancel_tx);
-                });
+                    ui.update(cx, |ui, _cx| {
+                        ui.set_cancellation_tx(cancel_tx);
+                    });
 
-                Some(Arc::new(SshClientDelegate {
-                    window: window.window_handle(),
-                    ui: ui.downgrade(),
-                    known_password: connection_options.password.clone(),
-                }))
-            }
-        })?;
+                    Some(Arc::new(SshClientDelegate {
+                        window: window.window_handle(),
+                        ui: ui.downgrade(),
+                        known_password: options.password.clone(),
+                    }))
+                }
+            })?,
+            RemoteConnectionOptions::Wsl(options) => todo!("WSL"),
+        };
 
         let Some(delegate) = delegate else { break };
 
-        let did_open_ssh_project = cx
+        let did_open_project = cx
             .update(|cx| {
-                workspace::open_ssh_project_with_new_connection(
+                workspace::open_remote_project_with_new_connection(
                     window,
                     connection_options.clone(),
                     cancel_rx,
@@ -661,7 +661,7 @@ pub async fn open_ssh_project(
             })
             .ok();
 
-        if let Err(e) = did_open_ssh_project {
+        if let Err(e) = did_open_project {
             log::error!("Failed to open project: {e:?}");
             let response = window
                 .update(cx, |_, window, cx| {

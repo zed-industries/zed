@@ -2,7 +2,7 @@ use crate::{
     RemoteClientDelegate, RemotePlatform,
     json_log::LogRecord,
     protocol::{MESSAGE_LEN_SIZE, message_len_from_buffer, read_message_with_len, write_message},
-    remote_client::{CommandTemplate, RemoteConnection},
+    remote_client::{CommandTemplate, RemoteConnection, RemoteConnectionOptions},
 };
 use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
@@ -99,8 +99,8 @@ impl RemoteConnection for SshRemoteConnection {
         self.master_process.lock().is_none()
     }
 
-    fn connection_options(&self) -> SshConnectionOptions {
-        self.socket.connection_options.clone()
+    fn connection_options(&self) -> RemoteConnectionOptions {
+        RemoteConnectionOptions::Ssh(self.socket.connection_options.clone())
     }
 
     fn shell(&self) -> String {
