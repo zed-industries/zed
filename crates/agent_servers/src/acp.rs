@@ -30,6 +30,8 @@ pub struct AcpConnection {
     auth_methods: Vec<acp::AuthMethod>,
     prompt_capabilities: acp::PromptCapabilities,
     _io_task: Task<Result<()>>,
+    _wait_task: Task<Result<()>>,
+    _stderr_task: Task<Result<()>>,
 }
 
 pub struct AcpSession {
@@ -86,7 +88,7 @@ impl AcpConnection {
 
         let io_task = cx.background_spawn(io_task);
 
-        cx.background_spawn(async move {
+        let stderr_task = cx.background_spawn(async move {
             let mut stderr = BufReader::new(stderr);
             let mut line = String::new();
             while let Ok(n) = stderr.read_line(&mut line).await
@@ -95,10 +97,10 @@ impl AcpConnection {
                 log::warn!("agent stderr: {}", &line);
                 line.clear();
             }
-        })
-        .detach();
+            Ok(())
+        });
 
-        cx.spawn({
+        let wait_task = cx.spawn({
             let sessions = sessions.clone();
             async move |cx| {
                 let status = child.status().await?;
@@ -114,8 +116,7 @@ impl AcpConnection {
 
                 anyhow::Ok(())
             }
-        })
-        .detach();
+        });
 
         let connection = Rc::new(connection);
 
@@ -148,6 +149,8 @@ impl AcpConnection {
             sessions,
             prompt_capabilities: response.agent_capabilities.prompt_capabilities,
             _io_task: io_task,
+            _wait_task: wait_task,
+            _stderr_task: stderr_task,
         })
     }
 

@@ -905,9 +905,10 @@ impl AcpThreadView {
         self.editing_message.take();
         self.thread_feedback.clear();
 
-        let Some(thread) = self.thread().cloned() else {
+        let Some(thread) = self.thread() else {
             return;
         };
+        let thread = thread.downgrade();
         if self.should_be_following {
             self.workspace
                 .update(cx, |workspace, cx| {
