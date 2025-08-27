@@ -22,6 +22,10 @@ impl CustomAgentServer {
 }
 
 impl crate::AgentServer for CustomAgentServer {
+    fn telemetry_id(&self) -> &'static str {
+        "custom"
+    }
+
     fn name(&self) -> SharedString {
         self.name.clone()
     }
@@ -51,6 +55,10 @@ impl crate::AgentServer for CustomAgentServer {
         cx.spawn(async move |mut cx| {
             crate::acp::connect(server_name, command, &root_dir, &mut cx).await
         })
+    }
+
+    fn install_command(&self) -> Option<&'static str> {
+        None
     }
 
     fn into_any(self: Rc<Self>) -> Rc<dyn std::any::Any> {

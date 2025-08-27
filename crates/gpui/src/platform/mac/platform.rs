@@ -1,5 +1,5 @@
 use super::{
-    BoolExt, MacKeyboardLayout,
+    BoolExt, MacKeyboardLayout, MacKeyboardMapper,
     attributed_string::{NSAttributedString, NSMutableAttributedString},
     events::key_to_native,
     renderer,
@@ -8,8 +8,9 @@ use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardString,
     CursorStyle, ForegroundExecutor, Image, ImageFormat, KeyContext, Keymap, MacDispatcher,
     MacDisplay, MacWindow, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformTextSystem, PlatformWindow, Result,
-    SemanticVersion, SystemMenuType, Task, WindowAppearance, WindowParams, hash,
+    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    PlatformWindow, Result, SemanticVersion, SystemMenuType, Task, WindowAppearance, WindowParams,
+    hash,
 };
 use anyhow::{Context as _, anyhow};
 use block::ConcreteBlock;
@@ -171,6 +172,7 @@ pub(crate) struct MacPlatformState {
     finish_launching: Option<Box<dyn FnOnce()>>,
     dock_menu: Option<id>,
     menus: Option<Vec<OwnedMenu>>,
+    keyboard_mapper: Rc<MacKeyboardMapper>,
 }
 
 impl Default for MacPlatform {
@@ -188,6 +190,9 @@ impl MacPlatform {
 
         #[cfg(not(feature = "font-kit"))]
         let text_system = Arc::new(crate::NoopTextSystem::new());
+
+        let keyboard_layout = MacKeyboardLayout::new();
+        let keyboard_mapper = Rc::new(MacKeyboardMapper::new(keyboard_layout.id()));
 
         Self(Mutex::new(MacPlatformState {
             headless,
@@ -209,6 +214,7 @@ impl MacPlatform {
             dock_menu: None,
             on_keyboard_layout_change: None,
             menus: None,
+            keyboard_mapper,
         }))
     }
 
@@ -348,19 +354,19 @@ impl MacPlatform {
                             let mut mask = NSEventModifierFlags::empty();
                             for (modifier, flag) in &[
                                 (
-                                    keystroke.modifiers.platform,
+                                    keystroke.display_modifiers.platform,
                                     NSEventModifierFlags::NSCommandKeyMask,
                                 ),
                                 (
-                                    keystroke.modifiers.control,
+                                    keystroke.display_modifiers.control,
                                     NSEventModifierFlags::NSControlKeyMask,
                                 ),
                                 (
-                                    keystroke.modifiers.alt,
+                                    keystroke.display_modifiers.alt,
                                     NSEventModifierFlags::NSAlternateKeyMask,
                                 ),
                                 (
-                                    keystroke.modifiers.shift,
+                                    keystroke.display_modifiers.shift,
                                     NSEventModifierFlags::NSShiftKeyMask,
                                 ),
                             ] {
@@ -373,7 +379,7 @@ impl MacPlatform {
                                 .initWithTitle_action_keyEquivalent_(
                                     ns_string(name),
                                     selector,
-                                    ns_string(key_to_native(&keystroke.key).as_ref()),
+                                    ns_string(key_to_native(&keystroke.display_key).as_ref()),
                                 )
                                 .autorelease();
                             if Self::os_version() >= SemanticVersion::new(12, 0, 0) {
@@ -880,6 +886,10 @@ impl Platform for MacPlatform {
 
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
         Box::new(MacKeyboardLayout::new())
+    }
+
+    fn keyboard_mapper(&self) -> Rc<dyn PlatformKeyboardMapper> {
+        self.0.lock().keyboard_mapper.clone()
     }
 
     fn app_path(&self) -> Result<PathBuf> {
@@ -1393,6 +1403,8 @@ extern "C" fn will_terminate(this: &mut Object, _: Sel, _: id) {
 extern "C" fn on_keyboard_layout_change(this: &mut Object, _: Sel, _: id) {
     let platform = unsafe { get_mac_platform(this) };
     let mut lock = platform.0.lock();
+    let keyboard_layout = MacKeyboardLayout::new();
+    lock.keyboard_mapper = Rc::new(MacKeyboardMapper::new(keyboard_layout.id()));
     if let Some(mut callback) = lock.on_keyboard_layout_change.take() {
         drop(lock);
         callback();

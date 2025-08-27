@@ -56,7 +56,7 @@ impl AcpConnection {
         root_dir: &Path,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
-        let mut child = util::command::new_smol_command(&command.path)
+        let mut child = util::command::new_smol_command(command.path)
             .args(command.args.iter().map(|arg| arg.as_str()))
             .envs(command.env.iter().flatten())
             .current_dir(root_dir)
@@ -150,6 +150,10 @@ impl AcpConnection {
             _io_task: io_task,
         })
     }
+
+    pub fn prompt_capabilities(&self) -> &acp::PromptCapabilities {
+        &self.prompt_capabilities
+    }
 }
 
 impl AgentConnection for AcpConnection {
@@ -162,12 +166,34 @@ impl AgentConnection for AcpConnection {
         let conn = self.connection.clone();
         let sessions = self.sessions.clone();
         let cwd = cwd.to_path_buf();
+        let context_server_store = project.read(cx).context_server_store().read(cx);
+        let mcp_servers = context_server_store
+            .configured_server_ids()
+            .iter()
+            .filter_map(|id| {
+                let configuration = context_server_store.configuration_for_server(id)?;
+                let command = configuration.command();
+                Some(acp::McpServer {
+                    name: id.0.to_string(),
+                    command: command.path.clone(),
+                    args: command.args.clone(),
+                    env: if let Some(env) = command.env.as_ref() {
+                        env.iter()
+                            .map(|(name, value)| acp::EnvVariable {
+                                name: name.clone(),
+                                value: value.clone(),
+                            })
+                            .collect()
+                    } else {
+                        vec![]
+                    },
+                })
+            })
+            .collect();
+
         cx.spawn(async move |cx| {
             let response = conn
-                .new_session(acp::NewSessionRequest {
-                    mcp_servers: vec![],
-                    cwd,
-                })
+                .new_session(acp::NewSessionRequest { mcp_servers, cwd })
                 .await
                 .map_err(|err| {
                     if err.code == acp::ErrorCode::AUTH_REQUIRED.code {
@@ -266,7 +292,9 @@ impl AgentConnection for AcpConnection {
 
                     match serde_json::from_value(data.clone()) {
                         Ok(ErrorDetails { details }) => {
-                            if suppress_abort_err && details.contains("This operation was aborted")
+                            if suppress_abort_err
+                                && (details.contains("This operation was aborted")
+                                    || details.contains("The user aborted a request"))
                             {
                                 Ok(acp::PromptResponse {
                                     stop_reason: acp::StopReason::Cancelled,

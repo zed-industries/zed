@@ -653,7 +653,7 @@ impl ProjectPanel {
                             let file_path = entry.path.clone();
                             let worktree_id = worktree.read(cx).id();
                             let entry_id = entry.id;
-                            let is_via_ssh = project.read(cx).is_via_ssh();
+                            let is_via_ssh = project.read(cx).is_via_remote_server();
 
                             workspace
                                 .open_path_preview(
@@ -4089,6 +4089,7 @@ impl ProjectPanel {
             .when(!is_sticky, |this| {
                 this
                 .when(is_highlighted && folded_directory_drag_target.is_none(), |this| this.border_color(transparent_white()).bg(item_colors.drag_over))
+                .when(settings.drag_and_drop, |this| this
                 .on_drag_move::<ExternalPaths>(cx.listener(
                     move |this, event: &DragMoveEvent<ExternalPaths>, _, cx| {
                         let is_current_target = this.drag_target_entry.as_ref()
@@ -4222,7 +4223,7 @@ impl ProjectPanel {
                         }
                         this.drag_onto(selections, entry_id, kind.is_file(), window, cx);
                     }),
-                )
+                ))
             })
             .on_mouse_down(
                 MouseButton::Left,
@@ -4433,6 +4434,7 @@ impl ProjectPanel {
                                                     div()
                                                     .when(!is_sticky, |div| {
                                                         div
+                                                            .when(settings.drag_and_drop, |div| div
                                                             .on_drop(cx.listener(move |this, selections: &DraggedSelection, window, cx| {
                                                             this.hover_scroll_task.take();
                                                             this.drag_target_entry = None;
@@ -4464,7 +4466,7 @@ impl ProjectPanel {
                                                                 }
 
                                                             },
-                                                        ))
+                                                        )))
                                                     })
                                                     .child(
                                                         Label::new(DELIMITER.clone())
@@ -4484,6 +4486,7 @@ impl ProjectPanel {
                                                 .when(index != components_len - 1, |div|{
                                                     let target_entry_id = folded_ancestors.ancestors.get(components_len - 1 - index).cloned();
                                                     div
+                                                    .when(settings.drag_and_drop, |div| div
                                                     .on_drag_move(cx.listener(
                                                         move |this, event: &DragMoveEvent<DraggedSelection>, _, _| {
                                                         if event.bounds.contains(&event.event.position) {
@@ -4521,7 +4524,7 @@ impl ProjectPanel {
                                                         target.index == index
                                                     ), |this| {
                                                         this.bg(item_colors.drag_over)
-                                                    })
+                                                    }))
                                                 })
                                             })
                                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -5029,7 +5032,8 @@ impl ProjectPanel {
 
         sticky_parents.reverse();
 
-        let git_status_enabled = ProjectPanelSettings::get_global(cx).git_status;
+        let panel_settings = ProjectPanelSettings::get_global(cx);
+        let git_status_enabled = panel_settings.git_status;
         let root_name = OsStr::new(worktree.root_name());
 
         let git_summaries_by_id = if git_status_enabled {
@@ -5113,11 +5117,11 @@ impl Render for ProjectPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_worktree = !self.visible_entries.is_empty();
         let project = self.project.read(cx);
-        let indent_size = ProjectPanelSettings::get_global(cx).indent_size;
-        let show_indent_guides =
-            ProjectPanelSettings::get_global(cx).indent_guides.show == ShowIndentGuides::Always;
+        let panel_settings = ProjectPanelSettings::get_global(cx);
+        let indent_size = panel_settings.indent_size;
+        let show_indent_guides = panel_settings.indent_guides.show == ShowIndentGuides::Always;
         let show_sticky_entries = {
-            if ProjectPanelSettings::get_global(cx).sticky_scroll {
+            if panel_settings.sticky_scroll {
                 let is_scrollable = self.scroll_handle.is_scrollable();
                 let is_scrolled = self.scroll_handle.offset().y < px(0.);
                 is_scrollable && is_scrolled
@@ -5205,8 +5209,10 @@ impl Render for ProjectPanel {
             h_flex()
                 .id("project-panel")
                 .group("project-panel")
-                .on_drag_move(cx.listener(handle_drag_move::<ExternalPaths>))
-                .on_drag_move(cx.listener(handle_drag_move::<DraggedSelection>))
+                .when(panel_settings.drag_and_drop, |this| {
+                    this.on_drag_move(cx.listener(handle_drag_move::<ExternalPaths>))
+                        .on_drag_move(cx.listener(handle_drag_move::<DraggedSelection>))
+                })
                 .size_full()
                 .relative()
                 .on_modifiers_changed(cx.listener(
@@ -5295,7 +5301,7 @@ impl Render for ProjectPanel {
                         .on_action(cx.listener(Self::open_system))
                         .on_action(cx.listener(Self::open_in_terminal))
                 })
-                .when(project.is_via_ssh(), |el| {
+                .when(project.is_via_remote_server(), |el| {
                     el.on_action(cx.listener(Self::open_in_terminal))
                 })
                 .on_mouse_down(
@@ -5544,30 +5550,32 @@ impl Render for ProjectPanel {
                         })),
                 )
                 .when(is_local, |div| {
-                    div.drag_over::<ExternalPaths>(|style, _, _, cx| {
-                        style.bg(cx.theme().colors().drop_target_background)
+                    div.when(panel_settings.drag_and_drop, |div| {
+                        div.drag_over::<ExternalPaths>(|style, _, _, cx| {
+                            style.bg(cx.theme().colors().drop_target_background)
+                        })
+                        .on_drop(cx.listener(
+                            move |this, external_paths: &ExternalPaths, window, cx| {
+                                this.drag_target_entry = None;
+                                this.hover_scroll_task.take();
+                                if let Some(task) = this
+                                    .workspace
+                                    .update(cx, |workspace, cx| {
+                                        workspace.open_workspace_for_paths(
+                                            true,
+                                            external_paths.paths().to_owned(),
+                                            window,
+                                            cx,
+                                        )
+                                    })
+                                    .log_err()
+                                {
+                                    task.detach_and_log_err(cx);
+                                }
+                                cx.stop_propagation();
+                            },
+                        ))
                     })
-                    .on_drop(cx.listener(
-                        move |this, external_paths: &ExternalPaths, window, cx| {
-                            this.drag_target_entry = None;
-                            this.hover_scroll_task.take();
-                            if let Some(task) = this
-                                .workspace
-                                .update(cx, |workspace, cx| {
-                                    workspace.open_workspace_for_paths(
-                                        true,
-                                        external_paths.paths().to_owned(),
-                                        window,
-                                        cx,
-                                    )
-                                })
-                                .log_err()
-                            {
-                                task.detach_and_log_err(cx);
-                            }
-                            cx.stop_propagation();
-                        },
-                    ))
                 })
         }
     }

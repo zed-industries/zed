@@ -18,7 +18,7 @@ use gpui::{
 use postage::oneshot;
 use rpc::{
     AnyProtoClient, ErrorExt, TypedEnvelope,
-    proto::{self, FromProto, SSH_PROJECT_ID, ToProto},
+    proto::{self, FromProto, REMOTE_SERVER_PROJECT_ID, ToProto},
 };
 use smol::{
     channel::{Receiver, Sender},
@@ -278,7 +278,7 @@ impl WorktreeStore {
             let path = RemotePathBuf::new(abs_path.into(), path_style);
             let response = client
                 .request(proto::AddWorktree {
-                    project_id: SSH_PROJECT_ID,
+                    project_id: REMOTE_SERVER_PROJECT_ID,
                     path: path.to_proto(),
                     visible,
                 })
@@ -298,7 +298,7 @@ impl WorktreeStore {
 
             let worktree = cx.update(|cx| {
                 Worktree::remote(
-                    SSH_PROJECT_ID,
+                    REMOTE_SERVER_PROJECT_ID,
                     0,
                     proto::WorktreeMetadata {
                         id: response.worktree_id,

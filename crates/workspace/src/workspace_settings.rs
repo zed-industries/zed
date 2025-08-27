@@ -29,6 +29,7 @@ pub struct WorkspaceSettings {
     pub on_last_window_closed: OnLastWindowClosed,
     pub resize_all_panels_in_dock: Vec<DockPosition>,
     pub close_on_file_delete: bool,
+    pub zoomed_padding: bool,
 }
 
 #[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -202,6 +203,12 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: false
     pub close_on_file_delete: Option<bool>,
+    /// Whether to show padding for zoomed panels.
+    /// When enabled, zoomed bottom panels will have some top padding,
+    /// while zoomed left/right panels will have padding to the right/left (respectively).
+    ///
+    /// Default: true
+    pub zoomed_padding: Option<bool>,
 }
 
 #[derive(Deserialize, SettingsUI)]

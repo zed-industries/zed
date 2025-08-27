@@ -22,6 +22,10 @@ impl NativeAgentServer {
 }
 
 impl AgentServer for NativeAgentServer {
+    fn telemetry_id(&self) -> &'static str {
+        "zed"
+    }
+
     fn name(&self) -> SharedString {
         "Zed Agent".into()
     }
@@ -36,6 +40,10 @@ impl AgentServer for NativeAgentServer {
 
     fn logo(&self) -> ui::IconName {
         ui::IconName::ZedAgent
+    }
+
+    fn install_command(&self) -> Option<&'static str> {
+        None
     }
 
     fn connect(

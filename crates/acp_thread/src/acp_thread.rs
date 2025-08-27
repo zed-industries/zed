@@ -183,16 +183,15 @@ impl ToolCall {
         language_registry: Arc<LanguageRegistry>,
         cx: &mut App,
     ) -> Self {
+        let title = if let Some((first_line, _)) = tool_call.title.split_once("\n") {
+            first_line.to_owned() + "…"
+        } else {
+            tool_call.title
+        };
         Self {
             id: tool_call.id,
-            label: cx.new(|cx| {
-                Markdown::new(
-                    tool_call.title.into(),
-                    Some(language_registry.clone()),
-                    None,
-                    cx,
-                )
-            }),
+            label: cx
+                .new(|cx| Markdown::new(title.into(), Some(language_registry.clone()), None, cx)),
             kind: tool_call.kind,
             content: tool_call
                 .content
@@ -233,7 +232,11 @@ impl ToolCall {
 
         if let Some(title) = title {
             self.label.update(cx, |label, cx| {
-                label.replace(title, cx);
+                if let Some((first_line, _)) = title.split_once("\n") {
+                    label.replace(first_line.to_owned() + "…", cx)
+                } else {
+                    label.replace(title, cx);
+                }
             });
         }
 
@@ -786,15 +789,10 @@ pub enum ThreadStatus {
 
 #[derive(Debug, Clone)]
 pub enum LoadError {
-    NotInstalled {
-        error_message: SharedString,
-        install_message: SharedString,
-        install_command: String,
-    },
+    NotInstalled,
     Unsupported {
-        error_message: SharedString,
-        upgrade_message: SharedString,
-        upgrade_command: String,
+        command: SharedString,
+        current_version: SharedString,
     },
     Exited {
         status: ExitStatus,
@@ -805,9 +803,12 @@ pub enum LoadError {
 impl Display for LoadError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            LoadError::NotInstalled { error_message, .. }
-            | LoadError::Unsupported { error_message, .. } => {
-                write!(f, "{error_message}")
+            LoadError::NotInstalled => write!(f, "not installed"),
+            LoadError::Unsupported {
+                command: path,
+                current_version,
+            } => {
+                write!(f, "version {current_version} from {path} is not supported")
             }
             LoadError::Exited { status } => write!(f, "Server exited with status {status}"),
             LoadError::Other(msg) => write!(f, "{}", msg),

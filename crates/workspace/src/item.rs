@@ -23,7 +23,7 @@ use std::{
     any::{Any, TypeId},
     cell::RefCell,
     ops::Range,
-    path::PathBuf,
+    path::Path,
     rc::Rc,
     sync::Arc,
     time::Duration,
@@ -1168,7 +1168,7 @@ pub trait ProjectItem: Item {
     /// with the error from that failure as an argument.
     /// Allows to open an item that can gracefully display and handle errors.
     fn for_broken_project_item(
-        _abs_path: PathBuf,
+        _abs_path: &Path,
         _is_local: bool,
         _e: &anyhow::Error,
         _window: &mut Window,
