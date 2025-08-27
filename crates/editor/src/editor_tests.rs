@@ -7711,10 +7711,10 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut TestAppContext) {
         assert_text_with_selections(
             editor,
             indoc! {r#"
-                use mod1::mod2::{mod3, mo«ˇ»d4};
+                use mod1::mod2::{mod3, moˇd4};
 
                 fn fn_1(para«ˇm1: bool, pa»ram2: &str) {
-                    let var1 = "te«ˇ»xt";
+                    let var1 = "teˇxt";
                 }
             "#},
             cx,
@@ -7729,10 +7729,10 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut TestAppContext) {
         assert_text_with_selections(
             editor,
             indoc! {r#"
-                use mod1::mod2::{mod3, mo«ˇ»d4};
+                use mod1::mod2::{mod3, moˇd4};
 
                 fn fn_1(para«ˇm1: bool, pa»ram2: &str) {
-                    let var1 = "te«ˇ»xt";
+                    let var1 = "teˇxt";
                 }
             "#},
             cx,
