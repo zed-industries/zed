@@ -11703,18 +11703,16 @@ impl LspStore {
                     // Ignore payload since we notify clients of setting changes unconditionally, relying on them pulling the latest settings.
                 }
                 "workspace/didChangeWorkspaceFolders" => {
-                    dbg!(&reg);
-                    let options = parse_register_capabilities(reg)?;
+                    // in this case register options as empty object, we can ignore it
+                    let caps = lsp::WorkspaceFoldersServerCapabilities {
+                        supported: Some(true),
+                        change_notifications: Some(OneOf::Right(reg.id)),
+                    };
                     server.update_capabilities(|capabilities| {
                         capabilities
                             .workspace
                             .get_or_insert_default()
-                            .workspace_folders
-                            .get_or_insert_with(|| lsp::WorkspaceFoldersServerCapabilities {
-                                supported: Some(true),
-                                change_notifications: None,
-                            })
-                            .change_notifications = Some(options);
+                            .workspace_folders = Some(caps);
                     });
                     notify_server_capabilities_updated(&server, cx);
                 }
