@@ -1366,7 +1366,6 @@ impl Workspace {
 
         let session_id = app_state.session.read(cx).id().to_owned();
 
-        dbg!("?????????:", cfg!(feature = "call"));
         #[cfg(feature = "call")]
         let mut active_call = None;
         #[cfg(feature = "call")]
