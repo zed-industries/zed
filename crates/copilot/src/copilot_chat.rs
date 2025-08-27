@@ -495,7 +495,7 @@ impl CopilotChat {
         };
 
         if this.oauth_token.is_some() {
-            cx.spawn(async move |this, mut cx| Self::update_models(&this, &mut cx).await)
+            cx.spawn(async move |this, cx| Self::update_models(&this, cx).await)
                 .detach_and_log_err(cx);
         }
 
@@ -892,7 +892,7 @@ mod tests {
               "object": "list"
             }"#;
 
-        let schema: ModelSchema = serde_json::from_str(&json).unwrap();
+        let schema: ModelSchema = serde_json::from_str(json).unwrap();
 
         assert_eq!(schema.data.len(), 2);
         assert_eq!(schema.data[0].id, "gpt-4");

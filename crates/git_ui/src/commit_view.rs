@@ -88,11 +88,10 @@ impl CommitView {
                             let ix = pane.items().position(|item| {
                                 let commit_view = item.downcast::<CommitView>();
                                 commit_view
-                                    .map_or(false, |view| view.read(cx).commit.sha == commit.sha)
+                                    .is_some_and(|view| view.read(cx).commit.sha == commit.sha)
                             });
                             if let Some(ix) = ix {
                                 pane.activate_item(ix, true, true, window, cx);
-                                return;
                             } else {
                                 pane.add_item(Box::new(commit_view), true, true, None, window, cx);
                             }
@@ -160,7 +159,7 @@ impl CommitView {
             });
         }
 
-        cx.spawn(async move |this, mut cx| {
+        cx.spawn(async move |this, cx| {
             for file in commit_diff.files {
                 let is_deleted = file.new_text.is_none();
                 let new_text = file.new_text.unwrap_or_default();
@@ -179,9 +178,9 @@ impl CommitView {
                     worktree_id,
                 }) as Arc<dyn language::File>;
 
-                let buffer = build_buffer(new_text, file, &language_registry, &mut cx).await?;
+                let buffer = build_buffer(new_text, file, &language_registry, cx).await?;
                 let buffer_diff =
-                    build_buffer_diff(old_text, &buffer, &language_registry, &mut cx).await?;
+                    build_buffer_diff(old_text, &buffer, &language_registry, cx).await?;
 
                 this.update(cx, |this, cx| {
                     this.multibuffer.update(cx, |multibuffer, cx| {

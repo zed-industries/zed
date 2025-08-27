@@ -14,13 +14,11 @@ pub struct IncompatibleToolsState {
 
 impl IncompatibleToolsState {
     pub fn new(thread: Entity<Thread>, cx: &mut Context<Self>) -> Self {
-        let _tool_working_set_subscription =
-            cx.subscribe(&thread, |this, _, event, _| match event {
-                ThreadEvent::ProfileChanged => {
-                    this.cache.clear();
-                }
-                _ => {}
-            });
+        let _tool_working_set_subscription = cx.subscribe(&thread, |this, _, event, _| {
+            if let ThreadEvent::ProfileChanged = event {
+                this.cache.clear();
+            }
+        });
 
         Self {
             cache: HashMap::default(),

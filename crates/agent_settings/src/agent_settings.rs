@@ -15,6 +15,8 @@ pub use crate::agent_profile::*;
 
 pub const SUMMARIZE_THREAD_PROMPT: &str =
     include_str!("../../agent/src/prompts/summarize_thread_prompt.txt");
+pub const SUMMARIZE_THREAD_DETAILED_PROMPT: &str =
+    include_str!("../../agent/src/prompts/summarize_thread_detailed_prompt.txt");
 
 pub fn init(cx: &mut App) {
     AgentSettings::register(cx);
@@ -116,15 +118,15 @@ pub struct LanguageModelParameters {
 
 impl LanguageModelParameters {
     pub fn matches(&self, model: &Arc<dyn LanguageModel>) -> bool {
-        if let Some(provider) = &self.provider {
-            if provider.0 != model.provider_id().0 {
-                return false;
-            }
+        if let Some(provider) = &self.provider
+            && provider.0 != model.provider_id().0
+        {
+            return false;
         }
-        if let Some(setting_model) = &self.model {
-            if *setting_model != model.id().0 {
-                return false;
-            }
+        if let Some(setting_model) = &self.model
+            && *setting_model != model.id().0
+        {
+            return false;
         }
         true
     }
@@ -309,7 +311,7 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     expand_terminal_card: Option<bool>,
-    /// Whether to always use cmd-enter (or ctrl-enter on Linux) to send messages in the agent panel.
+    /// Whether to always use cmd-enter (or ctrl-enter on Linux or Windows) to send messages in the agent panel.
     ///
     /// Default: false
     use_modifier_to_send: Option<bool>,
@@ -443,10 +445,6 @@ impl Settings for AgentSettings {
                 value.inline_alternatives.clone(),
             );
             merge(
-                &mut settings.always_allow_tool_actions,
-                value.always_allow_tool_actions,
-            );
-            merge(
                 &mut settings.notify_when_agent_waiting,
                 value.notify_when_agent_waiting,
             );
@@ -506,6 +504,19 @@ impl Settings for AgentSettings {
                     }));
             }
         }
+
+        debug_assert!(
+            !sources.default.always_allow_tool_actions.unwrap_or(false),
+            "For security, agent.always_allow_tool_actions should always be false in default.json. If it's true, that is a bug that should be fixed!"
+        );
+
+        // For security reasons, only trust the user's global settings for whether to always allow tool actions.
+        // If this could be overridden locally, an attacker could (e.g. by committing to source control and
+        // convincing you to switch branches) modify your project-local settings to disable the agent's safety checks.
+        settings.always_allow_tool_actions = sources
+            .user
+            .and_then(|setting| setting.always_allow_tool_actions)
+            .unwrap_or(false);
 
         Ok(settings)
     }

@@ -191,10 +191,10 @@ impl PickerDelegate for ToolPickerDelegate {
                         BTreeMap::default();
 
                     for item in all_items.iter() {
-                        if let PickerItem::Tool { server_id, name } = item.clone() {
-                            if name.contains(&query) {
-                                tools_by_provider.entry(server_id).or_default().push(name);
-                            }
+                        if let PickerItem::Tool { server_id, name } = item.clone()
+                            && name.contains(&query)
+                        {
+                            tools_by_provider.entry(server_id).or_default().push(name);
                         }
                     }
 

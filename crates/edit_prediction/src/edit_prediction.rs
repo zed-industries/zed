@@ -34,7 +34,7 @@ pub enum DataCollectionState {
 
 impl DataCollectionState {
     pub fn is_supported(&self) -> bool {
-        !matches!(self, DataCollectionState::Unsupported { .. })
+        !matches!(self, DataCollectionState::Unsupported)
     }
 
     pub fn is_enabled(&self) -> bool {
@@ -61,6 +61,10 @@ pub trait EditPredictionProvider: 'static + Sized {
     fn show_tab_accept_marker() -> bool {
         false
     }
+    fn supports_jump_to_edit() -> bool {
+        true
+    }
+
     fn data_collection_state(&self, _cx: &App) -> DataCollectionState {
         DataCollectionState::Unsupported
     }
@@ -85,9 +89,6 @@ pub trait EditPredictionProvider: 'static + Sized {
         debounce: bool,
         cx: &mut Context<Self>,
     );
-    fn needs_terms_acceptance(&self, _cx: &App) -> bool {
-        false
-    }
     fn cycle(
         &mut self,
         buffer: Entity<Buffer>,
@@ -116,10 +117,10 @@ pub trait EditPredictionProviderHandle {
     ) -> bool;
     fn show_completions_in_menu(&self) -> bool;
     fn show_tab_accept_marker(&self) -> bool;
+    fn supports_jump_to_edit(&self) -> bool;
     fn data_collection_state(&self, cx: &App) -> DataCollectionState;
     fn usage(&self, cx: &App) -> Option<EditPredictionUsage>;
     fn toggle_data_collection(&self, cx: &mut App);
-    fn needs_terms_acceptance(&self, cx: &App) -> bool;
     fn is_refreshing(&self, cx: &App) -> bool;
     fn refresh(
         &self,
@@ -166,6 +167,10 @@ where
         T::show_tab_accept_marker()
     }
 
+    fn supports_jump_to_edit(&self) -> bool {
+        T::supports_jump_to_edit()
+    }
+
     fn data_collection_state(&self, cx: &App) -> DataCollectionState {
         self.read(cx).data_collection_state(cx)
     }
@@ -185,10 +190,6 @@ where
         cx: &App,
     ) -> bool {
         self.read(cx).is_enabled(buffer, cursor_position, cx)
-    }
-
-    fn needs_terms_acceptance(&self, cx: &App) -> bool {
-        self.read(cx).needs_terms_acceptance(cx)
     }
 
     fn is_refreshing(&self, cx: &App) -> bool {

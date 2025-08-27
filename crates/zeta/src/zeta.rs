@@ -10,8 +10,7 @@ pub(crate) use completion_diff_element::*;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use edit_prediction::DataCollectionState;
 pub use init::*;
-use license_detection::LICENSE_FILES_TO_CHECK;
-pub use license_detection::is_license_eligible_for_data_collection;
+use license_detection::LicenseDetectionWatcher;
 pub use rate_completion_modal::*;
 
 use anyhow::{Context as _, Result, anyhow};
@@ -33,13 +32,11 @@ use language::{
     Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, ToOffset, ToPoint, text_diff,
 };
 use language_model::{LlmApiToken, RefreshLlmTokenListener};
-use postage::watch;
 use project::{Project, ProjectPath};
 use release_channel::AppVersion;
 use settings::WorktreeId;
 use std::str::FromStr;
 use std::{
-    borrow::Cow,
     cmp,
     fmt::Write,
     future::Future,
@@ -58,16 +55,17 @@ use workspace::Workspace;
 use workspace::notifications::{ErrorMessagePrompt, NotificationId};
 use worktree::Worktree;
 
-const CURSOR_MARKER: &'static str = "<|user_cursor_is_here|>";
-const START_OF_FILE_MARKER: &'static str = "<|start_of_file|>";
-const EDITABLE_REGION_START_MARKER: &'static str = "<|editable_region_start|>";
-const EDITABLE_REGION_END_MARKER: &'static str = "<|editable_region_end|>";
+const CURSOR_MARKER: &str = "<|user_cursor_is_here|>";
+const START_OF_FILE_MARKER: &str = "<|start_of_file|>";
+const EDITABLE_REGION_START_MARKER: &str = "<|editable_region_start|>";
+const EDITABLE_REGION_END_MARKER: &str = "<|editable_region_end|>";
 const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
 const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_choice";
 
 const MAX_CONTEXT_TOKENS: usize = 150;
 const MAX_REWRITE_TOKENS: usize = 350;
 const MAX_EVENT_TOKENS: usize = 500;
+const MAX_DIAGNOSTIC_GROUPS: usize = 10;
 
 /// Maximum number of events to track.
 const MAX_EVENT_COUNT: usize = 16;
@@ -108,7 +106,7 @@ impl Dismissable for ZedPredictUpsell {
         if KEY_VALUE_STORE
             .read_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE)
             .log_err()
-            .map_or(false, |s| s.is_some())
+            .is_some_and(|s| s.is_some())
         {
             return true;
         }
@@ -116,16 +114,12 @@ impl Dismissable for ZedPredictUpsell {
         KEY_VALUE_STORE
             .read_kvp(Self::KEY)
             .log_err()
-            .map_or(false, |s| s.is_some())
+            .is_some_and(|s| s.is_some())
     }
 }
 
-pub fn should_show_upsell_modal(user_store: &Entity<UserStore>, cx: &App) -> bool {
-    if user_store.read(cx).has_accepted_terms_of_service() {
-        !ZedPredictUpsell::dismissed()
-    } else {
-        true
-    }
+pub fn should_show_upsell_modal() -> bool {
+    !ZedPredictUpsell::dismissed()
 }
 
 #[derive(Clone)]
@@ -168,7 +162,7 @@ fn interpolate(
 ) -> Option<Vec<(Range<Anchor>, String)>> {
     let mut edits = Vec::new();
 
-    let mut model_edits = current_edits.into_iter().peekable();
+    let mut model_edits = current_edits.iter().peekable();
     for user_edit in new_snapshot.edits_since::<usize>(&old_snapshot.version) {
         while let Some((model_old_range, _)) = model_edits.peek() {
             let model_old_range = model_old_range.to_offset(old_snapshot);
@@ -253,11 +247,10 @@ impl Zeta {
 
         this.update(cx, move |this, cx| {
             if let Some(worktree) = worktree {
-                worktree.update(cx, |worktree, cx| {
-                    this.license_detection_watchers
-                        .entry(worktree.id())
-                        .or_insert_with(|| Rc::new(LicenseDetectionWatcher::new(worktree, cx)));
-                });
+                let worktree_id = worktree.read(cx).id();
+                this.license_detection_watchers
+                    .entry(worktree_id)
+                    .or_insert_with(|| Rc::new(LicenseDetectionWatcher::new(&worktree, cx)));
             }
         });
 
@@ -432,6 +425,7 @@ impl Zeta {
                 body,
                 editable_range,
             } = gather_task.await?;
+            let done_gathering_context_at = Instant::now();
 
             log::debug!(
                 "Events:\n{}\nExcerpt:\n{:?}",
@@ -484,6 +478,7 @@ impl Zeta {
                 }
             };
 
+            let received_response_at = Instant::now();
             log::debug!("completion response: {}", &response.output_excerpt);
 
             if let Some(usage) = usage {
@@ -495,7 +490,7 @@ impl Zeta {
                 .ok();
             }
 
-            Self::process_completion_response(
+            let edit_prediction = Self::process_completion_response(
                 response,
                 buffer,
                 &snapshot,
@@ -506,9 +501,27 @@ impl Zeta {
                 input_events,
                 input_excerpt,
                 buffer_snapshotted_at,
-                &cx,
+                cx,
             )
-            .await
+            .await;
+
+            let finished_at = Instant::now();
+
+            // record latency for ~1% of requests
+            if rand::random::<u8>() <= 2 {
+                telemetry::event!(
+                    "Edit Prediction Request",
+                    context_latency = done_gathering_context_at
+                        .duration_since(buffer_snapshotted_at)
+                        .as_millis(),
+                    request_latency = received_response_at
+                        .duration_since(done_gathering_context_at)
+                        .as_millis(),
+                    process_latency = finished_at.duration_since(received_response_at).as_millis()
+                );
+            }
+
+            edit_prediction
         })
     }
 
@@ -819,12 +832,11 @@ and then another
                 .headers()
                 .get(MINIMUM_REQUIRED_VERSION_HEADER_NAME)
                 .and_then(|version| SemanticVersion::from_str(version.to_str().ok()?).ok())
+                && app_version < minimum_required_version
             {
-                if app_version < minimum_required_version {
-                    return Err(anyhow!(ZedUpdateRequiredError {
-                        minimum_version: minimum_required_version
-                    }));
-                }
+                return Err(anyhow!(ZedUpdateRequiredError {
+                    minimum_version: minimum_required_version
+                }));
             }
 
             if response.status().is_success() {
@@ -964,7 +976,7 @@ and then another
             old_text,
             new_text,
             editable_range.start,
-            &snapshot,
+            snapshot,
         ))
     }
 
@@ -974,7 +986,7 @@ and then another
         offset: usize,
         snapshot: &BufferSnapshot,
     ) -> Vec<(Range<Anchor>, String)> {
-        text_diff(&old_text, &new_text)
+        text_diff(&old_text, new_text)
             .into_iter()
             .map(|(mut old_range, new_text)| {
                 old_range.start += offset;
@@ -1104,59 +1116,6 @@ pub struct ZedUpdateRequiredError {
     minimum_version: SemanticVersion,
 }
 
-struct LicenseDetectionWatcher {
-    is_open_source_rx: watch::Receiver<bool>,
-    _is_open_source_task: Task<()>,
-}
-
-impl LicenseDetectionWatcher {
-    pub fn new(worktree: &Worktree, cx: &mut Context<Worktree>) -> Self {
-        let (mut is_open_source_tx, is_open_source_rx) = watch::channel_with::<bool>(false);
-
-        // Check if worktree is a single file, if so we do not need to check for a LICENSE file
-        let task = if worktree.abs_path().is_file() {
-            Task::ready(())
-        } else {
-            let loaded_files = LICENSE_FILES_TO_CHECK
-                .iter()
-                .map(Path::new)
-                .map(|file| worktree.load_file(file, cx))
-                .collect::<ArrayVec<_, { LICENSE_FILES_TO_CHECK.len() }>>();
-
-            cx.background_spawn(async move {
-                for loaded_file in loaded_files.into_iter() {
-                    let Ok(loaded_file) = loaded_file.await else {
-                        continue;
-                    };
-
-                    let path = &loaded_file.file.path;
-                    if is_license_eligible_for_data_collection(&loaded_file.text) {
-                        log::info!("detected '{path:?}' as open source license");
-                        *is_open_source_tx.borrow_mut() = true;
-                    } else {
-                        log::info!("didn't detect '{path:?}' as open source license");
-                    }
-
-                    // stop on the first license that successfully read
-                    return;
-                }
-
-                log::debug!("didn't find a license file to check, assuming closed source");
-            })
-        };
-
-        Self {
-            is_open_source_rx,
-            _is_open_source_task: task,
-        }
-    }
-
-    /// Answers false until we find out it's open source
-    pub fn is_project_open_source(&self) -> bool {
-        *self.is_open_source_rx.borrow()
-    }
-}
-
 fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b: T2) -> usize {
     a.zip(b)
         .take_while(|(a, b)| a == b)
@@ -1211,14 +1170,14 @@ pub fn gather_context(
     let local_lsp_store =
         project.and_then(|project| project.read(cx).lsp_store().read(cx).as_local());
     let diagnostic_groups: Vec<(String, serde_json::Value)> =
-        if let Some(local_lsp_store) = local_lsp_store {
+        if can_collect_data && let Some(local_lsp_store) = local_lsp_store {
             snapshot
                 .diagnostic_groups(None)
                 .into_iter()
                 .filter_map(|(language_server_id, diagnostic_group)| {
                     let language_server =
                         local_lsp_store.running_language_server_for_id(language_server_id)?;
-                    let diagnostic_group = diagnostic_group.resolve::<usize>(&snapshot);
+                    let diagnostic_group = diagnostic_group.resolve::<usize>(snapshot);
                     let language_server_name = language_server.name().to_string();
                     let serialized = serde_json::to_value(diagnostic_group).unwrap();
                     Some((language_server_name, serialized))
@@ -1231,7 +1190,9 @@ pub fn gather_context(
     cx.background_spawn({
         let snapshot = snapshot.clone();
         async move {
-            let diagnostic_groups = if diagnostic_groups.is_empty() {
+            let diagnostic_groups = if diagnostic_groups.is_empty()
+                || diagnostic_groups.len() >= MAX_DIAGNOSTIC_GROUPS
+            {
                 None
             } else {
                 Some(diagnostic_groups)
@@ -1245,17 +1206,16 @@ pub fn gather_context(
                 MAX_CONTEXT_TOKENS,
             );
             let input_events = make_events_prompt();
-            let input_outline = prompt_for_outline(&snapshot);
             let editable_range = input_excerpt.editable_range.to_offset(&snapshot);
 
             let body = PredictEditsBody {
                 input_events,
                 input_excerpt: input_excerpt.prompt,
-                speculated_output: Some(input_excerpt.speculated_output),
-                outline: Some(input_outline),
                 can_collect_data,
                 diagnostic_groups,
                 git_info,
+                outline: None,
+                speculated_output: None,
             };
 
             Ok(GatherContextOutput {
@@ -1264,32 +1224,6 @@ pub fn gather_context(
             })
         }
     })
-}
-
-fn prompt_for_outline(snapshot: &BufferSnapshot) -> String {
-    let mut input_outline = String::new();
-
-    writeln!(
-        input_outline,
-        "```{}",
-        snapshot
-            .file()
-            .map_or(Cow::Borrowed("untitled"), |file| file
-                .path()
-                .to_string_lossy())
-    )
-    .unwrap();
-
-    if let Some(outline) = snapshot.outline(None) {
-        for item in &outline.items {
-            let spacing = " ".repeat(item.depth);
-            writeln!(input_outline, "{}{}", spacing, item.text).unwrap();
-        }
-    }
-
-    writeln!(input_outline, "```").unwrap();
-
-    input_outline
 }
 
 fn prompt_for_events(events: &VecDeque<Event>, mut remaining_tokens: usize) -> String {
@@ -1374,10 +1308,10 @@ impl CurrentEditPrediction {
             return true;
         }
 
-        let Some(old_edits) = old_completion.completion.interpolate(&snapshot) else {
+        let Some(old_edits) = old_completion.completion.interpolate(snapshot) else {
             return true;
         };
-        let Some(new_edits) = self.completion.interpolate(&snapshot) else {
+        let Some(new_edits) = self.completion.interpolate(snapshot) else {
             return false;
         };
 
@@ -1609,16 +1543,6 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
     ) -> bool {
         true
     }
-
-    fn needs_terms_acceptance(&self, cx: &App) -> bool {
-        !self
-            .zeta
-            .read(cx)
-            .user_store
-            .read(cx)
-            .has_accepted_terms_of_service()
-    }
-
     fn is_refreshing(&self) -> bool {
         !self.pending_completions.is_empty()
     }
@@ -1631,10 +1555,6 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
         _debounce: bool,
         cx: &mut Context<Self>,
     ) {
-        if self.needs_terms_acceptance(cx) {
-            return;
-        }
-
         if self.zeta.read(cx).update_required {
             return;
         }
@@ -1725,7 +1645,7 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
 
                 if let Some(old_completion) = this.current_completion.as_ref() {
                     let snapshot = buffer.read(cx).snapshot();
-                    if new_completion.should_replace_completion(&old_completion, &snapshot) {
+                    if new_completion.should_replace_completion(old_completion, &snapshot) {
                         this.zeta.update(cx, |zeta, cx| {
                             zeta.completion_shown(&new_completion.completion, cx);
                         });
@@ -2185,7 +2105,7 @@ mod tests {
         let completion = completion_task.await.unwrap().unwrap();
         completion
             .edits
-            .into_iter()
+            .iter()
             .map(|(old_range, new_text)| (old_range.to_point(&snapshot), new_text.clone()))
             .collect::<Vec<_>>()
     }

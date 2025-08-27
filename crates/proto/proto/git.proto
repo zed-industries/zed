@@ -121,6 +121,7 @@ message UpdateRepository {
     uint64 scan_id = 9;
     bool is_last_update = 10;
     optional GitCommitDetails head_commit_details = 11;
+    optional string merge_message = 12;
 }
 
 message RemoveRepository {
@@ -200,6 +201,16 @@ message GitInit {
     uint64 project_id = 1;
     string abs_path = 2;
     string fallback_branch_name = 3;
+}
+
+message GitClone {
+    uint64 project_id = 1;
+    string abs_path = 2;
+    string remote_repo = 3;
+}
+
+message GitCloneResponse {
+    bool success = 1;
 }
 
 message CheckForPushedCommits {

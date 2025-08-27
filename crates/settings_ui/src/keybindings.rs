@@ -12,8 +12,10 @@ use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, AppContext as _, AsyncApp, Axis, ClickEvent, Context, DismissEvent, Entity,
-    EventEmitter, FocusHandle, Focusable, Global, IsZero, KeyContext, Keystroke, MouseButton,
-    Point, ScrollStrategy, ScrollWheelEvent, Stateful, StyledText, Subscription, Task,
+    EventEmitter, FocusHandle, Focusable, Global, IsZero,
+    KeyBindingContextPredicate::{And, Descendant, Equal, Identifier, Not, NotEqual, Or},
+    KeyContext, KeybindingKeystroke, Keystroke, MouseButton, PlatformKeyboardMapper, Point,
+    ScrollStrategy, ScrollWheelEvent, Stateful, StyledText, Subscription, Task,
     TextStyleRefinement, WeakEntity, actions, anchored, deferred, div,
 };
 use language::{Language, LanguageConfig, ToOffset as _};
@@ -23,7 +25,7 @@ use settings::{BaseKeymap, KeybindSource, KeymapFile, Settings as _, SettingsAss
 use ui::{
     ActiveTheme as _, App, Banner, BorrowAppContext, ContextMenu, IconButtonShape, Indicator,
     Modal, ModalFooter, ModalHeader, ParentElement as _, Render, Section, SharedString,
-    Styled as _, Tooltip, Window, prelude::*,
+    Styled as _, Tooltip, Window, prelude::*, right_click_menu,
 };
 use ui_input::SingleLineInput;
 use util::ResultExt;
@@ -172,7 +174,7 @@ impl FilterState {
 
 #[derive(Debug, Default, PartialEq, Eq, Clone, Hash)]
 struct ActionMapping {
-    keystrokes: Vec<Keystroke>,
+    keystrokes: Vec<KeybindingKeystroke>,
     context: Option<SharedString>,
 }
 
@@ -180,15 +182,6 @@ struct ActionMapping {
 struct KeybindConflict {
     first_conflict_index: usize,
     remaining_conflict_amount: usize,
-}
-
-impl KeybindConflict {
-    fn from_iter<'a>(mut indices: impl Iterator<Item = &'a ConflictOrigin>) -> Option<Self> {
-        indices.next().map(|origin| Self {
-            first_conflict_index: origin.index,
-            remaining_conflict_amount: indices.count(),
-        })
-    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -238,13 +231,21 @@ impl ConflictOrigin {
 #[derive(Default)]
 struct ConflictState {
     conflicts: Vec<Option<ConflictOrigin>>,
-    keybind_mapping: HashMap<ActionMapping, Vec<ConflictOrigin>>,
+    keybind_mapping: ConflictKeybindMapping,
     has_user_conflicts: bool,
 }
 
+type ConflictKeybindMapping = HashMap<
+    Vec<KeybindingKeystroke>,
+    Vec<(
+        Option<gpui::KeyBindingContextPredicate>,
+        Vec<ConflictOrigin>,
+    )>,
+>;
+
 impl ConflictState {
     fn new(key_bindings: &[ProcessedBinding]) -> Self {
-        let mut action_keybind_mapping: HashMap<_, Vec<ConflictOrigin>> = HashMap::default();
+        let mut action_keybind_mapping = ConflictKeybindMapping::default();
 
         let mut largest_index = 0;
         for (index, binding) in key_bindings
@@ -252,29 +253,48 @@ impl ConflictState {
             .enumerate()
             .flat_map(|(index, binding)| Some(index).zip(binding.keybind_information()))
         {
-            action_keybind_mapping
-                .entry(binding.get_action_mapping())
-                .or_default()
-                .push(ConflictOrigin::new(binding.source, index));
+            let mapping = binding.get_action_mapping();
+            let predicate = mapping
+                .context
+                .and_then(|ctx| gpui::KeyBindingContextPredicate::parse(&ctx).ok());
+            let entry = action_keybind_mapping
+                .entry(mapping.keystrokes)
+                .or_default();
+            let origin = ConflictOrigin::new(binding.source, index);
+            if let Some((_, origins)) =
+                entry
+                    .iter_mut()
+                    .find(|(other_predicate, _)| match (&predicate, other_predicate) {
+                        (None, None) => true,
+                        (Some(a), Some(b)) => normalized_ctx_eq(a, b),
+                        _ => false,
+                    })
+            {
+                origins.push(origin);
+            } else {
+                entry.push((predicate, vec![origin]));
+            }
             largest_index = index;
         }
 
         let mut conflicts = vec![None; largest_index + 1];
         let mut has_user_conflicts = false;
 
-        for indices in action_keybind_mapping.values_mut() {
-            indices.sort_unstable_by_key(|origin| origin.override_source);
-            let Some((fst, snd)) = indices.get(0).zip(indices.get(1)) else {
-                continue;
-            };
+        for entries in action_keybind_mapping.values_mut() {
+            for (_, indices) in entries.iter_mut() {
+                indices.sort_unstable_by_key(|origin| origin.override_source);
+                let Some((fst, snd)) = indices.get(0).zip(indices.get(1)) else {
+                    continue;
+                };
 
-            for origin in indices.iter() {
-                conflicts[origin.index] =
-                    origin.get_conflict_with(if origin == fst { &snd } else { &fst })
+                for origin in indices.iter() {
+                    conflicts[origin.index] =
+                        origin.get_conflict_with(if origin == fst { snd } else { fst })
+                }
+
+                has_user_conflicts |= fst.override_source == KeybindSource::User
+                    && snd.override_source == KeybindSource::User;
             }
-
-            has_user_conflicts |= fst.override_source == KeybindSource::User
-                && snd.override_source == KeybindSource::User;
         }
 
         Self {
@@ -289,15 +309,34 @@ impl ConflictState {
         action_mapping: &ActionMapping,
         keybind_idx: Option<usize>,
     ) -> Option<KeybindConflict> {
-        self.keybind_mapping
-            .get(action_mapping)
-            .and_then(|indices| {
-                KeybindConflict::from_iter(
-                    indices
+        let ActionMapping {
+            keystrokes,
+            context,
+        } = action_mapping;
+        let predicate = context
+            .as_deref()
+            .and_then(|ctx| gpui::KeyBindingContextPredicate::parse(&ctx).ok());
+        self.keybind_mapping.get(keystrokes).and_then(|entries| {
+            entries
+                .iter()
+                .find_map(|(other_predicate, indices)| {
+                    match (&predicate, other_predicate) {
+                        (None, None) => true,
+                        (Some(pred), Some(other)) => normalized_ctx_eq(pred, other),
+                        _ => false,
+                    }
+                    .then_some(indices)
+                })
+                .and_then(|indices| {
+                    let mut indices = indices
                         .iter()
-                        .filter(|&conflict| Some(conflict.index) != keybind_idx),
-                )
-            })
+                        .filter(|&conflict| Some(conflict.index) != keybind_idx);
+                    indices.next().map(|origin| KeybindConflict {
+                        first_conflict_index: origin.index,
+                        remaining_conflict_amount: indices.count(),
+                    })
+                })
+        })
     }
 
     fn conflict_for_idx(&self, idx: usize) -> Option<ConflictOrigin> {
@@ -375,12 +414,14 @@ impl Focusable for KeymapEditor {
     }
 }
 /// Helper function to check if two keystroke sequences match exactly
-fn keystrokes_match_exactly(keystrokes1: &[Keystroke], keystrokes2: &[Keystroke]) -> bool {
+fn keystrokes_match_exactly(
+    keystrokes1: &[KeybindingKeystroke],
+    keystrokes2: &[KeybindingKeystroke],
+) -> bool {
     keystrokes1.len() == keystrokes2.len()
-        && keystrokes1
-            .iter()
-            .zip(keystrokes2)
-            .all(|(k1, k2)| k1.key == k2.key && k1.modifiers == k2.modifiers)
+        && keystrokes1.iter().zip(keystrokes2).all(|(k1, k2)| {
+            k1.inner.key == k2.inner.key && k1.inner.modifiers == k2.inner.modifiers
+        })
 }
 
 impl KeymapEditor {
@@ -470,15 +511,9 @@ impl KeymapEditor {
         self.filter_editor.read(cx).text(cx)
     }
 
-    fn current_keystroke_query(&self, cx: &App) -> Vec<Keystroke> {
+    fn current_keystroke_query(&self, cx: &App) -> Vec<KeybindingKeystroke> {
         match self.search_mode {
-            SearchMode::KeyStroke { .. } => self
-                .keystroke_editor
-                .read(cx)
-                .keystrokes()
-                .iter()
-                .cloned()
-                .collect(),
+            SearchMode::KeyStroke { .. } => self.keystroke_editor.read(cx).keystrokes().to_vec(),
             SearchMode::Normal => Default::default(),
         }
     }
@@ -497,7 +532,7 @@ impl KeymapEditor {
 
                 let keystroke_query = keystroke_query
                     .into_iter()
-                    .map(|keystroke| keystroke.unparse())
+                    .map(|keystroke| keystroke.inner.unparse())
                     .collect::<Vec<String>>()
                     .join(" ");
 
@@ -521,7 +556,7 @@ impl KeymapEditor {
     async fn update_matches(
         this: WeakEntity<Self>,
         action_query: String,
-        keystroke_query: Vec<Keystroke>,
+        keystroke_query: Vec<KeybindingKeystroke>,
         cx: &mut AsyncApp,
     ) -> anyhow::Result<()> {
         let action_query = command_palette::normalize_action_query(&action_query);
@@ -559,7 +594,7 @@ impl KeymapEditor {
                                 if exact_match {
                                     keystrokes_match_exactly(&keystroke_query, keystrokes)
                                 } else if keystroke_query.len() > keystrokes.len() {
-                                    return false;
+                                    false
                                 } else {
                                     for keystroke_offset in 0..keystrokes.len() {
                                         let mut found_count = 0;
@@ -570,16 +605,15 @@ impl KeymapEditor {
                                         {
                                             let query = &keystroke_query[query_cursor];
                                             let keystroke = &keystrokes[keystroke_cursor];
-                                            let matches =
-                                                query.modifiers.is_subset_of(&keystroke.modifiers)
-                                                    && ((query.key.is_empty()
-                                                        || query.key == keystroke.key)
-                                                        && query
-                                                            .key_char
-                                                            .as_ref()
-                                                            .map_or(true, |q_kc| {
-                                                                q_kc == &keystroke.key
-                                                            }));
+                                            let matches = query
+                                                .inner
+                                                .modifiers
+                                                .is_subset_of(&keystroke.inner.modifiers)
+                                                && ((query.inner.key.is_empty()
+                                                    || query.inner.key == keystroke.inner.key)
+                                                    && query.inner.key_char.as_ref().is_none_or(
+                                                        |q_kc| q_kc == &keystroke.inner.key,
+                                                    ));
                                             if matches {
                                                 found_count += 1;
                                                 query_cursor += 1;
@@ -591,7 +625,7 @@ impl KeymapEditor {
                                             return true;
                                         }
                                     }
-                                    return false;
+                                    false
                                 }
                             })
                     });
@@ -630,8 +664,7 @@ impl KeymapEditor {
         let key_bindings_ptr = cx.key_bindings();
         let lock = key_bindings_ptr.borrow();
         let key_bindings = lock.bindings();
-        let mut unmapped_action_names =
-            HashSet::from_iter(cx.all_action_names().into_iter().copied());
+        let mut unmapped_action_names = HashSet::from_iter(cx.all_action_names().iter().copied());
         let action_documentation = cx.action_documentation();
         let mut generator = KeymapFile::action_schema_generator();
         let actions_with_schemas = HashSet::from_iter(
@@ -649,7 +682,7 @@ impl KeymapEditor {
                 .map(KeybindSource::from_meta)
                 .unwrap_or(KeybindSource::Unknown);
 
-            let keystroke_text = ui::text_for_keystrokes(key_binding.keystrokes(), cx);
+            let keystroke_text = ui::text_for_keybinding_keystrokes(key_binding.keystrokes(), cx);
             let ui_key_binding = ui::KeyBinding::new_from_gpui(key_binding.clone(), cx)
                 .vim_mode(source == KeybindSource::Vim);
 
@@ -673,8 +706,8 @@ impl KeymapEditor {
                 action_name,
                 action_arguments,
                 &actions_with_schemas,
-                &action_documentation,
-                &humanized_action_names,
+                action_documentation,
+                humanized_action_names,
             );
 
             let index = processed_bindings.len();
@@ -696,8 +729,8 @@ impl KeymapEditor {
                 action_name,
                 None,
                 &actions_with_schemas,
-                &action_documentation,
-                &humanized_action_names,
+                action_documentation,
+                humanized_action_names,
             );
             let string_match_candidate =
                 StringMatchCandidate::new(index, &action_information.humanized_name);
@@ -1173,8 +1206,11 @@ impl KeymapEditor {
                 .read(cx)
                 .get_scrollbar_offset(Axis::Vertical),
         ));
-        cx.spawn(async move |_, _| remove_keybinding(to_remove, &fs, tab_size).await)
-            .detach_and_notify_err(window, cx);
+        let keyboard_mapper = cx.keyboard_mapper().clone();
+        cx.spawn(async move |_, _| {
+            remove_keybinding(to_remove, &fs, tab_size, keyboard_mapper.as_ref()).await
+        })
+        .detach_and_notify_err(window, cx);
     }
 
     fn copy_context_to_clipboard(
@@ -1192,8 +1228,8 @@ impl KeymapEditor {
             return;
         };
 
-        telemetry::event!("Keybinding Context Copied", context = context.clone());
-        cx.write_to_clipboard(gpui::ClipboardItem::new_string(context.clone()));
+        telemetry::event!("Keybinding Context Copied", context = context);
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(context));
     }
 
     fn copy_action_to_clipboard(
@@ -1209,8 +1245,8 @@ impl KeymapEditor {
             return;
         };
 
-        telemetry::event!("Keybinding Action Copied", action = action.clone());
-        cx.write_to_clipboard(gpui::ClipboardItem::new_string(action.clone()));
+        telemetry::event!("Keybinding Action Copied", action = action);
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(action));
     }
 
     fn toggle_conflict_filter(
@@ -1298,7 +1334,7 @@ struct HumanizedActionNameCache {
 
 impl HumanizedActionNameCache {
     fn new(cx: &App) -> Self {
-        let cache = HashMap::from_iter(cx.all_action_names().into_iter().map(|&action_name| {
+        let cache = HashMap::from_iter(cx.all_action_names().iter().map(|&action_name| {
             (
                 action_name,
                 command_palette::humanize_action_name(action_name).into(),
@@ -1393,7 +1429,7 @@ impl ProcessedBinding {
             .map(|keybind| keybind.get_action_mapping())
     }
 
-    fn keystrokes(&self) -> Option<&[Keystroke]> {
+    fn keystrokes(&self) -> Option<&[KeybindingKeystroke]> {
         self.ui_key_binding()
             .map(|binding| binding.keystrokes.as_slice())
     }
@@ -1474,7 +1510,7 @@ impl RenderOnce for KeybindContextString {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         match self {
             KeybindContextString::Global => {
-                muted_styled_text(KeybindContextString::GLOBAL.clone(), cx).into_any_element()
+                muted_styled_text(KeybindContextString::GLOBAL, cx).into_any_element()
             }
             KeybindContextString::Local(name, language) => {
                 SyntaxHighlightedText::new(name, language).into_any_element()
@@ -1536,6 +1572,33 @@ impl Render for KeymapEditor {
                     .child(
                         h_flex()
                             .gap_2()
+                            .child(
+                                right_click_menu("open-keymap-menu")
+                                    .menu(|window, cx| {
+                                        ContextMenu::build(window, cx, |menu, _, _| {
+                                            menu.header("Open Keymap JSON")
+                                                .action("User", zed_actions::OpenKeymap.boxed_clone())
+                                                .action("Zed Default", zed_actions::OpenDefaultKeymap.boxed_clone())
+                                                .action("Vim Default", vim::OpenDefaultKeymap.boxed_clone())
+                                        })
+                                    })
+                                    .anchor(gpui::Corner::TopLeft)
+                                    .trigger(|open, _, _|
+                                        IconButton::new(
+                                            "OpenKeymapJsonButton",
+                                            IconName::Json
+                                        )
+                                        .shape(ui::IconButtonShape::Square)
+                                        .when(!open, |this|
+                                            this.tooltip(move |window, cx| {
+                                                Tooltip::with_meta("Open Keymap JSON", Some(&zed_actions::OpenKeymap),"Right click to view more options", window, cx)
+                                            })
+                                        )
+                                        .on_click(|_, window, cx| {
+                                            window.dispatch_action(zed_actions::OpenKeymap.boxed_clone(), cx);
+                                        })
+                                    )
+                            )
                             .child(
                                 div()
                                     .key_context({
@@ -1731,7 +1794,7 @@ impl Render for KeymapEditor {
                                             } else {
                                                 const NULL: SharedString =
                                                     SharedString::new_static("<null>");
-                                                muted_styled_text(NULL.clone(), cx)
+                                                muted_styled_text(NULL, cx)
                                                     .into_any_element()
                                             }
                                         })
@@ -1839,18 +1902,15 @@ impl Render for KeymapEditor {
                                                   mouse_down_event: &gpui::MouseDownEvent,
                                                   window,
                                                   cx| {
-                                                match mouse_down_event.button {
-                                                    MouseButton::Right => {
-                                                        this.select_index(
-                                                            row_index, None, window, cx,
-                                                        );
-                                                        this.create_context_menu(
-                                                            mouse_down_event.position,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    }
-                                                    _ => {}
+                                                if mouse_down_event.button == MouseButton::Right {
+                                                    this.select_index(
+                                                        row_index, None, window, cx,
+                                                    );
+                                                    this.create_context_menu(
+                                                        mouse_down_event.position,
+                                                        window,
+                                                        cx,
+                                                    );
                                                 }
                                             },
                                         ))
@@ -1994,21 +2054,21 @@ impl RenderOnce for SyntaxHighlightedText {
 
 #[derive(PartialEq)]
 struct InputError {
-    severity: ui::Severity,
+    severity: Severity,
     content: SharedString,
 }
 
 impl InputError {
     fn warning(message: impl Into<SharedString>) -> Self {
         Self {
-            severity: ui::Severity::Warning,
+            severity: Severity::Warning,
             content: message.into(),
         }
     }
 
     fn error(message: anyhow::Error) -> Self {
         Self {
-            severity: ui::Severity::Error,
+            severity: Severity::Error,
             content: message.to_string().into(),
         }
     }
@@ -2135,9 +2195,11 @@ impl KeybindingEditorModal {
     }
 
     fn set_error(&mut self, error: InputError, cx: &mut Context<Self>) -> bool {
-        if self.error.as_ref().is_some_and(|old_error| {
-            old_error.severity == ui::Severity::Warning && *old_error == error
-        }) {
+        if self
+            .error
+            .as_ref()
+            .is_some_and(|old_error| old_error.severity == Severity::Warning && *old_error == error)
+        {
             false
         } else {
             self.error = Some(error);
@@ -2150,7 +2212,8 @@ impl KeybindingEditorModal {
         let action_arguments = self
             .action_arguments_editor
             .as_ref()
-            .map(|editor| editor.read(cx).editor.read(cx).text(cx));
+            .map(|arguments_editor| arguments_editor.read(cx).editor.read(cx).text(cx))
+            .filter(|args| !args.is_empty());
 
         let value = action_arguments
             .as_ref()
@@ -2159,12 +2222,12 @@ impl KeybindingEditorModal {
             })
             .transpose()?;
 
-        cx.build_action(&self.editing_keybind.action().name, value)
+        cx.build_action(self.editing_keybind.action().name, value)
             .context("Failed to validate action arguments")?;
         Ok(action_arguments)
     }
 
-    fn validate_keystrokes(&self, cx: &App) -> anyhow::Result<Vec<Keystroke>> {
+    fn validate_keystrokes(&self, cx: &App) -> anyhow::Result<Vec<KeybindingKeystroke>> {
         let new_keystrokes = self
             .keybind_editor
             .read_with(cx, |editor, _| editor.keystrokes().to_vec());
@@ -2260,58 +2323,60 @@ impl KeybindingEditorModal {
         }).unwrap_or(Ok(()))?;
 
         let create = self.creating;
-
-        let status_toast = StatusToast::new(
-            format!(
-                "Saved edits to the {} action.",
-                &self.editing_keybind.action().humanized_name
-            ),
-            cx,
-            move |this, _cx| {
-                this.icon(ToastIcon::new(IconName::Check).color(Color::Success))
-                    .dismiss_button(true)
-                // .action("Undo", f) todo: wire the undo functionality
-            },
-        );
-
-        self.workspace
-            .update(cx, |workspace, cx| {
-                workspace.toggle_status_toast(status_toast, cx);
-            })
-            .log_err();
+        let keyboard_mapper = cx.keyboard_mapper().clone();
 
         cx.spawn(async move |this, cx| {
             let action_name = existing_keybind.action().name;
+            let humanized_action_name = existing_keybind.action().humanized_name.clone();
 
-            if let Err(err) = save_keybinding_update(
+            match save_keybinding_update(
                 create,
                 existing_keybind,
                 &action_mapping,
                 new_action_args.as_deref(),
                 &fs,
                 tab_size,
+                keyboard_mapper.as_ref(),
             )
             .await
             {
-                this.update(cx, |this, cx| {
-                    this.set_error(InputError::error(err), cx);
-                })
-                .log_err();
-            } else {
-                this.update(cx, |this, cx| {
-                    this.keymap_editor.update(cx, |keymap, cx| {
-                        keymap.previous_edit = Some(PreviousEdit::Keybinding {
-                            action_mapping,
-                            action_name,
-                            fallback: keymap
-                                .table_interaction_state
-                                .read(cx)
-                                .get_scrollbar_offset(Axis::Vertical),
-                        })
-                    });
-                    cx.emit(DismissEvent);
-                })
-                .ok();
+                Ok(_) => {
+                    this.update(cx, |this, cx| {
+                        this.keymap_editor.update(cx, |keymap, cx| {
+                            keymap.previous_edit = Some(PreviousEdit::Keybinding {
+                                action_mapping,
+                                action_name,
+                                fallback: keymap
+                                    .table_interaction_state
+                                    .read(cx)
+                                    .get_scrollbar_offset(Axis::Vertical),
+                            });
+                            let status_toast = StatusToast::new(
+                                format!("Saved edits to the {} action.", humanized_action_name),
+                                cx,
+                                move |this, _cx| {
+                                    this.icon(ToastIcon::new(IconName::Check).color(Color::Success))
+                                        .dismiss_button(true)
+                                    // .action("Undo", f) todo: wire the undo functionality
+                                },
+                            );
+
+                            this.workspace
+                                .update(cx, |workspace, cx| {
+                                    workspace.toggle_status_toast(status_toast, cx);
+                                })
+                                .log_err();
+                        });
+                        cx.emit(DismissEvent);
+                    })
+                    .ok();
+                }
+                Err(err) => {
+                    this.update(cx, |this, cx| {
+                        this.set_error(InputError::error(err), cx);
+                    })
+                    .log_err();
+                }
             }
         })
         .detach();
@@ -2389,11 +2454,21 @@ impl KeybindingEditorModal {
     }
 }
 
-fn remove_key_char(Keystroke { modifiers, key, .. }: Keystroke) -> Keystroke {
-    Keystroke {
-        modifiers,
-        key,
-        ..Default::default()
+fn remove_key_char(
+    KeybindingKeystroke {
+        inner,
+        display_modifiers,
+        display_key,
+    }: KeybindingKeystroke,
+) -> KeybindingKeystroke {
+    KeybindingKeystroke {
+        inner: Keystroke {
+            modifiers: inner.modifiers,
+            key: inner.key,
+            key_char: None,
+        },
+        display_modifiers,
+        display_key,
     }
 }
 
@@ -2415,6 +2490,7 @@ impl Render for KeybindingEditorModal {
                     .header(
                         ModalHeader::new().child(
                             v_flex()
+                                .w_full()
                                 .pb_1p5()
                                 .mb_1()
                                 .gap_0p5()
@@ -2438,17 +2514,55 @@ impl Render for KeybindingEditorModal {
                     .section(
                         Section::new().child(
                             v_flex()
-                                .gap_2()
+                                .gap_2p5()
                                 .child(
                                     v_flex()
-                                        .child(Label::new("Edit Keystroke"))
                                         .gap_1()
-                                        .child(self.keybind_editor.clone()),
+                                        .child(Label::new("Edit Keystroke"))
+                                        .child(self.keybind_editor.clone())
+                                        .child(h_flex().gap_px().when(
+                                            matching_bindings_count > 0,
+                                            |this| {
+                                                let label = format!(
+                                                    "There {} {} {} with the same keystrokes.",
+                                                    if matching_bindings_count == 1 {
+                                                        "is"
+                                                    } else {
+                                                        "are"
+                                                    },
+                                                    matching_bindings_count,
+                                                    if matching_bindings_count == 1 {
+                                                        "binding"
+                                                    } else {
+                                                        "bindings"
+                                                    }
+                                                );
+
+                                                this.child(
+                                                    Label::new(label)
+                                                        .size(LabelSize::Small)
+                                                        .color(Color::Muted),
+                                                )
+                                                .child(
+                                                    Button::new("show_matching", "View")
+                                                        .label_size(LabelSize::Small)
+                                                        .icon(IconName::ArrowUpRight)
+                                                        .icon_color(Color::Muted)
+                                                        .icon_size(IconSize::Small)
+                                                        .on_click(cx.listener(
+                                                            |this, _, window, cx| {
+                                                                this.show_matching_bindings(
+                                                                    window, cx,
+                                                                );
+                                                            },
+                                                        )),
+                                                )
+                                            },
+                                        )),
                                 )
                                 .when_some(self.action_arguments_editor.clone(), |this, editor| {
                                     this.child(
                                         v_flex()
-                                            .mt_1p5()
                                             .gap_1()
                                             .child(Label::new("Edit Arguments"))
                                             .child(editor),
@@ -2459,50 +2573,25 @@ impl Render for KeybindingEditorModal {
                                     this.child(
                                         Banner::new()
                                             .severity(error.severity)
-                                            // For some reason, the div overflows its container to the
-                                            //right. The padding accounts for that.
-                                            .child(
-                                                div()
-                                                    .size_full()
-                                                    .pr_2()
-                                                    .child(Label::new(error.content.clone())),
-                                            ),
+                                            .child(Label::new(error.content.clone())),
                                     )
                                 }),
                         ),
                     )
                     .footer(
-                        ModalFooter::new()
-                            .start_slot(
-                                div().when(matching_bindings_count > 0, |this| {
-                                    this.child(
-                                        Button::new("show_matching", format!(
-                                            "There {} {} {} with the same keystrokes. Click to view",
-                                            if matching_bindings_count == 1 { "is" } else { "are" },
-                                            matching_bindings_count,
-                                            if matching_bindings_count == 1 { "binding" } else { "bindings" }
-                                        ))
-                                        .style(ButtonStyle::Transparent)
-                                        .color(Color::Accent)
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.show_matching_bindings(window, cx);
-                                        }))
-                                    )
-                                })
-                            )
-                            .end_slot(
-                                h_flex()
-                                    .gap_1()
-                                    .child(
-                                        Button::new("cancel", "Cancel")
-                                            .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
-                                    )
-                                    .child(Button::new("save-btn", "Save").on_click(cx.listener(
-                                        |this, _event, _window, cx| {
-                                            this.save_or_display_error(cx);
-                                        },
-                                    ))),
-                            ),
+                        ModalFooter::new().end_slot(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Button::new("cancel", "Cancel")
+                                        .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
+                                )
+                                .child(Button::new("save-btn", "Save").on_click(cx.listener(
+                                    |this, _event, _window, cx| {
+                                        this.save_or_display_error(cx);
+                                    },
+                                ))),
+                        ),
                     ),
             )
     }
@@ -2677,7 +2766,7 @@ impl ActionArgumentsEditor {
                 })
                 .ok();
             }
-            return result;
+            result
         })
         .detach_and_log_err(cx);
         Self {
@@ -2780,7 +2869,7 @@ impl Render for ActionArgumentsEditor {
         self.editor
             .update(cx, |editor, _| editor.set_text_style_refinement(text_style));
 
-        return v_flex().w_full().child(
+        v_flex().w_full().child(
             h_flex()
                 .min_h_8()
                 .min_w_48()
@@ -2793,7 +2882,7 @@ impl Render for ActionArgumentsEditor {
                 .border_color(border_color)
                 .track_focus(&self.focus_handle)
                 .child(self.editor.clone()),
-        );
+        )
     }
 }
 
@@ -2820,11 +2909,8 @@ impl CompletionProvider for KeyContextCompletionProvider {
                 break;
             }
         }
-        let start_anchor = buffer.anchor_before(
-            buffer_position
-                .to_offset(&buffer)
-                .saturating_sub(count_back),
-        );
+        let start_anchor =
+            buffer.anchor_before(buffer_position.to_offset(buffer).saturating_sub(count_back));
         let replace_range = start_anchor..buffer_position;
         gpui::Task::ready(Ok(vec![project::CompletionResponse {
             completions: self
@@ -2854,9 +2940,9 @@ impl CompletionProvider for KeyContextCompletionProvider {
         _menu_is_open: bool,
         _cx: &mut Context<Editor>,
     ) -> bool {
-        text.chars().last().map_or(false, |last_char| {
-            last_char.is_ascii_alphanumeric() || last_char == '_'
-        })
+        text.chars()
+            .last()
+            .is_some_and(|last_char| last_char.is_ascii_alphanumeric() || last_char == '_')
     }
 }
 
@@ -2875,7 +2961,7 @@ async fn load_json_language(workspace: WeakEntity<Workspace>, cx: &mut AsyncApp)
         Some(task) => task.await.context("Failed to load JSON language").log_err(),
         None => None,
     };
-    return json_language.unwrap_or_else(|| {
+    json_language.unwrap_or_else(|| {
         Arc::new(Language::new(
             LanguageConfig {
                 name: "JSON".into(),
@@ -2883,7 +2969,7 @@ async fn load_json_language(workspace: WeakEntity<Workspace>, cx: &mut AsyncApp)
             },
             Some(tree_sitter_json::LANGUAGE.into()),
         ))
-    });
+    })
 }
 
 async fn load_keybind_context_language(
@@ -2907,7 +2993,7 @@ async fn load_keybind_context_language(
             .log_err(),
         None => None,
     };
-    return language.unwrap_or_else(|| {
+    language.unwrap_or_else(|| {
         Arc::new(Language::new(
             LanguageConfig {
                 name: "Zed Keybind Context".into(),
@@ -2915,7 +3001,7 @@ async fn load_keybind_context_language(
             },
             Some(tree_sitter_rust::LANGUAGE.into()),
         ))
-    });
+    })
 }
 
 async fn save_keybinding_update(
@@ -2925,6 +3011,7 @@ async fn save_keybinding_update(
     new_args: Option<&str>,
     fs: &Arc<dyn Fs>,
     tab_size: usize,
+    keyboard_mapper: &dyn PlatformKeyboardMapper,
 ) -> anyhow::Result<()> {
     let keymap_contents = settings::KeymapFile::load_keymap_file(fs)
         .await
@@ -2941,14 +3028,14 @@ async fn save_keybinding_update(
     let target = settings::KeybindUpdateTarget {
         context: existing_context,
         keystrokes: existing_keystrokes,
-        action_name: &existing.action().name,
+        action_name: existing.action().name,
         action_arguments: existing_args,
     };
 
     let source = settings::KeybindUpdateTarget {
         context: action_mapping.context.as_ref().map(|a| &***a),
         keystrokes: &action_mapping.keystrokes,
-        action_name: &existing.action().name,
+        action_name: existing.action().name,
         action_arguments: new_args,
     };
 
@@ -2967,9 +3054,13 @@ async fn save_keybinding_update(
 
     let (new_keybinding, removed_keybinding, source) = operation.generate_telemetry();
 
-    let updated_keymap_contents =
-        settings::KeymapFile::update_keybinding(operation, keymap_contents, tab_size)
-            .context("Failed to update keybinding")?;
+    let updated_keymap_contents = settings::KeymapFile::update_keybinding(
+        operation,
+        keymap_contents,
+        tab_size,
+        keyboard_mapper,
+    )
+    .map_err(|err| anyhow::anyhow!("Could not save updated keybinding: {}", err))?;
     fs.write(
         paths::keymap_file().as_path(),
         updated_keymap_contents.as_bytes(),
@@ -2990,6 +3081,7 @@ async fn remove_keybinding(
     existing: ProcessedBinding,
     fs: &Arc<dyn Fs>,
     tab_size: usize,
+    keyboard_mapper: &dyn PlatformKeyboardMapper,
 ) -> anyhow::Result<()> {
     let Some(keystrokes) = existing.keystrokes() else {
         anyhow::bail!("Cannot remove a keybinding that does not exist");
@@ -3002,7 +3094,7 @@ async fn remove_keybinding(
         target: settings::KeybindUpdateTarget {
             context: existing.context().and_then(KeybindContextString::local_str),
             keystrokes,
-            action_name: &existing.action().name,
+            action_name: existing.action().name,
             action_arguments: existing
                 .action()
                 .arguments
@@ -3013,9 +3105,13 @@ async fn remove_keybinding(
     };
 
     let (new_keybinding, removed_keybinding, source) = operation.generate_telemetry();
-    let updated_keymap_contents =
-        settings::KeymapFile::update_keybinding(operation, keymap_contents, tab_size)
-            .context("Failed to update keybinding")?;
+    let updated_keymap_contents = settings::KeymapFile::update_keybinding(
+        operation,
+        keymap_contents,
+        tab_size,
+        keyboard_mapper,
+    )
+    .context("Failed to update keybinding")?;
     fs.write(
         paths::keymap_file().as_path(),
         updated_keymap_contents.as_bytes(),
@@ -3061,29 +3157,29 @@ fn collect_contexts_from_assets() -> Vec<SharedString> {
             queue.push(root_context);
             while let Some(context) = queue.pop() {
                 match context {
-                    gpui::KeyBindingContextPredicate::Identifier(ident) => {
+                    Identifier(ident) => {
                         contexts.insert(ident);
                     }
-                    gpui::KeyBindingContextPredicate::Equal(ident_a, ident_b) => {
+                    Equal(ident_a, ident_b) => {
                         contexts.insert(ident_a);
                         contexts.insert(ident_b);
                     }
-                    gpui::KeyBindingContextPredicate::NotEqual(ident_a, ident_b) => {
+                    NotEqual(ident_a, ident_b) => {
                         contexts.insert(ident_a);
                         contexts.insert(ident_b);
                     }
-                    gpui::KeyBindingContextPredicate::Descendant(ctx_a, ctx_b) => {
+                    Descendant(ctx_a, ctx_b) => {
                         queue.push(*ctx_a);
                         queue.push(*ctx_b);
                     }
-                    gpui::KeyBindingContextPredicate::Not(ctx) => {
+                    Not(ctx) => {
                         queue.push(*ctx);
                     }
-                    gpui::KeyBindingContextPredicate::And(ctx_a, ctx_b) => {
+                    And(ctx_a, ctx_b) => {
                         queue.push(*ctx_a);
                         queue.push(*ctx_b);
                     }
-                    gpui::KeyBindingContextPredicate::Or(ctx_a, ctx_b) => {
+                    Or(ctx_a, ctx_b) => {
                         queue.push(*ctx_a);
                         queue.push(*ctx_b);
                     }
@@ -3095,7 +3191,128 @@ fn collect_contexts_from_assets() -> Vec<SharedString> {
     let mut contexts = contexts.into_iter().collect::<Vec<_>>();
     contexts.sort();
 
-    return contexts;
+    contexts
+}
+
+fn normalized_ctx_eq(
+    a: &gpui::KeyBindingContextPredicate,
+    b: &gpui::KeyBindingContextPredicate,
+) -> bool {
+    use gpui::KeyBindingContextPredicate::*;
+    return match (a, b) {
+        (Identifier(_), Identifier(_)) => a == b,
+        (Equal(a_left, a_right), Equal(b_left, b_right)) => {
+            (a_left == b_left && a_right == b_right) || (a_left == b_right && a_right == b_left)
+        }
+        (NotEqual(a_left, a_right), NotEqual(b_left, b_right)) => {
+            (a_left == b_left && a_right == b_right) || (a_left == b_right && a_right == b_left)
+        }
+        (Descendant(a_parent, a_child), Descendant(b_parent, b_child)) => {
+            normalized_ctx_eq(a_parent, b_parent) && normalized_ctx_eq(a_child, b_child)
+        }
+        (Not(a_expr), Not(b_expr)) => normalized_ctx_eq(a_expr, b_expr),
+        // Handle double negation: !(!a) == a
+        (Not(a_expr), b) if matches!(a_expr.as_ref(), Not(_)) => {
+            let Not(a_inner) = a_expr.as_ref() else {
+                unreachable!();
+            };
+            normalized_ctx_eq(b, a_inner)
+        }
+        (a, Not(b_expr)) if matches!(b_expr.as_ref(), Not(_)) => {
+            let Not(b_inner) = b_expr.as_ref() else {
+                unreachable!();
+            };
+            normalized_ctx_eq(a, b_inner)
+        }
+        (And(a_left, a_right), And(b_left, b_right))
+            if matches!(a_left.as_ref(), And(_, _))
+                || matches!(a_right.as_ref(), And(_, _))
+                || matches!(b_left.as_ref(), And(_, _))
+                || matches!(b_right.as_ref(), And(_, _)) =>
+        {
+            let mut a_operands = Vec::new();
+            flatten_and(a, &mut a_operands);
+            let mut b_operands = Vec::new();
+            flatten_and(b, &mut b_operands);
+            compare_operand_sets(&a_operands, &b_operands)
+        }
+        (And(a_left, a_right), And(b_left, b_right)) => {
+            (normalized_ctx_eq(a_left, b_left) && normalized_ctx_eq(a_right, b_right))
+                || (normalized_ctx_eq(a_left, b_right) && normalized_ctx_eq(a_right, b_left))
+        }
+        (Or(a_left, a_right), Or(b_left, b_right))
+            if matches!(a_left.as_ref(), Or(_, _))
+                || matches!(a_right.as_ref(), Or(_, _))
+                || matches!(b_left.as_ref(), Or(_, _))
+                || matches!(b_right.as_ref(), Or(_, _)) =>
+        {
+            let mut a_operands = Vec::new();
+            flatten_or(a, &mut a_operands);
+            let mut b_operands = Vec::new();
+            flatten_or(b, &mut b_operands);
+            compare_operand_sets(&a_operands, &b_operands)
+        }
+        (Or(a_left, a_right), Or(b_left, b_right)) => {
+            (normalized_ctx_eq(a_left, b_left) && normalized_ctx_eq(a_right, b_right))
+                || (normalized_ctx_eq(a_left, b_right) && normalized_ctx_eq(a_right, b_left))
+        }
+        _ => false,
+    };
+
+    fn flatten_and<'a>(
+        pred: &'a gpui::KeyBindingContextPredicate,
+        operands: &mut Vec<&'a gpui::KeyBindingContextPredicate>,
+    ) {
+        use gpui::KeyBindingContextPredicate::*;
+        match pred {
+            And(left, right) => {
+                flatten_and(left, operands);
+                flatten_and(right, operands);
+            }
+            _ => operands.push(pred),
+        }
+    }
+
+    fn flatten_or<'a>(
+        pred: &'a gpui::KeyBindingContextPredicate,
+        operands: &mut Vec<&'a gpui::KeyBindingContextPredicate>,
+    ) {
+        use gpui::KeyBindingContextPredicate::*;
+        match pred {
+            Or(left, right) => {
+                flatten_or(left, operands);
+                flatten_or(right, operands);
+            }
+            _ => operands.push(pred),
+        }
+    }
+
+    fn compare_operand_sets(
+        a: &[&gpui::KeyBindingContextPredicate],
+        b: &[&gpui::KeyBindingContextPredicate],
+    ) -> bool {
+        if a.len() != b.len() {
+            return false;
+        }
+
+        // For each operand in a, find a matching operand in b
+        let mut b_matched = vec![false; b.len()];
+        for a_operand in a {
+            let mut found = false;
+            for (b_idx, b_operand) in b.iter().enumerate() {
+                if !b_matched[b_idx] && normalized_ctx_eq(a_operand, b_operand) {
+                    b_matched[b_idx] = true;
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                return false;
+            }
+        }
+
+        true
+    }
 }
 
 impl SerializableItem for KeymapEditor {
@@ -3160,12 +3377,15 @@ impl SerializableItem for KeymapEditor {
 }
 
 mod persistence {
-    use db::{define_connection, query, sqlez_macros::sql};
+    use db::{query, sqlez::domain::Domain, sqlez_macros::sql};
     use workspace::WorkspaceDb;
 
-    define_connection! {
-        pub static ref KEYBINDING_EDITORS: KeybindingEditorDb<WorkspaceDb> =
-            &[sql!(
+    pub struct KeybindingEditorDb(db::sqlez::thread_safe_connection::ThreadSafeConnection);
+
+    impl Domain for KeybindingEditorDb {
+        const NAME: &str = stringify!(KeybindingEditorDb);
+
+        const MIGRATIONS: &[&str] = &[sql!(
                 CREATE TABLE keybinding_editors (
                     workspace_id INTEGER,
                     item_id INTEGER UNIQUE,
@@ -3174,8 +3394,10 @@ mod persistence {
                     FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
                     ON DELETE CASCADE
                 ) STRICT;
-            )];
+        )];
     }
+
+    db::static_connection!(KEYBINDING_EDITORS, KeybindingEditorDb, [WorkspaceDb]);
 
     impl KeybindingEditorDb {
         query! {
@@ -3198,5 +3420,154 @@ mod persistence {
                 WHERE item_id = ? AND workspace_id = ?
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalized_ctx_cmp() {
+        #[track_caller]
+        fn cmp(a: &str, b: &str) -> bool {
+            let a = gpui::KeyBindingContextPredicate::parse(a)
+                .expect("Failed to parse keybinding context a");
+            let b = gpui::KeyBindingContextPredicate::parse(b)
+                .expect("Failed to parse keybinding context b");
+            normalized_ctx_eq(&a, &b)
+        }
+
+        // Basic equality - identical expressions
+        assert!(cmp("a && b", "a && b"));
+        assert!(cmp("a || b", "a || b"));
+        assert!(cmp("a == b", "a == b"));
+        assert!(cmp("a != b", "a != b"));
+        assert!(cmp("a > b", "a > b"));
+        assert!(cmp("!a", "!a"));
+
+        // AND operator - associative/commutative
+        assert!(cmp("a && b", "b && a"));
+        assert!(cmp("a && b && c", "c && b && a"));
+        assert!(cmp("a && b && c", "b && a && c"));
+        assert!(cmp("a && b && c && d", "d && c && b && a"));
+
+        // OR operator - associative/commutative
+        assert!(cmp("a || b", "b || a"));
+        assert!(cmp("a || b || c", "c || b || a"));
+        assert!(cmp("a || b || c", "b || a || c"));
+        assert!(cmp("a || b || c || d", "d || c || b || a"));
+
+        // Equality operator - associative/commutative
+        assert!(cmp("a == b", "b == a"));
+        assert!(cmp("x == y", "y == x"));
+
+        // Inequality operator - associative/commutative
+        assert!(cmp("a != b", "b != a"));
+        assert!(cmp("x != y", "y != x"));
+
+        // Complex nested expressions with associative operators
+        assert!(cmp("(a && b) || c", "c || (a && b)"));
+        assert!(cmp("(a && b) || c", "c || (b && a)"));
+        assert!(cmp("(a || b) && c", "c && (a || b)"));
+        assert!(cmp("(a || b) && c", "c && (b || a)"));
+        assert!(cmp("(a && b) || (c && d)", "(c && d) || (a && b)"));
+        assert!(cmp("(a && b) || (c && d)", "(d && c) || (b && a)"));
+
+        // Multiple levels of nesting
+        assert!(cmp("((a && b) || c) && d", "d && ((a && b) || c)"));
+        assert!(cmp("((a && b) || c) && d", "d && (c || (b && a))"));
+        assert!(cmp("a && (b || (c && d))", "(b || (c && d)) && a"));
+        assert!(cmp("a && (b || (c && d))", "(b || (d && c)) && a"));
+
+        // Negation with associative operators
+        assert!(cmp("!a && b", "b && !a"));
+        assert!(cmp("!a || b", "b || !a"));
+        assert!(cmp("!(a && b) || c", "c || !(a && b)"));
+        assert!(cmp("!(a && b) || c", "c || !(b && a)"));
+
+        // Descendant operator (>) - NOT associative/commutative
+        assert!(cmp("a > b", "a > b"));
+        assert!(!cmp("a > b", "b > a"));
+        assert!(!cmp("a > b > c", "c > b > a"));
+        assert!(!cmp("a > b > c", "a > c > b"));
+
+        // Mixed operators with descendant
+        assert!(cmp("(a > b) && c", "c && (a > b)"));
+        assert!(!cmp("(a > b) && c", "c && (b > a)"));
+        assert!(cmp("(a > b) || (c > d)", "(c > d) || (a > b)"));
+        assert!(!cmp("(a > b) || (c > d)", "(b > a) || (d > c)"));
+
+        // Negative cases - different operators
+        assert!(!cmp("a && b", "a || b"));
+        assert!(!cmp("a == b", "a != b"));
+        assert!(!cmp("a && b", "a > b"));
+        assert!(!cmp("a || b", "a > b"));
+        assert!(!cmp("a == b", "a && b"));
+        assert!(!cmp("a != b", "a || b"));
+
+        // Negative cases - different operands
+        assert!(!cmp("a && b", "a && c"));
+        assert!(!cmp("a && b", "c && d"));
+        assert!(!cmp("a || b", "a || c"));
+        assert!(!cmp("a || b", "c || d"));
+        assert!(!cmp("a == b", "a == c"));
+        assert!(!cmp("a != b", "a != c"));
+        assert!(!cmp("a > b", "a > c"));
+        assert!(!cmp("a > b", "c > b"));
+
+        // Negative cases - with negation
+        assert!(!cmp("!a", "a"));
+        assert!(!cmp("!a && b", "a && b"));
+        assert!(!cmp("!(a && b)", "a && b"));
+        assert!(!cmp("!a || b", "a || b"));
+        assert!(!cmp("!(a || b)", "a || b"));
+
+        // Negative cases - complex expressions
+        assert!(!cmp("(a && b) || c", "(a || b) && c"));
+        assert!(!cmp("a && (b || c)", "a || (b && c)"));
+        assert!(!cmp("(a && b) || (c && d)", "(a || b) && (c || d)"));
+        assert!(!cmp("a > b && c", "a && b > c"));
+
+        // Edge cases - multiple same operands
+        assert!(cmp("a && a", "a && a"));
+        assert!(cmp("a || a", "a || a"));
+        assert!(cmp("a && a && b", "b && a && a"));
+        assert!(cmp("a || a || b", "b || a || a"));
+
+        // Edge cases - deeply nested
+        assert!(cmp(
+            "((a && b) || (c && d)) && ((e || f) && g)",
+            "((e || f) && g) && ((c && d) || (a && b))"
+        ));
+        assert!(cmp(
+            "((a && b) || (c && d)) && ((e || f) && g)",
+            "(g && (f || e)) && ((d && c) || (b && a))"
+        ));
+
+        // Edge cases - repeated patterns
+        assert!(cmp("(a && b) || (a && b)", "(b && a) || (b && a)"));
+        assert!(cmp("(a || b) && (a || b)", "(b || a) && (b || a)"));
+
+        // Negative cases - subtle differences
+        assert!(!cmp("a && b && c", "a && b"));
+        assert!(!cmp("a || b || c", "a || b"));
+        assert!(!cmp("(a && b) || c", "a && (b || c)"));
+
+        // a > b > c is not the same as a > c, should not be equal
+        assert!(!cmp("a > b > c", "a > c"));
+
+        // Double negation with complex expressions
+        assert!(cmp("!(!(a && b))", "a && b"));
+        assert!(cmp("!(!(a || b))", "a || b"));
+        assert!(cmp("!(!(a > b))", "a > b"));
+        assert!(cmp("!(!a) && b", "a && b"));
+        assert!(cmp("!(!a) || b", "a || b"));
+        assert!(cmp("!(!(a && b)) || c", "(a && b) || c"));
+        assert!(cmp("!(!(a && b)) || c", "(b && a) || c"));
+        assert!(cmp("!(!a)", "a"));
+        assert!(cmp("a", "!(!a)"));
+        assert!(cmp("!(!(!a))", "!a"));
+        assert!(cmp("!(!(!(!a)))", "a"));
     }
 }

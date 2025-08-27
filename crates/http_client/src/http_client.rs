@@ -435,8 +435,7 @@ impl HttpClient for FakeHttpClient {
         &self,
         req: Request<AsyncBody>,
     ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
-        let future = (self.handler.lock().as_ref().unwrap())(req);
-        future
+        ((self.handler.lock().as_ref().unwrap())(req)) as _
     }
 
     fn user_agent(&self) -> Option<&HeaderValue> {

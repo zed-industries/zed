@@ -48,7 +48,7 @@ pub fn open(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let repository = workspace.project().read(cx).active_repository(cx).clone();
+    let repository = workspace.project().read(cx).active_repository(cx);
     let style = BranchListStyle::Modal;
     workspace.toggle_modal(window, cx, |window, cx| {
         BranchList::new(repository, style, rems(34.), window, cx)
@@ -144,7 +144,7 @@ impl BranchList {
         })
         .detach_and_log_err(cx);
 
-        let delegate = BranchListDelegate::new(repository.clone(), style);
+        let delegate = BranchListDelegate::new(repository, style);
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
 
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| {
@@ -473,7 +473,7 @@ impl PickerDelegate for BranchListDelegate {
             && entry.is_new
         {
             Some(
-                IconButton::new("branch-from-default", IconName::GitBranchSmall)
+                IconButton::new("branch-from-default", IconName::GitBranchAlt)
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.delegate.set_selected_index(ix, window, cx);
                         this.delegate.confirm(true, window, cx);

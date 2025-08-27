@@ -592,10 +592,7 @@ impl PlatformWindow for WindowsWindow {
     ) -> Option<Receiver<usize>> {
         let (done_tx, done_rx) = oneshot::channel();
         let msg = msg.to_string();
-        let detail_string = match detail {
-            Some(info) => Some(info.to_string()),
-            None => None,
-        };
+        let detail_string = detail.map(|detail| detail.to_string());
         let handle = self.0.hwnd;
         let answers = answers.to_vec();
         self.0

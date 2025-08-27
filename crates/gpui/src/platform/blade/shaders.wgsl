@@ -1057,6 +1057,9 @@ fn vs_underline(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) 
 
 @fragment
 fn fs_underline(input: UnderlineVarying) -> @location(0) vec4<f32> {
+    const WAVE_FREQUENCY: f32 = 2.0;
+    const WAVE_HEIGHT_RATIO: f32 = 0.8;
+
     // Alpha clip first, since we don't have `clip_distance`.
     if (any(input.clip_distances < vec4<f32>(0.0))) {
         return vec4<f32>(0.0);
@@ -1069,9 +1072,11 @@ fn fs_underline(input: UnderlineVarying) -> @location(0) vec4<f32> {
     }
 
     let half_thickness = underline.thickness * 0.5;
+
     let st = (input.position.xy - underline.bounds.origin) / underline.bounds.size.y - vec2<f32>(0.0, 0.5);
-    let frequency = M_PI_F * 3.0 * underline.thickness / 3.0;
-    let amplitude = 1.0 / (4.0 * underline.thickness);
+    let frequency = M_PI_F * WAVE_FREQUENCY * underline.thickness / underline.bounds.size.y;
+    let amplitude = (underline.thickness * WAVE_HEIGHT_RATIO) / underline.bounds.size.y;
+
     let sine = sin(st.x * frequency) * amplitude;
     let dSine = cos(st.x * frequency) * amplitude * frequency;
     let distance = (st.y - sine) / sqrt(1.0 + dSine * dSine);

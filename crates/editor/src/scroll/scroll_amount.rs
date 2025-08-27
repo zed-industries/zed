@@ -67,10 +67,7 @@ impl ScrollAmount {
     }
 
     pub fn is_full_page(&self) -> bool {
-        match self {
-            ScrollAmount::Page(count) if count.abs() == 1.0 => true,
-            _ => false,
-        }
+        matches!(self, ScrollAmount::Page(count) if count.abs() == 1.0)
     }
 
     pub fn direction(&self) -> ScrollDirection {

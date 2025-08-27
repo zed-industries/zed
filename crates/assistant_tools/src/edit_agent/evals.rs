@@ -1153,8 +1153,7 @@ impl EvalInput {
             .expect("Conversation must end with an edit_file tool use")
             .clone();
 
-        let edit_file_input: EditFileToolInput =
-            serde_json::from_value(tool_use.input.clone()).unwrap();
+        let edit_file_input: EditFileToolInput = serde_json::from_value(tool_use.input).unwrap();
 
         EvalInput {
             conversation,
@@ -1283,14 +1282,14 @@ impl EvalAssertion {
 
             // Parse the score from the response
             let re = regex::Regex::new(r"<score>(\d+)</score>").unwrap();
-            if let Some(captures) = re.captures(&output) {
-                if let Some(score_match) = captures.get(1) {
-                    let score = score_match.as_str().parse().unwrap_or(0);
-                    return Ok(EvalAssertionOutcome {
-                        score,
-                        message: Some(output),
-                    });
-                }
+            if let Some(captures) = re.captures(&output)
+                && let Some(score_match) = captures.get(1)
+            {
+                let score = score_match.as_str().parse().unwrap_or(0);
+                return Ok(EvalAssertionOutcome {
+                    score,
+                    message: Some(output),
+                });
             }
 
             anyhow::bail!("No score found in response. Raw output: {output}");
@@ -1460,7 +1459,7 @@ impl EditAgentTest {
     async fn new(cx: &mut TestAppContext) -> Self {
         cx.executor().allow_parking();
 
-        let fs = FakeFs::new(cx.executor().clone());
+        let fs = FakeFs::new(cx.executor());
         cx.update(|cx| {
             settings::init(cx);
             gpui_tokio::init(cx);
@@ -1475,7 +1474,7 @@ impl EditAgentTest {
             Project::init_settings(cx);
             language::init(cx);
             language_model::init(client.clone(), cx);
-            language_models::init(user_store.clone(), client.clone(), cx);
+            language_models::init(user_store, client.clone(), cx);
             crate::init(client.http_client(), cx);
         });
 
@@ -1586,7 +1585,7 @@ impl EditAgentTest {
         let has_system_prompt = eval
             .conversation
             .first()
-            .map_or(false, |msg| msg.role == Role::System);
+            .is_some_and(|msg| msg.role == Role::System);
         let messages = if has_system_prompt {
             eval.conversation
         } else {

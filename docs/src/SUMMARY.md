@@ -16,11 +16,13 @@
 - [Configuring Zed](./configuring-zed.md)
 - [Configuring Languages](./configuring-languages.md)
 - [Key bindings](./key-bindings.md)
+  - [All Actions](./all-actions.md)
 - [Snippets](./snippets.md)
 - [Themes](./themes.md)
 - [Icon Themes](./icon-themes.md)
 - [Visual Customization](./visual-customization.md)
 - [Vim Mode](./vim.md)
+- [Helix Mode](./helix.md)
 
 <!-- - [Globs](./globs.md) -->
 <!-- - [Fonts](./fonts.md) -->
@@ -45,6 +47,7 @@
 - [Overview](./ai/overview.md)
 - [Agent Panel](./ai/agent-panel.md)
   - [Tools](./ai/tools.md)
+  - [External Agents](./ai/external-agents.md)
 - [Inline Assistant](./ai/inline-assistant.md)
 - [Edit Prediction](./ai/edit-prediction.md)
 - [Text Threads](./ai/text-threads.md)
