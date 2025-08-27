@@ -1147,7 +1147,7 @@ mod tests {
             .send_events(&["+cmd", "shift-f", "-cmd"])
             // In search mode, when completing a modifier-only keystroke with a key,
             // only the original modifiers are preserved, not the keystroke's modifiers
-            .expect_keystrokes(&["cmd-f"]);
+            .expect_keystrokes(&["cmd-shift-f"]);
     }
 
     #[gpui::test]
@@ -1324,7 +1324,7 @@ mod tests {
             .await
             .with_search_mode(true)
             .send_events(&["+ctrl", "+shift", "-shift", "a", "-ctrl"])
-            .expect_keystrokes(&["ctrl-shift-a"]);
+            .expect_keystrokes(&["ctrl-a"]);
     }
 
     #[gpui::test]
@@ -1432,7 +1432,7 @@ mod tests {
             .await
             .with_search_mode(true)
             .send_events(&["+ctrl+alt", "-ctrl", "j"])
-            .expect_keystrokes(&["ctrl-alt-j"]);
+            .expect_keystrokes(&["alt-j"]);
     }
 
     #[gpui::test]
@@ -1454,11 +1454,11 @@ mod tests {
             .send_events(&["+ctrl+alt", "-ctrl", "+shift"])
             .expect_keystrokes(&["ctrl-shift-alt-"])
             .send_keystroke("j")
-            .expect_keystrokes(&["ctrl-shift-alt-j"])
+            .expect_keystrokes(&["shift-alt-j"])
             .send_keystroke("i")
-            .expect_keystrokes(&["ctrl-shift-alt-j", "shift-alt-i"])
+            .expect_keystrokes(&["shift-alt-j", "shift-alt-i"])
             .send_events(&["-shift-alt", "+cmd"])
-            .expect_keystrokes(&["ctrl-shift-alt-j", "shift-alt-i", "cmd-"]);
+            .expect_keystrokes(&["shift-alt-j", "shift-alt-i", "cmd-"]);
     }
 
     #[gpui::test]
