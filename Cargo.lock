@@ -8960,11 +8960,9 @@ dependencies = [
  "anyhow",
  "collections",
  "command_palette",
- "command_palette_hooks",
  "component",
  "db",
  "editor",
- "feature_flags",
  "fs",
  "fuzzy",
  "gpui",
@@ -14932,8 +14930,6 @@ dependencies = [
 name = "settings_ui"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "command_palette",
  "command_palette_hooks",
  "editor",
  "feature_flags",
@@ -14941,7 +14937,6 @@ dependencies = [
  "settings",
  "theme",
  "ui",
- "util",
  "workspace",
 ]
 
