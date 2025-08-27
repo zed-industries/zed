@@ -312,8 +312,7 @@ messages!(
     (GetDefaultBranch, Background),
     (GetDefaultBranchResponse, Background),
     (GitClone, Background),
-    (GitCloneResponse, Background),
-    (ToggleLspLogs, Background),
+    (GitCloneResponse, Background)
 );
 
 request_messages!(
@@ -482,8 +481,7 @@ request_messages!(
     (GetDocumentDiagnostics, GetDocumentDiagnosticsResponse),
     (PullWorkspaceDiagnostics, Ack),
     (GetDefaultBranch, GetDefaultBranchResponse),
-    (GitClone, GitCloneResponse),
-    (ToggleLspLogs, Ack),
+    (GitClone, GitCloneResponse)
 );
 
 lsp_messages!(
@@ -614,7 +612,6 @@ entity_messages!(
     GitReset,
     GitCheckoutFiles,
     SetIndexText,
-    ToggleLspLogs,
 
     Push,
     Fetch,

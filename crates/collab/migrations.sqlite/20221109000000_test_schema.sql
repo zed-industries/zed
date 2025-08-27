@@ -175,7 +175,6 @@ CREATE TABLE "language_servers" (
     "project_id" INTEGER NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
     "name" VARCHAR NOT NULL,
     "capabilities" TEXT NOT NULL,
-    "worktree_id" BIGINT,
     PRIMARY KEY (project_id, id)
 );
 

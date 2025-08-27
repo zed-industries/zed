@@ -30,7 +30,7 @@ pub struct ActiveSettingsProfileName(pub String);
 
 impl Global for ActiveSettingsProfileName {}
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord, serde::Serialize)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub struct WorktreeId(usize);
 
 impl From<WorktreeId> for usize {
