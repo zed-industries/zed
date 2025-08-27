@@ -442,6 +442,14 @@ impl LogStore {
                                     }
                                 }
                             }
+                            project::Event::ToggleLspLogs { server_id, enabled } => {
+                                // we do not support any other log toggling yet
+                                if *enabled {
+                                    log_store.enable_rpc_trace_for_language_server(*server_id);
+                                } else {
+                                    log_store.disable_rpc_trace_for_language_server(*server_id);
+                                }
+                            }
                             _ => {}
                         }
                     }),
