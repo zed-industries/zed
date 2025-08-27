@@ -1367,7 +1367,6 @@ impl Project {
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.settings_observer);
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.git_store);
 
-            remote_proto.add_entity_message_handler(Self::handle_toggle_lsp_logs);
             remote_proto.add_entity_message_handler(Self::handle_create_buffer_for_peer);
             remote_proto.add_entity_message_handler(Self::handle_update_worktree);
             remote_proto.add_entity_message_handler(Self::handle_update_project);
@@ -4627,16 +4626,6 @@ impl Project {
             }
             Ok(())
         })?
-    }
-
-    // TODO kb
-    async fn handle_toggle_lsp_logs(
-        _this: Entity<Self>,
-        _envelope: TypedEnvelope<proto::ToggleLspLogs>,
-        _cx: AsyncApp,
-    ) -> Result<()> {
-        log::error!("##########PPPPPPPPPPPPPPPproject##########################");
-        Ok(())
     }
 
     async fn handle_update_buffer_from_remote_server(
