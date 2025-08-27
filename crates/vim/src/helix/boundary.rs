@@ -1,4 +1,7 @@
-use std::{cmp::Ordering, ops::Range};
+use std::{
+    cmp::Ordering,
+    ops::{Deref, DerefMut, Range},
+};
 
 use editor::{
     DisplayPoint,
@@ -16,36 +19,16 @@ use crate::helix::object::HelixTextObject;
 trait BoundedObject {
     /// The next start since `from` (inclusive).
     /// If outer is true it is the start of "a" object (m a) rather than "inner" object (m i).
-    fn next_start(
-        &self,
-        map: &DisplaySnapshot,
-        from: DisplayPoint,
-        outer: bool,
-    ) -> Option<DisplayPoint>;
+    fn next_start(&self, map: &DisplaySnapshot, from: Offset, outer: bool) -> Option<Offset>;
     /// The next end since `from` (inclusive).
     /// If outer is true it is the end of "a" object (m a) rather than "inner" object (m i).
-    fn next_end(
-        &self,
-        map: &DisplaySnapshot,
-        from: DisplayPoint,
-        outer: bool,
-    ) -> Option<DisplayPoint>;
+    fn next_end(&self, map: &DisplaySnapshot, from: Offset, outer: bool) -> Option<Offset>;
     /// The previous start since `from` (inclusive).
     /// If outer is true it is the start of "a" object (m a) rather than "inner" object (m i).
-    fn previous_start(
-        &self,
-        map: &DisplaySnapshot,
-        from: DisplayPoint,
-        outer: bool,
-    ) -> Option<DisplayPoint>;
+    fn previous_start(&self, map: &DisplaySnapshot, from: Offset, outer: bool) -> Option<Offset>;
     /// The previous end since `from` (inclusive).
     /// If outer is true it is the end of "a" object (m a) rather than "inner" object (m i).
-    fn previous_end(
-        &self,
-        map: &DisplaySnapshot,
-        from: DisplayPoint,
-        outer: bool,
-    ) -> Option<DisplayPoint>;
+    fn previous_end(&self, map: &DisplaySnapshot, from: Offset, outer: bool) -> Option<Offset>;
 
     /// Whether the range inside or outside the object can have be zero characters wide.
     /// If so, the trait assumes that these ranges can't be directly adjacent to each other.
@@ -55,11 +38,7 @@ trait BoundedObject {
 
     /// Switches from an "mi" range to an "ma" one.
     /// Assumes the inner range is valid.
-    fn around(
-        &self,
-        map: &DisplaySnapshot,
-        inner_range: Range<DisplayPoint>,
-    ) -> Range<DisplayPoint> {
+    fn around(&self, map: &DisplaySnapshot, inner_range: Range<Offset>) -> Range<Offset> {
         if self.surround_on_both_sides() {
             let start = self
                 .previous_start(map, inner_range.start, true)
@@ -85,11 +64,7 @@ trait BoundedObject {
     }
     /// Switches from an "ma" range to an "mi" one.
     /// Assumes the inner range is valid.
-    fn inside(
-        &self,
-        map: &DisplaySnapshot,
-        outer_range: Range<DisplayPoint>,
-    ) -> Range<DisplayPoint> {
+    fn inside(&self, map: &DisplaySnapshot, outer_range: Range<Offset>) -> Range<Offset> {
         let inner_start = self
             .next_start(map, outer_range.start, false)
             .unwrap_or_else(|| {
@@ -106,29 +81,24 @@ trait BoundedObject {
     }
 
     /// The next end since `start` (inclusive) on the same nesting level.
-    fn close_at_end(
-        &self,
-        start: DisplayPoint,
-        map: &DisplaySnapshot,
-        outer: bool,
-    ) -> Option<DisplayPoint> {
+    fn close_at_end(&self, start: Offset, map: &DisplaySnapshot, outer: bool) -> Option<Offset> {
         let mut end_search_start = if self.can_be_zero_width(outer) {
             start
         } else {
-            movement::right(map, start)
+            start.next(map)
         };
-        let mut start_search_start = movement::right(map, start);
+        let mut start_search_start = start.next(map);
         loop {
             let next_end = self.next_end(map, end_search_start, outer)?;
             let maybe_next_start = self.next_start(map, start_search_start, outer);
             if let Some(next_start) = maybe_next_start
-                && ((next_start < next_end)
+                && ((*next_start < *next_end)
                     || (next_start == next_end && self.can_be_zero_width(outer)))
             {
                 let closing = self.close_at_end(next_start, map, outer)?;
-                end_search_start = movement::right(map, closing);
+                end_search_start = closing.next(map);
                 start_search_start = if self.can_be_zero_width(outer) {
-                    movement::right(map, closing)
+                    closing.next(map)
                 } else {
                     closing
                 };
@@ -139,37 +109,54 @@ trait BoundedObject {
         }
     }
     /// The previous start since `end` (inclusive) on the same nesting level.
-    fn close_at_start(
-        &self,
-        end: DisplayPoint,
-        map: &DisplaySnapshot,
-        outer: bool,
-    ) -> Option<DisplayPoint> {
+    fn close_at_start(&self, end: Offset, map: &DisplaySnapshot, outer: bool) -> Option<Offset> {
         let mut start_search_start = if self.can_be_zero_width(outer) {
             end
         } else {
-            movement::left(map, end)
+            end.previous(map)
         };
-        let mut end_search_start = movement::left(map, end);
+        let mut end_search_start = end.previous(map);
         loop {
             let prev_start = self.previous_start(map, start_search_start, outer)?;
             let maybe_prev_end = self.previous_end(map, end_search_start, outer);
             if let Some(prev_end) = maybe_prev_end
-                && ((prev_end > prev_start)
+                && ((*prev_end > *prev_start)
                     || (prev_end == prev_start && self.can_be_zero_width(outer)))
             {
                 let closing = self.close_at_start(prev_end, map, outer)?;
                 end_search_start = if self.can_be_zero_width(outer) {
-                    movement::left(map, closing)
+                    closing.previous(map)
                 } else {
                     closing
                 };
-                start_search_start = movement::left(map, closing);
+                start_search_start = closing.previous(map);
                 continue;
             } else {
                 return Some(prev_start);
             }
         }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct Offset(usize);
+impl Deref for Offset {
+    type Target = usize;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl DerefMut for Offset {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+impl Offset {
+    fn next(self, map: &DisplaySnapshot) -> Self {
+        Self(map.buffer_snapshot.clip_offset(*self + 1, Bias::Right))
+    }
+    fn previous(self, map: &DisplaySnapshot) -> Self {
+        Self(map.buffer_snapshot.clip_offset(*self - 1, Bias::Left))
     }
 }
 
@@ -180,30 +167,37 @@ impl<B: BoundedObject> HelixTextObject for B {
         relative_to: Range<DisplayPoint>,
         around: bool,
     ) -> Option<Range<DisplayPoint>> {
+        let relative_to = Offset(relative_to.start.to_offset(map, Bias::Left))
+            ..Offset(relative_to.end.to_offset(map, Bias::Right));
         let search_start = if self.can_be_zero_width(true) {
             relative_to.start
         } else {
             // If the objects can be directly next to each other an object start at the
             // cursor (relative_to) start would not count for close_at_start, so the search
             // needs to start one character to the left.
-            movement::right(map, relative_to.start)
+            relative_to.start.next(map)
         };
         let min_start = self.close_at_start(search_start, map, self.surround_on_both_sides())?;
         let max_end = self.close_at_end(min_start, map, self.surround_on_both_sides())?;
 
-        if max_end < relative_to.end {
+        if *max_end < *relative_to.end {
             return None;
         }
 
-        if around && !self.surround_on_both_sides() {
+        let range = if around && !self.surround_on_both_sides() {
             // max_end is not yet the outer end
-            Some(self.around(map, min_start..max_end))
+            self.around(map, min_start..max_end)
         } else if !around && self.surround_on_both_sides() {
             // max_end is the outer end, but the final result should have the inner end
-            Some(self.inside(map, min_start..max_end))
+            self.inside(map, min_start..max_end)
         } else {
-            Some(min_start..max_end)
-        }
+            min_start..max_end
+        };
+
+        let start = range.start.clone().to_display_point(map);
+        let end = range.end.clone().to_display_point(map);
+
+        Some(start..end)
     }
 
     fn next_range(
@@ -212,18 +206,25 @@ impl<B: BoundedObject> HelixTextObject for B {
         relative_to: Range<DisplayPoint>,
         around: bool,
     ) -> Option<Range<DisplayPoint>> {
+        let relative_to = Offset(relative_to.start.to_offset(map, Bias::Left))
+            ..Offset(relative_to.end.to_offset(map, Bias::Right));
         let min_start = self.next_start(map, relative_to.end, self.surround_on_both_sides())?;
         let max_end = self.close_at_end(min_start, map, self.surround_on_both_sides())?;
 
-        if around && !self.surround_on_both_sides() {
+        let range = if around && !self.surround_on_both_sides() {
             // max_end is not yet the outer end
-            Some(self.around(map, min_start..max_end))
+            self.around(map, min_start..max_end)
         } else if !around && self.surround_on_both_sides() {
             // max_end is the outer end, but the final result should have the inner end
-            Some(self.inside(map, min_start..max_end))
+            self.inside(map, min_start..max_end)
         } else {
-            Some(min_start..max_end)
-        }
+            min_start..max_end
+        };
+
+        let start = range.start.clone().to_display_point(map);
+        let end = range.end.clone().to_display_point(map);
+
+        Some(start..end)
     }
 
     fn previous_range(
@@ -232,18 +233,25 @@ impl<B: BoundedObject> HelixTextObject for B {
         relative_to: Range<DisplayPoint>,
         around: bool,
     ) -> Option<Range<DisplayPoint>> {
+        let relative_to = Offset(relative_to.start.to_offset(map, Bias::Left))
+            ..Offset(relative_to.end.to_offset(map, Bias::Right));
         let max_end = self.previous_end(map, relative_to.start, self.surround_on_both_sides())?;
         let min_start = self.close_at_start(max_end, map, self.surround_on_both_sides())?;
 
-        if around && !self.surround_on_both_sides() {
+        let range = if around && !self.surround_on_both_sides() {
             // max_end is not yet the outer end
-            Some(self.around(map, min_start..max_end))
+            self.around(map, min_start..max_end)
         } else if !around && self.surround_on_both_sides() {
             // max_end is the outer end, but the final result should have the inner end
-            Some(self.inside(map, min_start..max_end))
+            self.inside(map, min_start..max_end)
         } else {
-            Some(min_start..max_end)
-        }
+            min_start..max_end
+        };
+
+        let start = range.start.clone().to_display_point(map);
+        let end = range.end.clone().to_display_point(map);
+
+        Some(start..end)
     }
 }
 
@@ -350,16 +358,9 @@ impl ImmediateBoundary {
 }
 
 impl BoundedObject for ImmediateBoundary {
-    fn next_start(
-        &self,
-        map: &DisplaySnapshot,
-        from: DisplayPoint,
-        outer: bool,
-    ) -> Option<DisplayPoint> {
+    fn next_start(&self, map: &DisplaySnapshot, from: Offset, outer: bool) -> Option<Offset> {
         try_find_boundary(map, from, |left, right| {
-            let classifier = map
-                .buffer_snapshot
-                .char_classifier_at(from.to_offset(map, Bias::Left));
+            let classifier = map.buffer_snapshot.char_classifier_at(*from);
             if outer {
                 self.is_outer_start(left, right, classifier)
             } else {
@@ -367,16 +368,9 @@ impl BoundedObject for ImmediateBoundary {
             }
         })
     }
-    fn next_end(
-        &self,
-        map: &DisplaySnapshot,
-        from: DisplayPoint,
-        outer: bool,
-    ) -> Option<DisplayPoint> {
+    fn next_end(&self, map: &DisplaySnapshot, from: Offset, outer: bool) -> Option<Offset> {
         try_find_boundary(map, from, |left, right| {
-            let classifier = map
-                .buffer_snapshot
-                .char_classifier_at(from.to_offset(map, Bias::Left));
+            let classifier = map.buffer_snapshot.char_classifier_at(*from);
             if outer {
                 self.is_outer_end(left, right, classifier)
             } else {
@@ -384,16 +378,9 @@ impl BoundedObject for ImmediateBoundary {
             }
         })
     }
-    fn previous_start(
-        &self,
-        map: &DisplaySnapshot,
-        from: DisplayPoint,
-        outer: bool,
-    ) -> Option<DisplayPoint> {
+    fn previous_start(&self, map: &DisplaySnapshot, from: Offset, outer: bool) -> Option<Offset> {
         try_find_preceding_boundary(map, from, |left, right| {
-            let classifier = map
-                .buffer_snapshot
-                .char_classifier_at(from.to_offset(map, Bias::Left));
+            let classifier = map.buffer_snapshot.char_classifier_at(*from);
             if outer {
                 self.is_outer_start(left, right, classifier)
             } else {
@@ -401,16 +388,9 @@ impl BoundedObject for ImmediateBoundary {
             }
         })
     }
-    fn previous_end(
-        &self,
-        map: &DisplaySnapshot,
-        from: DisplayPoint,
-        outer: bool,
-    ) -> Option<DisplayPoint> {
+    fn previous_end(&self, map: &DisplaySnapshot, from: Offset, outer: bool) -> Option<Offset> {
         try_find_preceding_boundary(map, from, |left, right| {
-            let classifier = map
-                .buffer_snapshot
-                .char_classifier_at(from.to_offset(map, Bias::Left));
+            let classifier = map.buffer_snapshot.char_classifier_at(*from);
             if outer {
                 self.is_outer_end(left, right, classifier)
             } else {
@@ -440,7 +420,7 @@ impl FuzzyBoundary {
         left: char,
         right: char,
         classifier: &CharClassifier,
-    ) -> Option<Box<dyn Fn(DisplayPoint, &'a DisplaySnapshot) -> Option<DisplayPoint>>> {
+    ) -> Option<Box<dyn Fn(Offset, &'a DisplaySnapshot) -> Option<Offset>>> {
         if is_buffer_start(left) {
             return Some(Box::new(|identifier, _| Some(identifier)));
         }
@@ -477,7 +457,7 @@ impl FuzzyBoundary {
         left: char,
         right: char,
         classifier: &CharClassifier,
-    ) -> Option<Box<dyn Fn(DisplayPoint, &'a DisplaySnapshot) -> Option<DisplayPoint>>> {
+    ) -> Option<Box<dyn Fn(Offset, &'a DisplaySnapshot) -> Option<Offset>>> {
         if is_buffer_end(right) {
             return Some(Box::new(|identifier, _| Some(identifier)));
         }
@@ -511,7 +491,7 @@ impl FuzzyBoundary {
         left: char,
         right: char,
         classifier: &CharClassifier,
-    ) -> Option<Box<dyn Fn(DisplayPoint, &'a DisplaySnapshot) -> Option<DisplayPoint>>> {
+    ) -> Option<Box<dyn Fn(Offset, &'a DisplaySnapshot) -> Option<Offset>>> {
         match self {
             paragraph @ Self::Paragraph => {
                 paragraph.is_near_potential_inner_end(left, right, classifier)
@@ -528,7 +508,7 @@ impl FuzzyBoundary {
         left: char,
         right: char,
         classifier: &CharClassifier,
-    ) -> Option<Box<dyn Fn(DisplayPoint, &'a DisplaySnapshot) -> Option<DisplayPoint>>> {
+    ) -> Option<Box<dyn Fn(Offset, &'a DisplaySnapshot) -> Option<Offset>>> {
         match self {
             paragraph @ Self::Paragraph => {
                 paragraph.is_near_potential_inner_start(left, right, classifier)
@@ -545,15 +525,13 @@ impl FuzzyBoundary {
     fn to_boundary(
         &self,
         map: &DisplaySnapshot,
-        from: DisplayPoint,
+        from: Offset,
         outer: bool,
         backward: bool,
         boundary_kind: Boundary,
-    ) -> Option<DisplayPoint> {
-        let generate_boundary_data = |left, right, point: DisplayPoint| {
-            let classifier = map
-                .buffer_snapshot
-                .char_classifier_at(point.to_offset(map, Bias::Left));
+    ) -> Option<Offset> {
+        let generate_boundary_data = |left, right, point: Offset| {
+            let classifier = map.buffer_snapshot.char_classifier_at(*from);
             let reach_boundary = if outer && boundary_kind == Boundary::Start {
                 self.is_near_potential_outer_start(left, right, &classifier)
             } else if !outer && boundary_kind == Boundary::Start {
@@ -579,9 +557,9 @@ impl FuzzyBoundary {
                 Ordering::Greater => !backward,
             });
         if backward {
-            boundaries.max()
+            boundaries.max_by_key(|boundary| **boundary)
         } else {
-            boundaries.min()
+            boundaries.min_by_key(|boundary| **boundary)
         }
     }
 }
@@ -593,36 +571,16 @@ enum Boundary {
 }
 
 impl BoundedObject for FuzzyBoundary {
-    fn next_start(
-        &self,
-        map: &DisplaySnapshot,
-        from: DisplayPoint,
-        outer: bool,
-    ) -> Option<DisplayPoint> {
+    fn next_start(&self, map: &DisplaySnapshot, from: Offset, outer: bool) -> Option<Offset> {
         self.to_boundary(map, from, outer, false, Boundary::Start)
     }
-    fn next_end(
-        &self,
-        map: &DisplaySnapshot,
-        from: DisplayPoint,
-        outer: bool,
-    ) -> Option<DisplayPoint> {
+    fn next_end(&self, map: &DisplaySnapshot, from: Offset, outer: bool) -> Option<Offset> {
         self.to_boundary(map, from, outer, false, Boundary::End)
     }
-    fn previous_start(
-        &self,
-        map: &DisplaySnapshot,
-        from: DisplayPoint,
-        outer: bool,
-    ) -> Option<DisplayPoint> {
+    fn previous_start(&self, map: &DisplaySnapshot, from: Offset, outer: bool) -> Option<Offset> {
         self.to_boundary(map, from, outer, true, Boundary::Start)
     }
-    fn previous_end(
-        &self,
-        map: &DisplaySnapshot,
-        from: DisplayPoint,
-        outer: bool,
-    ) -> Option<DisplayPoint> {
+    fn previous_end(&self, map: &DisplaySnapshot, from: Offset, outer: bool) -> Option<Offset> {
         self.to_boundary(map, from, outer, true, Boundary::End)
     }
     fn can_be_zero_width(&self, _: bool) -> bool {
@@ -637,9 +595,9 @@ impl BoundedObject for FuzzyBoundary {
 /// The start and end of the file are the chars `'\0'`.
 fn try_find_boundary(
     map: &DisplaySnapshot,
-    from: DisplayPoint,
+    from: Offset,
     is_boundary: impl Fn(char, char) -> bool,
-) -> Option<DisplayPoint> {
+) -> Option<Offset> {
     let boundary = try_find_boundary_data(map, from, |left, right, point| {
         if is_boundary(left, right) {
             Some(point)
@@ -655,22 +613,20 @@ fn try_find_boundary(
 /// The start and end of the file are the chars `'\0'`.
 fn try_find_boundary_data<T>(
     map: &DisplaySnapshot,
-    from: DisplayPoint,
-    boundary_information: impl Fn(char, char, DisplayPoint) -> Option<T>,
+    mut from: Offset,
+    boundary_information: impl Fn(char, char, Offset) -> Option<T>,
 ) -> Option<T> {
-    let mut offset = from.to_offset(map, Bias::Right);
     let mut prev_ch = map
         .buffer_snapshot
-        .reversed_chars_at(offset)
+        .reversed_chars_at(*from)
         .next()
         .unwrap_or('\0');
 
-    for ch in map.buffer_snapshot.chars_at(offset).chain(['\0']) {
-        let display_point = offset.to_display_point(map);
-        if let Some(boundary_information) = boundary_information(prev_ch, ch, display_point) {
+    for ch in map.buffer_snapshot.chars_at(*from).chain(['\0']) {
+        if let Some(boundary_information) = boundary_information(prev_ch, ch, from) {
             return Some(boundary_information);
         }
-        offset += ch.len_utf8();
+        *from += ch.len_utf8();
         prev_ch = ch;
     }
 
@@ -681,9 +637,9 @@ fn try_find_boundary_data<T>(
 /// The start and end of the file are the chars `'\0'`.
 fn try_find_preceding_boundary(
     map: &DisplaySnapshot,
-    from: DisplayPoint,
+    from: Offset,
     is_boundary: impl Fn(char, char) -> bool,
-) -> Option<DisplayPoint> {
+) -> Option<Offset> {
     let boundary = try_find_preceding_boundary_data(map, from, |left, right, point| {
         if is_boundary(left, right) {
             Some(point)
@@ -699,18 +655,16 @@ fn try_find_preceding_boundary(
 /// The start and end of the file are the chars `'\0'`.
 fn try_find_preceding_boundary_data<T>(
     map: &DisplaySnapshot,
-    from: DisplayPoint,
-    is_boundary: impl Fn(char, char, DisplayPoint) -> Option<T>,
+    mut from: Offset,
+    is_boundary: impl Fn(char, char, Offset) -> Option<T>,
 ) -> Option<T> {
-    let mut offset = from.to_offset(map, Bias::Left);
-    let mut prev_ch = map.buffer_snapshot.chars_at(offset).next().unwrap_or('\0');
+    let mut prev_ch = map.buffer_snapshot.chars_at(*from).next().unwrap_or('\0');
 
-    for ch in map.buffer_snapshot.reversed_chars_at(offset).chain(['\0']) {
-        let display_point = offset.to_display_point(map);
-        if let Some(boundary_information) = is_boundary(ch, prev_ch, display_point) {
+    for ch in map.buffer_snapshot.reversed_chars_at(*from).chain(['\0']) {
+        if let Some(boundary_information) = is_boundary(ch, prev_ch, from) {
             return Some(boundary_information);
         }
-        offset = offset.saturating_sub(ch.len_utf8());
+        from.0 = from.0.saturating_sub(ch.len_utf8());
         prev_ch = ch;
     }
 
