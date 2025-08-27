@@ -698,7 +698,7 @@ fn python_env_kind_display(k: &PythonEnvironmentKind) -> &'static str {
         PythonEnvironmentKind::WindowsRegistry => "global (Windows Registry)",
     }
 }
-#[derive(Default)]
+
 pub(crate) struct PythonToolchainProvider;
 
 static ENV_PRIORITY_LIST: &[PythonEnvironmentKind] = &[
