@@ -954,7 +954,7 @@ mod tests {
         }
     }
 
-    /// For GPUI, when you press `ctrl-shift-2`, it produces `@` without the shift modifier.
+    /// For GPUI, when you press `ctrl-shift-2`, it produces `ctrl-@` without the shift modifier.
     fn to_gpui_keystroke(mut keystroke: Keystroke) -> Keystroke {
         if keystroke.modifiers.shift {
             match keystroke.key.as_str() {
