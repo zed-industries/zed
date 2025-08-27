@@ -1,9 +1,7 @@
-use std::{rc::Rc, time::Duration};
-
 use collections::HashMap;
 use gpui::{Animation, AnimationExt as _, Entity, Transformation, WeakEntity, percentage};
-use itertools::Itertools;
 use project::debugger::session::{ThreadId, ThreadStatus};
+use std::{rc::Rc, time::Duration};
 use ui::{ContextMenu, DropdownMenu, DropdownStyle, Indicator, prelude::*};
 use util::{maybe, truncate_and_trailoff};
 
