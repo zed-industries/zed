@@ -1,3 +1,5 @@
+mod ui_components;
+
 use std::{
     cmp::{self},
     ops::{Not as _, Range},
@@ -35,7 +37,7 @@ use workspace::{
 };
 
 use crate::{
-    keybindings::persistence::KEYBINDING_EDITORS,
+    persistence::KEYBINDING_EDITORS,
     ui_components::{
         keystroke_input::{ClearKeystrokes, KeystrokeInput, StartRecording, StopRecording},
         table::{ColumnWidths, ResizeBehavior, Table, TableInteractionState},

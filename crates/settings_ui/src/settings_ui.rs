@@ -1,12 +1,15 @@
 mod appearance_settings_controls;
 
-use std::any::TypeId;
+use std::any::{Any, TypeId};
+use std::ptr::read;
 
+use anyhow::Context as _;
 use command_palette_hooks::CommandPaletteFilter;
 use editor::EditorSettingsControls;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
 use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, ReadGlobal, actions};
-use settings::{SettingsStore, SettingsUIItemSingle, SettingsUIItemVariant};
+use settings::{SettingsStore, SettingsUIItemSingle, SettingsUIItemVariant, SettingsValue};
+use smallvec::SmallVec;
 use ui::{SwitchField, prelude::*};
 use workspace::item::{Item, ItemEvent};
 use workspace::{Workspace, with_active_or_new_workspace};
@@ -115,58 +118,182 @@ impl Item for SettingsPage {
     }
 }
 
+fn element_id_from_path(path: &[&'static str]) -> ElementId {
+    if path.len() == 0 {
+        panic!("Path length must not be zero");
+    } else if path.len() == 1 {
+        ElementId::Name(SharedString::new_static(path[0]))
+    } else {
+        ElementId::from((
+            ElementId::from(SharedString::new_static(path[path.len() - 2])),
+            SharedString::new_static(path[path.len() - 1]),
+        ))
+    }
+}
+
+fn render_item_single(
+    settings_value: SettingsValue<serde_json::Value>,
+    item: &SettingsUIItemSingle,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    match item {
+        SettingsUIItemSingle::Custom(_) => div()
+            .child(format!("Item: {}", settings_value.path.join(".")))
+            .into_any_element(),
+        SettingsUIItemSingle::SwitchField => {
+            render_any_item(settings_value, render_switch_field, window, cx)
+        }
+    }
+}
+
+fn read_settings_value_from_path<'a>(
+    settings_contents: &'a serde_json::Value,
+    path: &[&'static str],
+) -> Option<&'a serde_json::Value> {
+    let Some((key, remaining)) = path.split_first() else {
+        return Some(settings_contents);
+    };
+    let Some(value) = settings_contents.get(key) else {
+        // let error = format!("Key not found: {}", key);
+        // dbg!(error);
+        return None;
+    };
+
+    read_settings_value_from_path(value, remaining)
+}
+
+fn render_any_item<T: serde::de::DeserializeOwned>(
+    settings_value: SettingsValue<serde_json::Value>,
+    render_fn: impl Fn(SettingsValue<T>, &mut Window, &mut App) -> AnyElement + 'static,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let value = settings_value
+        .value
+        .map(|value| serde_json::from_value::<T>(value).expect("value is not a T"));
+    // todo! We have to make sure default.json has all default setting values now
+    let default_value = serde_json::from_value::<T>(settings_value.default_value)
+        .expect("default value is not an Option<T>");
+    let deserialized_setting_value = SettingsValue {
+        title: settings_value.title,
+        path: settings_value.path,
+        value,
+        default_value,
+    };
+    render_fn(deserialized_setting_value, window, cx)
+}
+
+fn render_switch_field(
+    value: SettingsValue<bool>,
+    _window: &mut Window,
+    _cx: &mut App,
+) -> AnyElement {
+    let id = element_id_from_path(&value.path);
+    SwitchField::new(
+        id,
+        SharedString::new_static(value.title),
+        None,
+        match value.read() {
+            true => ToggleState::Selected,
+            false => ToggleState::Unselected,
+        },
+        move |toggle_state, _, _| {
+            let new_value = match toggle_state {
+                ToggleState::Indeterminate => {
+                    return;
+                }
+                ToggleState::Selected => true,
+                ToggleState::Unselected => false,
+            };
+            dbg!("wrote:", new_value);
+            // value.write(new_value); // todo! figure out a way to get this working
+        },
+    )
+    .into_any_element()
+}
+
+fn settings_value_from_settings_and_path(
+    path: SmallVec<[&'static str; 1]>,
+    user_settings: &serde_json::Value,
+    default_settings: &serde_json::Value,
+) -> SettingsValue<serde_json::Value> {
+    let default_value = read_settings_value_from_path(default_settings, &path)
+        .with_context(|| format!("No default value for item at path {:?}", path.join(".")))
+        .expect("Default value set for item")
+        .clone();
+
+    let value = read_settings_value_from_path(user_settings, &path).cloned();
+    let settings_value = SettingsValue {
+        default_value,
+        value,
+        path: path.clone(),
+        title: path.last().expect("todo! pass path"),
+    };
+    return settings_value;
+}
+
 impl Render for SettingsPage {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let user_settings;
+        let default_settings;
+        let items;
+        {
+            let settings_store = SettingsStore::global(cx);
+            // todo! remove clones somehow?
+            user_settings = settings_store.raw_user_settings.clone();
+            default_settings = settings_store.raw_default_settings.clone();
+            items = settings_store
+                .settings_ui_items()
+                .into_iter()
+                .collect::<Vec<_>>();
+        }
+
         v_flex()
             .p_4()
             .size_full()
             .gap_4()
-            .children(
-                SettingsStore::global(cx)
-                    .settings_ui_items()
-                    .into_iter()
-                    .flat_map(|item| match item.item {
-                        settings::SettingsUIItemVariant::Group { title, path, group } => Some(
-                            div()
-                                .child(Label::new(title).size(LabelSize::Large))
-                                .children(group.items.iter().map(|item| {
-                                    match &item.item {
-                                        settings::SettingsUIItemVariant::Group {
+            .children(items.into_iter().flat_map(|item| {
+                match item.item {
+                    settings::SettingsUIItemVariant::Group {
+                        title,
+                        path: group_path,
+                        group,
+                    } => Some(
+                        div()
+                            .child(Label::new(title).size(LabelSize::Large))
+                            .children(group.items.iter().map(|item| {
+                                match &item.item {
+                                    settings::SettingsUIItemVariant::Group {
+                                        path,
+                                        title,
+                                        group,
+                                    } => div()
+                                        .child(format!("Subgroup: {}", title))
+                                        .into_any_element(),
+                                    settings::SettingsUIItemVariant::Item {
+                                        path: item_path,
+                                        item,
+                                    } => {
+                                        let path = smallvec::smallvec![group_path, *item_path];
+                                        let settings_value = settings_value_from_settings_and_path(
                                             path,
-                                            title,
-                                            group,
-                                        } => div()
-                                            .child(format!("Subgroup: {}", title))
-                                            .into_any_element(),
-                                        settings::SettingsUIItemVariant::Item { path, item } => {
-                                            match item {
-                                                SettingsUIItemSingle::Custom(_) => div()
-                                                    .child(format!("Item: {}", path))
-                                                    .into_any_element(),
-                                                SettingsUIItemSingle::SwitchField => div()
-                                                    .child(SwitchField::new(
-                                                        ElementId::Name(SharedString::new_static(
-                                                            path,
-                                                        )),
-                                                        SharedString::new_static(path),
-                                                        None,
-                                                        ToggleState::Unselected,
-                                                        |_, _, _| {},
-                                                    ))
-                                                    .into_any_element(),
-                                            }
-                                        }
-                                        settings::SettingsUIItemVariant::None => {
-                                            div().child("None").into_any_element()
-                                        }
+                                            &user_settings,
+                                            &default_settings,
+                                        );
+                                        render_item_single(settings_value, item, window, cx)
                                     }
-                                })),
-                        ),
+                                    settings::SettingsUIItemVariant::None => {
+                                        div().child("None").into_any_element()
+                                    }
+                                }
+                            })),
+                    ),
 
-                        settings::SettingsUIItemVariant::Item { path, item } => todo!(),
-                        settings::SettingsUIItemVariant::None => None,
-                    }),
-            )
+                    settings::SettingsUIItemVariant::Item { path, item } => todo!(),
+                    settings::SettingsUIItemVariant::None => None,
+                }
+            }))
             .child(Label::new("Settings").size(LabelSize::Large))
             .child(
                 v_flex().gap_1().child(Label::new("Appearance")).child(

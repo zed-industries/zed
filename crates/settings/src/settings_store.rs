@@ -193,9 +193,11 @@ pub struct SettingsLocation<'a> {
 /// A set of strongly-typed setting values defined via multiple config files.
 pub struct SettingsStore {
     setting_values: HashMap<TypeId, Box<dyn AnySettingValue>>,
-    raw_default_settings: Value,
+    // todo! non pub?
+    pub raw_default_settings: Value,
     raw_global_settings: Option<Value>,
-    raw_user_settings: Value,
+    // todo! non pub?
+    pub raw_user_settings: Value,
     raw_server_settings: Option<Value>,
     raw_extension_settings: Value,
     raw_local_settings: BTreeMap<(WorktreeId, Arc<Path>), Value>,
@@ -512,49 +514,10 @@ impl SettingsStore {
         }
     }
 
-    pub fn update_settings_file<T: Settings>(
+    fn update_settings_file_inner(
         &self,
         fs: Arc<dyn Fs>,
-        update: impl 'static + Send + FnOnce(&mut T::FileContent, &App),
-    ) {
-        self.setting_file_updates_tx
-            .unbounded_send(Box::new(move |cx: AsyncApp| {
-                async move {
-                    let old_text = Self::load_settings(&fs).await?;
-                    let new_text = cx.read_global(|store: &SettingsStore, cx| {
-                        store.new_text_for_update::<T>(old_text, |content| update(content, cx))
-                    })?;
-                    let settings_path = paths::settings_file().as_path();
-                    if fs.is_file(settings_path).await {
-                        let resolved_path =
-                            fs.canonicalize(settings_path).await.with_context(|| {
-                                format!("Failed to canonicalize settings path {:?}", settings_path)
-                            })?;
-
-                        fs.atomic_write(resolved_path.clone(), new_text)
-                            .await
-                            .with_context(|| {
-                                format!("Failed to write settings to file {:?}", resolved_path)
-                            })?;
-                    } else {
-                        fs.atomic_write(settings_path.to_path_buf(), new_text)
-                            .await
-                            .with_context(|| {
-                                format!("Failed to write settings to file {:?}", settings_path)
-                            })?;
-                    }
-
-                    anyhow::Ok(())
-                }
-                .boxed_local()
-            }))
-            .ok();
-    }
-
-    pub fn import_vscode_settings(
-        &self,
-        fs: Arc<dyn Fs>,
-        vscode_settings: VsCodeSettings,
+        update: impl 'static + Send + FnOnce(String, AsyncApp) -> Result<String>,
     ) -> oneshot::Receiver<Result<()>> {
         let (tx, rx) = oneshot::channel::<Result<()>>();
         self.setting_file_updates_tx
@@ -562,9 +525,7 @@ impl SettingsStore {
                 async move {
                     let res = async move {
                         let old_text = Self::load_settings(&fs).await?;
-                        let new_text = cx.read_global(|store: &SettingsStore, _cx| {
-                            store.get_vscode_edits(old_text, &vscode_settings)
-                        })?;
+                        let new_text = update(old_text, cx)?;
                         let settings_path = paths::settings_file().as_path();
                         if fs.is_file(settings_path).await {
                             let resolved_path =
@@ -587,7 +548,6 @@ impl SettingsStore {
                                     format!("Failed to write settings to file {:?}", settings_path)
                                 })?;
                         }
-
                         anyhow::Ok(())
                     }
                     .await;
@@ -602,9 +562,33 @@ impl SettingsStore {
                 }
                 .boxed_local()
             }))
-            .ok();
+            .map_err(|err| anyhow::format_err!("Failed to update settings file: {}", err))
+            .log_with_level(log::Level::Warn);
+        return rx;
+    }
 
-        rx
+    pub fn update_settings_file<T: Settings>(
+        &self,
+        fs: Arc<dyn Fs>,
+        update: impl 'static + Send + FnOnce(&mut T::FileContent, &App),
+    ) {
+        _ = self.update_settings_file_inner(fs, move |old_text: String, cx: AsyncApp| {
+            cx.read_global(|store: &SettingsStore, cx| {
+                store.new_text_for_update::<T>(old_text, |content| update(content, cx))
+            })
+        });
+    }
+
+    pub fn import_vscode_settings(
+        &self,
+        fs: Arc<dyn Fs>,
+        vscode_settings: VsCodeSettings,
+    ) -> oneshot::Receiver<Result<()>> {
+        self.update_settings_file_inner(fs, move |old_text: String, cx: AsyncApp| {
+            cx.read_global(|store: &SettingsStore, _cx| {
+                store.get_vscode_edits(old_text, &vscode_settings)
+            })
+        })
     }
 
     pub fn settings_ui_items(&self) -> impl IntoIterator<Item = SettingsUIItem> {

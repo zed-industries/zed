@@ -1,6 +1,7 @@
 use std::any::Any;
 
 use gpui::{AnyElement, App, Window};
+use smallvec::SmallVec;
 
 pub trait SettingsUI {
     fn settings_ui_render() -> SettingsUIRender {
@@ -38,6 +39,26 @@ pub enum SettingsUIItemSingle {
     // TODO: default/builtin variants
     SwitchField,
     Custom(Box<dyn Fn(&dyn Any, &mut Window, &mut App) -> AnyElement>),
+}
+
+pub struct SettingsValue<T> {
+    pub title: &'static str,
+    pub path: SmallVec<[&'static str; 1]>,
+    pub value: Option<T>,
+    pub default_value: T,
+}
+
+impl<T> SettingsValue<T> {
+    pub fn read(&self) -> &T {
+        match &self.value {
+            Some(value) => value,
+            None => &self.default_value,
+        }
+    }
+
+    pub fn write(&self, _value: T) {
+        todo!()
+    }
 }
 
 pub enum SettingsUIRender {

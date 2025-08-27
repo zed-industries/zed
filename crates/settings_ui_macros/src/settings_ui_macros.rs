@@ -30,6 +30,7 @@ pub fn derive_settings_ui(input: proc_macro::TokenStream) -> proc_macro::TokenSt
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
     let mut group_name = Option::<String>::None;
+    let mut path_name = Option::<String>::None;
 
     for attr in &input.attrs {
         if attr.path().is_ident("settings_ui") {
@@ -41,6 +42,13 @@ pub fn derive_settings_ui(input: proc_macro::TokenStream) -> proc_macro::TokenSt
                     meta.input.parse::<Token![=]>()?;
                     let lit: LitStr = meta.input.parse()?;
                     group_name = Some(lit.value());
+                } else if meta.path.is_ident("path") {
+                    if path_name.is_some() {
+                        return Err(meta.error("Only one 'path' can be specified"));
+                    }
+                    meta.input.parse::<Token![=]>()?;
+                    let lit: LitStr = meta.input.parse()?;
+                    path_name = Some(lit.value());
                 }
                 Ok(())
             })
@@ -113,7 +121,10 @@ pub fn derive_settings_ui(input: proc_macro::TokenStream) -> proc_macro::TokenSt
         }
     };
 
-    let settings_ui_item_fn_body = map_ui_item_to_render("todo! define path", quote! { Self });
+    let settings_ui_item_fn_body = map_ui_item_to_render(
+        path_name.as_deref().unwrap_or("todo! no path specified"),
+        quote! { Self },
+    );
 
     let expanded = quote! {
         impl #impl_generics settings::SettingsUI for #name #ty_generics #where_clause {
