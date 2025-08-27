@@ -754,6 +754,8 @@ impl BufferSearchBar {
         let settings_changed = configured_options != self.configured_options;
 
         if self.dismissed && settings_changed {
+            // Only update configuration options when search bar is dismissed,
+            // so we don't miss updates even after calling show twice
             self.configured_options = configured_options;
             self.search_options = configured_options;
             self.default_options = configured_options;
