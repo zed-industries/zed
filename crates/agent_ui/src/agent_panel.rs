@@ -29,7 +29,6 @@ use crate::{
     slash_command::SlashCommandCompletionProvider,
     text_thread_editor::{
         AgentPanelDelegate, TextThreadEditor, humanize_token_count, make_lsp_adapter_delegate,
-        render_remaining_tokens,
     },
     thread_history::{HistoryEntryElement, ThreadHistory},
     ui::{AgentOnboardingModal, EndTrialUpsell},
@@ -2871,12 +2870,8 @@ impl AgentPanel {
 
                 Some(token_count)
             }
-            ActiveView::TextThread { context_editor, .. } => {
-                let element = render_remaining_tokens(context_editor, cx)?;
-
-                Some(element.into_any_element())
-            }
             ActiveView::ExternalAgentThread { .. }
+            | ActiveView::TextThread { .. }
             | ActiveView::History
             | ActiveView::Configuration => None,
         }
