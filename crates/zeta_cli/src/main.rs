@@ -129,15 +129,15 @@ async fn get_context(
         return Err(anyhow!("Absolute paths are not supported in --cursor"));
     }
 
-    let (project, _lsp_open_handle, buffer) = if use_language_server {
-        let (project, lsp_open_handle, buffer) =
+    let (_lsp_open_handle, buffer) = if use_language_server {
+        let (_project, lsp_open_handle, buffer) =
             open_buffer_with_language_server(&worktree_path, &cursor.path, app_state, cx).await?;
-        (Some(project), Some(lsp_open_handle), buffer)
+        (Some(lsp_open_handle), buffer)
     } else {
         let abs_path = worktree_path.join(&cursor.path);
         let content = smol::fs::read_to_string(&abs_path).await?;
         let buffer = cx.new(|cx| Buffer::local(content, cx))?;
-        (None, None, buffer)
+        (None, buffer)
     };
 
     let worktree_name = worktree_path
@@ -172,21 +172,14 @@ async fn get_context(
         None => String::new(),
     };
     // Enable gathering extra data not currently needed for edit predictions
-    let git_info = None;
-    let mut gather_context_output = cx
-        .update(|cx| {
-            gather_context(
-                project.as_ref(),
-                full_path_str,
-                &snapshot,
-                clipped_cursor,
-                move || events,
-                CanCollectData(true),
-                git_info,
-                cx,
-            )
-        })?
-        .await;
+    let mut gather_context_output = gather_context(
+        full_path_str,
+        snapshot,
+        clipped_cursor,
+        move || events,
+        CanCollectData(true),
+    )
+    .await;
 
     // Disable data collection for these requests, as this is currently just used for evals
     if let Ok(gather_context_output) = gather_context_output.as_mut() {

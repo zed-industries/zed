@@ -138,30 +138,44 @@ pub enum LanguageModelProvider {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictEditsBody {
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub outline: Option<String>,
     pub input_events: String,
     pub input_excerpt: String,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub speculated_output: Option<String>,
     /// Whether the user provided consent for sampling this interaction.
     #[serde(default, alias = "data_collection_permission")]
     pub can_collect_data: bool,
+    /// Note that this is no longer sent, in favor of `PredictEditsAdditionalContext`.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub diagnostic_groups: Option<Vec<(String, serde_json::Value)>>,
-    /// Info about the git repository state, only present when can_collect_data is true.
+    /// Info about the git repository state, only present when can_collect_data is true. Note that
+    /// this is no longer sent, in favor of `PredictEditsAdditionalContext`.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub git_info: Option<PredictEditsGitInfo>,
 }
 
+/// Additional context only stored when can_collect_data is true for the corresponding edit
+/// predictions request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PredictEditsAdditionalContext {
+    /// Path to the file in the repository that contains the input excerpt.
+    pub input_path: String,
+    /// Cursor position within the file that contains the input excerpt.
+    pub cursor_point: Point,
+    /// Cursor offset in bytes within the file that contains the input excerpt.
+    pub cursor_offset: usize,
+    #[serde(flatten)]
+    pub git_info: PredictEditsGitInfo,
+    /// Diagnostic near the cursor position.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub diagnostic_groups: Vec<(String, Box<serde_json::value::RawValue>)>,
+    /// True if the diagnostics were truncated.
+    pub diagnostic_groups_truncated: bool,
+    /// Recently active files that may be within this repository.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub recent_files: Vec<PredictEditsRecentFile>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictEditsGitInfo {
-    /// Path to the file in the repository that contains the input excerpt.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub input_path: Option<String>,
-    /// Cursor position within the file that contains the input excerpt.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub cursor_point: Option<Point>,
     /// SHA of git HEAD commit at time of prediction.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub head_sha: Option<String>,
@@ -171,9 +185,6 @@ pub struct PredictEditsGitInfo {
     /// URL of the remote called `upstream`.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub remote_upstream_url: Option<String>,
-    /// Recently active files that may be within this repository.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub recent_files: Option<Vec<PredictEditsRecentFile>>,
 }
 
 /// A zero-indexed point in a text buffer consisting of a row and column.

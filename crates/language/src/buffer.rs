@@ -146,7 +146,7 @@ pub struct BufferSnapshot {
     pub text: text::BufferSnapshot,
     pub(crate) syntax: SyntaxSnapshot,
     file: Option<Arc<dyn File>>,
-    diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
+    pub diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
     language: Option<Arc<Language>>,
     non_text_state_update_count: usize,
