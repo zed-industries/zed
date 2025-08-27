@@ -71,7 +71,6 @@ impl RenderOnce for AddToolchainState {
         let weak = self.weak.upgrade();
         v_flex()
             .size_full()
-            .p_3()
             .rounded_md()
             .gap_1()
             .when_some(weak, |this, weak| {
@@ -85,15 +84,28 @@ impl RenderOnce for AddToolchainState {
                 ))
             })
             .bg(theme.colors().background)
-            .child(Label::new("Path"))
+            .child(
+                h_flex().w_full().child(
+                    h_flex()
+                        .w_full()
+                        .bg(theme.colors().editor_background)
+                        .p_2()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(theme.colors().border)
+                        .child(self.path),
+                ),
+            )
             .child(
                 h_flex()
-                    .bg(theme.colors().editor_background)
-                    .p_1()
-                    .rounded_sm()
-                    .border_1()
-                    .border_color(theme.colors().border)
-                    .child(self.path),
+                    .rounded_md()
+                    .bg(theme.colors().background)
+                    .p_2()
+                    .child(
+                        Label::new("Enter path to the python3 executable")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    ),
             )
     }
 }
