@@ -21,7 +21,7 @@ pub struct EncodingIndicator {
     pub encoding: Option<&'static dyn Encoding>,
     pub workspace: WeakEntity<Workspace>,
     observe: Option<Subscription>, // Subscription to observe changes in the active editor
-    show: bool,
+    show: bool, // Whether to show the indicator or not, based on whether an editor is active
 }
 
 pub mod selectors;

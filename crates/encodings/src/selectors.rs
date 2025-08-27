@@ -120,13 +120,14 @@ pub mod save_or_reopen {
 
                     workspace.update(cx, |workspace, cx| {
                         workspace.toggle_modal(window, cx, |window, cx| {
-                            EncodingSelector::new(
+                            let selector = EncodingSelector::new(
                                 window,
                                 cx,
                                 Action::Save,
                                 buffer.downgrade(),
                                 weak_workspace,
-                            )
+                            );
+                            selector
                         })
                     });
                 }
@@ -143,14 +144,15 @@ pub mod save_or_reopen {
 
                     workspace.update(cx, |workspace, cx| {
                         workspace.toggle_modal(window, cx, |window, cx| {
-                            EncodingSelector::new(
+                            let selector = EncodingSelector::new(
                                 window,
                                 cx,
                                 Action::Reopen,
                                 buffer.downgrade(),
                                 weak_workspace,
-                            )
-                        })
+                            );
+                            selector
+                        });
                     });
                 }
             }
@@ -516,7 +518,7 @@ pub mod encoding {
 
     impl Focusable for EncodingSelector {
         fn focus_handle(&self, cx: &ui::App) -> gpui::FocusHandle {
-            cx.focus_handle()
+            self.picker.focus_handle(cx)
         }
     }
 
