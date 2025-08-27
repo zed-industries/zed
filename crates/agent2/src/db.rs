@@ -18,6 +18,7 @@ use sqlez::{
 };
 use std::sync::Arc;
 use ui::{App, SharedString};
+use zed_env_vars::ZED_STATELESS;
 
 pub type DbMessage = crate::Message;
 pub type DbSummary = DetailedSummaryState;
@@ -200,9 +201,6 @@ impl DbThread {
         })
     }
 }
-
-pub static ZED_STATELESS: std::sync::LazyLock<bool> =
-    std::sync::LazyLock::new(|| std::env::var("ZED_STATELESS").is_ok_and(|v| !v.is_empty()));
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DataType {
