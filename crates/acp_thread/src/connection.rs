@@ -232,6 +232,13 @@ impl AgentModelList {
             AgentModelList::Grouped(groups) => groups.is_empty(),
         }
     }
+
+    pub fn len(&self) -> usize {
+        match self {
+            AgentModelList::Flat(models) => models.len(),
+            AgentModelList::Grouped(groups) => groups.values().len(),
+        }
+    }
 }
 
 #[cfg(feature = "test-support")]

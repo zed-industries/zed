@@ -72,7 +72,7 @@ impl AcpModelPickerDelegate {
 
                     this.update_in(cx, |this, window, cx| {
                         this.delegate.models = models.log_err();
-                        this.delegate.selected_model = selected_model.log_err();
+                        this.delegate.selected_model = selected_model.ok();
                         this.delegate.update_matches(this.query(cx), window, cx)
                     })?
                     .await;
@@ -144,6 +144,11 @@ impl PickerDelegate for AcpModelPickerDelegate {
         cx.spawn_in(window, async move |this, cx| {
             let filtered_models = match this
                 .read_with(cx, |this, cx| {
+                    if let Some(models) = this.delegate.models.as_ref() {
+                        log::debug!("Filtering {} models.", models.len());
+                    } else {
+                        log::debug!("No models available.");
+                    }
                     this.delegate.models.clone().map(move |models| {
                         fuzzy_search(models, query, cx.background_executor().clone())
                     })
@@ -154,6 +159,8 @@ impl PickerDelegate for AcpModelPickerDelegate {
                 Some(task) => task.await,
                 None => AgentModelList::Flat(vec![]),
             };
+
+            log::debug!("Filtered models. {} available.", filtered_models.len());
 
             this.update_in(cx, |this, window, cx| {
                 this.delegate.filtered_entries =
