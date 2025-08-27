@@ -1,5 +1,4 @@
 mod cloud;
-mod serpapi;
 
 use client::Client;
 use gpui::{App, Context, Entity};
@@ -23,11 +22,6 @@ fn register_web_search_providers(
         registry,
         client.clone(),
         &LanguageModelRegistry::global(cx),
-        cx,
-    );
-
-    registry.register_provider(
-        serpapi::SerpApiWebSearchProvider::new(client.http_client()),
         cx,
     );
 
