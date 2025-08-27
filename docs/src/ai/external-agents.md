@@ -34,7 +34,7 @@ If you don't yet have Gemini CLI installed, then Zed will install a version for 
 You need to be running at least Gemini version `0.2.0-preview`, and if your version of Gemini is too old you will see an
 error message.
 
-The instructions to upgrade Gemini depend on how you originally installed it, but typically, running `npm install -g gemini-cli@preview` should work.
+The instructions to upgrade Gemini depend on how you originally installed it, but typically, running `npm install -g google@gemini-cli@preview` should work.
 
 #### Authentication
 
