@@ -2816,6 +2816,28 @@ mod tests {
                 "After a settings update and toggling the search bar, configured options should be used"
             );
         });
+
+        update_search_settings(
+            SearchSettings {
+                button: true,
+                whole_word: true,
+                case_sensitive: true,
+                include_ignored: false,
+                regex: false,
+            },
+            cx,
+        );
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.deploy(&deploy, window, cx);
+            search_bar.dismiss(&Dismiss, window, cx);
+            search_bar.show(window, cx);
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::CASE_SENSITIVE | SearchOptions::WHOLE_WORD,
+                "Calling deploy on an already deployed search bar should not prevent settings updates from being detected"
+            );
+        });
     }
 
     fn update_search_settings(search_settings: SearchSettings, cx: &mut TestAppContext) {
