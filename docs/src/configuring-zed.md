@@ -276,68 +276,6 @@ Define extensions which should be installed (`true`) or never installed (`false`
 
 `boolean` values
 
-## Middle Click Paste (Linux only)
-
-- Description: Enable middle-click paste on Linux
-- Setting: `middle_click_paste`
-- Default: `true`
-
-**Options**
-
-`boolean` values
-
-## Double Click In Multibuffer
-
-- Description: What to do when multibuffer is double clicked in some of its excerpts (parts of singleton buffers)
-- Setting: `double_click_in_multibuffer`
-- Default: `"select"`
-
-**Options**
-
-1. Behave as a regular buffer and select the whole word (default):
-
-```json
-{
-  "double_click_in_multibuffer": "select"
-}
-```
-
-2. Open the excerpt clicked as a new buffer in the new tab:
-
-```json
-{
-  "double_click_in_multibuffer": "open"
-}
-```
-
-For the case of "open", regular selection behavior can be achieved by holding `alt` when double clicking.
-
-## Gutter
-
-- Description: Settings for the editor gutter
-- Setting: `gutter`
-- Default:
-
-```json
-{
-  "gutter": {
-    "line_numbers": true,
-    "runnables": true,
-    "breakpoints": true,
-    "folds": true,
-    "min_line_number_digits": 4
-  }
-}
-```
-
-**Options**
-
-- `line_numbers`: Whether to show line numbers in the gutter
-- `runnables`: Whether to show runnable buttons in the gutter
-- `breakpoints`: Whether to show breakpoints in the gutter
-- `folds`: Whether to show fold buttons in the gutter
-- `min_line_number_digits`: Minimum number of characters to reserve space for in the gutter
-
 ## Auto Update
 
 - Description: Whether or not to automatically check for updates.
@@ -492,6 +430,24 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 
 `"standard"`, `"comfortable"` or `{ "custom": float }` (`1` is compact, `2` is loose)
 
+## Centered Layout
+
+- Description: Configuration for the centered layout mode.
+- Setting: `centered_layout`
+- Default:
+
+```json
+"centered_layout": {
+  "left_padding": 0.2,
+  "right_padding": 0.2,
+}
+```
+
+**Options**
+
+The `left_padding` and `right_padding` options define the relative width of the
+left and right padding of the central pane from the workspace when the centered layout mode is activated. Valid values range is from `0` to `0.4`.
+
 ## Close on File Delete
 
 - Description: Whether to automatically close editor tabs when their corresponding files are deleted from disk.
@@ -515,34 +471,6 @@ Note: Dirty files (files with unsaved changes) will not be automatically closed 
 **Options**
 
 `boolean` values
-
-## Drop Target Size
-
-- Description: Relative size of the drop target in the editor that will open dropped file as a split pane (0-0.5). For example, 0.25 means if you drop onto the top/bottom quarter of the pane a new vertical split will be used, if you drop onto the left/right quarter of the pane a new horizontal split will be used.
-- Setting: `drop_target_size`
-- Default: `0.2`
-
-**Options**
-
-`float` values between `0` and `0.5`
-
-## Centered Layout
-
-- Description: Configuration for the centered layout mode.
-- Setting: `centered_layout`
-- Default:
-
-```json
-"centered_layout": {
-  "left_padding": 0.2,
-  "right_padding": 0.2,
-}
-```
-
-**Options**
-
-The `left_padding` and `right_padding` options define the relative width of the
-left and right padding of the central pane from the workspace when the centered layout mode is activated. Valid values range is from `0` to `0.4`.
 
 ## Diagnostics Max Severity
 
@@ -616,6 +544,42 @@ There are two options to choose from:
 
 1. `shell_hook`: Use the shell hook to load direnv. This relies on direnv to activate upon entering the directory. Supports POSIX shells and fish.
 2. `direct`: Use `direnv export json` to load direnv. This will load direnv directly without relying on the shell hook and might cause some inconsistencies. This allows direnv to work with any shell.
+
+## Double Click In Multibuffer
+
+- Description: What to do when multibuffer is double clicked in some of its excerpts (parts of singleton buffers)
+- Setting: `double_click_in_multibuffer`
+- Default: `"select"`
+
+**Options**
+
+1. Behave as a regular buffer and select the whole word (default):
+
+```json
+{
+  "double_click_in_multibuffer": "select"
+}
+```
+
+2. Open the excerpt clicked as a new buffer in the new tab:
+
+```json
+{
+  "double_click_in_multibuffer": "open"
+}
+```
+
+For the case of "open", regular selection behavior can be achieved by holding `alt` when double clicking.
+
+## Drop Target Size
+
+- Description: Relative size of the drop target in the editor that will open dropped file as a split pane (0-0.5). For example, 0.25 means if you drop onto the top/bottom quarter of the pane a new vertical split will be used, if you drop onto the left/right quarter of the pane a new horizontal split will be used.
+- Setting: `drop_target_size`
+- Default: `0.2`
+
+**Options**
+
+`float` values between `0` and `0.5`
 
 ## Edit Predictions
 
@@ -762,6 +726,32 @@ List of `string` values
 ```json
 "cursor_shape": "hollow"
 ```
+
+## Gutter
+
+- Description: Settings for the editor gutter
+- Setting: `gutter`
+- Default:
+
+```json
+{
+  "gutter": {
+    "line_numbers": true,
+    "runnables": true,
+    "breakpoints": true,
+    "folds": true,
+    "min_line_number_digits": 4
+  }
+}
+```
+
+**Options**
+
+- `line_numbers`: Whether to show line numbers in the gutter
+- `runnables`: Whether to show runnable buttons in the gutter
+- `breakpoints`: Whether to show breakpoints in the gutter
+- `folds`: Whether to show fold buttons in the gutter
+- `min_line_number_digits`: Minimum number of characters to reserve space for in the gutter
 
 ## Hide Mouse
 
@@ -2664,6 +2654,16 @@ Configuration for various AI model providers including API URLs and authenticati
 **Options**
 
 Positive `integer` values or `null` for unlimited tabs
+
+## Middle Click Paste (Linux only)
+
+- Description: Enable middle-click paste on Linux
+- Setting: `middle_click_paste`
+- Default: `true`
+
+**Options**
+
+`boolean` values
 
 ## Multi Cursor Modifier
 
