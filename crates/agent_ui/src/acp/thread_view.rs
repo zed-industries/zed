@@ -2975,7 +2975,7 @@ impl AcpThreadView {
             ))
             .when_some(existing_version, |el, (path, _)| {
                 el.child(
-                    Label::new(format!("If this does not work; you will need to upgrade manualy, or uninstall your existing version from {}", path))
+                    Label::new(format!("If this does not work you will need to upgrade manually, or uninstall your existing version from {}", path))
                         .size(LabelSize::Small)
                         .color(Color::Muted),
                 )
