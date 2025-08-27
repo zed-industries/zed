@@ -11710,25 +11710,21 @@ impl LspStore {
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "workspace/fileOperations" => {
-                    if let Some(options) = reg.register_options {
-                        let caps = serde_json::from_value(options)?;
-                        server.update_capabilities(|capabilities| {
-                            capabilities
-                                .workspace
-                                .get_or_insert_default()
-                                .file_operations = Some(caps);
-                        });
-                        notify_server_capabilities_updated(&server, cx);
-                    }
+                    let caps = parse_register_options_or_default(&reg)?;
+                    server.update_capabilities(|capabilities| {
+                        capabilities
+                            .workspace
+                            .get_or_insert_default()
+                            .file_operations = Some(caps);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
                 }
                 "workspace/executeCommand" => {
-                    if let Some(options) = reg.register_options {
-                        let options = serde_json::from_value(options)?;
-                        server.update_capabilities(|capabilities| {
-                            capabilities.execute_command_provider = Some(options);
-                        });
-                        notify_server_capabilities_updated(&server, cx);
-                    }
+                    let options = parse_register_options_or_default(&reg)?;
+                    server.update_capabilities(|capabilities| {
+                        capabilities.execute_command_provider = Some(options);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/rangeFormatting" => {
                     let options = parse_register_capabilities(reg)?;
@@ -11738,16 +11734,11 @@ impl LspStore {
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/onTypeFormatting" => {
-                    if let Some(options) = reg
-                        .register_options
-                        .map(serde_json::from_value)
-                        .transpose()?
-                    {
-                        server.update_capabilities(|capabilities| {
-                            capabilities.document_on_type_formatting_provider = Some(options);
-                        });
-                        notify_server_capabilities_updated(&server, cx);
-                    }
+                    let options = parse_register_options_or_default(&reg)?;
+                    server.update_capabilities(|capabilities| {
+                        capabilities.document_on_type_formatting_provider = Some(options);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/formatting" => {
                     let options = parse_register_capabilities(reg)?;
@@ -11796,16 +11787,11 @@ impl LspStore {
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/completion" => {
-                    if let Some(caps) = reg
-                        .register_options
-                        .map(serde_json::from_value)
-                        .transpose()?
-                    {
-                        server.update_capabilities(|capabilities| {
-                            capabilities.completion_provider = Some(caps);
-                        });
-                        notify_server_capabilities_updated(&server, cx);
-                    }
+                    let caps = parse_register_options_or_default(&reg)?;
+                    server.update_capabilities(|capabilities| {
+                        capabilities.completion_provider = Some(caps);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/hover" => {
                     let options = parse_register_capabilities(reg)?;
@@ -11819,16 +11805,11 @@ impl LspStore {
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/signatureHelp" => {
-                    if let Some(caps) = reg
-                        .register_options
-                        .map(serde_json::from_value)
-                        .transpose()?
-                    {
-                        server.update_capabilities(|capabilities| {
-                            capabilities.signature_help_provider = Some(caps);
-                        });
-                        notify_server_capabilities_updated(&server, cx);
-                    }
+                    let caps = parse_register_options_or_default(&reg)?;
+                    server.update_capabilities(|capabilities| {
+                        capabilities.signature_help_provider = Some(caps);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/didChange" => {
                     if let Some(sync_kind) = reg
@@ -11877,28 +11858,22 @@ impl LspStore {
                     }
                 }
                 "textDocument/codeLens" => {
-                    if let Some(caps) = reg
-                        .register_options
-                        .map(serde_json::from_value)
-                        .transpose()?
-                    {
-                        server.update_capabilities(|capabilities| {
-                            capabilities.code_lens_provider = Some(caps);
-                        });
-                        notify_server_capabilities_updated(&server, cx);
-                    }
+                    let caps = parse_register_options_or(&reg, || lsp::CodeLensOptions {
+                        resolve_provider: None,
+                    })?;
+                    server.update_capabilities(|capabilities| {
+                        capabilities.code_lens_provider = Some(caps);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/diagnostic" => {
-                    if let Some(caps) = reg
-                        .register_options
-                        .map(serde_json::from_value)
-                        .transpose()?
-                    {
-                        server.update_capabilities(|capabilities| {
-                            capabilities.diagnostic_provider = Some(caps);
-                        });
-                        notify_server_capabilities_updated(&server, cx);
-                    }
+                    let caps = parse_register_options_or(&reg, || {
+                        lsp::DiagnosticServerCapabilities::Options(lsp::DiagnosticOptions::default())
+                    })?;
+                    server.update_capabilities(|capabilities| {
+                        capabilities.diagnostic_provider = Some(caps);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/documentColor" => {
                     let options = parse_register_capabilities(reg)?;
@@ -12175,6 +12150,26 @@ fn parse_register_capabilities<T: serde::de::DeserializeOwned>(
         Some(options) => OneOf::Right(serde_json::from_value::<T>(options)?),
         None => OneOf::Left(true),
     })
+}
+
+// Parse register_options into T or return a provided default if None.
+fn parse_register_options_or<T, F>(reg: &lsp::Registration, default: F) -> Result<T>
+where
+    T: serde::de::DeserializeOwned,
+    F: FnOnce() -> T,
+{
+    Ok(match reg.register_options.as_ref() {
+        Some(options) => serde_json::from_value::<T>(options.clone())?,
+        None => default(),
+    })
+}
+
+// Parse register_options into T or default() if None.
+fn parse_register_options_or_default<T>(reg: &lsp::Registration) -> Result<T>
+where
+    T: serde::de::DeserializeOwned + Default,
+{
+    parse_register_options_or(reg, T::default)
 }
 
 fn subscribe_to_binary_statuses(
