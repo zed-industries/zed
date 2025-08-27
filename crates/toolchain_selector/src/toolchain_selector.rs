@@ -1,6 +1,7 @@
 mod active_toolchain;
 
 pub use active_toolchain::ActiveToolchain;
+use convert_case::Casing as _;
 use editor::Editor;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
@@ -239,6 +240,7 @@ pub struct ToolchainSelectorDelegate {
     worktree_abs_path_root: Arc<Path>,
     relative_path: Arc<Path>,
     placeholder_text: Arc<str>,
+    add_toolchain_text: Arc<str>,
     _fetch_candidates_task: Task<Option<()>>,
 }
 
@@ -257,7 +259,6 @@ impl ToolchainSelectorDelegate {
     ) -> Self {
         let _fetch_candidates_task = cx.spawn_in(window, {
             async move |this, cx| {
-                let x = std::time::Instant::now();
                 let term = project
                     .read_with(cx, |this, _| {
                         Project::toolchain_term(this.languages().clone(), language_name.clone())
@@ -265,7 +266,13 @@ impl ToolchainSelectorDelegate {
                     .ok()?
                     .await?;
                 let relative_path = this
-                    .read_with(cx, |this, _| this.delegate.relative_path.clone())
+                    .update(cx, |this, cx| {
+                        this.delegate.add_toolchain_text =
+                            format!("Add {}", term.as_ref().to_case(convert_case::Case::Title))
+                                .into();
+                        cx.notify();
+                        this.delegate.relative_path.clone()
+                    })
                     .ok()?;
 
                 let (available_toolchains, relative_path) = project
@@ -328,6 +335,7 @@ impl ToolchainSelectorDelegate {
             placeholder_text,
             relative_path,
             _fetch_candidates_task,
+            add_toolchain_text: Arc::from("Add Toolchain"),
         }
     }
     fn relativize_path(path: SharedString, worktree_root: &Path) -> SharedString {
@@ -514,7 +522,7 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                 .child(Divider::horizontal())
                 .child(
                     h_flex().p_1().child(
-                        Button::new("xd", "Add Toolchain")
+                        Button::new("xd", self.add_toolchain_text.clone())
                             .icon(IconName::Plus)
                             .style(ButtonStyle::Filled)
                             .icon_position(IconPosition::Start)

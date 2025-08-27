@@ -6,6 +6,7 @@ publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [dependencies]
+convert_case.workspace = true
 editor.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
