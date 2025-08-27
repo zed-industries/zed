@@ -21,7 +21,7 @@ impl Render for SearchButton {
             return button.w_0().invisible();
         }
 
-        button.child(
+        button.py(DynamicSpacing::Base04.rems(cx)).child(
             IconButton::new("project-search-indicator", SEARCH_ICON)
                 .icon_size(IconSize::Small)
                 .tooltip(|window, cx| {

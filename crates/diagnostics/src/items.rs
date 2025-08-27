@@ -94,6 +94,7 @@ impl Render for DiagnosticIndicator {
         };
 
         indicator
+            .py(DynamicSpacing::Base04.rems(cx))
             .child(
                 ButtonLike::new("diagnostic-indicator")
                     .child(diagnostic_indicator)

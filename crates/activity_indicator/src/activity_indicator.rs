@@ -787,7 +787,8 @@ impl Render for ActivityIndicator {
         };
         let this = cx.entity().downgrade();
         let truncate_content = content.message.len() > MAX_MESSAGE_LEN;
-        result.gap_2().child(
+        let spaced_result = result.gap_2().py(DynamicSpacing::Base04.rems(cx));
+        spaced_result.child(
             PopoverMenu::new("activity-indicator-popover")
                 .trigger(
                     ButtonLike::new("activity-indicator-trigger").child(
