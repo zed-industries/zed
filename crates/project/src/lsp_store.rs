@@ -11703,14 +11703,14 @@ impl LspStore {
                     // Ignore payload since we notify clients of setting changes unconditionally, relying on them pulling the latest settings.
                 }
                 "workspace/symbol" => {
-                    let options = parse_register_capabilities(reg)?;
+                    let options = parse_register_or(&reg, || OneOf::Left(true))?;
                     server.update_capabilities(|capabilities| {
                         capabilities.workspace_symbol_provider = Some(options);
                     });
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "workspace/fileOperations" => {
-                    let caps = parse_register_options_or_default(&reg)?;
+                    let caps = parse_register_or_default(&reg)?;
                     server.update_capabilities(|capabilities| {
                         capabilities
                             .workspace
@@ -11720,92 +11720,87 @@ impl LspStore {
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "workspace/executeCommand" => {
-                    let options = parse_register_options_or_default(&reg)?;
+                    let options = parse_register_or_default(&reg)?;
                     server.update_capabilities(|capabilities| {
                         capabilities.execute_command_provider = Some(options);
                     });
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/rangeFormatting" => {
-                    let options = parse_register_capabilities(reg)?;
+                    let options = parse_register_or(&reg, || OneOf::Left(true))?;
                     server.update_capabilities(|capabilities| {
                         capabilities.document_range_formatting_provider = Some(options);
                     });
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/onTypeFormatting" => {
-                    let options = parse_register_options_or_default(&reg)?;
+                    let options = parse_register_or_default(&reg)?;
                     server.update_capabilities(|capabilities| {
                         capabilities.document_on_type_formatting_provider = Some(options);
                     });
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/formatting" => {
-                    let options = parse_register_capabilities(reg)?;
+                    let options = parse_register_or(&reg, || OneOf::Left(true))?;
                     server.update_capabilities(|capabilities| {
                         capabilities.document_formatting_provider = Some(options);
                     });
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/rename" => {
-                    let options = parse_register_capabilities(reg)?;
+                    let options = parse_register_or(&reg, || OneOf::Left(true))?;
                     server.update_capabilities(|capabilities| {
                         capabilities.rename_provider = Some(options);
                     });
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/inlayHint" => {
-                    let options = parse_register_capabilities(reg)?;
+                    let options = parse_register_or(&reg, || OneOf::Left(true))?;
                     server.update_capabilities(|capabilities| {
                         capabilities.inlay_hint_provider = Some(options);
                     });
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/documentSymbol" => {
-                    let options = parse_register_capabilities(reg)?;
+                    let options = parse_register_or(&reg, || OneOf::Left(true))?;
                     server.update_capabilities(|capabilities| {
                         capabilities.document_symbol_provider = Some(options);
                     });
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/codeAction" => {
-                    let options = parse_register_capabilities(reg)?;
-                    let provider = match options {
-                        OneOf::Left(value) => lsp::CodeActionProviderCapability::Simple(value),
-                        OneOf::Right(caps) => caps,
-                    };
+                    let provider = parse_register_or(&reg, || {
+                        lsp::CodeActionProviderCapability::Simple(true)
+                    })?;
                     server.update_capabilities(|capabilities| {
                         capabilities.code_action_provider = Some(provider);
                     });
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/definition" => {
-                    let options = parse_register_capabilities(reg)?;
+                    let options = parse_register_or(&reg, || OneOf::Left(true))?;
                     server.update_capabilities(|capabilities| {
                         capabilities.definition_provider = Some(options);
                     });
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/completion" => {
-                    let caps = parse_register_options_or_default(&reg)?;
+                    let caps = parse_register_or_default(&reg)?;
                     server.update_capabilities(|capabilities| {
                         capabilities.completion_provider = Some(caps);
                     });
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/hover" => {
-                    let options = parse_register_capabilities(reg)?;
-                    let provider = match options {
-                        OneOf::Left(value) => lsp::HoverProviderCapability::Simple(value),
-                        OneOf::Right(caps) => caps,
-                    };
+                    let provider =
+                        parse_register_or(&reg, || lsp::HoverProviderCapability::Simple(true))?;
                     server.update_capabilities(|capabilities| {
                         capabilities.hover_provider = Some(provider);
                     });
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/signatureHelp" => {
-                    let caps = parse_register_options_or_default(&reg)?;
+                    let caps = parse_register_or_default(&reg)?;
                     server.update_capabilities(|capabilities| {
                         capabilities.signature_help_provider = Some(caps);
                     });
@@ -11858,7 +11853,7 @@ impl LspStore {
                     }
                 }
                 "textDocument/codeLens" => {
-                    let caps = parse_register_options_or(&reg, || lsp::CodeLensOptions {
+                    let caps = parse_register_or(&reg, || lsp::CodeLensOptions {
                         resolve_provider: None,
                     })?;
                     server.update_capabilities(|capabilities| {
@@ -11867,7 +11862,7 @@ impl LspStore {
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/diagnostic" => {
-                    let caps = parse_register_options_or(&reg, || {
+                    let caps = parse_register_or(&reg, || {
                         lsp::DiagnosticServerCapabilities::Options(lsp::DiagnosticOptions::default())
                     })?;
                     server.update_capabilities(|capabilities| {
@@ -11876,11 +11871,8 @@ impl LspStore {
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/documentColor" => {
-                    let options = parse_register_capabilities(reg)?;
-                    let provider = match options {
-                        OneOf::Left(value) => lsp::ColorProviderCapability::Simple(value),
-                        OneOf::Right(caps) => caps,
-                    };
+                    let provider =
+                        parse_register_or(&reg, || lsp::ColorProviderCapability::Simple(true))?;
                     server.update_capabilities(|capabilities| {
                         capabilities.color_provider = Some(provider);
                     });
@@ -12141,19 +12133,9 @@ impl LspStore {
     }
 }
 
-// Registration with registerOptions as null, should fallback to true.
 // https://github.com/microsoft/vscode-languageserver-node/blob/d90a87f9557a0df9142cfb33e251cfa6fe27d970/client/src/common/client.ts#L2133
-fn parse_register_capabilities<T: serde::de::DeserializeOwned>(
-    reg: lsp::Registration,
-) -> Result<OneOf<bool, T>> {
-    Ok(match reg.register_options {
-        Some(options) => OneOf::Right(serde_json::from_value::<T>(options)?),
-        None => OneOf::Left(true),
-    })
-}
-
 // Parse register_options into T or return a provided default if None.
-fn parse_register_options_or<T, F>(reg: &lsp::Registration, default: F) -> Result<T>
+fn parse_register_or<T, F>(reg: &lsp::Registration, default: F) -> Result<T>
 where
     T: serde::de::DeserializeOwned,
     F: FnOnce() -> T,
@@ -12165,11 +12147,11 @@ where
 }
 
 // Parse register_options into T or default() if None.
-fn parse_register_options_or_default<T>(reg: &lsp::Registration) -> Result<T>
+fn parse_register_or_default<T>(reg: &lsp::Registration) -> Result<T>
 where
     T: serde::de::DeserializeOwned + Default,
 {
-    parse_register_options_or(reg, T::default)
+    parse_register_or(reg, T::default)
 }
 
 fn subscribe_to_binary_statuses(
