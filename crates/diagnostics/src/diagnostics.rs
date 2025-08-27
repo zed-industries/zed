@@ -183,12 +183,8 @@ impl ProjectDiagnosticsEditor {
                     });
                     cx.emit(EditorEvent::TitleChanged);
 
-                    if this.editor.focus_handle(cx).contains_focused(window, cx) || this.focus_handle.contains_focused(window, cx) {
-                        log::debug!("diagnostics updated for server {language_server_id}, paths {paths:?}. recording change");
-                    } else {
-                        log::debug!("diagnostics updated for server {language_server_id}, paths {paths:?}. updating excerpts");
-                        this.update_stale_excerpts(window, cx);
-                    }
+                    log::debug!("diagnostics updated for server {language_server_id}, paths {paths:?}. updating excerpts");
+                    this.update_stale_excerpts(window, cx);
                 }
                 _ => {}
             });
@@ -232,6 +228,7 @@ impl ProjectDiagnosticsEditor {
                         }
                     }
                     EditorEvent::Blurred => this.update_stale_excerpts(window, cx),
+                    EditorEvent::Saved => this.update_all_excerpts(window, cx),
                     _ => {}
                 }
             },
@@ -423,7 +420,10 @@ impl ProjectDiagnosticsEditor {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let was_empty = self.multibuffer.read(cx).is_empty();
-        let buffer_snapshot = buffer.read(cx).snapshot();
+        let buffer_ = buffer.read(cx);
+        let is_dirty = buffer_.is_dirty();
+        let buffer_snapshot = buffer_.snapshot();
+
         let buffer_id = buffer_snapshot.remote_id();
         let max_severity = if self.include_warnings {
             lsp::DiagnosticSeverity::WARNING
@@ -536,6 +536,7 @@ impl ProjectDiagnosticsEditor {
                         buffer.clone(),
                         &buffer_snapshot,
                         excerpt_ranges,
+                        is_dirty,
                         cx,
                     )
                 });
