@@ -4,13 +4,13 @@ use async_trait::async_trait;
 use collections::HashMap;
 use gpui::{App, Task};
 use gpui::{AsyncApp, SharedString};
-use language::Toolchain;
 use language::ToolchainList;
 use language::ToolchainLister;
 use language::language_settings::language_settings;
 use language::{ContextLocation, LanguageToolchainStore};
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
 use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
+use language::{Toolchain, ToolchainMetadata};
 use lsp::LanguageServerBinary;
 use lsp::LanguageServerName;
 use node_runtime::{NodeRuntime, VersionStrategy};
@@ -698,18 +698,8 @@ fn python_env_kind_display(k: &PythonEnvironmentKind) -> &'static str {
         PythonEnvironmentKind::WindowsRegistry => "global (Windows Registry)",
     }
 }
-
-pub(crate) struct PythonToolchainProvider {
-    term: SharedString,
-}
-
-impl Default for PythonToolchainProvider {
-    fn default() -> Self {
-        Self {
-            term: SharedString::new_static("Virtual Environment"),
-        }
-    }
-}
+#[derive(Default)]
+pub(crate) struct PythonToolchainProvider;
 
 static ENV_PRIORITY_LIST: &[PythonEnvironmentKind] = &[
     // Prioritize non-Conda environments.
@@ -753,9 +743,6 @@ fn get_worktree_venv_declaration(worktree_root: &Path) -> Option<String> {
 
 #[async_trait]
 impl ToolchainLister for PythonToolchainProvider {
-    fn manifest_name(&self) -> language::ManifestName {
-        ManifestName::from(SharedString::new_static("pyproject.toml"))
-    }
     async fn list(
         &self,
         worktree_root: PathBuf,
@@ -888,8 +875,14 @@ impl ToolchainLister for PythonToolchainProvider {
             groups: Default::default(),
         }
     }
-    fn term(&self) -> SharedString {
-        self.term.clone()
+    fn meta(&self) -> ToolchainMetadata {
+        ToolchainMetadata {
+            term: SharedString::new_static("Virtual Environment"),
+            new_toolchain_placeholder: SharedString::new_static(
+                "A path to the python3 executable within a virtual environment, or path to virtual environment itself",
+            ),
+            manifest_name: ManifestName::from(SharedString::new_static("pyproject.toml")),
+        }
     }
     async fn resolve(
         &self,

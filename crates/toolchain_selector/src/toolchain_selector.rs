@@ -259,17 +259,19 @@ impl ToolchainSelectorDelegate {
     ) -> Self {
         let _fetch_candidates_task = cx.spawn_in(window, {
             async move |this, cx| {
-                let term = project
+                let meta = project
                     .read_with(cx, |this, _| {
-                        Project::toolchain_term(this.languages().clone(), language_name.clone())
+                        Project::toolchain_metadata(this.languages().clone(), language_name.clone())
                     })
                     .ok()?
                     .await?;
                 let relative_path = this
                     .update(cx, |this, cx| {
-                        this.delegate.add_toolchain_text =
-                            format!("Add {}", term.as_ref().to_case(convert_case::Case::Title))
-                                .into();
+                        this.delegate.add_toolchain_text = format!(
+                            "Add {}",
+                            meta.term.as_ref().to_case(convert_case::Case::Title)
+                        )
+                        .into();
                         cx.notify();
                         this.delegate.relative_path.clone()
                     })
@@ -297,7 +299,7 @@ impl ToolchainSelectorDelegate {
                     }
                 };
                 let placeholder_text =
-                    format!("Select a {} for {pretty_path}…", term.to_lowercase(),).into();
+                    format!("Select a {} for {pretty_path}…", meta.term.to_lowercase(),).into();
                 let _ = this.update_in(cx, move |this, window, cx| {
                     this.delegate.relative_path = relative_path;
                     this.delegate.placeholder_text = placeholder_text;

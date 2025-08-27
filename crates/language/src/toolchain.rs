@@ -67,10 +67,18 @@ pub trait ToolchainLister: Send + Sync {
         path: PathBuf,
     ) -> anyhow::Result<Toolchain>;
 
-    /// Returns a term which we should use in UI to refer to a toolchain.
-    fn term(&self) -> SharedString;
-    /// Returns the name of the manifest file for this toolchain.
-    fn manifest_name(&self) -> ManifestName;
+    /// Returns various "static" bits of information about this toolchain lister. This function should be pure.
+    fn meta(&self) -> ToolchainMetadata;
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct ToolchainMetadata {
+    /// Returns a term which we should use in UI to refer to toolchains produced by a given `[ToolchainLister]`.
+    pub term: SharedString,
+    /// A user-facing placeholder describing the semantic meaning of a path to a new toolchain.
+    pub new_toolchain_placeholder: SharedString,
+    /// The name of the manifest file for this toolchain.
+    pub manifest_name: ManifestName,
 }
 
 #[async_trait(?Send)]

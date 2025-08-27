@@ -351,7 +351,7 @@ impl LocalToolchainStore {
                 .await
                 .ok()?;
             let toolchains = language.toolchain_lister()?;
-            let manifest_name = toolchains.manifest_name();
+            let manifest_name = toolchains.meta().manifest_name;
             let (snapshot, worktree) = this
                 .update(cx, |this, cx| {
                     this.worktree_store
