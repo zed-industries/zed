@@ -11703,7 +11703,7 @@ impl LspStore {
                     // Ignore payload since we notify clients of setting changes unconditionally, relying on them pulling the latest settings.
                 }
                 "workspace/didChangeWorkspaceFolders" => {
-                    // in this case register options as empty object, we can ignore it
+                    // In this case register options is an empty object, we can ignore it
                     let caps = lsp::WorkspaceFoldersServerCapabilities {
                         supported: Some(true),
                         change_notifications: Some(OneOf::Right(reg.id)),
