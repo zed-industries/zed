@@ -2806,12 +2806,12 @@ mod tests {
             assert_eq!(
                 search_bar.configured_options,
                 SearchOptions::CASE_SENSITIVE,
-                "After a settings update, dismissing the bar should update the configured options"
+                "After a settings update and toggling the search bar, configured options should be updated"
             );
             assert_eq!(
                 search_bar.search_options,
                 SearchOptions::CASE_SENSITIVE,
-                "After a settings update, dismissing the bar should update the active search options"
+                "After a settings update and toggling the search bar, configured options should be used"
             );
         });
     }
