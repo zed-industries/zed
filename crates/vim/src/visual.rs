@@ -3,6 +3,7 @@ use std::sync::Arc;
 use collections::HashMap;
 use editor::{
     Bias, DisplayPoint, Editor, SelectionEffects,
+    actions::Copy,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement,
 };
@@ -89,6 +90,11 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     });
     Vim::action(editor, cx, |vim, _: &VisualYankLine, window, cx| {
         vim.visual_yank(true, window, cx)
+    });
+
+    // Handle standard Copy action (Cmd-C) in visual modes
+    Vim::action(editor, cx, |vim, _: &Copy, window, cx| {
+        vim.visual_copy(window, cx)
     });
 
     Vim::action(editor, cx, Vim::select_next);
@@ -703,6 +709,32 @@ impl Vim {
             });
         });
         self.switch_mode(Mode::Normal, true, window, cx);
+    }
+
+    pub fn visual_copy(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.update_editor(cx, |vim, editor, cx| {
+            let line_mode = editor.selections.line_mode;
+
+            // For visual line mode, adjust selections to avoid copying the next line when on \n
+            // This matches the same logic used in visual_yank
+            if line_mode && vim.mode != Mode::VisualBlock {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.move_with(|map, selection| {
+                        let start = selection.start.to_point(map);
+                        let end = selection.end.to_point(map);
+                        if end.column == 0 && end > start {
+                            let row = end.row.saturating_sub(1);
+                            selection.end =
+                                Point::new(row, map.buffer_snapshot.line_len(MultiBufferRow(row)))
+                                    .to_display_point(map);
+                        }
+                    });
+                });
+            }
+
+            // Call the standard copy operation
+            editor.copy(&Copy {}, window, cx);
+        });
     }
 
     pub(crate) fn visual_replace(
