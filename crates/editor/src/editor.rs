@@ -10469,7 +10469,7 @@ impl Editor {
         }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
 
-        let Some(wrap_cfg) = self
+        let Some(wrap_config) = self
             .active_excerpt(cx)
             .and_then(|(_, b, _)| b.read(cx).language())
             .and_then(|lang| lang.config().wrap_characters.clone())
@@ -10477,10 +10477,8 @@ impl Editor {
             return;
         };
 
-        let open_tag = format!("{}{}", wrap_cfg.start_prefix, wrap_cfg.start_suffix);
-        let close_tag = format!("{}{}", wrap_cfg.end_prefix, wrap_cfg.end_suffix);
-        let start_cursor = wrap_cfg.start_prefix.chars().count();
-        let end_suffix_len = wrap_cfg.end_suffix.chars().count();
+        let open_tag = format!("{}{}", wrap_config.start_prefix, wrap_config.start_suffix);
+        let close_tag = format!("{}{}", wrap_config.end_prefix, wrap_config.end_suffix);
 
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let mut edits = Vec::new();
@@ -10489,14 +10487,13 @@ impl Editor {
         for selection in self.selections.all::<Point>(cx).iter() {
             let start_before = snapshot.anchor_before(selection.start);
             let end_after = snapshot.anchor_after(selection.end);
-            let mut text = snapshot
-                .text_for_range(selection.start..selection.end)
-                .collect::<String>();
-            text.insert_str(0, &open_tag);
-            text.push_str(&close_tag);
-            edits.push((selection.start..selection.end, text));
+            edits.push((start_before..start_before, open_tag.clone()));
+            edits.push((end_after..end_after, close_tag.clone()));
             boundary_anchors.push((start_before, end_after));
         }
+
+        let start_prefix_len = wrap_config.start_prefix.chars().count();
+        let end_suffix_len = wrap_config.end_suffix.chars().count();
 
         self.transact(window, cx, |this, window, cx| {
             let buffer = this.buffer.update(cx, |buffer, cx| {
@@ -10506,7 +10503,7 @@ impl Editor {
             let mut new_selections = Vec::with_capacity(boundary_anchors.len() * 2);
             let mut selection_id = 0;
             for (start_before, end_after) in boundary_anchors.into_iter() {
-                let open_offset = start_before.to_offset(&buffer) + start_cursor;
+                let open_offset = start_before.to_offset(&buffer) + start_prefix_len;
                 new_selections.push(Selection {
                     id: selection_id,
                     start: open_offset,
