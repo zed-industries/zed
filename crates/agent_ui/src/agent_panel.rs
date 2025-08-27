@@ -29,7 +29,6 @@ use crate::{
     slash_command::SlashCommandCompletionProvider,
     text_thread_editor::{
         AgentPanelDelegate, TextThreadEditor, humanize_token_count, make_lsp_adapter_delegate,
-        render_remaining_tokens,
     },
     thread_history::{HistoryEntryElement, ThreadHistory},
     ui::{AgentOnboardingModal, EndTrialUpsell},
@@ -617,6 +616,10 @@ impl AgentPanel {
                             panel.new_agent_thread(selected_agent, window, cx);
                         }
                         cx.notify();
+                    });
+                } else {
+                    panel.update(cx, |panel, cx| {
+                        panel.new_agent_thread(AgentType::NativeAgent, window, cx);
                     });
                 }
                 panel
@@ -2871,12 +2874,8 @@ impl AgentPanel {
 
                 Some(token_count)
             }
-            ActiveView::TextThread { context_editor, .. } => {
-                let element = render_remaining_tokens(context_editor, cx)?;
-
-                Some(element.into_any_element())
-            }
             ActiveView::ExternalAgentThread { .. }
+            | ActiveView::TextThread { .. }
             | ActiveView::History
             | ActiveView::Configuration => None,
         }

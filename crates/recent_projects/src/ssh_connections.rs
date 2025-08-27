@@ -15,8 +15,9 @@ use gpui::{
 use language::CursorShape;
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use release_channel::ReleaseChannel;
-use remote::ssh_session::{ConnectionIdentifier, SshPortForwardOption};
-use remote::{SshConnectionOptions, SshPlatform, SshRemoteClient};
+use remote::{
+    ConnectionIdentifier, RemoteClient, RemotePlatform, SshConnectionOptions, SshPortForwardOption,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -451,7 +452,7 @@ pub struct SshClientDelegate {
     known_password: Option<String>,
 }
 
-impl remote::SshClientDelegate for SshClientDelegate {
+impl remote::RemoteClientDelegate for SshClientDelegate {
     fn ask_password(&self, prompt: String, tx: oneshot::Sender<String>, cx: &mut AsyncApp) {
         let mut known_password = self.known_password.clone();
         if let Some(password) = known_password.take() {
@@ -473,7 +474,7 @@ impl remote::SshClientDelegate for SshClientDelegate {
 
     fn download_server_binary_locally(
         &self,
-        platform: SshPlatform,
+        platform: RemotePlatform,
         release_channel: ReleaseChannel,
         version: Option<SemanticVersion>,
         cx: &mut AsyncApp,
@@ -503,7 +504,7 @@ impl remote::SshClientDelegate for SshClientDelegate {
 
     fn get_download_params(
         &self,
-        platform: SshPlatform,
+        platform: RemotePlatform,
         release_channel: ReleaseChannel,
         version: Option<SemanticVersion>,
         cx: &mut AsyncApp,
@@ -543,13 +544,13 @@ pub fn connect_over_ssh(
     ui: Entity<SshPrompt>,
     window: &mut Window,
     cx: &mut App,
-) -> Task<Result<Option<Entity<SshRemoteClient>>>> {
+) -> Task<Result<Option<Entity<RemoteClient>>>> {
     let window = window.window_handle();
     let known_password = connection_options.password.clone();
     let (tx, rx) = oneshot::channel();
     ui.update(cx, |ui, _cx| ui.set_cancellation_tx(tx));
 
-    remote::SshRemoteClient::new(
+    remote::RemoteClient::ssh(
         unique_identifier,
         connection_options,
         rx,
@@ -681,9 +682,9 @@ pub async fn open_ssh_project(
 
         window
             .update(cx, |workspace, _, cx| {
-                if let Some(client) = workspace.project().read(cx).ssh_client() {
+                if let Some(client) = workspace.project().read(cx).remote_client() {
                     ExtensionStore::global(cx)
-                        .update(cx, |store, cx| store.register_ssh_client(client, cx));
+                        .update(cx, |store, cx| store.register_remote_client(client, cx));
                 }
             })
             .ok();

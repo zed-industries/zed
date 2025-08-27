@@ -56,7 +56,7 @@ impl AcpConnection {
         root_dir: &Path,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
-        let mut child = util::command::new_smol_command(&command.path)
+        let mut child = util::command::new_smol_command(command.path)
             .args(command.args.iter().map(|arg| arg.as_str()))
             .envs(command.env.iter().flatten())
             .current_dir(root_dir)
@@ -149,6 +149,10 @@ impl AcpConnection {
             prompt_capabilities: response.agent_capabilities.prompt_capabilities,
             _io_task: io_task,
         })
+    }
+
+    pub fn prompt_capabilities(&self) -> &acp::PromptCapabilities {
+        &self.prompt_capabilities
     }
 }
 
