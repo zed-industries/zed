@@ -119,6 +119,7 @@ serde_json.workspace = true
 slotmap = "1.0.6"
 smallvec.workspace = true
 smol.workspace = true
+stacksafe.workspace = true
 strum.workspace = true
 sum_tree.workspace = true
 taffy = "=0.9.0"
@@ -209,7 +210,7 @@ xkbcommon = { version = "0.8.0", features = [
     "wayland",
     "x11",
 ], optional = true }
-xim = { git = "https://github.com/XDeme1/xim-rs", rev = "d50d461764c2213655cd9cf65a0ea94c70d3c4fd", features = [
+xim = { git = "https://github.com/zed-industries/xim-rs", rev = "c0a70c1bd2ce197364216e5e818a2cb3adb99a8d" , features = [
     "x11rb-xcb",
     "x11rb-client",
 ], optional = true }
@@ -305,3 +306,7 @@ path = "examples/uniform_list.rs"
 [[example]]
 name = "window_shadow"
 path = "examples/window_shadow.rs"
+
+[[example]]
+name = "grid_layout"
+path = "examples/grid_layout.rs"

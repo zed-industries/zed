@@ -45,7 +45,7 @@ use util::{ConnectionResult, ResultExt, TryFutureExt, redact};
 const JSON_RPC_VERSION: &str = "2.0";
 const CONTENT_LEN_HEADER: &str = "Content-Length: ";
 
-const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
+pub const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 type NotificationHandler = Box<dyn Send + FnMut(Option<RequestId>, Value, &mut AsyncApp)>;
@@ -318,6 +318,8 @@ impl LanguageServer {
         } else {
             root_path.parent().unwrap_or_else(|| Path::new("/"))
         };
+        let root_uri = Url::from_file_path(&working_dir)
+            .map_err(|()| anyhow!("{working_dir:?} is not a valid URI"))?;
 
         log::info!(
             "starting language server process. binary path: {:?}, working directory: {:?}, args: {:?}",
@@ -345,8 +347,6 @@ impl LanguageServer {
         let stdin = server.stdin.take().unwrap();
         let stdout = server.stdout.take().unwrap();
         let stderr = server.stderr.take().unwrap();
-        let root_uri = Url::from_file_path(&working_dir)
-            .map_err(|()| anyhow!("{working_dir:?} is not a valid URI"))?;
         let server = Self::new_internal(
             server_id,
             server_name,

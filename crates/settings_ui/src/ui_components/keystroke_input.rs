@@ -1,6 +1,6 @@
 use gpui::{
     Animation, AnimationExt, Context, EventEmitter, FocusHandle, Focusable, FontWeight, KeyContext,
-    Keystroke, Modifiers, ModifiersChangedEvent, Subscription, Task, actions,
+    KeybindingKeystroke, Keystroke, Modifiers, ModifiersChangedEvent, Subscription, Task, actions,
 };
 use ui::{
     ActiveTheme as _, Color, IconButton, IconButtonShape, IconName, IconSize, Label, LabelSize,
@@ -19,7 +19,7 @@ actions!(
     ]
 );
 
-const KEY_CONTEXT_VALUE: &'static str = "KeystrokeInput";
+const KEY_CONTEXT_VALUE: &str = "KeystrokeInput";
 
 const CLOSE_KEYSTROKE_CAPTURE_END_TIMEOUT: std::time::Duration =
     std::time::Duration::from_millis(300);
@@ -42,8 +42,8 @@ impl PartialEq for CloseKeystrokeResult {
 }
 
 pub struct KeystrokeInput {
-    keystrokes: Vec<Keystroke>,
-    placeholder_keystrokes: Option<Vec<Keystroke>>,
+    keystrokes: Vec<KeybindingKeystroke>,
+    placeholder_keystrokes: Option<Vec<KeybindingKeystroke>>,
     outer_focus_handle: FocusHandle,
     inner_focus_handle: FocusHandle,
     intercept_subscription: Option<Subscription>,
@@ -70,7 +70,7 @@ impl KeystrokeInput {
     const KEYSTROKE_COUNT_MAX: usize = 3;
 
     pub fn new(
-        placeholder_keystrokes: Option<Vec<Keystroke>>,
+        placeholder_keystrokes: Option<Vec<KeybindingKeystroke>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -97,7 +97,7 @@ impl KeystrokeInput {
         }
     }
 
-    pub fn set_keystrokes(&mut self, keystrokes: Vec<Keystroke>, cx: &mut Context<Self>) {
+    pub fn set_keystrokes(&mut self, keystrokes: Vec<KeybindingKeystroke>, cx: &mut Context<Self>) {
         self.keystrokes = keystrokes;
         self.keystrokes_changed(cx);
     }
@@ -106,7 +106,7 @@ impl KeystrokeInput {
         self.search = search;
     }
 
-    pub fn keystrokes(&self) -> &[Keystroke] {
+    pub fn keystrokes(&self) -> &[KeybindingKeystroke] {
         if let Some(placeholders) = self.placeholder_keystrokes.as_ref()
             && self.keystrokes.is_empty()
         {
@@ -116,19 +116,23 @@ impl KeystrokeInput {
             && self
                 .keystrokes
                 .last()
-                .map_or(false, |last| last.key.is_empty())
+                .is_some_and(|last| last.display_key.is_empty())
         {
             return &self.keystrokes[..self.keystrokes.len() - 1];
         }
-        return &self.keystrokes;
+        &self.keystrokes
     }
 
-    fn dummy(modifiers: Modifiers) -> Keystroke {
-        return Keystroke {
-            modifiers,
-            key: "".to_string(),
-            key_char: None,
-        };
+    fn dummy(modifiers: Modifiers) -> KeybindingKeystroke {
+        KeybindingKeystroke {
+            inner: Keystroke {
+                modifiers,
+                key: "".to_string(),
+                key_char: None,
+            },
+            display_modifiers: modifiers,
+            display_key: "".to_string(),
+        }
     }
 
     fn keystrokes_changed(&self, cx: &mut Context<Self>) {
@@ -182,7 +186,7 @@ impl KeystrokeInput {
     fn end_close_keystrokes_capture(&mut self) -> Option<usize> {
         self.close_keystrokes.take();
         self.clear_close_keystrokes_timer.take();
-        return self.close_keystrokes_start.take();
+        self.close_keystrokes_start.take()
     }
 
     fn handle_possible_close_keystroke(
@@ -233,7 +237,7 @@ impl KeystrokeInput {
             return CloseKeystrokeResult::Partial;
         }
         self.end_close_keystrokes_capture();
-        return CloseKeystrokeResult::None;
+        CloseKeystrokeResult::None
     }
 
     fn on_modifiers_changed(
@@ -254,7 +258,7 @@ impl KeystrokeInput {
         self.keystrokes_changed(cx);
 
         if let Some(last) = self.keystrokes.last_mut()
-            && last.key.is_empty()
+            && last.display_key.is_empty()
             && keystrokes_len <= Self::KEYSTROKE_COUNT_MAX
         {
             if !self.search && !event.modifiers.modified() {
@@ -263,13 +267,15 @@ impl KeystrokeInput {
             }
             if self.search {
                 if self.previous_modifiers.modified() {
-                    last.modifiers |= event.modifiers;
+                    last.display_modifiers |= event.modifiers;
+                    last.inner.modifiers |= event.modifiers;
                 } else {
                     self.keystrokes.push(Self::dummy(event.modifiers));
                 }
                 self.previous_modifiers |= event.modifiers;
             } else {
-                last.modifiers = event.modifiers;
+                last.display_modifiers = event.modifiers;
+                last.inner.modifiers = event.modifiers;
                 return;
             }
         } else if keystrokes_len < Self::KEYSTROKE_COUNT_MAX {
@@ -297,14 +303,17 @@ impl KeystrokeInput {
             return;
         }
 
-        let mut keystroke = keystroke.clone();
+        let mut keystroke =
+            KeybindingKeystroke::new(keystroke.clone(), false, cx.keyboard_mapper().as_ref());
         if let Some(last) = self.keystrokes.last()
-            && last.key.is_empty()
+            && last.display_key.is_empty()
             && (!self.search || self.previous_modifiers.modified())
         {
-            let key = keystroke.key.clone();
+            let display_key = keystroke.display_key.clone();
+            let inner_key = keystroke.inner.key.clone();
             keystroke = last.clone();
-            keystroke.key = key;
+            keystroke.display_key = display_key;
+            keystroke.inner.key = inner_key;
             self.keystrokes.pop();
         }
 
@@ -324,11 +333,14 @@ impl KeystrokeInput {
         self.keystrokes_changed(cx);
 
         if self.search {
-            self.previous_modifiers = keystroke.modifiers;
+            self.previous_modifiers = keystroke.display_modifiers;
             return;
         }
-        if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX && keystroke.modifiers.modified() {
-            self.keystrokes.push(Self::dummy(keystroke.modifiers));
+        if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX
+            && keystroke.display_modifiers.modified()
+        {
+            self.keystrokes
+                .push(Self::dummy(keystroke.display_modifiers));
         }
     }
 
@@ -364,7 +376,7 @@ impl KeystrokeInput {
             &self.keystrokes
         };
         keystrokes.iter().map(move |keystroke| {
-            h_flex().children(ui::render_keystroke(
+            h_flex().children(ui::render_keybinding_keystroke(
                 keystroke,
                 Some(Color::Default),
                 Some(rems(0.875).into()),
@@ -437,7 +449,7 @@ impl KeystrokeInput {
         // is a much more reliable check, as the intercept keystroke handlers are installed
         // on focus of the inner focus handle, thereby ensuring our recording state does
         // not get de-synced
-        return self.inner_focus_handle.is_focused(window);
+        self.inner_focus_handle.is_focused(window)
     }
 }
 
@@ -809,9 +821,13 @@ mod tests {
         /// Verifies that the keystrokes match the expected strings
         #[track_caller]
         pub fn expect_keystrokes(&mut self, expected: &[&str]) -> &mut Self {
-            let actual = self
-                .input
-                .read_with(&mut self.cx, |input, _| input.keystrokes.clone());
+            let actual: Vec<Keystroke> = self.input.read_with(&self.cx, |input, _| {
+                input
+                    .keystrokes
+                    .iter()
+                    .map(|keystroke| keystroke.inner.clone())
+                    .collect()
+            });
             Self::expect_keystrokes_equal(&actual, expected);
             self
         }
@@ -820,7 +836,7 @@ mod tests {
         pub fn expect_close_keystrokes(&mut self, expected: &[&str]) -> &mut Self {
             let actual = self
                 .input
-                .read_with(&mut self.cx, |input, _| input.close_keystrokes.clone())
+                .read_with(&self.cx, |input, _| input.close_keystrokes.clone())
                 .unwrap_or_default();
             Self::expect_keystrokes_equal(&actual, expected);
             self
@@ -934,12 +950,12 @@ mod tests {
             let change_tracker = KeystrokeUpdateTracker::new(self.input.clone(), &mut self.cx);
             let result = self.input.update_in(&mut self.cx, cb);
             KeystrokeUpdateTracker::finish(change_tracker, &self.cx);
-            return result;
+            result
         }
     }
 
     struct KeystrokeUpdateTracker {
-        initial_keystrokes: Vec<Keystroke>,
+        initial_keystrokes: Vec<KeybindingKeystroke>,
         _subscription: Subscription,
         input: Entity<KeystrokeInput>,
         received_keystrokes_updated: bool,
@@ -983,8 +999,8 @@ mod tests {
                 );
             }
 
-            fn keystrokes_str(ks: &[Keystroke]) -> String {
-                ks.iter().map(|ks| ks.unparse()).join(" ")
+            fn keystrokes_str(ks: &[KeybindingKeystroke]) -> String {
+                ks.iter().map(|ks| ks.inner.unparse()).join(" ")
             }
         }
     }

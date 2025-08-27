@@ -15,13 +15,9 @@ path = "src/feedback.rs"
 test-support = []
 
 [dependencies]
-client.workspace = true
 gpui.workspace = true
-human_bytes = "0.4.1"
 menu.workspace = true
-release_channel.workspace = true
-serde.workspace = true
-sysinfo.workspace = true
+system_specs.workspace = true
 ui.workspace = true
 urlencoding.workspace = true
 util.workspace = true

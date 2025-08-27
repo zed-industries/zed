@@ -446,10 +446,10 @@ impl History {
     }
 
     fn merge_transactions(&mut self, transaction: TransactionId, destination: TransactionId) {
-        if let Some(transaction) = self.forget(transaction) {
-            if let Some(destination) = self.transaction_mut(destination) {
-                destination.edit_ids.extend(transaction.edit_ids);
-            }
+        if let Some(transaction) = self.forget(transaction)
+            && let Some(destination) = self.transaction_mut(destination)
+        {
+            destination.edit_ids.extend(transaction.edit_ids);
         }
     }
 
@@ -1149,7 +1149,7 @@ impl Buffer {
             // Insert the new text before any existing fragments within the range.
             if !new_text.is_empty() {
                 let mut old_start = old_fragments.start().1;
-                if old_fragments.item().map_or(false, |f| f.visible) {
+                if old_fragments.item().is_some_and(|f| f.visible) {
                     old_start += fragment_start.0 - old_fragments.start().0.full_offset().0;
                 }
                 let new_start = new_fragments.summary().text.visible;
@@ -1585,11 +1585,11 @@ impl Buffer {
             .map(Some)
             .chain([None])
             .filter_map(move |range| {
-                if let Some((range, prev_range)) = range.as_ref().zip(prev_range.as_mut()) {
-                    if prev_range.end == range.start {
-                        prev_range.end = range.end;
-                        return None;
-                    }
+                if let Some((range, prev_range)) = range.as_ref().zip(prev_range.as_mut())
+                    && prev_range.end == range.start
+                {
+                    prev_range.end = range.end;
+                    return None;
                 }
                 let result = prev_range.clone();
                 prev_range = range;
@@ -1685,10 +1685,10 @@ impl Buffer {
             rx = Some(channel.1);
         }
         async move {
-            if let Some(mut rx) = rx {
-                if rx.recv().await.is_none() {
-                    anyhow::bail!("gave up waiting for version");
-                }
+            if let Some(mut rx) = rx
+                && rx.recv().await.is_none()
+            {
+                anyhow::bail!("gave up waiting for version");
             }
             Ok(())
         }
@@ -1834,7 +1834,7 @@ impl Buffer {
         let mut edits: Vec<(Range<usize>, Arc<str>)> = Vec::new();
         let mut last_end = None;
         for _ in 0..edit_count {
-            if last_end.map_or(false, |last_end| last_end >= self.len()) {
+            if last_end.is_some_and(|last_end| last_end >= self.len()) {
                 break;
             }
             let new_start = last_end.map_or(0, |last_end| last_end + 1);
@@ -2671,7 +2671,7 @@ impl<D: TextDimension + Ord, F: FnMut(&FragmentSummary) -> bool> Iterator for Ed
 
             if pending_edit
                 .as_ref()
-                .map_or(false, |(change, _)| change.new.end < self.new_end)
+                .is_some_and(|(change, _)| change.new.end < self.new_end)
             {
                 break;
             }

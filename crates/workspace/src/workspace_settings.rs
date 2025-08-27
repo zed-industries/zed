@@ -29,6 +29,7 @@ pub struct WorkspaceSettings {
     pub on_last_window_closed: OnLastWindowClosed,
     pub resize_all_panels_in_dock: Vec<DockPosition>,
     pub close_on_file_delete: bool,
+    pub zoomed_padding: bool,
 }
 
 #[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -202,6 +203,12 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: false
     pub close_on_file_delete: Option<bool>,
+    /// Whether to show padding for zoomed panels.
+    /// When enabled, zoomed bottom panels will have some top padding,
+    /// while zoomed left/right panels will have padding to the right/left (respectively).
+    ///
+    /// Default: true
+    pub zoomed_padding: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -282,19 +289,17 @@ impl Settings for WorkspaceSettings {
         if vscode
             .read_bool("accessibility.dimUnfocused.enabled")
             .unwrap_or_default()
-        {
-            if let Some(opacity) = vscode
+            && let Some(opacity) = vscode
                 .read_value("accessibility.dimUnfocused.opacity")
                 .and_then(|v| v.as_f64())
-            {
-                if let Some(settings) = current.active_pane_modifiers.as_mut() {
-                    settings.inactive_opacity = Some(opacity as f32)
-                } else {
-                    current.active_pane_modifiers = Some(ActivePanelModifiers {
-                        inactive_opacity: Some(opacity as f32),
-                        ..Default::default()
-                    })
-                }
+        {
+            if let Some(settings) = current.active_pane_modifiers.as_mut() {
+                settings.inactive_opacity = Some(opacity as f32)
+            } else {
+                current.active_pane_modifiers = Some(ActivePanelModifiers {
+                    inactive_opacity: Some(opacity as f32),
+                    ..Default::default()
+                })
             }
         }
 
@@ -345,13 +350,11 @@ impl Settings for WorkspaceSettings {
             .read_value("workbench.editor.limit.value")
             .and_then(|v| v.as_u64())
             .and_then(|n| NonZeroUsize::new(n as usize))
-        {
-            if vscode
+            && vscode
                 .read_bool("workbench.editor.limit.enabled")
                 .unwrap_or_default()
-            {
-                current.max_tabs = Some(n)
-            }
+        {
+            current.max_tabs = Some(n)
         }
 
         // some combination of "window.restoreWindows" and "workbench.startupEditor" might

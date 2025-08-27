@@ -31,7 +31,6 @@ collections.workspace = true
 component.workspace = true
 context_server.workspace = true
 convert_case.workspace = true
-feature_flags.workspace = true
 fs.workspace = true
 futures.workspace = true
 git.workspace = true

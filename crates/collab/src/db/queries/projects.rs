@@ -349,11 +349,11 @@ impl Database {
                                     serde_json::to_string(&repository.current_merge_conflicts)
                                         .unwrap(),
                                 )),
-
-                                // Old clients do not use abs path, entry ids or head_commit_details.
+                                // Old clients do not use abs path, entry ids, head_commit_details, or merge_message.
                                 abs_path: ActiveValue::set(String::new()),
                                 entry_ids: ActiveValue::set("[]".into()),
                                 head_commit_details: ActiveValue::set(None),
+                                merge_message: ActiveValue::set(None),
                             }
                         }),
                     )
@@ -502,6 +502,7 @@ impl Database {
                 current_merge_conflicts: ActiveValue::Set(Some(
                     serde_json::to_string(&update.current_merge_conflicts).unwrap(),
                 )),
+                merge_message: ActiveValue::set(update.merge_message.clone()),
             })
             .on_conflict(
                 OnConflict::columns([
@@ -515,6 +516,7 @@ impl Database {
                     project_repository::Column::AbsPath,
                     project_repository::Column::CurrentMergeConflicts,
                     project_repository::Column::HeadCommitDetails,
+                    project_repository::Column::MergeMessage,
                 ])
                 .to_owned(),
             )
@@ -943,21 +945,21 @@ impl Database {
                 let current_merge_conflicts = db_repository_entry
                     .current_merge_conflicts
                     .as_ref()
-                    .map(|conflicts| serde_json::from_str(&conflicts))
+                    .map(|conflicts| serde_json::from_str(conflicts))
                     .transpose()?
                     .unwrap_or_default();
 
                 let branch_summary = db_repository_entry
                     .branch_summary
                     .as_ref()
-                    .map(|branch_summary| serde_json::from_str(&branch_summary))
+                    .map(|branch_summary| serde_json::from_str(branch_summary))
                     .transpose()?
                     .unwrap_or_default();
 
                 let head_commit_details = db_repository_entry
                     .head_commit_details
                     .as_ref()
-                    .map(|head_commit_details| serde_json::from_str(&head_commit_details))
+                    .map(|head_commit_details| serde_json::from_str(head_commit_details))
                     .transpose()?
                     .unwrap_or_default();
 
@@ -990,6 +992,7 @@ impl Database {
                         head_commit_details,
                         scan_id: db_repository_entry.scan_id as u64,
                         is_last_update: true,
+                        merge_message: db_repository_entry.merge_message,
                     });
                 }
             }
@@ -1318,10 +1321,10 @@ impl Database {
             .await?;
 
         let mut connection_ids = HashSet::default();
-        if let Some(host_connection) = project.host_connection().log_err() {
-            if !exclude_dev_server {
-                connection_ids.insert(host_connection);
-            }
+        if let Some(host_connection) = project.host_connection().log_err()
+            && !exclude_dev_server
+        {
+            connection_ids.insert(host_connection);
         }
 
         while let Some(collaborator) = collaborators.next().await {

@@ -8,7 +8,6 @@ mod channel_buffer_tests;
 mod channel_guest_tests;
 mod channel_message_tests;
 mod channel_tests;
-// mod debug_panel_tests;
 mod editor_tests;
 mod following_tests;
 mod git_tests;
@@ -18,7 +17,6 @@ mod random_channel_buffer_tests;
 mod random_project_collaboration_tests;
 mod randomized_test_helpers;
 mod remote_editing_collaboration_tests;
-mod stripe_billing_tests;
 mod test_server;
 
 use language::{Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};

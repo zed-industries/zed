@@ -45,9 +45,7 @@ fn completion_from_diff(
     position: Anchor,
     delete_range: Range<Anchor>,
 ) -> EditPrediction {
-    let buffer_text = snapshot
-        .text_for_range(delete_range.clone())
-        .collect::<String>();
+    let buffer_text = snapshot.text_for_range(delete_range).collect::<String>();
 
     let mut edits: Vec<(Range<language::Anchor>, String)> = Vec::new();
 

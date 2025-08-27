@@ -35,7 +35,7 @@ use super::symbol_context_picker::search_symbols;
 use super::thread_context_picker::{ThreadContextEntry, ThreadMatch, search_threads};
 use super::{
     ContextPickerAction, ContextPickerEntry, ContextPickerMode, MentionLink, RecentEntry,
-    available_context_picker_entries, recent_context_picker_entries, selection_ranges,
+    available_context_picker_entries, recent_context_picker_entries_with_store, selection_ranges,
 };
 use crate::message_editor::ContextCreasesAddon;
 
@@ -79,8 +79,7 @@ fn search(
 ) -> Task<Vec<Match>> {
     match mode {
         Some(ContextPickerMode::File) => {
-            let search_files_task =
-                search_files(query.clone(), cancellation_flag.clone(), &workspace, cx);
+            let search_files_task = search_files(query, cancellation_flag, &workspace, cx);
             cx.background_spawn(async move {
                 search_files_task
                     .await
@@ -91,8 +90,7 @@ fn search(
         }
 
         Some(ContextPickerMode::Symbol) => {
-            let search_symbols_task =
-                search_symbols(query.clone(), cancellation_flag.clone(), &workspace, cx);
+            let search_symbols_task = search_symbols(query, cancellation_flag, &workspace, cx);
             cx.background_spawn(async move {
                 search_symbols_task
                     .await
@@ -108,13 +106,8 @@ fn search(
                 .and_then(|t| t.upgrade())
                 .zip(text_thread_context_store.as_ref().and_then(|t| t.upgrade()))
             {
-                let search_threads_task = search_threads(
-                    query.clone(),
-                    cancellation_flag.clone(),
-                    thread_store,
-                    context_store,
-                    cx,
-                );
+                let search_threads_task =
+                    search_threads(query, cancellation_flag, thread_store, context_store, cx);
                 cx.background_spawn(async move {
                     search_threads_task
                         .await
@@ -137,8 +130,7 @@ fn search(
 
         Some(ContextPickerMode::Rules) => {
             if let Some(prompt_store) = prompt_store.as_ref() {
-                let search_rules_task =
-                    search_rules(query.clone(), cancellation_flag.clone(), prompt_store, cx);
+                let search_rules_task = search_rules(query, cancellation_flag, prompt_store, cx);
                 cx.background_spawn(async move {
                     search_rules_task
                         .await
@@ -196,7 +188,7 @@ fn search(
                 let executor = cx.background_executor().clone();
 
                 let search_files_task =
-                    search_files(query.clone(), cancellation_flag.clone(), &workspace, cx);
+                    search_files(query.clone(), cancellation_flag, &workspace, cx);
 
                 let entries =
                     available_context_picker_entries(&prompt_store, &thread_store, &workspace, cx);
@@ -283,7 +275,7 @@ impl ContextPickerCompletionProvider {
     ) -> Option<Completion> {
         match entry {
             ContextPickerEntry::Mode(mode) => Some(Completion {
-                replace_range: source_range.clone(),
+                replace_range: source_range,
                 new_text: format!("@{} ", mode.keyword()),
                 label: CodeLabel::plain(mode.label().to_string(), None),
                 icon_path: Some(mode.icon().path().into()),
@@ -330,9 +322,6 @@ impl ContextPickerCompletionProvider {
                         );
 
                         let callback = Arc::new({
-                            let context_store = context_store.clone();
-                            let selections = selections.clone();
-                            let selection_infos = selection_infos.clone();
                             move |_, window: &mut Window, cx: &mut App| {
                                 context_store.update(cx, |context_store, cx| {
                                     for (buffer, range) in &selections {
@@ -441,7 +430,7 @@ impl ContextPickerCompletionProvider {
                 excerpt_id,
                 source_range.start,
                 new_text_len - 1,
-                editor.clone(),
+                editor,
                 context_store.clone(),
                 move |window, cx| match &thread_entry {
                     ThreadContextEntry::Thread { id, .. } => {
@@ -510,7 +499,7 @@ impl ContextPickerCompletionProvider {
                 excerpt_id,
                 source_range.start,
                 new_text_len - 1,
-                editor.clone(),
+                editor,
                 context_store.clone(),
                 move |_, cx| {
                     let user_prompt_id = rules.prompt_id;
@@ -547,7 +536,7 @@ impl ContextPickerCompletionProvider {
                 excerpt_id,
                 source_range.start,
                 new_text_len - 1,
-                editor.clone(),
+                editor,
                 context_store.clone(),
                 move |_, cx| {
                     let context_store = context_store.clone();
@@ -704,16 +693,16 @@ impl ContextPickerCompletionProvider {
                 excerpt_id,
                 source_range.start,
                 new_text_len - 1,
-                editor.clone(),
+                editor,
                 context_store.clone(),
                 move |_, cx| {
                     let symbol = symbol.clone();
                     let context_store = context_store.clone();
                     let workspace = workspace.clone();
                     let result = super::symbol_context_picker::add_symbol(
-                        symbol.clone(),
+                        symbol,
                         false,
-                        workspace.clone(),
+                        workspace,
                         context_store.downgrade(),
                         cx,
                     );
@@ -728,11 +717,11 @@ fn build_code_label_for_full_path(file_name: &str, directory: Option<&str>, cx: 
     let comment_id = cx.theme().syntax().highlight_id("comment").map(HighlightId);
     let mut label = CodeLabel::default();
 
-    label.push_str(&file_name, None);
+    label.push_str(file_name, None);
     label.push_str(" ", None);
 
     if let Some(directory) = directory {
-        label.push_str(&directory, comment_id);
+        label.push_str(directory, comment_id);
     }
 
     label.filter_range = 0..label.text().len();
@@ -787,7 +776,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
             .and_then(|b| b.read(cx).file())
             .map(|file| ProjectPath::from_file(file.as_ref(), cx));
 
-        let recent_entries = recent_context_picker_entries(
+        let recent_entries = recent_context_picker_entries_with_store(
             context_store.clone(),
             thread_store.clone(),
             text_thread_store.clone(),
@@ -1020,7 +1009,7 @@ impl MentionCompletion {
             && line
                 .chars()
                 .nth(last_mention_start - 1)
-                .map_or(false, |c| !c.is_whitespace())
+                .is_some_and(|c| !c.is_whitespace())
         {
             return None;
         }
@@ -1162,7 +1151,7 @@ mod tests {
 
     impl Focusable for AtMentionEditor {
         fn focus_handle(&self, cx: &App) -> FocusHandle {
-            self.0.read(cx).focus_handle(cx).clone()
+            self.0.read(cx).focus_handle(cx)
         }
     }
 
@@ -1480,7 +1469,7 @@ mod tests {
         let completions = editor.current_completions().expect("Missing completions");
         completions
             .into_iter()
-            .map(|completion| completion.label.text.to_string())
+            .map(|completion| completion.label.text)
             .collect::<Vec<_>>()
     }
 

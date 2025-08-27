@@ -59,12 +59,9 @@ impl TerminalTool {
             }
 
             if which::which("bash").is_ok() {
-                log::info!("agent selected bash for terminal tool");
                 "bash".into()
             } else {
-                let shell = get_system_shell();
-                log::info!("agent selected {shell} for terminal tool");
-                shell
+                get_system_shell()
             }
         });
         Self {
@@ -105,7 +102,7 @@ impl Tool for TerminalTool {
                 let first_line = lines.next().unwrap_or_default();
                 let remaining_line_count = lines.count();
                 match remaining_line_count {
-                    0 => MarkdownInlineCode(&first_line).to_string(),
+                    0 => MarkdownInlineCode(first_line).to_string(),
                     1 => MarkdownInlineCode(&format!(
                         "{} - {} more line",
                         first_line, remaining_line_count
@@ -216,7 +213,8 @@ impl Tool for TerminalTool {
             async move |cx| {
                 let program = program.await;
                 let env = env.await;
-                let terminal = project
+
+                project
                     .update(cx, |project, cx| {
                         project.create_terminal(
                             TerminalKind::Task(task::SpawnInTerminal {
@@ -229,8 +227,7 @@ impl Tool for TerminalTool {
                             cx,
                         )
                     })?
-                    .await;
-                terminal
+                    .await
             }
         });
 
@@ -353,7 +350,7 @@ fn process_content(
             if is_empty {
                 "Command executed successfully.".to_string()
             } else {
-                content.to_string()
+                content
             }
         }
         Some(exit_status) => {
@@ -387,7 +384,7 @@ fn working_dir(
     let project = project.read(cx);
     let cd = &input.cd;
 
-    if cd == "." || cd == "" {
+    if cd == "." || cd.is_empty() {
         // Accept "." or "" as meaning "the one worktree" if we only have one worktree.
         let mut worktrees = project.worktrees(cx);
 
@@ -412,10 +409,8 @@ fn working_dir(
             {
                 return Ok(Some(input_path.into()));
             }
-        } else {
-            if let Some(worktree) = project.worktree_for_root_name(cd, cx) {
-                return Ok(Some(worktree.read(cx).abs_path().to_path_buf()));
-            }
+        } else if let Some(worktree) = project.worktree_for_root_name(cd, cx) {
+            return Ok(Some(worktree.read(cx).abs_path().to_path_buf()));
         }
 
         anyhow::bail!("`cd` directory {cd:?} was not in any of the project's worktrees.");

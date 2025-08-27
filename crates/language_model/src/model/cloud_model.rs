@@ -42,6 +42,18 @@ impl fmt::Display for ModelRequestLimitReachedError {
     }
 }
 
+#[derive(Error, Debug)]
+pub struct ToolUseLimitReachedError;
+
+impl fmt::Display for ToolUseLimitReachedError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "Consecutive tool use limit reached. Enable Burn Mode for unlimited tool use."
+        )
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct LlmApiToken(Arc<RwLock<Option<String>>>);
 
@@ -70,7 +82,7 @@ impl LlmApiToken {
 
         let response = client.cloud_client().create_llm_token(system_id).await?;
         *lock = Some(response.token.0.clone());
-        Ok(response.token.0.clone())
+        Ok(response.token.0)
     }
 }
 

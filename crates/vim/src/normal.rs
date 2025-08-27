@@ -221,7 +221,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 return;
             };
 
-            let anchors = last_change.iter().cloned().collect::<Vec<_>>();
+            let anchors = last_change.to_vec();
             let mut last_row = None;
             let ranges: Vec<_> = anchors
                 .iter()

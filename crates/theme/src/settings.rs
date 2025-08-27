@@ -19,6 +19,7 @@ use util::ResultExt as _;
 use util::schemars::replace_subschema;
 
 const MIN_FONT_SIZE: Pixels = px(6.0);
+const MAX_FONT_SIZE: Pixels = px(100.0);
 const MIN_LINE_HEIGHT: f32 = 1.0;
 
 #[derive(
@@ -103,8 +104,8 @@ pub struct ThemeSettings {
     ///
     /// The terminal font family can be overridden using it's own setting.
     pub buffer_font: Font,
-    /// The agent font size. Determines the size of text in the agent panel.
-    agent_font_size: Pixels,
+    /// The agent font size. Determines the size of text in the agent panel. Falls back to the UI font size if unset.
+    agent_font_size: Option<Pixels>,
     /// The line height for buffers, and the terminal.
     ///
     /// Changing this may affect the spacing of some UI elements.
@@ -404,9 +405,9 @@ pub struct ThemeSettingsContent {
     #[serde(default)]
     #[schemars(default = "default_font_features")]
     pub buffer_font_features: Option<FontFeatures>,
-    /// The font size for the agent panel.
+    /// The font size for the agent panel. Falls back to the UI font size if unset.
     #[serde(default)]
-    pub agent_font_size: Option<f32>,
+    pub agent_font_size: Option<Option<f32>>,
     /// The name of the Zed theme to use.
     #[serde(default)]
     pub theme: Option<ThemeSelection>,
@@ -599,13 +600,13 @@ impl ThemeSettings {
         clamp_font_size(font_size)
     }
 
-    /// Returns the UI font size.
+    /// Returns the agent panel font size. Falls back to the UI font size if unset.
     pub fn agent_font_size(&self, cx: &App) -> Pixels {
-        let font_size = cx
-            .try_global::<AgentFontSize>()
+        cx.try_global::<AgentFontSize>()
             .map(|size| size.0)
-            .unwrap_or(self.agent_font_size);
-        clamp_font_size(font_size)
+            .or(self.agent_font_size)
+            .map(clamp_font_size)
+            .unwrap_or_else(|| self.ui_font_size(cx))
     }
 
     /// Returns the buffer font size, read from the settings.
@@ -622,6 +623,14 @@ impl ThemeSettings {
     /// Use [`Self::ui_font_size`] to get the real font size.
     pub fn ui_font_size_settings(&self) -> Pixels {
         self.ui_font_size
+    }
+
+    /// Returns the agent font size, read from the settings.
+    ///
+    /// The real agent font size is stored in-memory, to support temporary font size changes.
+    /// Use [`Self::agent_font_size`] to get the real font size.
+    pub fn agent_font_size_settings(&self) -> Option<Pixels> {
+        self.agent_font_size
     }
 
     // TODO: Rename: `line_height` -> `buffer_line_height`
@@ -732,14 +741,12 @@ pub fn adjusted_font_size(size: Pixels, cx: &App) -> Pixels {
 }
 
 /// Adjusts the buffer font size.
-pub fn adjust_buffer_font_size(cx: &mut App, mut f: impl FnMut(&mut Pixels)) {
+pub fn adjust_buffer_font_size(cx: &mut App, f: impl FnOnce(Pixels) -> Pixels) {
     let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
-    let mut adjusted_size = cx
+    let adjusted_size = cx
         .try_global::<BufferFontSize>()
         .map_or(buffer_font_size, |adjusted_size| adjusted_size.0);
-
-    f(&mut adjusted_size);
-    cx.set_global(BufferFontSize(clamp_font_size(adjusted_size)));
+    cx.set_global(BufferFontSize(clamp_font_size(f(adjusted_size))));
     cx.refresh_windows();
 }
 
@@ -765,14 +772,12 @@ pub fn setup_ui_font(window: &mut Window, cx: &mut App) -> gpui::Font {
 }
 
 /// Sets the adjusted UI font size.
-pub fn adjust_ui_font_size(cx: &mut App, mut f: impl FnMut(&mut Pixels)) {
+pub fn adjust_ui_font_size(cx: &mut App, f: impl FnOnce(Pixels) -> Pixels) {
     let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
-    let mut adjusted_size = cx
+    let adjusted_size = cx
         .try_global::<UiFontSize>()
         .map_or(ui_font_size, |adjusted_size| adjusted_size.0);
-
-    f(&mut adjusted_size);
-    cx.set_global(UiFontSize(clamp_font_size(adjusted_size)));
+    cx.set_global(UiFontSize(clamp_font_size(f(adjusted_size))));
     cx.refresh_windows();
 }
 
@@ -784,19 +789,17 @@ pub fn reset_ui_font_size(cx: &mut App) {
     }
 }
 
-/// Sets the adjusted UI font size.
-pub fn adjust_agent_font_size(cx: &mut App, mut f: impl FnMut(&mut Pixels)) {
+/// Sets the adjusted agent panel font size.
+pub fn adjust_agent_font_size(cx: &mut App, f: impl FnOnce(Pixels) -> Pixels) {
     let agent_font_size = ThemeSettings::get_global(cx).agent_font_size(cx);
-    let mut adjusted_size = cx
+    let adjusted_size = cx
         .try_global::<AgentFontSize>()
         .map_or(agent_font_size, |adjusted_size| adjusted_size.0);
-
-    f(&mut adjusted_size);
-    cx.set_global(AgentFontSize(clamp_font_size(adjusted_size)));
+    cx.set_global(AgentFontSize(clamp_font_size(f(adjusted_size))));
     cx.refresh_windows();
 }
 
-/// Resets the UI font size to the default value.
+/// Resets the agent panel font size to the default value.
 pub fn reset_agent_font_size(cx: &mut App) {
     if cx.has_global::<AgentFontSize>() {
         cx.remove_global::<AgentFontSize>();
@@ -806,7 +809,7 @@ pub fn reset_agent_font_size(cx: &mut App) {
 
 /// Ensures font size is within the valid range.
 pub fn clamp_font_size(size: Pixels) -> Pixels {
-    size.max(MIN_FONT_SIZE)
+    size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)
 }
 
 fn clamp_font_weight(weight: f32) -> FontWeight {
@@ -860,7 +863,7 @@ impl settings::Settings for ThemeSettings {
             },
             buffer_font_size: defaults.buffer_font_size.unwrap().into(),
             buffer_line_height: defaults.buffer_line_height.unwrap(),
-            agent_font_size: defaults.agent_font_size.unwrap().into(),
+            agent_font_size: defaults.agent_font_size.flatten().map(Into::into),
             theme_selection: defaults.theme.clone(),
             active_theme: themes
                 .get(defaults.theme.as_ref().unwrap().theme(*system_appearance))
@@ -959,20 +962,20 @@ impl settings::Settings for ThemeSettings {
                 }
             }
 
-            merge(&mut this.ui_font_size, value.ui_font_size.map(Into::into));
-            this.ui_font_size = this.ui_font_size.clamp(px(6.), px(100.));
-
+            merge(
+                &mut this.ui_font_size,
+                value.ui_font_size.map(Into::into).map(clamp_font_size),
+            );
             merge(
                 &mut this.buffer_font_size,
-                value.buffer_font_size.map(Into::into),
+                value.buffer_font_size.map(Into::into).map(clamp_font_size),
             );
-            this.buffer_font_size = this.buffer_font_size.clamp(px(6.), px(100.));
-
             merge(
                 &mut this.agent_font_size,
-                value.agent_font_size.map(Into::into),
+                value
+                    .agent_font_size
+                    .map(|value| value.map(Into::into).map(clamp_font_size)),
             );
-            this.agent_font_size = this.agent_font_size.clamp(px(6.), px(100.));
 
             merge(&mut this.buffer_line_height, value.buffer_line_height);
 

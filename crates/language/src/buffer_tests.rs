@@ -1744,7 +1744,7 @@ fn test_autoindent_block_mode(cx: &mut App) {
         buffer.edit(
             [(Point::new(2, 8)..Point::new(2, 8), inserted_text)],
             Some(AutoindentMode::Block {
-                original_indent_columns: original_indent_columns.clone(),
+                original_indent_columns,
             }),
             cx,
         );
@@ -1790,9 +1790,9 @@ fn test_autoindent_block_mode_with_newline(cx: &mut App) {
         "#
         .unindent();
         buffer.edit(
-            [(Point::new(2, 0)..Point::new(2, 0), inserted_text.clone())],
+            [(Point::new(2, 0)..Point::new(2, 0), inserted_text)],
             Some(AutoindentMode::Block {
-                original_indent_columns: original_indent_columns.clone(),
+                original_indent_columns,
             }),
             cx,
         );
@@ -1843,7 +1843,7 @@ fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut App) {
         buffer.edit(
             [(Point::new(2, 0)..Point::new(2, 0), inserted_text)],
             Some(AutoindentMode::Block {
-                original_indent_columns: original_indent_columns.clone(),
+                original_indent_columns,
             }),
             cx,
         );
@@ -2030,7 +2030,7 @@ fn test_autoindent_with_injected_languages(cx: &mut App) {
 
     let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     language_registry.add(html_language.clone());
-    language_registry.add(javascript_language.clone());
+    language_registry.add(javascript_language);
 
     cx.new(|cx| {
         let (text, ranges) = marked_text_ranges(

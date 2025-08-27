@@ -73,7 +73,7 @@ fn get_dismissed(source: &str) -> bool {
     db::kvp::KEY_VALUE_STORE
         .read_kvp(&dismissed_at)
         .log_err()
-        .map_or(false, |dismissed| dismissed.is_some())
+        .is_some_and(|dismissed| dismissed.is_some())
 }
 
 fn persist_dismissed(source: &str, cx: &mut App) {
@@ -119,7 +119,7 @@ impl Render for OnboardingBanner {
                         h_flex()
                             .h_full()
                             .gap_1()
-                            .child(Icon::new(self.details.icon_name).size(IconSize::Small))
+                            .child(Icon::new(self.details.icon_name).size(IconSize::XSmall))
                             .child(
                                 h_flex()
                                     .gap_0p5()

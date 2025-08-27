@@ -196,7 +196,6 @@ impl QuickActionBar {
                                 .into_any_element()
                         },
                         {
-                            let editor = editor.clone();
                             move |window, cx| {
                                 repl::restart(editor.clone(), window, cx);
                             }
@@ -216,7 +215,7 @@ impl QuickActionBar {
                             .size(IconSize::XSmall)
                             .color(Color::Muted),
                     )
-                    .width(rems(1.).into())
+                    .width(rems(1.))
                     .disabled(menu_state.popover_disabled),
                 Tooltip::text("REPL Menu"),
             );
@@ -346,7 +345,7 @@ impl QuickActionBar {
                 ),
             Tooltip::text("Select Kernel"),
         )
-        .with_handle(menu_handle.clone())
+        .with_handle(menu_handle)
         .into_any_element()
     }
 
@@ -362,7 +361,7 @@ impl QuickActionBar {
                         .shape(ui::IconButtonShape::Square)
                         .icon_size(ui::IconSize::Small)
                         .icon_color(Color::Muted)
-                        .tooltip(Tooltip::text(tooltip.clone()))
+                        .tooltip(Tooltip::text(tooltip))
                         .on_click(|_, _window, cx| {
                             cx.open_url(&format!("{}#installation", ZED_REPL_DOCUMENTATION))
                         }),

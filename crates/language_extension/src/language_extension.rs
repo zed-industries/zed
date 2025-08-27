@@ -52,7 +52,7 @@ impl ExtensionLanguageProxy for LanguageServerRegistryProxy {
         load: Arc<dyn Fn() -> Result<LoadedLanguage> + Send + Sync + 'static>,
     ) {
         self.language_registry
-            .register_language(language, grammar, matcher, hidden, load);
+            .register_language(language, grammar, matcher, hidden, None, load);
     }
 
     fn remove_languages(
@@ -61,6 +61,6 @@ impl ExtensionLanguageProxy for LanguageServerRegistryProxy {
         grammars_to_remove: &[Arc<str>],
     ) {
         self.language_registry
-            .remove_languages(&languages_to_remove, &grammars_to_remove);
+            .remove_languages(languages_to_remove, grammars_to_remove);
     }
 }

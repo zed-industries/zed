@@ -9,7 +9,7 @@ use strum::EnumIter;
 pub const OPEN_AI_API_URL: &str = "https://api.openai.com/v1";
 
 fn is_none_or_empty<T: AsRef<[U]>, U>(opt: &Option<T>) -> bool {
-    opt.as_ref().map_or(true, |v| v.as_ref().is_empty())
+    opt.as_ref().is_none_or(|v| v.as_ref().is_empty())
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -236,6 +236,13 @@ impl Model {
             Self::O1 | Self::O3 | Self::O3Mini | Self::O4Mini | Model::Custom { .. } => false,
         }
     }
+
+    /// Returns whether the given model supports the `prompt_cache_key` parameter.
+    ///
+    /// If the model does not support the parameter, do not pass it up.
+    pub fn supports_prompt_cache_key(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -257,6 +264,7 @@ pub struct Request {
     pub tools: Vec<ToolDefinition>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_cache_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<ReasoningEffort>,
 }
 
@@ -425,15 +433,19 @@ pub struct ChoiceDelta {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct OpenAiError {
+    message: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(untagged)]
 pub enum ResponseStreamResult {
     Ok(ResponseStreamEvent),
-    Err { error: String },
+    Err { error: OpenAiError },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ResponseStreamEvent {
-    pub model: String,
     pub choices: Vec<ChoiceDelta>,
     pub usage: Option<Usage>,
 }
@@ -467,7 +479,7 @@ pub async fn stream_completion(
                             match serde_json::from_str(line) {
                                 Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
                                 Ok(ResponseStreamResult::Err { error }) => {
-                                    Some(Err(anyhow!(error)))
+                                    Some(Err(anyhow!(error.message)))
                                 }
                                 Err(error) => {
                                     log::error!(
@@ -492,11 +504,6 @@ pub async fn stream_completion(
         #[derive(Deserialize)]
         struct OpenAiResponse {
             error: OpenAiError,
-        }
-
-        #[derive(Deserialize)]
-        struct OpenAiError {
-            message: String,
         }
 
         match serde_json::from_str::<OpenAiResponse>(&body) {

@@ -300,6 +300,7 @@ impl EditorLspTestContext {
         self.to_lsp_range(ranges[0].clone())
     }
 
+    #[expect(clippy::wrong_self_convention, reason = "This is test code")]
     pub fn to_lsp_range(&mut self, range: Range<usize>) -> lsp::Range {
         let snapshot = self.update_editor(|editor, window, cx| editor.snapshot(window, cx));
         let start_point = range.start.to_point(&snapshot.buffer_snapshot);
@@ -326,6 +327,7 @@ impl EditorLspTestContext {
         })
     }
 
+    #[expect(clippy::wrong_self_convention, reason = "This is test code")]
     pub fn to_lsp(&mut self, offset: usize) -> lsp::Position {
         let snapshot = self.update_editor(|editor, window, cx| editor.snapshot(window, cx));
         let point = offset.to_point(&snapshot.buffer_snapshot);

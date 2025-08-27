@@ -68,7 +68,7 @@ impl Tool for ReadFileTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::ToolRead
+        IconName::ToolSearch
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
@@ -201,7 +201,7 @@ impl Tool for ReadFileTool {
                 buffer
                     .file()
                     .as_ref()
-                    .map_or(true, |file| !file.disk_state().exists())
+                    .is_none_or(|file| !file.disk_state().exists())
             })? {
                 anyhow::bail!("{file_path} not found");
             }

@@ -34,7 +34,12 @@ impl Connection {
     /// Note: Unlike everything else in SQLez, migrations are run eagerly, without first
     /// preparing the SQL statements. This makes it possible to do multi-statement schema
     /// updates in a single string without running into prepare errors.
-    pub fn migrate(&self, domain: &'static str, migrations: &[&'static str]) -> Result<()> {
+    pub fn migrate(
+        &self,
+        domain: &'static str,
+        migrations: &[&'static str],
+        mut should_allow_migration_change: impl FnMut(usize, &str, &str) -> bool,
+    ) -> Result<()> {
         self.with_savepoint("migrating", || {
             // Setup the migrations table unconditionally
             self.exec(indoc! {"
@@ -65,8 +70,13 @@ impl Connection {
                         &sqlformat::QueryParams::None,
                         Default::default(),
                     );
-                    if completed_migration == migration {
+                    if completed_migration == migration
+                        || migration.trim().starts_with("-- ALLOW_MIGRATION_CHANGE")
+                    {
                         // Migration already run. Continue
+                        continue;
+                    } else if should_allow_migration_change(index, &completed_migration, &migration)
+                    {
                         continue;
                     } else {
                         anyhow::bail!(formatdoc! {"
@@ -108,6 +118,7 @@ mod test {
                     a TEXT,
                     b TEXT
                 )"}],
+                disallow_migration_change,
             )
             .unwrap();
 
@@ -136,6 +147,7 @@ mod test {
                         d TEXT
                     )"},
                 ],
+                disallow_migration_change,
             )
             .unwrap();
 
@@ -214,7 +226,11 @@ mod test {
 
         // Run the migration verifying that the row got dropped
         connection
-            .migrate("test", &["DELETE FROM test_table"])
+            .migrate(
+                "test",
+                &["DELETE FROM test_table"],
+                disallow_migration_change,
+            )
             .unwrap();
         assert_eq!(
             connection
@@ -232,7 +248,11 @@ mod test {
 
         // Run the same migration again and verify that the table was left unchanged
         connection
-            .migrate("test", &["DELETE FROM test_table"])
+            .migrate(
+                "test",
+                &["DELETE FROM test_table"],
+                disallow_migration_change,
+            )
             .unwrap();
         assert_eq!(
             connection
@@ -252,27 +272,28 @@ mod test {
             .migrate(
                 "test migration",
                 &[
-                    indoc! {"
-                CREATE TABLE test (
-                    col INTEGER
-                )"},
-                    indoc! {"
-                    INSERT INTO test (col) VALUES (1)"},
+                    "CREATE TABLE test (col INTEGER)",
+                    "INSERT INTO test (col) VALUES (1)",
                 ],
+                disallow_migration_change,
             )
             .unwrap();
+
+        let mut migration_changed = false;
 
         // Create another migration with the same domain but different steps
         let second_migration_result = connection.migrate(
             "test migration",
             &[
-                indoc! {"
-                CREATE TABLE test (
-                    color INTEGER
-                )"},
-                indoc! {"
-                INSERT INTO test (color) VALUES (1)"},
+                "CREATE TABLE test (color INTEGER )",
+                "INSERT INTO test (color) VALUES (1)",
             ],
+            |_, old, new| {
+                assert_eq!(old, "CREATE TABLE test (col INTEGER)");
+                assert_eq!(new, "CREATE TABLE test (color INTEGER)");
+                migration_changed = true;
+                false
+            },
         );
 
         // Verify new migration returns error when run
@@ -284,7 +305,11 @@ mod test {
         let connection = Connection::open_memory(Some("test_create_alter_drop"));
 
         connection
-            .migrate("first_migration", &["CREATE TABLE table1(a TEXT) STRICT;"])
+            .migrate(
+                "first_migration",
+                &["CREATE TABLE table1(a TEXT) STRICT;"],
+                disallow_migration_change,
+            )
             .unwrap();
 
         connection
@@ -305,11 +330,16 @@ mod test {
 
                     ALTER TABLE table2 RENAME TO table1;
                 "}],
+                disallow_migration_change,
             )
             .unwrap();
 
         let res = &connection.select::<String>("SELECT b FROM table1").unwrap()().unwrap()[0];
 
         assert_eq!(res, "test text");
+    }
+
+    fn disallow_migration_change(_: usize, _: &str, _: &str) -> bool {
+        false
     }
 }

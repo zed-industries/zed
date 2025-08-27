@@ -22,6 +22,7 @@ use settings::{
     SettingsStore, parse_json_with_comments, watch_config_file,
 };
 use std::{
+    collections::BTreeMap,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -180,17 +181,6 @@ pub struct DiagnosticsSettings {
 
     /// Settings for showing inline diagnostics.
     pub inline: InlineDiagnosticsSettings,
-
-    /// Configuration, related to Rust language diagnostics.
-    pub cargo: Option<CargoDiagnosticsSettings>,
-}
-
-impl DiagnosticsSettings {
-    pub fn fetch_cargo_diagnostics(&self) -> bool {
-        self.cargo.as_ref().map_or(false, |cargo_diagnostics| {
-            cargo_diagnostics.fetch_cargo_diagnostics
-        })
-    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
@@ -257,7 +247,6 @@ impl Default for DiagnosticsSettings {
             include_warnings: true,
             lsp_pull_diagnostics: LspPullDiagnosticsSettings::default(),
             inline: InlineDiagnosticsSettings::default(),
-            cargo: None,
         }
     }
 }
@@ -289,16 +278,6 @@ impl Default for GlobalLspSettings {
             button: default_true(),
         }
     }
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-pub struct CargoDiagnosticsSettings {
-    /// When enabled, Zed disables rust-analyzer's check on save and starts to query
-    /// Cargo diagnostics separately.
-    ///
-    /// Default: false
-    #[serde(default)]
-    pub fetch_cargo_diagnostics: bool,
 }
 
 #[derive(
@@ -518,16 +497,15 @@ impl Default for InlineBlameSettings {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
 pub struct BinarySettings {
     pub path: Option<String>,
     pub arguments: Option<Vec<String>>,
-    // this can't be an FxHashMap because the extension APIs require the default SipHash
-    pub env: Option<std::collections::HashMap<String, String>>,
+    pub env: Option<BTreeMap<String, String>>,
     pub ignore_system_version: Option<bool>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
 #[serde(rename_all = "snake_case")]
 pub struct LspSettings {
     pub binary: Option<BinarySettings>,
@@ -1105,7 +1083,7 @@ impl SettingsObserver {
         cx: &mut Context<Self>,
     ) -> Task<()> {
         let mut user_tasks_file_rx =
-            watch_config_file(&cx.background_executor(), fs, file_path.clone());
+            watch_config_file(cx.background_executor(), fs, file_path.clone());
         let user_tasks_content = cx.background_executor().block(user_tasks_file_rx.next());
         let weak_entry = cx.weak_entity();
         cx.spawn(async move |settings_observer, cx| {
@@ -1160,7 +1138,7 @@ impl SettingsObserver {
         cx: &mut Context<Self>,
     ) -> Task<()> {
         let mut user_tasks_file_rx =
-            watch_config_file(&cx.background_executor(), fs, file_path.clone());
+            watch_config_file(cx.background_executor(), fs, file_path.clone());
         let user_tasks_content = cx.background_executor().block(user_tasks_file_rx.next());
         let weak_entry = cx.weak_entity();
         cx.spawn(async move |settings_observer, cx| {

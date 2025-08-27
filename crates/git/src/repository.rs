@@ -6,7 +6,7 @@ use collections::HashMap;
 use futures::future::BoxFuture;
 use futures::{AsyncWriteExt, FutureExt as _, select_biased};
 use git2::BranchType;
-use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, SharedString};
+use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, SharedString, Task};
 use parking_lot::Mutex;
 use rope::Rope;
 use schemars::JsonSchema;
@@ -269,10 +269,8 @@ impl GitExcludeOverride {
     pub async fn restore_original(&mut self) -> Result<()> {
         if let Some(ref original) = self.original_excludes {
             smol::fs::write(&self.git_exclude_path, original).await?;
-        } else {
-            if self.git_exclude_path.exists() {
-                smol::fs::remove_file(&self.git_exclude_path).await?;
-            }
+        } else if self.git_exclude_path.exists() {
+            smol::fs::remove_file(&self.git_exclude_path).await?;
         }
 
         self.added_excludes = None;
@@ -338,7 +336,7 @@ pub trait GitRepository: Send + Sync {
 
     fn merge_message(&self) -> BoxFuture<'_, Option<String>>;
 
-    fn status(&self, path_prefixes: &[RepoPath]) -> BoxFuture<'_, Result<GitStatus>>;
+    fn status(&self, path_prefixes: &[RepoPath]) -> Task<Result<GitStatus>>;
 
     fn branches(&self) -> BoxFuture<'_, Result<Vec<Branch>>>;
 
@@ -858,7 +856,7 @@ impl GitRepository for RealGitRepository {
                     let output = new_smol_command(&git_binary_path)
                         .current_dir(&working_directory)
                         .envs(env.iter())
-                        .args(["update-index", "--add", "--cacheinfo", "100644", &sha])
+                        .args(["update-index", "--add", "--cacheinfo", "100644", sha])
                         .arg(path.to_unix_style())
                         .output()
                         .await?;
@@ -918,7 +916,7 @@ impl GitRepository for RealGitRepository {
                     .context("no stdin for git cat-file subprocess")?;
                 let mut stdin = BufWriter::new(stdin);
                 for rev in &revs {
-                    write!(&mut stdin, "{rev}\n")?;
+                    writeln!(&mut stdin, "{rev}")?;
                 }
                 stdin.flush()?;
                 drop(stdin);
@@ -953,25 +951,27 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn status(&self, path_prefixes: &[RepoPath]) -> BoxFuture<'_, Result<GitStatus>> {
+    fn status(&self, path_prefixes: &[RepoPath]) -> Task<Result<GitStatus>> {
         let git_binary_path = self.git_binary_path.clone();
-        let working_directory = self.working_directory();
-        let path_prefixes = path_prefixes.to_owned();
-        self.executor
-            .spawn(async move {
-                let output = new_std_command(&git_binary_path)
-                    .current_dir(working_directory?)
-                    .args(git_status_args(&path_prefixes))
-                    .output()?;
-                if output.status.success() {
-                    let stdout = String::from_utf8_lossy(&output.stdout);
-                    stdout.parse()
-                } else {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    anyhow::bail!("git status failed: {stderr}");
-                }
-            })
-            .boxed()
+        let working_directory = match self.working_directory() {
+            Ok(working_directory) => working_directory,
+            Err(e) => return Task::ready(Err(e)),
+        };
+        let args = git_status_args(path_prefixes);
+        log::debug!("Checking for git status in {path_prefixes:?}");
+        self.executor.spawn(async move {
+            let output = new_std_command(&git_binary_path)
+                .current_dir(working_directory)
+                .args(args)
+                .output()?;
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                stdout.parse()
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                anyhow::bail!("git status failed: {stderr}");
+            }
+        })
     }
 
     fn branches(&self) -> BoxFuture<'_, Result<Vec<Branch>>> {
@@ -1054,7 +1054,7 @@ impl GitRepository for RealGitRepository {
                 let (_, branch_name) = name.split_once("/").context("Unexpected branch format")?;
                 let revision = revision.get();
                 let branch_commit = revision.peel_to_commit()?;
-                let mut branch = repo.branch(&branch_name, &branch_commit, false)?;
+                let mut branch = repo.branch(branch_name, &branch_commit, false)?;
                 branch.set_upstream(Some(&name))?;
                 branch
             } else {
@@ -1445,12 +1445,11 @@ impl GitRepository for RealGitRepository {
 
                 let mut remote_branches = vec![];
                 let mut add_if_matching = async |remote_head: &str| {
-                    if let Ok(merge_base) = git_cmd(&["merge-base", &head, remote_head]).await {
-                        if merge_base.trim() == head {
-                            if let Some(s) = remote_head.strip_prefix("refs/remotes/") {
-                                remote_branches.push(s.to_owned().into());
-                            }
-                        }
+                    if let Ok(merge_base) = git_cmd(&["merge-base", &head, remote_head]).await
+                        && merge_base.trim() == head
+                        && let Some(s) = remote_head.strip_prefix("refs/remotes/")
+                    {
+                        remote_branches.push(s.to_owned().into());
                     }
                 };
 
@@ -1572,10 +1571,9 @@ impl GitRepository for RealGitRepository {
                     Err(error) => {
                         if let Some(GitBinaryCommandError { status, .. }) =
                             error.downcast_ref::<GitBinaryCommandError>()
+                            && status.code() == Some(1)
                         {
-                            if status.code() == Some(1) {
-                                return Ok(false);
-                            }
+                            return Ok(false);
                         }
 
                         Err(error)
@@ -2030,7 +2028,7 @@ fn parse_branch_input(input: &str) -> Result<Vec<Branch>> {
 
         branches.push(Branch {
             is_head: is_current_branch,
-            ref_name: ref_name,
+            ref_name,
             most_recent_commit: Some(CommitSummary {
                 sha: head_sha,
                 subject,
@@ -2052,7 +2050,7 @@ fn parse_branch_input(input: &str) -> Result<Vec<Branch>> {
 }
 
 fn parse_upstream_track(upstream_track: &str) -> Result<UpstreamTracking> {
-    if upstream_track == "" {
+    if upstream_track.is_empty() {
         return Ok(UpstreamTracking::Tracked(UpstreamTrackingStatus {
             ahead: 0,
             behind: 0,
@@ -2347,7 +2345,7 @@ mod tests {
         #[allow(clippy::octal_escapes)]
         let input = "*\0060964da10574cd9bf06463a53bf6e0769c5c45e\0\0refs/heads/zed-patches\0refs/remotes/origin/zed-patches\0\01733187470\0generated protobuf\n";
         assert_eq!(
-            parse_branch_input(&input).unwrap(),
+            parse_branch_input(input).unwrap(),
             vec![Branch {
                 is_head: true,
                 ref_name: "refs/heads/zed-patches".into(),

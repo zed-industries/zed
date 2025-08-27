@@ -106,9 +106,7 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
                         );
 
                         let expected_other_field = if input_path.contains("$ZED_WORKTREE_ROOT") {
-                            input_path
-                                .replace("$ZED_WORKTREE_ROOT", &path!("/test/worktree/path"))
-                                .to_owned()
+                            input_path.replace("$ZED_WORKTREE_ROOT", path!("/test/worktree/path"))
                         } else {
                             input_path.to_string()
                         };

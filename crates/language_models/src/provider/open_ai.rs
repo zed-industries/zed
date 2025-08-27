@@ -75,7 +75,7 @@ impl State {
             .clone();
         cx.spawn(async move |this, cx| {
             credentials_provider
-                .delete_credentials(&api_url, &cx)
+                .delete_credentials(&api_url, cx)
                 .await
                 .log_err();
             this.update(cx, |this, cx| {
@@ -94,7 +94,7 @@ impl State {
             .clone();
         cx.spawn(async move |this, cx| {
             credentials_provider
-                .write_credentials(&api_url, "Bearer", api_key.as_bytes(), &cx)
+                .write_credentials(&api_url, "Bearer", api_key.as_bytes(), cx)
                 .await
                 .log_err();
             this.update(cx, |this, cx| {
@@ -119,7 +119,7 @@ impl State {
                 (api_key, true)
             } else {
                 let (_, api_key) = credentials_provider
-                    .read_credentials(&api_url, &cx)
+                    .read_credentials(&api_url, cx)
                     .await?
                     .ok_or(AuthenticateError::CredentialsNotFound)?;
                 (
@@ -233,7 +233,12 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView {
+    fn configuration_view(
+        &self,
+        _target_agent: language_model::ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyView {
         cx.new(|cx| ConfigurationView::new(self.state.clone(), window, cx))
             .into()
     }
@@ -370,6 +375,7 @@ impl LanguageModel for OpenAiLanguageModel {
             request,
             self.model.id(),
             self.model.supports_parallel_tool_calls(),
+            self.model.supports_prompt_cache_key(),
             self.max_output_tokens(),
             self.model.reasoning_effort(),
         );
@@ -386,6 +392,7 @@ pub fn into_open_ai(
     request: LanguageModelRequest,
     model_id: &str,
     supports_parallel_tool_calls: bool,
+    supports_prompt_cache_key: bool,
     max_output_tokens: Option<u64>,
     reasoning_effort: Option<ReasoningEffort>,
 ) -> open_ai::Request {
@@ -397,7 +404,7 @@ pub fn into_open_ai(
             match content {
                 MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
                     add_message_content_part(
-                        open_ai::MessagePart::Text { text: text },
+                        open_ai::MessagePart::Text { text },
                         message.role,
                         &mut messages,
                     )
@@ -477,7 +484,11 @@ pub fn into_open_ai(
         } else {
             None
         },
-        prompt_cache_key: request.thread_id,
+        prompt_cache_key: if supports_prompt_cache_key {
+            request.thread_id
+        } else {
+            None
+        },
         tools: request
             .tools
             .into_iter()

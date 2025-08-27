@@ -22,13 +22,13 @@ impl CLspAdapter {
 #[async_trait(?Send)]
 impl super::LspAdapter for CLspAdapter {
     fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
+        Self::SERVER_NAME
     }
 
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
@@ -253,8 +253,7 @@ impl super::LspAdapter for CLspAdapter {
                     .grammar()
                     .and_then(|g| g.highlight_id_for_name(highlight_name?))
                 {
-                    let mut label =
-                        CodeLabel::plain(label.to_string(), completion.filter_text.as_deref());
+                    let mut label = CodeLabel::plain(label, completion.filter_text.as_deref());
                     label.runs.push((
                         0..label.text.rfind('(').unwrap_or(label.text.len()),
                         highlight_id,
@@ -264,10 +263,7 @@ impl super::LspAdapter for CLspAdapter {
             }
             _ => {}
         }
-        Some(CodeLabel::plain(
-            label.to_string(),
-            completion.filter_text.as_deref(),
-        ))
+        Some(CodeLabel::plain(label, completion.filter_text.as_deref()))
     }
 
     async fn label_for_symbol(

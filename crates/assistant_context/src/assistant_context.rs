@@ -590,17 +590,16 @@ impl From<&Message> for MessageMetadata {
 
 impl MessageMetadata {
     pub fn is_cache_valid(&self, buffer: &BufferSnapshot, range: &Range<usize>) -> bool {
-        let result = match &self.cache {
+        match &self.cache {
             Some(MessageCacheMetadata { cached_at, .. }) => !buffer.has_edits_since_in_range(
-                &cached_at,
+                cached_at,
                 Range {
                     start: buffer.anchor_at(range.start, Bias::Right),
                     end: buffer.anchor_at(range.end, Bias::Left),
                 },
             ),
             _ => false,
-        };
-        result
+        }
     }
 }
 
@@ -1023,9 +1022,11 @@ impl AssistantContext {
                     summary: new_summary,
                     ..
                 } => {
-                    if self.summary.timestamp().map_or(true, |current_timestamp| {
-                        new_summary.timestamp > current_timestamp
-                    }) {
+                    if self
+                        .summary
+                        .timestamp()
+                        .is_none_or(|current_timestamp| new_summary.timestamp > current_timestamp)
+                    {
                         self.summary = ContextSummary::Content(new_summary);
                         summary_generated = true;
                     }
@@ -1076,20 +1077,20 @@ impl AssistantContext {
                     timestamp,
                     ..
                 } => {
-                    if let Some(slash_command) = self.invoked_slash_commands.get_mut(&id) {
-                        if timestamp > slash_command.timestamp {
-                            slash_command.timestamp = timestamp;
-                            match error_message {
-                                Some(message) => {
-                                    slash_command.status =
-                                        InvokedSlashCommandStatus::Error(message.into());
-                                }
-                                None => {
-                                    slash_command.status = InvokedSlashCommandStatus::Finished;
-                                }
+                    if let Some(slash_command) = self.invoked_slash_commands.get_mut(&id)
+                        && timestamp > slash_command.timestamp
+                    {
+                        slash_command.timestamp = timestamp;
+                        match error_message {
+                            Some(message) => {
+                                slash_command.status =
+                                    InvokedSlashCommandStatus::Error(message.into());
                             }
-                            cx.emit(ContextEvent::InvokedSlashCommandChanged { command_id: id });
+                            None => {
+                                slash_command.status = InvokedSlashCommandStatus::Finished;
+                            }
                         }
+                        cx.emit(ContextEvent::InvokedSlashCommandChanged { command_id: id });
                     }
                 }
                 ContextOperation::BufferOperation(_) => unreachable!(),
@@ -1339,7 +1340,7 @@ impl AssistantContext {
                 let is_invalid = self
                     .messages_metadata
                     .get(&message_id)
-                    .map_or(true, |metadata| {
+                    .is_none_or(|metadata| {
                         !metadata.is_cache_valid(&buffer, &message.offset_range)
                             || *encountered_invalid
                     });
@@ -1368,10 +1369,10 @@ impl AssistantContext {
                 continue;
             }
 
-            if let Some(last_anchor) = last_anchor {
-                if message.id == last_anchor {
-                    hit_last_anchor = true;
-                }
+            if let Some(last_anchor) = last_anchor
+                && message.id == last_anchor
+            {
+                hit_last_anchor = true;
             }
 
             new_anchor_needs_caching = new_anchor_needs_caching
@@ -1406,14 +1407,14 @@ impl AssistantContext {
         if !self.pending_completions.is_empty() {
             return;
         }
-        if let Some(cache_configuration) = cache_configuration {
-            if !cache_configuration.should_speculate {
-                return;
-            }
+        if let Some(cache_configuration) = cache_configuration
+            && !cache_configuration.should_speculate
+        {
+            return;
         }
 
         let request = {
-            let mut req = self.to_completion_request(Some(&model), cx);
+            let mut req = self.to_completion_request(Some(model), cx);
             // Skip the last message because it's likely to change and
             // therefore would be a waste to cache.
             req.messages.pop();
@@ -1428,7 +1429,7 @@ impl AssistantContext {
         let model = Arc::clone(model);
         self.pending_cache_warming_task = cx.spawn(async move |this, cx| {
             async move {
-                match model.stream_completion(request, &cx).await {
+                match model.stream_completion(request, cx).await {
                     Ok(mut stream) => {
                         stream.next().await;
                         log::info!("Cache warming completed successfully");
@@ -1552,25 +1553,24 @@ impl AssistantContext {
                     })
                     .map(ToOwned::to_owned)
                     .collect::<SmallVec<_>>();
-                if let Some(command) = self.slash_commands.command(name, cx) {
-                    if !command.requires_argument() || !arguments.is_empty() {
-                        let start_ix = offset + command_line.name.start - 1;
-                        let end_ix = offset
-                            + command_line
-                                .arguments
-                                .last()
-                                .map_or(command_line.name.end, |argument| argument.end);
-                        let source_range =
-                            buffer.anchor_after(start_ix)..buffer.anchor_after(end_ix);
-                        let pending_command = ParsedSlashCommand {
-                            name: name.to_string(),
-                            arguments,
-                            source_range,
-                            status: PendingSlashCommandStatus::Idle,
-                        };
-                        updated.push(pending_command.clone());
-                        new_commands.push(pending_command);
-                    }
+                if let Some(command) = self.slash_commands.command(name, cx)
+                    && (!command.requires_argument() || !arguments.is_empty())
+                {
+                    let start_ix = offset + command_line.name.start - 1;
+                    let end_ix = offset
+                        + command_line
+                            .arguments
+                            .last()
+                            .map_or(command_line.name.end, |argument| argument.end);
+                    let source_range = buffer.anchor_after(start_ix)..buffer.anchor_after(end_ix);
+                    let pending_command = ParsedSlashCommand {
+                        name: name.to_string(),
+                        arguments,
+                        source_range,
+                        status: PendingSlashCommandStatus::Idle,
+                    };
+                    updated.push(pending_command.clone());
+                    new_commands.push(pending_command);
                 }
             }
 
@@ -1661,12 +1661,12 @@ impl AssistantContext {
     ) -> Range<usize> {
         let buffer = self.buffer.read(cx);
         let start_ix = match all_annotations
-            .binary_search_by(|probe| probe.range().end.cmp(&range.start, &buffer))
+            .binary_search_by(|probe| probe.range().end.cmp(&range.start, buffer))
         {
             Ok(ix) | Err(ix) => ix,
         };
         let end_ix = match all_annotations
-            .binary_search_by(|probe| probe.range().start.cmp(&range.end, &buffer))
+            .binary_search_by(|probe| probe.range().start.cmp(&range.end, buffer))
         {
             Ok(ix) => ix + 1,
             Err(ix) => ix,
@@ -1799,14 +1799,13 @@ impl AssistantContext {
                                 });
 
                                 let end = this.buffer.read(cx).anchor_before(insert_position);
-                                if run_commands_in_text {
-                                    if let Some(invoked_slash_command) =
+                                if run_commands_in_text
+                                    && let Some(invoked_slash_command) =
                                         this.invoked_slash_commands.get_mut(&command_id)
-                                    {
-                                        invoked_slash_command
-                                            .run_commands_in_ranges
-                                            .push(start..end);
-                                    }
+                                {
+                                    invoked_slash_command
+                                        .run_commands_in_ranges
+                                        .push(start..end);
                                 }
                             }
                             SlashCommandEvent::EndSection => {
@@ -1862,7 +1861,7 @@ impl AssistantContext {
                         {
                             let newline_offset = insert_position.saturating_sub(1);
                             if buffer.contains_str_at(newline_offset, "\n")
-                                && last_section_range.map_or(true, |last_section_range| {
+                                && last_section_range.is_none_or(|last_section_range| {
                                     !last_section_range
                                         .to_offset(buffer)
                                         .contains(&newline_offset)
@@ -2045,7 +2044,7 @@ impl AssistantContext {
 
         let task = cx.spawn({
             async move |this, cx| {
-                let stream = model.stream_completion(request, &cx);
+                let stream = model.stream_completion(request, cx);
                 let assistant_message_id = assistant_message.id;
                 let mut response_latency = None;
                 let stream_completion = async {
@@ -2081,15 +2080,12 @@ impl AssistantContext {
 
                                 match event {
                                     LanguageModelCompletionEvent::StatusUpdate(status_update) => {
-                                        match status_update {
-                                            CompletionRequestStatus::UsageUpdated { amount, limit } => {
-                                                this.update_model_request_usage(
-                                                    amount as u32,
-                                                    limit,
-                                                    cx,
-                                                );
-                                            }
-                                            _ => {}
+                                        if let CompletionRequestStatus::UsageUpdated { amount, limit } = status_update {
+                                            this.update_model_request_usage(
+                                                amount as u32,
+                                                limit,
+                                                cx,
+                                            );
                                         }
                                     }
                                     LanguageModelCompletionEvent::StartMessage { .. } => {}
@@ -2286,7 +2282,7 @@ impl AssistantContext {
         let mut contents = self.contents(cx).peekable();
 
         fn collect_text_content(buffer: &Buffer, range: Range<usize>) -> Option<String> {
-            let text: String = buffer.text_for_range(range.clone()).collect();
+            let text: String = buffer.text_for_range(range).collect();
             if text.trim().is_empty() {
                 None
             } else {
@@ -2315,10 +2311,7 @@ impl AssistantContext {
             let mut request_message = LanguageModelRequestMessage {
                 role: message.role,
                 content: Vec::new(),
-                cache: message
-                    .cache
-                    .as_ref()
-                    .map_or(false, |cache| cache.is_anchor),
+                cache: message.cache.as_ref().is_some_and(|cache| cache.is_anchor),
             };
 
             while let Some(content) = contents.peek() {
@@ -2708,7 +2701,7 @@ impl AssistantContext {
 
             self.summary_task = cx.spawn(async move |this, cx| {
                 let result = async {
-                    let stream = model.model.stream_completion_text(request, &cx);
+                    let stream = model.model.stream_completion_text(request, cx);
                     let mut messages = stream.await?;
 
                     let mut replaced = !replace_old;
@@ -2741,10 +2734,10 @@ impl AssistantContext {
                     }
 
                     this.read_with(cx, |this, _cx| {
-                        if let Some(summary) = this.summary.content() {
-                            if summary.text.is_empty() {
-                                bail!("Model generated an empty summary");
-                            }
+                        if let Some(summary) = this.summary.content()
+                            && summary.text.is_empty()
+                        {
+                            bail!("Model generated an empty summary");
                         }
                         Ok(())
                     })??;
@@ -2799,7 +2792,7 @@ impl AssistantContext {
         let mut current_message = messages.next();
         while let Some(offset) = offsets.next() {
             // Locate the message that contains the offset.
-            while current_message.as_ref().map_or(false, |message| {
+            while current_message.as_ref().is_some_and(|message| {
                 !message.offset_range.contains(&offset) && messages.peek().is_some()
             }) {
                 current_message = messages.next();
@@ -2809,7 +2802,7 @@ impl AssistantContext {
             };
 
             // Skip offsets that are in the same message.
-            while offsets.peek().map_or(false, |offset| {
+            while offsets.peek().is_some_and(|offset| {
                 message.offset_range.contains(offset) || messages.peek().is_none()
             }) {
                 offsets.next();
@@ -2924,18 +2917,18 @@ impl AssistantContext {
                 fs.create_dir(contexts_dir().as_ref()).await?;
 
                 // rename before write ensures that only one file exists
-                if let Some(old_path) = old_path.as_ref() {
-                    if new_path.as_path() != old_path.as_ref() {
-                        fs.rename(
-                            &old_path,
-                            &new_path,
-                            RenameOptions {
-                                overwrite: true,
-                                ignore_if_exists: true,
-                            },
-                        )
-                        .await?;
-                    }
+                if let Some(old_path) = old_path.as_ref()
+                    && new_path.as_path() != old_path.as_ref()
+                {
+                    fs.rename(
+                        old_path,
+                        &new_path,
+                        RenameOptions {
+                            overwrite: true,
+                            ignore_if_exists: true,
+                        },
+                    )
+                    .await?;
                 }
 
                 // update path before write in case it fails

@@ -21,7 +21,7 @@ use language::{
     point_from_lsp, point_to_lsp,
 };
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServerName};
-use node_runtime::NodeRuntime;
+use node_runtime::{NodeRuntime, VersionStrategy};
 use parking_lot::Mutex;
 use project::DisableAiSettings;
 use request::StatusNotification;
@@ -81,10 +81,7 @@ pub fn init(
     };
     copilot_chat::init(fs.clone(), http.clone(), configuration, cx);
 
-    let copilot = cx.new({
-        let node_runtime = node_runtime.clone();
-        move |cx| Copilot::start(new_server_id, fs, node_runtime, cx)
-    });
+    let copilot = cx.new(move |cx| Copilot::start(new_server_id, fs, node_runtime, cx));
     Copilot::set_global(copilot.clone(), cx);
     cx.observe(&copilot, |copilot, cx| {
         copilot.update(cx, |copilot, cx| copilot.update_action_visibilities(cx));
@@ -129,7 +126,7 @@ impl CopilotServer {
     fn as_authenticated(&mut self) -> Result<&mut RunningCopilotServer> {
         let server = self.as_running()?;
         anyhow::ensure!(
-            matches!(server.sign_in_status, SignInStatus::Authorized { .. }),
+            matches!(server.sign_in_status, SignInStatus::Authorized),
             "must sign in before using copilot"
         );
         Ok(server)
@@ -349,7 +346,11 @@ impl Copilot {
         this.start_copilot(true, false, cx);
         cx.observe_global::<SettingsStore>(move |this, cx| {
             this.start_copilot(true, false, cx);
-            this.send_configuration_update(cx);
+            if let Ok(server) = this.server.as_running() {
+                notify_did_change_config_to_server(&server.lsp, cx)
+                    .context("copilot setting change: did change configuration")
+                    .log_err();
+            }
         })
         .detach();
         this
@@ -436,43 +437,6 @@ impl Copilot {
         }
 
         if env.is_empty() { None } else { Some(env) }
-    }
-
-    fn send_configuration_update(&mut self, cx: &mut Context<Self>) {
-        let copilot_settings = all_language_settings(None, cx)
-            .edit_predictions
-            .copilot
-            .clone();
-
-        let settings = json!({
-            "http": {
-                "proxy": copilot_settings.proxy,
-                "proxyStrictSSL": !copilot_settings.proxy_no_verify.unwrap_or(false)
-            },
-            "github-enterprise": {
-                "uri": copilot_settings.enterprise_uri
-            }
-        });
-
-        if let Some(copilot_chat) = copilot_chat::CopilotChat::global(cx) {
-            copilot_chat.update(cx, |chat, cx| {
-                chat.set_configuration(
-                    copilot_chat::CopilotChatConfiguration {
-                        enterprise_uri: copilot_settings.enterprise_uri.clone(),
-                    },
-                    cx,
-                );
-            });
-        }
-
-        if let Ok(server) = self.server.as_running() {
-            server
-                .lsp
-                .notify::<lsp::notification::DidChangeConfiguration>(
-                    &lsp::DidChangeConfigurationParams { settings },
-                )
-                .log_err();
-        }
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -573,6 +537,9 @@ impl Copilot {
                 })?
                 .await?;
 
+            this.update(cx, |_, cx| notify_did_change_config_to_server(&server, cx))?
+                .context("copilot: did change configuration")?;
+
             let status = server
                 .request::<request::CheckStatus>(request::CheckStatusParams {
                     local_checks_only: false,
@@ -598,8 +565,6 @@ impl Copilot {
                     });
                     cx.emit(Event::CopilotLanguageServerStarted);
                     this.update_sign_in_status(status, cx);
-                    // Send configuration now that the LSP is fully started
-                    this.send_configuration_update(cx);
                 }
                 Err(error) => {
                     this.server = CopilotServer::Error(error.to_string().into());
@@ -613,12 +578,12 @@ impl Copilot {
     pub(crate) fn sign_in(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         if let CopilotServer::Running(server) = &mut self.server {
             let task = match &server.sign_in_status {
-                SignInStatus::Authorized { .. } => Task::ready(Ok(())).shared(),
+                SignInStatus::Authorized => Task::ready(Ok(())).shared(),
                 SignInStatus::SigningIn { task, .. } => {
                     cx.notify();
                     task.clone()
                 }
-                SignInStatus::SignedOut { .. } | SignInStatus::Unauthorized { .. } => {
+                SignInStatus::SignedOut { .. } | SignInStatus::Unauthorized => {
                     let lsp = server.lsp.clone();
                     let task = cx
                         .spawn(async move |this, cx| {
@@ -640,15 +605,13 @@ impl Copilot {
                                                 sign_in_status: status,
                                                 ..
                                             }) = &mut this.server
-                                            {
-                                                if let SignInStatus::SigningIn {
+                                                && let SignInStatus::SigningIn {
                                                     prompt: prompt_flow,
                                                     ..
                                                 } = status
-                                                {
-                                                    *prompt_flow = Some(flow.clone());
-                                                    cx.notify();
-                                                }
+                                            {
+                                                *prompt_flow = Some(flow.clone());
+                                                cx.notify();
                                             }
                                         })?;
                                         let response = lsp
@@ -764,7 +727,7 @@ impl Copilot {
             ..
         }) = &mut self.server
         {
-            if !matches!(status, SignInStatus::Authorized { .. }) {
+            if !matches!(status, SignInStatus::Authorized) {
                 return;
             }
 
@@ -814,59 +777,58 @@ impl Copilot {
         event: &language::BufferEvent,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        if let Ok(server) = self.server.as_running() {
-            if let Some(registered_buffer) = server.registered_buffers.get_mut(&buffer.entity_id())
-            {
-                match event {
-                    language::BufferEvent::Edited => {
-                        drop(registered_buffer.report_changes(&buffer, cx));
-                    }
-                    language::BufferEvent::Saved => {
+        if let Ok(server) = self.server.as_running()
+            && let Some(registered_buffer) = server.registered_buffers.get_mut(&buffer.entity_id())
+        {
+            match event {
+                language::BufferEvent::Edited => {
+                    drop(registered_buffer.report_changes(&buffer, cx));
+                }
+                language::BufferEvent::Saved => {
+                    server
+                        .lsp
+                        .notify::<lsp::notification::DidSaveTextDocument>(
+                            &lsp::DidSaveTextDocumentParams {
+                                text_document: lsp::TextDocumentIdentifier::new(
+                                    registered_buffer.uri.clone(),
+                                ),
+                                text: None,
+                            },
+                        )?;
+                }
+                language::BufferEvent::FileHandleChanged
+                | language::BufferEvent::LanguageChanged => {
+                    let new_language_id = id_for_language(buffer.read(cx).language());
+                    let Ok(new_uri) = uri_for_buffer(&buffer, cx) else {
+                        return Ok(());
+                    };
+                    if new_uri != registered_buffer.uri
+                        || new_language_id != registered_buffer.language_id
+                    {
+                        let old_uri = mem::replace(&mut registered_buffer.uri, new_uri);
+                        registered_buffer.language_id = new_language_id;
                         server
                             .lsp
-                            .notify::<lsp::notification::DidSaveTextDocument>(
-                                &lsp::DidSaveTextDocumentParams {
-                                    text_document: lsp::TextDocumentIdentifier::new(
+                            .notify::<lsp::notification::DidCloseTextDocument>(
+                                &lsp::DidCloseTextDocumentParams {
+                                    text_document: lsp::TextDocumentIdentifier::new(old_uri),
+                                },
+                            )?;
+                        server
+                            .lsp
+                            .notify::<lsp::notification::DidOpenTextDocument>(
+                                &lsp::DidOpenTextDocumentParams {
+                                    text_document: lsp::TextDocumentItem::new(
                                         registered_buffer.uri.clone(),
+                                        registered_buffer.language_id.clone(),
+                                        registered_buffer.snapshot_version,
+                                        registered_buffer.snapshot.text(),
                                     ),
-                                    text: None,
                                 },
                             )?;
                     }
-                    language::BufferEvent::FileHandleChanged
-                    | language::BufferEvent::LanguageChanged => {
-                        let new_language_id = id_for_language(buffer.read(cx).language());
-                        let Ok(new_uri) = uri_for_buffer(&buffer, cx) else {
-                            return Ok(());
-                        };
-                        if new_uri != registered_buffer.uri
-                            || new_language_id != registered_buffer.language_id
-                        {
-                            let old_uri = mem::replace(&mut registered_buffer.uri, new_uri);
-                            registered_buffer.language_id = new_language_id;
-                            server
-                                .lsp
-                                .notify::<lsp::notification::DidCloseTextDocument>(
-                                    &lsp::DidCloseTextDocumentParams {
-                                        text_document: lsp::TextDocumentIdentifier::new(old_uri),
-                                    },
-                                )?;
-                            server
-                                .lsp
-                                .notify::<lsp::notification::DidOpenTextDocument>(
-                                    &lsp::DidOpenTextDocumentParams {
-                                        text_document: lsp::TextDocumentItem::new(
-                                            registered_buffer.uri.clone(),
-                                            registered_buffer.language_id.clone(),
-                                            registered_buffer.snapshot_version,
-                                            registered_buffer.snapshot.text(),
-                                        ),
-                                    },
-                                )?;
-                        }
-                    }
-                    _ => {}
                 }
+                _ => {}
             }
         }
 
@@ -874,17 +836,17 @@ impl Copilot {
     }
 
     fn unregister_buffer(&mut self, buffer: &WeakEntity<Buffer>) {
-        if let Ok(server) = self.server.as_running() {
-            if let Some(buffer) = server.registered_buffers.remove(&buffer.entity_id()) {
-                server
-                    .lsp
-                    .notify::<lsp::notification::DidCloseTextDocument>(
-                        &lsp::DidCloseTextDocumentParams {
-                            text_document: lsp::TextDocumentIdentifier::new(buffer.uri),
-                        },
-                    )
-                    .ok();
-            }
+        if let Ok(server) = self.server.as_running()
+            && let Some(buffer) = server.registered_buffers.remove(&buffer.entity_id())
+        {
+            server
+                .lsp
+                .notify::<lsp::notification::DidCloseTextDocument>(
+                    &lsp::DidCloseTextDocumentParams {
+                        text_document: lsp::TextDocumentIdentifier::new(buffer.uri),
+                    },
+                )
+                .ok();
         }
     }
 
@@ -1047,8 +1009,8 @@ impl Copilot {
             CopilotServer::Error(error) => Status::Error(error.clone()),
             CopilotServer::Running(RunningCopilotServer { sign_in_status, .. }) => {
                 match sign_in_status {
-                    SignInStatus::Authorized { .. } => Status::Authorized,
-                    SignInStatus::Unauthorized { .. } => Status::Unauthorized,
+                    SignInStatus::Authorized => Status::Authorized,
+                    SignInStatus::Unauthorized => Status::Unauthorized,
                     SignInStatus::SigningIn { prompt, .. } => Status::SigningIn {
                         prompt: prompt.clone(),
                     },
@@ -1156,6 +1118,41 @@ fn uri_for_buffer(buffer: &Entity<Buffer>, cx: &App) -> Result<lsp::Url, ()> {
     }
 }
 
+fn notify_did_change_config_to_server(
+    server: &Arc<LanguageServer>,
+    cx: &mut Context<Copilot>,
+) -> std::result::Result<(), anyhow::Error> {
+    let copilot_settings = all_language_settings(None, cx)
+        .edit_predictions
+        .copilot
+        .clone();
+
+    if let Some(copilot_chat) = copilot_chat::CopilotChat::global(cx) {
+        copilot_chat.update(cx, |chat, cx| {
+            chat.set_configuration(
+                copilot_chat::CopilotChatConfiguration {
+                    enterprise_uri: copilot_settings.enterprise_uri.clone(),
+                },
+                cx,
+            );
+        });
+    }
+
+    let settings = json!({
+        "http": {
+            "proxy": copilot_settings.proxy,
+            "proxyStrictSSL": !copilot_settings.proxy_no_verify.unwrap_or(false)
+        },
+        "github-enterprise": {
+            "uri": copilot_settings.enterprise_uri
+        }
+    });
+
+    server.notify::<lsp::notification::DidChangeConfiguration>(&lsp::DidChangeConfigurationParams {
+        settings,
+    })
+}
+
 async fn clear_copilot_dir() {
     remove_matching(paths::copilot_dir(), |_| true).await
 }
@@ -1181,7 +1178,7 @@ async fn get_copilot_lsp(fs: Arc<dyn Fs>, node_runtime: NodeRuntime) -> anyhow::
             PACKAGE_NAME,
             &server_path,
             paths::copilot_dir(),
-            &latest_version,
+            VersionStrategy::Latest(&latest_version),
         )
         .await;
     if should_install {

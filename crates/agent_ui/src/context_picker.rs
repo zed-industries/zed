@@ -1,18 +1,19 @@
 mod completion_provider;
-mod fetch_context_picker;
+pub(crate) mod fetch_context_picker;
 pub(crate) mod file_context_picker;
-mod rules_context_picker;
-mod symbol_context_picker;
-mod thread_context_picker;
+pub(crate) mod rules_context_picker;
+pub(crate) mod symbol_context_picker;
+pub(crate) mod thread_context_picker;
 
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
+use collections::HashSet;
 pub use completion_provider::ContextPickerCompletionProvider;
 use editor::display_map::{Crease, CreaseId, CreaseMetadata, FoldId};
-use editor::{Anchor, AnchorRangeExt as _, Editor, ExcerptId, FoldPlaceholder, ToOffset};
+use editor::{Anchor, Editor, ExcerptId, FoldPlaceholder, ToOffset};
 use fetch_context_picker::FetchContextPicker;
 use file_context_picker::FileContextPicker;
 use file_context_picker::render_file_context_entry;
@@ -45,7 +46,7 @@ use agent::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ContextPickerEntry {
+pub(crate) enum ContextPickerEntry {
     Mode(ContextPickerMode),
     Action(ContextPickerAction),
 }
@@ -74,7 +75,7 @@ impl ContextPickerEntry {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ContextPickerMode {
+pub(crate) enum ContextPickerMode {
     File,
     Symbol,
     Fetch,
@@ -83,7 +84,7 @@ enum ContextPickerMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ContextPickerAction {
+pub(crate) enum ContextPickerAction {
     AddSelections,
 }
 
@@ -227,7 +228,7 @@ impl ContextPicker {
     }
 
     fn build_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<ContextMenu> {
-        let context_picker = cx.entity().clone();
+        let context_picker = cx.entity();
 
         let menu = ContextMenu::build(window, cx, move |menu, _window, cx| {
             let recent = self.recent_entries(cx);
@@ -384,12 +385,11 @@ impl ContextPicker {
     }
 
     pub fn select_first(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match &self.mode {
-            ContextPickerState::Default(entity) => entity.update(cx, |entity, cx| {
+        // Other variants already select their first entry on open automatically
+        if let ContextPickerState::Default(entity) = &self.mode {
+            entity.update(cx, |entity, cx| {
                 entity.select_first(&Default::default(), window, cx)
-            }),
-            // Other variants already select their first entry on open automatically
-            _ => {}
+            })
         }
     }
 
@@ -531,7 +531,7 @@ impl ContextPicker {
             return vec![];
         };
 
-        recent_context_picker_entries(
+        recent_context_picker_entries_with_store(
             context_store,
             self.thread_store.clone(),
             self.text_thread_store.clone(),
@@ -585,7 +585,8 @@ impl Render for ContextPicker {
             })
     }
 }
-enum RecentEntry {
+
+pub(crate) enum RecentEntry {
     File {
         project_path: ProjectPath,
         path_prefix: Arc<str>,
@@ -593,7 +594,7 @@ enum RecentEntry {
     Thread(ThreadContextEntry),
 }
 
-fn available_context_picker_entries(
+pub(crate) fn available_context_picker_entries(
     prompt_store: &Option<Entity<PromptStore>>,
     thread_store: &Option<WeakEntity<ThreadStore>>,
     workspace: &Entity<Workspace>,
@@ -608,9 +609,7 @@ fn available_context_picker_entries(
         .read(cx)
         .active_item(cx)
         .and_then(|item| item.downcast::<Editor>())
-        .map_or(false, |editor| {
-            editor.update(cx, |editor, cx| editor.has_non_empty_selection(cx))
-        });
+        .is_some_and(|editor| editor.update(cx, |editor, cx| editor.has_non_empty_selection(cx)));
     if has_selection {
         entries.push(ContextPickerEntry::Action(
             ContextPickerAction::AddSelections,
@@ -630,7 +629,7 @@ fn available_context_picker_entries(
     entries
 }
 
-fn recent_context_picker_entries(
+fn recent_context_picker_entries_with_store(
     context_store: Entity<ContextStore>,
     thread_store: Option<WeakEntity<ThreadStore>>,
     text_thread_store: Option<WeakEntity<TextThreadStore>>,
@@ -638,16 +637,48 @@ fn recent_context_picker_entries(
     exclude_path: Option<ProjectPath>,
     cx: &App,
 ) -> Vec<RecentEntry> {
+    let project = workspace.read(cx).project();
+
+    let mut exclude_paths = context_store.read(cx).file_paths(cx);
+    exclude_paths.extend(exclude_path);
+
+    let exclude_paths = exclude_paths
+        .into_iter()
+        .filter_map(|project_path| project.read(cx).absolute_path(&project_path, cx))
+        .collect();
+
+    let exclude_threads = context_store.read(cx).thread_ids();
+
+    recent_context_picker_entries(
+        thread_store,
+        text_thread_store,
+        workspace,
+        &exclude_paths,
+        exclude_threads,
+        cx,
+    )
+}
+
+pub(crate) fn recent_context_picker_entries(
+    thread_store: Option<WeakEntity<ThreadStore>>,
+    text_thread_store: Option<WeakEntity<TextThreadStore>>,
+    workspace: Entity<Workspace>,
+    exclude_paths: &HashSet<PathBuf>,
+    exclude_threads: &HashSet<ThreadId>,
+    cx: &App,
+) -> Vec<RecentEntry> {
     let mut recent = Vec::with_capacity(6);
-    let mut current_files = context_store.read(cx).file_paths(cx);
-    current_files.extend(exclude_path);
     let workspace = workspace.read(cx);
     let project = workspace.project().read(cx);
 
     recent.extend(
         workspace
             .recent_navigation_history_iter(cx)
-            .filter(|(path, _)| !current_files.contains(path))
+            .filter(|(_, abs_path)| {
+                abs_path
+                    .as_ref()
+                    .is_none_or(|path| !exclude_paths.contains(path.as_path()))
+            })
             .take(4)
             .filter_map(|(project_path, _)| {
                 project
@@ -658,8 +689,6 @@ fn recent_context_picker_entries(
                     })
             }),
     );
-
-    let current_threads = context_store.read(cx).thread_ids();
 
     let active_thread_id = workspace
         .panel::<AgentPanel>(cx)
@@ -672,7 +701,7 @@ fn recent_context_picker_entries(
         let mut threads = unordered_thread_entries(thread_store, text_thread_store, cx)
             .filter(|(_, thread)| match thread {
                 ThreadContextEntry::Thread { id, .. } => {
-                    Some(id) != active_thread_id && !current_threads.contains(id)
+                    Some(id) != active_thread_id && !exclude_threads.contains(id)
                 }
                 ThreadContextEntry::Context { .. } => true,
             })
@@ -710,7 +739,7 @@ fn add_selections_as_context(
     })
 }
 
-fn selection_ranges(
+pub(crate) fn selection_ranges(
     workspace: &Entity<Workspace>,
     cx: &mut App,
 ) -> Vec<(Entity<Buffer>, Range<text::Anchor>)> {
@@ -789,13 +818,8 @@ pub fn crease_for_mention(
 
     let render_trailer = move |_row, _unfold, _window: &mut Window, _cx: &mut App| Empty.into_any();
 
-    Crease::inline(
-        range,
-        placeholder.clone(),
-        fold_toggle("mention"),
-        render_trailer,
-    )
-    .with_metadata(CreaseMetadata { icon_path, label })
+    Crease::inline(range, placeholder, fold_toggle("mention"), render_trailer)
+        .with_metadata(CreaseMetadata { icon_path, label })
 }
 
 fn render_fold_icon_button(
@@ -805,42 +829,9 @@ fn render_fold_icon_button(
 ) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
     Arc::new({
         move |fold_id, fold_range, cx| {
-            let is_in_text_selection = editor.upgrade().is_some_and(|editor| {
-                editor.update(cx, |editor, cx| {
-                    let snapshot = editor
-                        .buffer()
-                        .update(cx, |multi_buffer, cx| multi_buffer.snapshot(cx));
-
-                    let is_in_pending_selection = || {
-                        editor
-                            .selections
-                            .pending
-                            .as_ref()
-                            .is_some_and(|pending_selection| {
-                                pending_selection
-                                    .selection
-                                    .range()
-                                    .includes(&fold_range, &snapshot)
-                            })
-                    };
-
-                    let mut is_in_complete_selection = || {
-                        editor
-                            .selections
-                            .disjoint_in_range::<usize>(fold_range.clone(), cx)
-                            .into_iter()
-                            .any(|selection| {
-                                // This is needed to cover a corner case, if we just check for an existing
-                                // selection in the fold range, having a cursor at the start of the fold
-                                // marks it as selected. Non-empty selections don't cause this.
-                                let length = selection.end - selection.start;
-                                length > 0
-                            })
-                    };
-
-                    is_in_pending_selection() || is_in_complete_selection()
-                })
-            });
+            let is_in_text_selection = editor
+                .update(cx, |editor, cx| editor.is_range_selected(&fold_range, cx))
+                .unwrap_or_default();
 
             ButtonLike::new(fold_id)
                 .style(ButtonStyle::Filled)

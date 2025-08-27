@@ -17,7 +17,7 @@ use workspace::{
 async fn test_visible_list(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root1",
         json!({
@@ -106,7 +106,7 @@ async fn test_visible_list(cx: &mut gpui::TestAppContext) {
 async fn test_opening_file(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/src"),
         json!({
@@ -276,7 +276,7 @@ async fn test_exclusions_in_visible_list(cx: &mut gpui::TestAppContext) {
 async fn test_auto_collapse_dir_paths(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/root1"),
         json!({
@@ -459,7 +459,7 @@ async fn test_auto_collapse_dir_paths(cx: &mut gpui::TestAppContext) {
 async fn test_editing_files(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root1",
         json!({
@@ -740,9 +740,9 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
             "    > .git",
             "    > a",
             "    v b",
+            "        > [EDITOR: '']  <== selected",
             "        > 3",
             "        > 4",
-            "        > [EDITOR: '']  <== selected",
             "          a-different-filename.tar.gz",
             "    > C",
             "      .dockerignore",
@@ -765,10 +765,10 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
             "    > .git",
             "    > a",
             "    v b",
-            "        > 3",
-            "        > 4",
             "        > [PROCESSING: 'new-dir']",
-            "          a-different-filename.tar.gz  <== selected",
+            "        > 3  <== selected",
+            "        > 4",
+            "          a-different-filename.tar.gz",
             "    > C",
             "      .dockerignore",
         ]
@@ -782,10 +782,10 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
             "    > .git",
             "    > a",
             "    v b",
-            "        > 3",
+            "        > 3  <== selected",
             "        > 4",
             "        > new-dir",
-            "          a-different-filename.tar.gz  <== selected",
+            "          a-different-filename.tar.gz",
             "    > C",
             "      .dockerignore",
         ]
@@ -801,10 +801,10 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
             "    > .git",
             "    > a",
             "    v b",
-            "        > 3",
+            "        > [EDITOR: '3']  <== selected",
             "        > 4",
             "        > new-dir",
-            "          [EDITOR: 'a-different-filename.tar.gz']  <== selected",
+            "          a-different-filename.tar.gz",
             "    > C",
             "      .dockerignore",
         ]
@@ -819,10 +819,10 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
             "    > .git",
             "    > a",
             "    v b",
-            "        > 3",
+            "        > 3  <== selected",
             "        > 4",
             "        > new-dir",
-            "          a-different-filename.tar.gz  <== selected",
+            "          a-different-filename.tar.gz",
             "    > C",
             "      .dockerignore",
         ]
@@ -837,12 +837,12 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
             "    > .git",
             "    > a",
             "    v b",
-            "        > 3",
+            "        v 3",
+            "              [EDITOR: '']  <== selected",
+            "              Q",
             "        > 4",
             "        > new-dir",
-            "          [EDITOR: '']  <== selected",
             "          a-different-filename.tar.gz",
-            "    > C",
         ]
     );
     panel.update_in(cx, |panel, window, cx| {
@@ -863,12 +863,12 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
             "    > .git",
             "    > a",
             "    v b",
-            "        > 3",
+            "        v 3  <== selected",
+            "              Q",
             "        > 4",
             "        > new-dir",
-            "          a-different-filename.tar.gz  <== selected",
+            "          a-different-filename.tar.gz",
             "    > C",
-            "      .dockerignore",
         ]
     );
 }
@@ -877,7 +877,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
 async fn test_adding_directories_via_file(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root1",
         json!({
@@ -1010,7 +1010,7 @@ async fn test_adding_directories_via_file(cx: &mut gpui::TestAppContext) {
 async fn test_adding_directory_via_file(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/root1"),
         json!({
@@ -1137,7 +1137,7 @@ async fn test_adding_directory_via_file(cx: &mut gpui::TestAppContext) {
 async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root1",
         json!({
@@ -1235,7 +1235,7 @@ async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
 async fn test_cut_paste(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root",
         json!({
@@ -1320,7 +1320,7 @@ async fn test_cut_paste(cx: &mut gpui::TestAppContext) {
 async fn test_cut_paste_between_different_worktrees(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root1",
         json!({
@@ -1416,7 +1416,7 @@ async fn test_cut_paste_between_different_worktrees(cx: &mut gpui::TestAppContex
 async fn test_copy_paste_between_different_worktrees(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root1",
         json!({
@@ -1551,7 +1551,7 @@ async fn test_copy_paste_between_different_worktrees(cx: &mut gpui::TestAppConte
 async fn test_copy_paste_directory(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root",
         json!({
@@ -1692,7 +1692,7 @@ async fn test_copy_paste_directory(cx: &mut gpui::TestAppContext) {
 async fn test_copy_paste_directory_with_sibling_file(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/test",
         json!({
@@ -1797,7 +1797,7 @@ async fn test_copy_paste_directory_with_sibling_file(cx: &mut gpui::TestAppConte
 async fn test_copy_paste_nested_and_root_entries(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/test",
         json!({
@@ -1876,7 +1876,7 @@ async fn test_copy_paste_nested_and_root_entries(cx: &mut gpui::TestAppContext) 
 async fn test_remove_opened_file(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/src"),
         json!({
@@ -1968,7 +1968,7 @@ async fn test_remove_opened_file(cx: &mut gpui::TestAppContext) {
 async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/src",
         json!({
@@ -2161,7 +2161,7 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
 async fn test_select_git_entry(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/root"),
         json!({
@@ -2440,7 +2440,7 @@ async fn test_select_git_entry(cx: &mut gpui::TestAppContext) {
 async fn test_select_directory(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/project_root",
         json!({
@@ -2541,7 +2541,7 @@ async fn test_select_directory(cx: &mut gpui::TestAppContext) {
 async fn test_select_first_last(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/project_root",
         json!({
@@ -2651,7 +2651,7 @@ async fn test_select_first_last(cx: &mut gpui::TestAppContext) {
 async fn test_dir_toggle_collapse(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/project_root",
         json!({
@@ -2693,7 +2693,7 @@ async fn test_dir_toggle_collapse(cx: &mut gpui::TestAppContext) {
 async fn test_collapse_all_entries(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/project_root",
         json!({
@@ -2751,7 +2751,7 @@ async fn test_collapse_all_entries(cx: &mut gpui::TestAppContext) {
 async fn test_new_file_move(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.as_fake().insert_tree(path!("/root"), json!({})).await;
     let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
@@ -2819,7 +2819,7 @@ async fn test_new_file_move(cx: &mut gpui::TestAppContext) {
 async fn test_rename_root_of_worktree(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root1",
         json!({
@@ -2895,7 +2895,7 @@ async fn test_rename_root_of_worktree(cx: &mut gpui::TestAppContext) {
 async fn test_rename_with_hide_root(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root1",
         json!({
@@ -2989,7 +2989,7 @@ async fn test_rename_with_hide_root(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/project_root",
         json!({
@@ -3731,7 +3731,7 @@ async fn test_creating_excluded_entries(cx: &mut gpui::TestAppContext) {
         register_project_item::<TestProjectItemView>(cx);
     });
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root1",
         json!({
@@ -3914,7 +3914,7 @@ async fn test_creating_excluded_entries(cx: &mut gpui::TestAppContext) {
 async fn test_selection_restored_when_creation_cancelled(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/src",
         json!({
@@ -3982,7 +3982,7 @@ async fn test_selection_restored_when_creation_cancelled(cx: &mut gpui::TestAppC
 async fn test_basic_file_deletion_scenarios(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root",
         json!({
@@ -4105,7 +4105,7 @@ async fn test_basic_file_deletion_scenarios(cx: &mut gpui::TestAppContext) {
 async fn test_deletion_gitignored(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/root"),
         json!({
@@ -4206,7 +4206,7 @@ async fn test_deletion_gitignored(cx: &mut gpui::TestAppContext) {
 async fn test_nested_deletion_gitignore(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/root"),
         json!({
@@ -4271,7 +4271,7 @@ async fn test_nested_deletion_gitignore(cx: &mut gpui::TestAppContext) {
 async fn test_complex_selection_scenarios(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root",
         json!({
@@ -4382,7 +4382,7 @@ async fn test_complex_selection_scenarios(cx: &mut gpui::TestAppContext) {
 async fn test_delete_all_files_and_directories(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root",
         json!({
@@ -4457,7 +4457,7 @@ async fn test_delete_all_files_and_directories(cx: &mut gpui::TestAppContext) {
 async fn test_nested_selection_deletion(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root",
         json!({
@@ -4523,7 +4523,7 @@ async fn test_nested_selection_deletion(cx: &mut gpui::TestAppContext) {
 async fn test_multiple_worktrees_deletion(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     // First worktree
     fs.insert_tree(
         "/root1",
@@ -4666,7 +4666,7 @@ async fn test_multiple_worktrees_deletion(cx: &mut gpui::TestAppContext) {
 async fn test_selection_vs_marked_entries_priority(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root",
         json!({
@@ -4766,7 +4766,7 @@ async fn test_selection_vs_marked_entries_priority(cx: &mut gpui::TestAppContext
 async fn test_selection_fallback_to_next_highest_worktree(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root_b",
         json!({
@@ -4859,7 +4859,7 @@ fn toggle_expand_dir(
 async fn test_expand_all_for_entry(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/root"),
         json!({
@@ -5050,7 +5050,7 @@ async fn test_expand_all_for_entry(cx: &mut gpui::TestAppContext) {
 async fn test_collapse_all_for_entry(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/root"),
         json!({
@@ -5234,7 +5234,7 @@ async fn test_collapse_all_for_entry(cx: &mut gpui::TestAppContext) {
 async fn test_create_entries_without_selection(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/root"),
         json!({
@@ -5299,7 +5299,7 @@ async fn test_create_entries_without_selection(cx: &mut gpui::TestAppContext) {
 async fn test_create_entries_without_selection_hide_root(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/root"),
         json!({
@@ -5448,7 +5448,7 @@ async fn test_create_entries_without_selection_hide_root(cx: &mut gpui::TestAppC
 async fn test_highlight_entry_for_external_drag(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root",
         json!({
@@ -5516,7 +5516,7 @@ async fn test_highlight_entry_for_external_drag(cx: &mut gpui::TestAppContext) {
 async fn test_highlight_entry_for_selection_drag(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root",
         json!({
@@ -5647,7 +5647,7 @@ async fn test_highlight_entry_for_selection_drag(cx: &mut gpui::TestAppContext) 
 async fn test_hide_root(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root1",
         json!({
@@ -5825,7 +5825,7 @@ async fn test_hide_root(cx: &mut gpui::TestAppContext) {
 async fn test_compare_selected_files(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root",
         json!({
@@ -5923,7 +5923,7 @@ async fn test_compare_selected_files(cx: &mut gpui::TestAppContext) {
 async fn test_compare_files_context_menu(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root",
         json!({
@@ -6152,7 +6152,7 @@ fn init_test_with_editor(cx: &mut TestAppContext) {
         language::init(cx);
         editor::init(cx);
         crate::init(cx);
-        workspace::init(app_state.clone(), cx);
+        workspace::init(app_state, cx);
         Project::init_settings(cx);
 
         cx.update_global::<SettingsStore, _>(|store, cx| {

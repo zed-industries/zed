@@ -132,6 +132,10 @@ pub struct StatusBar {
     ///
     /// Default: true
     pub active_language_button: bool,
+    /// Whether to show the cursor position button in the status bar.
+    ///
+    /// Default: true
+    pub cursor_position_button: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -585,6 +589,10 @@ pub struct StatusBarContent {
     ///
     /// Default: true
     pub active_language_button: Option<bool>,
+    /// Whether to show the cursor position button in the status bar.
+    ///
+    /// Default: true
+    pub cursor_position_button: Option<bool>,
 }
 
 // Toolbar related settings
@@ -802,10 +810,8 @@ impl Settings for EditorSettings {
             if gutter.line_numbers.is_some() {
                 old_gutter.line_numbers = gutter.line_numbers
             }
-        } else {
-            if gutter != GutterContent::default() {
-                current.gutter = Some(gutter)
-            }
+        } else if gutter != GutterContent::default() {
+            current.gutter = Some(gutter)
         }
         if let Some(b) = vscode.read_bool("editor.scrollBeyondLastLine") {
             current.scroll_beyond_last_line = Some(if b {

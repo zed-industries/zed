@@ -862,7 +862,7 @@ async fn test_random_diagnostics_with_inlays(cx: &mut TestAppContext, mut rng: S
             21..=50 => mutated_diagnostics.update_in(cx, |diagnostics, window, cx| {
                 diagnostics.editor.update(cx, |editor, cx| {
                     let snapshot = editor.snapshot(window, cx);
-                    if snapshot.buffer_snapshot.len() > 0 {
+                    if !snapshot.buffer_snapshot.is_empty() {
                         let position = rng.gen_range(0..snapshot.buffer_snapshot.len());
                         let position = snapshot.buffer_snapshot.clip_offset(position, Bias::Left);
                         log::info!(
@@ -971,7 +971,7 @@ async fn active_diagnostics_dismiss_after_invalidation(cx: &mut TestAppContext) 
 
     let mut cx = EditorTestContext::new(cx).await;
     let lsp_store =
-        cx.update_editor(|editor, _, cx| editor.project.as_ref().unwrap().read(cx).lsp_store());
+        cx.update_editor(|editor, _, cx| editor.project().unwrap().read(cx).lsp_store());
 
     cx.set_state(indoc! {"
         ˇfn func(abc def: i32) -> u32 {
@@ -1065,7 +1065,7 @@ async fn cycle_through_same_place_diagnostics(cx: &mut TestAppContext) {
 
     let mut cx = EditorTestContext::new(cx).await;
     let lsp_store =
-        cx.update_editor(|editor, _, cx| editor.project.as_ref().unwrap().read(cx).lsp_store());
+        cx.update_editor(|editor, _, cx| editor.project().unwrap().read(cx).lsp_store());
 
     cx.set_state(indoc! {"
         ˇfn func(abc def: i32) -> u32 {
@@ -1239,7 +1239,7 @@ async fn test_diagnostics_with_links(cx: &mut TestAppContext) {
         }
     "});
     let lsp_store =
-        cx.update_editor(|editor, _, cx| editor.project.as_ref().unwrap().read(cx).lsp_store());
+        cx.update_editor(|editor, _, cx| editor.project().unwrap().read(cx).lsp_store());
 
     cx.update(|_, cx| {
         lsp_store.update(cx, |lsp_store, cx| {
@@ -1293,7 +1293,7 @@ async fn test_hover_diagnostic_and_info_popovers(cx: &mut gpui::TestAppContext) 
         fn «test»() { println!(); }
     "});
     let lsp_store =
-        cx.update_editor(|editor, _, cx| editor.project.as_ref().unwrap().read(cx).lsp_store());
+        cx.update_editor(|editor, _, cx| editor.project().unwrap().read(cx).lsp_store());
     cx.update(|_, cx| {
         lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.update_diagnostics(
@@ -1450,7 +1450,7 @@ async fn go_to_diagnostic_with_severity(cx: &mut TestAppContext) {
 
     let mut cx = EditorTestContext::new(cx).await;
     let lsp_store =
-        cx.update_editor(|editor, _, cx| editor.project.as_ref().unwrap().read(cx).lsp_store());
+        cx.update_editor(|editor, _, cx| editor.project().unwrap().read(cx).lsp_store());
 
     cx.set_state(indoc! {"error warning info hiˇnt"});
 

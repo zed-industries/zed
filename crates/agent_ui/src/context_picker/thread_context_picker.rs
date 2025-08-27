@@ -167,7 +167,7 @@ impl PickerDelegate for ThreadContextPickerDelegate {
                     return;
                 };
                 let open_thread_task =
-                    thread_store.update(cx, |this, cx| this.open_thread(&id, window, cx));
+                    thread_store.update(cx, |this, cx| this.open_thread(id, window, cx));
 
                 cx.spawn(async move |this, cx| {
                     let thread = open_thread_task.await?;
@@ -236,12 +236,10 @@ pub fn render_thread_context_entry(
     let is_added = match entry {
         ThreadContextEntry::Thread { id, .. } => context_store
             .upgrade()
-            .map_or(false, |ctx_store| ctx_store.read(cx).includes_thread(&id)),
-        ThreadContextEntry::Context { path, .. } => {
-            context_store.upgrade().map_or(false, |ctx_store| {
-                ctx_store.read(cx).includes_text_thread(path)
-            })
-        }
+            .is_some_and(|ctx_store| ctx_store.read(cx).includes_thread(id)),
+        ThreadContextEntry::Context { path, .. } => context_store
+            .upgrade()
+            .is_some_and(|ctx_store| ctx_store.read(cx).includes_text_thread(path)),
     };
 
     h_flex()
@@ -338,7 +336,7 @@ pub(crate) fn search_threads(
             let candidates = threads
                 .iter()
                 .enumerate()
-                .map(|(id, (_, thread))| StringMatchCandidate::new(id, &thread.title()))
+                .map(|(id, (_, thread))| StringMatchCandidate::new(id, thread.title()))
                 .collect::<Vec<_>>();
             let matches = fuzzy::match_strings(
                 &candidates,
