@@ -2913,10 +2913,17 @@ impl AcpThreadView {
             if let Some((path, version)) = existing_version {
                 (
                     format!("Upgrade {} to work with Zed", self.agent.name()),
-                    format!(
-                        "Currently using {}, which is only version {}",
-                        path, version
-                    ),
+                    if version.is_empty() {
+                        format!(
+                            "Currently using {}, which does not report a valid --version",
+                            path,
+                        )
+                    } else {
+                        format!(
+                            "Currently using {}, which is only version {}",
+                            path, version
+                        )
+                    },
                     format!("Upgrade {}", self.agent.name()),
                 )
             } else {
@@ -2966,6 +2973,13 @@ impl AcpThreadView {
                 self.install_command_markdown.clone(),
                 default_markdown_style(false, false, window, cx),
             ))
+            .when_some(existing_version, |el, (path, _)| {
+                el.child(
+                    Label::new(format!("If this does not work you will need to upgrade manually, or uninstall your existing version from {}", path))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+            })
             .into_any_element()
     }
 
