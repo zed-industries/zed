@@ -280,6 +280,7 @@ pub enum Event {
         server_id: LanguageServerId,
         buffer_id: BufferId,
         buffer_abs_path: PathBuf,
+        name: Option<LanguageServerName>,
     },
     Toast {
         notification_id: SharedString,
@@ -2971,6 +2972,7 @@ impl Project {
                                 buffer_id,
                                 server_id: *language_server_id,
                                 buffer_abs_path: PathBuf::from(&update.buffer_abs_path),
+                                name: name.clone(),
                             });
                         }
                     }
