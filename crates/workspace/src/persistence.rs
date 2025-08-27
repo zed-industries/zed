@@ -34,6 +34,7 @@ use uuid::Uuid;
 use crate::{
     WorkspaceId,
     path_list::{PathList, SerializedPathList},
+    persistence::model::RemoteConnectionKind,
 };
 
 use model::{
@@ -631,10 +632,11 @@ impl Domain for WorkspaceDb {
         sql!(
             CREATE TABLE remote_connections(
                 id INTEGER PRIMARY KEY,
+                kind TEXT NOT NULL,
                 host TEXT,
                 port INTEGER,
                 user TEXT,
-                wsl_distro TEXT
+                distro TEXT
             );
 
             CREATE TABLE workspaces_2(
@@ -667,18 +669,12 @@ impl Domain for WorkspaceDb {
             INSERT INTO remote_connections
             SELECT
                 id,
+                "ssh" as kind,
                 host,
                 port,
                 user,
-                NULL as wsl_distro
+                NULL as distro
             FROM ssh_connections;
-
-            DELETE FROM remote_connections
-            WHERE id NOT IN (
-                SELECT MAX(id)
-                FROM remote_connections
-                GROUP BY host, port, user, wsl_distro
-            );
 
             INSERT
             INTO workspaces_2
@@ -1030,52 +1026,63 @@ impl WorkspaceDb {
         this: &Connection,
         options: RemoteConnectionOptions,
     ) -> Result<RemoteConnectionId> {
+        let kind;
         let mut host = None;
         let mut port = None;
         let mut user = None;
-        let mut wsl_distro = None;
+        let mut distro = None;
         match options {
             RemoteConnectionOptions::Ssh(options) => {
+                kind = RemoteConnectionKind::Ssh;
                 host = Some(options.host);
                 port = options.port;
                 user = options.username;
             }
             RemoteConnectionOptions::Wsl(options) => {
-                wsl_distro = Some(options.distro_name);
+                kind = RemoteConnectionKind::Wsl;
+                distro = Some(options.distro_name);
             }
         }
-        Self::get_or_create_remote_connection_query(this, host, port, user, wsl_distro)
+        Self::get_or_create_remote_connection_query(this, kind, host, port, user, distro)
     }
 
     fn get_or_create_remote_connection_query(
         this: &Connection,
+        kind: RemoteConnectionKind,
         host: Option<String>,
         port: Option<u16>,
         user: Option<String>,
-        wsl_distro: Option<String>,
+        distro: Option<String>,
     ) -> Result<RemoteConnectionId> {
         if let Some(id) = this.select_row_bound(sql!(
             SELECT id
             FROM remote_connections
             WHERE
+                kind IS ? AND
                 host IS ? AND
                 port IS ? AND
                 user IS ? AND
-                wsl_distro IS ?
+                distro IS ?
             LIMIT 1
-        ))?((host.clone(), port, user.clone(), wsl_distro.clone()))?
-        {
+        ))?((
+            kind.serialize(),
+            host.clone(),
+            port,
+            user.clone(),
+            distro.clone(),
+        ))? {
             Ok(RemoteConnectionId(id))
         } else {
             let id = this.select_row_bound(sql!(
                 INSERT INTO remote_connections (
+                    kind,
                     host,
                     port,
                     user,
-                    wsl_distro
-                ) VALUES (?1, ?2, ?3, ?4)
+                    distro
+                ) VALUES (?1, ?2, ?3, ?4, ?5)
                 RETURNING id
-            ))?((host, port, user, wsl_distro))?
+            ))?((kind.serialize(), host, port, user, distro))?
             .context("failed to insert remote project")?;
             Ok(RemoteConnectionId(id))
         }
@@ -1156,61 +1163,53 @@ impl WorkspaceDb {
     }
 
     fn remote_connections(&self) -> Result<HashMap<RemoteConnectionId, RemoteConnectionOptions>> {
-        Ok(self
-            .remote_connections_query()?
-            .into_iter()
-            .filter_map(|(id, host, port, user, wsl_distro)| {
-                Some((
-                    RemoteConnectionId(id),
-                    Self::remote_connection_from_row(host, port, user, wsl_distro)?,
-                ))
-            })
-            .collect())
-    }
-
-    query! {
-        fn remote_connections_query() -> Result<Vec<(u64, Option<String>, Option<u16>, Option<String>, Option<String>)>> {
-            SELECT id, host, port, user, wsl_distro
-            FROM remote_connections
-        }
+        Ok(self.select(sql!(
+            SELECT
+                id, kind, host, port, user, distro
+            FROM
+                remote_connections
+        ))?()?
+        .into_iter()
+        .filter_map(|(id, kind, host, port, user, distro)| {
+            Some((
+                RemoteConnectionId(id),
+                Self::remote_connection_from_row(kind, host, port, user, distro)?,
+            ))
+        })
+        .collect())
     }
 
     pub(crate) fn remote_connection(
         &self,
         id: RemoteConnectionId,
     ) -> Result<RemoteConnectionOptions> {
-        let row = self.remote_connection_query(id.0)?;
-        Self::remote_connection_from_row(row.0, row.1, row.2, row.3)
+        let (kind, host, port, user, distro) = self.select_row_bound(sql!(
+            SELECT kind, host, port, user, distro
+            FROM remote_connections
+            WHERE id = ?
+        ))?(id.0)?
+        .context("no such remote connection")?;
+        Self::remote_connection_from_row(kind, host, port, user, distro)
             .context("invalid remote_connection row")
     }
 
     fn remote_connection_from_row(
+        kind: String,
         host: Option<String>,
         port: Option<u16>,
         user: Option<String>,
-        wsl_distro: Option<String>,
+        distro: Option<String>,
     ) -> Option<RemoteConnectionOptions> {
-        if let Some(wsl_distro) = wsl_distro {
-            Some(RemoteConnectionOptions::Wsl(WslConnectionOptions {
-                distro_name: wsl_distro,
-            }))
-        } else if let Some(host) = host {
-            Some(RemoteConnectionOptions::Ssh(SshConnectionOptions {
-                host,
+        match RemoteConnectionKind::deserialize(&kind)? {
+            RemoteConnectionKind::Wsl => Some(RemoteConnectionOptions::Wsl(WslConnectionOptions {
+                distro_name: distro?,
+            })),
+            RemoteConnectionKind::Ssh => Some(RemoteConnectionOptions::Ssh(SshConnectionOptions {
+                host: host?,
                 port,
                 username: user,
                 ..Default::default()
-            }))
-        } else {
-            None
-        }
-    }
-
-    query! {
-        fn remote_connection_query(id: u64) -> Result<(Option<String>, Option<u16>, Option<String>, Option<String>)> {
-            SELECT host, port, user, wsl_distro
-            FROM remote_connections
-            WHERE id = ?
+            })),
         }
     }
 
