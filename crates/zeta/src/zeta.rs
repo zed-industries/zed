@@ -335,7 +335,7 @@ impl Zeta {
             update_required: false,
             license_detection_watchers: HashMap::default(),
             user_store,
-            recent_editors: VecDeque::with_capacity(MAX_RECENT_PROJECT_ENTRIES_COUNT),
+            recent_editors: VecDeque::new(),
         }
     }
 
@@ -1269,6 +1269,10 @@ and then another
     }
 
     fn handle_active_workspace_item_changed(&mut self, cx: &Context<Self>) {
+        if !self.data_collection_choice.read(cx).is_enabled() {
+            self.recent_editors.clear();
+            return;
+        }
         if let Some(active_editor) = self
             .workspace
             .read_with(cx, |workspace, cx| {
