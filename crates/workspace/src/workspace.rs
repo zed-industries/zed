@@ -7425,7 +7425,6 @@ pub fn open_ssh_project_with_new_connection(
                 cx,
             )
         })?;
-        // TODO kb register here instead?
 
         open_ssh_project_inner(
             project,
