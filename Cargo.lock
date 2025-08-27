@@ -11193,6 +11193,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "util",
  "workspace-hack",
 ]
 
