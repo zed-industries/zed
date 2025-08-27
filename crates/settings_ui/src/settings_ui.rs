@@ -238,6 +238,15 @@ impl Render for SettingsPage {
         let user_settings;
         let default_settings;
         let items;
+        // todo! this feels like it wants to be separated into 2 layers:
+        // 1. Load settings, and ui_items tree. Construct intermediate representation of tree, that is more uniform, and possibly more caching-friendly
+        // 2. Render from the intermediate representation
+        // With this structure:
+        // - changing how the tree is rendered completely should be easier (we don't know the final design yet)
+        // - caching of IR is possible
+        // IR can hold (and possibly cache):
+        // - The settings values (i.e. don't store serde_json::Value and deserialize per frame, just downcast_ref)
+        // - The structure of the tree (for panel)
         {
             let settings_store = SettingsStore::global(cx);
             // todo! remove clones somehow?
