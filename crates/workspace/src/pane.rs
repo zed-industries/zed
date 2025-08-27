@@ -206,6 +206,8 @@ actions!(
         JoinAll,
         /// Reopens the most recently closed item.
         ReopenClosedItem,
+        /// Reveals the current file in the system file manager.
+        RevealInFileManager,
         /// Splits the pane to the left.
         SplitLeft,
         /// Splits the pane upward.
@@ -2830,7 +2832,7 @@ impl Pane {
                             let entry_id = entry.to_proto();
                             menu = menu
                                 .separator()
-                                .when_some(entry_abs_path, |menu, abs_path| {
+                                .when_some(entry_abs_path.clone(), |menu, abs_path| {
                                     menu.entry(
                                         "Copy Path",
                                         Some(Box::new(zed_actions::workspace::CopyPath)),
@@ -2866,6 +2868,18 @@ impl Pane {
                                                     ))
                                                 })
                                                 .ok();
+                                        }),
+                                    )
+                                })
+                                .when_some(entry_abs_path, |menu, abs_path| {
+                                    menu.entry(
+                                        #[cfg(target_os = "macos")]
+                                        "Reveal in Finder",
+                                        #[cfg(not(target_os = "macos"))]
+                                        "Reveal in File Manager",
+                                        Some(Box::new(RevealInFileManager)),
+                                        window.handler_for(&pane, move |_pane, _window, cx| {
+                                            cx.reveal_path(&abs_path);
                                         }),
                                     )
                                 })
