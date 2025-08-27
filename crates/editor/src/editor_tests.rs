@@ -4442,6 +4442,14 @@ async fn test_wrap_in_tag_single_selection(cx: &mut TestAppContext) {
         <«ˇ»>test
          test</«ˇ»>
     "});
+
+    cx.set_state(indoc! {"
+        teˇst
+    "});
+    cx.update_editor(|e, window, cx| e.wrap_selections_in_tag(&WrapSelectionsInTag, window, cx));
+    cx.assert_editor_state(indoc! {"
+        te<«ˇ»></«ˇ»>st
+    "});
 }
 
 #[gpui::test]
