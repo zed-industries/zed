@@ -1,6 +1,7 @@
 use std::rc::Rc;
 use std::{any::Any, path::Path};
 
+use crate::acp::AcpConnection;
 use crate::{AgentServer, AgentServerCommand};
 use acp_thread::{AgentConnection, LoadError};
 use anyhow::Result;
@@ -37,6 +38,10 @@ impl AgentServer for Gemini {
         ui::IconName::AiGemini
     }
 
+    fn install_command(&self) -> Option<&'static str> {
+        Some("npm install -g @google/gemini-cli@latest")
+    }
+
     fn connect(
         &self,
         root_dir: &Path,
@@ -52,48 +57,73 @@ impl AgentServer for Gemini {
             })?;
 
             let Some(mut command) =
-                AgentServerCommand::resolve("gemini", &[ACP_ARG], None, settings, &project, cx).await
+                AgentServerCommand::resolve("gemini", &[ACP_ARG], None, settings, &project, cx)
+                    .await
             else {
-                return Err(LoadError::NotInstalled {
-                    error_message: "Failed to find Gemini CLI binary".into(),
-                    install_message: "Install Gemini CLI".into(),
-                    install_command: Self::install_command().into(),
-                }.into());
+                return Err(LoadError::NotInstalled.into());
             };
 
-            if let Some(api_key)= cx.update(GoogleLanguageModelProvider::api_key)?.await.ok() {
-                command.env.get_or_insert_default().insert("GEMINI_API_KEY".to_owned(), api_key.key);
+            if let Some(api_key) = cx.update(GoogleLanguageModelProvider::api_key)?.await.ok() {
+                command
+                    .env
+                    .get_or_insert_default()
+                    .insert("GEMINI_API_KEY".to_owned(), api_key.key);
             }
 
             let result = crate::acp::connect(server_name, command.clone(), &root_dir, cx).await;
-            if result.is_err() {
-                let version_fut = util::command::new_smol_command(&command.path)
-                    .args(command.args.iter())
-                    .arg("--version")
-                    .kill_on_drop(true)
-                    .output();
+            match &result {
+                Ok(connection) => {
+                    if let Some(connection) = connection.clone().downcast::<AcpConnection>()
+                        && !connection.prompt_capabilities().image
+                    {
+                        let version_output = util::command::new_smol_command(&command.path)
+                            .args(command.args.iter())
+                            .arg("--version")
+                            .kill_on_drop(true)
+                            .output()
+                            .await;
+                        let current_version =
+                            String::from_utf8(version_output?.stdout)?.trim().to_owned();
+                        if !connection.prompt_capabilities().image {
+                            return Err(LoadError::Unsupported {
+                                current_version: current_version.into(),
+                                command: format!(
+                                    "{} {}",
+                                    command.path.to_string_lossy(),
+                                    command.args.join(" ")
+                                )
+                                .into(),
+                            }
+                            .into());
+                        }
+                    }
+                }
+                Err(_) => {
+                    let version_fut = util::command::new_smol_command(&command.path)
+                        .args(command.args.iter())
+                        .arg("--version")
+                        .kill_on_drop(true)
+                        .output();
 
-                let help_fut = util::command::new_smol_command(&command.path)
-                    .args(command.args.iter())
-                    .arg("--help")
-                    .kill_on_drop(true)
-                    .output();
+                    let help_fut = util::command::new_smol_command(&command.path)
+                        .args(command.args.iter())
+                        .arg("--help")
+                        .kill_on_drop(true)
+                        .output();
 
-                let (version_output, help_output) = futures::future::join(version_fut, help_fut).await;
+                    let (version_output, help_output) =
+                        futures::future::join(version_fut, help_fut).await;
 
-                let current_version = String::from_utf8(version_output?.stdout)?;
-                let supported = String::from_utf8(help_output?.stdout)?.contains(ACP_ARG);
+                    let current_version = String::from_utf8(version_output?.stdout)?;
+                    let supported = String::from_utf8(help_output?.stdout)?.contains(ACP_ARG);
 
-                if !supported {
-                    return Err(LoadError::Unsupported {
-                        error_message: format!(
-                            "Your installed version of Gemini CLI ({}, version {}) doesn't support the Agentic Coding Protocol (ACP).",
-                            command.path.to_string_lossy(),
-                            current_version
-                        ).into(),
-                        upgrade_message: "Upgrade Gemini CLI to latest".into(),
-                        upgrade_command: Self::upgrade_command().into(),
-                    }.into())
+                    if !supported {
+                        return Err(LoadError::Unsupported {
+                            current_version: current_version.into(),
+                            command: command.path.to_string_lossy().to_string().into(),
+                        }
+                        .into());
+                    }
                 }
             }
             result
@@ -111,11 +141,11 @@ impl Gemini {
     }
 
     pub fn install_command() -> &'static str {
-        "npm install -g @google/gemini-cli@preview"
+        "npm install -g @google/gemini-cli@latest"
     }
 
     pub fn upgrade_command() -> &'static str {
-        "npm install -g @google/gemini-cli@preview"
+        "npm install -g @google/gemini-cli@latest"
     }
 }
 
