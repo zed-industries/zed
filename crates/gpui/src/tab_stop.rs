@@ -79,6 +79,7 @@ impl TabHandles {
 
     fn end_group(&mut self) {
         self.group_depth -= 1;
+        self.groups.pop();
     }
 }
 
