@@ -13,7 +13,8 @@ use lsp::{
     MessageType, SetTraceParams, TraceValue, notification::SetTrace,
 };
 use project::{
-    LspStore, Project, WorktreeId, lsp_store::LanguageServerLogType, search::SearchQuery,
+    LspStore, Project, ProjectItem, WorktreeId, lsp_store::LanguageServerLogType,
+    search::SearchQuery,
 };
 use std::{any::TypeId, borrow::Cow, sync::Arc};
 use ui::{Button, Checkbox, ContextMenu, Label, PopoverMenu, ToggleState, prelude::*};
@@ -374,6 +375,36 @@ impl LogStore {
                                         .lsp_store()
                                         .read(cx)
                                         .language_server_for_id(*id),
+                                    cx,
+                                );
+                            }
+                            project::Event::LanguageServerBufferRegistered {
+                                server_id,
+                                buffer_id,
+                                name,
+                                ..
+                            } if project.read(cx).is_via_collab() => {
+                                let worktree_id = project
+                                    .read(cx)
+                                    .buffer_for_id(*buffer_id, cx)
+                                    .and_then(|buffer| {
+                                        Some(buffer.read(cx).project_path(cx)?.worktree_id)
+                                    });
+                                let name = name.clone().or_else(|| {
+                                    project
+                                        .read(cx)
+                                        .lsp_store()
+                                        .read(cx)
+                                        .language_server_statuses
+                                        .get(server_id)
+                                        .map(|status| status.name.clone())
+                                });
+                                log_store.add_language_server(
+                                    server_kind,
+                                    *server_id,
+                                    name,
+                                    worktree_id,
+                                    None,
                                     cx,
                                 );
                             }

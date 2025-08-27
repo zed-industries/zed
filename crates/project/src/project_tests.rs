@@ -1951,6 +1951,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
             server_id: LanguageServerId(1),
             buffer_id,
             buffer_abs_path: PathBuf::from(path!("/dir/a.rs")),
+            name: Some(fake_server.server.name())
         }
     );
     assert_eq!(
