@@ -71,8 +71,8 @@ impl AcpModelPickerDelegate {
                     let (models, selected_model) = futures::join!(models_task, selected_model_task);
 
                     this.update_in(cx, |this, window, cx| {
-                        this.delegate.models = models.ok();
-                        this.delegate.selected_model = selected_model.ok();
+                        this.delegate.models = models.log_err();
+                        this.delegate.selected_model = selected_model.log_err();
                         this.delegate.update_matches(this.query(cx), window, cx)
                     })?
                     .await;
