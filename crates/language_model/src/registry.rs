@@ -25,9 +25,6 @@ pub enum ConfigurationError {
     ModelNotFound,
     #[error("{} LLM provider is not configured.", .0.name().0)]
     ProviderNotAuthenticated(Arc<dyn LanguageModelProvider>),
-    #[error("Using the {} LLM provider requires accepting the Terms of Service.",
-    .0.name().0)]
-    ProviderPendingTermsAcceptance(Arc<dyn LanguageModelProvider>),
 }
 
 impl std::fmt::Debug for ConfigurationError {
@@ -37,9 +34,6 @@ impl std::fmt::Debug for ConfigurationError {
             Self::ModelNotFound => write!(f, "ModelNotFound"),
             Self::ProviderNotAuthenticated(provider) => {
                 write!(f, "ProviderNotAuthenticated({})", provider.id())
-            }
-            Self::ProviderPendingTermsAcceptance(provider) => {
-                write!(f, "ProviderPendingTermsAcceptance({})", provider.id())
             }
         }
     }
@@ -200,12 +194,6 @@ impl LanguageModelRegistry {
             return Some(ConfigurationError::ProviderNotAuthenticated(model.provider));
         }
 
-        if model.provider.must_accept_terms(cx) {
-            return Some(ConfigurationError::ProviderPendingTermsAcceptance(
-                model.provider,
-            ));
-        }
-
         None
     }
 
@@ -220,6 +208,7 @@ impl LanguageModelRegistry {
     ) -> impl Iterator<Item = Arc<dyn LanguageModel>> + 'a {
         self.providers
             .values()
+            .filter(|provider| provider.is_authenticated(cx))
             .flat_map(|provider| provider.provided_models(cx))
     }
 

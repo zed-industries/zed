@@ -25,8 +25,8 @@ use xkbcommon::xkb::{self, Keycode, Keysym, State};
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, LinuxDispatcher, Menu, MenuItem, OwnedMenu, PathPromptOptions,
-    Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformTextSystem, PlatformWindow,
-    Point, Result, Task, WindowAppearance, WindowParams, px,
+    Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformTextSystem, PlatformWindow, Point, Result, Task, WindowAppearance, WindowParams, px,
 };
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -108,13 +108,13 @@ impl LinuxCommon {
 
         let callbacks = PlatformHandlers::default();
 
-        let dispatcher = Arc::new(LinuxDispatcher::new(main_sender.clone()));
+        let dispatcher = Arc::new(LinuxDispatcher::new(main_sender));
 
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
 
         let common = LinuxCommon {
             background_executor,
-            foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
+            foreground_executor: ForegroundExecutor::new(dispatcher),
             text_system,
             appearance: WindowAppearance::Light,
             auto_hide_scrollbars: false,
@@ -142,6 +142,10 @@ impl<P: LinuxClient + 'static> Platform for P {
 
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
         self.keyboard_layout()
+    }
+
+    fn keyboard_mapper(&self) -> Rc<dyn PlatformKeyboardMapper> {
+        Rc::new(crate::DummyKeyboardMapper)
     }
 
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>) {
@@ -441,7 +445,7 @@ impl<P: LinuxClient + 'static> Platform for P {
     fn app_path(&self) -> Result<PathBuf> {
         // get the path of the executable of the current process
         let app_path = env::current_exe()?;
-        return Ok(app_path);
+        Ok(app_path)
     }
 
     fn set_menus(&self, menus: Vec<Menu>, _keymap: &Keymap) {
@@ -667,7 +671,7 @@ pub(super) const DEFAULT_CURSOR_ICON_NAME: &str = "left_ptr";
 
 impl CursorStyle {
     #[cfg(any(feature = "wayland", feature = "x11"))]
-    pub(super) fn to_icon_names(&self) -> &'static [&'static str] {
+    pub(super) fn to_icon_names(self) -> &'static [&'static str] {
         // Based on cursor names from chromium:
         // https://github.com/chromium/chromium/blob/d3069cf9c973dc3627fa75f64085c6a86c8f41bf/ui/base/cursor/cursor_factory.cc#L113
         match self {
@@ -990,21 +994,18 @@ mod tests {
     #[test]
     fn test_is_within_click_distance() {
         let zero = Point::new(px(0.0), px(0.0));
-        assert_eq!(
-            is_within_click_distance(zero, Point::new(px(5.0), px(5.0))),
-            true
-        );
-        assert_eq!(
-            is_within_click_distance(zero, Point::new(px(-4.9), px(5.0))),
-            true
-        );
-        assert_eq!(
-            is_within_click_distance(Point::new(px(3.0), px(2.0)), Point::new(px(-2.0), px(-2.0))),
-            true
-        );
-        assert_eq!(
-            is_within_click_distance(zero, Point::new(px(5.0), px(5.1))),
-            false
-        );
+        assert!(is_within_click_distance(zero, Point::new(px(5.0), px(5.0))));
+        assert!(is_within_click_distance(
+            zero,
+            Point::new(px(-4.9), px(5.0))
+        ));
+        assert!(is_within_click_distance(
+            Point::new(px(3.0), px(2.0)),
+            Point::new(px(-2.0), px(-2.0))
+        ));
+        assert!(!is_within_click_distance(
+            zero,
+            Point::new(px(5.0), px(5.1))
+        ),);
     }
 }

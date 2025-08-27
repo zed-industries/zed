@@ -510,17 +510,16 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                     vim.switch_mode(Mode::Normal, true, window, cx);
                 }
                 vim.update_editor(cx, |_, editor, cx| {
-                    if let Some(first_sel) = initial_selections {
-                        if let Some(tx_id) = editor
+                    if let Some(first_sel) = initial_selections
+                        && let Some(tx_id) = editor
                             .buffer()
                             .update(cx, |multi, cx| multi.last_transaction_id(cx))
-                        {
-                            let last_sel = editor.selections.disjoint_anchors();
-                            editor.modify_transaction_selection_history(tx_id, |old| {
-                                old.0 = first_sel;
-                                old.1 = Some(last_sel);
-                            });
-                        }
+                    {
+                        let last_sel = editor.selections.disjoint_anchors();
+                        editor.modify_transaction_selection_history(tx_id, |old| {
+                            old.0 = first_sel;
+                            old.1 = Some(last_sel);
+                        });
                     }
                 });
             })
@@ -567,7 +566,6 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             workspace.update(cx, |workspace, cx| {
                 e.notify_err(workspace, cx);
             });
-            return;
         }
     });
 
@@ -1410,11 +1408,7 @@ pub fn command_interceptor(mut input: &str, cx: &App) -> Vec<CommandInterceptRes
             start: Position::Line { row: 0, offset: 0 },
             end: Some(Position::LastLine { offset: 0 }),
         });
-        if let Some(action) = OnMatchingLines::parse(query, invert, range, cx) {
-            Some(action.boxed_clone())
-        } else {
-            None
-        }
+        OnMatchingLines::parse(query, invert, range, cx).map(|action| action.boxed_clone())
     } else if query.contains('!') {
         ShellExec::parse(query, range.clone())
     } else {
@@ -1445,7 +1439,7 @@ pub fn command_interceptor(mut input: &str, cx: &App) -> Vec<CommandInterceptRes
             }];
         }
     }
-    return Vec::default();
+    Vec::default()
 }
 
 fn generate_positions(string: &str, query: &str) -> Vec<usize> {
@@ -1498,7 +1492,7 @@ impl OnMatchingLines {
         let mut search = String::new();
         let mut escaped = false;
 
-        while let Some(c) = chars.next() {
+        for c in chars.by_ref() {
             if escaped {
                 escaped = false;
                 // unescape escaped parens
@@ -1650,7 +1644,7 @@ impl OnMatchingLines {
                         });
                         window.dispatch_action(action, cx);
                         cx.defer_in(window, move |editor, window, cx| {
-                            let newest = editor.selections.newest::<Point>(cx).clone();
+                            let newest = editor.selections.newest::<Point>(cx);
                             editor.change_selections(
                                 SelectionEffects::no_scroll(),
                                 window,
@@ -1713,14 +1707,12 @@ impl Vim {
             match c {
                 '%' => {
                     self.update_editor(cx, |_, editor, cx| {
-                        if let Some((_, buffer, _)) = editor.active_excerpt(cx) {
-                            if let Some(file) = buffer.read(cx).file() {
-                                if let Some(local) = file.as_local() {
-                                    if let Some(str) = local.path().to_str() {
-                                        ret.push_str(str)
-                                    }
-                                }
-                            }
+                        if let Some((_, buffer, _)) = editor.active_excerpt(cx)
+                            && let Some(file) = buffer.read(cx).file()
+                            && let Some(local) = file.as_local()
+                            && let Some(str) = local.path().to_str()
+                        {
+                            ret.push_str(str)
                         }
                     });
                 }
@@ -1932,7 +1924,9 @@ impl ShellExec {
 
         let Some(range) = input_range else { return };
 
-        let mut process = project.read(cx).exec_in_shell(command, cx);
+        let Some(mut process) = project.read(cx).exec_in_shell(command, cx).log_err() else {
+            return;
+        };
         process.stdout(Stdio::piped());
         process.stderr(Stdio::piped());
 
@@ -1954,19 +1948,19 @@ impl ShellExec {
                 return;
             };
 
-            if let Some(mut stdin) = running.stdin.take() {
-                if let Some(snapshot) = input_snapshot {
-                    let range = range.clone();
-                    cx.background_spawn(async move {
-                        for chunk in snapshot.text_for_range(range) {
-                            if stdin.write_all(chunk.as_bytes()).log_err().is_none() {
-                                return;
-                            }
+            if let Some(mut stdin) = running.stdin.take()
+                && let Some(snapshot) = input_snapshot
+            {
+                let range = range.clone();
+                cx.background_spawn(async move {
+                    for chunk in snapshot.text_for_range(range) {
+                        if stdin.write_all(chunk.as_bytes()).log_err().is_none() {
+                            return;
                         }
-                        stdin.flush().log_err();
-                    })
-                    .detach();
-                }
+                    }
+                    stdin.flush().log_err();
+                })
+                .detach();
             };
 
             let output = cx

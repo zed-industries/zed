@@ -28,13 +28,14 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use agent::{Thread, ThreadId};
+use agent_servers::AgentServerSettings;
 use agent_settings::{AgentProfileId, AgentSettings, LanguageModelSelection};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
-use gpui::{Action, App, Entity, actions};
+use gpui::{Action, App, Entity, SharedString, actions};
 use language::LanguageRegistry;
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
@@ -128,6 +129,12 @@ actions!(
     ]
 );
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Action)]
+#[action(namespace = agent)]
+#[action(deprecated_aliases = ["assistant::QuoteSelection"])]
+/// Quotes the current selection in the agent panel's message editor.
+pub struct QuoteSelection;
+
 /// Creates a new conversation thread, optionally based on an existing thread.
 #[derive(Default, Clone, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]
@@ -146,21 +153,50 @@ pub struct NewExternalAgentThread {
     agent: Option<ExternalAgent>,
 }
 
-#[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = agent)]
+#[serde(deny_unknown_fields)]
+pub struct NewNativeAgentThreadFromSummary {
+    from_session_id: agent_client_protocol::SessionId,
+}
+
+// TODO unify this with AgentType
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 enum ExternalAgent {
     #[default]
     Gemini,
     ClaudeCode,
     NativeAgent,
+    Custom {
+        name: SharedString,
+        settings: AgentServerSettings,
+    },
 }
 
 impl ExternalAgent {
-    pub fn server(&self, fs: Arc<dyn fs::Fs>) -> Rc<dyn agent_servers::AgentServer> {
+    fn name(&self) -> &'static str {
         match self {
-            ExternalAgent::Gemini => Rc::new(agent_servers::Gemini),
-            ExternalAgent::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
-            ExternalAgent::NativeAgent => Rc::new(agent2::NativeAgentServer::new(fs)),
+            Self::NativeAgent => "zed",
+            Self::Gemini => "gemini-cli",
+            Self::ClaudeCode => "claude-code",
+            Self::Custom { .. } => "custom",
+        }
+    }
+
+    pub fn server(
+        &self,
+        fs: Arc<dyn fs::Fs>,
+        history: Entity<agent2::HistoryStore>,
+    ) -> Rc<dyn agent_servers::AgentServer> {
+        match self {
+            Self::Gemini => Rc::new(agent_servers::Gemini),
+            Self::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
+            Self::NativeAgent => Rc::new(agent2::NativeAgentServer::new(fs, history)),
+            Self::Custom { name, settings } => Rc::new(agent_servers::CustomAgentServer::new(
+                name.clone(),
+                settings,
+            )),
         }
     }
 }
@@ -236,12 +272,7 @@ pub fn init(
         client.telemetry().clone(),
         cx,
     );
-    terminal_inline_assistant::init(
-        fs.clone(),
-        prompt_builder.clone(),
-        client.telemetry().clone(),
-        cx,
-    );
+    terminal_inline_assistant::init(fs.clone(), prompt_builder, client.telemetry().clone(), cx);
     cx.observe_new(move |workspace, window, cx| {
         ConfigureContextServerModal::register(workspace, language_registry.clone(), window, cx)
     })
@@ -387,7 +418,6 @@ fn register_slash_commands(cx: &mut App) {
     slash_command_registry.register_command(assistant_slash_commands::FetchSlashCommand, true);
 
     cx.observe_flag::<assistant_slash_commands::StreamingExampleSlashCommandFeatureFlag, _>({
-        let slash_command_registry = slash_command_registry.clone();
         move |is_enabled, _cx| {
             if is_enabled {
                 slash_command_registry.register_command(

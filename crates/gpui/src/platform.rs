@@ -231,7 +231,6 @@ pub(crate) trait Platform: 'static {
 
     fn on_quit(&self, callback: Box<dyn FnMut()>);
     fn on_reopen(&self, callback: Box<dyn FnMut()>);
-    fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>);
 
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap);
     fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
@@ -251,7 +250,6 @@ pub(crate) trait Platform: 'static {
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>);
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>);
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
-    fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout>;
 
     fn compositor_name(&self) -> &'static str {
         ""
@@ -272,6 +270,10 @@ pub(crate) trait Platform: 'static {
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>>;
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>>;
     fn delete_credentials(&self, url: &str) -> Task<Result<()>>;
+
+    fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout>;
+    fn keyboard_mapper(&self) -> Rc<dyn PlatformKeyboardMapper>;
+    fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>);
 }
 
 /// A handle to a platform's display, e.g. a monitor or laptop screen.
@@ -592,7 +594,7 @@ impl PlatformTextSystem for NoopTextSystem {
     }
 
     fn font_id(&self, _descriptor: &Font) -> Result<FontId> {
-        return Ok(FontId(1));
+        Ok(FontId(1))
     }
 
     fn font_metrics(&self, _font_id: FontId) -> FontMetrics {
@@ -673,7 +675,7 @@ impl PlatformTextSystem for NoopTextSystem {
             }
         }
         let mut runs = Vec::default();
-        if glyphs.len() > 0 {
+        if !glyphs.is_empty() {
             runs.push(ShapedRun {
                 font_id: FontId(0),
                 glyphs,
@@ -1089,6 +1091,12 @@ pub struct WindowOptions {
     /// Whether the window should be movable by the user
     pub is_movable: bool,
 
+    /// Whether the window should be resizable by the user
+    pub is_resizable: bool,
+
+    /// Whether the window should be minimized by the user
+    pub is_minimizable: bool,
+
     /// The display to create the window on, if this is None,
     /// the window will be created on the main display
     pub display_id: Option<DisplayId>,
@@ -1130,6 +1138,14 @@ pub(crate) struct WindowParams {
     /// Whether the window should be movable by the user
     #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
     pub is_movable: bool,
+
+    /// Whether the window should be resizable by the user
+    #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
+    pub is_resizable: bool,
+
+    /// Whether the window should be minimized by the user
+    #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
+    pub is_minimizable: bool,
 
     #[cfg_attr(
         any(target_os = "linux", target_os = "freebsd", target_os = "windows"),
@@ -1189,6 +1205,8 @@ impl Default for WindowOptions {
             show: true,
             kind: WindowKind::Normal,
             is_movable: true,
+            is_resizable: true,
+            is_minimizable: true,
             display_id: None,
             window_background: WindowBackgroundAppearance::default(),
             app_id: None,

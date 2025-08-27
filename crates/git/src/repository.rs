@@ -269,10 +269,8 @@ impl GitExcludeOverride {
     pub async fn restore_original(&mut self) -> Result<()> {
         if let Some(ref original) = self.original_excludes {
             smol::fs::write(&self.git_exclude_path, original).await?;
-        } else {
-            if self.git_exclude_path.exists() {
-                smol::fs::remove_file(&self.git_exclude_path).await?;
-            }
+        } else if self.git_exclude_path.exists() {
+            smol::fs::remove_file(&self.git_exclude_path).await?;
         }
 
         self.added_excludes = None;
@@ -918,7 +916,7 @@ impl GitRepository for RealGitRepository {
                     .context("no stdin for git cat-file subprocess")?;
                 let mut stdin = BufWriter::new(stdin);
                 for rev in &revs {
-                    write!(&mut stdin, "{rev}\n")?;
+                    writeln!(&mut stdin, "{rev}")?;
                 }
                 stdin.flush()?;
                 drop(stdin);
@@ -1447,12 +1445,11 @@ impl GitRepository for RealGitRepository {
 
                 let mut remote_branches = vec![];
                 let mut add_if_matching = async |remote_head: &str| {
-                    if let Ok(merge_base) = git_cmd(&["merge-base", &head, remote_head]).await {
-                        if merge_base.trim() == head {
-                            if let Some(s) = remote_head.strip_prefix("refs/remotes/") {
-                                remote_branches.push(s.to_owned().into());
-                            }
-                        }
+                    if let Ok(merge_base) = git_cmd(&["merge-base", &head, remote_head]).await
+                        && merge_base.trim() == head
+                        && let Some(s) = remote_head.strip_prefix("refs/remotes/")
+                    {
+                        remote_branches.push(s.to_owned().into());
                     }
                 };
 
@@ -1574,10 +1571,9 @@ impl GitRepository for RealGitRepository {
                     Err(error) => {
                         if let Some(GitBinaryCommandError { status, .. }) =
                             error.downcast_ref::<GitBinaryCommandError>()
+                            && status.code() == Some(1)
                         {
-                            if status.code() == Some(1) {
-                                return Ok(false);
-                            }
+                            return Ok(false);
                         }
 
                         Err(error)
@@ -2032,7 +2028,7 @@ fn parse_branch_input(input: &str) -> Result<Vec<Branch>> {
 
         branches.push(Branch {
             is_head: is_current_branch,
-            ref_name: ref_name,
+            ref_name,
             most_recent_commit: Some(CommitSummary {
                 sha: head_sha,
                 subject,
@@ -2054,7 +2050,7 @@ fn parse_branch_input(input: &str) -> Result<Vec<Branch>> {
 }
 
 fn parse_upstream_track(upstream_track: &str) -> Result<UpstreamTracking> {
-    if upstream_track == "" {
+    if upstream_track.is_empty() {
         return Ok(UpstreamTracking::Tracked(UpstreamTrackingStatus {
             ahead: 0,
             behind: 0,

@@ -66,6 +66,8 @@ pub static IMPERSONATE_LOGIN: LazyLock<Option<String>> = LazyLock::new(|| {
         .and_then(|s| if s.is_empty() { None } else { Some(s) })
 });
 
+pub static USE_WEB_LOGIN: LazyLock<bool> = LazyLock::new(|| std::env::var("ZED_WEB_LOGIN").is_ok());
+
 pub static ADMIN_API_TOKEN: LazyLock<Option<String>> = LazyLock::new(|| {
     std::env::var("ZED_ADMIN_API_TOKEN")
         .ok()
@@ -76,7 +78,7 @@ pub static ZED_APP_PATH: LazyLock<Option<PathBuf>> =
     LazyLock::new(|| std::env::var("ZED_APP_PATH").ok().map(PathBuf::from));
 
 pub static ZED_ALWAYS_ACTIVE: LazyLock<bool> =
-    LazyLock::new(|| std::env::var("ZED_ALWAYS_ACTIVE").map_or(false, |e| !e.is_empty()));
+    LazyLock::new(|| std::env::var("ZED_ALWAYS_ACTIVE").is_ok_and(|e| !e.is_empty()));
 
 pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(500);
 pub const MAX_RECONNECTION_DELAY: Duration = Duration::from_secs(30);
@@ -181,7 +183,7 @@ pub fn init(client: &Arc<Client>, cx: &mut App) {
     });
 
     cx.on_action({
-        let client = client.clone();
+        let client = client;
         move |_: &Reconnect, cx| {
             if let Some(client) = client.upgrade() {
                 cx.spawn(async move |cx| {
@@ -791,7 +793,7 @@ impl Client {
             Arc::new(move |subscriber, envelope, client, cx| {
                 let subscriber = subscriber.downcast::<E>().unwrap();
                 let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
-                handler(subscriber, *envelope, client.clone(), cx).boxed_local()
+                handler(subscriber, *envelope, client, cx).boxed_local()
             }),
         );
         if prev_handler.is_some() {
@@ -864,22 +866,23 @@ impl Client {
         let mut credentials = None;
 
         let old_credentials = self.state.read().credentials.clone();
-        if let Some(old_credentials) = old_credentials {
-            if self.validate_credentials(&old_credentials, cx).await? {
-                credentials = Some(old_credentials);
-            }
+        if let Some(old_credentials) = old_credentials
+            && self.validate_credentials(&old_credentials, cx).await?
+        {
+            credentials = Some(old_credentials);
         }
 
-        if credentials.is_none() && try_provider {
-            if let Some(stored_credentials) = self.credentials_provider.read_credentials(cx).await {
-                if self.validate_credentials(&stored_credentials, cx).await? {
-                    credentials = Some(stored_credentials);
-                } else {
-                    self.credentials_provider
-                        .delete_credentials(cx)
-                        .await
-                        .log_err();
-                }
+        if credentials.is_none()
+            && try_provider
+            && let Some(stored_credentials) = self.credentials_provider.read_credentials(cx).await
+        {
+            if self.validate_credentials(&stored_credentials, cx).await? {
+                credentials = Some(stored_credentials);
+            } else {
+                self.credentials_provider
+                    .delete_credentials(cx)
+                    .await
+                    .log_err();
             }
         }
 
@@ -1028,11 +1031,11 @@ impl Client {
             Status::SignedOut | Status::Authenticated => true,
             Status::ConnectionError
             | Status::ConnectionLost
-            | Status::Authenticating { .. }
+            | Status::Authenticating
             | Status::AuthenticationError
-            | Status::Reauthenticating { .. }
+            | Status::Reauthenticating
             | Status::ReconnectionError { .. } => false,
-            Status::Connected { .. } | Status::Connecting { .. } | Status::Reconnecting { .. } => {
+            Status::Connected { .. } | Status::Connecting | Status::Reconnecting => {
                 return ConnectionResult::Result(Ok(()));
             }
             Status::UpgradeRequired => {
@@ -1289,19 +1292,21 @@ impl Client {
                 "http" => Http,
                 _ => Err(anyhow!("invalid rpc url: {}", rpc_url))?,
             };
-            let rpc_host = rpc_url
-                .host_str()
-                .zip(rpc_url.port_or_known_default())
-                .context("missing host in rpc url")?;
 
-            let stream = {
-                let handle = cx.update(|cx| gpui_tokio::Tokio::handle(cx)).ok().unwrap();
-                let _guard = handle.enter();
-                match proxy {
-                    Some(proxy) => connect_proxy_stream(&proxy, rpc_host).await?,
-                    None => Box::new(TcpStream::connect(rpc_host).await?),
+            let stream = gpui_tokio::Tokio::spawn_result(cx, {
+                let rpc_url = rpc_url.clone();
+                async move {
+                    let rpc_host = rpc_url
+                        .host_str()
+                        .zip(rpc_url.port_or_known_default())
+                        .context("missing host in rpc url")?;
+                    Ok(match proxy {
+                        Some(proxy) => connect_proxy_stream(&proxy, rpc_host).await?,
+                        None => Box::new(TcpStream::connect(rpc_host).await?),
+                    })
                 }
-            };
+            })?
+            .await?;
 
             log::info!("connected to rpc endpoint {}", rpc_url);
 
@@ -1389,11 +1394,13 @@ impl Client {
                     if let Some((login, token)) =
                         IMPERSONATE_LOGIN.as_ref().zip(ADMIN_API_TOKEN.as_ref())
                     {
-                        eprintln!("authenticate as admin {login}, {token}");
+                        if !*USE_WEB_LOGIN {
+                            eprintln!("authenticate as admin {login}, {token}");
 
-                        return this
-                            .authenticate_as_admin(http, login.clone(), token.clone())
-                            .await;
+                            return this
+                                .authenticate_as_admin(http, login.clone(), token.clone())
+                                .await;
+                        }
                     }
 
                     // Start an HTTP server to receive the redirect from Zed's sign-in page.
@@ -1901,10 +1908,7 @@ mod tests {
         assert!(matches!(status.next().await, Some(Status::Connecting)));
 
         executor.advance_clock(CONNECTION_TIMEOUT);
-        assert!(matches!(
-            status.next().await,
-            Some(Status::ConnectionError { .. })
-        ));
+        assert!(matches!(status.next().await, Some(Status::ConnectionError)));
         auth_and_connect.await.into_response().unwrap_err();
 
         // Allow the connection to be established.
@@ -1928,10 +1932,7 @@ mod tests {
             })
         });
         executor.advance_clock(2 * INITIAL_RECONNECTION_DELAY);
-        assert!(matches!(
-            status.next().await,
-            Some(Status::Reconnecting { .. })
-        ));
+        assert!(matches!(status.next().await, Some(Status::Reconnecting)));
 
         executor.advance_clock(CONNECTION_TIMEOUT);
         assert!(matches!(
@@ -2047,10 +2048,7 @@ mod tests {
         assert_eq!(*auth_count.lock(), 1);
         assert_eq!(*dropped_auth_count.lock(), 0);
 
-        let _authenticate = cx.spawn({
-            let client = client.clone();
-            |cx| async move { client.connect(false, &cx).await }
-        });
+        let _authenticate = cx.spawn(|cx| async move { client.connect(false, &cx).await });
         executor.run_until_parked();
         assert_eq!(*auth_count.lock(), 2);
         assert_eq!(*dropped_auth_count.lock(), 1);
@@ -2072,8 +2070,8 @@ mod tests {
         let (done_tx1, done_rx1) = smol::channel::unbounded();
         let (done_tx2, done_rx2) = smol::channel::unbounded();
         AnyProtoClient::from(client.clone()).add_entity_message_handler(
-            move |entity: Entity<TestEntity>, _: TypedEnvelope<proto::JoinProject>, mut cx| {
-                match entity.read_with(&mut cx, |entity, _| entity.id).unwrap() {
+            move |entity: Entity<TestEntity>, _: TypedEnvelope<proto::JoinProject>, cx| {
+                match entity.read_with(&cx, |entity, _| entity.id).unwrap() {
                     1 => done_tx1.try_send(()).unwrap(),
                     2 => done_tx2.try_send(()).unwrap(),
                     _ => unreachable!(),
@@ -2097,17 +2095,17 @@ mod tests {
         let _subscription1 = client
             .subscribe_to_entity(1)
             .unwrap()
-            .set_entity(&entity1, &mut cx.to_async());
+            .set_entity(&entity1, &cx.to_async());
         let _subscription2 = client
             .subscribe_to_entity(2)
             .unwrap()
-            .set_entity(&entity2, &mut cx.to_async());
+            .set_entity(&entity2, &cx.to_async());
         // Ensure dropping a subscription for the same entity type still allows receiving of
         // messages for other entity IDs of the same type.
         let subscription3 = client
             .subscribe_to_entity(3)
             .unwrap()
-            .set_entity(&entity3, &mut cx.to_async());
+            .set_entity(&entity3, &cx.to_async());
         drop(subscription3);
 
         server.send(proto::JoinProject {

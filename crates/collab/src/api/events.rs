@@ -149,35 +149,35 @@ pub async fn post_crash(
         "crash report"
     );
 
-    if let Some(kinesis_client) = app.kinesis_client.clone() {
-        if let Some(stream) = app.config.kinesis_stream.clone() {
-            let properties = json!({
-                "app_version": report.header.app_version,
-                "os_version": report.header.os_version,
-                "os_name": "macOS",
-                "bundle_id": report.header.bundle_id,
-                "incident_id": report.header.incident_id,
-                "installation_id": installation_id,
-                "description": description,
-                "backtrace": summary,
-            });
-            let row = SnowflakeRow::new(
-                "Crash Reported",
-                None,
-                false,
-                Some(installation_id),
-                properties,
-            );
-            let data = serde_json::to_vec(&row)?;
-            kinesis_client
-                .put_record()
-                .stream_name(stream)
-                .partition_key(row.insert_id.unwrap_or_default())
-                .data(data.into())
-                .send()
-                .await
-                .log_err();
-        }
+    if let Some(kinesis_client) = app.kinesis_client.clone()
+        && let Some(stream) = app.config.kinesis_stream.clone()
+    {
+        let properties = json!({
+            "app_version": report.header.app_version,
+            "os_version": report.header.os_version,
+            "os_name": "macOS",
+            "bundle_id": report.header.bundle_id,
+            "incident_id": report.header.incident_id,
+            "installation_id": installation_id,
+            "description": description,
+            "backtrace": summary,
+        });
+        let row = SnowflakeRow::new(
+            "Crash Reported",
+            None,
+            false,
+            Some(installation_id),
+            properties,
+        );
+        let data = serde_json::to_vec(&row)?;
+        kinesis_client
+            .put_record()
+            .stream_name(stream)
+            .partition_key(row.insert_id.unwrap_or_default())
+            .data(data.into())
+            .send()
+            .await
+            .log_err();
     }
 
     if let Some(slack_panics_webhook) = app.config.slack_panics_webhook.clone() {
@@ -280,7 +280,7 @@ pub async fn post_hang(
         service = "client",
         version = %report.app_version.unwrap_or_default().to_string(),
         os_name = %report.os_name,
-        os_version = report.os_version.unwrap_or_default().to_string(),
+        os_version = report.os_version.unwrap_or_default(),
         incident_id = %incident_id,
         installation_id = %report.installation_id.unwrap_or_default(),
         backtrace = %backtrace,
@@ -359,34 +359,34 @@ pub async fn post_panic(
         "panic report"
     );
 
-    if let Some(kinesis_client) = app.kinesis_client.clone() {
-        if let Some(stream) = app.config.kinesis_stream.clone() {
-            let properties = json!({
-                "app_version": panic.app_version,
-                "os_name": panic.os_name,
-                "os_version": panic.os_version,
-                "incident_id": incident_id,
-                "installation_id": panic.installation_id,
-                "description": panic.payload,
-                "backtrace": backtrace,
-            });
-            let row = SnowflakeRow::new(
-                "Panic Reported",
-                None,
-                false,
-                panic.installation_id.clone(),
-                properties,
-            );
-            let data = serde_json::to_vec(&row)?;
-            kinesis_client
-                .put_record()
-                .stream_name(stream)
-                .partition_key(row.insert_id.unwrap_or_default())
-                .data(data.into())
-                .send()
-                .await
-                .log_err();
-        }
+    if let Some(kinesis_client) = app.kinesis_client.clone()
+        && let Some(stream) = app.config.kinesis_stream.clone()
+    {
+        let properties = json!({
+            "app_version": panic.app_version,
+            "os_name": panic.os_name,
+            "os_version": panic.os_version,
+            "incident_id": incident_id,
+            "installation_id": panic.installation_id,
+            "description": panic.payload,
+            "backtrace": backtrace,
+        });
+        let row = SnowflakeRow::new(
+            "Panic Reported",
+            None,
+            false,
+            panic.installation_id.clone(),
+            properties,
+        );
+        let data = serde_json::to_vec(&row)?;
+        kinesis_client
+            .put_record()
+            .stream_name(stream)
+            .partition_key(row.insert_id.unwrap_or_default())
+            .data(data.into())
+            .send()
+            .await
+            .log_err();
     }
 
     if !report_to_slack(&panic) {
@@ -518,30 +518,30 @@ pub async fn post_events(
     let first_event_at = chrono::Utc::now()
         - chrono::Duration::milliseconds(last_event.milliseconds_since_first_event);
 
-    if let Some(kinesis_client) = app.kinesis_client.clone() {
-        if let Some(stream) = app.config.kinesis_stream.clone() {
-            let mut request = kinesis_client.put_records().stream_name(stream);
-            let mut has_records = false;
-            for row in for_snowflake(
-                request_body.clone(),
-                first_event_at,
-                country_code.clone(),
-                checksum_matched,
-            ) {
-                if let Some(data) = serde_json::to_vec(&row).log_err() {
-                    request = request.records(
-                        aws_sdk_kinesis::types::PutRecordsRequestEntry::builder()
-                            .partition_key(request_body.system_id.clone().unwrap_or_default())
-                            .data(data.into())
-                            .build()
-                            .unwrap(),
-                    );
-                    has_records = true;
-                }
+    if let Some(kinesis_client) = app.kinesis_client.clone()
+        && let Some(stream) = app.config.kinesis_stream.clone()
+    {
+        let mut request = kinesis_client.put_records().stream_name(stream);
+        let mut has_records = false;
+        for row in for_snowflake(
+            request_body.clone(),
+            first_event_at,
+            country_code.clone(),
+            checksum_matched,
+        ) {
+            if let Some(data) = serde_json::to_vec(&row).log_err() {
+                request = request.records(
+                    aws_sdk_kinesis::types::PutRecordsRequestEntry::builder()
+                        .partition_key(request_body.system_id.clone().unwrap_or_default())
+                        .data(data.into())
+                        .build()
+                        .unwrap(),
+                );
+                has_records = true;
             }
-            if has_records {
-                request.send().await.log_err();
-            }
+        }
+        if has_records {
+            request.send().await.log_err();
         }
     };
 

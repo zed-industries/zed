@@ -584,8 +584,8 @@ impl project::ProjectItem for NotebookItem {
                     Ok(nbformat::Notebook::Legacy(legacy_notebook)) => {
                         // TODO: Decide if we want to mutate the notebook by including Cell IDs
                         // and any other conversions
-                        let notebook = nbformat::upgrade_legacy_notebook(legacy_notebook)?;
-                        notebook
+
+                        nbformat::upgrade_legacy_notebook(legacy_notebook)?
                     }
                     // Bad notebooks and notebooks v4.0 and below are not supported
                     Err(e) => {

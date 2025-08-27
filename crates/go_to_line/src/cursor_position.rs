@@ -95,10 +95,8 @@ impl CursorPosition {
                 .ok()
                 .unwrap_or(true);
 
-            if !is_singleton {
-                if let Some(debounce) = debounce {
-                    cx.background_executor().timer(debounce).await;
-                }
+            if !is_singleton && let Some(debounce) = debounce {
+                cx.background_executor().timer(debounce).await;
             }
 
             editor
@@ -108,7 +106,7 @@ impl CursorPosition {
                         cursor_position.selected_count.selections = editor.selections.count();
                         match editor.mode() {
                             editor::EditorMode::AutoHeight { .. }
-                            | editor::EditorMode::SingleLine { .. }
+                            | editor::EditorMode::SingleLine
                             | editor::EditorMode::Minimap { .. } => {
                                 cursor_position.position = None;
                                 cursor_position.context = None;
@@ -131,7 +129,7 @@ impl CursorPosition {
                                                 cursor_position.selected_count.lines += 1;
                                             }
                                         }
-                                        if last_selection.as_ref().map_or(true, |last_selection| {
+                                        if last_selection.as_ref().is_none_or(|last_selection| {
                                             selection.id > last_selection.id
                                         }) {
                                             last_selection = Some(selection);
@@ -234,13 +232,11 @@ impl Render for CursorPosition {
                                 if let Some(editor) = workspace
                                     .active_item(cx)
                                     .and_then(|item| item.act_as::<Editor>(cx))
+                                    && let Some((_, buffer, _)) = editor.read(cx).active_excerpt(cx)
                                 {
-                                    if let Some((_, buffer, _)) = editor.read(cx).active_excerpt(cx)
-                                    {
-                                        workspace.toggle_modal(window, cx, |window, cx| {
-                                            crate::GoToLine::new(editor, buffer, window, cx)
-                                        })
-                                    }
+                                    workspace.toggle_modal(window, cx, |window, cx| {
+                                        crate::GoToLine::new(editor, buffer, window, cx)
+                                    })
                                 }
                             });
                         }

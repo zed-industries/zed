@@ -363,7 +363,7 @@ fn anonymous_fd(path: &str) -> Option<fs::File> {
 
         let fd: fd::RawFd = fd_str.parse().ok()?;
         let file = unsafe { fs::File::from_raw_fd(fd) };
-        return Some(file);
+        Some(file)
     }
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     {
@@ -381,13 +381,13 @@ fn anonymous_fd(path: &str) -> Option<fs::File> {
         }
         let fd: fd::RawFd = fd_str.parse().ok()?;
         let file = unsafe { fs::File::from_raw_fd(fd) };
-        return Some(file);
+        Some(file)
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
     {
         _ = path;
         // not implemented for bsd, windows. Could be, but isn't yet
-        return None;
+        None
     }
 }
 
@@ -494,11 +494,11 @@ mod linux {
                 Ok(Fork::Parent(_)) => Ok(()),
                 Ok(Fork::Child) => {
                     unsafe { std::env::set_var(FORCE_CLI_MODE_ENV_VAR_NAME, "") };
-                    if let Err(_) = fork::setsid() {
+                    if fork::setsid().is_err() {
                         eprintln!("failed to setsid: {}", std::io::Error::last_os_error());
                         process::exit(1);
                     }
-                    if let Err(_) = fork::close_fd() {
+                    if fork::close_fd().is_err() {
                         eprintln!("failed to close_fd: {}", std::io::Error::last_os_error());
                     }
                     let error =
@@ -534,8 +534,8 @@ mod flatpak {
     use std::process::Command;
     use std::{env, process};
 
-    const EXTRA_LIB_ENV_NAME: &'static str = "ZED_FLATPAK_LIB_PATH";
-    const NO_ESCAPE_ENV_NAME: &'static str = "ZED_FLATPAK_NO_ESCAPE";
+    const EXTRA_LIB_ENV_NAME: &str = "ZED_FLATPAK_LIB_PATH";
+    const NO_ESCAPE_ENV_NAME: &str = "ZED_FLATPAK_NO_ESCAPE";
 
     /// Adds bundled libraries to LD_LIBRARY_PATH if running under flatpak
     pub fn ld_extra_libs() {
@@ -586,14 +586,11 @@ mod flatpak {
 
     pub fn set_bin_if_no_escape(mut args: super::Args) -> super::Args {
         if env::var(NO_ESCAPE_ENV_NAME).is_ok()
-            && env::var("FLATPAK_ID").map_or(false, |id| id.starts_with("dev.zed.Zed"))
+            && env::var("FLATPAK_ID").is_ok_and(|id| id.starts_with("dev.zed.Zed"))
+            && args.zed.is_none()
         {
-            if args.zed.is_none() {
-                args.zed = Some("/app/libexec/zed-editor".into());
-                unsafe {
-                    env::set_var("ZED_UPDATE_EXPLANATION", "Please use flatpak to update zed")
-                };
-            }
+            args.zed = Some("/app/libexec/zed-editor".into());
+            unsafe { env::set_var("ZED_UPDATE_EXPLANATION", "Please use flatpak to update zed") };
         }
         args
     }
@@ -929,7 +926,7 @@ mod mac_os {
 
         fn path(&self) -> PathBuf {
             match self {
-                Bundle::App { app_bundle, .. } => app_bundle.join("Contents/MacOS/zed").clone(),
+                Bundle::App { app_bundle, .. } => app_bundle.join("Contents/MacOS/zed"),
                 Bundle::LocalPath { executable, .. } => executable.clone(),
             }
         }

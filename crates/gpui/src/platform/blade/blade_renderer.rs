@@ -434,24 +434,24 @@ impl BladeRenderer {
     }
 
     fn wait_for_gpu(&mut self) {
-        if let Some(last_sp) = self.last_sync_point.take() {
-            if !self.gpu.wait_for(&last_sp, MAX_FRAME_TIME_MS) {
-                log::error!("GPU hung");
-                #[cfg(target_os = "linux")]
-                if self.gpu.device_information().driver_name == "radv" {
-                    log::error!(
-                        "there's a known bug with amdgpu/radv, try setting ZED_PATH_SAMPLE_COUNT=0 as a workaround"
-                    );
-                    log::error!(
-                        "if that helps you're running into https://github.com/zed-industries/zed/issues/26143"
-                    );
-                }
+        if let Some(last_sp) = self.last_sync_point.take()
+            && !self.gpu.wait_for(&last_sp, MAX_FRAME_TIME_MS)
+        {
+            log::error!("GPU hung");
+            #[cfg(target_os = "linux")]
+            if self.gpu.device_information().driver_name == "radv" {
                 log::error!(
-                    "your device information is: {:?}",
-                    self.gpu.device_information()
+                    "there's a known bug with amdgpu/radv, try setting ZED_PATH_SAMPLE_COUNT=0 as a workaround"
                 );
-                while !self.gpu.wait_for(&last_sp, MAX_FRAME_TIME_MS) {}
+                log::error!(
+                    "if that helps you're running into https://github.com/zed-industries/zed/issues/26143"
+                );
             }
+            log::error!(
+                "your device information is: {:?}",
+                self.gpu.device_information()
+            );
+            while !self.gpu.wait_for(&last_sp, MAX_FRAME_TIME_MS) {}
         }
     }
 

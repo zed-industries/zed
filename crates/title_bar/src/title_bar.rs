@@ -275,11 +275,11 @@ impl TitleBar {
 
         let banner = cx.new(|cx| {
             OnboardingBanner::new(
-                "Debugger Onboarding",
-                IconName::Debug,
-                "The Debugger",
-                None,
-                zed_actions::debugger::OpenOnboardingModal.boxed_clone(),
+                "ACP Onboarding",
+                IconName::Sparkle,
+                "Bring Your Own Agent",
+                Some("Introducing:".into()),
+                zed_actions::agent::OpenAcpOnboardingModal.boxed_clone(),
                 cx,
             )
         });
@@ -299,17 +299,16 @@ impl TitleBar {
         }
     }
 
-    fn render_ssh_project_host(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let options = self.project.read(cx).ssh_connection_options(cx)?;
+    fn render_remote_project_connection(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let options = self.project.read(cx).remote_connection_options(cx)?;
         let host: SharedString = options.connection_string().into();
 
         let nickname = options
             .nickname
-            .clone()
             .map(|nick| nick.into())
             .unwrap_or_else(|| host.clone());
 
-        let (indicator_color, meta) = match self.project.read(cx).ssh_connection_state(cx)? {
+        let (indicator_color, meta) = match self.project.read(cx).remote_connection_state(cx)? {
             remote::ConnectionState::Connecting => (Color::Info, format!("Connecting to: {host}")),
             remote::ConnectionState::Connected => (Color::Success, format!("Connected to: {host}")),
             remote::ConnectionState::HeartbeatMissed => (
@@ -325,7 +324,7 @@ impl TitleBar {
             }
         };
 
-        let icon_color = match self.project.read(cx).ssh_connection_state(cx)? {
+        let icon_color = match self.project.read(cx).remote_connection_state(cx)? {
             remote::ConnectionState::Connecting => Color::Info,
             remote::ConnectionState::Connected => Color::Default,
             remote::ConnectionState::HeartbeatMissed => Color::Warning,
@@ -351,11 +350,7 @@ impl TitleBar {
                             .indicator_border_color(Some(cx.theme().colors().title_bar_background))
                             .into_any_element(),
                         )
-                        .child(
-                            Label::new(nickname.clone())
-                                .size(LabelSize::Small)
-                                .truncate(),
-                        ),
+                        .child(Label::new(nickname).size(LabelSize::Small).truncate()),
                 )
                 .tooltip(move |window, cx| {
                     Tooltip::with_meta(
@@ -384,8 +379,8 @@ impl TitleBar {
     }
 
     pub fn render_project_host(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.project.read(cx).is_via_ssh() {
-            return self.render_ssh_project_host(cx);
+        if self.project.read(cx).is_via_remote_server() {
+            return self.render_remote_project_connection(cx);
         }
 
         if self.project.read(cx).is_disconnected(cx) {
@@ -568,8 +563,8 @@ impl TitleBar {
         match status {
             client::Status::ConnectionError
             | client::Status::ConnectionLost
-            | client::Status::Reauthenticating { .. }
-            | client::Status::Reconnecting { .. }
+            | client::Status::Reauthenticating
+            | client::Status::Reconnecting
             | client::Status::ReconnectionError { .. } => Some(
                 div()
                     .id("disconnected")
@@ -593,11 +588,11 @@ impl TitleBar {
                     Button::new("connection-status", label)
                         .label_size(LabelSize::Small)
                         .on_click(|_, window, cx| {
-                            if let Some(auto_updater) = auto_update::AutoUpdater::get(cx) {
-                                if auto_updater.read(cx).status().is_updated() {
-                                    workspace::reload(cx);
-                                    return;
-                                }
+                            if let Some(auto_updater) = auto_update::AutoUpdater::get(cx)
+                                && auto_updater.read(cx).status().is_updated()
+                            {
+                                workspace::reload(cx);
+                                return;
                             }
                             auto_update::check(&Default::default(), window, cx);
                         })

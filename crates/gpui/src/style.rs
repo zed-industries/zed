@@ -573,7 +573,7 @@ impl Style {
 
                 if self
                     .border_color
-                    .map_or(false, |color| !color.is_transparent())
+                    .is_some_and(|color| !color.is_transparent())
                 {
                     min.x += self.border_widths.left.to_pixels(rem_size);
                     max.x -= self.border_widths.right.to_pixels(rem_size);
@@ -633,7 +633,7 @@ impl Style {
         window.paint_shadows(bounds, corner_radii, &self.box_shadow);
 
         let background_color = self.background.as_ref().and_then(Fill::color);
-        if background_color.map_or(false, |color| !color.is_transparent()) {
+        if background_color.is_some_and(|color| !color.is_transparent()) {
             let mut border_color = match background_color {
                 Some(color) => match color.tag {
                     BackgroundTag::Solid => color.solid,
@@ -729,7 +729,7 @@ impl Style {
 
     fn is_border_visible(&self) -> bool {
         self.border_color
-            .map_or(false, |color| !color.is_transparent())
+            .is_some_and(|color| !color.is_transparent())
             && self.border_widths.any(|length| !length.is_zero())
     }
 }

@@ -310,7 +310,7 @@ impl Server {
         let mut server = Self {
             id: parking_lot::Mutex::new(id),
             peer: Peer::new(id.0 as u32),
-            app_state: app_state.clone(),
+            app_state,
             connection_pool: Default::default(),
             handlers: Default::default(),
             teardown: watch::channel(false).0,
@@ -400,6 +400,8 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::SaveBuffer>)
             .add_request_handler(forward_mutating_project_request::<proto::BlameBuffer>)
             .add_request_handler(multi_lsp_query)
+            .add_request_handler(lsp_query)
+            .add_message_handler(broadcast_project_message_from_host::<proto::LspQueryResponse>)
             .add_request_handler(forward_mutating_project_request::<proto::RestartLanguageServers>)
             .add_request_handler(forward_mutating_project_request::<proto::StopLanguageServers>)
             .add_request_handler(forward_mutating_project_request::<proto::LinkedEditingRange>)
@@ -474,7 +476,9 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::GitChangeBranch>)
             .add_request_handler(forward_mutating_project_request::<proto::CheckForPushedCommits>)
             .add_message_handler(broadcast_project_message_from_host::<proto::AdvertiseContexts>)
-            .add_message_handler(update_context);
+            .add_message_handler(update_context)
+            .add_request_handler(forward_mutating_project_request::<proto::ToggleLspLogs>)
+            .add_message_handler(broadcast_project_message_from_host::<proto::LanguageServerLog>);
 
         Arc::new(server)
     }
@@ -616,10 +620,10 @@ impl Server {
                             }
                         }
 
-                        if let Some(live_kit) = livekit_client.as_ref() {
-                            if delete_livekit_room {
-                                live_kit.delete_room(livekit_room).await.trace_err();
-                            }
+                        if let Some(live_kit) = livekit_client.as_ref()
+                            && delete_livekit_room
+                        {
+                            live_kit.delete_room(livekit_room).await.trace_err();
                         }
                     }
                 }
@@ -910,7 +914,9 @@ impl Server {
                                 user_id=field::Empty,
                                 login=field::Empty,
                                 impersonator=field::Empty,
+                                // todo(lsp) remove after Zed Stable hits v0.204.x
                                 multi_lsp_query_request=field::Empty,
+                                lsp_query_request=field::Empty,
                                 release_channel=field::Empty,
                                 { TOTAL_DURATION_MS }=field::Empty,
                                 { PROCESSING_DURATION_MS }=field::Empty,
@@ -1015,47 +1021,47 @@ impl Server {
         inviter_id: UserId,
         invitee_id: UserId,
     ) -> Result<()> {
-        if let Some(user) = self.app_state.db.get_user_by_id(inviter_id).await? {
-            if let Some(code) = &user.invite_code {
-                let pool = self.connection_pool.lock();
-                let invitee_contact = contact_for_user(invitee_id, false, &pool);
-                for connection_id in pool.user_connection_ids(inviter_id) {
-                    self.peer.send(
-                        connection_id,
-                        proto::UpdateContacts {
-                            contacts: vec![invitee_contact.clone()],
-                            ..Default::default()
-                        },
-                    )?;
-                    self.peer.send(
-                        connection_id,
-                        proto::UpdateInviteInfo {
-                            url: format!("{}{}", self.app_state.config.invite_link_prefix, &code),
-                            count: user.invite_count as u32,
-                        },
-                    )?;
-                }
+        if let Some(user) = self.app_state.db.get_user_by_id(inviter_id).await?
+            && let Some(code) = &user.invite_code
+        {
+            let pool = self.connection_pool.lock();
+            let invitee_contact = contact_for_user(invitee_id, false, &pool);
+            for connection_id in pool.user_connection_ids(inviter_id) {
+                self.peer.send(
+                    connection_id,
+                    proto::UpdateContacts {
+                        contacts: vec![invitee_contact.clone()],
+                        ..Default::default()
+                    },
+                )?;
+                self.peer.send(
+                    connection_id,
+                    proto::UpdateInviteInfo {
+                        url: format!("{}{}", self.app_state.config.invite_link_prefix, &code),
+                        count: user.invite_count as u32,
+                    },
+                )?;
             }
         }
         Ok(())
     }
 
     pub async fn invite_count_updated(self: &Arc<Self>, user_id: UserId) -> Result<()> {
-        if let Some(user) = self.app_state.db.get_user_by_id(user_id).await? {
-            if let Some(invite_code) = &user.invite_code {
-                let pool = self.connection_pool.lock();
-                for connection_id in pool.user_connection_ids(user_id) {
-                    self.peer.send(
-                        connection_id,
-                        proto::UpdateInviteInfo {
-                            url: format!(
-                                "{}{}",
-                                self.app_state.config.invite_link_prefix, invite_code
-                            ),
-                            count: user.invite_count as u32,
-                        },
-                    )?;
-                }
+        if let Some(user) = self.app_state.db.get_user_by_id(user_id).await?
+            && let Some(invite_code) = &user.invite_code
+        {
+            let pool = self.connection_pool.lock();
+            for connection_id in pool.user_connection_ids(user_id) {
+                self.peer.send(
+                    connection_id,
+                    proto::UpdateInviteInfo {
+                        url: format!(
+                            "{}{}",
+                            self.app_state.config.invite_link_prefix, invite_code
+                        ),
+                        count: user.invite_count as u32,
+                    },
+                )?;
             }
         }
         Ok(())
@@ -1101,10 +1107,10 @@ fn broadcast<F>(
     F: FnMut(ConnectionId) -> anyhow::Result<()>,
 {
     for receiver_id in receiver_ids {
-        if Some(receiver_id) != sender_id {
-            if let Err(error) = f(receiver_id) {
-                tracing::error!("failed to send to {:?} {}", receiver_id, error);
-            }
+        if Some(receiver_id) != sender_id
+            && let Err(error) = f(receiver_id)
+        {
+            tracing::error!("failed to send to {:?} {}", receiver_id, error);
         }
     }
 }
@@ -1386,9 +1392,7 @@ async fn create_room(
         let live_kit = live_kit?;
         let user_id = session.user_id().to_string();
 
-        let token = live_kit
-            .room_token(&livekit_room, &user_id.to_string())
-            .trace_err()?;
+        let token = live_kit.room_token(&livekit_room, &user_id).trace_err()?;
 
         Some(proto::LiveKitConnectionInfo {
             server_url: live_kit.url().into(),
@@ -2015,9 +2019,9 @@ async fn join_project(
         .unzip();
     response.send(proto::JoinProjectResponse {
         project_id: project.id.0 as u64,
-        worktrees: worktrees.clone(),
+        worktrees,
         replica_id: replica_id.0 as u32,
-        collaborators: collaborators.clone(),
+        collaborators,
         language_servers,
         language_server_capabilities,
         role: project.role.into(),
@@ -2294,11 +2298,10 @@ async fn update_language_server(
     let db = session.db().await;
 
     if let Some(proto::update_language_server::Variant::MetadataUpdated(update)) = &request.variant
+        && let Some(capabilities) = update.capabilities.clone()
     {
-        if let Some(capabilities) = update.capabilities.clone() {
-            db.update_server_capabilities(project_id, request.language_server_id, capabilities)
-                .await?;
-        }
+        db.update_server_capabilities(project_id, request.language_server_id, capabilities)
+            .await?;
     }
 
     let project_connection_ids = db
@@ -2359,6 +2362,7 @@ where
     Ok(())
 }
 
+// todo(lsp) remove after Zed Stable hits v0.204.x
 async fn multi_lsp_query(
     request: MultiLspQuery,
     response: Response<MultiLspQuery>,
@@ -2367,6 +2371,21 @@ async fn multi_lsp_query(
     tracing::Span::current().record("multi_lsp_query_request", request.request_str());
     tracing::info!("multi_lsp_query message received");
     forward_mutating_project_request(request, response, session).await
+}
+
+async fn lsp_query(
+    request: proto::LspQuery,
+    response: Response<proto::LspQuery>,
+    session: MessageContext,
+) -> Result<()> {
+    let (name, should_write) = request.query_name_and_write_permissions();
+    tracing::Span::current().record("lsp_query_request", name);
+    tracing::info!("lsp_query message received");
+    if should_write {
+        forward_mutating_project_request(request, response, session).await
+    } else {
+        forward_read_only_project_request(request, response, session).await
+    }
 }
 
 /// Notify other participants that a new buffer has been created

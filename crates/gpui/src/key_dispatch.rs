@@ -458,7 +458,7 @@ impl DispatchTree {
             .keymap
             .borrow()
             .bindings_for_input(input, &context_stack);
-        return (bindings, partial, context_stack);
+        (bindings, partial, context_stack)
     }
 
     /// dispatch_key processes the keystroke
@@ -639,10 +639,7 @@ mod tests {
         }
 
         fn partial_eq(&self, action: &dyn Action) -> bool {
-            action
-                .as_any()
-                .downcast_ref::<Self>()
-                .map_or(false, |a| self == a)
+            action.as_any().downcast_ref::<Self>() == Some(self)
         }
 
         fn boxed_clone(&self) -> std::boxed::Box<dyn Action> {

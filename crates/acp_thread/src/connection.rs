@@ -5,11 +5,12 @@ use collections::IndexMap;
 use gpui::{Entity, SharedString, Task};
 use language_model::LanguageModelProviderId;
 use project::Project;
+use serde::{Deserialize, Serialize};
 use std::{any::Any, error::Error, fmt, path::Path, rc::Rc, sync::Arc};
 use ui::{App, IconName};
 use uuid::Uuid;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct UserMessageId(Arc<str>);
 
 impl UserMessageId {
@@ -40,18 +41,26 @@ pub trait AgentConnection {
     fn resume(
         &self,
         _session_id: &acp::SessionId,
-        _cx: &mut App,
+        _cx: &App,
     ) -> Option<Rc<dyn AgentSessionResume>> {
         None
     }
 
     fn cancel(&self, session_id: &acp::SessionId, cx: &mut App);
 
-    fn session_editor(
+    fn truncate(
         &self,
         _session_id: &acp::SessionId,
-        _cx: &mut App,
-    ) -> Option<Rc<dyn AgentSessionEditor>> {
+        _cx: &App,
+    ) -> Option<Rc<dyn AgentSessionTruncate>> {
+        None
+    }
+
+    fn set_title(
+        &self,
+        _session_id: &acp::SessionId,
+        _cx: &App,
+    ) -> Option<Rc<dyn AgentSessionSetTitle>> {
         None
     }
 
@@ -60,6 +69,10 @@ pub trait AgentConnection {
     /// If the agent does not support model selection, returns [None].
     /// This allows sharing the selector in UI components.
     fn model_selector(&self) -> Option<Rc<dyn AgentModelSelector>> {
+        None
+    }
+
+    fn telemetry(&self) -> Option<Rc<dyn AgentTelemetry>> {
         None
     }
 
@@ -72,12 +85,29 @@ impl dyn AgentConnection {
     }
 }
 
-pub trait AgentSessionEditor {
-    fn truncate(&self, message_id: UserMessageId, cx: &mut App) -> Task<Result<()>>;
+pub trait AgentSessionTruncate {
+    fn run(&self, message_id: UserMessageId, cx: &mut App) -> Task<Result<()>>;
 }
 
 pub trait AgentSessionResume {
     fn run(&self, cx: &mut App) -> Task<Result<acp::PromptResponse>>;
+}
+
+pub trait AgentSessionSetTitle {
+    fn run(&self, title: SharedString, cx: &mut App) -> Task<Result<()>>;
+}
+
+pub trait AgentTelemetry {
+    /// The name of the agent used for telemetry.
+    fn agent_name(&self) -> String;
+
+    /// A representation of the current thread state that can be serialized for
+    /// storage with telemetry events.
+    fn thread_data(
+        &self,
+        session_id: &acp::SessionId,
+        cx: &mut App,
+    ) -> Task<Result<serde_json::Value>>;
 }
 
 #[derive(Debug)]
@@ -208,6 +238,7 @@ impl AgentModelList {
 mod test_support {
     use std::sync::Arc;
 
+    use action_log::ActionLog;
     use collections::HashMap;
     use futures::{channel::oneshot, future::try_join_all};
     use gpui::{AppContext as _, WeakEntity};
@@ -295,8 +326,22 @@ mod test_support {
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             let session_id = acp::SessionId(self.sessions.lock().len().to_string().into());
-            let thread =
-                cx.new(|cx| AcpThread::new("Test", self.clone(), project, session_id.clone(), cx));
+            let action_log = cx.new(|_| ActionLog::new(project.clone()));
+            let thread = cx.new(|cx| {
+                AcpThread::new(
+                    "Test",
+                    self.clone(),
+                    project,
+                    action_log,
+                    session_id.clone(),
+                    watch::Receiver::constant(acp::PromptCapabilities {
+                        image: true,
+                        audio: true,
+                        embedded_context: true,
+                    }),
+                    cx,
+                )
+            });
             self.sessions.lock().insert(
                 session_id,
                 Session {
@@ -383,15 +428,15 @@ mod test_support {
                 .response_tx
                 .take()
             {
-                end_turn_tx.send(acp::StopReason::Canceled).unwrap();
+                end_turn_tx.send(acp::StopReason::Cancelled).unwrap();
             }
         }
 
-        fn session_editor(
+        fn truncate(
             &self,
             _session_id: &agent_client_protocol::SessionId,
-            _cx: &mut App,
-        ) -> Option<Rc<dyn AgentSessionEditor>> {
+            _cx: &App,
+        ) -> Option<Rc<dyn AgentSessionTruncate>> {
             Some(Rc::new(StubAgentSessionEditor))
         }
 
@@ -402,8 +447,8 @@ mod test_support {
 
     struct StubAgentSessionEditor;
 
-    impl AgentSessionEditor for StubAgentSessionEditor {
-        fn truncate(&self, _: UserMessageId, _: &mut App) -> Task<Result<()>> {
+    impl AgentSessionTruncate for StubAgentSessionEditor {
+        fn run(&self, _: UserMessageId, _: &mut App) -> Task<Result<()>> {
             Task::ready(Ok(()))
         }
     }

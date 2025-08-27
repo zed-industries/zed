@@ -2250,11 +2250,11 @@ impl ReferenceMultibuffer {
             let base_buffer = diff.base_text();
 
             let mut offset = buffer_range.start;
-            let mut hunks = diff
+            let hunks = diff
                 .hunks_intersecting_range(excerpt.range.clone(), buffer, cx)
                 .peekable();
 
-            while let Some(hunk) = hunks.next() {
+            for hunk in hunks {
                 // Ignore hunks that are outside the excerpt range.
                 let mut hunk_range = hunk.buffer_range.to_offset(buffer);
 
@@ -3592,24 +3592,20 @@ fn assert_position_translation(snapshot: &MultiBufferSnapshot) {
 
     for (anchors, bias) in [(&left_anchors, Bias::Left), (&right_anchors, Bias::Right)] {
         for (ix, (offset, anchor)) in offsets.iter().zip(anchors).enumerate() {
-            if ix > 0 {
-                if *offset == 252 {
-                    if offset > &offsets[ix - 1] {
-                        let prev_anchor = left_anchors[ix - 1];
-                        assert!(
-                            anchor.cmp(&prev_anchor, snapshot).is_gt(),
-                            "anchor({}, {bias:?}).cmp(&anchor({}, {bias:?}).is_gt()",
-                            offsets[ix],
-                            offsets[ix - 1],
-                        );
-                        assert!(
-                            prev_anchor.cmp(anchor, snapshot).is_lt(),
-                            "anchor({}, {bias:?}).cmp(&anchor({}, {bias:?}).is_lt()",
-                            offsets[ix - 1],
-                            offsets[ix],
-                        );
-                    }
-                }
+            if ix > 0 && *offset == 252 && offset > &offsets[ix - 1] {
+                let prev_anchor = left_anchors[ix - 1];
+                assert!(
+                    anchor.cmp(&prev_anchor, snapshot).is_gt(),
+                    "anchor({}, {bias:?}).cmp(&anchor({}, {bias:?}).is_gt()",
+                    offsets[ix],
+                    offsets[ix - 1],
+                );
+                assert!(
+                    prev_anchor.cmp(anchor, snapshot).is_lt(),
+                    "anchor({}, {bias:?}).cmp(&anchor({}, {bias:?}).is_lt()",
+                    offsets[ix - 1],
+                    offsets[ix],
+                );
             }
         }
     }

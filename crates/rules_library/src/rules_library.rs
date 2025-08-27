@@ -49,7 +49,7 @@ actions!(
     ]
 );
 
-const BUILT_IN_TOOLTIP_TEXT: &'static str = concat!(
+const BUILT_IN_TOOLTIP_TEXT: &str = concat!(
     "This rule supports special functionality.\n",
     "It's read-only, but you can remove it from your default rules."
 );
@@ -418,7 +418,7 @@ impl RulesLibrary {
             } else {
                 None
             },
-            store: store.clone(),
+            store,
             language_registry,
             rule_editors: HashMap::default(),
             active_rule_id: None,
@@ -456,11 +456,11 @@ impl RulesLibrary {
     pub fn new_rule(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // If we already have an untitled rule, use that instead
         // of creating a new one.
-        if let Some(metadata) = self.store.read(cx).first() {
-            if metadata.title.is_none() {
-                self.load_rule(metadata.id, true, window, cx);
-                return;
-            }
+        if let Some(metadata) = self.store.read(cx).first()
+            && metadata.title.is_none()
+        {
+            self.load_rule(metadata.id, true, window, cx);
+            return;
         }
 
         let prompt_id = PromptId::new();
@@ -703,18 +703,14 @@ impl RulesLibrary {
                     .delegate
                     .matches
                     .get(picker.delegate.selected_index())
-                    .map_or(true, |old_selected_prompt| {
-                        old_selected_prompt.id != prompt_id
-                    })
-                {
-                    if let Some(ix) = picker
+                    .is_none_or(|old_selected_prompt| old_selected_prompt.id != prompt_id)
+                    && let Some(ix) = picker
                         .delegate
                         .matches
                         .iter()
                         .position(|mat| mat.id == prompt_id)
-                    {
-                        picker.set_selected_index(ix, None, true, window, cx);
-                    }
+                {
+                    picker.set_selected_index(ix, None, true, window, cx);
                 }
             } else {
                 picker.focus(window, cx);
@@ -869,10 +865,10 @@ impl RulesLibrary {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(rule_id) = self.active_rule_id {
-            if let Some(rule_editor) = self.rule_editors.get(&rule_id) {
-                window.focus(&rule_editor.body_editor.focus_handle(cx));
-            }
+        if let Some(rule_id) = self.active_rule_id
+            && let Some(rule_editor) = self.rule_editors.get(&rule_id)
+        {
+            window.focus(&rule_editor.body_editor.focus_handle(cx));
         }
     }
 
@@ -882,10 +878,10 @@ impl RulesLibrary {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(rule_id) = self.active_rule_id {
-            if let Some(rule_editor) = self.rule_editors.get(&rule_id) {
-                window.focus(&rule_editor.title_editor.focus_handle(cx));
-            }
+        if let Some(rule_id) = self.active_rule_id
+            && let Some(rule_editor) = self.rule_editors.get(&rule_id)
+        {
+            window.focus(&rule_editor.title_editor.focus_handle(cx));
         }
     }
 
@@ -1140,7 +1136,7 @@ impl RulesLibrary {
                                                 .child(
                                                     Label::new(format!(
                                                         "{} tokens",
-                                                        label_token_count.clone()
+                                                        label_token_count
                                                     ))
                                                     .color(Color::Muted),
                                                 )

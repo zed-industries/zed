@@ -122,8 +122,7 @@ impl LanguageServerState {
         let lsp_logs = cx
             .try_global::<GlobalLogStore>()
             .and_then(|lsp_logs| lsp_logs.0.upgrade());
-        let lsp_store = self.lsp_store.upgrade();
-        let Some((lsp_logs, lsp_store)) = lsp_logs.zip(lsp_store) else {
+        let Some(lsp_logs) = lsp_logs else {
             return menu;
         };
 
@@ -210,10 +209,11 @@ impl LanguageServerState {
             };
 
             let server_selector = server_info.server_selector();
-            // TODO currently, Zed remote does not work well with the LSP logs
-            // https://github.com/zed-industries/zed/issues/28557
-            let has_logs = lsp_store.read(cx).as_local().is_some()
-                && lsp_logs.read(cx).has_server_logs(&server_selector);
+            let is_remote = self
+                .lsp_store
+                .update(cx, |lsp_store, _| lsp_store.as_remote().is_some())
+                .unwrap_or(false);
+            let has_logs = is_remote || lsp_logs.read(cx).has_server_logs(&server_selector);
 
             let status_color = server_info
                 .binary_status
@@ -241,10 +241,10 @@ impl LanguageServerState {
                 .as_ref()
                 .or_else(|| server_info.binary_status.as_ref()?.message.as_ref())
                 .cloned();
-            let hover_label = if has_logs {
-                Some("View Logs")
-            } else if message.is_some() {
+            let hover_label = if message.is_some() {
                 Some("View Message")
+            } else if has_logs {
+                Some("View Logs")
             } else {
                 None
             };
@@ -288,16 +288,7 @@ impl LanguageServerState {
                     let server_name = server_info.name.clone();
                     let workspace = self.workspace.clone();
                     move |window, cx| {
-                        if has_logs {
-                            lsp_logs.update(cx, |lsp_logs, cx| {
-                                lsp_logs.open_server_trace(
-                                    workspace.clone(),
-                                    server_selector.clone(),
-                                    window,
-                                    cx,
-                                );
-                            });
-                        } else if let Some(message) = &message {
+                        if let Some(message) = &message {
                             let Some(create_buffer) = workspace
                                 .update(cx, |workspace, cx| {
                                     workspace
@@ -347,9 +338,17 @@ impl LanguageServerState {
                                 anyhow::Ok(())
                             })
                             .detach();
+                        } else if has_logs {
+                            lsp_logs.update(cx, |lsp_logs, cx| {
+                                lsp_logs.open_server_trace(
+                                    workspace.clone(),
+                                    server_selector.clone(),
+                                    window,
+                                    cx,
+                                );
+                            });
                         } else {
                             cx.propagate();
-                            return;
                         }
                     }
                 },
@@ -523,7 +522,6 @@ impl LspTool {
                 if ProjectSettings::get_global(cx).global_lsp_settings.button {
                     if lsp_tool.lsp_menu.is_none() {
                         lsp_tool.refresh_lsp_menu(true, window, cx);
-                        return;
                     }
                 } else if lsp_tool.lsp_menu.take().is_some() {
                     cx.notify();
@@ -531,26 +529,48 @@ impl LspTool {
             });
 
         let lsp_store = workspace.project().read(cx).lsp_store();
+        let mut language_servers = LanguageServers::default();
+        for (_, status) in lsp_store.read(cx).language_server_statuses() {
+            language_servers.binary_statuses.insert(
+                status.name.clone(),
+                LanguageServerBinaryStatus {
+                    status: BinaryStatus::None,
+                    message: None,
+                },
+            );
+        }
+
         let lsp_store_subscription =
             cx.subscribe_in(&lsp_store, window, |lsp_tool, _, e, window, cx| {
                 lsp_tool.on_lsp_store_event(e, window, cx)
             });
 
-        let state = cx.new(|_| LanguageServerState {
+        let server_state = cx.new(|_| LanguageServerState {
             workspace: workspace.weak_handle(),
             items: Vec::new(),
             lsp_store: lsp_store.downgrade(),
             active_editor: None,
-            language_servers: LanguageServers::default(),
+            language_servers,
         });
 
-        Self {
-            server_state: state,
+        let mut lsp_tool = Self {
+            server_state,
             popover_menu_handle,
             lsp_menu: None,
             lsp_menu_refresh: Task::ready(()),
             _subscriptions: vec![settings_subscription, lsp_store_subscription],
+        };
+        if !lsp_tool
+            .server_state
+            .read(cx)
+            .language_servers
+            .binary_statuses
+            .is_empty()
+        {
+            lsp_tool.refresh_lsp_menu(true, window, cx);
         }
+
+        lsp_tool
     }
 
     fn on_lsp_store_event(
@@ -710,6 +730,25 @@ impl LspTool {
                     }
                 }
             }
+            state
+                .lsp_store
+                .update(cx, |lsp_store, cx| {
+                    for (server_id, status) in lsp_store.language_server_statuses() {
+                        if let Some(worktree) = status.worktree.and_then(|worktree_id| {
+                            lsp_store
+                                .worktree_store()
+                                .read(cx)
+                                .worktree_for_id(worktree_id, cx)
+                        }) {
+                            server_ids_to_worktrees.insert(server_id, worktree.clone());
+                            server_names_to_worktrees
+                                .entry(status.name.clone())
+                                .or_default()
+                                .insert((worktree, server_id));
+                        }
+                    }
+                })
+                .ok();
 
             let mut servers_per_worktree = BTreeMap::<SharedString, Vec<ServerData>>::new();
             let mut servers_without_worktree = Vec::<ServerData>::new();

@@ -257,7 +257,7 @@ impl DebugPanel {
                                         .as_ref()
                                         .map(|entity| entity.downgrade()),
                                     task_context: task_context.clone(),
-                                    worktree_id: worktree_id,
+                                    worktree_id,
                                 });
                             };
                             running.resolve_scenario(
@@ -386,10 +386,10 @@ impl DebugPanel {
             return;
         };
 
-        let dap_store_handle = self.project.read(cx).dap_store().clone();
+        let dap_store_handle = self.project.read(cx).dap_store();
         let label = curr_session.read(cx).label();
         let quirks = curr_session.read(cx).quirks();
-        let adapter = curr_session.read(cx).adapter().clone();
+        let adapter = curr_session.read(cx).adapter();
         let binary = curr_session.read(cx).binary().cloned().unwrap();
         let task_context = curr_session.read(cx).task_context().clone();
 
@@ -447,9 +447,9 @@ impl DebugPanel {
             return;
         };
 
-        let dap_store_handle = self.project.read(cx).dap_store().clone();
+        let dap_store_handle = self.project.read(cx).dap_store();
         let label = self.label_for_child_session(&parent_session, request, cx);
-        let adapter = parent_session.read(cx).adapter().clone();
+        let adapter = parent_session.read(cx).adapter();
         let quirks = parent_session.read(cx).quirks();
         let Some(mut binary) = parent_session.read(cx).binary().cloned() else {
             log::error!("Attempted to start a child-session without a binary");
@@ -530,10 +530,9 @@ impl DebugPanel {
                     .active_session
                     .as_ref()
                     .map(|session| session.entity_id())
+                    && active_session_id == entity_id
                 {
-                    if active_session_id == entity_id {
-                        this.active_session = this.sessions_with_children.keys().next().cloned();
-                    }
+                    this.active_session = this.sessions_with_children.keys().next().cloned();
                 }
                 cx.notify()
             })
@@ -933,7 +932,6 @@ impl DebugPanel {
                                     .cloned(),
                                 |this, running_state| {
                                     this.children({
-                                        let running_state = running_state.clone();
                                         let threads =
                                             running_state.update(cx, |running_state, cx| {
                                                 let session = running_state.session();
@@ -1302,10 +1300,10 @@ impl DebugPanel {
         cx: &mut Context<'_, Self>,
     ) -> Option<SharedString> {
         let adapter = parent_session.read(cx).adapter();
-        if let Some(adapter) = DapRegistry::global(cx).adapter(&adapter) {
-            if let Some(label) = adapter.label_for_child_session(request) {
-                return Some(label.into());
-            }
+        if let Some(adapter) = DapRegistry::global(cx).adapter(&adapter)
+            && let Some(label) = adapter.label_for_child_session(request)
+        {
+            return Some(label.into());
         }
         None
     }
@@ -1646,7 +1644,6 @@ impl Render for DebugPanel {
                 }
             })
             .on_action({
-                let this = this.clone();
                 move |_: &ToggleSessionPicker, window, cx| {
                     this.update(cx, |this, cx| {
                         this.toggle_session_picker(window, cx);

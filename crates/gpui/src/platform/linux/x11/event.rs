@@ -104,7 +104,7 @@ fn bit_is_set_in_vec(bit_vec: &Vec<u32>, bit_index: u16) -> bool {
     let array_index = bit_index as usize / 32;
     bit_vec
         .get(array_index)
-        .map_or(false, |bits| bit_is_set(*bits, bit_index % 32))
+        .is_some_and(|bits| bit_is_set(*bits, bit_index % 32))
 }
 
 fn bit_is_set(bits: u32, bit_index: u16) -> bool {

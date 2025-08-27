@@ -42,6 +42,7 @@ use ui::{IconDecorationKind, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::PathExt};
 use workspace::{
     CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
+    invalid_buffer_view::InvalidBufferView,
     item::{FollowableItem, Item, ItemEvent, ProjectItem, SaveOptions},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
 };
@@ -103,9 +104,9 @@ impl FollowableItem for Editor {
                         multibuffer = MultiBuffer::new(project.read(cx).capability());
                         let mut sorted_excerpts = state.excerpts.clone();
                         sorted_excerpts.sort_by_key(|e| e.id);
-                        let mut sorted_excerpts = sorted_excerpts.into_iter().peekable();
+                        let sorted_excerpts = sorted_excerpts.into_iter().peekable();
 
-                        while let Some(excerpt) = sorted_excerpts.next() {
+                        for excerpt in sorted_excerpts {
                             let Ok(buffer_id) = BufferId::new(excerpt.buffer_id) else {
                                 continue;
                             };
@@ -201,7 +202,7 @@ impl FollowableItem for Editor {
         if buffer
             .as_singleton()
             .and_then(|buffer| buffer.read(cx).file())
-            .map_or(false, |file| file.is_private())
+            .is_some_and(|file| file.is_private())
         {
             return None;
         }
@@ -293,7 +294,7 @@ impl FollowableItem for Editor {
                 EditorEvent::ExcerptsRemoved { ids, .. } => {
                     update
                         .deleted_excerpts
-                        .extend(ids.iter().map(ExcerptId::to_proto));
+                        .extend(ids.iter().copied().map(ExcerptId::to_proto));
                     true
                 }
                 EditorEvent::ScrollPositionChanged { autoscroll, .. } if !autoscroll => {
@@ -715,7 +716,7 @@ impl Item for Editor {
             .read(cx)
             .as_singleton()
             .and_then(|buffer| buffer.read(cx).file())
-            .map_or(false, |file| file.disk_state() == DiskState::Deleted);
+            .is_some_and(|file| file.disk_state() == DiskState::Deleted);
 
         h_flex()
             .gap_2()
@@ -930,10 +931,10 @@ impl Item for Editor {
             })?;
             buffer
                 .update(cx, |buffer, cx| {
-                    if let Some(transaction) = transaction {
-                        if !buffer.is_singleton() {
-                            buffer.push_transaction(&transaction.0, cx);
-                        }
+                    if let Some(transaction) = transaction
+                        && !buffer.is_singleton()
+                    {
+                        buffer.push_transaction(&transaction.0, cx);
                     }
                 })
                 .ok();
@@ -1009,16 +1010,12 @@ impl Item for Editor {
     ) {
         self.workspace = Some((workspace.weak_handle(), workspace.database_id()));
         if let Some(workspace) = &workspace.weak_handle().upgrade() {
-            cx.subscribe(
-                workspace,
-                |editor, _, event: &workspace::Event, _cx| match event {
-                    workspace::Event::ModalOpened => {
-                        editor.mouse_context_menu.take();
-                        editor.inline_blame_popover.take();
-                    }
-                    _ => {}
-                },
-            )
+            cx.subscribe(workspace, |editor, _, event: &workspace::Event, _cx| {
+                if let workspace::Event::ModalOpened = event {
+                    editor.mouse_context_menu.take();
+                    editor.inline_blame_popover.take();
+                }
+            })
             .detach();
         }
     }
@@ -1374,39 +1371,46 @@ impl ProjectItem for Editor {
         let mut editor = Self::for_buffer(buffer.clone(), Some(project), window, cx);
         if let Some((excerpt_id, buffer_id, snapshot)) =
             editor.buffer().read(cx).snapshot(cx).as_singleton()
+            && WorkspaceSettings::get(None, cx).restore_on_file_reopen
+            && let Some(restoration_data) = Self::project_item_kind()
+                .and_then(|kind| pane.as_ref()?.project_item_restoration_data.get(&kind))
+                .and_then(|data| data.downcast_ref::<EditorRestorationData>())
+                .and_then(|data| {
+                    let file = project::File::from_dyn(buffer.read(cx).file())?;
+                    data.entries.get(&file.abs_path(cx))
+                })
         {
-            if WorkspaceSettings::get(None, cx).restore_on_file_reopen {
-                if let Some(restoration_data) = Self::project_item_kind()
-                    .and_then(|kind| pane.as_ref()?.project_item_restoration_data.get(&kind))
-                    .and_then(|data| data.downcast_ref::<EditorRestorationData>())
-                    .and_then(|data| {
-                        let file = project::File::from_dyn(buffer.read(cx).file())?;
-                        data.entries.get(&file.abs_path(cx))
-                    })
-                {
-                    editor.fold_ranges(
-                        clip_ranges(&restoration_data.folds, snapshot),
-                        false,
-                        window,
-                        cx,
-                    );
-                    if !restoration_data.selections.is_empty() {
-                        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                            s.select_ranges(clip_ranges(&restoration_data.selections, snapshot));
-                        });
-                    }
-                    let (top_row, offset) = restoration_data.scroll_position;
-                    let anchor = Anchor::in_buffer(
-                        *excerpt_id,
-                        buffer_id,
-                        snapshot.anchor_before(Point::new(top_row, 0)),
-                    );
-                    editor.set_scroll_anchor(ScrollAnchor { anchor, offset }, window, cx);
-                }
+            editor.fold_ranges(
+                clip_ranges(&restoration_data.folds, snapshot),
+                false,
+                window,
+                cx,
+            );
+            if !restoration_data.selections.is_empty() {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.select_ranges(clip_ranges(&restoration_data.selections, snapshot));
+                });
             }
+            let (top_row, offset) = restoration_data.scroll_position;
+            let anchor = Anchor::in_buffer(
+                *excerpt_id,
+                buffer_id,
+                snapshot.anchor_before(Point::new(top_row, 0)),
+            );
+            editor.set_scroll_anchor(ScrollAnchor { anchor, offset }, window, cx);
         }
 
         editor
+    }
+
+    fn for_broken_project_item(
+        abs_path: &Path,
+        is_local: bool,
+        e: &anyhow::Error,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<InvalidBufferView> {
+        Some(InvalidBufferView::new(abs_path, is_local, e, window, cx))
     }
 }
 

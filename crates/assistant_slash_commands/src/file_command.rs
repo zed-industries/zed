@@ -92,7 +92,7 @@ impl FileSlashCommand {
                         snapshot: worktree.snapshot(),
                         include_ignored: worktree
                             .root_entry()
-                            .map_or(false, |entry| entry.is_ignored),
+                            .is_some_and(|entry| entry.is_ignored),
                         include_root_name: true,
                         candidates: project::Candidates::Entries,
                     }
@@ -223,7 +223,7 @@ fn collect_files(
     cx: &mut App,
 ) -> impl Stream<Item = Result<SlashCommandEvent>> + use<> {
     let Ok(matchers) = glob_inputs
-        .into_iter()
+        .iter()
         .map(|glob_input| {
             custom_path_matcher::PathMatcher::new(&[glob_input.to_owned()])
                 .with_context(|| format!("invalid path {glob_input}"))
@@ -371,7 +371,7 @@ fn collect_files(
                             &mut output,
                         )
                         .log_err();
-                        let mut buffer_events = output.to_event_stream();
+                        let mut buffer_events = output.into_event_stream();
                         while let Some(event) = buffer_events.next().await {
                             events_tx.unbounded_send(event)?;
                         }
@@ -379,7 +379,7 @@ fn collect_files(
                 }
             }
 
-            while let Some(_) = directory_stack.pop() {
+            while directory_stack.pop().is_some() {
                 events_tx.unbounded_send(Ok(SlashCommandEvent::EndSection))?;
             }
         }
@@ -491,7 +491,7 @@ mod custom_path_matcher {
     impl PathMatcher {
         pub fn new(globs: &[String]) -> Result<Self, globset::Error> {
             let globs = globs
-                .into_iter()
+                .iter()
                 .map(|glob| Glob::new(&SanitizedPath::from(glob).to_glob_string()))
                 .collect::<Result<Vec<_>, _>>()?;
             let sources = globs.iter().map(|glob| glob.glob().to_owned()).collect();
@@ -536,7 +536,7 @@ mod custom_path_matcher {
             let path_str = path.to_string_lossy();
             let separator = std::path::MAIN_SEPARATOR_STR;
             if path_str.ends_with(separator) {
-                return false;
+                false
             } else {
                 self.glob.is_match(path_str.to_string() + separator)
             }

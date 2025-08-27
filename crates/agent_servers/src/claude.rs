@@ -1,6 +1,11 @@
+mod edit_tool;
 mod mcp_server;
+mod permission_tool;
+mod read_tool;
 pub mod tools;
+mod write_tool;
 
+use action_log::ActionLog;
 use collections::HashMap;
 use context_server::listener::McpServerTool;
 use language_models::provider::anthropic::AnthropicLanguageModelProvider;
@@ -10,8 +15,9 @@ use smol::process::Child;
 use std::any::Any;
 use std::cell::RefCell;
 use std::fmt::Display;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use util::command::new_smol_command;
 use uuid::Uuid;
 
 use agent_client_protocol as acp;
@@ -24,33 +30,41 @@ use futures::{
     io::BufReader,
     select_biased,
 };
-use gpui::{App, AppContext, AsyncApp, Entity, Task, WeakEntity};
+use gpui::{App, AppContext, AsyncApp, Entity, SharedString, Task, WeakEntity};
 use serde::{Deserialize, Serialize};
 use util::{ResultExt, debug_panic};
 
 use crate::claude::mcp_server::{ClaudeZedMcpServer, McpConfig};
 use crate::claude::tools::ClaudeTool;
 use crate::{AgentServer, AgentServerCommand, AllAgentServersSettings};
-use acp_thread::{AcpThread, AgentConnection, AuthRequired};
+use acp_thread::{AcpThread, AgentConnection, AuthRequired, LoadError, MentionUri};
 
 #[derive(Clone)]
 pub struct ClaudeCode;
 
 impl AgentServer for ClaudeCode {
-    fn name(&self) -> &'static str {
-        "Claude Code"
+    fn telemetry_id(&self) -> &'static str {
+        "claude-code"
     }
 
-    fn empty_state_headline(&self) -> &'static str {
+    fn name(&self) -> SharedString {
+        "Claude Code".into()
+    }
+
+    fn empty_state_headline(&self) -> SharedString {
         self.name()
     }
 
-    fn empty_state_message(&self) -> &'static str {
-        "How can I help you today?"
+    fn empty_state_message(&self) -> SharedString {
+        "How can I help you today?".into()
     }
 
     fn logo(&self) -> ui::IconName {
         ui::IconName::AiClaude
+    }
+
+    fn install_command(&self) -> Option<&'static str> {
+        Some("npm install -g @anthropic-ai/claude-code@latest")
     }
 
     fn connect(
@@ -98,7 +112,7 @@ impl AgentConnection for ClaudeAgentConnection {
             )
             .await
             else {
-                anyhow::bail!("Failed to find claude binary");
+                return Err(LoadError::NotInstalled.into());
             };
 
             let api_key =
@@ -203,20 +217,47 @@ impl AgentConnection for ClaudeAgentConnection {
                         .await
                     }
 
-                    if let Some(status) = child.status().await.log_err() {
-                        if let Some(thread) = thread_rx.recv().await.ok() {
-                            thread
-                                .update(cx, |thread, cx| {
-                                    thread.emit_server_exited(status, cx);
-                                })
-                                .ok();
-                        }
+                    if let Some(status) = child.status().await.log_err()
+                        && let Some(thread) = thread_rx.recv().await.ok()
+                    {
+                        let version = claude_version(command.path.clone(), cx).await.log_err();
+                        let help = claude_help(command.path.clone(), cx).await.log_err();
+                        thread
+                            .update(cx, |thread, cx| {
+                                let error = if let Some(version) = version
+                                    && let Some(help) = help
+                                    && (!help.contains("--input-format")
+                                        || !help.contains("--session-id"))
+                                {
+                                    LoadError::Unsupported {
+                                        command: command.path.to_string_lossy().to_string().into(),
+                                        current_version: version.to_string().into(),
+                                    }
+                                } else {
+                                    LoadError::Exited { status }
+                                };
+                                thread.emit_load_error(error, cx);
+                            })
+                            .ok();
                     }
                 }
             });
 
+            let action_log = cx.new(|_| ActionLog::new(project.clone()))?;
             let thread = cx.new(|cx| {
-                AcpThread::new("Claude Code", self.clone(), project, session_id.clone(), cx)
+                AcpThread::new(
+                    "Claude Code",
+                    self.clone(),
+                    project,
+                    action_log,
+                    session_id.clone(),
+                    watch::Receiver::constant(acp::PromptCapabilities {
+                        image: true,
+                        audio: false,
+                        embedded_context: true,
+                    }),
+                    cx,
+                )
             })?;
 
             thread_tx.send(thread.downgrade())?;
@@ -259,27 +300,12 @@ impl AgentConnection for ClaudeAgentConnection {
         let (end_tx, end_rx) = oneshot::channel();
         session.turn_state.replace(TurnState::InProgress { end_tx });
 
-        let mut content = String::new();
-        for chunk in params.prompt {
-            match chunk {
-                acp::ContentBlock::Text(text_content) => {
-                    content.push_str(&text_content.text);
-                }
-                acp::ContentBlock::ResourceLink(resource_link) => {
-                    content.push_str(&format!("@{}", resource_link.uri));
-                }
-                acp::ContentBlock::Audio(_)
-                | acp::ContentBlock::Image(_)
-                | acp::ContentBlock::Resource(_) => {
-                    // TODO
-                }
-            }
-        }
+        let content = acp_content_to_claude(params.prompt);
 
         if let Err(err) = session.outgoing_tx.unbounded_send(SdkMessage::User {
             message: Message {
                 role: Role::User,
-                content: Content::UntaggedText(content),
+                content: Content::Chunks(content),
                 id: None,
                 model: None,
                 stop_reason: None,
@@ -358,18 +384,16 @@ fn spawn_claude(
             &format!(
                 "mcp__{}__{}",
                 mcp_server::SERVER_NAME,
-                mcp_server::PermissionTool::NAME,
+                permission_tool::PermissionTool::NAME,
             ),
             "--allowedTools",
             &format!(
-                "mcp__{}__{},mcp__{}__{}",
+                "mcp__{}__{}",
                 mcp_server::SERVER_NAME,
-                mcp_server::EditTool::NAME,
-                mcp_server::SERVER_NAME,
-                mcp_server::ReadTool::NAME
+                read_tool::ReadTool::NAME
             ),
             "--disallowedTools",
-            "Read,Edit",
+            "Read,Write,Edit,MultiEdit",
         ])
         .args(match mode {
             ClaudeSessionMode::Start => ["--session-id".to_string(), session_id.to_string()],
@@ -386,6 +410,27 @@ fn spawn_claude(
         .spawn()?;
 
     Ok(child)
+}
+
+fn claude_version(path: PathBuf, cx: &mut AsyncApp) -> Task<Result<semver::Version>> {
+    cx.background_spawn(async move {
+        let output = new_smol_command(path).arg("--version").output().await?;
+        let output = String::from_utf8(output.stdout)?;
+        let version = output
+            .trim()
+            .strip_suffix(" (Claude Code)")
+            .context("parsing Claude version")?;
+        let version = semver::Version::parse(version)?;
+        anyhow::Ok(version)
+    })
+}
+
+fn claude_help(path: PathBuf, cx: &mut AsyncApp) -> Task<Result<String>> {
+    cx.background_spawn(async move {
+        let output = new_smol_command(path).arg("--help").output().await?;
+        let output = String::from_utf8(output.stdout)?;
+        anyhow::Ok(output)
+    })
 }
 
 struct ClaudeAgentSession {
@@ -477,9 +522,16 @@ impl ClaudeAgentSession {
                             let content = content.to_string();
                             thread
                                 .update(cx, |thread, cx| {
+                                    let id = acp::ToolCallId(tool_use_id.into());
+                                    let set_new_content = !content.is_empty()
+                                        && thread.tool_call(&id).is_none_or(|(_, tool_call)| {
+                                            // preserve rich diff if we have one
+                                            tool_call.diffs().next().is_none()
+                                        });
+
                                     thread.update_tool_call(
                                         acp::ToolCallUpdate {
-                                            id: acp::ToolCallId(tool_use_id.into()),
+                                            id,
                                             fields: acp::ToolCallUpdateFields {
                                                 status: if turn_state.borrow().is_canceled() {
                                                     // Do not set to completed if turn was canceled
@@ -487,7 +539,7 @@ impl ClaudeAgentSession {
                                                 } else {
                                                     Some(acp::ToolCallStatus::Completed)
                                                 },
-                                                content: (!content.is_empty())
+                                                content: set_new_content
                                                     .then(|| vec![content.into()]),
                                                 ..Default::default()
                                             },
@@ -505,10 +557,17 @@ impl ClaudeAgentSession {
                                 chunk
                             );
                         }
+                        ContentChunk::Image { source } => {
+                            if !turn_state.borrow().is_canceled() {
+                                thread
+                                    .update(cx, |thread, cx| {
+                                        thread.push_user_content_block(None, source.into(), cx)
+                                    })
+                                    .log_err();
+                            }
+                        }
 
-                        ContentChunk::Image
-                        | ContentChunk::Document
-                        | ContentChunk::WebSearchToolResult => {
+                        ContentChunk::Document | ContentChunk::WebSearchToolResult => {
                             thread
                                 .update(cx, |thread, cx| {
                                     thread.push_assistant_content_block(
@@ -594,7 +653,14 @@ impl ClaudeAgentSession {
                                 "Should not get tool results with role: assistant. should we handle this?"
                             );
                         }
-                        ContentChunk::Image | ContentChunk::Document => {
+                        ContentChunk::Image { source } => {
+                            thread
+                                .update(cx, |thread, cx| {
+                                    thread.push_assistant_content_block(source.into(), false, cx)
+                                })
+                                .log_err();
+                        }
+                        ContentChunk::Document => {
                             thread
                                 .update(cx, |thread, cx| {
                                     thread.push_assistant_content_block(
@@ -632,7 +698,7 @@ impl ClaudeAgentSession {
                     let stop_reason = match subtype {
                         ResultErrorType::Success => acp::StopReason::EndTurn,
                         ResultErrorType::ErrorMaxTurns => acp::StopReason::MaxTurnRequests,
-                        ResultErrorType::ErrorDuringExecution => acp::StopReason::Canceled,
+                        ResultErrorType::ErrorDuringExecution => acp::StopReason::Cancelled,
                     };
                     end_turn_tx
                         .send(Ok(acp::PromptResponse { stop_reason }))
@@ -722,7 +788,7 @@ impl Content {
     pub fn chunks(self) -> impl Iterator<Item = ContentChunk> {
         match self {
             Self::Chunks(chunks) => chunks.into_iter(),
-            Self::UntaggedText(text) => vec![ContentChunk::Text { text: text.clone() }].into_iter(),
+            Self::UntaggedText(text) => vec![ContentChunk::Text { text }].into_iter(),
         }
     }
 }
@@ -760,12 +826,42 @@ enum ContentChunk {
         thinking: String,
     },
     RedactedThinking,
+    Image {
+        source: ImageSource,
+    },
     // TODO
-    Image,
     Document,
     WebSearchToolResult,
     #[serde(untagged)]
     UntaggedText(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ImageSource {
+    Base64 { data: String, media_type: String },
+    Url { url: String },
+}
+
+impl Into<acp::ContentBlock> for ImageSource {
+    fn into(self) -> acp::ContentBlock {
+        match self {
+            ImageSource::Base64 { data, media_type } => {
+                acp::ContentBlock::Image(acp::ImageContent {
+                    annotations: None,
+                    data,
+                    mime_type: media_type,
+                    uri: None,
+                })
+            }
+            ImageSource::Url { url } => acp::ContentBlock::Image(acp::ImageContent {
+                annotations: None,
+                data: "".to_string(),
+                mime_type: "".to_string(),
+                uri: Some(url),
+            }),
+        }
+    }
 }
 
 impl Display for ContentChunk {
@@ -776,7 +872,7 @@ impl Display for ContentChunk {
             ContentChunk::RedactedThinking => write!(f, "Thinking: [REDACTED]"),
             ContentChunk::UntaggedText(text) => write!(f, "{}", text),
             ContentChunk::ToolResult { content, .. } => write!(f, "{}", content),
-            ContentChunk::Image
+            ContentChunk::Image { .. }
             | ContentChunk::Document
             | ContentChunk::ToolUse { .. }
             | ContentChunk::WebSearchToolResult => {
@@ -888,6 +984,75 @@ impl Display for ResultErrorType {
     }
 }
 
+fn acp_content_to_claude(prompt: Vec<acp::ContentBlock>) -> Vec<ContentChunk> {
+    let mut content = Vec::with_capacity(prompt.len());
+    let mut context = Vec::with_capacity(prompt.len());
+
+    for chunk in prompt {
+        match chunk {
+            acp::ContentBlock::Text(text_content) => {
+                content.push(ContentChunk::Text {
+                    text: text_content.text,
+                });
+            }
+            acp::ContentBlock::ResourceLink(resource_link) => {
+                match MentionUri::parse(&resource_link.uri) {
+                    Ok(uri) => {
+                        content.push(ContentChunk::Text {
+                            text: format!("{}", uri.as_link()),
+                        });
+                    }
+                    Err(_) => {
+                        content.push(ContentChunk::Text {
+                            text: resource_link.uri,
+                        });
+                    }
+                }
+            }
+            acp::ContentBlock::Resource(resource) => match resource.resource {
+                acp::EmbeddedResourceResource::TextResourceContents(resource) => {
+                    match MentionUri::parse(&resource.uri) {
+                        Ok(uri) => {
+                            content.push(ContentChunk::Text {
+                                text: format!("{}", uri.as_link()),
+                            });
+                        }
+                        Err(_) => {
+                            content.push(ContentChunk::Text {
+                                text: resource.uri.clone(),
+                            });
+                        }
+                    }
+
+                    context.push(ContentChunk::Text {
+                        text: format!(
+                            "\n<context ref=\"{}\">\n{}\n</context>",
+                            resource.uri, resource.text
+                        ),
+                    });
+                }
+                acp::EmbeddedResourceResource::BlobResourceContents(_) => {
+                    // Unsupported by SDK
+                }
+            },
+            acp::ContentBlock::Image(acp::ImageContent {
+                data, mime_type, ..
+            }) => content.push(ContentChunk::Image {
+                source: ImageSource::Base64 {
+                    data,
+                    media_type: mime_type,
+                },
+            }),
+            acp::ContentBlock::Audio(_) => {
+                // Unsupported by SDK
+            }
+        }
+    }
+
+    content.extend(context);
+    content
+}
+
 fn new_request_id() -> String {
     use rand::Rng;
     // In the Claude Code TS SDK they just generate a random 12 character string,
@@ -921,7 +1086,7 @@ pub(crate) mod tests {
     use gpui::TestAppContext;
     use serde_json::json;
 
-    crate::common_e2e_tests!(ClaudeCode, allow_option_id = "allow");
+    crate::common_e2e_tests!(async |_, _, _| ClaudeCode, allow_option_id = "allow");
 
     pub fn local_command() -> AgentServerCommand {
         AgentServerCommand {
@@ -953,7 +1118,7 @@ pub(crate) mod tests {
 
         thread.read_with(cx, |thread, _| {
             entries_len = thread.plan().entries.len();
-            assert!(thread.plan().entries.len() > 0, "Empty plan");
+            assert!(!thread.plan().entries.is_empty(), "Empty plan");
         });
 
         thread
@@ -1102,6 +1267,102 @@ pub(crate) mod tests {
                 assert_eq!(tool_use_id, "tool_789");
             }
             _ => panic!("Expected ToolResult variant"),
+        }
+    }
+
+    #[test]
+    fn test_acp_content_to_claude() {
+        let acp_content = vec![
+            acp::ContentBlock::Text(acp::TextContent {
+                text: "Hello world".to_string(),
+                annotations: None,
+            }),
+            acp::ContentBlock::Image(acp::ImageContent {
+                data: "base64data".to_string(),
+                mime_type: "image/png".to_string(),
+                annotations: None,
+                uri: None,
+            }),
+            acp::ContentBlock::ResourceLink(acp::ResourceLink {
+                uri: "file:///path/to/example.rs".to_string(),
+                name: "example.rs".to_string(),
+                annotations: None,
+                description: None,
+                mime_type: None,
+                size: None,
+                title: None,
+            }),
+            acp::ContentBlock::Resource(acp::EmbeddedResource {
+                annotations: None,
+                resource: acp::EmbeddedResourceResource::TextResourceContents(
+                    acp::TextResourceContents {
+                        mime_type: None,
+                        text: "fn main() { println!(\"Hello!\"); }".to_string(),
+                        uri: "file:///path/to/code.rs".to_string(),
+                    },
+                ),
+            }),
+            acp::ContentBlock::ResourceLink(acp::ResourceLink {
+                uri: "invalid_uri_format".to_string(),
+                name: "invalid.txt".to_string(),
+                annotations: None,
+                description: None,
+                mime_type: None,
+                size: None,
+                title: None,
+            }),
+        ];
+
+        let claude_content = acp_content_to_claude(acp_content);
+
+        assert_eq!(claude_content.len(), 6);
+
+        match &claude_content[0] {
+            ContentChunk::Text { text } => assert_eq!(text, "Hello world"),
+            _ => panic!("Expected Text chunk"),
+        }
+
+        match &claude_content[1] {
+            ContentChunk::Image { source } => match source {
+                ImageSource::Base64 { data, media_type } => {
+                    assert_eq!(data, "base64data");
+                    assert_eq!(media_type, "image/png");
+                }
+                _ => panic!("Expected Base64 image source"),
+            },
+            _ => panic!("Expected Image chunk"),
+        }
+
+        match &claude_content[2] {
+            ContentChunk::Text { text } => {
+                assert!(text.contains("example.rs"));
+                assert!(text.contains("file:///path/to/example.rs"));
+            }
+            _ => panic!("Expected Text chunk for ResourceLink"),
+        }
+
+        match &claude_content[3] {
+            ContentChunk::Text { text } => {
+                assert!(text.contains("code.rs"));
+                assert!(text.contains("file:///path/to/code.rs"));
+            }
+            _ => panic!("Expected Text chunk for Resource"),
+        }
+
+        match &claude_content[4] {
+            ContentChunk::Text { text } => {
+                assert_eq!(text, "invalid_uri_format");
+            }
+            _ => panic!("Expected Text chunk for invalid URI"),
+        }
+
+        match &claude_content[5] {
+            ContentChunk::Text { text } => {
+                assert!(text.contains("<context ref=\"file:///path/to/code.rs\">"));
+                assert!(text.contains("fn main() { println!(\"Hello!\"); }"));
+                assert!(text.contains("</context>"));
+            }
+            _ => panic!("Expected Text chunk for context"),
         }
     }
 }

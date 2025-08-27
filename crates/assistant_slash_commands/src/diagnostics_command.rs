@@ -44,7 +44,7 @@ impl DiagnosticsSlashCommand {
                         score: 0.,
                         positions: Vec::new(),
                         worktree_id: entry.worktree_id.to_usize(),
-                        path: entry.path.clone(),
+                        path: entry.path,
                         path_prefix: path_prefix.clone(),
                         is_dir: false, // Diagnostics can't be produced for directories
                         distance_to_relative_ancestor: 0,
@@ -61,7 +61,7 @@ impl DiagnosticsSlashCommand {
                         snapshot: worktree.snapshot(),
                         include_ignored: worktree
                             .root_entry()
-                            .map_or(false, |entry| entry.is_ignored),
+                            .is_some_and(|entry| entry.is_ignored),
                         include_root_name: true,
                         candidates: project::Candidates::Entries,
                     }
@@ -189,7 +189,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
 
         window.spawn(cx, async move |_| {
             task.await?
-                .map(|output| output.to_event_stream())
+                .map(|output| output.into_event_stream())
                 .context("No diagnostics found")
         })
     }
@@ -280,10 +280,10 @@ fn collect_diagnostics(
 
         let mut project_summary = DiagnosticSummary::default();
         for (project_path, path, summary) in diagnostic_summaries {
-            if let Some(path_matcher) = &options.path_matcher {
-                if !path_matcher.is_match(&path) {
-                    continue;
-                }
+            if let Some(path_matcher) = &options.path_matcher
+                && !path_matcher.is_match(&path)
+            {
+                continue;
             }
 
             project_summary.error_count += summary.error_count;

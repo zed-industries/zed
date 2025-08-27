@@ -119,13 +119,7 @@ impl EditorTestContext {
             for excerpt in excerpts.into_iter() {
                 let (text, ranges) = marked_text_ranges(excerpt, false);
                 let buffer = cx.new(|cx| Buffer::local(text, cx));
-                multibuffer.push_excerpts(
-                    buffer,
-                    ranges
-                        .into_iter()
-                        .map(|range| ExcerptRange::new(range.clone())),
-                    cx,
-                );
+                multibuffer.push_excerpts(buffer, ranges.into_iter().map(ExcerptRange::new), cx);
             }
             multibuffer
         });
@@ -426,7 +420,7 @@ impl EditorTestContext {
             if expected_text == "[FOLDED]\n" {
                 assert!(is_folded, "excerpt {} should be folded", ix);
                 let is_selected = selections.iter().any(|s| s.head().excerpt_id == excerpt_id);
-                if expected_selections.len() > 0 {
+                if !expected_selections.is_empty() {
                     assert!(
                         is_selected,
                         "excerpt {ix} should be selected. got {:?}",

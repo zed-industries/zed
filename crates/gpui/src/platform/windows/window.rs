@@ -382,10 +382,17 @@ impl WindowsWindow {
         let (mut dwexstyle, dwstyle) = if params.kind == WindowKind::PopUp {
             (WS_EX_TOOLWINDOW, WINDOW_STYLE(0x0))
         } else {
-            (
-                WS_EX_APPWINDOW,
-                WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX,
-            )
+            let mut dwstyle = WS_SYSMENU;
+
+            if params.is_resizable {
+                dwstyle |= WS_THICKFRAME | WS_MAXIMIZEBOX;
+            }
+
+            if params.is_minimizable {
+                dwstyle |= WS_MINIMIZEBOX;
+            }
+
+            (WS_EX_APPWINDOW, dwstyle)
         };
         if !disable_direct_composition {
             dwexstyle |= WS_EX_NOREDIRECTIONBITMAP;
@@ -592,10 +599,7 @@ impl PlatformWindow for WindowsWindow {
     ) -> Option<Receiver<usize>> {
         let (done_tx, done_rx) = oneshot::channel();
         let msg = msg.to_string();
-        let detail_string = match detail {
-            Some(info) => Some(info.to_string()),
-            None => None,
-        };
+        let detail_string = detail.map(|detail| detail.to_string());
         let handle = self.0.hwnd;
         let answers = answers.to_vec();
         self.0

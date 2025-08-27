@@ -341,10 +341,10 @@ async fn detect_package_manager(
     fs: Arc<dyn Fs>,
     package_json_data: Option<PackageJsonData>,
 ) -> &'static str {
-    if let Some(package_json_data) = package_json_data {
-        if let Some(package_manager) = package_json_data.package_manager {
-            return package_manager;
-        }
+    if let Some(package_json_data) = package_json_data
+        && let Some(package_manager) = package_json_data.package_manager
+    {
+        return package_manager;
     }
     if fs.is_file(&worktree_root.join("pnpm-lock.yaml")).await {
         return "pnpm";
@@ -557,7 +557,7 @@ struct TypeScriptVersions {
 #[async_trait(?Send)]
 impl LspAdapter for TypeScriptLspAdapter {
     fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
+        Self::SERVER_NAME
     }
 
     async fn fetch_latest_server_version(
@@ -879,7 +879,7 @@ impl LspAdapter for EsLintLspAdapter {
     }
 
     fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
+        Self::SERVER_NAME
     }
 
     async fn fetch_latest_server_version(

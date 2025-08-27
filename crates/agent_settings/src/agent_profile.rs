@@ -58,7 +58,7 @@ impl AgentProfileSettings {
             || self
                 .context_servers
                 .get(server_id)
-                .map_or(false, |preset| preset.tools.get(tool_name) == Some(&true))
+                .is_some_and(|preset| preset.tools.get(tool_name) == Some(&true))
     }
 }
 

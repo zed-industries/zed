@@ -93,7 +93,7 @@ impl LanguageModelPickerDelegate {
         let entries = models.entries();
 
         Self {
-            on_model_changed: on_model_changed.clone(),
+            on_model_changed,
             all_models: Arc::new(models),
             selected_index: Self::get_active_model_index(&entries, get_active_model(cx)),
             filtered_entries: entries,
@@ -514,7 +514,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                                 .pl_0p5()
                                 .gap_1p5()
                                 .w(px(240.))
-                                .child(Label::new(model_info.model.name().0.clone()).truncate()),
+                                .child(Label::new(model_info.model.name().0).truncate()),
                         )
                         .end_slot(div().pr_3().when(is_selected, |this| {
                             this.child(

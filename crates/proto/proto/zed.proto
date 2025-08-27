@@ -393,7 +393,11 @@ message Envelope {
         GetCrashFilesResponse get_crash_files_response = 362;
 
         GitClone git_clone = 363;
-        GitCloneResponse git_clone_response = 364; // current max
+        GitCloneResponse git_clone_response = 364;
+
+        LspQuery lsp_query = 365;
+        LspQueryResponse lsp_query_response = 366;
+        ToggleLspLogs toggle_lsp_logs = 367; // current max
     }
 
     reserved 87 to 88;

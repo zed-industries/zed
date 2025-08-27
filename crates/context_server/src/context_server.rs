@@ -137,7 +137,7 @@ impl ContextServer {
     }
 
     async fn initialize(&self, client: Client) -> Result<()> {
-        log::info!("starting context server {}", self.id);
+        log::debug!("starting context server {}", self.id);
         let protocol = crate::protocol::ModelContextProtocol::new(client);
         let client_info = types::Implementation {
             name: "Zed".to_string(),

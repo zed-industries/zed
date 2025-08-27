@@ -392,7 +392,7 @@ impl LogStore {
                         session.label(),
                         session
                             .adapter_client()
-                            .map_or(false, |client| client.has_adapter_logs()),
+                            .is_some_and(|client| client.has_adapter_logs()),
                     )
                 });
 
@@ -661,11 +661,11 @@ impl ToolbarItemView for DapLogToolbarItemView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> workspace::ToolbarItemLocation {
-        if let Some(item) = active_pane_item {
-            if let Some(log_view) = item.downcast::<DapLogView>() {
-                self.log_view = Some(log_view.clone());
-                return workspace::ToolbarItemLocation::PrimaryLeft;
-            }
+        if let Some(item) = active_pane_item
+            && let Some(log_view) = item.downcast::<DapLogView>()
+        {
+            self.log_view = Some(log_view);
+            return workspace::ToolbarItemLocation::PrimaryLeft;
         }
         self.log_view = None;
 

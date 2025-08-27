@@ -186,11 +186,11 @@ unsafe extern "system" fn wnd_proc(
         }),
         WM_TERMINATE => {
             with_dialog_data(hwnd, |data| {
-                if let Ok(result) = data.borrow_mut().rx.recv() {
-                    if let Err(e) = result {
-                        log::error!("Failed to update Zed: {:?}", e);
-                        show_error(format!("Error: {:?}", e));
-                    }
+                if let Ok(result) = data.borrow_mut().rx.recv()
+                    && let Err(e) = result
+                {
+                    log::error!("Failed to update Zed: {:?}", e);
+                    show_error(format!("Error: {:?}", e));
                 }
             });
             unsafe { PostQuitMessage(0) };

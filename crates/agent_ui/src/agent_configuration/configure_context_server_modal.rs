@@ -163,10 +163,10 @@ impl ConfigurationSource {
                     .read(cx)
                     .text(cx);
                 let settings = serde_json_lenient::from_str::<serde_json::Value>(&text)?;
-                if let Some(settings_validator) = settings_validator {
-                    if let Err(error) = settings_validator.validate(&settings) {
-                        return Err(anyhow::anyhow!(error.to_string()));
-                    }
+                if let Some(settings_validator) = settings_validator
+                    && let Err(error) = settings_validator.validate(&settings)
+                {
+                    return Err(anyhow::anyhow!(error.to_string()));
                 }
                 Ok((
                     id.clone(),
@@ -261,7 +261,6 @@ impl ConfigureContextServerModal {
         _cx: &mut Context<Workspace>,
     ) {
         workspace.register_action({
-            let language_registry = language_registry.clone();
             move |_workspace, _: &AddContextServer, window, cx| {
                 let workspace_handle = cx.weak_entity();
                 let language_registry = language_registry.clone();
@@ -487,7 +486,7 @@ impl ConfigureContextServerModal {
     }
 
     fn render_modal_description(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        const MODAL_DESCRIPTION: &'static str = "Visit the MCP server configuration docs to find all necessary arguments and environment variables.";
+        const MODAL_DESCRIPTION: &str = "Visit the MCP server configuration docs to find all necessary arguments and environment variables.";
 
         if let ConfigurationSource::Extension {
             installation_instructions: Some(installation_instructions),
@@ -716,24 +715,24 @@ fn wait_for_context_server(
         project::context_server_store::Event::ServerStatusChanged { server_id, status } => {
             match status {
                 ContextServerStatus::Running => {
-                    if server_id == &context_server_id {
-                        if let Some(tx) = tx.lock().unwrap().take() {
-                            let _ = tx.send(Ok(()));
-                        }
+                    if server_id == &context_server_id
+                        && let Some(tx) = tx.lock().unwrap().take()
+                    {
+                        let _ = tx.send(Ok(()));
                     }
                 }
                 ContextServerStatus::Stopped => {
-                    if server_id == &context_server_id {
-                        if let Some(tx) = tx.lock().unwrap().take() {
-                            let _ = tx.send(Err("Context server stopped running".into()));
-                        }
+                    if server_id == &context_server_id
+                        && let Some(tx) = tx.lock().unwrap().take()
+                    {
+                        let _ = tx.send(Err("Context server stopped running".into()));
                     }
                 }
                 ContextServerStatus::Error(error) => {
-                    if server_id == &context_server_id {
-                        if let Some(tx) = tx.lock().unwrap().take() {
-                            let _ = tx.send(Err(error.clone()));
-                        }
+                    if server_id == &context_server_id
+                        && let Some(tx) = tx.lock().unwrap().take()
+                    {
+                        let _ = tx.send(Err(error.clone()));
                     }
                 }
                 _ => {}

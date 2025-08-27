@@ -81,10 +81,7 @@ pub fn init(
     };
     copilot_chat::init(fs.clone(), http.clone(), configuration, cx);
 
-    let copilot = cx.new({
-        let node_runtime = node_runtime.clone();
-        move |cx| Copilot::start(new_server_id, fs, node_runtime, cx)
-    });
+    let copilot = cx.new(move |cx| Copilot::start(new_server_id, fs, node_runtime, cx));
     Copilot::set_global(copilot.clone(), cx);
     cx.observe(&copilot, |copilot, cx| {
         copilot.update(cx, |copilot, cx| copilot.update_action_visibilities(cx));
@@ -129,7 +126,7 @@ impl CopilotServer {
     fn as_authenticated(&mut self) -> Result<&mut RunningCopilotServer> {
         let server = self.as_running()?;
         anyhow::ensure!(
-            matches!(server.sign_in_status, SignInStatus::Authorized { .. }),
+            matches!(server.sign_in_status, SignInStatus::Authorized),
             "must sign in before using copilot"
         );
         Ok(server)
@@ -581,12 +578,12 @@ impl Copilot {
     pub(crate) fn sign_in(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         if let CopilotServer::Running(server) = &mut self.server {
             let task = match &server.sign_in_status {
-                SignInStatus::Authorized { .. } => Task::ready(Ok(())).shared(),
+                SignInStatus::Authorized => Task::ready(Ok(())).shared(),
                 SignInStatus::SigningIn { task, .. } => {
                     cx.notify();
                     task.clone()
                 }
-                SignInStatus::SignedOut { .. } | SignInStatus::Unauthorized { .. } => {
+                SignInStatus::SignedOut { .. } | SignInStatus::Unauthorized => {
                     let lsp = server.lsp.clone();
                     let task = cx
                         .spawn(async move |this, cx| {
@@ -608,15 +605,13 @@ impl Copilot {
                                                 sign_in_status: status,
                                                 ..
                                             }) = &mut this.server
-                                            {
-                                                if let SignInStatus::SigningIn {
+                                                && let SignInStatus::SigningIn {
                                                     prompt: prompt_flow,
                                                     ..
                                                 } = status
-                                                {
-                                                    *prompt_flow = Some(flow.clone());
-                                                    cx.notify();
-                                                }
+                                            {
+                                                *prompt_flow = Some(flow.clone());
+                                                cx.notify();
                                             }
                                         })?;
                                         let response = lsp
@@ -732,7 +727,7 @@ impl Copilot {
             ..
         }) = &mut self.server
         {
-            if !matches!(status, SignInStatus::Authorized { .. }) {
+            if !matches!(status, SignInStatus::Authorized) {
                 return;
             }
 
@@ -782,59 +777,58 @@ impl Copilot {
         event: &language::BufferEvent,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        if let Ok(server) = self.server.as_running() {
-            if let Some(registered_buffer) = server.registered_buffers.get_mut(&buffer.entity_id())
-            {
-                match event {
-                    language::BufferEvent::Edited => {
-                        drop(registered_buffer.report_changes(&buffer, cx));
-                    }
-                    language::BufferEvent::Saved => {
+        if let Ok(server) = self.server.as_running()
+            && let Some(registered_buffer) = server.registered_buffers.get_mut(&buffer.entity_id())
+        {
+            match event {
+                language::BufferEvent::Edited => {
+                    drop(registered_buffer.report_changes(&buffer, cx));
+                }
+                language::BufferEvent::Saved => {
+                    server
+                        .lsp
+                        .notify::<lsp::notification::DidSaveTextDocument>(
+                            &lsp::DidSaveTextDocumentParams {
+                                text_document: lsp::TextDocumentIdentifier::new(
+                                    registered_buffer.uri.clone(),
+                                ),
+                                text: None,
+                            },
+                        )?;
+                }
+                language::BufferEvent::FileHandleChanged
+                | language::BufferEvent::LanguageChanged => {
+                    let new_language_id = id_for_language(buffer.read(cx).language());
+                    let Ok(new_uri) = uri_for_buffer(&buffer, cx) else {
+                        return Ok(());
+                    };
+                    if new_uri != registered_buffer.uri
+                        || new_language_id != registered_buffer.language_id
+                    {
+                        let old_uri = mem::replace(&mut registered_buffer.uri, new_uri);
+                        registered_buffer.language_id = new_language_id;
                         server
                             .lsp
-                            .notify::<lsp::notification::DidSaveTextDocument>(
-                                &lsp::DidSaveTextDocumentParams {
-                                    text_document: lsp::TextDocumentIdentifier::new(
+                            .notify::<lsp::notification::DidCloseTextDocument>(
+                                &lsp::DidCloseTextDocumentParams {
+                                    text_document: lsp::TextDocumentIdentifier::new(old_uri),
+                                },
+                            )?;
+                        server
+                            .lsp
+                            .notify::<lsp::notification::DidOpenTextDocument>(
+                                &lsp::DidOpenTextDocumentParams {
+                                    text_document: lsp::TextDocumentItem::new(
                                         registered_buffer.uri.clone(),
+                                        registered_buffer.language_id.clone(),
+                                        registered_buffer.snapshot_version,
+                                        registered_buffer.snapshot.text(),
                                     ),
-                                    text: None,
                                 },
                             )?;
                     }
-                    language::BufferEvent::FileHandleChanged
-                    | language::BufferEvent::LanguageChanged => {
-                        let new_language_id = id_for_language(buffer.read(cx).language());
-                        let Ok(new_uri) = uri_for_buffer(&buffer, cx) else {
-                            return Ok(());
-                        };
-                        if new_uri != registered_buffer.uri
-                            || new_language_id != registered_buffer.language_id
-                        {
-                            let old_uri = mem::replace(&mut registered_buffer.uri, new_uri);
-                            registered_buffer.language_id = new_language_id;
-                            server
-                                .lsp
-                                .notify::<lsp::notification::DidCloseTextDocument>(
-                                    &lsp::DidCloseTextDocumentParams {
-                                        text_document: lsp::TextDocumentIdentifier::new(old_uri),
-                                    },
-                                )?;
-                            server
-                                .lsp
-                                .notify::<lsp::notification::DidOpenTextDocument>(
-                                    &lsp::DidOpenTextDocumentParams {
-                                        text_document: lsp::TextDocumentItem::new(
-                                            registered_buffer.uri.clone(),
-                                            registered_buffer.language_id.clone(),
-                                            registered_buffer.snapshot_version,
-                                            registered_buffer.snapshot.text(),
-                                        ),
-                                    },
-                                )?;
-                        }
-                    }
-                    _ => {}
                 }
+                _ => {}
             }
         }
 
@@ -842,17 +836,17 @@ impl Copilot {
     }
 
     fn unregister_buffer(&mut self, buffer: &WeakEntity<Buffer>) {
-        if let Ok(server) = self.server.as_running() {
-            if let Some(buffer) = server.registered_buffers.remove(&buffer.entity_id()) {
-                server
-                    .lsp
-                    .notify::<lsp::notification::DidCloseTextDocument>(
-                        &lsp::DidCloseTextDocumentParams {
-                            text_document: lsp::TextDocumentIdentifier::new(buffer.uri),
-                        },
-                    )
-                    .ok();
-            }
+        if let Ok(server) = self.server.as_running()
+            && let Some(buffer) = server.registered_buffers.remove(&buffer.entity_id())
+        {
+            server
+                .lsp
+                .notify::<lsp::notification::DidCloseTextDocument>(
+                    &lsp::DidCloseTextDocumentParams {
+                        text_document: lsp::TextDocumentIdentifier::new(buffer.uri),
+                    },
+                )
+                .ok();
         }
     }
 
@@ -1015,8 +1009,8 @@ impl Copilot {
             CopilotServer::Error(error) => Status::Error(error.clone()),
             CopilotServer::Running(RunningCopilotServer { sign_in_status, .. }) => {
                 match sign_in_status {
-                    SignInStatus::Authorized { .. } => Status::Authorized,
-                    SignInStatus::Unauthorized { .. } => Status::Unauthorized,
+                    SignInStatus::Authorized => Status::Authorized,
+                    SignInStatus::Unauthorized => Status::Unauthorized,
                     SignInStatus::SigningIn { prompt, .. } => Status::SigningIn {
                         prompt: prompt.clone(),
                     },

@@ -974,8 +974,6 @@ impl Buffer {
                 TextBuffer::new_normalized(0, buffer_id, Default::default(), text).snapshot();
             let mut syntax = SyntaxMap::new(&text).snapshot();
             if let Some(language) = language.clone() {
-                let text = text.clone();
-                let language = language.clone();
                 let language_registry = language_registry.clone();
                 syntax.reparse(&text, language_registry, language);
             }
@@ -1020,9 +1018,6 @@ impl Buffer {
         let text = TextBuffer::new_normalized(0, buffer_id, Default::default(), text).snapshot();
         let mut syntax = SyntaxMap::new(&text).snapshot();
         if let Some(language) = language.clone() {
-            let text = text.clone();
-            let language = language.clone();
-            let language_registry = language_registry.clone();
             syntax.reparse(&text, language_registry, language);
         }
         BufferSnapshot {
@@ -1128,7 +1123,7 @@ impl Buffer {
         } else {
             ranges.as_slice()
         }
-        .into_iter()
+        .iter()
         .peekable();
 
         let mut edits = Vec::new();
@@ -1158,13 +1153,12 @@ impl Buffer {
             base_buffer.edit(edits, None, cx)
         });
 
-        if let Some(operation) = operation {
-            if let Some(BufferBranchState {
+        if let Some(operation) = operation
+            && let Some(BufferBranchState {
                 merged_operations, ..
             }) = &mut self.branch_state
-            {
-                merged_operations.push(operation);
-            }
+        {
+            merged_operations.push(operation);
         }
     }
 
@@ -1185,11 +1179,11 @@ impl Buffer {
         };
 
         let mut operation_to_undo = None;
-        if let Operation::Buffer(text::Operation::Edit(operation)) = &operation {
-            if let Ok(ix) = merged_operations.binary_search(&operation.timestamp) {
-                merged_operations.remove(ix);
-                operation_to_undo = Some(operation.timestamp);
-            }
+        if let Operation::Buffer(text::Operation::Edit(operation)) = &operation
+            && let Ok(ix) = merged_operations.binary_search(&operation.timestamp)
+        {
+            merged_operations.remove(ix);
+            operation_to_undo = Some(operation.timestamp);
         }
 
         self.apply_ops([operation.clone()], cx);
@@ -1396,7 +1390,8 @@ impl Buffer {
                     is_first = false;
                     return true;
                 }
-                let any_sub_ranges_contain_range = layer
+
+                layer
                     .included_sub_ranges
                     .map(|sub_ranges| {
                         sub_ranges.iter().any(|sub_range| {
@@ -1405,9 +1400,7 @@ impl Buffer {
                             !is_before_start && !is_after_end
                         })
                     })
-                    .unwrap_or(true);
-                let result = any_sub_ranges_contain_range;
-                return result;
+                    .unwrap_or(true)
             })
             .last()
             .map(|info| info.language.clone())
@@ -1424,10 +1417,10 @@ impl Buffer {
             .map(|info| info.language.clone())
             .collect();
 
-        if languages.is_empty() {
-            if let Some(buffer_language) = self.language() {
-                languages.push(buffer_language.clone());
-            }
+        if languages.is_empty()
+            && let Some(buffer_language) = self.language()
+        {
+            languages.push(buffer_language.clone());
         }
 
         languages
@@ -1521,12 +1514,12 @@ impl Buffer {
                     let new_syntax_map = parse_task.await;
                     this.update(cx, move |this, cx| {
                         let grammar_changed =
-                            this.language.as_ref().map_or(true, |current_language| {
+                            this.language.as_ref().is_none_or(|current_language| {
                                 !Arc::ptr_eq(&language, current_language)
                             });
                         let language_registry_changed = new_syntax_map
                             .contains_unknown_injections()
-                            && language_registry.map_or(false, |registry| {
+                            && language_registry.is_some_and(|registry| {
                                 registry.version() != new_syntax_map.language_registry_version()
                             });
                         let parse_again = language_registry_changed
@@ -1576,11 +1569,21 @@ impl Buffer {
         self.send_operation(op, true, cx);
     }
 
-    pub fn get_diagnostics(&self, server_id: LanguageServerId) -> Option<&DiagnosticSet> {
-        let Ok(idx) = self.diagnostics.binary_search_by_key(&server_id, |v| v.0) else {
-            return None;
-        };
-        Some(&self.diagnostics[idx].1)
+    pub fn buffer_diagnostics(
+        &self,
+        for_server: Option<LanguageServerId>,
+    ) -> Vec<&DiagnosticEntry<Anchor>> {
+        match for_server {
+            Some(server_id) => match self.diagnostics.binary_search_by_key(&server_id, |v| v.0) {
+                Ok(idx) => self.diagnostics[idx].1.iter().collect(),
+                Err(_) => Vec::new(),
+            },
+            None => self
+                .diagnostics
+                .iter()
+                .flat_map(|(_, diagnostic_set)| diagnostic_set.iter())
+                .collect(),
+        }
     }
 
     fn request_autoindent(&mut self, cx: &mut Context<Self>) {
@@ -1720,8 +1723,7 @@ impl Buffer {
                                 })
                                 .with_delta(suggestion.delta, language_indent_size);
 
-                            if old_suggestions.get(&new_row).map_or(
-                                true,
+                            if old_suggestions.get(&new_row).is_none_or(
                                 |(old_indentation, was_within_error)| {
                                     suggested_indent != *old_indentation
                                         && (!suggestion.within_error || *was_within_error)
@@ -2015,7 +2017,7 @@ impl Buffer {
 
     fn was_changed(&mut self) {
         self.change_bits.retain(|change_bit| {
-            change_bit.upgrade().map_or(false, |bit| {
+            change_bit.upgrade().is_some_and(|bit| {
                 bit.replace(true);
                 true
             })
@@ -2192,7 +2194,7 @@ impl Buffer {
         if self
             .remote_selections
             .get(&self.text.replica_id())
-            .map_or(true, |set| !set.selections.is_empty())
+            .is_none_or(|set| !set.selections.is_empty())
         {
             self.set_active_selections(Arc::default(), false, Default::default(), cx);
         }
@@ -2209,7 +2211,7 @@ impl Buffer {
         self.remote_selections.insert(
             AGENT_REPLICA_ID,
             SelectionSet {
-                selections: selections.clone(),
+                selections,
                 lamport_timestamp,
                 line_mode,
                 cursor_shape,
@@ -2589,10 +2591,10 @@ impl Buffer {
                 line_mode,
                 cursor_shape,
             } => {
-                if let Some(set) = self.remote_selections.get(&lamport_timestamp.replica_id) {
-                    if set.lamport_timestamp > lamport_timestamp {
-                        return;
-                    }
+                if let Some(set) = self.remote_selections.get(&lamport_timestamp.replica_id)
+                    && set.lamport_timestamp > lamport_timestamp
+                {
+                    return;
                 }
 
                 self.remote_selections.insert(
@@ -2618,7 +2620,7 @@ impl Buffer {
                     self.completion_triggers = self
                         .completion_triggers_per_language_server
                         .values()
-                        .flat_map(|triggers| triggers.into_iter().cloned())
+                        .flat_map(|triggers| triggers.iter().cloned())
                         .collect();
                 } else {
                     self.completion_triggers_per_language_server
@@ -2778,7 +2780,7 @@ impl Buffer {
             self.completion_triggers = self
                 .completion_triggers_per_language_server
                 .values()
-                .flat_map(|triggers| triggers.into_iter().cloned())
+                .flat_map(|triggers| triggers.iter().cloned())
                 .collect();
         } else {
             self.completion_triggers_per_language_server
@@ -2840,7 +2842,7 @@ impl Buffer {
         let mut edits: Vec<(Range<usize>, String)> = Vec::new();
         let mut last_end = None;
         for _ in 0..old_range_count {
-            if last_end.map_or(false, |last_end| last_end >= self.len()) {
+            if last_end.is_some_and(|last_end| last_end >= self.len()) {
                 break;
             }
 
@@ -3009,9 +3011,9 @@ impl BufferSnapshot {
         }
 
         let mut error_ranges = Vec::<Range<Point>>::new();
-        let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
-            grammar.error_query.as_ref()
-        });
+        let mut matches = self
+            .syntax
+            .matches(range, &self.text, |grammar| grammar.error_query.as_ref());
         while let Some(mat) = matches.peek() {
             let node = mat.captures[0].node;
             let start = Point::from_ts_point(node.start_position());
@@ -3060,14 +3062,14 @@ impl BufferSnapshot {
                 if config
                     .decrease_indent_pattern
                     .as_ref()
-                    .map_or(false, |regex| regex.is_match(line))
+                    .is_some_and(|regex| regex.is_match(line))
                 {
                     indent_change_rows.push((row, Ordering::Less));
                 }
                 if config
                     .increase_indent_pattern
                     .as_ref()
-                    .map_or(false, |regex| regex.is_match(line))
+                    .is_some_and(|regex| regex.is_match(line))
                 {
                     indent_change_rows.push((row + 1, Ordering::Greater));
                 }
@@ -3083,7 +3085,7 @@ impl BufferSnapshot {
                     }
                 }
                 for rule in &config.decrease_indent_patterns {
-                    if rule.pattern.as_ref().map_or(false, |r| r.is_match(line)) {
+                    if rule.pattern.as_ref().is_some_and(|r| r.is_match(line)) {
                         let row_start_column = self.indent_size_for_line(row).len;
                         let basis_row = rule
                             .valid_after
@@ -3296,8 +3298,7 @@ impl BufferSnapshot {
         range: Range<D>,
     ) -> Option<SyntaxLayer<'_>> {
         let range = range.to_offset(self);
-        return self
-            .syntax
+        self.syntax
             .layers_for_range(range, &self.text, false)
             .max_by(|a, b| {
                 if a.depth != b.depth {
@@ -3307,7 +3308,7 @@ impl BufferSnapshot {
                 } else {
                     a.node().end_byte().cmp(&b.node().end_byte()).reverse()
                 }
-            });
+            })
     }
 
     /// Returns the main [`Language`].
@@ -3365,9 +3366,8 @@ impl BufferSnapshot {
                 }
             }
 
-            if let Some(range) = range {
-                if smallest_range_and_depth.as_ref().map_or(
-                    true,
+            if let Some(range) = range
+                && smallest_range_and_depth.as_ref().is_none_or(
                     |(smallest_range, smallest_range_depth)| {
                         if layer.depth > *smallest_range_depth {
                             true
@@ -3377,13 +3377,13 @@ impl BufferSnapshot {
                             false
                         }
                     },
-                ) {
-                    smallest_range_and_depth = Some((range, layer.depth));
-                    scope = Some(LanguageScope {
-                        language: layer.language.clone(),
-                        override_id: layer.override_id(offset, &self.text),
-                    });
-                }
+                )
+            {
+                smallest_range_and_depth = Some((range, layer.depth));
+                scope = Some(LanguageScope {
+                    language: layer.language.clone(),
+                    override_id: layer.override_id(offset, &self.text),
+                });
             }
         }
 
@@ -3499,17 +3499,17 @@ impl BufferSnapshot {
                 // If there is a candidate node on both sides of the (empty) range, then
                 // decide between the two by favoring a named node over an anonymous token.
                 // If both nodes are the same in that regard, favor the right one.
-                if let Some(right_node) = right_node {
-                    if right_node.is_named() || !left_node.is_named() {
-                        layer_result = right_node;
-                    }
+                if let Some(right_node) = right_node
+                    && (right_node.is_named() || !left_node.is_named())
+                {
+                    layer_result = right_node;
                 }
             }
 
-            if let Some(previous_result) = &result {
-                if previous_result.byte_range().len() < layer_result.byte_range().len() {
-                    continue;
-                }
+            if let Some(previous_result) = &result
+                && previous_result.byte_range().len() < layer_result.byte_range().len()
+            {
+                continue;
             }
             result = Some(layer_result);
         }
@@ -3544,7 +3544,7 @@ impl BufferSnapshot {
             }
         }
 
-        return Some(cursor.node());
+        Some(cursor.node())
     }
 
     /// Returns the outline for the buffer.
@@ -3573,7 +3573,7 @@ impl BufferSnapshot {
         )?;
         let mut prev_depth = None;
         items.retain(|item| {
-            let result = prev_depth.map_or(true, |prev_depth| item.depth > prev_depth);
+            let result = prev_depth.is_none_or(|prev_depth| item.depth > prev_depth);
             prev_depth = Some(item.depth);
             result
         });
@@ -4080,11 +4080,11 @@ impl BufferSnapshot {
         // Get the ranges of the innermost pair of brackets.
         let mut result: Option<(Range<usize>, Range<usize>)> = None;
 
-        for pair in self.enclosing_bracket_ranges(range.clone()) {
-            if let Some(range_filter) = range_filter {
-                if !range_filter(pair.open_range.clone(), pair.close_range.clone()) {
-                    continue;
-                }
+        for pair in self.enclosing_bracket_ranges(range) {
+            if let Some(range_filter) = range_filter
+                && !range_filter(pair.open_range.clone(), pair.close_range.clone())
+            {
+                continue;
             }
 
             let len = pair.close_range.end - pair.open_range.start;
@@ -4253,7 +4253,7 @@ impl BufferSnapshot {
                         .map(|(range, name)| {
                             (
                                 name.to_string(),
-                                self.text_for_range(range.clone()).collect::<String>(),
+                                self.text_for_range(range).collect::<String>(),
                             )
                         })
                         .collect();
@@ -4450,7 +4450,7 @@ impl BufferSnapshot {
 
     pub fn words_in_range(&self, query: WordsQuery) -> BTreeMap<String, Range<Anchor>> {
         let query_str = query.fuzzy_contents;
-        if query_str.map_or(false, |query| query.is_empty()) {
+        if query_str.is_some_and(|query| query.is_empty()) {
             return BTreeMap::default();
         }
 
@@ -4474,27 +4474,26 @@ impl BufferSnapshot {
                         current_word_start_ix = Some(ix);
                     }
 
-                    if let Some(query_chars) = &query_chars {
-                        if query_ix < query_len {
-                            if c.to_lowercase().eq(query_chars[query_ix].to_lowercase()) {
-                                query_ix += 1;
-                            }
-                        }
+                    if let Some(query_chars) = &query_chars
+                        && query_ix < query_len
+                        && c.to_lowercase().eq(query_chars[query_ix].to_lowercase())
+                    {
+                        query_ix += 1;
                     }
                     continue;
-                } else if let Some(word_start) = current_word_start_ix.take() {
-                    if query_ix == query_len {
-                        let word_range = self.anchor_before(word_start)..self.anchor_after(ix);
-                        let mut word_text = self.text_for_range(word_start..ix).peekable();
-                        let first_char = word_text
-                            .peek()
-                            .and_then(|first_chunk| first_chunk.chars().next());
-                        // Skip empty and "words" starting with digits as a heuristic to reduce useless completions
-                        if !query.skip_digits
-                            || first_char.map_or(true, |first_char| !first_char.is_digit(10))
-                        {
-                            words.insert(word_text.collect(), word_range);
-                        }
+                } else if let Some(word_start) = current_word_start_ix.take()
+                    && query_ix == query_len
+                {
+                    let word_range = self.anchor_before(word_start)..self.anchor_after(ix);
+                    let mut word_text = self.text_for_range(word_start..ix).peekable();
+                    let first_char = word_text
+                        .peek()
+                        .and_then(|first_chunk| first_chunk.chars().next());
+                    // Skip empty and "words" starting with digits as a heuristic to reduce useless completions
+                    if !query.skip_digits
+                        || first_char.is_none_or(|first_char| !first_char.is_digit(10))
+                    {
+                        words.insert(word_text.collect(), word_range);
                     }
                 }
                 query_ix = 0;
@@ -4607,17 +4606,17 @@ impl<'a> BufferChunks<'a> {
                 highlights
                     .stack
                     .retain(|(end_offset, _)| *end_offset > range.start);
-                if let Some(capture) = &highlights.next_capture {
-                    if range.start >= capture.node.start_byte() {
-                        let next_capture_end = capture.node.end_byte();
-                        if range.start < next_capture_end {
-                            highlights.stack.push((
-                                next_capture_end,
-                                highlights.highlight_maps[capture.grammar_index].get(capture.index),
-                            ));
-                        }
-                        highlights.next_capture.take();
+                if let Some(capture) = &highlights.next_capture
+                    && range.start >= capture.node.start_byte()
+                {
+                    let next_capture_end = capture.node.end_byte();
+                    if range.start < next_capture_end {
+                        highlights.stack.push((
+                            next_capture_end,
+                            highlights.highlight_maps[capture.grammar_index].get(capture.index),
+                        ));
                     }
+                    highlights.next_capture.take();
                 }
             } else if let Some(snapshot) = self.buffer_snapshot {
                 let (captures, highlight_maps) = snapshot.get_highlights(self.range.clone());
@@ -4642,33 +4641,33 @@ impl<'a> BufferChunks<'a> {
     }
 
     fn initialize_diagnostic_endpoints(&mut self) {
-        if let Some(diagnostics) = self.diagnostic_endpoints.as_mut() {
-            if let Some(buffer) = self.buffer_snapshot {
-                let mut diagnostic_endpoints = Vec::new();
-                for entry in buffer.diagnostics_in_range::<_, usize>(self.range.clone(), false) {
-                    diagnostic_endpoints.push(DiagnosticEndpoint {
-                        offset: entry.range.start,
-                        is_start: true,
-                        severity: entry.diagnostic.severity,
-                        is_unnecessary: entry.diagnostic.is_unnecessary,
-                        underline: entry.diagnostic.underline,
-                    });
-                    diagnostic_endpoints.push(DiagnosticEndpoint {
-                        offset: entry.range.end,
-                        is_start: false,
-                        severity: entry.diagnostic.severity,
-                        is_unnecessary: entry.diagnostic.is_unnecessary,
-                        underline: entry.diagnostic.underline,
-                    });
-                }
-                diagnostic_endpoints
-                    .sort_unstable_by_key(|endpoint| (endpoint.offset, !endpoint.is_start));
-                *diagnostics = diagnostic_endpoints.into_iter().peekable();
-                self.hint_depth = 0;
-                self.error_depth = 0;
-                self.warning_depth = 0;
-                self.information_depth = 0;
+        if let Some(diagnostics) = self.diagnostic_endpoints.as_mut()
+            && let Some(buffer) = self.buffer_snapshot
+        {
+            let mut diagnostic_endpoints = Vec::new();
+            for entry in buffer.diagnostics_in_range::<_, usize>(self.range.clone(), false) {
+                diagnostic_endpoints.push(DiagnosticEndpoint {
+                    offset: entry.range.start,
+                    is_start: true,
+                    severity: entry.diagnostic.severity,
+                    is_unnecessary: entry.diagnostic.is_unnecessary,
+                    underline: entry.diagnostic.underline,
+                });
+                diagnostic_endpoints.push(DiagnosticEndpoint {
+                    offset: entry.range.end,
+                    is_start: false,
+                    severity: entry.diagnostic.severity,
+                    is_unnecessary: entry.diagnostic.is_unnecessary,
+                    underline: entry.diagnostic.underline,
+                });
             }
+            diagnostic_endpoints
+                .sort_unstable_by_key(|endpoint| (endpoint.offset, !endpoint.is_start));
+            *diagnostics = diagnostic_endpoints.into_iter().peekable();
+            self.hint_depth = 0;
+            self.error_depth = 0;
+            self.warning_depth = 0;
+            self.information_depth = 0;
         }
     }
 
@@ -4779,11 +4778,11 @@ impl<'a> Iterator for BufferChunks<'a> {
                 .min(next_capture_start)
                 .min(next_diagnostic_endpoint);
             let mut highlight_id = None;
-            if let Some(highlights) = self.highlights.as_ref() {
-                if let Some((parent_capture_end, parent_highlight_id)) = highlights.stack.last() {
-                    chunk_end = chunk_end.min(*parent_capture_end);
-                    highlight_id = Some(*parent_highlight_id);
-                }
+            if let Some(highlights) = self.highlights.as_ref()
+                && let Some((parent_capture_end, parent_highlight_id)) = highlights.stack.last()
+            {
+                chunk_end = chunk_end.min(*parent_capture_end);
+                highlight_id = Some(*parent_highlight_id);
             }
 
             let slice =
@@ -4977,11 +4976,12 @@ pub(crate) fn contiguous_ranges(
     std::iter::from_fn(move || {
         loop {
             if let Some(value) = values.next() {
-                if let Some(range) = &mut current_range {
-                    if value == range.end && range.len() < max_len {
-                        range.end += 1;
-                        continue;
-                    }
+                if let Some(range) = &mut current_range
+                    && value == range.end
+                    && range.len() < max_len
+                {
+                    range.end += 1;
+                    continue;
                 }
 
                 let prev_range = current_range.clone();
@@ -5049,10 +5049,10 @@ impl CharClassifier {
             } else {
                 scope.word_characters()
             };
-            if let Some(characters) = characters {
-                if characters.contains(&c) {
-                    return CharKind::Word;
-                }
+            if let Some(characters) = characters
+                && characters.contains(&c)
+            {
+                return CharKind::Word;
             }
         }
 

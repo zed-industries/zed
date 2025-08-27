@@ -321,6 +321,12 @@ TBD: Centered layout related settings
     // Defaults to true.
     "cursor_position_button": true,
   },
+  "global_lsp_settings": {
+    // Show/hide the LSP button in the status bar.
+    // Activity from the LSP is still shown.
+    // Button is not shown if "enable_language_server" if false.
+    "button": true
+  },
 ```
 
 ### Multibuffer
@@ -424,6 +430,8 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
     "indent_size": 20,              // Pixels for each successive indent
     "auto_reveal_entries": true,    // Show file in panel when activating its buffer
     "auto_fold_dirs": true,         // Fold dirs with single subdir
+    "sticky_scroll": true,          // Stick parent directories at top of the project panel.
+    "drag_and_drop": true,          // Whether drag and drop is enabled
     "scrollbar": {                  // Project panel scrollbar settings
       "show": null                  // Show/hide: (auto, system, always, never)
     },

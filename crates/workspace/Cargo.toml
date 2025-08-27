@@ -13,6 +13,7 @@ path = "src/workspace.rs"
 doctest = false
 
 [features]
+default = ["call"]
 test-support = [
     "call/test-support",
     "client/test-support",
@@ -29,8 +30,7 @@ test-support = [
 any_vec.workspace = true
 anyhow.workspace = true
 async-recursion.workspace = true
-bincode = "1.2.1"
-call.workspace = true
+call = { workspace = true, optional = true }
 client.workspace = true
 clock.workspace = true
 collections.workspace = true
@@ -80,5 +80,6 @@ project = { workspace = true, features = ["test-support"] }
 session = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
+pretty_assertions.workspace = true
 tempfile.workspace = true
 zlog.workspace = true

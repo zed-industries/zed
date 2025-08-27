@@ -194,10 +194,10 @@ pub fn flush() {
         ENABLED_SINKS_FILE.clear_poison();
         handle.into_inner()
     });
-    if let Some(file) = file.as_mut() {
-        if let Err(err) = file.flush() {
-            eprintln!("Failed to flush log file: {}", err);
-        }
+    if let Some(file) = file.as_mut()
+        && let Err(err) = file.flush()
+    {
+        eprintln!("Failed to flush log file: {}", err);
     }
 }
 

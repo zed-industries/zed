@@ -205,7 +205,7 @@ impl SummaryIndex {
             let worktree = self.worktree.read(cx).snapshot();
             let worktree_abs_path = worktree.abs_path().clone();
 
-            backlogged = self.scan_updated_entries(worktree, updated_entries.clone(), cx);
+            backlogged = self.scan_updated_entries(worktree, updated_entries, cx);
             digest = self.digest_files(backlogged.paths_to_digest, worktree_abs_path, cx);
             needs_summary = self.check_summary_cache(digest.files, cx);
             summaries = self.summarize_files(needs_summary.files, cx);
@@ -379,18 +379,14 @@ impl SummaryIndex {
                     | project::PathChange::Added
                     | project::PathChange::Updated
                     | project::PathChange::AddedOrUpdated => {
-                        if let Some(entry) = worktree.entry_for_id(*entry_id) {
-                            if entry.is_file() {
-                                let needs_summary = Self::add_to_backlog(
-                                    Arc::clone(&backlog),
-                                    digest_db,
-                                    &txn,
-                                    entry,
-                                );
+                        if let Some(entry) = worktree.entry_for_id(*entry_id)
+                            && entry.is_file()
+                        {
+                            let needs_summary =
+                                Self::add_to_backlog(Arc::clone(&backlog), digest_db, &txn, entry);
 
-                                if !needs_summary.is_empty() {
-                                    tx.send(needs_summary).await?;
-                                }
+                            if !needs_summary.is_empty() {
+                                tx.send(needs_summary).await?;
                             }
                         }
                     }
