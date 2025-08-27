@@ -10479,79 +10479,23 @@ impl Editor {
 
         let open_tag = format!("{}{}", wrap_cfg.start_prefix, wrap_cfg.start_suffix);
         let close_tag = format!("{}{}", wrap_cfg.end_prefix, wrap_cfg.end_suffix);
-        let start_cursor = wrap_cfg.start_prefix.chars().count() as u32;
-        let end_cursor = wrap_cfg.end_prefix.chars().count() as u32;
+        let start_cursor = wrap_cfg.start_prefix.chars().count();
+        let end_suffix_len = wrap_cfg.end_suffix.chars().count();
 
-        let open_tag_len: u32 = open_tag.chars().count() as u32;
-        let close_tag_len: u32 = close_tag.chars().count() as u32;
-
-        let buffer = self.buffer.read(cx).snapshot(cx);
+        let snapshot = self.buffer.read(cx).snapshot(cx);
         let mut edits = Vec::new();
+        let mut boundary_anchors = Vec::new();
 
-        let selections = self.selections.all::<Point>(cx);
-        let mut selections = selections.iter();
-
-        let mut new_selections = Vec::new();
-        let mut selection_id = 0;
-        let mut last_row = 0;
-        let mut col_offset = 0;
-
-        while let Some(selection) = selections.next() {
-            let mut start_point = selection.start;
-            let mut end_point = selection.end;
-
-            let mut text = buffer
-                .text_for_range(start_point..end_point)
+        for selection in self.selections.all::<Point>(cx).iter() {
+            let start_before = snapshot.anchor_before(selection.start);
+            let end_after = snapshot.anchor_after(selection.end);
+            let mut text = snapshot
+                .text_for_range(selection.start..selection.end)
                 .collect::<String>();
-
             text.insert_str(0, &open_tag);
             text.push_str(&close_tag);
-
-            edits.push((start_point..end_point, text));
-
-            // When this selection is on a different row than the previous one
-            // there's no need to offset subsequent selections
-            if end_point.row != last_row {
-                col_offset = 0;
-            }
-
-            start_point.column += col_offset;
-            end_point.column += col_offset;
-
-            start_point.column += start_cursor;
-            new_selections.push(Selection {
-                id: selection_id,
-                start: start_point,
-                end: start_point,
-                goal: SelectionGoal::None,
-                reversed: false,
-            });
-
-            selection_id += 1;
-
-            // When start and end are on the same row, account for the opening tag inserted before.
-            if start_point.row == end_point.row {
-                end_point.column += open_tag_len as u32;
-            }
-
-            end_point.column += end_cursor;
-
-            new_selections.push(Selection {
-                id: selection_id,
-                start: end_point,
-                end: end_point,
-                goal: SelectionGoal::None,
-                reversed: false,
-            });
-
-            selection_id += 1;
-            last_row = end_point.row;
-
-            if start_point.row == end_point.row {
-                col_offset += (open_tag_len + close_tag_len) as u32;
-            } else {
-                col_offset += close_tag_len as u32;
-            }
+            edits.push((selection.start..selection.end, text));
+            boundary_anchors.push((start_before, end_after));
         }
 
         self.transact(window, cx, |this, window, cx| {
@@ -10559,18 +10503,28 @@ impl Editor {
                 buffer.edit(edits, None, cx);
                 buffer.snapshot(cx)
             });
-
-            // Recalculate offsets on newly edited buffer
-            let new_selections = new_selections
-                .iter()
-                .map(|s| Selection {
-                    id: s.id,
-                    start: buffer.point_to_offset(s.start),
-                    end: buffer.point_to_offset(s.end),
-                    goal: s.goal,
-                    reversed: s.reversed,
-                })
-                .collect();
+            let mut new_selections = Vec::with_capacity(boundary_anchors.len() * 2);
+            let mut selection_id = 0;
+            for (start_before, end_after) in boundary_anchors.into_iter() {
+                let open_offset = start_before.to_offset(&buffer) + start_cursor;
+                new_selections.push(Selection {
+                    id: selection_id,
+                    start: open_offset,
+                    end: open_offset,
+                    goal: SelectionGoal::None,
+                    reversed: false,
+                });
+                selection_id += 1;
+                let close_offset = end_after.to_offset(&buffer).saturating_sub(end_suffix_len);
+                new_selections.push(Selection {
+                    id: selection_id,
+                    start: close_offset,
+                    end: close_offset,
+                    goal: SelectionGoal::None,
+                    reversed: false,
+                });
+                selection_id += 1;
+            }
 
             this.change_selections(Default::default(), window, cx, |s| {
                 s.select(new_selections);
