@@ -11702,6 +11702,22 @@ impl LspStore {
                 "workspace/didChangeConfiguration" => {
                     // Ignore payload since we notify clients of setting changes unconditionally, relying on them pulling the latest settings.
                 }
+                "workspace/didChangeWorkspaceFolders" => {
+                    dbg!(&reg);
+                    let options = parse_register_capabilities(reg)?;
+                    server.update_capabilities(|capabilities| {
+                        capabilities
+                            .workspace
+                            .get_or_insert_default()
+                            .workspace_folders
+                            .get_or_insert_with(|| lsp::WorkspaceFoldersServerCapabilities {
+                                supported: Some(true),
+                                change_notifications: None,
+                            })
+                            .change_notifications = Some(options);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
                 "workspace/symbol" => {
                     let options = parse_register_capabilities(reg)?;
                     server.update_capabilities(|capabilities| {
@@ -11943,6 +11959,18 @@ impl LspStore {
                 }
                 "workspace/didChangeConfiguration" => {
                     // Ignore payload since we notify clients of setting changes unconditionally, relying on them pulling the latest settings.
+                }
+                "workspace/didChangeWorkspaceFolders" => {
+                    server.update_capabilities(|capabilities| {
+                        capabilities
+                            .workspace
+                            .get_or_insert_with(|| lsp::WorkspaceServerCapabilities {
+                                workspace_folders: None,
+                                file_operations: None,
+                            })
+                            .workspace_folders = None;
+                    });
+                    notify_server_capabilities_updated(&server, cx);
                 }
                 "workspace/symbol" => {
                     server.update_capabilities(|capabilities| {
