@@ -332,7 +332,7 @@ impl PickerDelegate for StashListDelegate {
                 fuzzy::match_strings(
                     &candidates,
                     &query,
-                    true,
+                    false,
                     true,
                     10000,
                     &Default::default(),
