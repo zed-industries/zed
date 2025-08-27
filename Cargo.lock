@@ -22,6 +22,7 @@ dependencies = [
  "language_model",
  "markdown",
  "parking_lot",
+ "portable-pty",
  "project",
  "prompt_store",
  "rand 0.8.5",
@@ -29,6 +30,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "task",
  "tempfile",
  "terminal",
  "ui",
@@ -191,9 +193,7 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.0.31"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "289eb34ee17213dadcca47eedadd386a5e7678094095414e475965d1bcca2860"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-broadcast",

@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 pub use terminal::*;
 
 use action_log::ActionLog;
-use agent_client_protocol as acp;
+use agent_client_protocol::{self as acp, NewTerminalResponse};
 use anyhow::{Context as _, Result, anyhow};
 use editor::Bias;
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
@@ -181,6 +181,7 @@ impl ToolCall {
         tool_call: acp::ToolCall,
         status: ToolCallStatus,
         language_registry: Arc<LanguageRegistry>,
+        terminals: &[Entity<Terminal>],
         cx: &mut App,
     ) -> Self {
         let title = if let Some((first_line, _)) = tool_call.title.split_once("\n") {
@@ -196,7 +197,9 @@ impl ToolCall {
             content: tool_call
                 .content
                 .into_iter()
-                .map(|content| ToolCallContent::from_acp(content, language_registry.clone(), cx))
+                .map(|content| {
+                    ToolCallContent::from_acp(content, language_registry.clone(), terminals, cx)
+                })
                 .collect(),
             locations: tool_call.locations,
             resolved_locations: Vec::default(),
@@ -210,6 +213,7 @@ impl ToolCall {
         &mut self,
         fields: acp::ToolCallUpdateFields,
         language_registry: Arc<LanguageRegistry>,
+        terminals: &[Entity<Terminal>],
         cx: &mut App,
     ) {
         let acp::ToolCallUpdateFields {
@@ -246,12 +250,13 @@ impl ToolCall {
 
             // Reuse existing content if we can
             for (old, new) in self.content.iter_mut().zip(content.by_ref()) {
-                old.update_from_acp(new, language_registry.clone(), cx);
+                old.update_from_acp(new, language_registry.clone(), terminals, cx);
             }
             for new in content {
                 self.content.push(ToolCallContent::from_acp(
                     new,
                     language_registry.clone(),
+                    terminals,
                     cx,
                 ))
             }
@@ -547,6 +552,7 @@ impl ToolCallContent {
     pub fn from_acp(
         content: acp::ToolCallContent,
         language_registry: Arc<LanguageRegistry>,
+        terminals: &[Entity<Terminal>],
         cx: &mut App,
     ) -> Self {
         match content {
@@ -562,6 +568,11 @@ impl ToolCallContent {
                     cx,
                 )
             })),
+            acp::ToolCallContent::Terminal { terminal_id } => {
+                //todo!
+                let ix = terminal_id.0.parse::<usize>().unwrap();
+                Self::Terminal(terminals.get(ix).unwrap().clone())
+            }
         }
     }
 
@@ -569,6 +580,7 @@ impl ToolCallContent {
         &mut self,
         new: acp::ToolCallContent,
         language_registry: Arc<LanguageRegistry>,
+        terminals: &[Entity<Terminal>],
         cx: &mut App,
     ) {
         let needs_update = match (&self, &new) {
@@ -583,7 +595,7 @@ impl ToolCallContent {
         };
 
         if needs_update {
-            *self = Self::from_acp(new, language_registry, cx);
+            *self = Self::from_acp(new, language_registry, terminals, cx);
         }
     }
 
@@ -761,6 +773,7 @@ pub struct AcpThread {
     token_usage: Option<TokenUsage>,
     prompt_capabilities: acp::PromptCapabilities,
     _observe_prompt_capabilities: Task<anyhow::Result<()>>,
+    terminals: Vec<Entity<Terminal>>,
 }
 
 #[derive(Debug)]
@@ -852,6 +865,7 @@ impl AcpThread {
             token_usage: None,
             prompt_capabilities,
             _observe_prompt_capabilities: task,
+            terminals: Vec::new(),
         }
     }
 
@@ -1075,13 +1089,13 @@ impl AcpThread {
         let update = update.into();
         let languages = self.project.read(cx).languages().clone();
 
-        let (ix, current_call) = self
+        let (ix, current_call, terminals) = self
             .tool_call_mut(update.id())
             .context("Tool call not found")?;
         match update {
             ToolCallUpdate::UpdateFields(update) => {
                 let location_updated = update.fields.locations.is_some();
-                current_call.update_fields(update.fields, languages, cx);
+                current_call.update_fields(update.fields, languages, terminals, cx);
                 if location_updated {
                     self.resolve_locations(update.id, cx);
                 }
@@ -1125,14 +1139,19 @@ impl AcpThread {
         let language_registry = self.project.read(cx).languages().clone();
         let id = tool_call_update.id.clone();
 
-        if let Some((ix, current_call)) = self.tool_call_mut(&id) {
-            current_call.update_fields(tool_call_update.fields, language_registry, cx);
+        if let Some((ix, current_call, terminals)) = self.tool_call_mut(&id) {
+            current_call.update_fields(tool_call_update.fields, language_registry, terminals, cx);
             current_call.status = status;
 
             cx.emit(AcpThreadEvent::EntryUpdated(ix));
         } else {
-            let call =
-                ToolCall::from_acp(tool_call_update.try_into()?, status, language_registry, cx);
+            let call = ToolCall::from_acp(
+                tool_call_update.try_into()?,
+                status,
+                language_registry,
+                &self.terminals,
+                cx,
+            );
             self.push_entry(AgentThreadEntry::ToolCall(call), cx);
         };
 
@@ -1140,7 +1159,10 @@ impl AcpThread {
         Ok(())
     }
 
-    fn tool_call_mut(&mut self, id: &acp::ToolCallId) -> Option<(usize, &mut ToolCall)> {
+    fn tool_call_mut(
+        &mut self,
+        id: &acp::ToolCallId,
+    ) -> Option<(usize, &mut ToolCall, &Vec<Entity<Terminal>>)> {
         // The tool call we are looking for is typically the last one, or very close to the end.
         // At the moment, it doesn't seem like a hashmap would be a good fit for this use case.
         self.entries
@@ -1151,7 +1173,7 @@ impl AcpThread {
                 if let AgentThreadEntry::ToolCall(tool_call) = tool_call
                     && &tool_call.id == id
                 {
-                    Some((index, tool_call))
+                    Some((index, tool_call, &self.terminals))
                 } else {
                     None
                 }
@@ -1176,7 +1198,7 @@ impl AcpThread {
 
     pub fn resolve_locations(&mut self, id: acp::ToolCallId, cx: &mut Context<Self>) {
         let project = self.project.clone();
-        let Some((_, tool_call)) = self.tool_call_mut(&id) else {
+        let Some((_, tool_call, _)) = self.tool_call_mut(&id) else {
             return;
         };
         let task = tool_call.resolve_locations(project, cx);
@@ -1184,7 +1206,7 @@ impl AcpThread {
             let resolved_locations = task.await;
             this.update(cx, |this, cx| {
                 let project = this.project.clone();
-                let Some((ix, tool_call)) = this.tool_call_mut(&id) else {
+                let Some((ix, tool_call, _)) = this.tool_call_mut(&id) else {
                     return;
                 };
                 if let Some(Some(location)) = resolved_locations.last() {
@@ -1245,7 +1267,7 @@ impl AcpThread {
         option_kind: acp::PermissionOptionKind,
         cx: &mut Context<Self>,
     ) {
-        let Some((ix, call)) = self.tool_call_mut(&id) else {
+        let Some((ix, call, _)) = self.tool_call_mut(&id) else {
             return;
         };
 
@@ -1790,6 +1812,47 @@ impl AcpThread {
             project
                 .update(cx, |project, cx| project.save_buffer(buffer, cx))?
                 .await
+        })
+    }
+
+    pub fn new_terminal(
+        &self,
+        args: acp::NewTerminalRequest,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<NewTerminalResponse>> {
+        let terminal = Terminal::new2(
+            format!("{} {}", args.command, args.args.join(" ")),
+            args.env,
+            args.cwd,
+            self.project.clone(),
+            cx,
+        );
+
+        cx.spawn(async move |this, cx| {
+            let terminal = terminal.await?;
+            this.update(cx, |this, cx| {
+                let terminal_id = acp::TerminalId(this.terminals.len().to_string().into());
+                this.terminals.push(cx.new(|_| terminal));
+                acp::NewTerminalResponse { terminal_id }
+            })
+        })
+    }
+
+    pub fn terminal_output(
+        &self,
+        args: acp::TerminalOutputRequest,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<acp::TerminalOutputResponse>> {
+        let Some(terminal_id) = args.terminal_id.0.parse::<usize>().ok() else {
+            return Task::ready(Err(anyhow!("Invalid terminal ID")));
+        };
+
+        let Some(terminal) = self.terminals.get(terminal_id) else {
+            return Task::ready(Err(anyhow!("Terminal not found")));
+        };
+
+        terminal.update(cx, |terminal, cx| {
+            terminal.output2(args.limit.map(|limit| limit as usize), cx)
         })
     }
 
