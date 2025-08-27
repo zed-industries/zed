@@ -324,18 +324,19 @@ impl KeystrokeInput {
             return;
         }
 
-        self.keystrokes.push(keystroke.clone());
+        self.keystrokes.push(keystroke);
         self.keystrokes_changed(cx);
 
+        // The reason we use the real modifiers from the window instead of the keystroke's modifiers
+        // is that for keystrokes like `ctrl-$` the modifiers reported by keystroke is `ctrl` which
+        // is wrong, it should be `ctrl-shift`. The window's modifiers are always correct.
+        let real_modifiers = window.modifiers();
         if self.search {
-            self.previous_modifiers = keystroke.display_modifiers;
+            self.previous_modifiers = real_modifiers;
             return;
         }
-        if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX
-            && keystroke.display_modifiers.modified()
-        {
-            self.keystrokes
-                .push(Self::dummy(keystroke.display_modifiers));
+        if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX && real_modifiers.modified() {
+            self.keystrokes.push(Self::dummy(real_modifiers));
         }
     }
 
@@ -713,9 +714,11 @@ mod tests {
 
             // Combine current modifiers with keystroke modifiers
             keystroke.modifiers |= self.current_modifiers;
+            let real_modifiers = keystroke.modifiers;
             keystroke = to_gpui_keystroke(keystroke);
 
             self.update_input(|input, window, cx| {
+                window.set_modifiers(real_modifiers);
                 input.handle_keystroke(&keystroke, window, cx);
             });
 
@@ -743,6 +746,7 @@ mod tests {
             };
 
             self.update_input(|input, window, cx| {
+                window.set_modifiers(new_modifiers);
                 input.on_modifiers_changed(&event, window, cx);
             });
 
