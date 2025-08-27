@@ -4349,7 +4349,7 @@ Visit [the Configuration page](./ai/configuration.md) under the AI section to le
 
 ## Collaboration Panel
 
-- Description: Customizatons for the collaboration panel.
+- Description: Customizations for the collaboration panel.
 - Setting: `collaboration_panel`
 - Default:
 
@@ -4371,7 +4371,7 @@ Visit [the Configuration page](./ai/configuration.md) under the AI section to le
 
 ## Chat Panel
 
-- Description: Customizatons for the chat panel.
+- Description: Customizations for the chat panel.
 - Setting: `chat_panel`
 - Default:
 
