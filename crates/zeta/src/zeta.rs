@@ -32,7 +32,7 @@ use gpui::{
 use http_client::{AsyncBody, HttpClient, Method, Request, Response};
 use input_excerpt::excerpt_for_cursor_position;
 use language::{
-    Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, ToOffset, ToPoint, text_diff,
+    Anchor, Buffer, BufferSnapshot, EditPreview, File, OffsetRangeExt, ToOffset, ToPoint, text_diff,
 };
 use language_model::{LlmApiToken, RefreshLlmTokenListener};
 use project::{Project, ProjectPath};
@@ -76,7 +76,7 @@ const MAX_EVENT_COUNT: usize = 16;
 const MAX_RECENT_PROJECT_ENTRIES_COUNT: usize = 16;
 
 /// Minimum number of milliseconds between recent file entries.
-const MIN_TIME_BETWEEN_RECENT_PROJECT_ENTRIES: Duration = Duration::from_millis(100);
+const MIN_TIME_BETWEEN_RECENT_FILES: Duration = Duration::from_millis(100);
 
 /// Maximum file path length to include in recent files list.
 const MAX_RECENT_FILE_PATH_LENGTH: usize = 512;
@@ -1177,7 +1177,7 @@ and then another
     ) -> Option<Task<PredictEditsAdditionalContext>> {
         let project = project?.read(cx);
         let entry = project.entry_for_path(&project_path, cx)?;
-        if !worktree_entry_eligible_for_collection(&entry) {
+        if !worktree_entry_is_eligible_for_collection(&entry) {
             return None;
         }
 
@@ -1295,7 +1295,7 @@ and then another
             // a workspace is loaded.
             if let Some(previous_recent) = self.recent_editors.back_mut()
                 && now.duration_since(previous_recent.last_active_at)
-                    < MIN_TIME_BETWEEN_RECENT_PROJECT_ENTRIES
+                    < MIN_TIME_BETWEEN_RECENT_FILES
             {
                 *previous_recent = new_recent;
                 return;
@@ -1328,12 +1328,15 @@ and then another
                     maybe!({
                         let (buffer, cursor_point, _) = editor.cursor_buffer_point(cx)?;
                         let file = buffer.read(cx).file()?;
+                        if !file_is_eligible_for_collection(file.as_ref()) {
+                            return None;
+                        }
                         let project_path = ProjectPath {
                             worktree_id: file.worktree_id(cx),
                             path: file.path().clone(),
                         };
                         let entry = project.read(cx).entry_for_path(&project_path, cx)?;
-                        if !worktree_entry_eligible_for_collection(entry) {
+                        if !worktree_entry_is_eligible_for_collection(entry) {
                             return None;
                         }
                         let Some(repo_path) =
@@ -1377,7 +1380,11 @@ fn to_cloud_llm_client_point(point: language::Point) -> cloud_llm_client::Point 
     }
 }
 
-fn worktree_entry_eligible_for_collection(entry: &worktree::Entry) -> bool {
+fn file_is_eligible_for_collection(file: &dyn File) -> bool {
+    file.is_local() && !file.is_private()
+}
+
+fn worktree_entry_is_eligible_for_collection(entry: &worktree::Entry) -> bool {
     entry.is_file()
         && entry.is_created()
         && !entry.is_ignored
@@ -1602,7 +1609,7 @@ impl ProviderDataCollection {
         let choice_and_watcher = buffer.and_then(|buffer| {
             let file = buffer.read(cx).file()?;
 
-            if !file.is_local() || file.is_private() {
+            if !file_is_eligible_for_collection(file.as_ref()) {
                 return None;
             }
 
