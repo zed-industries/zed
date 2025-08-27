@@ -286,10 +286,12 @@ jobs:
       - name: Upload Zed Nightly
         working-directory: ${{ env.ZED_WORKSPACE }}
         run: script/upload-nightly.ps1 windows
+
   gpui-docs:
     timeout-minutes: 60
     name: Render rust docs for gpui
     if: github.repository_owner == 'zed-industries'
+    # TODO: build for multiple targets?
     runs-on:
       - buildjet-16vcpu-ubuntu-2004
     needs: tests
@@ -308,10 +310,21 @@ jobs:
       - name: Limit target directory size
         run: script/clear-target-dir-if-larger-than 100
 
-      - name: Upload Zed Nightly
-        run: cargo doc -p gpui
+      - name: Build rustdocs
+        run: cargo doc -p gpui --no-deps
 
-      # TODO: add upload-artifact step
+      - name: Check for broken links (in HTML)
+        uses: lycheeverse/lychee-action@82202e5e9c2f4ef1a55a3d02563e1cb6041e5332 # v2.4.1
+        with:
+          args: --no-progress --exclude '^http' 'target/doc/'
+          fail: true
+
+      - name: Deploy rustdoc
+        uses: cloudflare/wrangler-action@da0e0dfe58b7a431659754fdf3f186c529afbe65 # v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy target/doc --project-name=rustdoc
 
   update-nightly-tag:
     name: Update nightly tag
