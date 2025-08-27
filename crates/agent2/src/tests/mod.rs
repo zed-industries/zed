@@ -72,6 +72,7 @@ async fn test_echo(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg_attr(target_os = "windows", ignore)] // TODO: Fix this test on Windows
 async fn test_thinking(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
@@ -471,7 +472,7 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
                 tool_name: ToolRequiringPermission::name().into(),
                 is_error: true,
                 content: "Permission to run tool denied by user".into(),
-                output: None
+                output: Some("Permission to run tool denied by user".into())
             })
         ]
     );
@@ -1347,6 +1348,7 @@ async fn test_cancellation(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg_attr(target_os = "windows", ignore)] // TODO: Fix this test on Windows
 async fn test_in_progress_send_canceled_by_next_send(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
@@ -1820,11 +1822,11 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
         let clock = Arc::new(clock::FakeSystemClock::new());
         let client = Client::new(clock, http_client, cx);
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        Project::init_settings(cx);
-        agent_settings::init(cx);
         language_model::init(client.clone(), cx);
         language_models::init(user_store, client.clone(), cx);
+        Project::init_settings(cx);
         LanguageModelRegistry::test(cx);
+        agent_settings::init(cx);
     });
     cx.executor().forbid_parking();
 

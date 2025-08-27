@@ -220,10 +220,10 @@ pub fn init(
         let installation_id = installation_id.clone();
         let system_id = system_id.clone();
 
-        let Some(ssh_client) = project.ssh_client() else {
+        let Some(remote_client) = project.remote_client() else {
             return;
         };
-        ssh_client.update(cx, |client, cx| {
+        remote_client.update(cx, |client, cx| {
             if !TelemetrySettings::get_global(cx).diagnostics {
                 return;
             }

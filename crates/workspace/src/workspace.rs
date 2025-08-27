@@ -74,7 +74,7 @@ use project::{
     DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
 };
-use remote::{SshClientDelegate, SshConnectionOptions, ssh_session::ConnectionIdentifier};
+use remote::{RemoteClientDelegate, SshConnectionOptions, remote_client::ConnectionIdentifier};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
@@ -2084,7 +2084,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
         if self.project.read(cx).is_via_collab()
-            || self.project.read(cx).is_via_ssh()
+            || self.project.read(cx).is_via_remote_server()
             || !WorkspaceSettings::get_global(cx).use_system_path_prompts
         {
             let prompt = self.on_prompt_for_new_path.take().unwrap();
@@ -5249,7 +5249,7 @@ impl Workspace {
 
     fn serialize_workspace_location(&self, cx: &App) -> WorkspaceLocation {
         let paths = PathList::new(&self.root_paths(cx));
-        if let Some(connection) = self.project.read(cx).ssh_connection_options(cx) {
+        if let Some(connection) = self.project.read(cx).remote_connection_options(cx) {
             WorkspaceLocation::Location(
                 SerializedWorkspaceLocation::Ssh(SerializedSshConnection {
                     host: connection.host,
@@ -6917,7 +6917,7 @@ async fn join_channel_internal(
                     return None;
                 }
 
-                if (project.is_local() || project.is_via_ssh())
+                if (project.is_local() || project.is_via_remote_server())
                     && project.visible_worktrees(cx).any(|tree| {
                         tree.read(cx)
                             .root_entry()
@@ -7263,7 +7263,7 @@ pub fn open_ssh_project_with_new_connection(
     window: WindowHandle<Workspace>,
     connection_options: SshConnectionOptions,
     cancel_rx: oneshot::Receiver<()>,
-    delegate: Arc<dyn SshClientDelegate>,
+    delegate: Arc<dyn RemoteClientDelegate>,
     app_state: Arc<AppState>,
     paths: Vec<PathBuf>,
     cx: &mut App,
@@ -7274,7 +7274,7 @@ pub fn open_ssh_project_with_new_connection(
 
         let session = match cx
             .update(|cx| {
-                remote::SshRemoteClient::new(
+                remote::RemoteClient::ssh(
                     ConnectionIdentifier::Workspace(workspace_id.0),
                     connection_options,
                     cancel_rx,
@@ -7289,7 +7289,7 @@ pub fn open_ssh_project_with_new_connection(
         };
 
         let project = cx.update(|cx| {
-            project::Project::ssh(
+            project::Project::remote(
                 session,
                 app_state.client.clone(),
                 app_state.node_runtime.clone(),

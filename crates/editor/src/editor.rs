@@ -2588,7 +2588,7 @@ impl Editor {
                 || binding
                     .keystrokes()
                     .first()
-                    .is_some_and(|keystroke| keystroke.modifiers.modified())
+                    .is_some_and(|keystroke| keystroke.display_modifiers.modified())
         }))
     }
 
@@ -7686,16 +7686,16 @@ impl Editor {
             .keystroke()
         {
             modifiers_held = modifiers_held
-                || (&accept_keystroke.modifiers == modifiers
-                    && accept_keystroke.modifiers.modified());
+                || (&accept_keystroke.display_modifiers == modifiers
+                    && accept_keystroke.display_modifiers.modified());
         };
         if let Some(accept_partial_keystroke) = self
             .accept_edit_prediction_keybind(true, window, cx)
             .keystroke()
         {
             modifiers_held = modifiers_held
-                || (&accept_partial_keystroke.modifiers == modifiers
-                    && accept_partial_keystroke.modifiers.modified());
+                || (&accept_partial_keystroke.display_modifiers == modifiers
+                    && accept_partial_keystroke.display_modifiers.modified());
         }
 
         if modifiers_held {
@@ -9044,7 +9044,7 @@ impl Editor {
 
         let is_platform_style_mac = PlatformStyle::platform() == PlatformStyle::Mac;
 
-        let modifiers_color = if accept_keystroke.modifiers == window.modifiers() {
+        let modifiers_color = if accept_keystroke.display_modifiers == window.modifiers() {
             Color::Accent
         } else {
             Color::Muted
@@ -9056,19 +9056,19 @@ impl Editor {
             .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
             .text_size(TextSize::XSmall.rems(cx))
             .child(h_flex().children(ui::render_modifiers(
-                &accept_keystroke.modifiers,
+                &accept_keystroke.display_modifiers,
                 PlatformStyle::platform(),
                 Some(modifiers_color),
                 Some(IconSize::XSmall.rems().into()),
                 true,
             )))
             .when(is_platform_style_mac, |parent| {
-                parent.child(accept_keystroke.key.clone())
+                parent.child(accept_keystroke.display_key.clone())
             })
             .when(!is_platform_style_mac, |parent| {
                 parent.child(
                     Key::new(
-                        util::capitalize(&accept_keystroke.key),
+                        util::capitalize(&accept_keystroke.display_key),
                         Some(Color::Default),
                     )
                     .size(Some(IconSize::XSmall.rems().into())),
@@ -9172,7 +9172,7 @@ impl Editor {
         max_width: Pixels,
         cursor_point: Point,
         style: &EditorStyle,
-        accept_keystroke: Option<&gpui::Keystroke>,
+        accept_keystroke: Option<&gpui::KeybindingKeystroke>,
         _window: &Window,
         cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {
@@ -9251,7 +9251,7 @@ impl Editor {
                                         accept_keystroke.as_ref(),
                                         |el, accept_keystroke| {
                                             el.child(h_flex().children(ui::render_modifiers(
-                                                &accept_keystroke.modifiers,
+                                                &accept_keystroke.display_modifiers,
                                                 PlatformStyle::platform(),
                                                 Some(Color::Default),
                                                 Some(IconSize::XSmall.rems().into()),
@@ -9321,7 +9321,7 @@ impl Editor {
                         .child(completion),
                 )
                 .when_some(accept_keystroke, |el, accept_keystroke| {
-                    if !accept_keystroke.modifiers.modified() {
+                    if !accept_keystroke.display_modifiers.modified() {
                         return el;
                     }
 
@@ -9340,7 +9340,7 @@ impl Editor {
                                     .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
                                     .when(is_platform_style_mac, |parent| parent.gap_1())
                                     .child(h_flex().children(ui::render_modifiers(
-                                        &accept_keystroke.modifiers,
+                                        &accept_keystroke.display_modifiers,
                                         PlatformStyle::platform(),
                                         Some(if !has_completion {
                                             Color::Muted
@@ -20076,7 +20076,7 @@ impl Editor {
                 let (telemetry, is_via_ssh) = {
                     let project = project.read(cx);
                     let telemetry = project.client().telemetry().clone();
-                    let is_via_ssh = project.is_via_ssh();
+                    let is_via_ssh = project.is_via_remote_server();
                     (telemetry, is_via_ssh)
                 };
                 refresh_linked_ranges(self, window, cx);
@@ -20644,7 +20644,7 @@ impl Editor {
                 copilot_enabled,
                 copilot_enabled_for_language,
                 edit_predictions_provider,
-                is_via_ssh = project.is_via_ssh(),
+                is_via_ssh = project.is_via_remote_server(),
             );
         } else {
             telemetry::event!(
@@ -20654,7 +20654,7 @@ impl Editor {
                 copilot_enabled,
                 copilot_enabled_for_language,
                 edit_predictions_provider,
-                is_via_ssh = project.is_via_ssh(),
+                is_via_ssh = project.is_via_remote_server(),
             );
         };
     }
