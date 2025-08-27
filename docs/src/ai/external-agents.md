@@ -31,10 +31,10 @@ If you'd like to bind this to a keyboard shortcut, you can do so by editing your
 
 If you don't yet have Gemini CLI installed, then Zed will install a version for you. If you do, then we will use the version of Gemini CLI on your path.
 
-You need to be running at least Gemini version `0.2.0-preview`, and if your version of Gemini is too old you will see an
+You need to be running at least Gemini version `0.2.0`, and if your version of Gemini is too old you will see an
 error message.
 
-The instructions to upgrade Gemini depend on how you originally installed it, but typically, running `npm install -g gemini-cli@preview` should work.
+The instructions to upgrade Gemini depend on how you originally installed it, but typically, running `npm install -g @google/gemini-cli@latest` should work.
 
 #### Authentication
 
