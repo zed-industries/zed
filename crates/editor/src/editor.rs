@@ -10492,41 +10492,24 @@ impl Editor {
             boundary_anchors.push((start_before, end_after));
         }
 
-        let start_prefix_len = wrap_config.start_prefix.chars().count();
-        let end_suffix_len = wrap_config.end_suffix.chars().count();
+        let start_prefix_len = wrap_config.start_prefix.len();
+        let end_suffix_len = wrap_config.end_suffix.len();
 
         self.transact(window, cx, |this, window, cx| {
             let buffer = this.buffer.update(cx, |buffer, cx| {
                 buffer.edit(edits, None, cx);
                 buffer.snapshot(cx)
             });
-            let mut new_selections = Vec::with_capacity(boundary_anchors.len() * 2);
-            let mut selection_id = 0;
+            let mut cursor_ranges = Vec::with_capacity(boundary_anchors.len() * 2);
             for (start_before, end_after) in boundary_anchors.into_iter() {
                 let open_offset = start_before.to_offset(&buffer) + start_prefix_len;
-                new_selections.push(Selection {
-                    id: selection_id,
-                    start: open_offset,
-                    end: open_offset,
-                    goal: SelectionGoal::None,
-                    reversed: false,
-                });
-                selection_id += 1;
+                cursor_ranges.push(open_offset..open_offset);
                 let close_offset = end_after.to_offset(&buffer).saturating_sub(end_suffix_len);
-                new_selections.push(Selection {
-                    id: selection_id,
-                    start: close_offset,
-                    end: close_offset,
-                    goal: SelectionGoal::None,
-                    reversed: false,
-                });
-                selection_id += 1;
+                cursor_ranges.push(close_offset..close_offset);
             }
-
             this.change_selections(Default::default(), window, cx, |s| {
-                s.select(new_selections);
+                s.select_ranges(cursor_ranges);
             });
-
             this.request_autoscroll(Autoscroll::fit(), cx);
         });
     }
