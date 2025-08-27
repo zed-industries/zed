@@ -303,17 +303,12 @@ impl KeystrokeInput {
             return;
         }
 
-        let mut keystroke =
+        let keystroke =
             KeybindingKeystroke::new(keystroke.clone(), false, cx.keyboard_mapper().as_ref());
         if let Some(last) = self.keystrokes.last()
             && last.display_key.is_empty()
             && (!self.search || self.previous_modifiers.modified())
         {
-            let display_key = keystroke.display_key.clone();
-            let inner_key = keystroke.inner.key.clone();
-            keystroke = last.clone();
-            keystroke.display_key = display_key;
-            keystroke.inner.key = inner_key;
             self.keystrokes.pop();
         }
 
