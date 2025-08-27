@@ -1124,8 +1124,8 @@ impl Platform for MacPlatform {
                 }
             }
 
-            // Next, check for file URL flavors and convert to a file system path string.
-            // Some screenshot tools place only a file URL on the clipboard (no plain text).
+            // Next, check for URL flavors (including file URLs). Some tools only provide a URL
+            // with no plain text entry.
             {
                 // Try the modern UTType identifiers first.
                 let file_url_type: id = ns_string("public.file-url");
@@ -1144,20 +1144,12 @@ impl Platform for MacPlatform {
                         url_data.bytes() as *mut u8,
                         url_data.length() as usize,
                     );
-                    if let Ok(text) = std::str::from_utf8(bytes) {
-                        // Convert the URL string to a file path if possible.
-                        let ns = ns_string(text);
-                        let url: id = msg_send![class!(NSURL), URLWithString: ns];
-                        if url != nil && msg_send![url, isFileURL] {
-                            if let Ok(path) = ns_url_to_path(url) {
-                                return Some(ClipboardItem::new_string(path.to_string_lossy().into_owned()));
-                            }
-                        }
-                    }
+
+                    return Some(self.read_string_from_clipboard(&state, bytes));
                 }
             }
 
-            // If it wasn't a string, try the various supported image types.
+            // If it wasn't a string or URL, try the various supported image types.
             for format in ImageFormat::iter() {
                 if let Some(item) = try_clipboard_image(pasteboard, format) {
                     return Some(item);
@@ -1165,7 +1157,7 @@ impl Platform for MacPlatform {
             }
         }
 
-        // If it wasn't a string or a supported image type, give up.
+        // If it wasn't a string, URL, or a supported image type, give up.
         None
     }
 
@@ -1741,7 +1733,7 @@ mod tests {
     }
 
     #[test]
-    fn test_file_url_converts_to_path() {
+    fn test_file_url_reads_as_url_string() {
         let platform = build_platform();
 
         // Create a file URL for an arbitrary test path and write it to the pasteboard.
@@ -1755,11 +1747,7 @@ mod tests {
             // Encode the URL string as UTF-8 bytes
             let len: usize = msg_send![abs, lengthOfBytesUsingEncoding: NSUTF8StringEncoding];
             let bytes_ptr = abs.UTF8String() as *const u8;
-            let data = NSData::dataWithBytes_length_(
-                nil,
-                bytes_ptr as *const c_void,
-                len as u64,
-            );
+            let data = NSData::dataWithBytes_length_(nil, bytes_ptr as *const c_void, len as u64);
 
             // Write as public.file-url to the unique pasteboard
             let file_url_type: id = ns_string("public.file-url");
@@ -1770,10 +1758,11 @@ mod tests {
                 .setData_forType(data, file_url_type);
         }
 
-        // Ensure the clipboard read maps the file URL to the expected path string
+        // Ensure the clipboard read returns the URL string, not a converted path
+        let expected_url = format!("file://{}", mock_path);
         assert_eq!(
             platform.read_from_clipboard(),
-            Some(ClipboardItem::new_string(mock_path.to_string()))
+            Some(ClipboardItem::new_string(expected_url))
         );
     }
 
