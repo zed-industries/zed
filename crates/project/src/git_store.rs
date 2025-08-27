@@ -44,7 +44,7 @@ use parking_lot::Mutex;
 use postage::stream::Stream as _;
 use rpc::{
     AnyProtoClient, TypedEnvelope,
-    proto::{self, FromProto, SSH_PROJECT_ID, ToProto, git_reset, split_repository_update},
+    proto::{self, FromProto, ToProto, git_reset, split_repository_update},
 };
 use serde::Deserialize;
 use std::{
@@ -141,14 +141,10 @@ enum GitStoreState {
         project_environment: Entity<ProjectEnvironment>,
         fs: Arc<dyn Fs>,
     },
-    Ssh {
-        upstream_client: AnyProtoClient,
-        upstream_project_id: ProjectId,
-        downstream: Option<(AnyProtoClient, ProjectId)>,
-    },
     Remote {
         upstream_client: AnyProtoClient,
-        upstream_project_id: ProjectId,
+        upstream_project_id: u64,
+        downstream: Option<(AnyProtoClient, ProjectId)>,
     },
 }
 
@@ -355,7 +351,7 @@ impl GitStore {
         worktree_store: &Entity<WorktreeStore>,
         buffer_store: Entity<BufferStore>,
         upstream_client: AnyProtoClient,
-        project_id: ProjectId,
+        project_id: u64,
         cx: &mut Context<Self>,
     ) -> Self {
         Self::new(
@@ -364,23 +360,6 @@ impl GitStore {
             GitStoreState::Remote {
                 upstream_client,
                 upstream_project_id: project_id,
-            },
-            cx,
-        )
-    }
-
-    pub fn ssh(
-        worktree_store: &Entity<WorktreeStore>,
-        buffer_store: Entity<BufferStore>,
-        upstream_client: AnyProtoClient,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        Self::new(
-            worktree_store.clone(),
-            buffer_store,
-            GitStoreState::Ssh {
-                upstream_client,
-                upstream_project_id: ProjectId(SSH_PROJECT_ID),
                 downstream: None,
             },
             cx,
@@ -451,7 +430,7 @@ impl GitStore {
 
     pub fn shared(&mut self, project_id: u64, client: AnyProtoClient, cx: &mut Context<Self>) {
         match &mut self.state {
-            GitStoreState::Ssh {
+            GitStoreState::Remote {
                 downstream: downstream_client,
                 ..
             } => {
@@ -527,9 +506,6 @@ impl GitStore {
                     }),
                 });
             }
-            GitStoreState::Remote { .. } => {
-                debug_panic!("shared called on remote store");
-            }
         }
     }
 
@@ -541,14 +517,11 @@ impl GitStore {
             } => {
                 downstream_client.take();
             }
-            GitStoreState::Ssh {
+            GitStoreState::Remote {
                 downstream: downstream_client,
                 ..
             } => {
                 downstream_client.take();
-            }
-            GitStoreState::Remote { .. } => {
-                debug_panic!("unshared called on remote store");
             }
         }
         self.shared_diffs.clear();
@@ -1047,21 +1020,17 @@ impl GitStore {
             } => downstream_client
                 .as_ref()
                 .map(|state| (state.client.clone(), state.project_id)),
-            GitStoreState::Ssh {
+            GitStoreState::Remote {
                 downstream: downstream_client,
                 ..
             } => downstream_client.clone(),
-            GitStoreState::Remote { .. } => None,
         }
     }
 
     fn upstream_client(&self) -> Option<AnyProtoClient> {
         match &self.state {
             GitStoreState::Local { .. } => None,
-            GitStoreState::Ssh {
-                upstream_client, ..
-            }
-            | GitStoreState::Remote {
+            GitStoreState::Remote {
                 upstream_client, ..
             } => Some(upstream_client.clone()),
         }
@@ -1432,12 +1401,7 @@ impl GitStore {
                 cx.background_executor()
                     .spawn(async move { fs.git_init(&path, fallback_branch_name) })
             }
-            GitStoreState::Ssh {
-                upstream_client,
-                upstream_project_id: project_id,
-                ..
-            }
-            | GitStoreState::Remote {
+            GitStoreState::Remote {
                 upstream_client,
                 upstream_project_id: project_id,
                 ..
@@ -1447,7 +1411,7 @@ impl GitStore {
                 cx.background_executor().spawn(async move {
                     client
                         .request(proto::GitInit {
-                            project_id: project_id.0,
+                            project_id: project_id,
                             abs_path: path.to_string_lossy().to_string(),
                             fallback_branch_name,
                         })
@@ -1471,13 +1435,18 @@ impl GitStore {
                 cx.background_executor()
                     .spawn(async move { fs.git_clone(&repo, &path).await })
             }
-            GitStoreState::Ssh {
+            GitStoreState::Remote {
                 upstream_client,
                 upstream_project_id,
                 ..
             } => {
+                if upstream_client.is_via_collab() {
+                    return Task::ready(Err(anyhow!(
+                        "Git Clone isn't supported for project guests"
+                    )));
+                }
                 let request = upstream_client.request(proto::GitClone {
-                    project_id: upstream_project_id.0,
+                    project_id: *upstream_project_id,
                     abs_path: path.to_string_lossy().to_string(),
                     remote_repo: repo,
                 });
@@ -1490,9 +1459,6 @@ impl GitStore {
                         false => Err(anyhow!("Git Clone failed")),
                     }
                 })
-            }
-            GitStoreState::Remote { .. } => {
-                Task::ready(Err(anyhow!("Git Clone isn't supported for remote users")))
             }
         }
     }

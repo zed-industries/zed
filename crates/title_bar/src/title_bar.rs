@@ -299,8 +299,8 @@ impl TitleBar {
         }
     }
 
-    fn render_ssh_project_host(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let options = self.project.read(cx).ssh_connection_options(cx)?;
+    fn render_remote_project_connection(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let options = self.project.read(cx).remote_connection_options(cx)?;
         let host: SharedString = options.connection_string().into();
 
         let nickname = options
@@ -308,7 +308,7 @@ impl TitleBar {
             .map(|nick| nick.into())
             .unwrap_or_else(|| host.clone());
 
-        let (indicator_color, meta) = match self.project.read(cx).ssh_connection_state(cx)? {
+        let (indicator_color, meta) = match self.project.read(cx).remote_connection_state(cx)? {
             remote::ConnectionState::Connecting => (Color::Info, format!("Connecting to: {host}")),
             remote::ConnectionState::Connected => (Color::Success, format!("Connected to: {host}")),
             remote::ConnectionState::HeartbeatMissed => (
@@ -324,7 +324,7 @@ impl TitleBar {
             }
         };
 
-        let icon_color = match self.project.read(cx).ssh_connection_state(cx)? {
+        let icon_color = match self.project.read(cx).remote_connection_state(cx)? {
             remote::ConnectionState::Connecting => Color::Info,
             remote::ConnectionState::Connected => Color::Default,
             remote::ConnectionState::HeartbeatMissed => Color::Warning,
@@ -379,8 +379,8 @@ impl TitleBar {
     }
 
     pub fn render_project_host(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.project.read(cx).is_via_ssh() {
-            return self.render_ssh_project_host(cx);
+        if self.project.read(cx).is_via_remote_server() {
+            return self.render_remote_project_connection(cx);
         }
 
         if self.project.read(cx).is_disconnected(cx) {

@@ -28,8 +28,8 @@ use paths::user_ssh_config_file;
 use picker::Picker;
 use project::Fs;
 use project::Project;
-use remote::ssh_session::ConnectionIdentifier;
-use remote::{SshConnectionOptions, SshRemoteClient};
+use remote::remote_client::ConnectionIdentifier;
+use remote::{RemoteClient, SshConnectionOptions};
 use settings::Settings;
 use settings::SettingsStore;
 use settings::update_settings_file;
@@ -69,7 +69,7 @@ pub struct RemoteServerProjects {
     mode: Mode,
     focus_handle: FocusHandle,
     workspace: WeakEntity<Workspace>,
-    retained_connections: Vec<Entity<SshRemoteClient>>,
+    retained_connections: Vec<Entity<RemoteClient>>,
     ssh_config_updates: Task<()>,
     ssh_config_servers: BTreeSet<SharedString>,
     create_new_window: bool,
@@ -597,7 +597,7 @@ impl RemoteServerProjects {
                     let (path_style, project) = cx.update(|_, cx| {
                         (
                             session.read(cx).path_style(),
-                            project::Project::ssh(
+                            project::Project::remote(
                                 session,
                                 app_state.client.clone(),
                                 app_state.node_runtime.clone(),
