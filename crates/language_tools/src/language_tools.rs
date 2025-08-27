@@ -1,5 +1,5 @@
 mod key_context_view;
-mod lsp_log;
+pub mod lsp_log;
 pub mod lsp_tool;
 mod syntax_tree_view;
 
@@ -14,7 +14,7 @@ use ui::{Context, Window};
 use workspace::{Item, ItemHandle, SplitDirection, Workspace};
 
 pub fn init(cx: &mut App) {
-    lsp_log::init(cx);
+    lsp_log::init(true, cx);
     syntax_tree_view::init(cx);
     key_context_view::init(cx);
 }

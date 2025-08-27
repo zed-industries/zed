@@ -280,6 +280,11 @@ pub enum Event {
         server_id: LanguageServerId,
         buffer_id: BufferId,
         buffer_abs_path: PathBuf,
+        name: Option<LanguageServerName>,
+    },
+    ToggleLspLogs {
+        server_id: LanguageServerId,
+        enabled: bool,
     },
     Toast {
         notification_id: SharedString,
@@ -1001,6 +1006,7 @@ impl Project {
         client.add_entity_request_handler(Self::handle_open_buffer_by_path);
         client.add_entity_request_handler(Self::handle_open_new_buffer);
         client.add_entity_message_handler(Self::handle_create_buffer_for_peer);
+        client.add_entity_message_handler(Self::handle_toggle_lsp_logs);
 
         WorktreeStore::init(&client);
         BufferStore::init(&client);
@@ -2971,6 +2977,7 @@ impl Project {
                                 buffer_id,
                                 server_id: *language_server_id,
                                 buffer_abs_path: PathBuf::from(&update.buffer_abs_path),
+                                name: name.clone(),
                             });
                         }
                     }
@@ -4695,6 +4702,20 @@ impl Project {
                 )
             })
         })?
+    }
+
+    async fn handle_toggle_lsp_logs(
+        project: Entity<Self>,
+        envelope: TypedEnvelope<proto::ToggleLspLogs>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        project.update(&mut cx, |_, cx| {
+            cx.emit(Event::ToggleLspLogs {
+                server_id: LanguageServerId::from_proto(envelope.payload.server_id),
+                enabled: envelope.payload.enabled,
+            })
+        })?;
+        Ok(())
     }
 
     async fn handle_synchronize_buffers(

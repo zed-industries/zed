@@ -977,7 +977,9 @@ impl LocalLspStore {
                         this.update(&mut cx, |_, cx| {
                             cx.emit(LspStoreEvent::LanguageServerLog(
                                 server_id,
-                                LanguageServerLogType::Trace(params.verbose),
+                                LanguageServerLogType::Trace {
+                                    verbose_info: params.verbose,
+                                },
                                 params.message,
                             ));
                         })
@@ -3482,13 +3484,13 @@ pub struct LspStore {
     buffer_store: Entity<BufferStore>,
     worktree_store: Entity<WorktreeStore>,
     pub languages: Arc<LanguageRegistry>,
-    language_server_statuses: BTreeMap<LanguageServerId, LanguageServerStatus>,
+    pub language_server_statuses: BTreeMap<LanguageServerId, LanguageServerStatus>,
     active_entry: Option<ProjectEntryId>,
     _maintain_workspace_config: (Task<Result<()>>, watch::Sender<()>),
     _maintain_buffer_languages: Task<()>,
     diagnostic_summaries:
         HashMap<WorktreeId, HashMap<Arc<Path>, HashMap<LanguageServerId, DiagnosticSummary>>>,
-    pub(super) lsp_server_capabilities: HashMap<LanguageServerId, lsp::ServerCapabilities>,
+    pub lsp_server_capabilities: HashMap<LanguageServerId, lsp::ServerCapabilities>,
     lsp_document_colors: HashMap<BufferId, DocumentColorData>,
     lsp_code_lens: HashMap<BufferId, CodeLensData>,
     running_lsp_requests: HashMap<TypeId, (Global, HashMap<LspRequestId, Task<()>>)>,
@@ -3565,6 +3567,7 @@ pub struct LanguageServerStatus {
     pub pending_work: BTreeMap<String, LanguageServerProgress>,
     pub has_pending_diagnostic_updates: bool,
     progress_tokens: HashSet<String>,
+    pub worktree: Option<WorktreeId>,
 }
 
 #[derive(Clone, Debug)]
@@ -7483,7 +7486,7 @@ impl LspStore {
                         server: Some(proto::LanguageServer {
                             id: server_id.to_proto(),
                             name: status.name.to_string(),
-                            worktree_id: None,
+                            worktree_id: status.worktree.map(|id| id.to_proto()),
                         }),
                         capabilities: serde_json::to_string(&server.capabilities())
                             .expect("serializing server LSP capabilities"),
@@ -7527,6 +7530,7 @@ impl LspStore {
                         pending_work: Default::default(),
                         has_pending_diagnostic_updates: false,
                         progress_tokens: Default::default(),
+                        worktree: server.worktree_id.map(WorktreeId::from_proto),
                     },
                 )
             })
@@ -8892,6 +8896,7 @@ impl LspStore {
                     pending_work: Default::default(),
                     has_pending_diagnostic_updates: false,
                     progress_tokens: Default::default(),
+                    worktree: server.worktree_id.map(WorktreeId::from_proto),
                 },
             );
             cx.emit(LspStoreEvent::LanguageServerAdded(
@@ -10905,6 +10910,7 @@ impl LspStore {
                 pending_work: Default::default(),
                 has_pending_diagnostic_updates: false,
                 progress_tokens: Default::default(),
+                worktree: Some(key.worktree_id),
             },
         );
 
@@ -11702,6 +11708,20 @@ impl LspStore {
                 "workspace/didChangeConfiguration" => {
                     // Ignore payload since we notify clients of setting changes unconditionally, relying on them pulling the latest settings.
                 }
+                "workspace/didChangeWorkspaceFolders" => {
+                    // In this case register options is an empty object, we can ignore it
+                    let caps = lsp::WorkspaceFoldersServerCapabilities {
+                        supported: Some(true),
+                        change_notifications: Some(OneOf::Right(reg.id)),
+                    };
+                    server.update_capabilities(|capabilities| {
+                        capabilities
+                            .workspace
+                            .get_or_insert_default()
+                            .workspace_folders = Some(caps);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
                 "workspace/symbol" => {
                     let options = parse_register_capabilities(reg)?;
                     server.update_capabilities(|capabilities| {
@@ -11944,6 +11964,18 @@ impl LspStore {
                 "workspace/didChangeConfiguration" => {
                     // Ignore payload since we notify clients of setting changes unconditionally, relying on them pulling the latest settings.
                 }
+                "workspace/didChangeWorkspaceFolders" => {
+                    server.update_capabilities(|capabilities| {
+                        capabilities
+                            .workspace
+                            .get_or_insert_with(|| lsp::WorkspaceServerCapabilities {
+                                workspace_folders: None,
+                                file_operations: None,
+                            })
+                            .workspace_folders = None;
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
                 "workspace/symbol" => {
                     server.update_capabilities(|capabilities| {
                         capabilities.workspace_symbol_provider = None
@@ -12163,6 +12195,14 @@ impl LspStore {
     pub fn forget_code_lens_task(&mut self, buffer_id: BufferId) -> Option<CodeLensTask> {
         let data = self.lsp_code_lens.get_mut(&buffer_id)?;
         Some(data.update.take()?.1)
+    }
+
+    pub fn downstream_client(&self) -> Option<(AnyProtoClient, u64)> {
+        self.downstream_client.clone()
+    }
+
+    pub fn worktree_store(&self) -> Entity<WorktreeStore> {
+        self.worktree_store.clone()
     }
 }
 
@@ -12673,45 +12713,69 @@ impl PartialEq for LanguageServerPromptRequest {
 #[derive(Clone, Debug, PartialEq)]
 pub enum LanguageServerLogType {
     Log(MessageType),
-    Trace(Option<String>),
+    Trace { verbose_info: Option<String> },
+    Rpc { received: bool },
 }
 
 impl LanguageServerLogType {
     pub fn to_proto(&self) -> proto::language_server_log::LogType {
         match self {
             Self::Log(log_type) => {
-                let message_type = match *log_type {
-                    MessageType::ERROR => 1,
-                    MessageType::WARNING => 2,
-                    MessageType::INFO => 3,
-                    MessageType::LOG => 4,
+                use proto::log_message::LogLevel;
+                let level = match *log_type {
+                    MessageType::ERROR => LogLevel::Error,
+                    MessageType::WARNING => LogLevel::Warning,
+                    MessageType::INFO => LogLevel::Info,
+                    MessageType::LOG => LogLevel::Log,
                     other => {
-                        log::warn!("Unknown lsp log message type: {:?}", other);
-                        4
+                        log::warn!("Unknown lsp log message type: {other:?}");
+                        LogLevel::Log
                     }
                 };
-                proto::language_server_log::LogType::LogMessageType(message_type)
-            }
-            Self::Trace(message) => {
-                proto::language_server_log::LogType::LogTrace(proto::LspLogTrace {
-                    message: message.clone(),
+                proto::language_server_log::LogType::Log(proto::LogMessage {
+                    level: level as i32,
                 })
+            }
+            Self::Trace { verbose_info } => {
+                proto::language_server_log::LogType::Trace(proto::TraceMessage {
+                    verbose_info: verbose_info.to_owned(),
+                })
+            }
+            Self::Rpc { received } => {
+                let kind = if *received {
+                    proto::rpc_message::Kind::Received
+                } else {
+                    proto::rpc_message::Kind::Sent
+                };
+                let kind = kind as i32;
+                proto::language_server_log::LogType::Rpc(proto::RpcMessage { kind })
             }
         }
     }
 
     pub fn from_proto(log_type: proto::language_server_log::LogType) -> Self {
+        use proto::log_message::LogLevel;
+        use proto::rpc_message;
         match log_type {
-            proto::language_server_log::LogType::LogMessageType(message_type) => {
-                Self::Log(match message_type {
-                    1 => MessageType::ERROR,
-                    2 => MessageType::WARNING,
-                    3 => MessageType::INFO,
-                    4 => MessageType::LOG,
-                    _ => MessageType::LOG,
-                })
-            }
-            proto::language_server_log::LogType::LogTrace(trace) => Self::Trace(trace.message),
+            proto::language_server_log::LogType::Log(message_type) => Self::Log(
+                match LogLevel::from_i32(message_type.level).unwrap_or(LogLevel::Log) {
+                    LogLevel::Error => MessageType::ERROR,
+                    LogLevel::Warning => MessageType::WARNING,
+                    LogLevel::Info => MessageType::INFO,
+                    LogLevel::Log => MessageType::LOG,
+                },
+            ),
+            proto::language_server_log::LogType::Trace(trace_message) => Self::Trace {
+                verbose_info: trace_message.verbose_info,
+            },
+            proto::language_server_log::LogType::Rpc(message) => Self::Rpc {
+                received: match rpc_message::Kind::from_i32(message.kind)
+                    .unwrap_or(rpc_message::Kind::Received)
+                {
+                    rpc_message::Kind::Received => true,
+                    rpc_message::Kind::Sent => false,
+                },
+            },
         }
     }
 }

@@ -759,7 +759,7 @@ impl ToolchainLister for PythonToolchainProvider {
     async fn list(
         &self,
         worktree_root: PathBuf,
-        subroot_relative_path: Option<Arc<Path>>,
+        subroot_relative_path: Arc<Path>,
         project_env: Option<HashMap<String, String>>,
     ) -> ToolchainList {
         let env = project_env.unwrap_or_default();
@@ -771,13 +771,15 @@ impl ToolchainLister for PythonToolchainProvider {
         );
         let mut config = Configuration::default();
 
-        let mut directories = vec![worktree_root.clone()];
-        if let Some(subroot_relative_path) = subroot_relative_path {
-            debug_assert!(subroot_relative_path.is_relative());
-            directories.push(worktree_root.join(subroot_relative_path));
-        }
-
-        config.workspace_directories = Some(directories);
+        debug_assert!(subroot_relative_path.is_relative());
+        // `.ancestors()` will yield at least one path, so in case of empty `subroot_relative_path`, we'll just use
+        // worktree root as the workspace directory.
+        config.workspace_directories = Some(
+            subroot_relative_path
+                .ancestors()
+                .map(|ancestor| worktree_root.join(ancestor))
+                .collect(),
+        );
         for locator in locators.iter() {
             locator.configure(&config);
         }
