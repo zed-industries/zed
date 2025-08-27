@@ -754,7 +754,7 @@ actions!(
         /// Removes duplicate lines (case-sensitive).
         UniqueLinesCaseSensitive,
         UnwrapSyntaxNode,
-        /// Wraps in an HTML tag.
-        WrapInTag
+        /// Wraps selections in tag specified by language.
+        WrapSelectionsInTag
     ]
 );

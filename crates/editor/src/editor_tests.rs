@@ -4412,6 +4412,12 @@ async fn test_wrap_in_tag_single_selection(cx: &mut TestAppContext) {
     let js_language = Arc::new(Language::new(
         LanguageConfig {
             name: "JavaScript".into(),
+            wrap_characters: Some(language::WrapCharactersConfig {
+                start_prefix: "<".into(),
+                start_suffix: ">".into(),
+                end_prefix: "</".into(),
+                end_suffix: ">".into(),
+            }),
             ..LanguageConfig::default()
         },
         None,
@@ -4422,7 +4428,7 @@ async fn test_wrap_in_tag_single_selection(cx: &mut TestAppContext) {
     cx.set_state(indoc! {"
         «testˇ»
     "});
-    cx.update_editor(|e, window, cx| e.wrap_in_tag(&WrapInTag, window, cx));
+    cx.update_editor(|e, window, cx| e.wrap_selections_in_tag(&WrapSelectionsInTag, window, cx));
     cx.assert_editor_state(indoc! {"
         <«ˇ»>test</«ˇ»>
     "});
@@ -4431,7 +4437,7 @@ async fn test_wrap_in_tag_single_selection(cx: &mut TestAppContext) {
         «test
          testˇ»
     "});
-    cx.update_editor(|e, window, cx| e.wrap_in_tag(&WrapInTag, window, cx));
+    cx.update_editor(|e, window, cx| e.wrap_selections_in_tag(&WrapSelectionsInTag, window, cx));
     cx.assert_editor_state(indoc! {"
         <«ˇ»>test
          test</«ˇ»>
@@ -4447,6 +4453,12 @@ async fn test_wrap_in_tag_multi_selection(cx: &mut TestAppContext) {
     let js_language = Arc::new(Language::new(
         LanguageConfig {
             name: "JavaScript".into(),
+            wrap_characters: Some(language::WrapCharactersConfig {
+                start_prefix: "<".into(),
+                start_suffix: ">".into(),
+                end_prefix: "</".into(),
+                end_suffix: ">".into(),
+            }),
             ..LanguageConfig::default()
         },
         None,
@@ -4459,7 +4471,7 @@ async fn test_wrap_in_tag_multi_selection(cx: &mut TestAppContext) {
         «testˇ» «testˇ»
         «testˇ»
     "});
-    cx.update_editor(|e, window, cx| e.wrap_in_tag(&WrapInTag, window, cx));
+    cx.update_editor(|e, window, cx| e.wrap_selections_in_tag(&WrapSelectionsInTag, window, cx));
     cx.assert_editor_state(indoc! {"
         <«ˇ»>test</«ˇ»>
         <«ˇ»>test</«ˇ»> <«ˇ»>test</«ˇ»>
@@ -4472,7 +4484,7 @@ async fn test_wrap_in_tag_multi_selection(cx: &mut TestAppContext) {
         «test
          testˇ»
     "});
-    cx.update_editor(|e, window, cx| e.wrap_in_tag(&WrapInTag, window, cx));
+    cx.update_editor(|e, window, cx| e.wrap_selections_in_tag(&WrapSelectionsInTag, window, cx));
     cx.assert_editor_state(indoc! {"
         <«ˇ»>test
          test</«ˇ»>
@@ -4500,7 +4512,7 @@ async fn test_wrap_in_tag_does_nothing_in_unsupported_languages(cx: &mut TestApp
     cx.set_state(indoc! {"
         «testˇ»
     "});
-    cx.update_editor(|e, window, cx| e.wrap_in_tag(&WrapInTag, window, cx));
+    cx.update_editor(|e, window, cx| e.wrap_selections_in_tag(&WrapSelectionsInTag, window, cx));
     cx.assert_editor_state(indoc! {"
       «testˇ»
     "});

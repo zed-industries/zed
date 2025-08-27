@@ -10447,7 +10447,7 @@ impl Editor {
         })
     }
 
-    pub fn supports_wrap_in_tag(&self, cx: &App) -> bool {
+    fn supports_wrap_in_tag(&self, cx: &App) -> bool {
         let Some((_, buffer, _)) = self.active_excerpt(cx) else {
             return false;
         };
@@ -10455,28 +10455,35 @@ impl Editor {
         let Some(language) = buffer.read(cx).language() else {
             return false;
         };
-
-        let tag_languages = vec![
-            "astro",
-            "html",
-            "javascript",
-            "typescript",
-            "svelte",
-            "tsx",
-            "vue.js",
-        ];
-
-        let lsp_id = language.lsp_id();
-
-        return tag_languages.into_iter().any(|s| s == lsp_id);
+        language.config().wrap_characters.is_some()
     }
 
-    pub fn wrap_in_tag(&mut self, _: &WrapInTag, window: &mut Window, cx: &mut Context<Self>) {
+    fn wrap_selections_in_tag(
+        &mut self,
+        _: &WrapSelectionsInTag,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !self.supports_wrap_in_tag(cx) {
             return;
         }
-
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
+
+        let Some(wrap_cfg) = self
+            .active_excerpt(cx)
+            .and_then(|(_, b, _)| b.read(cx).language())
+            .and_then(|lang| lang.config().wrap_characters.clone())
+        else {
+            return;
+        };
+
+        let open_tag = format!("{}{}", wrap_cfg.start_prefix, wrap_cfg.start_suffix);
+        let close_tag = format!("{}{}", wrap_cfg.end_prefix, wrap_cfg.end_suffix);
+        let start_cursor = wrap_cfg.start_prefix.chars().count() as u32;
+        let end_cursor = wrap_cfg.end_prefix.chars().count() as u32;
+
+        let open_tag_len: u32 = open_tag.chars().count() as u32;
+        let close_tag_len: u32 = close_tag.chars().count() as u32;
 
         let buffer = self.buffer.read(cx).snapshot(cx);
         let mut edits = Vec::new();
@@ -10497,8 +10504,8 @@ impl Editor {
                 .text_for_range(start_point..end_point)
                 .collect::<String>();
 
-            text.insert_str(0, "<>");
-            text.push_str("</>");
+            text.insert_str(0, &open_tag);
+            text.push_str(&close_tag);
 
             edits.push((start_point..end_point, text));
 
@@ -10511,9 +10518,7 @@ impl Editor {
             start_point.column += col_offset;
             end_point.column += col_offset;
 
-            // Put cursor into the opening tag
-            start_point.column += 1;
-            col_offset += 1;
+            start_point.column += start_cursor;
             new_selections.push(Selection {
                 id: selection_id,
                 start: start_point,
@@ -10524,16 +10529,12 @@ impl Editor {
 
             selection_id += 1;
 
-            // When start and end are on the same row then the column
-            // needs to be offset by two additional chars.
+            // When start and end are on the same row, account for the opening tag inserted before.
             if start_point.row == end_point.row {
-                end_point.column += 2;
-                col_offset += 2;
+                end_point.column += open_tag_len as u32;
             }
 
-            // Put another cursor into the closing tag
-            end_point.column += 2;
-            col_offset += 2;
+            end_point.column += end_cursor;
 
             new_selections.push(Selection {
                 id: selection_id,
@@ -10545,6 +10546,12 @@ impl Editor {
 
             selection_id += 1;
             last_row = end_point.row;
+
+            if start_point.row == end_point.row {
+                col_offset += (open_tag_len + close_tag_len) as u32;
+            } else {
+                col_offset += close_tag_len as u32;
+            }
         }
 
         self.transact(window, cx, |this, window, cx| {

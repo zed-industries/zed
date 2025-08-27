@@ -586,7 +586,7 @@ impl EditorElement {
         register_action(editor, window, Editor::enable_breakpoint);
         register_action(editor, window, Editor::disable_breakpoint);
         if editor.read(cx).supports_wrap_in_tag(cx) {
-            register_action(editor, window, Editor::wrap_in_tag);
+            register_action(editor, window, Editor::wrap_selections_in_tag);
         }
     }
 
