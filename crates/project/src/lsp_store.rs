@@ -11778,10 +11778,10 @@ impl LspStore {
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/codeAction" => {
-                    let options = parse_register_capabilities::<lsp::CodeActionOptions>(reg)?;
+                    let options = parse_register_capabilities(reg)?;
                     let provider = match options {
                         OneOf::Left(value) => lsp::CodeActionProviderCapability::Simple(value),
-                        OneOf::Right(opts) => lsp::CodeActionProviderCapability::Options(opts),
+                        OneOf::Right(caps) => caps,
                     };
                     server.update_capabilities(|capabilities| {
                         capabilities.code_action_provider = Some(provider);
@@ -11808,10 +11808,10 @@ impl LspStore {
                     }
                 }
                 "textDocument/hover" => {
-                    let options = parse_register_capabilities::<lsp::HoverOptions>(reg)?;
+                    let options = parse_register_capabilities(reg)?;
                     let provider = match options {
                         OneOf::Left(value) => lsp::HoverProviderCapability::Simple(value),
-                        OneOf::Right(opts) => lsp::HoverProviderCapability::Options(opts),
+                        OneOf::Right(caps) => caps,
                     };
                     server.update_capabilities(|capabilities| {
                         capabilities.hover_provider = Some(provider);
@@ -11901,10 +11901,10 @@ impl LspStore {
                     }
                 }
                 "textDocument/documentColor" => {
-                    let options = parse_register_capabilities::<lsp::ColorProviderOptions>(reg)?;
+                    let options = parse_register_capabilities(reg)?;
                     let provider = match options {
                         OneOf::Left(value) => lsp::ColorProviderCapability::Simple(value),
-                        OneOf::Right(opts) => lsp::ColorProviderCapability::ColorProvider(opts),
+                        OneOf::Right(caps) => caps,
                     };
                     server.update_capabilities(|capabilities| {
                         capabilities.color_provider = Some(provider);
