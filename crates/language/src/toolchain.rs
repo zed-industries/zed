@@ -52,7 +52,7 @@ pub trait ToolchainLister: Send + Sync {
     async fn list(
         &self,
         worktree_root: PathBuf,
-        subroot_relative_path: Option<Arc<Path>>,
+        subroot_relative_path: Arc<Path>,
         project_env: Option<HashMap<String, String>>,
     ) -> ToolchainList;
     // Returns a term which we should use in UI to refer to a toolchain.
