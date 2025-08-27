@@ -46,6 +46,8 @@ pub trait AgentServer: Send {
     ) -> Task<Result<Rc<dyn AgentConnection>>>;
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any>;
+
+    fn install_command(&self) -> Option<&'static str>;
 }
 
 impl dyn AgentServer {
