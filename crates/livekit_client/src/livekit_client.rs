@@ -129,7 +129,7 @@ impl Room {
         cx: &mut App,
     ) -> Result<playback::AudioStream> {
         if AudioSettings::get_global(cx).rodio_audio {
-            info!("Using experimental.rodio_audio audio pipeline");
+            info!("Using experimental.rodio_audio audio pipeline for output");
             playback::play_remote_audio_track(&track.0, cx)
         } else {
             Ok(self.playback.play_remote_audio_track(&track.0))

@@ -5,7 +5,7 @@ use libwebrtc::{audio_stream::native::NativeAudioStream, prelude::AudioFrame};
 use livekit::track::RemoteAudioTrack;
 use rodio::{Source, buffer::SamplesBuffer, conversions::SampleTypeConverter};
 
-use crate::livekit_client::playback::{NUM_CHANNELS, SAMPLE_RATE};
+use crate::livekit_client::playback::{CHANNEL_COUNT, SAMPLE_RATE};
 
 fn frame_to_samplesbuffer(frame: AudioFrame) -> SamplesBuffer {
     let samples = frame.data.iter().copied();
@@ -29,7 +29,7 @@ impl LiveKitStream {
         let mut stream = NativeAudioStream::new(
             track.rtc_track(),
             SAMPLE_RATE.get() as i32,
-            NUM_CHANNELS.get().into(),
+            CHANNEL_COUNT.get().into(),
         );
         let (queue_input, queue_output) = rodio::queue::queue(true);
         // spawn rtc stream

@@ -9400,7 +9400,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc2f4eb4bc735547cfed7c0a4922cbd04a4655978c09b54f1f7b228750664c34"
 dependencies = [
  "cfg-if",
- "windows-targets 0.48.5",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -13856,7 +13856,7 @@ dependencies = [
 [[package]]
 name = "rodio"
 version = "0.21.1"
-source = "git+https://github.com/RustAudio/rodio?branch=microphone#cad73716a363a5ba92fcb73ec37a4b98a7d7de5f"
+source = "git+https://github.com/RustAudio/rodio?branch=microphone#0e6e6436b3a97f4af72baafe11a02ade2b457b62"
 dependencies = [
  "cpal",
  "dasp_sample",
@@ -18943,7 +18943,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
