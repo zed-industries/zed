@@ -208,6 +208,7 @@ impl LanguageModelRegistry {
     ) -> impl Iterator<Item = Arc<dyn LanguageModel>> + 'a {
         self.providers
             .values()
+            .filter(|provider| provider.is_authenticated(cx))
             .flat_map(|provider| provider.provided_models(cx))
     }
 
