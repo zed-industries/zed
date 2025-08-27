@@ -1504,7 +1504,7 @@ impl AcpThreadView {
                 let style = default_markdown_style(false, false, window, cx);
                 let message_body = v_flex()
                     .w_full()
-                    .gap_2p5()
+                    .gap_3()
                     .children(chunks.iter().enumerate().filter_map(
                         |(chunk_ix, chunk)| match chunk {
                             AssistantMessageChunk::Message { block } => {
@@ -3352,7 +3352,6 @@ impl AcpThreadView {
                 let element = h_flex()
                     .group("edited-code")
                     .id(("file-container", index))
-                    .relative()
                     .py_1()
                     .pl_2()
                     .pr_1()
@@ -3364,6 +3363,7 @@ impl AcpThreadView {
                     })
                     .child(
                         h_flex()
+                            .relative()
                             .id(("file-name", index))
                             .pr_8()
                             .gap_1p5()
@@ -3371,6 +3371,16 @@ impl AcpThreadView {
                             .overflow_x_scroll()
                             .child(file_icon)
                             .child(h_flex().gap_0p5().children(file_name).children(file_path))
+                            .child(
+                                div()
+                                    .absolute()
+                                    .h_full()
+                                    .w_12()
+                                    .top_0()
+                                    .bottom_0()
+                                    .right_0()
+                                    .bg(overlay_gradient),
+                            )
                             .on_click({
                                 let buffer = buffer.clone();
                                 cx.listener(move |this, _, window, cx| {
@@ -3431,17 +3441,6 @@ impl AcpThreadView {
                                         }
                                     }),
                             ),
-                    )
-                    .child(
-                        div()
-                            .id("gradient-overlay")
-                            .absolute()
-                            .h_full()
-                            .w_12()
-                            .top_0()
-                            .bottom_0()
-                            .right(px(152.))
-                            .bg(overlay_gradient),
                     );
 
                 Some(element)
