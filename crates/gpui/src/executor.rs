@@ -384,10 +384,9 @@ impl BackgroundExecutor {
         self.dispatcher.as_test().unwrap().advance_clock(duration)
     }
 
-    /// in tests, run one task.
-    #[cfg(any(test, feature = "test-support"))]
+    /// docs
     pub fn tick(&self) -> bool {
-        self.dispatcher.as_test().unwrap().tick(false)
+        self.dispatcher.tick(true)
     }
 
     /// in tests, run all tasks that are ready to run. If after doing so
