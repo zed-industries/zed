@@ -718,6 +718,7 @@ mod tests {
 
             // Combine current modifiers with keystroke modifiers
             keystroke.modifiers |= self.current_modifiers;
+            keystroke = to_gpui_keystroke(keystroke);
 
             self.update_input(|input, window, cx| {
                 input.handle_keystroke(&keystroke, window, cx);
@@ -952,6 +953,100 @@ mod tests {
             KeystrokeUpdateTracker::finish(change_tracker, &self.cx);
             result
         }
+    }
+
+    /// For GPUI, when you press `ctrl-shift-2`, it produces `@` without the shift modifier.
+    fn to_gpui_keystroke(mut keystroke: Keystroke) -> Keystroke {
+        if keystroke.modifiers.shift {
+            match keystroke.key.as_str() {
+                "`" => {
+                    keystroke.key = "~".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "1" => {
+                    keystroke.key = "!".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "2" => {
+                    keystroke.key = "@".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "3" => {
+                    keystroke.key = "#".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "4" => {
+                    keystroke.key = "$".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "5" => {
+                    keystroke.key = "%".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "6" => {
+                    keystroke.key = "^".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "7" => {
+                    keystroke.key = "&".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "8" => {
+                    keystroke.key = "*".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "9" => {
+                    keystroke.key = "(".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "0" => {
+                    keystroke.key = ")".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "-" => {
+                    keystroke.key = "_".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "=" => {
+                    keystroke.key = "+".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "[" => {
+                    keystroke.key = "{".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "]" => {
+                    keystroke.key = "}".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "\\" => {
+                    keystroke.key = "|".into();
+                    keystroke.modifiers.shift = false;
+                }
+                ";" => {
+                    keystroke.key = ":".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "'" => {
+                    keystroke.key = "\"".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "," => {
+                    keystroke.key = "<".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "." => {
+                    keystroke.key = ">".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "/" => {
+                    keystroke.key = "?".into();
+                    keystroke.modifiers.shift = false;
+                }
+                _ => {}
+            }
+        }
+        keystroke
     }
 
     struct KeystrokeUpdateTracker {
@@ -1400,5 +1495,14 @@ mod tests {
             .with_search_mode(false)
             .send_events(&["+ctrl", "-ctrl", "+alt", "-alt", "+shift", "-shift"])
             .expect_empty();
+    }
+
+    #[gpui::test]
+    async fn test_not_search_shifted_keys(cx: &mut TestAppContext) {
+        init_test(cx)
+            .await
+            .with_search_mode(false)
+            .send_events(&["+ctrl", "+shift", "4", "-all"])
+            .expect_keystrokes(&["ctrl-$"]);
     }
 }
