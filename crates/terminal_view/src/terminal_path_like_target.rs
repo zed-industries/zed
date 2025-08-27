@@ -19,6 +19,13 @@ enum OpenTargetFoundBy {
     FileSystemBackground,
 }
 
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum BackgroundFsChecks {
+    Enabled,
+    Disabled,
+}
+
 #[derive(Debug, Clone)]
 enum OpenTarget {
     Worktree(PathWithPosition, Entry, #[cfg(test)] OpenTargetFoundBy),
@@ -62,7 +69,36 @@ pub(super) fn hover_path_like_target(
     path_like_target: &PathLikeTarget,
     cx: &mut Context<TerminalView>,
 ) -> Task<()> {
-    let file_to_open_task = possible_open_target(workspace, path_like_target, cx);
+    #[cfg(not(test))]
+    {
+        possible_hover_target(workspace, hovered_word, path_like_target, cx)
+    }
+    #[cfg(test)]
+    {
+        possible_hover_target(
+            workspace,
+            hovered_word,
+            path_like_target,
+            cx,
+            BackgroundFsChecks::Enabled,
+        )
+    }
+}
+
+fn possible_hover_target(
+    workspace: &WeakEntity<Workspace>,
+    hovered_word: HoveredWord,
+    path_like_target: &PathLikeTarget,
+    cx: &mut Context<TerminalView>,
+    #[cfg(test)] background_fs_checks: BackgroundFsChecks,
+) -> Task<()> {
+    let file_to_open_task = possible_open_target(
+        workspace,
+        path_like_target,
+        cx,
+        #[cfg(test)]
+        background_fs_checks,
+    );
     cx.spawn(async move |terminal_view, cx| {
         let file_to_open = file_to_open_task.await;
         terminal_view
@@ -85,6 +121,7 @@ fn possible_open_target(
     workspace: &WeakEntity<Workspace>,
     path_like_target: &PathLikeTarget,
     cx: &App,
+    #[cfg(test)] background_fs_checks: BackgroundFsChecks,
 ) -> Task<Option<OpenTarget>> {
     let Some(workspace) = workspace.upgrade() else {
         return Task::ready(None);
@@ -211,20 +248,24 @@ fn possible_open_target(
         }
     }
 
-    let project_is_local = workspace.read(cx).project().read(cx).is_local();
+    #[cfg(not(test))]
+    let enable_background_fs_checks = workspace.read(cx).project().read(cx).is_local();
+    #[cfg(test)]
+    let enable_background_fs_checks = background_fs_checks == BackgroundFsChecks::Enabled;
+
     if open_target.is_some() {
         // We we want to prefer open targets found via background fs checks over worktree matches,
         // however we can return early if either:
         //   - This is a remote project, or
         //   - If the terminal working directory is inside of at least one worktree
-        if !project_is_local || is_cwd_in_worktree {
+        if !enable_background_fs_checks || is_cwd_in_worktree {
             return Task::ready(open_target);
         }
     }
 
     // Before entire worktree traversal(s), make an attempt to do FS checks if available.
     let fs_paths_to_check =
-        if project_is_local {
+        if enable_background_fs_checks {
             let fs_cwd_paths_to_check = cwd
                 .iter()
                 .flat_map(|cwd| {
@@ -356,8 +397,23 @@ pub(super) fn open_path_like_target(
     window: &mut Window,
     cx: &mut Context<TerminalView>,
 ) {
-    possibly_open_target(workspace, terminal_view, path_like_target, window, cx)
+    #[cfg(not(test))]
+    {
+        possibly_open_target(workspace, terminal_view, path_like_target, window, cx)
+            .detach_and_log_err(cx)
+    }
+    #[cfg(test)]
+    {
+        possibly_open_target(
+            workspace,
+            terminal_view,
+            path_like_target,
+            window,
+            cx,
+            BackgroundFsChecks::Enabled,
+        )
         .detach_and_log_err(cx)
+    }
 }
 
 fn possibly_open_target(
@@ -366,6 +422,7 @@ fn possibly_open_target(
     path_like_target: &PathLikeTarget,
     window: &mut Window,
     cx: &mut Context<TerminalView>,
+    #[cfg(test)] background_fs_checks: BackgroundFsChecks,
 ) -> Task<Result<Option<OpenTarget>>> {
     if terminal_view.hover.is_none() {
         return Task::ready(Ok(None));
@@ -375,7 +432,13 @@ fn possibly_open_target(
     cx.spawn_in(window, async move |terminal_view, cx| {
         let Some(open_target) = terminal_view
             .update(cx, |_, cx| {
-                possible_open_target(&workspace, &path_like_target, cx)
+                possible_open_target(
+                    &workspace,
+                    &path_like_target,
+                    cx,
+                    #[cfg(test)]
+                    background_fs_checks,
+                )
             })?
             .await
         else {
@@ -456,8 +519,11 @@ mod tests {
         app_cx: &mut TestAppContext,
         trees: impl IntoIterator<Item = (&str, serde_json::Value)>,
         worktree_roots: impl IntoIterator<Item = &str>,
-    ) -> impl AsyncFnMut(HoveredWord, PathLikeTarget) -> (Option<HoverTarget>, Option<OpenTarget>)
-    {
+    ) -> impl AsyncFnMut(
+        HoveredWord,
+        PathLikeTarget,
+        BackgroundFsChecks,
+    ) -> (Option<HoverTarget>, Option<OpenTarget>) {
         let fs = app_cx.update(AppState::test).fs.as_fake().clone();
 
         app_cx.update(|cx| {
@@ -505,16 +571,18 @@ mod tests {
         });
 
         async move |hovered_word: HoveredWord,
-                    path_like_target: PathLikeTarget|
+                    path_like_target: PathLikeTarget,
+                    background_fs_checks: BackgroundFsChecks|
                     -> (Option<HoverTarget>, Option<OpenTarget>) {
             let workspace_a = workspace.clone();
             terminal_view
                 .update(cx, |_, cx| {
-                    hover_path_like_target(
+                    possible_hover_target(
                         &workspace_a.downgrade(),
                         hovered_word,
                         &path_like_target,
                         cx,
+                        background_fs_checks,
                     )
                 })
                 .await;
@@ -530,6 +598,7 @@ mod tests {
                         &path_like_target,
                         window,
                         cx,
+                        background_fs_checks,
                     )
                 })
                 .await
@@ -543,11 +612,13 @@ mod tests {
         test_path_like: &mut impl AsyncFnMut(
             HoveredWord,
             PathLikeTarget,
+            BackgroundFsChecks,
         ) -> (Option<HoverTarget>, Option<OpenTarget>),
         maybe_path: &str,
         tooltip: &str,
         terminal_dir: Option<PathBuf>,
-        open_target_found_by: OpenTargetFoundBy,
+        background_fs_checks: BackgroundFsChecks,
+        mut open_target_found_by: OpenTargetFoundBy,
         file: &str,
         line: u32,
     ) {
@@ -561,6 +632,7 @@ mod tests {
                 maybe_path: maybe_path.to_string(),
                 terminal_dir,
             },
+            background_fs_checks,
         )
         .await;
 
@@ -595,6 +667,12 @@ mod tests {
             "Open target path mismatch at {file}:{line}:"
         );
 
+        if background_fs_checks == BackgroundFsChecks::Disabled
+            && open_target_found_by == OpenTargetFoundBy::FileSystemBackground
+        {
+            open_target_found_by = OpenTargetFoundBy::WorktreeBackground;
+        }
+
         assert_eq!(
             open_target.found_by(),
             open_target_found_by,
@@ -612,12 +690,45 @@ mod tests {
     }
 
     macro_rules! test_path_like {
-        ($test_path_like:expr, $maybe_path:literal, $tooltip:literal, $cwd:tt, $found_by:expr) => {
+        (
+            $test_path_like:expr,
+            $maybe_path:literal,
+            $tooltip:literal,
+            $cwd:tt,
+            $found_by:expr
+        ) => {{
+            test_path_like!(
+                $test_path_like,
+                $maybe_path,
+                $tooltip,
+                $cwd,
+                BackgroundFsChecks::Enabled,
+                $found_by
+            );
+            test_path_like!(
+                $test_path_like,
+                $maybe_path,
+                $tooltip,
+                $cwd,
+                BackgroundFsChecks::Disabled,
+                $found_by
+            );
+        }};
+
+        (
+            $test_path_like:expr,
+            $maybe_path:literal,
+            $tooltip:literal,
+            $cwd:tt,
+            $background_fs_checks:path,
+            $found_by:expr
+        ) => {
             test_path_like_simple(
                 &mut $test_path_like,
                 path!($maybe_path),
                 path!($tooltip),
                 none_or_some_pathbuf!($cwd),
+                $background_fs_checks,
                 $found_by,
                 std::file!(),
                 std::line!(),
@@ -626,17 +737,84 @@ mod tests {
         };
     }
 
+    // Note the arms of `test`, `test_local`, and `test_remote` should be collapsed once macro
+    // metavariable expressions (#![feature(macro_metavar_expr)]) are stabilized.
+    // See https://github.com/rust-lang/rust/issues/83527
     #[doc = "test_path_likes!(<cx>, <trees>, <worktrees>, { $(<tests>;)+ })"]
     macro_rules! test_path_likes {
         ($cx:expr, $trees:expr, $worktrees:expr, { $($tests:expr;)+ }) => { {
             let mut test_path_like = init_test($cx, $trees, $worktrees).await;
-            #[doc ="test!(<hovered maybe_path>, <expected tooltip>, <terminal cwd>)"]
+            #[doc ="test!(<hovered maybe_path>, <expected tooltip>, <terminal cwd> "]
+            #[doc ="\\[, found by \\])"]
+            #[allow(unused_macros)]
             macro_rules! test {
                 ($maybe_path:literal, $tooltip:literal, $cwd:tt) => {
-                    test_path_like!(test_path_like, $maybe_path, $tooltip, $cwd, OpenTargetFoundBy::WorktreeForeground)
+                    test_path_like!(
+                        test_path_like,
+                        $maybe_path,
+                        $tooltip,
+                        $cwd,
+                        OpenTargetFoundBy::WorktreeForeground
+                    )
                 };
                 ($maybe_path:literal, $tooltip:literal, $cwd:tt, $found_by:ident) => {
-                    test_path_like!(test_path_like, $maybe_path, $tooltip, $cwd, OpenTargetFoundBy::$found_by)
+                    test_path_like!(
+                        test_path_like,
+                        $maybe_path,
+                        $tooltip,
+                        $cwd,
+                        OpenTargetFoundBy::$found_by
+                    )
+                }
+            }
+            #[doc ="test_local!(<hovered maybe_path>, <expected tooltip>, <terminal cwd> "]
+            #[doc ="\\[, found by \\])"]
+            #[allow(unused_macros)]
+            macro_rules! test_local {
+                ($maybe_path:literal, $tooltip:literal, $cwd:tt) => {
+                    test_path_like!(
+                        test_path_like,
+                        $maybe_path,
+                        $tooltip,
+                        $cwd,
+                        BackgroundFsChecks::Enabled,
+                        OpenTargetFoundBy::WorktreeForeground
+                    )
+                };
+                ($maybe_path:literal, $tooltip:literal, $cwd:tt, $found_by:ident) => {
+                    test_path_like!(
+                        test_path_like,
+                        $maybe_path,
+                        $tooltip,
+                        $cwd,
+                        BackgroundFsChecks::Enabled,
+                        OpenTargetFoundBy::$found_by
+                    )
+                }
+            }
+            #[doc ="test_remote!(<hovered maybe_path>, <expected tooltip>, <terminal cwd> "]
+            #[doc ="\\[, found by \\])"]
+            #[allow(unused_macros)]
+            macro_rules! test_remote {
+                ($maybe_path:literal, $tooltip:literal, $cwd:tt) => {
+                    test_path_like!(
+                        test_path_like,
+                        $maybe_path,
+                        $tooltip,
+                        $cwd,
+                        BackgroundFsChecks::Disabled,
+                        OpenTargetFoundBy::WorktreeForeground
+                    )
+                };
+                ($maybe_path:literal, $tooltip:literal, $cwd:tt, $found_by:ident) => {
+                    test_path_like!(
+                        test_path_like,
+                        $maybe_path,
+                        $tooltip,
+                        $cwd,
+                        BackgroundFsChecks::Disabled,
+                        OpenTargetFoundBy::$found_by
+                    )
                 }
             }
             $($tests);+
@@ -802,7 +980,7 @@ mod tests {
         }
 
         // https://github.com/zed-industries/zed/issues/28339
-        // TODO(davewa): These could all be found by WorktreeForeground if we used
+        // Note: These could all be found by WorktreeForeground if we used
         // `fs::normalize_path(&maybe_path)`
         #[gpui::test]
         async fn issue_28339(cx: &mut TestAppContext) {
@@ -820,39 +998,93 @@ mod tests {
                 )],
                 vec![path!("/tmp")],
                 {
-                    test!(
+                    test_local!(
                         "foo/./bar.txt",
                         "/tmp/issue28339/foo/bar.txt",
                         "/tmp/issue28339"
                     );
-                    test!(
+                    test_local!(
                         "foo/../foo/bar.txt",
                         "/tmp/issue28339/foo/bar.txt",
                         "/tmp/issue28339",
                         FileSystemBackground
                     );
-                    test!(
+                    test_local!(
                         "foo/..///foo/bar.txt",
                         "/tmp/issue28339/foo/bar.txt",
                         "/tmp/issue28339",
                         FileSystemBackground
                     );
-                    test!(
+                    test_local!(
                         "issue28339/../issue28339/foo/../foo/bar.txt",
                         "/tmp/issue28339/foo/bar.txt",
                         "/tmp/issue28339",
                         FileSystemBackground
                     );
-                    test!(
+                    test_local!(
                         "./bar.txt",
                         "/tmp/issue28339/foo/bar.txt",
                         "/tmp/issue28339/foo"
                     );
-                    test!(
+                    test_local!(
                         "../foo/bar.txt",
                         "/tmp/issue28339/foo/bar.txt",
                         "/tmp/issue28339/foo",
                         FileSystemBackground
+                    );
+                }
+            )
+        }
+
+        // https://github.com/zed-industries/zed/issues/28339
+        // Note: These could all be found by WorktreeForeground if we used
+        // `fs::normalize_path(&maybe_path)`
+        #[gpui::test]
+        #[should_panic(expected = "Hover target should not be `None`")]
+        async fn issue_28339_remote(cx: &mut TestAppContext) {
+            test_path_likes!(
+                cx,
+                vec![(
+                    path!("/tmp"),
+                    json!({
+                        "issue28339": {
+                            "foo": {
+                                "bar.txt": ""
+                            },
+                        },
+                    }),
+                )],
+                vec![path!("/tmp")],
+                {
+                    test_remote!(
+                        "foo/./bar.txt",
+                        "/tmp/issue28339/foo/bar.txt",
+                        "/tmp/issue28339"
+                    );
+                    test_remote!(
+                        "foo/../foo/bar.txt",
+                        "/tmp/issue28339/foo/bar.txt",
+                        "/tmp/issue28339"
+                    );
+                    test_remote!(
+                        "foo/..///foo/bar.txt",
+                        "/tmp/issue28339/foo/bar.txt",
+                        "/tmp/issue28339"
+                    );
+                    test_remote!(
+                        "issue28339/../issue28339/foo/../foo/bar.txt",
+                        "/tmp/issue28339/foo/bar.txt",
+                        "/tmp/issue28339"
+                    );
+                    test_remote!(
+                        "./bar.txt",
+                        "/tmp/issue28339/foo/bar.txt",
+                        "/tmp/issue28339/foo"
+                    );
+                    test_remote!(
+                        "../foo/bar.txt",
+                        "/tmp/issue28339/foo/bar.txt",
+                        "/tmp/issue28339/foo"
                     );
                 }
             )
@@ -980,7 +1212,7 @@ mod tests {
 
         // https://github.com/zed-industries/zed/issues/34027
         #[gpui::test]
-        async fn issue_34027_non_worktree_file(cx: &mut TestAppContext) {
+        async fn issue_34027_non_worktree_local_file(cx: &mut TestAppContext) {
             test_path_likes!(
                 cx,
                 vec![
@@ -999,44 +1231,35 @@ mod tests {
                 ],
                 vec![path!("/test")],
                 {
-                    test!("file.txt", "/file.txt", "/", FileSystemBackground);
-                    test!("file.txt", "/test/file.txt", "/test");
+                    // Note: Opening a non-worktree file adds that file as a single file worktree.
+                    test_local!("file.txt", "/file.txt", "/", FileSystemBackground);
                 }
             )
         }
 
         // https://github.com/zed-industries/zed/issues/34027
         #[gpui::test]
-        #[should_panic(expected = "Tooltip mismatch")]
-        async fn issue_34027_full_worktree_scan(cx: &mut TestAppContext) {
+        async fn issue_34027_non_worktree_remote_file(cx: &mut TestAppContext) {
             test_path_likes!(
                 cx,
-                vec![(
-                    path!("/test"),
-                    json!({
-                        "sub1": {
+                vec![
+                    (
+                        path!("/"),
+                        json!({
                             "file.txt": "",
-                            "subsub1": {
-                                "file.txt": "",
-                            }
-                        },
-                        "sub2": {
+                        }),
+                    ),
+                    (
+                        path!("/test"),
+                        json!({
                             "file.txt": "",
-                            "subsub1": {
-                                "file.txt": "",
-                            }
-                        }
-                    }),
-                ),],
+                        }),
+                    ),
+                ],
                 vec![path!("/test")],
                 {
-                    // Finds "/test/sub1/subsub1/file.txt"
-                    test!(
-                        "subsub1/file.txt",
-                        "/test/sub2/subsub1/file.txt",
-                        "/test/sub2/subsub1",
-                        WorktreeBackground
-                    );
+                    // Note: Opening a non-worktree file adds that file as a single file worktree.
+                    test_remote!("file.txt", "/test/file.txt", "/");
                 }
             )
         }
