@@ -10447,15 +10447,18 @@ impl Editor {
         })
     }
 
-    fn supports_wrap_in_tag(&self, cx: &App) -> bool {
-        let Some((_, buffer, _)) = self.active_excerpt(cx) else {
-            return false;
-        };
-
-        let Some(language) = buffer.read(cx).language() else {
-            return false;
-        };
-        language.config().wrap_characters.is_some()
+    fn enable_wrap_selections_in_tag(&self, cx: &App) -> bool {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        for selection in self.selections.disjoint_anchors().iter() {
+            if snapshot
+                .language_at(selection.start)
+                .and_then(|lang| lang.config().wrap_characters.as_ref())
+                .is_some()
+            {
+                return true;
+            }
+        }
+        false
     }
 
     fn wrap_selections_in_tag(
@@ -10464,9 +10467,6 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.supports_wrap_in_tag(cx) {
-            return;
-        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
 
         let snapshot = self.buffer.read(cx).snapshot(cx);
