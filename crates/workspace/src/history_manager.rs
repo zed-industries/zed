@@ -3,11 +3,12 @@ use std::path::PathBuf;
 use gpui::{AppContext, Entity, Global, MenuItem};
 use smallvec::SmallVec;
 use ui::App;
-use util::{ResultExt, paths::PathExt};
+use util::paths::PathExt;
 
-use crate::{
-    NewWindow, SerializedWorkspaceLocation, WORKSPACE_DB, WorkspaceId, path_list::PathList,
-};
+use crate::{NewWindow, WorkspaceId, path_list::PathList};
+
+#[cfg(feature = "sqlez")]
+use crate::{SerializedWorkspaceLocation, WORKSPACE_DB};
 
 pub fn init(cx: &mut App) {
     let manager = cx.new(|_| HistoryManager::new());
@@ -39,27 +40,34 @@ impl HistoryManager {
     }
 
     fn init(this: Entity<HistoryManager>, cx: &App) {
-        cx.spawn(async move |cx| {
-            let recent_folders = WORKSPACE_DB
-                .recent_workspaces_on_disk()
-                .await
-                .unwrap_or_default()
-                .into_iter()
-                .rev()
-                .filter_map(|(id, location, paths)| {
-                    if matches!(location, SerializedWorkspaceLocation::Local) {
-                        Some(HistoryManagerEntry::new(id, &paths))
-                    } else {
-                        None
-                    }
+        #[cfg(feature = "sqlez")]
+        {
+            cx.spawn(async move |cx| {
+                let recent_folders = WORKSPACE_DB
+                    .recent_workspaces_on_disk()
+                    .await
+                    .unwrap_or_default()
+                    .into_iter()
+                    .rev()
+                    .filter_map(|(id, location, paths)| {
+                        if matches!(location, SerializedWorkspaceLocation::Local) {
+                            Some(HistoryManagerEntry::new(id, &paths))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                this.update(cx, |this, cx| {
+                    this.history = recent_folders;
+                    this.update_jump_list(cx);
                 })
-                .collect::<Vec<_>>();
-            this.update(cx, |this, cx| {
-                this.history = recent_folders;
-                this.update_jump_list(cx);
             })
-        })
-        .detach();
+            .detach();
+        }
+        #[cfg(not(feature = "sqlez"))]
+        {
+            let _ = (cx, this);
+        }
     }
 
     pub fn global(cx: &App) -> Option<Entity<Self>> {
@@ -116,12 +124,21 @@ impl HistoryManager {
                 self.history.remove(idx);
             }
         }
-        cx.spawn(async move |_| {
-            for id in deleted_ids.iter() {
-                WORKSPACE_DB.delete_workspace_by_id(*id).await.log_err();
-            }
-        })
-        .detach();
+
+        #[cfg(feature = "sqlez")]
+        {
+            use util::ResultExt;
+            cx.spawn(async move |_| {
+                for id in deleted_ids.iter() {
+                    WORKSPACE_DB.delete_workspace_by_id(*id).await.log_err();
+                }
+            })
+            .detach();
+        }
+        #[cfg(not(feature = "sqlez"))]
+        {
+            let _ = (cx, deleted_ids);
+        }
     }
 }
 

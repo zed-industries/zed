@@ -13,6 +13,10 @@ path = "src/editor.rs"
 doctest = false
 
 [features]
+default = ["workspace-full"]
+workspace-full = ["workspace/call", "workspace/sqlez"]
+workspace-minimal = []
+
 test-support = [
     "text/test-support",
     "language/test-support",
@@ -116,6 +120,6 @@ tree-sitter-yaml.workspace = true
 tree-sitter-bash.workspace = true
 unindent.workspace = true
 util = { workspace = true, features = ["test-support"] }
-workspace = { workspace = true, features = ["test-support"] }
+workspace = { path = "../workspace", default-features = false, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
 zlog.workspace = true

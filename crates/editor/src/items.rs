@@ -1,13 +1,18 @@
+#[cfg(feature = "workspace-full")]
+use crate::ItemId;
+#[cfg(feature = "workspace-full")]
+use crate::persistence::{DB, SerializedEditor};
+#[cfg(feature = "workspace-full")]
+use anyhow::Context as _;
+
 use crate::{
     Anchor, Autoscroll, Editor, EditorEvent, EditorSettings, ExcerptId, ExcerptRange, FormatTarget,
     MultiBuffer, MultiBufferSnapshot, NavigationData, ReportEditorEvent, SearchWithinRange,
-    SelectionEffects, ToPoint as _,
-    display_map::HighlightKey,
-    editor_settings::SeedQuerySetting,
-    persistence::{DB, SerializedEditor},
+    SelectionEffects, ToPoint as _, display_map::HighlightKey, editor_settings::SeedQuerySetting,
     scroll::ScrollAnchor,
 };
-use anyhow::{Context as _, Result, anyhow};
+
+use anyhow::Result;
 use collections::{HashMap, HashSet};
 use file_icons::FileIcons;
 use futures::future::try_join_all;
@@ -22,8 +27,7 @@ use language::{
 };
 use lsp::DiagnosticSeverity;
 use project::{
-    Project, ProjectItem as _, ProjectPath, lsp_store::FormatTrigger,
-    project_settings::ProjectSettings, search::SearchQuery,
+    Project, ProjectItem as _, ProjectPath, lsp_store::FormatTrigger, search::SearchQuery,
 };
 use rpc::proto::{self, update_view};
 use settings::Settings;
@@ -41,19 +45,14 @@ use theme::{Theme, ThemeSettings};
 use ui::{IconDecorationKind, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::PathExt};
 use workspace::{
-    CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
+    CollaboratorId, ItemNavHistory, Pane, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
+    WorkspaceSettings,
     invalid_buffer_view::InvalidBufferView,
-    item::{FollowableItem, Item, ItemEvent, ProjectItem, SaveOptions},
-    searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
-};
-use workspace::{
-    OpenOptions,
-    item::{Dedup, ItemSettings, SerializableItem, TabContentParams},
-};
-use workspace::{
-    OpenVisible, Pane, WorkspaceSettings,
-    item::{BreadcrumbText, FollowEvent, ProjectItemKind},
-    searchable::SearchOptions,
+    item::{
+        BreadcrumbText, Dedup, FollowEvent, FollowableItem, Item, ItemEvent, ItemSettings,
+        ProjectItem, ProjectItemKind, SaveOptions, TabContentParams,
+    },
+    searchable::{Direction, SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
 };
 
 pub const MAX_TAB_TITLE_LEN: usize = 24;
@@ -1063,7 +1062,8 @@ impl Item for Editor {
     }
 }
 
-impl SerializableItem for Editor {
+#[cfg(feature = "workspace-full")]
+impl workspace::SerializableItem for Editor {
     fn serialized_item_kind() -> &'static str {
         "Editor"
     }
@@ -1090,7 +1090,7 @@ impl SerializableItem for Editor {
             .context("Failed to query editor state")
         {
             Ok(Some(serialized_editor)) => {
-                if ProjectSettings::get_global(cx)
+                if project::project_settings::ProjectSettings::get_global(cx)
                     .session
                     .restore_unsaved_buffers
                 {
@@ -1105,7 +1105,7 @@ impl SerializableItem for Editor {
                 }
             }
             Ok(None) => {
-                return Task::ready(Err(anyhow!("No path or contents found for buffer")));
+                return Task::ready(Err(anyhow::anyhow!("No path or contents found for buffer")));
             }
             Err(error) => {
                 return Task::ready(Err(error));
@@ -1221,8 +1221,8 @@ impl SerializableItem for Editor {
                         let open_by_abs_path = workspace.update(cx, |workspace, cx| {
                             workspace.open_abs_path(
                                 abs_path.clone(),
-                                OpenOptions {
-                                    visible: Some(OpenVisible::None),
+                                workspace::OpenOptions {
+                                    visible: Some(workspace::OpenVisible::None),
                                     ..Default::default()
                                 },
                                 window,
@@ -1958,6 +1958,8 @@ mod tests {
         project: Entity<Project>,
         cx: &mut VisualTestContext,
     ) -> Entity<Editor> {
+        use workspace::SerializableItem;
+
         workspace
             .update_in(cx, |workspace, window, cx| {
                 let pane = workspace.active_pane();

@@ -1,4 +1,6 @@
+#[cfg(feature = "sqlez")]
 use crate::persistence::model::DockData;
+
 use crate::{DraggedDock, Event, ModalLayer, Pane};
 use crate::{Workspace, status_bar::StatusItemView};
 use anyhow::Context as _;
@@ -198,6 +200,7 @@ pub struct Dock {
     is_open: bool,
     active_panel_index: Option<usize>,
     focus_handle: FocusHandle,
+    #[cfg(feature = "sqlez")]
     pub(crate) serialized_dock: Option<DockData>,
     zoom_layer_open: bool,
     modal_layer: Entity<ModalLayer>,
@@ -275,6 +278,7 @@ impl Dock {
                 is_open: false,
                 focus_handle: focus_handle.clone(),
                 _subscriptions: [focus_subscription, zoom_subscription],
+                #[cfg(feature = "sqlez")]
                 serialized_dock: None,
                 zoom_layer_open: false,
                 modal_layer,
@@ -553,7 +557,10 @@ impl Dock {
             },
         );
 
-        self.restore_state(window, cx);
+        #[cfg(feature = "sqlez")]
+        {
+            self.restore_state(window, cx);
+        }
         if panel.read(cx).starts_open(window, cx) {
             self.activate_panel(index, window, cx);
             self.set_open(true, window, cx);
@@ -563,6 +570,7 @@ impl Dock {
         index
     }
 
+    #[cfg(feature = "sqlez")]
     pub fn restore_state(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if let Some(serialized) = self.serialized_dock.clone() {
             if let Some(active_panel) = serialized.active_panel.filter(|_| serialized.visible)

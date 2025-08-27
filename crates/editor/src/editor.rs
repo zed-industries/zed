@@ -12,6 +12,10 @@
 //! All other submodules and structs are mostly concerned with holding editor data about the way it displays current buffer region(s).
 //!
 //! If you're looking to improve Vim mode, you should check out Vim crate that wraps Editor and overrides its behavior.
+
+#[cfg(feature = "workspace-full")]
+mod persistence;
+
 pub mod actions;
 mod blink_manager;
 mod clangd_ext;
@@ -33,7 +37,6 @@ mod lsp_colors;
 mod lsp_ext;
 mod mouse_context_menu;
 pub mod movement;
-mod persistence;
 mod proposed_changes_editor;
 mod rust_analyzer_ext;
 pub mod scroll;
@@ -49,6 +52,11 @@ mod editor_tests;
 mod signature_help;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
+
+#[cfg(feature = "workspace-full")]
+use persistence::DB;
+#[cfg(feature = "workspace-full")]
+use workspace::{ItemId, SERIALIZATION_THROTTLE_TIME};
 
 pub(crate) use actions::*;
 pub use display_map::{ChunkRenderer, ChunkRendererContext, DisplayPoint, FoldPlaceholder};
@@ -145,7 +153,6 @@ use multi_buffer::{
     MultiOrSingleBufferOffsetRange, ToOffsetUtf16,
 };
 use parking_lot::Mutex;
-use persistence::DB;
 use project::{
     BreakpointWithPosition, CodeAction, Completion, CompletionIntent, CompletionResponse,
     CompletionSource, DisableAiSettings, DocumentHighlight, InlayHint, Location, LocationLink,
@@ -176,7 +183,6 @@ use snippet::Snippet;
 use std::{
     any::TypeId,
     borrow::Cow,
-    cell::OnceCell,
     cell::RefCell,
     cmp::{self, Ordering, Reverse},
     iter::Peekable,
@@ -202,9 +208,9 @@ use ui::{
 };
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
 use workspace::{
-    CollaboratorId, Item as WorkspaceItem, ItemId, ItemNavHistory, OpenInTerminal, OpenTerminal,
-    RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME, SplitDirection, TabBarSettings, Toast,
-    ViewId, Workspace, WorkspaceId, WorkspaceSettings,
+    CollaboratorId, Item as WorkspaceItem, ItemNavHistory, OpenInTerminal, OpenTerminal,
+    RestoreOnStartupBehavior, SplitDirection, TabBarSettings, Toast, ViewId, Workspace,
+    WorkspaceId, WorkspaceSettings,
     item::{ItemHandle, PreviewTabsSettings, SaveOptions},
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
     searchable::SearchEvent,
@@ -358,7 +364,10 @@ pub fn init(cx: &mut App) {
 
     workspace::register_project_item::<Editor>(cx);
     workspace::FollowableViewRegistry::register::<Editor>(cx);
-    workspace::register_serializable_item::<Editor>(cx);
+    #[cfg(feature = "workspace-full")]
+    {
+        workspace::register_serializable_item::<Editor>(cx);
+    }
 
     cx.observe_new(
         |workspace: &mut Workspace, _: Option<&mut Window>, _cx: &mut Context<Workspace>| {
@@ -371,35 +380,38 @@ pub fn init(cx: &mut App) {
     )
     .detach();
 
-    cx.on_action(move |_: &workspace::NewFile, cx| {
-        let app_state = workspace::AppState::global(cx);
-        if let Some(app_state) = app_state.upgrade() {
-            workspace::open_new(
-                Default::default(),
-                app_state,
-                cx,
-                |workspace, window, cx| {
-                    Editor::new_file(workspace, &Default::default(), window, cx)
-                },
-            )
-            .detach();
-        }
-    });
-    cx.on_action(move |_: &workspace::NewWindow, cx| {
-        let app_state = workspace::AppState::global(cx);
-        if let Some(app_state) = app_state.upgrade() {
-            workspace::open_new(
-                Default::default(),
-                app_state,
-                cx,
-                |workspace, window, cx| {
-                    cx.activate(true);
-                    Editor::new_file(workspace, &Default::default(), window, cx)
-                },
-            )
-            .detach();
-        }
-    });
+    #[cfg(feature = "workspace-full")]
+    {
+        cx.on_action(move |_: &workspace::NewFile, cx| {
+            let app_state = workspace::AppState::global(cx);
+            if let Some(app_state) = app_state.upgrade() {
+                workspace::open_new(
+                    Default::default(),
+                    app_state,
+                    cx,
+                    |workspace, window, cx| {
+                        Editor::new_file(workspace, &Default::default(), window, cx)
+                    },
+                )
+                .detach();
+            }
+        });
+        cx.on_action(move |_: &workspace::NewWindow, cx| {
+            let app_state = workspace::AppState::global(cx);
+            if let Some(app_state) = app_state.upgrade() {
+                workspace::open_new(
+                    Default::default(),
+                    app_state,
+                    cx,
+                    |workspace, window, cx| {
+                        cx.activate(true);
+                        Editor::new_file(workspace, &Default::default(), window, cx)
+                    },
+                )
+                .detach();
+            }
+        });
+    }
 }
 
 pub fn set_blame_renderer(renderer: impl BlameRenderer + 'static, cx: &mut App) {
@@ -1167,7 +1179,9 @@ pub struct Editor {
     selection_mark_mode: bool,
     toggle_fold_multiple_buffers: Task<()>,
     _scroll_cursor_center_top_bottom_task: Task<()>,
+    #[cfg(feature = "workspace-full")]
     serialize_selections: Task<()>,
+    #[cfg(feature = "workspace-full")]
     serialize_folds: Task<()>,
     mouse_cursor_hidden: bool,
     minimap: Option<Entity<Self>>,
@@ -2242,7 +2256,9 @@ impl Editor {
             _scroll_cursor_center_top_bottom_task: Task::ready(()),
             selection_mark_mode: false,
             toggle_fold_multiple_buffers: Task::ready(()),
+            #[cfg(feature = "workspace-full")]
             serialize_selections: Task::ready(()),
+            #[cfg(feature = "workspace-full")]
             serialize_folds: Task::ready(()),
             text_style_refinement: None,
             load_diff_task: load_uncommitted_diff,
@@ -3165,15 +3181,18 @@ impl Editor {
                 data.selections = inmemory_selections;
             });
 
-            if WorkspaceSettings::get(None, cx).restore_on_startup != RestoreOnStartupBehavior::None
-                && let Some(workspace_id) =
-                    self.workspace.as_ref().and_then(|workspace| workspace.1)
+            #[cfg(feature = "workspace-full")]
             {
-                let snapshot = self.buffer().read(cx).snapshot(cx);
-                let selections = selections.clone();
-                let background_executor = cx.background_executor().clone();
-                let editor_id = cx.entity().entity_id().as_u64() as ItemId;
-                self.serialize_selections = cx.background_spawn(async move {
+                if WorkspaceSettings::get(None, cx).restore_on_startup
+                    != RestoreOnStartupBehavior::None
+                    && let Some(workspace_id) =
+                        self.workspace.as_ref().and_then(|workspace| workspace.1)
+                {
+                    let snapshot = self.buffer().read(cx).snapshot(cx);
+                    let selections = selections.clone();
+                    let background_executor = cx.background_executor().clone();
+                    let editor_id = cx.entity().entity_id().as_u64() as ItemId;
+                    self.serialize_selections = cx.background_spawn(async move {
                             background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;
                             let db_selections = selections
                                 .iter()
@@ -3189,7 +3208,8 @@ impl Editor {
                                 .await
                                 .with_context(|| format!("persisting editor selections for editor {editor_id}, workspace {workspace_id:?}"))
                                 .log_err();
-                        });
+                    });
+                }
             }
         }
 
@@ -3197,7 +3217,6 @@ impl Editor {
     }
 
     fn folds_did_change(&mut self, cx: &mut Context<Self>) {
-        use text::ToOffset as _;
         use text::ToPoint as _;
 
         if self.mode.is_minimap()
@@ -3226,26 +3245,31 @@ impl Editor {
             data.folds = inmemory_folds;
         });
 
-        let Some(workspace_id) = self.workspace.as_ref().and_then(|workspace| workspace.1) else {
-            return;
-        };
-        let background_executor = cx.background_executor().clone();
-        let editor_id = cx.entity().entity_id().as_u64() as ItemId;
-        let db_folds = self.display_map.update(cx, |display_map, cx| {
-            display_map
-                .snapshot(cx)
-                .folds_in_range(0..snapshot.len())
-                .map(|fold| {
-                    (
-                        fold.range.start.text_anchor.to_offset(&snapshot),
-                        fold.range.end.text_anchor.to_offset(&snapshot),
-                    )
-                })
-                .collect()
-        });
-        self.serialize_folds = cx.background_spawn(async move {
-            background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;
-            DB.save_editor_folds(editor_id, workspace_id, db_folds)
+        #[cfg(feature = "workspace-full")]
+        {
+            use text::ToOffset as _;
+
+            let Some(workspace_id) = self.workspace.as_ref().and_then(|workspace| workspace.1)
+            else {
+                return;
+            };
+            let background_executor = cx.background_executor().clone();
+            let editor_id = cx.entity().entity_id().as_u64() as ItemId;
+            let db_folds = self.display_map.update(cx, |display_map, cx| {
+                display_map
+                    .snapshot(cx)
+                    .folds_in_range(0..snapshot.len())
+                    .map(|fold| {
+                        (
+                            fold.range.start.text_anchor.to_offset(&snapshot),
+                            fold.range.end.text_anchor.to_offset(&snapshot),
+                        )
+                    })
+                    .collect()
+            });
+            self.serialize_folds = cx.background_spawn(async move {
+                background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;
+                DB.save_editor_folds(editor_id, workspace_id, db_folds)
                 .await
                 .with_context(|| {
                     format!(
@@ -3253,7 +3277,8 @@ impl Editor {
                     )
                 })
                 .log_err();
-        });
+            });
+        }
     }
 
     pub fn sync_selections(
@@ -21148,6 +21173,7 @@ impl Editor {
         self.load_diff_task.clone()
     }
 
+    #[cfg(feature = "workspace-full")]
     fn read_metadata_from_db(
         &mut self,
         item_id: u64,
@@ -21159,7 +21185,7 @@ impl Editor {
             && !self.mode.is_minimap()
             && WorkspaceSettings::get(None, cx).restore_on_startup != RestoreOnStartupBehavior::None
         {
-            let buffer_snapshot = OnceCell::new();
+            let buffer_snapshot = std::cell::OnceCell::new();
 
             if let Some(folds) = DB.get_editor_folds(item_id, workspace_id).log_err()
                 && !folds.is_empty()

@@ -2,19 +2,21 @@ mod actions;
 pub(crate) mod autoscroll;
 pub(crate) mod scroll_amount;
 
+#[cfg(feature = "workspace-full")]
+use crate::persistence::DB;
+
 use crate::editor_settings::ScrollBeyondLastLine;
 use crate::{
     Anchor, DisplayPoint, DisplayRow, Editor, EditorEvent, EditorMode, EditorSettings,
     InlayHintRefreshReason, MultiBufferSnapshot, RowExt, ToPoint,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
-    persistence::DB,
 };
 pub use autoscroll::{Autoscroll, AutoscrollStrategy};
 use core::fmt::Debug;
 use gpui::{Along, App, Axis, Context, Global, Pixels, Task, Window, point, px};
+use language::Bias;
 use language::language_settings::{AllLanguageSettings, SoftWrap};
-use language::{Bias, Point};
 pub use scroll_amount::ScrollAmount;
 use settings::Settings;
 use std::{
@@ -22,7 +24,7 @@ use std::{
     time::{Duration, Instant},
 };
 use util::ResultExt;
-use workspace::{ItemId, WorkspaceId};
+use workspace::WorkspaceId;
 
 pub const SCROLL_EVENT_SEPARATION: Duration = Duration::from_millis(28);
 const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
@@ -296,10 +298,12 @@ impl ScrollManager {
         self.anchor = adjusted_anchor;
         cx.emit(EditorEvent::ScrollPositionChanged { local, autoscroll });
         self.show_scrollbars(window, cx);
-        if let Some(workspace_id) = workspace_id {
-            let item_id = cx.entity().entity_id().as_u64() as ItemId;
+        #[cfg(feature = "workspace-full")]
+        {
+            if let Some(workspace_id) = workspace_id {
+                let item_id = cx.entity().entity_id().as_u64() as workspace::ItemId;
 
-            cx.foreground_executor()
+                cx.foreground_executor()
                 .spawn(async move {
                     log::debug!(
                         "Saving scroll position for item {item_id:?} in workspace {workspace_id:?}"
@@ -315,6 +319,11 @@ impl ScrollManager {
                     .log_err()
                 })
                 .detach()
+            }
+        }
+        #[cfg(not(feature = "workspace-full"))]
+        {
+            let _ = (workspace_id, top_row);
         }
         cx.notify();
 
@@ -758,6 +767,7 @@ impl Editor {
         Ordering::Greater
     }
 
+    #[cfg(feature = "workspace-full")]
     pub fn read_scroll_position_from_db(
         &mut self,
         item_id: u64,
@@ -771,7 +781,7 @@ impl Editor {
                 .buffer()
                 .read(cx)
                 .snapshot(cx)
-                .anchor_at(Point::new(top_row, 0), Bias::Left);
+                .anchor_at(language::Point::new(top_row, 0), Bias::Left);
             let scroll_anchor = ScrollAnchor {
                 offset: gpui::Point::new(x, y),
                 anchor: top_anchor,

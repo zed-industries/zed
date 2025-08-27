@@ -7,6 +7,7 @@ pub mod notifications;
 pub mod pane;
 pub mod pane_group;
 mod path_list;
+#[cfg(feature = "sqlez")]
 mod persistence;
 pub mod searchable;
 #[cfg(feature = "call")]
@@ -30,15 +31,40 @@ use client::{Status, proto::ErrorCode};
 #[cfg(feature = "call")]
 use shared_screen::SharedScreen;
 
+#[cfg(feature = "sqlez")]
+use persistence::{
+    DB, SerializedAxis, SerializedWindowBounds,
+    model::{
+        DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup,
+        SerializedWorkspace,
+    },
+};
+#[cfg(feature = "sqlez")]
+pub use persistence::{
+    DB as WORKSPACE_DB, WorkspaceDb, delete_unloaded_items,
+    model::{ItemId, SerializedSshConnection, SerializedWorkspaceLocation},
+};
+#[cfg(not(feature = "sqlez"))]
+pub type ItemId = u64;
+
+#[cfg(feature = "sqlez")]
+use remote::{RemoteClientDelegate, SshConnectionOptions, remote_client::ConnectionIdentifier};
+#[cfg(feature = "sqlez")]
+use sqlez::{
+    bindable::{Bind, Column, StaticColumnCount},
+    statement::Statement,
+};
+
 use anyhow::{Context as _, Result, anyhow};
 use client::{
-    ChannelId, Client, ErrorExt, TypedEnvelope, UserStore,
+    ChannelId, Client, TypedEnvelope, UserStore,
     proto::{self, PanelId, PeerId},
 };
 use collections::{HashMap, HashSet, hash_map};
+
 use dock::{Dock, DockPosition, PanelButtons, PanelHandle, RESIZE_HANDLE_SIZE};
 use futures::{
-    Future, FutureExt, StreamExt,
+    FutureExt, StreamExt,
     channel::{
         mpsc::{self, UnboundedReceiver, UnboundedSender},
         oneshot,
@@ -50,8 +76,8 @@ use gpui::{
     CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke, ManagedView, MouseButton,
     PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription, Task,
-    Tiling, WeakEntity, WindowBounds, WindowHandle, WindowId, WindowOptions, actions, canvas,
-    point, relative, size, transparent_black,
+    Tiling, WeakEntity, WindowBounds, WindowHandle, WindowOptions, actions, canvas, point,
+    relative, size, transparent_black,
 };
 pub use history_manager::*;
 pub use item::{
@@ -60,7 +86,7 @@ pub use item::{
 };
 use itertools::Itertools;
 use language::{
-    Buffer, LanguageRegistry, Rope,
+    Buffer, LanguageRegistry,
     language_settings::{AllLanguageSettings, all_language_settings},
 };
 pub use modal_layer::*;
@@ -71,25 +97,16 @@ use notifications::{
 };
 pub use pane::*;
 pub use pane_group::*;
-use persistence::{DB, SerializedWindowBounds, model::SerializedWorkspace};
-pub use persistence::{
-    DB as WORKSPACE_DB, WorkspaceDb, delete_unloaded_items,
-    model::{ItemId, SerializedSshConnection, SerializedWorkspaceLocation},
-};
+
 use postage::stream::Stream;
 use project::{
     DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
 };
-use remote::{RemoteClientDelegate, SshConnectionOptions, remote_client::ConnectionIdentifier};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
 use settings::{Settings, update_settings_file};
-use sqlez::{
-    bindable::{Bind, Column, StaticColumnCount},
-    statement::Statement,
-};
 use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use std::{
@@ -98,12 +115,11 @@ use std::{
     cell::RefCell,
     cmp,
     collections::{VecDeque, hash_map::DefaultHasher},
-    env,
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
     process::ExitStatus,
     rc::Rc,
-    sync::{Arc, LazyLock, Weak, atomic::AtomicUsize},
+    sync::{Arc, Weak, atomic::AtomicUsize},
     time::Duration,
 };
 use task::{DebugScenario, SpawnInTerminal, TaskContext};
@@ -111,34 +127,34 @@ use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
 use ui::{Window, prelude::*};
-use util::{ResultExt, TryFutureExt, paths::SanitizedPath, serde::default_true};
+use util::{ResultExt, paths::SanitizedPath, serde::default_true};
 use uuid::Uuid;
 pub use workspace_settings::{
     AutosaveSetting, BottomDockLayout, RestoreOnStartupBehavior, TabBarSettings, WorkspaceSettings,
 };
-use zed_actions::{Spawn, feedback::FileBugReport};
+use zed_actions::Spawn;
 
 use crate::notifications::NotificationId;
-use crate::persistence::{
-    SerializedAxis,
-    model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
-};
 
 pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
 
-static ZED_WINDOW_SIZE: LazyLock<Option<Size<Pixels>>> = LazyLock::new(|| {
-    env::var("ZED_WINDOW_SIZE")
-        .ok()
-        .as_deref()
-        .and_then(parse_pixel_size_env_var)
-});
+#[cfg(feature = "sqlez")]
+static ZED_WINDOW_SIZE: std::sync::LazyLock<Option<Size<Pixels>>> =
+    std::sync::LazyLock::new(|| {
+        std::env::var("ZED_WINDOW_SIZE")
+            .ok()
+            .as_deref()
+            .and_then(parse_pixel_size_env_var)
+    });
 
-static ZED_WINDOW_POSITION: LazyLock<Option<Point<Pixels>>> = LazyLock::new(|| {
-    env::var("ZED_WINDOW_POSITION")
-        .ok()
-        .as_deref()
-        .and_then(parse_pixel_position_env_var)
-});
+#[cfg(feature = "sqlez")]
+static ZED_WINDOW_POSITION: std::sync::LazyLock<Option<Point<Pixels>>> =
+    std::sync::LazyLock::new(|| {
+        std::env::var("ZED_WINDOW_POSITION")
+            .ok()
+            .as_deref()
+            .and_then(parse_pixel_position_env_var)
+    });
 
 pub trait TerminalProvider {
     fn spawn(
@@ -484,12 +500,17 @@ pub struct OpenTerminal {
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct WorkspaceId(i64);
 
+#[cfg(feature = "sqlez")]
 impl StaticColumnCount for WorkspaceId {}
+
+#[cfg(feature = "sqlez")]
 impl Bind for WorkspaceId {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         self.0.bind(statement, start_index)
     }
 }
+
+#[cfg(feature = "sqlez")]
 impl Column for WorkspaceId {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         i64::column(statement, start_index)
@@ -497,6 +518,7 @@ impl Column for WorkspaceId {
             .with_context(|| format!("Failed to read WorkspaceId at index {start_index}"))
     }
 }
+
 impl From<WorkspaceId> for i64 {
     fn from(val: WorkspaceId) -> Self {
         val.0
@@ -515,10 +537,18 @@ fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, c
     cx.spawn(
         async move |cx| match paths.await.anyhow().and_then(|res| res) {
             Ok(Some(paths)) => {
-                cx.update(|cx| {
-                    open_paths(&paths, app_state, OpenOptions::default(), cx).detach_and_log_err(cx)
-                })
-                .ok();
+                #[cfg(feature = "sqlez")]
+                {
+                    cx.update(|cx| {
+                        open_paths(&paths, app_state, OpenOptions::default(), cx)
+                            .detach_and_log_err(cx)
+                    })
+                    .ok();
+                }
+                #[cfg(not(feature = "sqlez"))]
+                {
+                    let _ = (app_state, paths);
+                }
             }
             Ok(None) => {}
             Err(err) => {
@@ -780,6 +810,7 @@ impl FollowableViewRegistry {
 
 #[derive(Copy, Clone)]
 struct SerializableItemDescriptor {
+    #[cfg(feature = "sqlez")]
     deserialize: fn(
         Entity<Project>,
         WeakEntity<Workspace>,
@@ -788,12 +819,14 @@ struct SerializableItemDescriptor {
         &mut Window,
         &mut Context<Pane>,
     ) -> Task<Result<Box<dyn ItemHandle>>>,
+    #[cfg(feature = "sqlez")]
     cleanup: fn(WorkspaceId, Vec<ItemId>, &mut Window, &mut App) -> Task<Result<()>>,
     view_to_serializable_item: fn(AnyView) -> Box<dyn SerializableItemHandle>,
 }
 
 #[derive(Default)]
 struct SerializableItemRegistry {
+    #[cfg(feature = "sqlez")]
     descriptors_by_kind: HashMap<Arc<str>, SerializableItemDescriptor>,
     descriptors_by_type: HashMap<TypeId, SerializableItemDescriptor>,
 }
@@ -801,6 +834,7 @@ struct SerializableItemRegistry {
 impl Global for SerializableItemRegistry {}
 
 impl SerializableItemRegistry {
+    #[cfg(feature = "sqlez")]
     fn deserialize(
         item_kind: &str,
         project: Entity<Project>,
@@ -820,6 +854,7 @@ impl SerializableItemRegistry {
         (descriptor.deserialize)(project, workspace, workspace_id, item_item, window, cx)
     }
 
+    #[cfg(feature = "sqlez")]
     fn cleanup(
         item_kind: &str,
         workspace_id: WorkspaceId,
@@ -846,12 +881,14 @@ impl SerializableItemRegistry {
         Some((descriptor.view_to_serializable_item)(view))
     }
 
+    #[cfg(feature = "sqlez")]
     fn descriptor(item_kind: &str, cx: &App) -> Option<SerializableItemDescriptor> {
         let this = cx.try_global::<Self>()?;
         this.descriptors_by_kind.get(item_kind).copied()
     }
 }
 
+#[cfg(feature = "sqlez")]
 pub fn register_serializable_item<I: SerializableItem>(cx: &mut App) {
     let serialized_item_kind = I::serialized_item_kind();
 
@@ -1057,6 +1094,7 @@ pub enum OpenVisible {
     OnlyDirectories,
 }
 
+#[cfg(feature = "sqlez")]
 enum WorkspaceLocation {
     // Valid local paths or SSH project to serialize
     Location(SerializedWorkspaceLocation, PathList),
@@ -1194,8 +1232,11 @@ impl Workspace {
                 project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded(_) => {
                     this.update_window_title(window, cx);
                     this.serialize_workspace(window, cx);
-                    // This event could be triggered by `AddFolderToProject` or `RemoveFromProject`.
-                    this.update_history(cx);
+                    #[cfg(feature = "sqlez")]
+                    {
+                        // This event could be triggered by `AddFolderToProject` or `RemoveFromProject`.
+                        this.update_history(cx);
+                    }
                 }
 
                 project::Event::DisconnectedFromHost => {
@@ -1389,29 +1430,37 @@ impl Workspace {
                 if this.bounds_save_task_queued.is_some() {
                     return;
                 }
-                this.bounds_save_task_queued = Some(cx.spawn_in(window, async move |this, cx| {
-                    cx.background_executor()
-                        .timer(Duration::from_millis(100))
-                        .await;
-                    this.update_in(cx, |this, window, cx| {
-                        if let Some(display) = window.display(cx)
-                            && let Ok(display_uuid) = display.uuid()
-                        {
-                            let window_bounds = window.inner_window_bounds();
-                            if let Some(database_id) = workspace_id {
-                                cx.background_executor()
-                                    .spawn(DB.set_window_open_status(
-                                        database_id,
-                                        SerializedWindowBounds(window_bounds),
-                                        display_uuid,
-                                    ))
-                                    .detach_and_log_err(cx);
-                            }
-                        }
-                        this.bounds_save_task_queued.take();
-                    })
-                    .ok();
-                }));
+                #[cfg(feature = "sqlez")]
+                {
+                    this.bounds_save_task_queued =
+                        Some(cx.spawn_in(window, async move |this, cx| {
+                            cx.background_executor()
+                                .timer(Duration::from_millis(100))
+                                .await;
+                            this.update_in(cx, |this, window, cx| {
+                                if let Some(display) = window.display(cx)
+                                    && let Ok(display_uuid) = display.uuid()
+                                {
+                                    let window_bounds = window.inner_window_bounds();
+                                    if let Some(database_id) = workspace_id {
+                                        cx.background_executor()
+                                            .spawn(DB.set_window_open_status(
+                                                database_id,
+                                                SerializedWindowBounds(window_bounds),
+                                                display_uuid,
+                                            ))
+                                            .detach_and_log_err(cx);
+                                    }
+                                }
+                                this.bounds_save_task_queued.take();
+                            })
+                            .ok();
+                        }));
+                }
+                #[cfg(not(feature = "sqlez"))]
+                {
+                    let _ = window;
+                }
                 cx.notify();
             }),
             cx.observe_window_appearance(window, |_, window, cx| {
@@ -1488,6 +1537,7 @@ impl Workspace {
         }
     }
 
+    #[cfg(feature = "sqlez")]
     pub fn new_local(
         abs_paths: Vec<PathBuf>,
         app_state: Arc<AppState>,
@@ -1520,8 +1570,7 @@ impl Workspace {
                 }
             }
 
-            let serialized_workspace =
-                persistence::DB.workspace_for_roots(paths_to_open.as_slice());
+            let serialized_workspace = DB.workspace_for_roots(paths_to_open.as_slice());
 
             if let Some(paths) = serialized_workspace.as_ref().map(|ws| &ws.paths) {
                 paths_to_open = paths.paths().to_vec();
@@ -2154,6 +2203,7 @@ impl Workspace {
         self.titlebar_item.clone()
     }
 
+    #[cfg(feature = "sqlez")]
     /// Call the given callback with a workspace whose project is local.
     ///
     /// If the given workspace has a local project, then it will be passed
@@ -2192,7 +2242,10 @@ impl Workspace {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn worktree_scans_complete(&self, cx: &App) -> impl Future<Output = ()> + 'static + use<> {
+    pub fn worktree_scans_complete(
+        &self,
+        cx: &App,
+    ) -> impl std::future::Future<Output = ()> + 'static + use<> {
         let futures = self
             .worktrees(cx)
             .filter_map(|worktree| worktree.read(cx).as_local())
@@ -2511,6 +2564,7 @@ impl Workspace {
         })
     }
 
+    #[cfg(feature = "sqlez")]
     pub fn open_workspace_for_paths(
         &mut self,
         replace_current_window: bool,
@@ -3463,6 +3517,23 @@ impl Workspace {
             .is_some()
     }
 
+    #[cfg(not(feature = "sqlez"))]
+    pub fn open_project_item<T>(
+        &mut self,
+        _pane: Entity<Pane>,
+        _project_item: Entity<T::Item>,
+        _activate_pane: bool,
+        _focus_item: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Entity<T>
+    where
+        T: ProjectItem,
+    {
+        panic!("Cannot open items without the sqlez feature enabled")
+    }
+
+    #[cfg(feature = "sqlez")]
     pub fn open_project_item<T>(
         &mut self,
         pane: Entity<Pane>,
@@ -5062,10 +5133,12 @@ impl Workspace {
     pub fn on_window_activation_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if window.is_window_active() {
             self.update_active_view_for_followers(window, cx);
-
-            if let Some(database_id) = self.database_id {
-                cx.background_spawn(persistence::DB.update_timestamp(database_id))
-                    .detach();
+            #[cfg(feature = "sqlez")]
+            {
+                if let Some(database_id) = self.database_id {
+                    cx.background_spawn(persistence::DB.update_timestamp(database_id))
+                        .detach();
+                }
             }
         } else {
             for pane in &self.panes {
@@ -5125,6 +5198,7 @@ impl Workspace {
             .collect::<Vec<_>>()
     }
 
+    #[cfg(feature = "sqlez")]
     fn remove_panes(&mut self, member: Member, window: &mut Window, cx: &mut Context<Workspace>) {
         match member {
             Member::Axis(PaneAxis { members, .. }) => {
@@ -5140,7 +5214,15 @@ impl Workspace {
 
     fn remove_from_session(&mut self, window: &mut Window, cx: &mut App) -> Task<()> {
         self.session_id.take();
-        self.serialize_workspace_internal(window, cx)
+        #[cfg(feature = "sqlez")]
+        {
+            self.serialize_workspace_internal(window, cx)
+        }
+        #[cfg(not(feature = "sqlez"))]
+        {
+            let _ = (window, cx);
+            Task::ready(())
+        }
     }
 
     fn force_remove_pane(
@@ -5165,6 +5247,7 @@ impl Workspace {
         cx.notify();
     }
 
+    #[cfg(feature = "sqlez")]
     fn serialize_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self._schedule_serialize_workspace.is_none() {
             self._schedule_serialize_workspace =
@@ -5181,6 +5264,10 @@ impl Workspace {
         }
     }
 
+    #[cfg(not(feature = "sqlez"))]
+    fn serialize_workspace(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
+
+    #[cfg(feature = "sqlez")]
     fn serialize_workspace_internal(&self, window: &mut Window, cx: &mut App) -> Task<()> {
         let Some(database_id) = self.database_id() else {
             return Task::ready(());
@@ -5334,6 +5421,7 @@ impl Workspace {
         }
     }
 
+    #[cfg(feature = "sqlez")]
     fn serialize_workspace_location(&self, cx: &App) -> WorkspaceLocation {
         let paths = PathList::new(&self.root_paths(cx));
         if let Some(connection) = self.project.read(cx).remote_connection_options(cx) {
@@ -5356,6 +5444,7 @@ impl Workspace {
         }
     }
 
+    #[cfg(feature = "sqlez")]
     fn update_history(&self, cx: &mut App) {
         let Some(id) = self.database_id() else {
             return;
@@ -5417,6 +5506,7 @@ impl Workspace {
             .map_err(|err| anyhow!("failed to send serializable item over channel: {err}"))
     }
 
+    #[cfg(feature = "sqlez")]
     pub(crate) fn load_workspace(
         serialized_workspace: SerializedWorkspace,
         paths_to_open: Vec<Option<ProjectPath>>,
@@ -5510,28 +5600,33 @@ impl Workspace {
                 })?
                 .await;
 
-            // Clean up all the items that have _not_ been loaded. Our ItemIds aren't stable. That means
-            // after loading the items, we might have different items and in order to avoid
-            // the database filling up, we delete items that haven't been loaded now.
-            //
-            // The items that have been loaded, have been saved after they've been added to the workspace.
-            let clean_up_tasks = workspace.update_in(cx, |_, window, cx| {
-                item_ids_by_kind
-                    .into_iter()
-                    .map(|(item_kind, loaded_items)| {
-                        SerializableItemRegistry::cleanup(
-                            item_kind,
-                            serialized_workspace.id,
-                            loaded_items,
-                            window,
-                            cx,
-                        )
-                        .log_err()
-                    })
-                    .collect::<Vec<_>>()
-            })?;
+            #[cfg(feature = "sqlez")]
+            {
+                use util::TryFutureExt;
 
-            futures::future::join_all(clean_up_tasks).await;
+                // Clean up all the items that have _not_ been loaded. Our ItemIds aren't stable. That means
+                // after loading the items, we might have different items and in order to avoid
+                // the database filling up, we delete items that haven't been loaded now.
+                //
+                // The items that have been loaded, have been saved after they've been added to the workspace.
+                let clean_up_tasks = workspace.update_in(cx, |_, window, cx| {
+                    item_ids_by_kind
+                        .into_iter()
+                        .map(|(item_kind, loaded_items)| {
+                            SerializableItemRegistry::cleanup(
+                                item_kind,
+                                serialized_workspace.id,
+                                loaded_items,
+                                window,
+                                cx,
+                            )
+                            .log_err()
+                        })
+                        .collect::<Vec<_>>()
+                })?;
+
+                futures::future::join_all(clean_up_tasks).await;
+            }
 
             workspace
                 .update_in(cx, |workspace, window, cx| {
@@ -5831,9 +5926,12 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.centered_layout = !self.centered_layout;
-        if let Some(database_id) = self.database_id() {
-            cx.background_spawn(DB.set_centered_layout(database_id, self.centered_layout))
-                .detach_and_log_err(cx);
+        #[cfg(feature = "sqlez")]
+        {
+            if let Some(database_id) = self.database_id() {
+                cx.background_spawn(DB.set_centered_layout(database_id, self.centered_layout))
+                    .detach_and_log_err(cx);
+            }
         }
         cx.notify();
     }
@@ -6054,6 +6152,7 @@ fn leader_border_for_pane(
     )
 }
 
+#[cfg(feature = "sqlez")]
 fn window_bounds_env_override() -> Option<Bounds<Pixels>> {
     ZED_WINDOW_POSITION
         .zip(*ZED_WINDOW_SIZE)
@@ -6063,12 +6162,14 @@ fn window_bounds_env_override() -> Option<Bounds<Pixels>> {
         })
 }
 
+#[cfg(feature = "sqlez")]
 fn open_items(
     serialized_workspace: Option<SerializedWorkspace>,
     mut project_paths_to_open: Vec<(PathBuf, Option<ProjectPath>)>,
     window: &mut Window,
     cx: &mut Context<Workspace>,
-) -> impl 'static + Future<Output = Result<Vec<Option<Result<Box<dyn ItemHandle>>>>>> + use<> {
+) -> impl 'static + std::future::Future<Output = Result<Vec<Option<Result<Box<dyn ItemHandle>>>>>> + use<>
+{
     let restored_items = serialized_workspace.map(|serialized_workspace| {
         Workspace::load_workspace(
             serialized_workspace,
@@ -6173,6 +6274,7 @@ enum ActivateInDirectionTarget {
     Dock(Entity<Dock>),
 }
 
+#[cfg(feature = "sqlez")]
 fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncApp) {
     workspace
         .update(cx, |workspace, _, cx| {
@@ -6188,7 +6290,10 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
                                 .primary_message("File an Issue")
                                 .primary_icon(IconName::Plus)
                                 .primary_on_click(|window, cx| {
-                                    window.dispatch_action(Box::new(FileBugReport), cx)
+                                    window.dispatch_action(
+                                        Box::new(zed_actions::feedback::FileBugReport),
+                                        cx,
+                                    )
                                 })
                         })
                     },
@@ -6873,13 +6978,15 @@ impl WorkspaceHandle for Entity<Workspace> {
     }
 }
 
+#[cfg(feature = "sqlez")]
 pub async fn last_opened_workspace_location() -> Option<(SerializedWorkspaceLocation, PathList)> {
     DB.last_workspace().await.log_err().flatten()
 }
 
+#[cfg(feature = "sqlez")]
 pub fn last_session_workspace_locations(
     last_session_id: &str,
-    last_session_window_stack: Option<Vec<WindowId>>,
+    last_session_window_stack: Option<Vec<gpui::WindowId>>,
 ) -> Option<Vec<(SerializedWorkspaceLocation, PathList)>> {
     DB.last_session_workspace_locations(last_session_id, last_session_window_stack)
         .log_err()
@@ -7079,6 +7186,8 @@ pub fn join_channel(
     requesting_window: Option<WindowHandle<Workspace>>,
     cx: &mut App,
 ) -> Task<Result<()>> {
+    use client::ErrorExt;
+
     let active_call = ActiveCall::global(cx);
     cx.spawn(async move |cx| {
         let result = join_channel_internal(
@@ -7153,6 +7262,7 @@ pub fn join_channel(
     })
 }
 
+#[cfg(feature = "sqlez")]
 pub async fn get_any_active_workspace(
     app_state: Arc<AppState>,
     mut cx: AsyncApp,
@@ -7166,6 +7276,7 @@ pub async fn get_any_active_workspace(
     activate_any_workspace_window(&mut cx).context("could not open zed")
 }
 
+#[cfg(feature = "sqlez")]
 fn activate_any_workspace_window(cx: &mut AsyncApp) -> Option<WindowHandle<Workspace>> {
     cx.update(|cx| {
         if let Some(workspace_window) = cx
@@ -7210,6 +7321,7 @@ pub struct OpenOptions {
     pub env: Option<HashMap<String, String>>,
 }
 
+#[cfg(feature = "sqlez")]
 #[allow(clippy::type_complexity)]
 pub fn open_paths(
     abs_paths: &[PathBuf],
@@ -7330,6 +7442,17 @@ pub fn open_paths(
     })
 }
 
+#[cfg(not(feature = "sqlez"))]
+pub fn open_new(
+    _open_options: OpenOptions,
+    _app_state: Arc<AppState>,
+    _cx: &mut App,
+    _init: impl FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + 'static + Send,
+) -> Task<anyhow::Result<()>> {
+    Task::ready(Ok(()))
+}
+
+#[cfg(feature = "sqlez")]
 pub fn open_new(
     open_options: OpenOptions,
     app_state: Arc<AppState>,
@@ -7348,11 +7471,12 @@ pub fn open_new(
     })
 }
 
+#[cfg(feature = "sqlez")]
 pub fn create_and_open_local_file(
     path: &'static Path,
     window: &mut Window,
     cx: &mut Context<Workspace>,
-    default_content: impl 'static + Send + FnOnce() -> Rope,
+    default_content: impl 'static + Send + FnOnce() -> language::Rope,
 ) -> Task<Result<Box<dyn ItemHandle>>> {
     cx.spawn_in(window, async move |workspace, cx| {
         let fs = workspace.read_with(cx, |workspace, _| workspace.app_state().fs.clone())?;
@@ -7385,6 +7509,7 @@ pub fn create_and_open_local_file(
     })
 }
 
+#[cfg(feature = "sqlez")]
 pub fn open_ssh_project_with_new_connection(
     window: WindowHandle<Workspace>,
     connection_options: SshConnectionOptions,
@@ -7439,6 +7564,7 @@ pub fn open_ssh_project_with_new_connection(
     })
 }
 
+#[cfg(feature = "sqlez")]
 pub fn open_ssh_project_with_existing_connection(
     connection_options: SshConnectionOptions,
     project: Entity<Project>,
@@ -7464,6 +7590,7 @@ pub fn open_ssh_project_with_existing_connection(
     })
 }
 
+#[cfg(feature = "sqlez")]
 async fn open_ssh_project_inner(
     project: Entity<Project>,
     paths: Vec<PathBuf>,
@@ -7473,6 +7600,8 @@ async fn open_ssh_project_inner(
     window: WindowHandle<Workspace>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
+    use client::ErrorExt;
+
     let toolchains = DB.toolchains(workspace_id).await?;
     for (toolchain, worktree_id, path) in toolchains {
         project
@@ -7551,6 +7680,7 @@ async fn open_ssh_project_inner(
     Ok(())
 }
 
+#[cfg(feature = "sqlez")]
 fn serialize_ssh_project(
     connection_options: SshConnectionOptions,
     paths: Vec<PathBuf>,
@@ -7726,6 +7856,7 @@ pub fn reload(cx: &mut App) {
     .detach_and_log_err(cx);
 }
 
+#[cfg(feature = "sqlez")]
 fn parse_pixel_position_env_var(value: &str) -> Option<Point<Pixels>> {
     let mut parts = value.split(',');
     let x: usize = parts.next()?.parse().ok()?;
@@ -7733,6 +7864,7 @@ fn parse_pixel_position_env_var(value: &str) -> Option<Point<Pixels>> {
     Some(point(px(x as f32), px(y as f32)))
 }
 
+#[cfg(feature = "sqlez")]
 fn parse_pixel_size_env_var(value: &str) -> Option<Size<Pixels>> {
     let mut parts = value.split(',');
     let width: usize = parts.next()?.parse().ok()?;
@@ -8127,6 +8259,7 @@ pub struct WorkspacePosition {
     pub centered_layout: bool,
 }
 
+#[cfg(feature = "sqlez")]
 pub fn ssh_workspace_position_from_db(
     host: String,
     port: Option<u16>,
@@ -8175,6 +8308,7 @@ pub fn ssh_workspace_position_from_db(
     })
 }
 
+#[cfg(feature = "sqlez")]
 pub fn with_active_or_new_workspace(
     cx: &mut App,
     f: impl FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send + 'static,
@@ -8222,6 +8356,7 @@ mod tests {
     use project::{Project, ProjectEntryId};
     use serde_json::json;
     use settings::SettingsStore;
+    use util::TryFutureExt;
 
     #[gpui::test]
     async fn test_tab_disambiguation(cx: &mut TestAppContext) {

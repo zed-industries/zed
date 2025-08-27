@@ -17,7 +17,7 @@ anyhow.workspace = true
 client.workspace = true
 collections.workspace = true
 copilot.workspace = true
-editor.workspace = true
+editor = { path = "../editor", default-features = false }
 futures.workspace = true
 gpui.workspace = true
 itertools.workspace = true
@@ -36,7 +36,7 @@ zed_actions.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]
-editor = { workspace = true, features = ["test-support"] }
+editor = { path = "../editor", default-features = false, features = ["test-support"] }
 release_channel.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }

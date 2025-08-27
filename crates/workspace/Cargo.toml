@@ -13,7 +13,7 @@ path = "src/workspace.rs"
 doctest = false
 
 [features]
-default = ["call"]
+default = ["call", "sqlez"]
 test-support = [
     "call/test-support",
     "client/test-support",
@@ -55,7 +55,7 @@ serde_json.workspace = true
 session.workspace = true
 settings.workspace = true
 smallvec.workspace = true
-sqlez.workspace = true
+sqlez = { workspace = true, optional = true }
 strum.workspace = true
 task.workspace = true
 telemetry.workspace = true
