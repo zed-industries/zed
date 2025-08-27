@@ -1,13 +1,6 @@
 # Zed Releases
 
-Zed currently maintains two public releases for macOS:
-
-- [Stable](https://zed.dev/download): This is the primary version that people download and use.
-- [Preview](https://zed.dev/releases/preview): which receives updates a week ahead of Stable for early adopters.
-
-Typically we cut a new minor release every Wednesday. The current Preview becomes Stable, and the new Preview contains everything on main up until that point.
-
-If bugs are found and fixed during the week, they may be cherry-picked into the release branches and so new patch versions for preview and stable can become available throughout the week.
+Read about Zed's release channels [here](https://zed.dev/faq#what-are-the-release-channels).
 
 ## Wednesday release process
 
