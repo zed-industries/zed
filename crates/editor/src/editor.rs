@@ -10469,47 +10469,60 @@ impl Editor {
         }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
 
-        let Some(wrap_config) = self
-            .active_excerpt(cx)
-            .and_then(|(_, b, _)| b.read(cx).language())
-            .and_then(|lang| lang.config().wrap_characters.clone())
-        else {
-            return;
-        };
-
-        let open_tag = format!("{}{}", wrap_config.start_prefix, wrap_config.start_suffix);
-        let close_tag = format!("{}{}", wrap_config.end_prefix, wrap_config.end_suffix);
-
         let snapshot = self.buffer.read(cx).snapshot(cx);
+
         let mut edits = Vec::new();
-        let mut boundary_anchors = Vec::new();
+        let mut boundaries = Vec::new();
 
         for selection in self.selections.all::<Point>(cx).iter() {
+            let Some(wrap_config) = snapshot
+                .language_at(selection.start)
+                .and_then(|lang| lang.config().wrap_characters.clone())
+            else {
+                continue;
+            };
+
+            let open_tag = format!("{}{}", wrap_config.start_prefix, wrap_config.start_suffix);
+            let close_tag = format!("{}{}", wrap_config.end_prefix, wrap_config.end_suffix);
+
             let start_before = snapshot.anchor_before(selection.start);
             let end_after = snapshot.anchor_after(selection.end);
-            edits.push((start_before..start_before, open_tag.clone()));
-            edits.push((end_after..end_after, close_tag.clone()));
-            boundary_anchors.push((start_before, end_after));
+
+            edits.push((start_before..start_before, open_tag));
+            edits.push((end_after..end_after, close_tag));
+
+            boundaries.push((
+                start_before,
+                end_after,
+                wrap_config.start_prefix.len(),
+                wrap_config.end_suffix.len(),
+            ));
         }
 
-        let start_prefix_len = wrap_config.start_prefix.len();
-        let end_suffix_len = wrap_config.end_suffix.len();
+        if edits.is_empty() {
+            return;
+        }
 
         self.transact(window, cx, |this, window, cx| {
             let buffer = this.buffer.update(cx, |buffer, cx| {
                 buffer.edit(edits, None, cx);
                 buffer.snapshot(cx)
             });
-            let mut cursor_ranges = Vec::with_capacity(boundary_anchors.len() * 2);
-            for (start_before, end_after) in boundary_anchors.into_iter() {
+
+            let mut new_selections = Vec::with_capacity(boundaries.len() * 2);
+            for (start_before, end_after, start_prefix_len, end_suffix_len) in
+                boundaries.into_iter()
+            {
                 let open_offset = start_before.to_offset(&buffer) + start_prefix_len;
-                cursor_ranges.push(open_offset..open_offset);
                 let close_offset = end_after.to_offset(&buffer).saturating_sub(end_suffix_len);
-                cursor_ranges.push(close_offset..close_offset);
+                new_selections.push(open_offset..open_offset);
+                new_selections.push(close_offset..close_offset);
             }
+
             this.change_selections(Default::default(), window, cx, |s| {
-                s.select_ranges(cursor_ranges);
+                s.select_ranges(new_selections);
             });
+
             this.request_autoscroll(Autoscroll::fit(), cx);
         });
     }
