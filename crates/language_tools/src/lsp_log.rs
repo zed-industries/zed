@@ -100,6 +100,7 @@ impl Message for TraceMessage {
     }
 }
 
+#[derive(Debug)]
 struct RpcMessage {
     message: String,
 }
@@ -156,6 +157,7 @@ impl LanguageServerKind {
     }
 }
 
+#[derive(Debug)]
 pub struct LanguageServerRpcState {
     rpc_messages: VecDeque<RpcMessage>,
     last_message_kind: Option<MessageKind>,
@@ -177,7 +179,7 @@ pub struct LspLogToolbarItemView {
     _log_view_subscription: Option<Subscription>,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 enum MessageKind {
     Send,
     Receive,
@@ -571,7 +573,7 @@ impl LogStore {
             return;
         };
 
-        let mut line_before_message_to_send = None;
+        let received = kind == MessageKind::Receive;
         let rpc_log_lines = &mut state.rpc_messages;
         if state.last_message_kind != Some(kind) {
             while rpc_log_lines.len() + 1 >= MAX_STORED_LOG_ENTRIES {
@@ -586,7 +588,12 @@ impl LogStore {
                     message: line_before_message.to_string(),
                 });
             }
-            line_before_message_to_send = Some(line_before_message);
+            // Do not send a synthetic message over the wire, it will be derived from the actual RPC message
+            cx.emit(Event::NewServerLogEntry {
+                id: language_server_id,
+                kind: LanguageServerLogType::Rpc { received },
+                text: line_before_message.to_string(),
+            });
         }
 
         while rpc_log_lines.len() + 1 >= MAX_STORED_LOG_ENTRIES {
@@ -599,17 +606,6 @@ impl LogStore {
             });
         }
 
-        let received = kind == MessageKind::Receive;
-        if let Some(line_before_message) = line_before_message_to_send {
-            self.emit_event(
-                Event::NewServerLogEntry {
-                    id: language_server_id,
-                    kind: LanguageServerLogType::Rpc { received },
-                    text: line_before_message.to_string(),
-                },
-                cx,
-            );
-        }
         self.emit_event(
             Event::NewServerLogEntry {
                 id: language_server_id,
@@ -822,7 +818,6 @@ impl LogStore {
                     }
                     .and_then(|lsp_store| lsp_store.read(cx).downstream_client());
                     if let Some((client, project_id)) = downstream_client {
-                        log::error!("|||||||||| {text}");
                         client
                             .send(proto::LanguageServerLog {
                                 project_id,
@@ -882,48 +877,48 @@ impl LspLogView {
                 cx.notify();
             });
 
-        let events_subscriptions =
-            cx.subscribe_in(&log_store, window, move |log_view, _, e, window, cx| {
-                log::error!("@@@@@@ {e:?}");
-                match e {
-                    Event::NewServerLogEntry { id, kind, text } => {
-                        if log_view.current_server_id == Some(*id)
-                            && LogKind::from_server_log_type(kind) == log_view.active_entry_kind
-                        {
-                            log_view.editor.update(cx, |editor, cx| {
-                                editor.set_read_only(false);
-                                let last_offset = editor.buffer().read(cx).len(cx);
-                                let newest_cursor_is_at_end =
-                                    editor.selections.newest::<usize>(cx).start >= last_offset;
-                                editor.edit(
-                                    vec![
-                                        (last_offset..last_offset, text.as_str()),
-                                        (last_offset..last_offset, "\n"),
-                                    ],
+        let events_subscriptions = cx.subscribe_in(
+            &log_store,
+            window,
+            move |log_view, _, e, window, cx| match e {
+                Event::NewServerLogEntry { id, kind, text } => {
+                    if log_view.current_server_id == Some(*id)
+                        && LogKind::from_server_log_type(kind) == log_view.active_entry_kind
+                    {
+                        log_view.editor.update(cx, |editor, cx| {
+                            editor.set_read_only(false);
+                            let last_offset = editor.buffer().read(cx).len(cx);
+                            let newest_cursor_is_at_end =
+                                editor.selections.newest::<usize>(cx).start >= last_offset;
+                            editor.edit(
+                                vec![
+                                    (last_offset..last_offset, text.as_str()),
+                                    (last_offset..last_offset, "\n"),
+                                ],
+                                cx,
+                            );
+                            if text.len() > 1024
+                                && let Some((fold_offset, _)) =
+                                    text.char_indices().dropping(1024).next()
+                                && fold_offset < text.len()
+                            {
+                                editor.fold_ranges(
+                                    vec![last_offset + fold_offset..last_offset + text.len()],
+                                    false,
+                                    window,
                                     cx,
                                 );
-                                if text.len() > 1024
-                                    && let Some((fold_offset, _)) =
-                                        text.char_indices().dropping(1024).next()
-                                    && fold_offset < text.len()
-                                {
-                                    editor.fold_ranges(
-                                        vec![last_offset + fold_offset..last_offset + text.len()],
-                                        false,
-                                        window,
-                                        cx,
-                                    );
-                                }
+                            }
 
-                                if newest_cursor_is_at_end {
-                                    editor.request_autoscroll(Autoscroll::bottom(), cx);
-                                }
-                                editor.set_read_only(true);
-                            });
-                        }
+                            if newest_cursor_is_at_end {
+                                editor.request_autoscroll(Autoscroll::bottom(), cx);
+                            }
+                            editor.set_read_only(true);
+                        });
                     }
                 }
-            });
+            },
+        );
         let (editor, editor_subscriptions) = Self::editor_for_logs(String::new(), window, cx);
 
         let focus_handle = cx.focus_handle();
