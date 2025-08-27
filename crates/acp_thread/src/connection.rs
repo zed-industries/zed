@@ -236,7 +236,7 @@ impl AgentModelList {
     pub fn len(&self) -> usize {
         match self {
             AgentModelList::Flat(models) => models.len(),
-            AgentModelList::Grouped(groups) => groups.values().len(),
+            AgentModelList::Grouped(groups) => groups.values().map(|v| v.len()).sum(),
         }
     }
 }

@@ -107,6 +107,10 @@ impl PickerDelegate for AcpModelPickerDelegate {
     type ListItem = AnyElement;
 
     fn match_count(&self) -> usize {
+        log::trace!(
+            "AcpModelPickerDelegate::match_count {}",
+            self.filtered_entries.len()
+        );
         self.filtered_entries.len()
     }
 
@@ -160,11 +164,15 @@ impl PickerDelegate for AcpModelPickerDelegate {
                 None => AgentModelList::Flat(vec![]),
             };
 
-            log::debug!("Filtered models. {} available.", filtered_models.len());
+            log::debug!("{} filtered models available.", filtered_models.len());
 
             this.update_in(cx, |this, window, cx| {
                 this.delegate.filtered_entries =
                     info_list_to_picker_entries(filtered_models).collect();
+                log::debug!(
+                    "{} filtered entries available.",
+                    this.delegate.filtered_entries.len()
+                );
                 // Finds the currently selected model in the list
                 let new_index = this
                     .delegate
@@ -181,6 +189,8 @@ impl PickerDelegate for AcpModelPickerDelegate {
                     })
                     .unwrap_or(0);
                 this.set_selected_index(new_index, Some(picker::Direction::Down), true, window, cx);
+
+                log::trace!("Notify on AcpModelPickerDelegate");
                 cx.notify();
             })
             .ok();
