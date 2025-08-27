@@ -7,7 +7,7 @@ use futures::{
     channel::{mpsc, oneshot},
     future::LocalBoxFuture,
 };
-use gpui::{App, AsyncApp, BorrowAppContext, Global, Task, UpdateGlobal};
+use gpui::{App, AsyncApp, BorrowAppContext, Global, SharedString, Task, UpdateGlobal};
 
 use paths::{EDITORCONFIG_NAME, local_settings_file_relative_path, task_file_name};
 use schemars::JsonSchema;
@@ -32,7 +32,7 @@ pub type EditorconfigProperties = ec4rs::Properties;
 
 use crate::{
     ActiveSettingsProfileName, ParameterizedJsonSchema, SettingsJsonSchemaParams, SettingsUIItem,
-    SettingsUIRender, VsCodeSettings, WorktreeId, parse_json_with_comments,
+    VsCodeSettings, WorktreeId, parse_json_with_comments, replace_value_in_json_text,
     settings_ui::SettingsUI, update_value_in_json_text,
 };
 
@@ -565,6 +565,34 @@ impl SettingsStore {
             .map_err(|err| anyhow::format_err!("Failed to update settings file: {}", err))
             .log_with_level(log::Level::Warn);
         return rx;
+    }
+
+    pub fn update_settings_file_at_path(
+        &self,
+        fs: Arc<dyn Fs>,
+        path: &[&str],
+        new_value: serde_json::Value,
+    ) -> oneshot::Receiver<Result<()>> {
+        let key_path = path
+            .into_iter()
+            .cloned()
+            .map(SharedString::new)
+            .collect::<Vec<_>>();
+        let update = move |mut old_text: String, cx: AsyncApp| {
+            cx.read_global(|store: &SettingsStore, _cx| {
+                // todo! use update for merge, needs old value though...
+                let (range, replacement) = replace_value_in_json_text(
+                    &old_text,
+                    key_path.as_slice(),
+                    store.json_tab_size(),
+                    Some(&new_value),
+                    None,
+                );
+                old_text.replace_range(range, &replacement);
+                old_text
+            })
+        };
+        self.update_settings_file_inner(fs, update)
     }
 
     pub fn update_settings_file<T: Settings>(

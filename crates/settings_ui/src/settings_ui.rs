@@ -1,12 +1,12 @@
 mod appearance_settings_controls;
 
-use std::any::{Any, TypeId};
-use std::ptr::read;
+use std::any::TypeId;
 
 use anyhow::Context as _;
 use command_palette_hooks::CommandPaletteFilter;
 use editor::EditorSettingsControls;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
+use fs::Fs;
 use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, ReadGlobal, actions};
 use settings::{SettingsStore, SettingsUIItemSingle, SettingsUIItemVariant, SettingsValue};
 use smallvec::SmallVec;
@@ -190,6 +190,7 @@ fn render_switch_field(
     _cx: &mut App,
 ) -> AnyElement {
     let id = element_id_from_path(&value.path);
+    let path = value.path.clone();
     SwitchField::new(
         id,
         SharedString::new_static(value.title),
@@ -198,16 +199,25 @@ fn render_switch_field(
             true => ToggleState::Selected,
             false => ToggleState::Unselected,
         },
-        move |toggle_state, _, _| {
-            let new_value = match toggle_state {
+        move |toggle_state, _, cx| {
+            let new_value = serde_json::Value::Bool(match toggle_state {
                 ToggleState::Indeterminate => {
                     return;
                 }
                 ToggleState::Selected => true,
                 ToggleState::Unselected => false,
-            };
-            dbg!("wrote:", new_value);
-            // value.write(new_value); // todo! figure out a way to get this working
+            });
+
+            let settings_store = SettingsStore::global(cx);
+            let fs = <dyn Fs>::global(cx);
+
+            let rx = settings_store.update_settings_file_at_path(
+                fs.clone(),
+                &path.as_slice(),
+                new_value,
+            );
+            cx.background_spawn(async move { rx.await?.context("Failed to update settings") })
+                .detach_and_log_err(cx);
         },
     )
     .into_any_element()
