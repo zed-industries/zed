@@ -3567,6 +3567,7 @@ pub struct LanguageServerStatus {
     pub pending_work: BTreeMap<String, LanguageServerProgress>,
     pub has_pending_diagnostic_updates: bool,
     progress_tokens: HashSet<String>,
+    pub worktree: Option<WorktreeId>,
 }
 
 #[derive(Clone, Debug)]
@@ -7485,7 +7486,7 @@ impl LspStore {
                         server: Some(proto::LanguageServer {
                             id: server_id.to_proto(),
                             name: status.name.to_string(),
-                            worktree_id: None,
+                            worktree_id: status.worktree.map(|id| id.to_proto()),
                         }),
                         capabilities: serde_json::to_string(&server.capabilities())
                             .expect("serializing server LSP capabilities"),
@@ -7529,6 +7530,7 @@ impl LspStore {
                         pending_work: Default::default(),
                         has_pending_diagnostic_updates: false,
                         progress_tokens: Default::default(),
+                        worktree: server.worktree_id.map(WorktreeId::from_proto),
                     },
                 )
             })
@@ -8894,6 +8896,7 @@ impl LspStore {
                     pending_work: Default::default(),
                     has_pending_diagnostic_updates: false,
                     progress_tokens: Default::default(),
+                    worktree: server.worktree_id.map(WorktreeId::from_proto),
                 },
             );
             cx.emit(LspStoreEvent::LanguageServerAdded(
@@ -10907,6 +10910,7 @@ impl LspStore {
                 pending_work: Default::default(),
                 has_pending_diagnostic_updates: false,
                 progress_tokens: Default::default(),
+                worktree: Some(key.worktree_id),
             },
         );
 
@@ -12195,6 +12199,10 @@ impl LspStore {
 
     pub fn downstream_client(&self) -> Option<(AnyProtoClient, u64)> {
         self.downstream_client.clone()
+    }
+
+    pub fn worktree_store(&self) -> Entity<WorktreeStore> {
+        self.worktree_store.clone()
     }
 }
 
