@@ -418,8 +418,8 @@ impl std::fmt::Display for Keystroke {
 
 impl std::fmt::Display for KeybindingKeystroke {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        display_modifiers(&self.display_modifiers, f)?;
-        display_key(&self.display_key, f)
+        display_modifiers(self.modifiers(), f)?;
+        display_key(self.key(), f)
     }
 }
 
