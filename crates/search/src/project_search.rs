@@ -1139,7 +1139,7 @@ impl ProjectSearchView {
 
     fn build_search_query(&mut self, cx: &mut Context<Self>) -> Option<SearchQuery> {
         // Do not bail early in this function, as we want to fill out `self.panels_with_errors`.
-        let text = self.query_editor.read(cx).text(cx);
+        let text = self.search_query_text(cx);
         let open_buffers = if self.included_opened_only {
             Some(self.open_buffers(cx))
         } else {

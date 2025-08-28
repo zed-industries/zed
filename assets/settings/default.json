@@ -363,6 +363,8 @@
     // Whether to show code action buttons in the editor toolbar.
     "code_actions": false
   },
+  // Whether to allow windows to tab together based on the user’s tabbing preference (macOS only).
+  "use_system_window_tabs": false,
   // Titlebar related settings
   "title_bar": {
     // Whether to show the branch icon beside branch switcher in the titlebar.
@@ -1583,7 +1585,7 @@
       "ensure_final_newline_on_save": false
     },
     "Elixir": {
-      "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
+      "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."]
     },
     "Elm": {
       "tab_size": 4
@@ -1608,7 +1610,7 @@
       }
     },
     "HEEX": {
-      "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
+      "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."]
     },
     "HTML": {
       "prettier": {

@@ -1057,6 +1057,18 @@ pub fn get_system_shell() -> String {
     }
 }
 
+pub fn get_default_system_shell() -> String {
+    #[cfg(target_os = "windows")]
+    {
+        get_windows_system_shell()
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        "/bin/sh".to_string()
+    }
+}
+
 #[derive(Debug)]
 pub enum ConnectionResult<O> {
     Timeout,

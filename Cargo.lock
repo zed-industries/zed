@@ -295,23 +295,21 @@ dependencies = [
  "anyhow",
  "client",
  "collections",
- "context_server",
  "env_logger 0.11.8",
  "fs",
  "futures 0.3.31",
  "gpui",
  "gpui_tokio",
  "indoc",
- "itertools 0.14.0",
  "language",
  "language_model",
  "language_models",
  "libc",
  "log",
  "nix 0.29.0",
+ "node_runtime",
  "paths",
  "project",
- "rand 0.8.5",
  "reqwest_client",
  "schemars",
  "semver",
@@ -319,12 +317,10 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
- "strum 0.27.1",
  "tempfile",
  "thiserror 2.0.12",
  "ui",
  "util",
- "uuid",
  "watch",
  "which 6.0.3",
  "workspace-hack",
@@ -13504,7 +13500,6 @@ dependencies = [
  "language",
  "language_extension",
  "language_model",
- "language_tools",
  "languages",
  "libc",
  "log",
@@ -20594,7 +20589,7 @@ dependencies = [
 
 [[package]]
 name = "zed_html"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]

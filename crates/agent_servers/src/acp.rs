@@ -3,6 +3,7 @@ use acp_thread::AgentConnection;
 use acp_tools::AcpConnectionRegistry;
 use action_log::ActionLog;
 use agent_client_protocol::{self as acp, Agent as _, ErrorCode};
+use agent_settings::AgentSettings;
 use anyhow::anyhow;
 use collections::HashMap;
 use futures::AsyncBufReadExt as _;
@@ -10,6 +11,7 @@ use futures::channel::oneshot;
 use futures::io::BufReader;
 use project::Project;
 use serde::Deserialize;
+use settings::Settings as _;
 use std::{any::Any, cell::RefCell};
 use std::{path::Path, rc::Rc};
 use thiserror::Error;
@@ -343,6 +345,28 @@ impl acp::Client for ClientDelegate {
         arguments: acp::RequestPermissionRequest,
     ) -> Result<acp::RequestPermissionResponse, acp::Error> {
         let cx = &mut self.cx.clone();
+
+        // If always_allow_tool_actions is enabled, then auto-choose the first "Allow" button
+        if AgentSettings::try_read_global(cx, |settings| settings.always_allow_tool_actions)
+            .unwrap_or(false)
+        {
+            // Don't use AllowAlways, because then if you were to turn off always_allow_tool_actions,
+            // some tools would (incorrectly) continue to auto-accept.
+            if let Some(allow_once_option) = arguments.options.iter().find_map(|option| {
+                if matches!(option.kind, acp::PermissionOptionKind::AllowOnce) {
+                    Some(option.id.clone())
+                } else {
+                    None
+                }
+            }) {
+                return Ok(acp::RequestPermissionResponse {
+                    outcome: acp::RequestPermissionOutcome::Selected {
+                        option_id: allow_once_option,
+                    },
+                });
+            }
+        }
+
         let rx = self
             .session_thread(&arguments.session_id)?
             .update(cx, |thread, cx| {

@@ -2,7 +2,7 @@ mod reliability;
 mod zed;
 
 use agent_ui::AgentPanel;
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Error, Result};
 use clap::{Parser, command};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{Client, ProxySettings, UserStore, parse_zed_link};
@@ -947,9 +947,13 @@ async fn installation_id() -> Result<IdType> {
 
 async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp) -> Result<()> {
     if let Some(locations) = restorable_workspace_locations(cx, &app_state).await {
+        let use_system_window_tabs = cx
+            .update(|cx| WorkspaceSettings::get(None, cx).use_system_window_tabs)
+            .unwrap_or(false);
+        let mut results: Vec<Result<(), Error>> = Vec::new();
         let mut tasks = Vec::new();
 
-        for (location, paths) in locations {
+        for (index, (location, paths)) in locations.into_iter().enumerate() {
             match location {
                 SerializedWorkspaceLocation::Local => {
                     let app_state = app_state.clone();
@@ -964,7 +968,14 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                         })?;
                         open_task.await.map(|_| ())
                     });
-                    tasks.push(task);
+
+                    // If we're using system window tabs and this is the first workspace,
+                    // wait for it to finish so that the other windows can be added as tabs.
+                    if use_system_window_tabs && index == 0 {
+                        results.push(task.await);
+                    } else {
+                        tasks.push(task);
+                    }
                 }
                 SerializedWorkspaceLocation::Ssh(ssh) => {
                     let app_state = app_state.clone();
@@ -998,7 +1009,7 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
         }
 
         // Wait for all workspaces to open concurrently
-        let results = future::join_all(tasks).await;
+        results.extend(future::join_all(tasks).await);
 
         // Show notifications for any errors that occurred
         let mut error_count = 0;

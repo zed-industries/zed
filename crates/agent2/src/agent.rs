@@ -94,7 +94,7 @@ impl LanguageModels {
         let mut recommended = Vec::new();
         for provider in &providers {
             for model in provider.recommended_models(cx) {
-                recommended_models.insert(model.id());
+                recommended_models.insert((model.provider_id(), model.id()));
                 recommended.push(Self::map_language_model_to_info(&model, provider));
             }
         }
@@ -111,7 +111,7 @@ impl LanguageModels {
             for model in provider.provided_models(cx) {
                 let model_info = Self::map_language_model_to_info(&model, &provider);
                 let model_id = model_info.id.clone();
-                if !recommended_models.contains(&model.id()) {
+                if !recommended_models.contains(&(model.provider_id(), model.id())) {
                     provider_models.push(model_info);
                 }
                 models.insert(model_id, model);
