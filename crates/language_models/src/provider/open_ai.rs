@@ -143,7 +143,9 @@ impl OpenAiLanguageModelProvider {
         let state = cx.new(|cx| State {
             api_key: None,
             api_key_from_env: false,
-            _subscription: cx.observe_global::<SettingsStore>(|_this: &mut State, cx| {
+            _subscription: cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
+                this.api_key = None;
+                this.api_key_from_env = false;
                 cx.notify();
             }),
         });
