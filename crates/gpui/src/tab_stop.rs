@@ -1,4 +1,6 @@
-use crate::{FocusHandle, FocusId};
+use std::sync::Arc;
+
+use crate::{FocusHandle, FocusId, GlobalElementId};
 
 /// Represents a collection of tab handles.
 ///
@@ -8,14 +10,11 @@ pub(crate) struct TabHandles {
     pub(crate) handles: Vec<FocusHandle>,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub(crate) struct FocusTrapId(pub(crate) Arc<GlobalElementId>);
+
 impl TabHandles {
-    pub(crate) fn insert(&mut self, focus_handle: &FocusHandle) {
-        if !focus_handle.tab_stop {
-            return;
-        }
-
-        let focus_handle = focus_handle.clone();
-
+    pub(crate) fn insert(&mut self, focus_handle: FocusHandle) {
         // Insert handle with same tab_index last
         if let Some(ix) = self
             .handles
@@ -32,37 +31,75 @@ impl TabHandles {
         self.handles.clear();
     }
 
-    fn current_index(&self, focused_id: Option<&FocusId>) -> Option<usize> {
-        self.handles.iter().position(|h| Some(&h.id) == focused_id)
+    pub(crate) fn with_focus_trap(&self, focused_id: Option<&FocusId>) -> Vec<FocusHandle> {
+        if let Some(focused_id) = focused_id {
+            if let Some(handle) = self.handles.iter().find(|h| &h.id == focused_id) {
+                return self
+                    .handles
+                    .iter()
+                    .filter(|h| h.focus_trap == handle.focus_trap)
+                    .cloned()
+                    .collect();
+            }
+        }
+
+        self.handles
+            .iter()
+            .filter(|h| h.focus_trap.is_none())
+            .cloned()
+            .collect()
     }
 
     pub(crate) fn next(&self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {
-        let next_ix = self
-            .current_index(focused_id)
+        let group_handles = self.with_focus_trap(focused_id);
+        let next_ix = group_handles
+            .iter()
+            .position(|h| Some(&h.id) == focused_id)
             .and_then(|ix| {
                 let next_ix = ix + 1;
-                (next_ix < self.handles.len()).then_some(next_ix)
+                (next_ix < group_handles.len()).then_some(next_ix)
             })
             .unwrap_or_default();
 
-        self.handles.get(next_ix).cloned()
+        if let Some(item) = group_handles
+            .iter()
+            .skip(next_ix)
+            .find(|h| h.tab_stop)
+            .cloned()
+        {
+            return Some(item);
+        }
+
+        // Fallback to the first tab stop in the group
+        group_handles.iter().find(|h| h.tab_stop).cloned()
     }
 
     pub(crate) fn prev(&self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {
-        let ix = self.current_index(focused_id).unwrap_or_default();
-        let prev_ix = if ix == 0 {
-            self.handles.len().saturating_sub(1)
-        } else {
-            ix.saturating_sub(1)
-        };
+        let group_handles = self.with_focus_trap(focused_id);
+        let ix = group_handles
+            .iter()
+            .position(|h| Some(&h.id) == focused_id)
+            .unwrap_or_default();
+        let ix = if ix == 0 { group_handles.len() } else { ix };
 
-        self.handles.get(prev_ix).cloned()
+        if let Some(item) = group_handles
+            .iter()
+            .take(ix)
+            .rev()
+            .find(|h| h.tab_stop)
+            .cloned()
+        {
+            return Some(item);
+        }
+
+        // Fallback to the last tab stop in the group
+        group_handles.iter().rev().find(|h| h.tab_stop).cloned()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{FocusHandle, FocusMap, TabHandles};
+    use crate::{FocusHandle, FocusMap, FocusTrapId, GlobalElementId, TabHandles};
     use std::sync::Arc;
 
     #[test]
@@ -70,18 +107,34 @@ mod tests {
         let focus_map = Arc::new(FocusMap::default());
         let mut tab = TabHandles::default();
 
+        let trap_id = FocusTrapId(Arc::new(GlobalElementId(smallvec::smallvec![
+            "trap1".into()
+        ])));
+
         let focus_handles = vec![
+            FocusHandle::new(&focus_map).tab_stop(true).tab_index(1),
             FocusHandle::new(&focus_map).tab_stop(true).tab_index(0),
             FocusHandle::new(&focus_map).tab_stop(true).tab_index(1),
-            FocusHandle::new(&focus_map).tab_stop(true).tab_index(1),
-            FocusHandle::new(&focus_map),
+            FocusHandle::new(&focus_map).focus_trap(&trap_id),
             FocusHandle::new(&focus_map).tab_index(2),
+            FocusHandle::new(&focus_map)
+                .tab_stop(true)
+                .tab_index(0)
+                .focus_trap(&trap_id),
+            FocusHandle::new(&focus_map)
+                .tab_stop(true)
+                .tab_index(0)
+                .focus_trap(&trap_id),
+            FocusHandle::new(&focus_map)
+                .tab_stop(true)
+                .tab_index(0)
+                .focus_trap(&trap_id),
             FocusHandle::new(&focus_map).tab_stop(true).tab_index(0),
             FocusHandle::new(&focus_map).tab_stop(true).tab_index(2),
         ];
 
         for handle in focus_handles.iter() {
-            tab.insert(handle);
+            tab.insert(handle.clone());
         }
         assert_eq!(
             tab.handles
@@ -89,64 +142,118 @@ mod tests {
                 .map(|handle| handle.id)
                 .collect::<Vec<_>>(),
             vec![
-                focus_handles[0].id,
-                focus_handles[5].id,
+                // ix 0
                 focus_handles[1].id,
-                focus_handles[2].id,
+                // ix 1, trap1, tab_stop false
+                focus_handles[3].id,
+                // ix 2, trap1
+                focus_handles[5].id,
+                // ix 3, trap1
                 focus_handles[6].id,
+                // ix 4, trap1
+                focus_handles[7].id,
+                // ix 5
+                focus_handles[8].id,
+                // ix 6
+                focus_handles[0].id,
+                // ix 7
+                focus_handles[2].id,
+                // ix 8, tab_stop false
+                focus_handles[4].id,
+                // ix 9
+                focus_handles[9].id,
             ]
         );
 
+        let untrap_handles = [
+            focus_handles[1].clone(),
+            focus_handles[8].clone(),
+            focus_handles[0].clone(),
+            focus_handles[2].clone(),
+            focus_handles[9].clone(),
+        ];
+
+        let trap1_handles = [
+            focus_handles[5].clone(),
+            focus_handles[6].clone(),
+            focus_handles[7].clone(),
+        ];
+
         // Select first tab index if no handle is currently focused.
-        assert_eq!(tab.next(None), Some(tab.handles[0].clone()));
+        assert_eq!(tab.next(None), Some(untrap_handles[0].clone()));
         // Select last tab index if no handle is currently focused.
-        assert_eq!(
-            tab.prev(None),
-            Some(tab.handles[tab.handles.len() - 1].clone())
-        );
+        assert_eq!(tab.prev(None), Some(untrap_handles[4].clone()));
 
         assert_eq!(
-            tab.next(Some(&tab.handles[0].id)),
-            Some(tab.handles[1].clone())
+            tab.next(Some(&untrap_handles[0].id)),
+            Some(untrap_handles[1].clone())
         );
         assert_eq!(
-            tab.next(Some(&tab.handles[1].id)),
-            Some(tab.handles[2].clone())
+            tab.next(Some(&untrap_handles[1].id)),
+            Some(untrap_handles[2].clone())
         );
         assert_eq!(
-            tab.next(Some(&tab.handles[2].id)),
-            Some(tab.handles[3].clone())
+            tab.next(Some(&untrap_handles[2].id)),
+            Some(untrap_handles[3].clone())
         );
         assert_eq!(
-            tab.next(Some(&tab.handles[3].id)),
-            Some(tab.handles[4].clone())
+            tab.next(Some(&untrap_handles[3].id)),
+            Some(untrap_handles[4].clone())
         );
         assert_eq!(
-            tab.next(Some(&tab.handles[4].id)),
-            Some(tab.handles[0].clone())
+            tab.next(Some(&untrap_handles[4].id)),
+            Some(untrap_handles[0].clone())
         );
 
         // prev
-        assert_eq!(tab.prev(None), Some(tab.handles[4].clone()));
+        assert_eq!(tab.prev(None), Some(untrap_handles[4].clone()));
         assert_eq!(
-            tab.prev(Some(&tab.handles[0].id)),
-            Some(tab.handles[4].clone())
+            tab.prev(Some(&untrap_handles[0].id)),
+            Some(untrap_handles[4].clone())
         );
         assert_eq!(
-            tab.prev(Some(&tab.handles[1].id)),
-            Some(tab.handles[0].clone())
+            tab.prev(Some(&untrap_handles[1].id)),
+            Some(untrap_handles[0].clone())
         );
         assert_eq!(
-            tab.prev(Some(&tab.handles[2].id)),
-            Some(tab.handles[1].clone())
+            tab.prev(Some(&untrap_handles[2].id)),
+            Some(untrap_handles[1].clone())
         );
         assert_eq!(
-            tab.prev(Some(&tab.handles[3].id)),
-            Some(tab.handles[2].clone())
+            tab.prev(Some(&untrap_handles[3].id)),
+            Some(untrap_handles[2].clone())
         );
         assert_eq!(
-            tab.prev(Some(&tab.handles[4].id)),
-            Some(tab.handles[3].clone())
+            tab.prev(Some(&untrap_handles[4].id)),
+            Some(untrap_handles[3].clone())
+        );
+
+        // next in trap1
+        assert_eq!(
+            tab.next(Some(&trap1_handles[0].id)),
+            Some(trap1_handles[1].clone())
+        );
+        assert_eq!(
+            tab.next(Some(&trap1_handles[1].id)),
+            Some(trap1_handles[2].clone())
+        );
+        assert_eq!(
+            tab.next(Some(&trap1_handles[2].id)),
+            Some(trap1_handles[0].clone())
+        );
+
+        // prev in trap1
+        assert_eq!(
+            tab.prev(Some(&trap1_handles[0].id)),
+            Some(trap1_handles[2].clone())
+        );
+        assert_eq!(
+            tab.prev(Some(&trap1_handles[1].id)),
+            Some(trap1_handles[0].clone())
+        );
+        assert_eq!(
+            tab.prev(Some(&trap1_handles[2].id)),
+            Some(trap1_handles[1].clone())
         );
     }
 }

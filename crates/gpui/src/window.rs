@@ -5,18 +5,18 @@ use crate::{
     AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Capslock,
     Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
     DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
-    FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero,
-    KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
-    LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
-    MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptButton, PromptLevel, Quad,
-    Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
-    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubscriberSet, Subscription, TabHandles, TaffyLayoutEngine, Task,
-    TextStyle, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
-    transparent_black,
+    FileDropEvent, FocusTrapId, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla,
+    InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
+    KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
+    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
+    PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams,
+    RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS, ScaledPixels,
+    Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubscriberSet, Subscription,
+    TabHandles, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement, TransformationMatrix,
+    Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, point,
+    prelude::*, px, rems, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -230,6 +230,7 @@ pub(crate) struct FocusRef {
     pub(crate) ref_count: AtomicUsize,
     pub(crate) tab_index: isize,
     pub(crate) tab_stop: bool,
+    pub(crate) focus_trap: Option<FocusTrapId>,
 }
 
 impl FocusId {
@@ -268,13 +269,22 @@ pub struct FocusHandle {
     handles: Arc<FocusMap>,
     /// The index of this element in the tab order.
     pub tab_index: isize,
+    /// The group of this element in the tab order, if any the tab navigation should cycle within.
     /// Whether this element can be focused by tab navigation.
     pub tab_stop: bool,
+    pub(crate) focus_trap: Option<FocusTrapId>,
 }
 
 impl std::fmt::Debug for FocusHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("FocusHandle({:?})", self.id))
+        if self.focus_trap.is_some() {
+            f.write_fmt(format_args!(
+                "FocusHandle({:?}, {:?})",
+                self.focus_trap, self.id
+            ))
+        } else {
+            f.write_fmt(format_args!("FocusHandle({:?})", self.id))
+        }
     }
 }
 
@@ -284,10 +294,12 @@ impl FocusHandle {
             ref_count: AtomicUsize::new(1),
             tab_index: 0,
             tab_stop: false,
+            focus_trap: None,
         });
 
         Self {
             id,
+            focus_trap: None,
             tab_index: 0,
             tab_stop: false,
             handles: handles.clone(),
@@ -302,6 +314,7 @@ impl FocusHandle {
         }
         Some(Self {
             id,
+            focus_trap: focus.focus_trap.clone(),
             tab_index: focus.tab_index,
             tab_stop: focus.tab_stop,
             handles: handles.clone(),
@@ -324,6 +337,14 @@ impl FocusHandle {
         self.tab_stop = tab_stop;
         if let Some(focus) = self.handles.write().get_mut(self.id) {
             focus.tab_stop = tab_stop;
+        }
+        self
+    }
+
+    pub(crate) fn focus_trap(mut self, focus_trap: &FocusTrapId) -> Self {
+        self.focus_trap = Some(focus_trap.clone());
+        if let Some(focus) = self.handles.write().get_mut(self.id) {
+            focus.focus_trap = Some(focus_trap.clone());
         }
         self
     }
@@ -874,6 +895,7 @@ pub struct Window {
     pub(crate) client_inset: Option<Pixels>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     inspector: Option<Entity<Inspector>>,
+    pub(crate) focus_trap_stack: Vec<FocusTrapId>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1188,6 +1210,7 @@ impl Window {
             image_cache_stack: Vec::new(),
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector: None,
+            focus_trap_stack: Vec::new(),
         })
     }
 
@@ -4325,6 +4348,24 @@ impl Window {
             }
         }
         f(&mut None, self)
+    }
+
+    /// Creates a new focus trap ID based on the current element ID stack.
+    pub(crate) fn focus_trap_id(&self) -> FocusTrapId {
+        FocusTrapId(Arc::new(GlobalElementId(self.element_id_stack.clone())))
+    }
+
+    /// Acquire a focus_trap.
+    /// Only valid for the duration of the provided closure.
+    pub(crate) fn with_focus_trap<R>(&mut self, enable: bool, f: impl FnOnce(&mut Self) -> R) -> R {
+        if enable {
+            self.focus_trap_stack.push(self.focus_trap_id());
+        }
+        let result = f(self);
+        if enable {
+            self.focus_trap_stack.pop();
+        }
+        result
     }
 
     #[cfg(any(feature = "inspector", debug_assertions))]
