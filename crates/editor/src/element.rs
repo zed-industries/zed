@@ -3260,6 +3260,48 @@ impl EditorElement {
             .collect()
     }
 
+    fn bg_segments_per_row(
+        rows: Range<DisplayRow>,
+        highlight_ranges: &[(Range<DisplayPoint>, Hsla)],
+    ) -> Vec<Vec<(Range<DisplayPoint>, Hsla)>> {
+        Self::clamped_highlight_ranges_per_row(rows, highlight_ranges)
+    }
+
+    fn clamped_highlight_ranges_per_row(
+        rows: Range<DisplayRow>,
+        ranges: &[(Range<DisplayPoint>, Hsla)],
+    ) -> Vec<Vec<(Range<DisplayPoint>, Hsla)>> {
+        if rows.start >= rows.end {
+            return Vec::new();
+        }
+        let mut buckets = vec![Vec::new(); rows.len()];
+        for (range, color) in ranges.iter().cloned() {
+            let covered_rows = if range.end.column() == 0 {
+                cmp::max(range.start.row(), rows.start)..cmp::min(range.end.row(), rows.end)
+            } else {
+                cmp::max(range.start.row(), rows.start)
+                    ..cmp::min(range.end.row().next_row(), rows.end)
+            };
+            for row in covered_rows.iter_rows() {
+                let seg_start = if row == range.start.row() {
+                    range.start
+                } else {
+                    DisplayPoint::new(row, 0)
+                };
+                let seg_end = if row == range.end.row() && range.end.column() != 0 {
+                    range.end
+                } else {
+                    DisplayPoint::new(row.next_row(), 0)
+                };
+                let ix = row.minus(rows.start) as usize;
+                if let Some(bucket) = buckets.get_mut(ix) {
+                    bucket.push((seg_start..seg_end, color));
+                }
+            }
+        }
+        buckets
+    }
+
     fn layout_lines(
         rows: Range<DisplayRow>,
         snapshot: &EditorSnapshot,
@@ -8451,6 +8493,9 @@ impl Element for EditorElement {
                         window,
                         cx,
                     );
+
+                    let _highlight_ranges_per_row =
+                        Self::bg_segments_per_row(start_row..end_row, &highlighted_ranges);
 
                     let mut line_layouts = Self::layout_lines(
                         start_row..end_row,
