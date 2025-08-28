@@ -197,7 +197,7 @@ impl AnthropicLanguageModelProvider {
         })
     }
 
-    pub fn api_key(cx: &mut App) -> Task<Result<ApiKey>> {
+    pub fn api_key(cx: &mut App) -> Task<Result<ApiKey, AuthenticateError>> {
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
         let api_url = AllLanguageModelSettings::get_global(cx)
             .anthropic
