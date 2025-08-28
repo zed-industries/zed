@@ -5,7 +5,7 @@ use crate::acp::AcpConnection;
 use crate::{AgentServer, AgentServerDelegate};
 use acp_thread::{AgentConnection, LoadError};
 use anyhow::Result;
-use gpui::{App, SharedString, Task};
+use gpui::{App, AppContext as _, SharedString, Task};
 use language_models::provider::google::GoogleLanguageModelProvider;
 use settings::SettingsStore;
 
@@ -37,23 +37,32 @@ impl AgentServer for Gemini {
     ) -> Task<Result<Rc<dyn AgentConnection>>> {
         let root_dir = root_dir.to_path_buf();
         let server_name = self.name();
-        cx.spawn(async move |cx| {
-            let settings = cx.read_global(|settings: &SettingsStore, _| {
-                settings.get::<AllAgentServersSettings>(None).gemini.clone()
-            })?;
+        let settings = cx.read_global(|settings: &SettingsStore, _| {
+            settings.get::<AllAgentServersSettings>(None).gemini.clone()
+        });
 
-            let mut command = cx
-                .update(|cx| {
+        cx.spawn(async move |cx| {
+            let ignore_system_version = settings
+                .as_ref()
+                .and_then(|settings| settings.ignore_system_version)
+                .unwrap_or(true);
+            let mut command = if let Some(settings) = settings
+                && let Some(command) = settings.custom_command()
+            {
+                command
+            } else {
+                cx.update(|cx| {
                     delegate.get_or_npm_install_builtin_agent(
                         Self::BINARY_NAME.into(),
                         Self::PACKAGE_NAME.into(),
                         format!("node_modules/{}/dist/index.js", Self::PACKAGE_NAME).into(),
-                        settings,
-                        Some("0.2.1".parse().unwrap()),
+                        ignore_system_version,
+                        Some(Self::MINIMUM_VERSION.parse().unwrap()),
                         cx,
                     )
                 })?
-                .await?;
+                .await?
+            };
             command.args.push("--experimental-acp".into());
 
             if let Some(api_key) = cx.update(GoogleLanguageModelProvider::api_key)?.await.ok() {
