@@ -406,7 +406,7 @@ mod tests {
 
         let terminal = project
             .update(cx, |project: &mut Project, cx| {
-                project.create_terminal_shell(None, cx, None)
+                project.create_terminal_shell(None, cx)
             })
             .await
             .expect("Failed to create a terminal");

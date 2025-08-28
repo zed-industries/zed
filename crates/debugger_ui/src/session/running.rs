@@ -1042,13 +1042,6 @@ impl RunningState {
                         project.create_terminal_task(
                             task_with_shell.clone(),
                             cx,
-                            project
-                                .active_entry()
-                                .and_then(|entry_id| project.worktree_id_for_entry(entry_id, cx))
-                                .map(|worktree_id| project::ProjectPath {
-                                    worktree_id,
-                                    path: Arc::from(std::path::Path::new("")),
-                                }),
                         )
                     })?.await?;
 
@@ -1217,19 +1210,8 @@ impl RunningState {
         let workspace = self.workspace.clone();
         let weak_project = project.downgrade();
 
-        let terminal_task = project.update(cx, |project, cx| {
-            project.create_terminal_task(
-                kind,
-                cx,
-                project
-                    .active_entry()
-                    .and_then(|entry_id| project.worktree_id_for_entry(entry_id, cx))
-                    .map(|worktree_id| project::ProjectPath {
-                        worktree_id,
-                        path: Arc::from(std::path::Path::new("")),
-                    }),
-            )
-        });
+        let terminal_task =
+            project.update(cx, |project, cx| project.create_terminal_task(kind, cx));
         let terminal_task = cx.spawn_in(window, async move |_, cx| {
             let terminal = terminal_task.await?;
 

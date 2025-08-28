@@ -46,9 +46,16 @@ impl Project {
         &mut self,
         spawn_task: SpawnInTerminal,
         cx: &mut Context<Self>,
-        project_path_context: Option<ProjectPath>,
     ) -> Task<Result<Entity<Terminal>>> {
         let is_via_remote = self.remote_client.is_some();
+        let project_path_context = self
+            .active_entry()
+            .and_then(|entry_id| self.worktree_id_for_entry(entry_id, cx))
+            .or_else(|| self.visible_worktrees(cx).next().map(|wt| wt.read(cx).id()))
+            .map(|worktree_id| ProjectPath {
+                worktree_id,
+                path: Arc::from(Path::new("")),
+            });
 
         let path: Option<Arc<Path>> = if let Some(cwd) = &spawn_task.cwd {
             if is_via_remote {
@@ -225,8 +232,15 @@ impl Project {
         &mut self,
         cwd: Option<PathBuf>,
         cx: &mut Context<Self>,
-        project_path_context: Option<ProjectPath>,
     ) -> Task<Result<Entity<Terminal>>> {
+        let project_path_context = self
+            .active_entry()
+            .and_then(|entry_id| self.worktree_id_for_entry(entry_id, cx))
+            .or_else(|| self.visible_worktrees(cx).next().map(|wt| wt.read(cx).id()))
+            .map(|worktree_id| ProjectPath {
+                worktree_id,
+                path: Arc::from(Path::new("")),
+            });
         let path = cwd.map(|p| Arc::from(&*p));
         let is_via_remote = self.remote_client.is_some();
 

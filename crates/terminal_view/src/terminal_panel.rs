@@ -1,11 +1,4 @@
-use std::{
-    cmp,
-    ops::ControlFlow,
-    path::{Path, PathBuf},
-    process::ExitStatus,
-    sync::Arc,
-    time::Duration,
-};
+use std::{cmp, ops::ControlFlow, path::PathBuf, process::ExitStatus, sync::Arc, time::Duration};
 
 use crate::{
     TerminalView, default_working_directory,
@@ -440,17 +433,7 @@ impl TerminalPanel {
                         cx,
                         || working_directory,
                     )),
-                    None => project.create_terminal_shell(
-                        working_directory,
-                        cx,
-                        project
-                            .active_entry()
-                            .and_then(|entry_id| project.worktree_id_for_entry(entry_id, cx))
-                            .map(|worktree_id| project::ProjectPath {
-                                worktree_id,
-                                path: Arc::from(Path::new("")),
-                            }),
-                    ),
+                    None => project.create_terminal_shell(working_directory, cx),
                 })
                 .ok()?
                 .await
@@ -603,17 +586,7 @@ impl TerminalPanel {
                 .workspace
                 .update(cx, |workspace, cx| {
                     Self::add_center_terminal(workspace, window, cx, |project, cx| {
-                        project.create_terminal_task(
-                            spawn_task,
-                            cx,
-                            project
-                                .active_entry()
-                                .and_then(|entry_id| project.worktree_id_for_entry(entry_id, cx))
-                                .map(|worktree_id| project::ProjectPath {
-                                    worktree_id,
-                                    path: Arc::from(Path::new("")),
-                                }),
-                        )
+                        project.create_terminal_task(spawn_task, cx)
                     })
                 })
                 .unwrap_or_else(|e| Task::ready(Err(e))),
@@ -753,19 +726,7 @@ impl TerminalPanel {
             })?;
             let project = workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
             let terminal = project
-                .update(cx, |project, cx| {
-                    project.create_terminal_task(
-                        task,
-                        cx,
-                        project
-                            .active_entry()
-                            .and_then(|entry_id| project.worktree_id_for_entry(entry_id, cx))
-                            .map(|worktree_id| project::ProjectPath {
-                                worktree_id,
-                                path: Arc::from(Path::new("")),
-                            }),
-                    )
-                })?
+                .update(cx, |project, cx| project.create_terminal_task(task, cx))?
                 .await?;
             let result = workspace.update_in(cx, |workspace, window, cx| {
                 let terminal_view = Box::new(cx.new(|cx| {
@@ -824,19 +785,7 @@ impl TerminalPanel {
             })?;
             let project = workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
             let terminal = project
-                .update(cx, |project, cx| {
-                    project.create_terminal_shell(
-                        cwd,
-                        cx,
-                        project
-                            .active_entry()
-                            .and_then(|entry_id| project.worktree_id_for_entry(entry_id, cx))
-                            .map(|worktree_id| project::ProjectPath {
-                                worktree_id,
-                                path: Arc::from(Path::new("")),
-                            }),
-                    )
-                })?
+                .update(cx, |project, cx| project.create_terminal_shell(cwd, cx))?
                 .await?;
             let result = workspace.update_in(cx, |workspace, window, cx| {
                 let terminal_view = Box::new(cx.new(|cx| {
@@ -945,17 +894,7 @@ impl TerminalPanel {
             })??;
             let new_terminal = project
                 .update(cx, |project, cx| {
-                    project.create_terminal_task(
-                        spawn_task,
-                        cx,
-                        project
-                            .active_entry()
-                            .and_then(|entry_id| project.worktree_id_for_entry(entry_id, cx))
-                            .map(|worktree_id| project::ProjectPath {
-                                worktree_id,
-                                path: Arc::from(Path::new("")),
-                            }),
-                    )
+                    project.create_terminal_task(spawn_task, cx)
                 })?
                 .await?;
             terminal_to_replace.update_in(cx, |terminal_to_replace, window, cx| {
