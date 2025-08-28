@@ -11702,6 +11702,20 @@ impl LspStore {
                 "workspace/didChangeConfiguration" => {
                     // Ignore payload since we notify clients of setting changes unconditionally, relying on them pulling the latest settings.
                 }
+                "workspace/didChangeWorkspaceFolders" => {
+                    // In this case register options is an empty object, we can ignore it
+                    let caps = lsp::WorkspaceFoldersServerCapabilities {
+                        supported: Some(true),
+                        change_notifications: Some(OneOf::Right(reg.id)),
+                    };
+                    server.update_capabilities(|capabilities| {
+                        capabilities
+                            .workspace
+                            .get_or_insert_default()
+                            .workspace_folders = Some(caps);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
                 "workspace/symbol" => {
                     let options = parse_register_capabilities(reg)?;
                     server.update_capabilities(|capabilities| {
@@ -11778,17 +11792,15 @@ impl LspStore {
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/codeAction" => {
-                    if let Some(options) = reg
-                        .register_options
-                        .map(serde_json::from_value)
-                        .transpose()?
-                    {
-                        server.update_capabilities(|capabilities| {
-                            capabilities.code_action_provider =
-                                Some(lsp::CodeActionProviderCapability::Options(options));
-                        });
-                        notify_server_capabilities_updated(&server, cx);
-                    }
+                    let options = parse_register_capabilities(reg)?;
+                    let provider = match options {
+                        OneOf::Left(value) => lsp::CodeActionProviderCapability::Simple(value),
+                        OneOf::Right(caps) => caps,
+                    };
+                    server.update_capabilities(|capabilities| {
+                        capabilities.code_action_provider = Some(provider);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/definition" => {
                     let options = parse_register_capabilities(reg)?;
@@ -11810,16 +11822,15 @@ impl LspStore {
                     }
                 }
                 "textDocument/hover" => {
-                    if let Some(caps) = reg
-                        .register_options
-                        .map(serde_json::from_value)
-                        .transpose()?
-                    {
-                        server.update_capabilities(|capabilities| {
-                            capabilities.hover_provider = Some(caps);
-                        });
-                        notify_server_capabilities_updated(&server, cx);
-                    }
+                    let options = parse_register_capabilities(reg)?;
+                    let provider = match options {
+                        OneOf::Left(value) => lsp::HoverProviderCapability::Simple(value),
+                        OneOf::Right(caps) => caps,
+                    };
+                    server.update_capabilities(|capabilities| {
+                        capabilities.hover_provider = Some(provider);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/signatureHelp" => {
                     if let Some(caps) = reg
@@ -11904,16 +11915,15 @@ impl LspStore {
                     }
                 }
                 "textDocument/documentColor" => {
-                    if let Some(caps) = reg
-                        .register_options
-                        .map(serde_json::from_value)
-                        .transpose()?
-                    {
-                        server.update_capabilities(|capabilities| {
-                            capabilities.color_provider = Some(caps);
-                        });
-                        notify_server_capabilities_updated(&server, cx);
-                    }
+                    let options = parse_register_capabilities(reg)?;
+                    let provider = match options {
+                        OneOf::Left(value) => lsp::ColorProviderCapability::Simple(value),
+                        OneOf::Right(caps) => caps,
+                    };
+                    server.update_capabilities(|capabilities| {
+                        capabilities.color_provider = Some(provider);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
                 }
                 _ => log::warn!("unhandled capability registration: {reg:?}"),
             }
@@ -11947,6 +11957,18 @@ impl LspStore {
                 }
                 "workspace/didChangeConfiguration" => {
                     // Ignore payload since we notify clients of setting changes unconditionally, relying on them pulling the latest settings.
+                }
+                "workspace/didChangeWorkspaceFolders" => {
+                    server.update_capabilities(|capabilities| {
+                        capabilities
+                            .workspace
+                            .get_or_insert_with(|| lsp::WorkspaceServerCapabilities {
+                                workspace_folders: None,
+                                file_operations: None,
+                            })
+                            .workspace_folders = None;
+                    });
+                    notify_server_capabilities_updated(&server, cx);
                 }
                 "workspace/symbol" => {
                     server.update_capabilities(|capabilities| {

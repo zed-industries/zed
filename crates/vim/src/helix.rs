@@ -1,8 +1,10 @@
 use editor::display_map::DisplaySnapshot;
-use editor::{DisplayPoint, Editor, SelectionEffects, ToOffset, ToPoint, movement};
+use editor::{
+    DisplayPoint, Editor, HideMouseCursorOrigin, SelectionEffects, ToOffset, ToPoint, movement,
+};
 use gpui::{Action, actions};
 use gpui::{Context, Window};
-use language::{CharClassifier, CharKind};
+use language::{CharClassifier, CharKind, Point};
 use text::{Bias, SelectionGoal};
 
 use crate::motion;
@@ -23,14 +25,20 @@ actions!(
         HelixInsert,
         /// Appends at the end of the selection.
         HelixAppend,
+        /// Goes to the location of the last modification.
+        HelixGotoLastModification,
+        /// Select entire line or multiple lines, extending downwards.
+        HelixSelectLine,
     ]
 );
 
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::helix_normal_after);
+    Vim::action(editor, cx, Vim::helix_select_lines);
     Vim::action(editor, cx, Vim::helix_insert);
     Vim::action(editor, cx, Vim::helix_append);
     Vim::action(editor, cx, Vim::helix_yank);
+    Vim::action(editor, cx, Vim::helix_goto_last_modification);
 }
 
 impl Vim {
@@ -430,6 +438,56 @@ impl Vim {
         });
         self.switch_mode(Mode::HelixNormal, true, window, cx);
     }
+
+    pub fn helix_goto_last_modification(
+        &mut self,
+        _: &HelixGotoLastModification,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.jump(".".into(), false, false, window, cx);
+    }
+
+    pub fn helix_select_lines(
+        &mut self,
+        _: &HelixSelectLine,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let count = Vim::take_count(cx).unwrap_or(1);
+        self.update_editor(cx, |_, editor, cx| {
+            editor.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
+            let display_map = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
+            let mut selections = editor.selections.all::<Point>(cx);
+            let max_point = display_map.buffer_snapshot.max_point();
+            let buffer_snapshot = &display_map.buffer_snapshot;
+
+            for selection in &mut selections {
+                // Start always goes to column 0 of the first selected line
+                let start_row = selection.start.row;
+                let current_end_row = selection.end.row;
+
+                // Check if cursor is on empty line by checking first character
+                let line_start_offset = buffer_snapshot.point_to_offset(Point::new(start_row, 0));
+                let first_char = buffer_snapshot.chars_at(line_start_offset).next();
+                let extra_line = if first_char == Some('\n') { 1 } else { 0 };
+
+                let end_row = current_end_row + count as u32 + extra_line;
+
+                selection.start = Point::new(start_row, 0);
+                selection.end = if end_row > max_point.row {
+                    max_point
+                } else {
+                    Point::new(end_row, 0)
+                };
+                selection.reversed = false;
+            }
+
+            editor.change_selections(Default::default(), window, cx, |s| {
+                s.select(selections);
+            });
+        });
+    }
 }
 
 #[cfg(test)]
@@ -441,6 +499,7 @@ mod test {
     #[gpui::test]
     async fn test_word_motions(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
         // «
         // ˇ
         // »
@@ -502,6 +561,7 @@ mod test {
     #[gpui::test]
     async fn test_delete(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
 
         // test delete a selection
         cx.set_state(
@@ -582,6 +642,7 @@ mod test {
     #[gpui::test]
     async fn test_f_and_t(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
 
         cx.set_state(
             indoc! {"
@@ -635,6 +696,7 @@ mod test {
     #[gpui::test]
     async fn test_newline_char(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
 
         cx.set_state("aa«\nˇ»bb cc", Mode::HelixNormal);
 
@@ -652,6 +714,7 @@ mod test {
     #[gpui::test]
     async fn test_insert_selected(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
         cx.set_state(
             indoc! {"
             «The ˇ»quick brown
@@ -674,6 +737,7 @@ mod test {
     #[gpui::test]
     async fn test_append(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
         // test from the end of the selection
         cx.set_state(
             indoc! {"
@@ -716,6 +780,7 @@ mod test {
     #[gpui::test]
     async fn test_replace(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
 
         // No selection (single character)
         cx.set_state("ˇaa", Mode::HelixNormal);
@@ -762,5 +827,211 @@ mod test {
         cx.simulate_keystrokes("y");
         cx.shared_clipboard().assert_eq("worl");
         cx.assert_state("hello «worlˇ»d", Mode::HelixNormal);
+    }
+    #[gpui::test]
+    async fn test_shift_r_paste(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // First copy some text to clipboard
+        cx.set_state("«hello worldˇ»", Mode::HelixNormal);
+        cx.simulate_keystrokes("y");
+
+        // Test paste with shift-r on single cursor
+        cx.set_state("foo ˇbar", Mode::HelixNormal);
+        cx.simulate_keystrokes("shift-r");
+
+        cx.assert_state("foo hello worldˇbar", Mode::HelixNormal);
+
+        // Test paste with shift-r on selection
+        cx.set_state("foo «barˇ» baz", Mode::HelixNormal);
+        cx.simulate_keystrokes("shift-r");
+
+        cx.assert_state("foo hello worldˇ baz", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_insert_mode_stickiness(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // Make a modification at a specific location
+        cx.set_state("ˇhello", Mode::HelixNormal);
+        assert_eq!(cx.mode(), Mode::HelixNormal);
+        cx.simulate_keystrokes("i");
+        assert_eq!(cx.mode(), Mode::Insert);
+        cx.simulate_keystrokes("escape");
+        assert_eq!(cx.mode(), Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_goto_last_modification(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // Make a modification at a specific location
+        cx.set_state("line one\nline ˇtwo\nline three", Mode::HelixNormal);
+        cx.assert_state("line one\nline ˇtwo\nline three", Mode::HelixNormal);
+        cx.simulate_keystrokes("i");
+        cx.simulate_keystrokes("escape");
+        cx.simulate_keystrokes("i");
+        cx.simulate_keystrokes("m o d i f i e d space");
+        cx.simulate_keystrokes("escape");
+
+        // TODO: this fails, because state is no longer helix
+        cx.assert_state(
+            "line one\nline modified ˇtwo\nline three",
+            Mode::HelixNormal,
+        );
+
+        // Move cursor away from the modification
+        cx.simulate_keystrokes("up");
+
+        // Use "g ." to go back to last modification
+        cx.simulate_keystrokes("g .");
+
+        // Verify we're back at the modification location and still in HelixNormal mode
+        cx.assert_state(
+            "line one\nline modifiedˇ two\nline three",
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_lines(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state(
+            "line one\nline ˇtwo\nline three\nline four",
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("2 x");
+        cx.assert_state(
+            "line one\n«line two\nline three\nˇ»line four",
+            Mode::HelixNormal,
+        );
+
+        // Test extending existing line selection
+        cx.set_state(
+            indoc! {"
+            li«ˇne one
+            li»ne two
+            line three
+            line four"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("x");
+        cx.assert_state(
+            indoc! {"
+            «line one
+            line two
+            ˇ»line three
+            line four"},
+            Mode::HelixNormal,
+        );
+
+        // Pressing x in empty line, select next line (because helix considers cursor a selection)
+        cx.set_state(
+            indoc! {"
+            line one
+            ˇ
+            line three
+            line four"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("x");
+        cx.assert_state(
+            indoc! {"
+            line one
+            «
+            line three
+            ˇ»line four"},
+            Mode::HelixNormal,
+        );
+
+        // Empty line with count selects extra + count lines
+        cx.set_state(
+            indoc! {"
+            line one
+            ˇ
+            line three
+            line four
+            line five"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("2 x");
+        cx.assert_state(
+            indoc! {"
+            line one
+            «
+            line three
+            line four
+            ˇ»line five"},
+            Mode::HelixNormal,
+        );
+
+        // Compare empty vs non-empty line behavior
+        cx.set_state(
+            indoc! {"
+            ˇnon-empty line
+            line two
+            line three"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("x");
+        cx.assert_state(
+            indoc! {"
+            «non-empty line
+            ˇ»line two
+            line three"},
+            Mode::HelixNormal,
+        );
+
+        // Same test but with empty line - should select one extra
+        cx.set_state(
+            indoc! {"
+            ˇ
+            line two
+            line three"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("x");
+        cx.assert_state(
+            indoc! {"
+            «
+            line two
+            ˇ»line three"},
+            Mode::HelixNormal,
+        );
+
+        // Test selecting multiple lines with count
+        cx.set_state(
+            indoc! {"
+            ˇline one
+            line two
+            line threeˇ
+            line four
+            line five"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("x");
+        cx.assert_state(
+            indoc! {"
+            «line one
+            ˇ»line two
+            «line three
+            ˇ»line four
+            line five"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("x");
+        cx.assert_state(
+            indoc! {"
+            «line one
+            line two
+            line three
+            line four
+            ˇ»line five"},
+            Mode::HelixNormal,
+        );
     }
 }

@@ -1,30 +1,59 @@
 # Zed Releases
 
-Zed currently maintains two public releases for macOS:
-
-- [Stable](https://zed.dev/download): This is the primary version that people download and use.
-- [Preview](https://zed.dev/releases/preview): which receives updates a week ahead of Stable for early adopters.
-
-Typically we cut a new minor release every Wednesday. The current Preview becomes Stable, and the new Preview contains everything on main up until that point.
-
-If bugs are found and fixed during the week, they may be cherry-picked into the release branches and so new patch versions for preview and stable can become available throughout the week.
+Read about Zed's release channels [here](https://zed.dev/faq#what-are-the-release-channels).
 
 ## Wednesday release process
 
-You will need write access to the Zed repository to do this:
+You will need write access to the Zed repository to do this.
 
-- Checkout `main` and ensure your working copy is clean.
-- Run `./script/bump-zed-minor-versions` and push the tags
-  and branches as instructed.
-- Wait for the builds to appear on [the Releases tab on GitHub](https://github.com/zed-industries/zed/releases) (typically takes around 30 minutes)
-- While you're waiting:
-  - Start creating the new release notes for preview. You can start with the output of `./script/get-preview-channel-changes`.
-  - Start drafting the release tweets.
-- Once the builds are ready:
-  - Copy the release notes from the previous Preview release(s) to the current Stable release.
-  - Download the artifacts for each release and test that you can run them locally.
-  - Publish the releases on GitHub.
-  - Tweet the tweets (Credentials are in 1Password).
+Credentials for various services used in this process can be found in 1Password.
+
+---
+
+1. Checkout `main` and ensure your working copy is clean.
+
+1. Run `git fetch && git pull` to ensure you have the latest commits locally.
+
+1. Run `git fetch --tags --force` to forcibly ensure your local tags are in sync with the remote.
+
+1. Run `./script/get-stable-channel-release-notes`.
+
+   - Follow the instructions at the end of the script and aggregate the release notes into one structure.
+
+1. Run `./script/bump-zed-minor-versions`.
+
+   - Push the tags and branches as instructed.
+
+1. Run `./script/get-preview-channel-changes`.
+
+   - Take the script's output and build release notes by organizing each release note line into a category.
+   - Use a prior release for the initial outline.
+   - Make sure to append the `Credit` line, if present, to the end of the release note line.
+
+1. Once release drafts are up on [GitHub Releases](https://github.com/zed-industries/zed/releases), paste both preview and stable release notes into each and **save**.
+
+   - **Do not publish the drafts, yet.**
+
+1. Check the release assets.
+
+   - Ensure the stable and preview release jobs have finished without error.
+   - Ensure each build has the proper number of assets—releases currently have 10 assets each.
+   - Download the artifacts for each release and test that you can run them locally.
+
+1. Publish each build, one at a time.
+
+   - Use [Vercel](https://vercel.com/zed-industries/zed-dev) to check the status of each build.
+
+1. Publish the release email that has been sent to [Kit](https://kit.com).
+
+   - Make sure to double check that the email is correct before publishing.
+   - We sometimes correct things here and there that didn't translate from GitHub's renderer to Kit's.
+
+1. Build social media posts based on the popular items in stable.
+
+   - You can use the [prior week's post chain](https://zed.dev/channel/tweets-23331) as your outline.
+   - Stage the copy and assets using [Buffer](https://buffer.com), for both X and BlueSky.
+   - Publish both, one at a time, ensuring both are posted to each respective platform.
 
 ## Patch release process
 

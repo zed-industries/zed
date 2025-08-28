@@ -655,6 +655,8 @@
       //    "never"
       "show": "always"
     },
+    // Whether to enable drag-and-drop operations in the project panel.
+    "drag_and_drop": true,
     // Whether to hide the root entry when only one folder is open in the window.
     "hide_root": false
   },

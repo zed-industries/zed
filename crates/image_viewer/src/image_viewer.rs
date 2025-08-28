@@ -401,12 +401,19 @@ pub fn init(cx: &mut App) {
 mod persistence {
     use std::path::PathBuf;
 
-    use db::{define_connection, query, sqlez_macros::sql};
+    use db::{
+        query,
+        sqlez::{domain::Domain, thread_safe_connection::ThreadSafeConnection},
+        sqlez_macros::sql,
+    };
     use workspace::{ItemId, WorkspaceDb, WorkspaceId};
 
-    define_connection! {
-        pub static ref IMAGE_VIEWER: ImageViewerDb<WorkspaceDb> =
-            &[sql!(
+    pub struct ImageViewerDb(ThreadSafeConnection);
+
+    impl Domain for ImageViewerDb {
+        const NAME: &str = stringify!(ImageViewerDb);
+
+        const MIGRATIONS: &[&str] = &[sql!(
                 CREATE TABLE image_viewers (
                     workspace_id INTEGER,
                     item_id INTEGER UNIQUE,
@@ -417,8 +424,10 @@ mod persistence {
                     FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
                     ON DELETE CASCADE
                 ) STRICT;
-            )];
+        )];
     }
+
+    db::static_connection!(IMAGE_VIEWER, ImageViewerDb, [WorkspaceDb]);
 
     impl ImageViewerDb {
         query! {

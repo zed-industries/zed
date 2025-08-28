@@ -215,6 +215,7 @@ pub enum IconName {
     Tab,
     Terminal,
     TerminalAlt,
+    TerminalGhost,
     TextSnippet,
     TextThread,
     Thread,

@@ -63,6 +63,7 @@ fn build_window_options(display_id: DisplayId, bounds: Bounds<Pixels>) -> Window
         window_min_size: None,
         window_decorations: None,
         tabbing_identifier: None,
+        ..Default::default()
     }
 }
 

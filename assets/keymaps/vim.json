@@ -428,12 +428,14 @@
       "g h": "vim::StartOfLine",
       "g s": "vim::FirstNonWhitespace", // "g s" default behavior is "space s"
       "g e": "vim::EndOfDocument",
+      "g .": "vim::HelixGotoLastModification", // go to last modification
       "g r": "editor::FindAllReferences", // zed specific
       "g t": "vim::WindowTop",
       "g c": "vim::WindowMiddle",
       "g b": "vim::WindowBottom",
 
-      "x": "editor::SelectLine",
+      "shift-r": "editor::Paste",
+      "x": "vim::HelixSelectLine",
       "shift-x": "editor::SelectLine",
       "%": "editor::SelectAll",
       // Window mode

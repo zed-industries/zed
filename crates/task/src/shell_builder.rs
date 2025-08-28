@@ -36,7 +36,7 @@ impl ShellKind {
         } else if program == "csh" {
             ShellKind::Csh
         } else {
-            // Someother shell detected, the user might install and use a
+            // Some other shell detected, the user might install and use a
             // unix-like shell.
             ShellKind::Posix
         }
@@ -203,14 +203,15 @@ pub struct ShellBuilder {
 impl ShellBuilder {
     /// Create a new ShellBuilder as configured.
     pub fn new(remote_system_shell: Option<&str>, shell: &Shell) -> Self {
-        let (program, args) = match shell {
-            Shell::System => match remote_system_shell {
-                Some(remote_shell) => (remote_shell.to_string(), Vec::new()),
-                None => (system_shell(), Vec::new()),
+        let (program, args) = match remote_system_shell {
+            Some(program) => (program.to_string(), Vec::new()),
+            None => match shell {
+                Shell::System => (system_shell(), Vec::new()),
+                Shell::Program(shell) => (shell.clone(), Vec::new()),
+                Shell::WithArguments { program, args, .. } => (program.clone(), args.clone()),
             },
-            Shell::Program(shell) => (shell.clone(), Vec::new()),
-            Shell::WithArguments { program, args, .. } => (program.clone(), args.clone()),
         };
+
         let kind = ShellKind::new(&program);
         Self {
             program,

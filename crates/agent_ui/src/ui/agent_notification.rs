@@ -63,6 +63,7 @@ impl AgentNotification {
             window_min_size: None,
             window_decorations: Some(WindowDecorations::Client),
             tabbing_identifier: None,
+            ..Default::default()
         }
     }
 }
