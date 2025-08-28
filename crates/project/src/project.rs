@@ -1481,7 +1481,7 @@ impl Project {
         })?;
 
         let lsp_store = cx.new(|cx| {
-            let mut lsp_store = LspStore::new_remote(
+            LspStore::new_remote(
                 buffer_store.clone(),
                 worktree_store.clone(),
                 languages.clone(),
@@ -1489,12 +1489,7 @@ impl Project {
                 remote_id,
                 fs.clone(),
                 cx,
-            );
-            lsp_store.set_language_server_statuses_from_proto(
-                response.payload.language_servers,
-                response.payload.language_server_capabilities,
-            );
-            lsp_store
+            )
         })?;
 
         let task_store = cx.new(|cx| {
@@ -1528,7 +1523,7 @@ impl Project {
             )
         })?;
 
-        let this = cx.new(|cx| {
+        let project = cx.new(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
 
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
@@ -1559,7 +1554,7 @@ impl Project {
 
             cx.subscribe(&dap_store, Self::on_dap_store_event).detach();
 
-            let mut this = Self {
+            let mut project = Self {
                 buffer_ordered_messages_tx: tx,
                 buffer_store: buffer_store.clone(),
                 image_store,
@@ -1602,12 +1597,24 @@ impl Project {
                 toolchain_store: None,
                 agent_location: None,
             };
-            this.set_role(role, cx);
+            project.set_role(role, cx);
             for worktree in worktrees {
-                this.add_worktree(&worktree, cx);
+                project.add_worktree(&worktree, cx);
             }
-            this
+            project
         })?;
+
+        let weak_project = project.downgrade();
+        lsp_store
+            .update(&mut cx, |lsp_store, cx| {
+                lsp_store.set_language_server_statuses_from_proto(
+                    weak_project,
+                    response.payload.language_servers,
+                    response.payload.language_server_capabilities,
+                    cx,
+                );
+            })
+            .ok();
 
         let subscriptions = subscriptions
             .into_iter()
@@ -1624,7 +1631,7 @@ impl Project {
                 EntitySubscription::SettingsObserver(subscription) => {
                     subscription.set_entity(&settings_observer, &cx)
                 }
-                EntitySubscription::Project(subscription) => subscription.set_entity(&this, &cx),
+                EntitySubscription::Project(subscription) => subscription.set_entity(&project, &cx),
                 EntitySubscription::LspStore(subscription) => {
                     subscription.set_entity(&lsp_store, &cx)
                 }
@@ -1644,13 +1651,13 @@ impl Project {
             .update(&mut cx, |user_store, cx| user_store.get_users(user_ids, cx))?
             .await?;
 
-        this.update(&mut cx, |this, cx| {
+        project.update(&mut cx, |this, cx| {
             this.set_collaborators_from_proto(response.payload.collaborators, cx)?;
             this.client_subscriptions.extend(subscriptions);
             anyhow::Ok(())
         })??;
 
-        Ok(this)
+        Ok(project)
     }
 
     fn new_search_history() -> SearchHistory {
@@ -2321,10 +2328,14 @@ impl Project {
         self.join_project_response_message_id = message_id;
         self.set_worktrees_from_proto(message.worktrees, cx)?;
         self.set_collaborators_from_proto(message.collaborators, cx)?;
-        self.lsp_store.update(cx, |lsp_store, _| {
+
+        let project = cx.weak_entity();
+        self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.set_language_server_statuses_from_proto(
+                project,
                 message.language_servers,
                 message.language_server_capabilities,
+                cx,
             )
         });
         self.enqueue_buffer_ordered_message(BufferOrderedMessage::Resync)

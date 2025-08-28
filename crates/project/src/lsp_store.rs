@@ -18,12 +18,15 @@ pub mod rust_analyzer_ext;
 use crate::{
     CodeAction, ColorPresentation, Completion, CompletionResponse, CompletionSource,
     CoreCompletion, DocumentColor, Hover, InlayHint, LocationLink, LspAction, LspPullDiagnostics,
-    ManifestProvidersStore, ProjectItem, ProjectPath, ProjectTransaction, PulledDiagnostics,
-    ResolveState, Symbol,
+    ManifestProvidersStore, Project, ProjectItem, ProjectPath, ProjectTransaction,
+    PulledDiagnostics, ResolveState, Symbol,
     buffer_store::{BufferStore, BufferStoreEvent},
     environment::ProjectEnvironment,
     lsp_command::{self, *},
-    lsp_store,
+    lsp_store::{
+        self,
+        log_store::{GlobalLogStore, LanguageServerKind},
+    },
     manifest_tree::{
         LanguageServerTree, LanguageServerTreeNode, LaunchDisposition, ManifestQueryDelegate,
         ManifestTree,
@@ -7512,9 +7515,15 @@ impl LspStore {
 
     pub(crate) fn set_language_server_statuses_from_proto(
         &mut self,
+        project: WeakEntity<Project>,
         language_servers: Vec<proto::LanguageServer>,
         server_capabilities: Vec<String>,
+        cx: &mut Context<Self>,
     ) {
+        let lsp_logs = cx
+            .try_global::<GlobalLogStore>()
+            .map(|lsp_store| lsp_store.0.clone());
+
         self.language_server_statuses = language_servers
             .into_iter()
             .zip(server_capabilities)
@@ -7524,14 +7533,34 @@ impl LspStore {
                     self.lsp_server_capabilities
                         .insert(server_id, server_capabilities);
                 }
+
+                let name = LanguageServerName::from_proto(server.name);
+                let worktree = server.worktree_id.map(WorktreeId::from_proto);
+
+                if let Some(lsp_logs) = &lsp_logs {
+                    lsp_logs.update(cx, |lsp_logs, cx| {
+                        lsp_logs.add_language_server(
+                            // Only remote clients get their language servers set from proto
+                            LanguageServerKind::Remote {
+                                project: project.clone(),
+                            },
+                            server_id,
+                            Some(name.clone()),
+                            worktree,
+                            None,
+                            cx,
+                        );
+                    });
+                }
+
                 (
                     server_id,
                     LanguageServerStatus {
-                        name: LanguageServerName::from_proto(server.name),
+                        name,
                         pending_work: Default::default(),
                         has_pending_diagnostic_updates: false,
                         progress_tokens: Default::default(),
-                        worktree: server.worktree_id.map(WorktreeId::from_proto),
+                        worktree,
                     },
                 )
             })

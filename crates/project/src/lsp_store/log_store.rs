@@ -292,7 +292,7 @@ impl LogStore {
                                 buffer_id,
                                 name,
                                 ..
-                            } if project.read(cx).is_via_collab() => {
+                            } => {
                                 let worktree_id = project
                                     .read(cx)
                                     .buffer_for_id(*buffer_id, cx)
