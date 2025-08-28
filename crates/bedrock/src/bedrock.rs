@@ -54,11 +54,7 @@ pub async fn stream_completion(
         )])));
     }
 
-    if request
-        .tools
-        .as_ref()
-        .map_or(false, |t| !t.tools.is_empty())
-    {
+    if request.tools.as_ref().is_some_and(|t| !t.tools.is_empty()) {
         response = response.set_tool_config(request.tools);
     }
 

@@ -213,38 +213,37 @@ impl Connection {
 
 fn parse_alter_table(remaining_sql_str: &str) -> Option<(String, String)> {
     let remaining_sql_str = remaining_sql_str.to_lowercase();
-    if remaining_sql_str.starts_with("alter") {
-        if let Some(table_offset) = remaining_sql_str.find("table") {
-            let after_table_offset = table_offset + "table".len();
-            let table_to_alter = remaining_sql_str
-                .chars()
-                .skip(after_table_offset)
-                .skip_while(|c| c.is_whitespace())
-                .take_while(|c| !c.is_whitespace())
-                .collect::<String>();
-            if !table_to_alter.is_empty() {
-                let column_name =
-                    if let Some(rename_offset) = remaining_sql_str.find("rename column") {
-                        let after_rename_offset = rename_offset + "rename column".len();
-                        remaining_sql_str
-                            .chars()
-                            .skip(after_rename_offset)
-                            .skip_while(|c| c.is_whitespace())
-                            .take_while(|c| !c.is_whitespace())
-                            .collect::<String>()
-                    } else if let Some(drop_offset) = remaining_sql_str.find("drop column") {
-                        let after_drop_offset = drop_offset + "drop column".len();
-                        remaining_sql_str
-                            .chars()
-                            .skip(after_drop_offset)
-                            .skip_while(|c| c.is_whitespace())
-                            .take_while(|c| !c.is_whitespace())
-                            .collect::<String>()
-                    } else {
-                        "__place_holder_column_for_syntax_checking".to_string()
-                    };
-                return Some((table_to_alter, column_name));
-            }
+    if remaining_sql_str.starts_with("alter")
+        && let Some(table_offset) = remaining_sql_str.find("table")
+    {
+        let after_table_offset = table_offset + "table".len();
+        let table_to_alter = remaining_sql_str
+            .chars()
+            .skip(after_table_offset)
+            .skip_while(|c| c.is_whitespace())
+            .take_while(|c| !c.is_whitespace())
+            .collect::<String>();
+        if !table_to_alter.is_empty() {
+            let column_name = if let Some(rename_offset) = remaining_sql_str.find("rename column") {
+                let after_rename_offset = rename_offset + "rename column".len();
+                remaining_sql_str
+                    .chars()
+                    .skip(after_rename_offset)
+                    .skip_while(|c| c.is_whitespace())
+                    .take_while(|c| !c.is_whitespace())
+                    .collect::<String>()
+            } else if let Some(drop_offset) = remaining_sql_str.find("drop column") {
+                let after_drop_offset = drop_offset + "drop column".len();
+                remaining_sql_str
+                    .chars()
+                    .skip(after_drop_offset)
+                    .skip_while(|c| c.is_whitespace())
+                    .take_while(|c| !c.is_whitespace())
+                    .collect::<String>()
+            } else {
+                "__place_holder_column_for_syntax_checking".to_string()
+            };
+            return Some((table_to_alter, column_name));
         }
     }
     None

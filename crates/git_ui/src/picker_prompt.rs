@@ -152,7 +152,7 @@ impl PickerDelegate for PickerPromptDelegate {
                     .all_options
                     .iter()
                     .enumerate()
-                    .map(|(ix, option)| StringMatchCandidate::new(ix, &option))
+                    .map(|(ix, option)| StringMatchCandidate::new(ix, option))
                     .collect::<Vec<StringMatchCandidate>>()
             });
             let Some(candidates) = candidates.log_err() else {

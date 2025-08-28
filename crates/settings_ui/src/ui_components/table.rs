@@ -213,7 +213,7 @@ impl TableInteractionState {
 
         let mut column_ix = 0;
         let resizable_columns_slice = *resizable_columns;
-        let mut resizable_columns = resizable_columns.into_iter();
+        let mut resizable_columns = resizable_columns.iter();
 
         let dividers = intersperse_with(spacers, || {
             window.with_id(column_ix, |window| {
@@ -248,7 +248,7 @@ impl TableInteractionState {
                         .cursor_col_resize()
                         .when_some(columns.clone(), |this, columns| {
                             this.on_click(move |event, window, cx| {
-                                if event.down.click_count >= 2 {
+                                if event.click_count() >= 2 {
                                     columns.update(cx, |columns, _| {
                                         columns.on_double_click(
                                             column_ix,
@@ -343,7 +343,7 @@ impl TableInteractionState {
             .on_any_mouse_down(|_, _, cx| {
                 cx.stop_propagation();
             })
-            .on_scroll_wheel(Self::listener(&this, |_, _, _, cx| {
+            .on_scroll_wheel(Self::listener(this, |_, _, _, cx| {
                 cx.notify();
             }))
             .children(Scrollbar::vertical(
@@ -731,7 +731,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         }
         widths[col_idx] = widths[col_idx] + (diff - diff_remaining);
 
-        return diff_remaining;
+        diff_remaining
     }
 }
 
@@ -801,7 +801,7 @@ impl<const COLS: usize> Table<COLS> {
     ) -> Self {
         self.rows = TableContents::UniformList(UniformListData {
             element_id: id.into(),
-            row_count: row_count,
+            row_count,
             render_item_fn: Box::new(render_item_fn),
         });
         self
@@ -997,7 +997,7 @@ pub fn render_header<const COLS: usize>(
                         |this, (column_widths, resizables, initial_sizes)| {
                             if resizables[header_idx].is_resizable() {
                                 this.on_click(move |event, window, cx| {
-                                    if event.down.click_count > 1 {
+                                    if event.click_count() > 1 {
                                         column_widths
                                             .update(cx, |column, _| {
                                                 column.on_double_click(

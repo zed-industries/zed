@@ -2,18 +2,19 @@ use anyhow::{Context as _, ensure};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
+use futures::AsyncBufReadExt;
 use gpui::{App, Task};
 use gpui::{AsyncApp, SharedString};
+use language::Toolchain;
 use language::ToolchainList;
 use language::ToolchainLister;
 use language::language_settings::language_settings;
 use language::{ContextLocation, LanguageToolchainStore};
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
 use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
-use language::{Toolchain, WorkspaceFoldersContent};
 use lsp::LanguageServerBinary;
 use lsp::LanguageServerName;
-use node_runtime::NodeRuntime;
+use node_runtime::{NodeRuntime, VersionStrategy};
 use pet_core::Configuration;
 use pet_core::os_environment::Environment;
 use pet_core::python_environment::PythonEnvironmentKind;
@@ -30,8 +31,6 @@ use std::{
     borrow::Cow,
     ffi::OsString,
     fmt::Write,
-    fs,
-    io::{self, BufRead},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -103,7 +102,7 @@ impl PythonLspAdapter {
 #[async_trait(?Send)]
 impl LspAdapter for PythonLspAdapter {
     fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
+        Self::SERVER_NAME
     }
 
     async fn initialization_options(
@@ -127,7 +126,7 @@ impl LspAdapter for PythonLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         if let Some(pyright_bin) = delegate.which("pyright-langserver".as_ref()).await {
@@ -204,8 +203,8 @@ impl LspAdapter for PythonLspAdapter {
             .should_install_npm_package(
                 Self::SERVER_NAME.as_ref(),
                 &server_path,
-                &container_dir,
-                &version,
+                container_dir,
+                VersionStrategy::Latest(version),
             )
             .await;
 
@@ -319,17 +318,9 @@ impl LspAdapter for PythonLspAdapter {
         self: Arc<Self>,
         _: &dyn Fs,
         adapter: &Arc<dyn LspAdapterDelegate>,
-        toolchains: Arc<dyn LanguageToolchainStore>,
+        toolchain: Option<Toolchain>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
-        let toolchain = toolchains
-            .active_toolchain(
-                adapter.worktree_id(),
-                Arc::from("".as_ref()),
-                LanguageName::new("Python"),
-                cx,
-            )
-            .await;
         cx.update(move |cx| {
             let mut user_settings =
                 language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
@@ -346,31 +337,31 @@ impl LspAdapter for PythonLspAdapter {
                 let interpreter_path = toolchain.path.to_string();
 
                 // Detect if this is a virtual environment
-                if let Some(interpreter_dir) = Path::new(&interpreter_path).parent() {
-                    if let Some(venv_dir) = interpreter_dir.parent() {
-                        // Check if this looks like a virtual environment
-                        if venv_dir.join("pyvenv.cfg").exists()
-                            || venv_dir.join("bin/activate").exists()
-                            || venv_dir.join("Scripts/activate.bat").exists()
-                        {
-                            // Set venvPath and venv at the root level
-                            // This matches the format of a pyrightconfig.json file
-                            if let Some(parent) = venv_dir.parent() {
-                                // Use relative path if the venv is inside the workspace
-                                let venv_path = if parent == adapter.worktree_root_path() {
-                                    ".".to_string()
-                                } else {
-                                    parent.to_string_lossy().into_owned()
-                                };
-                                object.insert("venvPath".to_string(), Value::String(venv_path));
-                            }
+                if let Some(interpreter_dir) = Path::new(&interpreter_path).parent()
+                    && let Some(venv_dir) = interpreter_dir.parent()
+                {
+                    // Check if this looks like a virtual environment
+                    if venv_dir.join("pyvenv.cfg").exists()
+                        || venv_dir.join("bin/activate").exists()
+                        || venv_dir.join("Scripts/activate.bat").exists()
+                    {
+                        // Set venvPath and venv at the root level
+                        // This matches the format of a pyrightconfig.json file
+                        if let Some(parent) = venv_dir.parent() {
+                            // Use relative path if the venv is inside the workspace
+                            let venv_path = if parent == adapter.worktree_root_path() {
+                                ".".to_string()
+                            } else {
+                                parent.to_string_lossy().into_owned()
+                            };
+                            object.insert("venvPath".to_string(), Value::String(venv_path));
+                        }
 
-                            if let Some(venv_name) = venv_dir.file_name() {
-                                object.insert(
-                                    "venv".to_owned(),
-                                    Value::String(venv_name.to_string_lossy().into_owned()),
-                                );
-                            }
+                        if let Some(venv_name) = venv_dir.file_name() {
+                            object.insert(
+                                "venv".to_owned(),
+                                Value::String(venv_name.to_string_lossy().into_owned()),
+                            );
                         }
                     }
                 }
@@ -396,12 +387,6 @@ impl LspAdapter for PythonLspAdapter {
 
             user_settings
         })
-    }
-    fn manifest_name(&self) -> Option<ManifestName> {
-        Some(SharedString::new_static("pyproject.toml").into())
-    }
-    fn workspace_folders_content(&self) -> WorkspaceFoldersContent {
-        WorkspaceFoldersContent::WorktreeRoot
     }
 }
 
@@ -725,7 +710,7 @@ impl Default for PythonToolchainProvider {
     }
 }
 
-static ENV_PRIORITY_LIST: &'static [PythonEnvironmentKind] = &[
+static ENV_PRIORITY_LIST: &[PythonEnvironmentKind] = &[
     // Prioritize non-Conda environments.
     PythonEnvironmentKind::Poetry,
     PythonEnvironmentKind::Pipenv,
@@ -755,14 +740,16 @@ fn env_priority(kind: Option<PythonEnvironmentKind>) -> usize {
 /// Return the name of environment declared in <worktree-root/.venv.
 ///
 /// https://virtualfish.readthedocs.io/en/latest/plugins.html#auto-activation-auto-activation
-fn get_worktree_venv_declaration(worktree_root: &Path) -> Option<String> {
-    fs::File::open(worktree_root.join(".venv"))
-        .and_then(|file| {
-            let mut venv_name = String::new();
-            io::BufReader::new(file).read_line(&mut venv_name)?;
-            Ok(venv_name.trim().to_string())
-        })
-        .ok()
+async fn get_worktree_venv_declaration(worktree_root: &Path) -> Option<String> {
+    let file = async_fs::File::open(worktree_root.join(".venv"))
+        .await
+        .ok()?;
+    let mut venv_name = String::new();
+    smol::io::BufReader::new(file)
+        .read_line(&mut venv_name)
+        .await
+        .ok()?;
+    Some(venv_name.trim().to_string())
 }
 
 #[async_trait]
@@ -773,7 +760,7 @@ impl ToolchainLister for PythonToolchainProvider {
     async fn list(
         &self,
         worktree_root: PathBuf,
-        subroot_relative_path: Option<Arc<Path>>,
+        subroot_relative_path: Arc<Path>,
         project_env: Option<HashMap<String, String>>,
     ) -> ToolchainList {
         let env = project_env.unwrap_or_default();
@@ -785,13 +772,15 @@ impl ToolchainLister for PythonToolchainProvider {
         );
         let mut config = Configuration::default();
 
-        let mut directories = vec![worktree_root.clone()];
-        if let Some(subroot_relative_path) = subroot_relative_path {
-            debug_assert!(subroot_relative_path.is_relative());
-            directories.push(worktree_root.join(subroot_relative_path));
-        }
-
-        config.workspace_directories = Some(directories);
+        debug_assert!(subroot_relative_path.is_relative());
+        // `.ancestors()` will yield at least one path, so in case of empty `subroot_relative_path`, we'll just use
+        // worktree root as the workspace directory.
+        config.workspace_directories = Some(
+            subroot_relative_path
+                .ancestors()
+                .map(|ancestor| worktree_root.join(ancestor))
+                .collect(),
+        );
         for locator in locators.iter() {
             locator.configure(&config);
         }
@@ -805,7 +794,7 @@ impl ToolchainLister for PythonToolchainProvider {
             .map_or(Vec::new(), |mut guard| std::mem::take(&mut guard));
 
         let wr = worktree_root;
-        let wr_venv = get_worktree_venv_declaration(&wr);
+        let wr_venv = get_worktree_venv_declaration(&wr).await;
         // Sort detected environments by:
         //     environment name matching activation file (<workdir>/.venv)
         //     environment project dir matching worktree_root
@@ -842,7 +831,7 @@ impl ToolchainLister for PythonToolchainProvider {
                         .get_env_var("CONDA_PREFIX".to_string())
                         .map(|conda_prefix| {
                             let is_match = |exe: &Option<PathBuf>| {
-                                exe.as_ref().map_or(false, |e| e.starts_with(&conda_prefix))
+                                exe.as_ref().is_some_and(|e| e.starts_with(&conda_prefix))
                             };
                             match (is_match(&lhs.executable), is_match(&rhs.executable)) {
                                 (true, false) => Ordering::Less,
@@ -870,7 +859,7 @@ impl ToolchainLister for PythonToolchainProvider {
             .into_iter()
             .filter_map(|toolchain| {
                 let mut name = String::from("Python");
-                if let Some(ref version) = toolchain.version {
+                if let Some(version) = &toolchain.version {
                     _ = write!(name, " {version}");
                 }
 
@@ -891,7 +880,7 @@ impl ToolchainLister for PythonToolchainProvider {
                     name: name.into(),
                     path: toolchain.executable.as_ref()?.to_str()?.to_owned().into(),
                     language_name: LanguageName::new("Python"),
-                    as_json: serde_json::to_value(toolchain).ok()?,
+                    as_json: serde_json::to_value(toolchain.clone()).ok()?,
                 })
             })
             .collect();
@@ -904,6 +893,23 @@ impl ToolchainLister for PythonToolchainProvider {
     }
     fn term(&self) -> SharedString {
         self.term.clone()
+    }
+    async fn activation_script(&self, toolchain: &Toolchain, fs: &dyn Fs) -> Option<String> {
+        let toolchain = serde_json::from_value::<pet_core::python_environment::PythonEnvironment>(
+            toolchain.as_json.clone(),
+        )
+        .ok()?;
+        let mut activation_script = None;
+        if let Some(prefix) = &toolchain.prefix {
+            #[cfg(not(target_os = "windows"))]
+            let path = prefix.join(BINARY_DIR).join("activate");
+            #[cfg(target_os = "windows")]
+            let path = prefix.join(BINARY_DIR).join("activate.ps1");
+            if fs.is_file(&path).await {
+                activation_script = Some(format!(". {}", path.display()));
+            }
+        }
+        activation_script
     }
 }
 
@@ -1040,14 +1046,14 @@ const BINARY_DIR: &str = if cfg!(target_os = "windows") {
 #[async_trait(?Send)]
 impl LspAdapter for PyLspAdapter {
     fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
+        Self::SERVER_NAME
     }
 
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        toolchains: Arc<dyn LanguageToolchainStore>,
-        cx: &AsyncApp,
+        toolchain: Option<Toolchain>,
+        _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         if let Some(pylsp_bin) = delegate.which(Self::SERVER_NAME.as_ref()).await {
             let env = delegate.shell_env().await;
@@ -1057,14 +1063,7 @@ impl LspAdapter for PyLspAdapter {
                 arguments: vec![],
             })
         } else {
-            let venv = toolchains
-                .active_toolchain(
-                    delegate.worktree_id(),
-                    Arc::from("".as_ref()),
-                    LanguageName::new("Python"),
-                    &mut cx.clone(),
-                )
-                .await?;
+            let venv = toolchain?;
             let pylsp_path = Path::new(venv.path.as_ref()).parent()?.join("pylsp");
             pylsp_path.exists().then(|| LanguageServerBinary {
                 path: venv.path.to_string().into(),
@@ -1211,17 +1210,9 @@ impl LspAdapter for PyLspAdapter {
         self: Arc<Self>,
         _: &dyn Fs,
         adapter: &Arc<dyn LspAdapterDelegate>,
-        toolchains: Arc<dyn LanguageToolchainStore>,
+        toolchain: Option<Toolchain>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
-        let toolchain = toolchains
-            .active_toolchain(
-                adapter.worktree_id(),
-                Arc::from("".as_ref()),
-                LanguageName::new("Python"),
-                cx,
-            )
-            .await;
         cx.update(move |cx| {
             let mut user_settings =
                 language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
@@ -1281,12 +1272,6 @@ impl LspAdapter for PyLspAdapter {
 
             user_settings
         })
-    }
-    fn manifest_name(&self) -> Option<ManifestName> {
-        Some(SharedString::new_static("pyproject.toml").into())
-    }
-    fn workspace_folders_content(&self) -> WorkspaceFoldersContent {
-        WorkspaceFoldersContent::WorktreeRoot
     }
 }
 
@@ -1353,7 +1338,7 @@ impl BasedPyrightLspAdapter {
 #[async_trait(?Send)]
 impl LspAdapter for BasedPyrightLspAdapter {
     fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
+        Self::SERVER_NAME
     }
 
     async fn initialization_options(
@@ -1377,8 +1362,8 @@ impl LspAdapter for BasedPyrightLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        toolchains: Arc<dyn LanguageToolchainStore>,
-        cx: &AsyncApp,
+        toolchain: Option<Toolchain>,
+        _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         if let Some(bin) = delegate.which(Self::BINARY_NAME.as_ref()).await {
             let env = delegate.shell_env().await;
@@ -1388,15 +1373,7 @@ impl LspAdapter for BasedPyrightLspAdapter {
                 arguments: vec!["--stdio".into()],
             })
         } else {
-            let venv = toolchains
-                .active_toolchain(
-                    delegate.worktree_id(),
-                    Arc::from("".as_ref()),
-                    LanguageName::new("Python"),
-                    &mut cx.clone(),
-                )
-                .await?;
-            let path = Path::new(venv.path.as_ref())
+            let path = Path::new(toolchain?.path.as_ref())
                 .parent()?
                 .join(Self::BINARY_NAME);
             path.exists().then(|| LanguageServerBinary {
@@ -1543,17 +1520,9 @@ impl LspAdapter for BasedPyrightLspAdapter {
         self: Arc<Self>,
         _: &dyn Fs,
         adapter: &Arc<dyn LspAdapterDelegate>,
-        toolchains: Arc<dyn LanguageToolchainStore>,
+        toolchain: Option<Toolchain>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
-        let toolchain = toolchains
-            .active_toolchain(
-                adapter.worktree_id(),
-                Arc::from("".as_ref()),
-                LanguageName::new("Python"),
-                cx,
-            )
-            .await;
         cx.update(move |cx| {
             let mut user_settings =
                 language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
@@ -1570,31 +1539,31 @@ impl LspAdapter for BasedPyrightLspAdapter {
                 let interpreter_path = toolchain.path.to_string();
 
                 // Detect if this is a virtual environment
-                if let Some(interpreter_dir) = Path::new(&interpreter_path).parent() {
-                    if let Some(venv_dir) = interpreter_dir.parent() {
-                        // Check if this looks like a virtual environment
-                        if venv_dir.join("pyvenv.cfg").exists()
-                            || venv_dir.join("bin/activate").exists()
-                            || venv_dir.join("Scripts/activate.bat").exists()
-                        {
-                            // Set venvPath and venv at the root level
-                            // This matches the format of a pyrightconfig.json file
-                            if let Some(parent) = venv_dir.parent() {
-                                // Use relative path if the venv is inside the workspace
-                                let venv_path = if parent == adapter.worktree_root_path() {
-                                    ".".to_string()
-                                } else {
-                                    parent.to_string_lossy().into_owned()
-                                };
-                                object.insert("venvPath".to_string(), Value::String(venv_path));
-                            }
+                if let Some(interpreter_dir) = Path::new(&interpreter_path).parent()
+                    && let Some(venv_dir) = interpreter_dir.parent()
+                {
+                    // Check if this looks like a virtual environment
+                    if venv_dir.join("pyvenv.cfg").exists()
+                        || venv_dir.join("bin/activate").exists()
+                        || venv_dir.join("Scripts/activate.bat").exists()
+                    {
+                        // Set venvPath and venv at the root level
+                        // This matches the format of a pyrightconfig.json file
+                        if let Some(parent) = venv_dir.parent() {
+                            // Use relative path if the venv is inside the workspace
+                            let venv_path = if parent == adapter.worktree_root_path() {
+                                ".".to_string()
+                            } else {
+                                parent.to_string_lossy().into_owned()
+                            };
+                            object.insert("venvPath".to_string(), Value::String(venv_path));
+                        }
 
-                            if let Some(venv_name) = venv_dir.file_name() {
-                                object.insert(
-                                    "venv".to_owned(),
-                                    Value::String(venv_name.to_string_lossy().into_owned()),
-                                );
-                            }
+                        if let Some(venv_name) = venv_dir.file_name() {
+                            object.insert(
+                                "venv".to_owned(),
+                                Value::String(venv_name.to_string_lossy().into_owned()),
+                            );
                         }
                     }
                 }
@@ -1620,14 +1589,6 @@ impl LspAdapter for BasedPyrightLspAdapter {
 
             user_settings
         })
-    }
-
-    fn manifest_name(&self) -> Option<ManifestName> {
-        Some(SharedString::new_static("pyproject.toml").into())
-    }
-
-    fn workspace_folders_content(&self) -> WorkspaceFoldersContent {
-        WorkspaceFoldersContent::WorktreeRoot
     }
 }
 

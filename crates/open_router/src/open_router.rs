@@ -27,7 +27,7 @@ fn extract_retry_after(headers: &http::HeaderMap) -> Option<std::time::Duration>
 }
 
 fn is_none_or_empty<T: AsRef<[U]>, U>(opt: &Option<T>) -> bool {
-    opt.as_ref().map_or(true, |v| v.as_ref().is_empty())
+    opt.as_ref().is_none_or(|v| v.as_ref().is_empty())
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -259,10 +259,10 @@ impl MessageContent {
 
 impl From<Vec<MessagePart>> for MessageContent {
     fn from(parts: Vec<MessagePart>) -> Self {
-        if parts.len() == 1 {
-            if let MessagePart::Text { text } = &parts[0] {
-                return Self::Plain(text.clone());
-            }
+        if parts.len() == 1
+            && let MessagePart::Text { text } = &parts[0]
+        {
+            return Self::Plain(text.clone());
         }
         Self::Multipart(parts)
     }

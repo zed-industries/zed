@@ -90,11 +90,7 @@ pub(crate) const JOBS: [Job; 2] = [
         std::thread::sleep(Duration::from_millis(1000));
         if let Ok(config) = std::env::var("ZED_AUTO_UPDATE") {
             match config.as_str() {
-                "err" => Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "Simulated error",
-                ))
-                .context("Anyhow!"),
+                "err" => Err(std::io::Error::other("Simulated error")).context("Anyhow!"),
                 _ => panic!("Unknown ZED_AUTO_UPDATE value: {}", config),
             }
         } else {
@@ -105,11 +101,7 @@ pub(crate) const JOBS: [Job; 2] = [
         std::thread::sleep(Duration::from_millis(1000));
         if let Ok(config) = std::env::var("ZED_AUTO_UPDATE") {
             match config.as_str() {
-                "err" => Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "Simulated error",
-                ))
-                .context("Anyhow!"),
+                "err" => Err(std::io::Error::other("Simulated error")).context("Anyhow!"),
                 _ => panic!("Unknown ZED_AUTO_UPDATE value: {}", config),
             }
         } else {
@@ -118,7 +110,7 @@ pub(crate) const JOBS: [Job; 2] = [
     },
 ];
 
-pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>) -> Result<()> {
+pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>, launch: bool) -> Result<()> {
     let hwnd = hwnd.map(|ptr| HWND(ptr as _));
 
     for job in JOBS.iter() {
@@ -145,9 +137,11 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>) -> Result<()> 
             }
         }
     }
-    let _ = std::process::Command::new(app_dir.join("Zed.exe"))
-        .creation_flags(CREATE_NEW_PROCESS_GROUP.0)
-        .spawn();
+    if launch {
+        let _ = std::process::Command::new(app_dir.join("Zed.exe"))
+            .creation_flags(CREATE_NEW_PROCESS_GROUP.0)
+            .spawn();
+    }
     log::info!("Update completed successfully");
     Ok(())
 }
@@ -159,11 +153,11 @@ mod test {
     #[test]
     fn test_perform_update() {
         let app_dir = std::path::Path::new("C:/");
-        assert!(perform_update(app_dir, None).is_ok());
+        assert!(perform_update(app_dir, None, false).is_ok());
 
         // Simulate a timeout
         unsafe { std::env::set_var("ZED_AUTO_UPDATE", "err") };
-        let ret = perform_update(app_dir, None);
+        let ret = perform_update(app_dir, None, false);
         assert!(ret.is_err_and(|e| e.to_string().as_str() == "Timed out"));
     }
 }

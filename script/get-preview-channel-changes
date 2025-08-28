@@ -1,12 +1,11 @@
 #!/usr/bin/env node --redirect-warnings=/dev/null
 
 const { execFileSync } = require("child_process");
-let { GITHUB_ACCESS_TOKEN } = process.env;
+const { GITHUB_ACCESS_TOKEN } = process.env;
 const GITHUB_URL = "https://github.com";
 const SKIPPABLE_NOTE_REGEX = /^\s*-?\s*n\/?a\s*/ims;
 const PULL_REQUEST_WEB_URL = "https://github.com/zed-industries/zed/pull";
-const PULL_REQUEST_API_URL =
-  "https://api.github.com/repos/zed-industries/zed/pulls";
+const PULL_REQUEST_API_URL = "https://api.github.com/repos/zed-industries/zed/pulls";
 const DIVIDER = "-".repeat(80);
 
 main();
@@ -25,15 +24,12 @@ async function main() {
   const STAFF_MEMBERS = new Set(
     (
       await (
-        await fetch(
-          "https://api.github.com/orgs/zed-industries/teams/staff/members",
-          {
-            headers: {
-              Authorization: `token ${GITHUB_ACCESS_TOKEN}`,
-              Accept: "application/vnd.github+json",
-            },
+        await fetch("https://api.github.com/orgs/zed-industries/teams/staff/members", {
+          headers: {
+            Authorization: `token ${GITHUB_ACCESS_TOKEN}`,
+            Accept: "application/vnd.github+json",
           },
-        )
+        })
       ).json()
     ).map(({ login }) => login.toLowerCase()),
   );
@@ -44,11 +40,7 @@ async function main() {
   };
 
   // Get the last two preview tags
-  const [newTag, oldTag] = execFileSync(
-    "git",
-    ["tag", "--sort", "-committerdate"],
-    { encoding: "utf8" },
-  )
+  const [newTag, oldTag] = execFileSync("git", ["tag", "--sort", "-committerdate"], { encoding: "utf8" })
     .split("\n")
     .filter((t) => t.startsWith("v") && t.endsWith("-pre"));
 
@@ -59,14 +51,10 @@ async function main() {
   const pullRequestNumbers = getPullRequestNumbers(oldTag, newTag);
 
   // Get the PRs that were cherry-picked between main and the old tag.
-  const existingPullRequestNumbers = new Set(
-    getPullRequestNumbers("main", oldTag),
-  );
+  const existingPullRequestNumbers = new Set(getPullRequestNumbers("main", oldTag));
 
   // Filter out those existing PRs from the set of new PRs.
-  const newPullRequestNumbers = pullRequestNumbers.filter(
-    (number) => !existingPullRequestNumbers.has(number),
-  );
+  const newPullRequestNumbers = pullRequestNumbers.filter((number) => !existingPullRequestNumbers.has(number));
 
   // Fetch the pull requests from the GitHub API.
   console.log("Merged Pull requests:");
@@ -84,8 +72,7 @@ async function main() {
     const releaseNotesHeader = /^\s*Release Notes:(.+)/ims;
 
     const releaseNotes = pullRequest.body || "";
-    let contributor =
-      pullRequest.user?.login ?? "Unable to identify contributor";
+    let contributor = pullRequest.user?.login ?? "Unable to identify contributor";
     const captures = releaseNotesHeader.exec(releaseNotes);
     let notes = captures ? captures[1] : "MISSING";
     notes = notes.trim();
@@ -127,11 +114,7 @@ function getCreditString(pullRequestNumber, contributor, isStaff) {
 }
 
 function getPullRequestNumbers(oldTag, newTag) {
-  const pullRequestNumbers = execFileSync(
-    "git",
-    ["log", `${oldTag}..${newTag}`, "--oneline"],
-    { encoding: "utf8" },
-  )
+  const pullRequestNumbers = execFileSync("git", ["log", `${oldTag}..${newTag}`, "--oneline"], { encoding: "utf8" })
     .split("\n")
     .filter((line) => line.length > 0)
     .map((line) => {

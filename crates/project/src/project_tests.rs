@@ -4,6 +4,7 @@ use crate::{
     Event, git_store::StatusEntry, task_inventory::TaskContexts, task_store::TaskSettingsLocation,
     *,
 };
+use async_trait::async_trait;
 use buffer_diff::{
     BufferDiffEvent, CALCULATE_DIFF_TASK, DiffHunkSecondaryStatus, DiffHunkStatus,
     DiffHunkStatusKind, assert_hunks,
@@ -18,9 +19,11 @@ use git::{
 use git2::RepositoryInitOptions;
 use gpui::{App, BackgroundExecutor, SemanticVersion, UpdateGlobal};
 use http_client::Url;
+use itertools::Itertools;
 use language::{
-    Diagnostic, DiagnosticEntry, DiagnosticSet, DiskState, FakeLspAdapter, LanguageConfig,
-    LanguageMatcher, LanguageName, LineEnding, OffsetRangeExt, Point, ToPoint,
+    Diagnostic, DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, DiskState, FakeLspAdapter,
+    LanguageConfig, LanguageMatcher, LanguageName, LineEnding, ManifestName, ManifestProvider,
+    ManifestQuery, OffsetRangeExt, Point, ToPoint, ToolchainLister,
     language_settings::{AllLanguageSettings, LanguageSettingsContent, language_settings},
     tree_sitter_rust, tree_sitter_typescript,
 };
@@ -139,8 +142,10 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
             end_of_line = lf
             insert_final_newline = true
             trim_trailing_whitespace = true
+            max_line_length = 120
         [*.js]
             tab_width = 10
+            max_line_length = off
         "#,
         ".zed": {
             "settings.json": r#"{
@@ -148,7 +153,8 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
                 "hard_tabs": false,
                 "ensure_final_newline_on_save": false,
                 "remove_trailing_whitespace_on_save": false,
-                "soft_wrap": "editor_width"
+                "preferred_line_length": 64,
+                "soft_wrap": "editor_width",
             }"#,
         },
         "a.rs": "fn a() {\n    A\n}",
@@ -156,6 +162,7 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
             ".editorconfig": r#"
             [*.rs]
                 indent_size = 2
+                max_line_length = off,
             "#,
             "b.rs": "fn b() {\n    B\n}",
         },
@@ -204,12 +211,17 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
         assert_eq!(settings_a.hard_tabs, true);
         assert_eq!(settings_a.ensure_final_newline_on_save, true);
         assert_eq!(settings_a.remove_trailing_whitespace_on_save, true);
+        assert_eq!(settings_a.preferred_line_length, 120);
 
         // .editorconfig in b/ overrides .editorconfig in root
         assert_eq!(Some(settings_b.tab_size), NonZeroU32::new(2));
 
         // "indent_size" is not set, so "tab_width" is used
         assert_eq!(Some(settings_c.tab_size), NonZeroU32::new(10));
+
+        // When max_line_length is "off", default to .zed/settings.json
+        assert_eq!(settings_b.preferred_line_length, 64);
+        assert_eq!(settings_c.preferred_line_length, 64);
 
         // README.md should not be affected by .editorconfig's globe "*.rs"
         assert_eq!(Some(settings_readme.tab_size), NonZeroU32::new(8));
@@ -587,6 +599,203 @@ async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
+    cx: &mut gpui::TestAppContext,
+) {
+    pub(crate) struct PyprojectTomlManifestProvider;
+
+    impl ManifestProvider for PyprojectTomlManifestProvider {
+        fn name(&self) -> ManifestName {
+            SharedString::new_static("pyproject.toml").into()
+        }
+
+        fn search(
+            &self,
+            ManifestQuery {
+                path,
+                depth,
+                delegate,
+            }: ManifestQuery,
+        ) -> Option<Arc<Path>> {
+            for path in path.ancestors().take(depth) {
+                let p = path.join("pyproject.toml");
+                if delegate.exists(&p, Some(false)) {
+                    return Some(path.into());
+                }
+            }
+
+            None
+        }
+    }
+
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+
+    fs.insert_tree(
+        path!("/the-root"),
+        json!({
+            ".zed": {
+                "settings.json": r#"
+                {
+                    "languages": {
+                        "Python": {
+                            "language_servers": ["ty"]
+                        }
+                    }
+                }"#
+            },
+            "project-a": {
+                ".venv": {},
+                "file.py": "",
+                "pyproject.toml": ""
+            },
+            "project-b": {
+                ".venv": {},
+                "source_file.py":"",
+                "another_file.py": "",
+                "pyproject.toml": ""
+            }
+        }),
+    )
+    .await;
+    cx.update(|cx| {
+        ManifestProvidersStore::global(cx).register(Arc::new(PyprojectTomlManifestProvider))
+    });
+
+    let project = Project::test(fs.clone(), [path!("/the-root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    let _fake_python_server = language_registry.register_fake_lsp(
+        "Python",
+        FakeLspAdapter {
+            name: "ty",
+            capabilities: lsp::ServerCapabilities {
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    language_registry.add(python_lang(fs.clone()));
+    let (first_buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/project-a/file.py"), cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+    let servers = project.update(cx, |project, cx| {
+        project.lsp_store.update(cx, |this, cx| {
+            first_buffer.update(cx, |buffer, cx| {
+                this.language_servers_for_local_buffer(buffer, cx)
+                    .map(|(adapter, server)| (adapter.clone(), server.clone()))
+                    .collect::<Vec<_>>()
+            })
+        })
+    });
+    cx.executor().run_until_parked();
+    assert_eq!(servers.len(), 1);
+    let (adapter, server) = servers.into_iter().next().unwrap();
+    assert_eq!(adapter.name(), LanguageServerName::new_static("ty"));
+    assert_eq!(server.server_id(), LanguageServerId(0));
+    // `workspace_folders` are set to the rooting point.
+    assert_eq!(
+        server.workspace_folders(),
+        BTreeSet::from_iter(
+            [Url::from_file_path(path!("/the-root/project-a")).unwrap()].into_iter()
+        )
+    );
+
+    let (second_project_buffer, _other_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/project-b/source_file.py"), cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+    let servers = project.update(cx, |project, cx| {
+        project.lsp_store.update(cx, |this, cx| {
+            second_project_buffer.update(cx, |buffer, cx| {
+                this.language_servers_for_local_buffer(buffer, cx)
+                    .map(|(adapter, server)| (adapter.clone(), server.clone()))
+                    .collect::<Vec<_>>()
+            })
+        })
+    });
+    cx.executor().run_until_parked();
+    assert_eq!(servers.len(), 1);
+    let (adapter, server) = servers.into_iter().next().unwrap();
+    assert_eq!(adapter.name(), LanguageServerName::new_static("ty"));
+    // We're not using venvs at all here, so both folders should fall under the same root.
+    assert_eq!(server.server_id(), LanguageServerId(0));
+    // Now, let's select a different toolchain for one of subprojects.
+    let (available_toolchains_for_b, root_path) = project
+        .update(cx, |this, cx| {
+            let worktree_id = this.worktrees(cx).next().unwrap().read(cx).id();
+            this.available_toolchains(
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from("project-b/source_file.py".as_ref()),
+                },
+                LanguageName::new("Python"),
+                cx,
+            )
+        })
+        .await
+        .expect("A toolchain to be discovered");
+    assert_eq!(root_path.as_ref(), Path::new("project-b"));
+    assert_eq!(available_toolchains_for_b.toolchains().len(), 1);
+    let currently_active_toolchain = project
+        .update(cx, |this, cx| {
+            let worktree_id = this.worktrees(cx).next().unwrap().read(cx).id();
+            this.active_toolchain(
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from("project-b/source_file.py".as_ref()),
+                },
+                LanguageName::new("Python"),
+                cx,
+            )
+        })
+        .await;
+
+    assert!(currently_active_toolchain.is_none());
+    let _ = project
+        .update(cx, |this, cx| {
+            let worktree_id = this.worktrees(cx).next().unwrap().read(cx).id();
+            this.activate_toolchain(
+                ProjectPath {
+                    worktree_id,
+                    path: root_path,
+                },
+                available_toolchains_for_b
+                    .toolchains
+                    .into_iter()
+                    .next()
+                    .unwrap(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    let servers = project.update(cx, |project, cx| {
+        project.lsp_store.update(cx, |this, cx| {
+            second_project_buffer.update(cx, |buffer, cx| {
+                this.language_servers_for_local_buffer(buffer, cx)
+                    .map(|(adapter, server)| (adapter.clone(), server.clone()))
+                    .collect::<Vec<_>>()
+            })
+        })
+    });
+    cx.executor().run_until_parked();
+    assert_eq!(servers.len(), 1);
+    let (adapter, server) = servers.into_iter().next().unwrap();
+    assert_eq!(adapter.name(), LanguageServerName::new_static("ty"));
+    // There's a new language server in town.
+    assert_eq!(server.server_id(), LanguageServerId(1));
+}
+
+#[gpui::test]
 async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -694,7 +903,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             buffer
                 .completion_triggers()
-                .into_iter()
+                .iter()
                 .cloned()
                 .collect::<Vec<_>>(),
             &[".".to_string(), "::".to_string()]
@@ -746,7 +955,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             buffer
                 .completion_triggers()
-                .into_iter()
+                .iter()
                 .cloned()
                 .collect::<Vec<_>>(),
             &[":".to_string()]
@@ -765,7 +974,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             buffer
                 .completion_triggers()
-                .into_iter()
+                .iter()
                 .cloned()
                 .collect::<Vec<_>>(),
             &[".".to_string(), "::".to_string()]
@@ -1098,9 +1307,9 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
     let prev_read_dir_count = fs.read_dir_call_count();
 
     let fake_server = fake_servers.next().await.unwrap();
-    let (server_id, server_name) = lsp_store.read_with(cx, |lsp_store, _| {
-        let (id, status) = lsp_store.language_server_statuses().next().unwrap();
-        (id, LanguageServerName::from(status.name.as_str()))
+    let server_id = lsp_store.read_with(cx, |lsp_store, _| {
+        let (id, _) = lsp_store.language_server_statuses().next().unwrap();
+        id
     });
 
     // Simulate jumping to a definition in a dependency outside of the worktree.
@@ -1109,7 +1318,6 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
             project.open_local_buffer_via_lsp(
                 lsp::Url::from_file_path(path!("/the-registry/dep1/src/dep1.rs")).unwrap(),
                 server_id,
-                server_name.clone(),
                 cx,
             )
         })
@@ -1618,7 +1826,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
         events.next().await.unwrap(),
         Event::DiagnosticsUpdated {
             language_server_id: LanguageServerId(0),
-            path: (worktree_id, Path::new("a.rs")).into()
+            paths: vec![(worktree_id, Path::new("a.rs")).into()],
         }
     );
 
@@ -1666,7 +1874,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
         events.next().await.unwrap(),
         Event::DiagnosticsUpdated {
             language_server_id: LanguageServerId(0),
-            path: (worktree_id, Path::new("a.rs")).into()
+            paths: vec![(worktree_id, Path::new("a.rs")).into()],
         }
     );
 
@@ -1698,7 +1906,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
             name: "the-language-server",
             disk_based_diagnostics_sources: vec!["disk".into()],
             disk_based_diagnostics_progress_token: Some(progress_token.into()),
-            ..Default::default()
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -1710,6 +1918,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
         })
         .await
         .unwrap();
+    let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
     // Simulate diagnostics starting to update.
     let fake_server = fake_servers.next().await.unwrap();
     fake_server.start_progress(progress_token).await;
@@ -1736,6 +1945,15 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
     );
     assert_eq!(events.next().await.unwrap(), Event::RefreshInlayHints);
     fake_server.start_progress(progress_token).await;
+    assert_eq!(
+        events.next().await.unwrap(),
+        Event::LanguageServerBufferRegistered {
+            server_id: LanguageServerId(1),
+            buffer_id,
+            buffer_abs_path: PathBuf::from(path!("/dir/a.rs")),
+            name: Some(fake_server.server.name())
+        }
+    );
     assert_eq!(
         events.next().await.unwrap(),
         Event::DiskBasedDiagnosticsStarted {
@@ -1809,7 +2027,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
             buffer
                 .snapshot()
                 .diagnostics_in_range::<_, usize>(0..1, false)
-                .map(|entry| entry.diagnostic.message.clone())
+                .map(|entry| entry.diagnostic.message)
                 .collect::<Vec<_>>(),
             ["the message".to_string()]
         );
@@ -1835,7 +2053,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
             buffer
                 .snapshot()
                 .diagnostics_in_range::<_, usize>(0..1, false)
-                .map(|entry| entry.diagnostic.message.clone())
+                .map(|entry| entry.diagnostic.message)
                 .collect::<Vec<_>>(),
             Vec::<String>::new(),
         );
@@ -2938,9 +3156,10 @@ fn chunks_with_diagnostics<T: ToOffset + ToPoint>(
 ) -> Vec<(String, Option<DiagnosticSeverity>)> {
     let mut chunks: Vec<(String, Option<DiagnosticSeverity>)> = Vec::new();
     for chunk in buffer.snapshot().chunks(range, true) {
-        if chunks.last().map_or(false, |prev_chunk| {
-            prev_chunk.1 == chunk.diagnostic_severity
-        }) {
+        if chunks
+            .last()
+            .is_some_and(|prev_chunk| prev_chunk.1 == chunk.diagnostic_severity)
+        {
             chunks.last_mut().unwrap().0.push_str(chunk.text);
         } else {
             chunks.push((chunk.text.to_string(), chunk.diagnostic_severity));
@@ -2995,6 +3214,7 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
     let mut definitions = project
         .update(cx, |project, cx| project.definitions(&buffer, 22, cx))
         .await
+        .unwrap()
         .unwrap();
 
     // Assert no new language server started
@@ -3509,7 +3729,7 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
         .next()
         .await;
 
-    let action = actions.await.unwrap()[0].clone();
+    let action = actions.await.unwrap().unwrap()[0].clone();
     let apply = project.update(cx, |project, cx| {
         project.apply_code_action(buffer.clone(), action, true, cx)
     });
@@ -3702,7 +3922,7 @@ async fn test_save_file_spawns_language_server(cx: &mut gpui::TestAppContext) {
 async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/dir"),
         json!({
@@ -3757,7 +3977,7 @@ async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext)
 async fn test_edit_buffer_while_it_reloads(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/dir"),
         json!({
@@ -4113,7 +4333,7 @@ async fn test_buffer_identity_across_renames(cx: &mut gpui::TestAppContext) {
         })
         .unwrap()
         .await
-        .to_included()
+        .into_included()
         .unwrap();
     cx.executor().run_until_parked();
 
@@ -5887,7 +6107,7 @@ async fn test_search_with_unicode(cx: &mut gpui::TestAppContext) {
 async fn test_create_entry(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/one/two",
         json!({
@@ -5908,7 +6128,7 @@ async fn test_create_entry(cx: &mut gpui::TestAppContext) {
         })
         .await
         .unwrap()
-        .to_included()
+        .into_included()
         .unwrap();
 
     // Can't create paths outside the project
@@ -6100,6 +6320,7 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
         hover_task
             .await
             .into_iter()
+            .flatten()
             .map(|hover| hover.contents.iter().map(|block| &block.text).join("|"))
             .sorted()
             .collect::<Vec<_>>(),
@@ -6173,6 +6394,7 @@ async fn test_hovers_with_empty_parts(cx: &mut gpui::TestAppContext) {
         hover_task
             .await
             .into_iter()
+            .flatten()
             .map(|hover| hover.contents.iter().map(|block| &block.text).join("|"))
             .sorted()
             .collect::<Vec<_>>(),
@@ -6251,7 +6473,7 @@ async fn test_code_actions_only_kinds(cx: &mut gpui::TestAppContext) {
         .await
         .expect("The code action request should have been triggered");
 
-    let code_actions = code_actions_task.await.unwrap();
+    let code_actions = code_actions_task.await.unwrap().unwrap();
     assert_eq!(code_actions.len(), 1);
     assert_eq!(
         code_actions[0].lsp_action.action_kind(),
@@ -6409,6 +6631,7 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
         vec!["TailwindServer code action", "TypeScriptServer code action"],
         code_actions_task
             .await
+            .unwrap()
             .unwrap()
             .into_iter()
             .map(|code_action| code_action.lsp_action.title().to_owned())
@@ -8957,6 +9180,69 @@ fn rust_lang() -> Arc<Language> {
         },
         Some(tree_sitter_rust::LANGUAGE.into()),
     ))
+}
+
+fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
+    struct PythonMootToolchainLister(Arc<FakeFs>);
+    #[async_trait]
+    impl ToolchainLister for PythonMootToolchainLister {
+        async fn list(
+            &self,
+            worktree_root: PathBuf,
+            subroot_relative_path: Arc<Path>,
+            _: Option<HashMap<String, String>>,
+        ) -> ToolchainList {
+            // This lister will always return a path .venv directories within ancestors
+            let ancestors = subroot_relative_path
+                .ancestors()
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>();
+            let mut toolchains = vec![];
+            for ancestor in ancestors {
+                let venv_path = worktree_root.join(ancestor).join(".venv");
+                if self.0.is_dir(&venv_path).await {
+                    toolchains.push(Toolchain {
+                        name: SharedString::new("Python Venv"),
+                        path: venv_path.to_string_lossy().into_owned().into(),
+                        language_name: LanguageName(SharedString::new_static("Python")),
+                        as_json: serde_json::Value::Null,
+                    })
+                }
+            }
+            ToolchainList {
+                toolchains,
+                ..Default::default()
+            }
+        }
+        // Returns a term which we should use in UI to refer to a toolchain.
+        fn term(&self) -> SharedString {
+            SharedString::new_static("virtual environment")
+        }
+        /// Returns the name of the manifest file for this toolchain.
+        fn manifest_name(&self) -> ManifestName {
+            SharedString::new_static("pyproject.toml").into()
+        }
+        async fn activation_script(&self, _: &Toolchain, _: &dyn Fs) -> Option<String> {
+            None
+        }
+    }
+    Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "Python".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["py".to_string()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            None, // We're not testing Python parsing with this language.
+        )
+        .with_manifest(Some(ManifestName::from(SharedString::new_static(
+            "pyproject.toml",
+        ))))
+        .with_toolchain_lister(Some(Arc::new(PythonMootToolchainLister(fs)))),
+    )
 }
 
 fn typescript_lang() -> Arc<Language> {

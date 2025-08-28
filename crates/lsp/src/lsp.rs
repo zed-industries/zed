@@ -45,7 +45,7 @@ use util::{ConnectionResult, ResultExt, TryFutureExt, redact};
 const JSON_RPC_VERSION: &str = "2.0";
 const CONTENT_LEN_HEADER: &str = "Content-Length: ";
 
-const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
+pub const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 type NotificationHandler = Box<dyn Send + FnMut(Option<RequestId>, Value, &mut AsyncApp)>;
@@ -242,7 +242,7 @@ struct Notification<'a, T> {
 
 /// Language server RPC notification message before it is deserialized into a concrete type.
 #[derive(Debug, Clone, Deserialize)]
-struct AnyNotification {
+struct NotificationOrRequest {
     #[serde(default)]
     id: Option<RequestId>,
     method: String,
@@ -252,7 +252,10 @@ struct AnyNotification {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Error {
+    code: i64,
     message: String,
+    #[serde(default)]
+    data: Option<serde_json::Value>,
 }
 
 pub trait LspRequestFuture<O>: Future<Output = ConnectionResult<O>> {
@@ -315,6 +318,8 @@ impl LanguageServer {
         } else {
             root_path.parent().unwrap_or_else(|| Path::new("/"))
         };
+        let root_uri = Url::from_file_path(&working_dir)
+            .map_err(|()| anyhow!("{working_dir:?} is not a valid URI"))?;
 
         log::info!(
             "starting language server process. binary path: {:?}, working directory: {:?}, args: {:?}",
@@ -342,8 +347,6 @@ impl LanguageServer {
         let stdin = server.stdin.take().unwrap();
         let stdout = server.stdout.take().unwrap();
         let stderr = server.stderr.take().unwrap();
-        let root_uri = Url::from_file_path(&working_dir)
-            .map_err(|()| anyhow!("{working_dir:?} is not a valid URI"))?;
         let server = Self::new_internal(
             server_id,
             server_name,
@@ -364,6 +367,7 @@ impl LanguageServer {
                     notification.method,
                     serde_json::to_string_pretty(&notification.params).unwrap(),
                 );
+                false
             },
         );
 
@@ -389,7 +393,7 @@ impl LanguageServer {
         Stdin: AsyncWrite + Unpin + Send + 'static,
         Stdout: AsyncRead + Unpin + Send + 'static,
         Stderr: AsyncRead + Unpin + Send + 'static,
-        F: FnMut(AnyNotification) + 'static + Send + Sync + Clone,
+        F: Fn(&NotificationOrRequest) -> bool + 'static + Send + Sync + Clone,
     {
         let (outbound_tx, outbound_rx) = channel::unbounded::<String>();
         let (output_done_tx, output_done_rx) = barrier::channel();
@@ -400,14 +404,34 @@ impl LanguageServer {
         let io_handlers = Arc::new(Mutex::new(HashMap::default()));
 
         let stdout_input_task = cx.spawn({
-            let on_unhandled_notification = on_unhandled_notification.clone();
+            let unhandled_notification_wrapper = {
+                let response_channel = outbound_tx.clone();
+                async move |msg: NotificationOrRequest| {
+                    let did_handle = on_unhandled_notification(&msg);
+                    if !did_handle && let Some(message_id) = msg.id {
+                        let response = AnyResponse {
+                            jsonrpc: JSON_RPC_VERSION,
+                            id: message_id,
+                            error: Some(Error {
+                                code: -32601,
+                                message: format!("Unrecognized method `{}`", msg.method),
+                                data: None,
+                            }),
+                            result: None,
+                        };
+                        if let Ok(response) = serde_json::to_string(&response) {
+                            response_channel.send(response).await.ok();
+                        }
+                    }
+                }
+            };
             let notification_handlers = notification_handlers.clone();
             let response_handlers = response_handlers.clone();
             let io_handlers = io_handlers.clone();
             async move |cx| {
-                Self::handle_input(
+                Self::handle_incoming_messages(
                     stdout,
-                    on_unhandled_notification,
+                    unhandled_notification_wrapper,
                     notification_handlers,
                     response_handlers,
                     io_handlers,
@@ -433,7 +457,7 @@ impl LanguageServer {
             stdout.or(stderr)
         });
         let output_task = cx.background_spawn({
-            Self::handle_output(
+            Self::handle_outgoing_messages(
                 stdin,
                 outbound_rx,
                 output_done_tx,
@@ -479,9 +503,9 @@ impl LanguageServer {
         self.code_action_kinds.clone()
     }
 
-    async fn handle_input<Stdout, F>(
+    async fn handle_incoming_messages<Stdout>(
         stdout: Stdout,
-        mut on_unhandled_notification: F,
+        on_unhandled_notification: impl AsyncFn(NotificationOrRequest) + 'static + Send,
         notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
@@ -489,7 +513,6 @@ impl LanguageServer {
     ) -> anyhow::Result<()>
     where
         Stdout: AsyncRead + Unpin + Send + 'static,
-        F: FnMut(AnyNotification) + 'static + Send,
     {
         use smol::stream::StreamExt;
         let stdout = BufReader::new(stdout);
@@ -506,15 +529,19 @@ impl LanguageServer {
             cx.background_executor().clone(),
         );
 
-        while let Some(msg) = input_handler.notifications_channel.next().await {
-            {
+        while let Some(msg) = input_handler.incoming_messages.next().await {
+            let unhandled_message = {
                 let mut notification_handlers = notification_handlers.lock();
                 if let Some(handler) = notification_handlers.get_mut(msg.method.as_str()) {
                     handler(msg.id, msg.params.unwrap_or(Value::Null), cx);
+                    None
                 } else {
-                    drop(notification_handlers);
-                    on_unhandled_notification(msg);
+                    Some(msg)
                 }
+            };
+
+            if let Some(msg) = unhandled_message {
+                on_unhandled_notification(msg).await;
             }
 
             // Don't starve the main thread when receiving lots of notifications at once.
@@ -558,7 +585,7 @@ impl LanguageServer {
         }
     }
 
-    async fn handle_output<Stdin>(
+    async fn handle_outgoing_messages<Stdin>(
         stdin: Stdin,
         outbound_rx: channel::Receiver<String>,
         output_done_tx: barrier::Sender,
@@ -624,7 +651,7 @@ impl LanguageServer {
             capabilities: ClientCapabilities {
                 general: Some(GeneralClientCapabilities {
                     position_encodings: Some(vec![PositionEncodingKind::UTF16]),
-                    ..Default::default()
+                    ..GeneralClientCapabilities::default()
                 }),
                 workspace: Some(WorkspaceClientCapabilities {
                     configuration: Some(true),
@@ -638,6 +665,7 @@ impl LanguageServer {
                     workspace_folders: Some(true),
                     symbol: Some(WorkspaceSymbolClientCapabilities {
                         resolve_support: None,
+                        dynamic_registration: Some(true),
                         ..WorkspaceSymbolClientCapabilities::default()
                     }),
                     inlay_hint: Some(InlayHintWorkspaceClientCapabilities {
@@ -661,21 +689,21 @@ impl LanguageServer {
                         ..WorkspaceEditClientCapabilities::default()
                     }),
                     file_operations: Some(WorkspaceFileOperationsClientCapabilities {
-                        dynamic_registration: Some(false),
+                        dynamic_registration: Some(true),
                         did_rename: Some(true),
                         will_rename: Some(true),
-                        ..Default::default()
+                        ..WorkspaceFileOperationsClientCapabilities::default()
                     }),
                     apply_edit: Some(true),
                     execute_command: Some(ExecuteCommandClientCapabilities {
-                        dynamic_registration: Some(false),
+                        dynamic_registration: Some(true),
                     }),
-                    ..Default::default()
+                    ..WorkspaceClientCapabilities::default()
                 }),
                 text_document: Some(TextDocumentClientCapabilities {
                     definition: Some(GotoCapability {
                         link_support: Some(true),
-                        dynamic_registration: None,
+                        dynamic_registration: Some(true),
                     }),
                     code_action: Some(CodeActionClientCapabilities {
                         code_action_literal_support: Some(CodeActionLiteralSupport {
@@ -698,7 +726,8 @@ impl LanguageServer {
                                 "command".to_string(),
                             ],
                         }),
-                        ..Default::default()
+                        dynamic_registration: Some(true),
+                        ..CodeActionClientCapabilities::default()
                     }),
                     completion: Some(CompletionClientCapabilities {
                         completion_item: Some(CompletionItemCapability {
@@ -720,7 +749,11 @@ impl LanguageServer {
                                     InsertTextMode::ADJUST_INDENTATION,
                                 ],
                             }),
-                            ..Default::default()
+                            documentation_format: Some(vec![
+                                MarkupKind::Markdown,
+                                MarkupKind::PlainText,
+                            ]),
+                            ..CompletionItemCapability::default()
                         }),
                         insert_text_mode: Some(InsertTextMode::ADJUST_INDENTATION),
                         completion_list: Some(CompletionListCapability {
@@ -733,18 +766,20 @@ impl LanguageServer {
                             ]),
                         }),
                         context_support: Some(true),
-                        ..Default::default()
+                        dynamic_registration: Some(true),
+                        ..CompletionClientCapabilities::default()
                     }),
                     rename: Some(RenameClientCapabilities {
                         prepare_support: Some(true),
                         prepare_support_default_behavior: Some(
                             PrepareSupportDefaultBehavior::IDENTIFIER,
                         ),
-                        ..Default::default()
+                        dynamic_registration: Some(true),
+                        ..RenameClientCapabilities::default()
                     }),
                     hover: Some(HoverClientCapabilities {
                         content_format: Some(vec![MarkupKind::Markdown]),
-                        dynamic_registration: None,
+                        dynamic_registration: Some(true),
                     }),
                     inlay_hint: Some(InlayHintClientCapabilities {
                         resolve_support: Some(InlayHintResolveClientCapabilities {
@@ -756,7 +791,7 @@ impl LanguageServer {
                                 "label.command".to_string(),
                             ],
                         }),
-                        dynamic_registration: Some(false),
+                        dynamic_registration: Some(true),
                     }),
                     publish_diagnostics: Some(PublishDiagnosticsClientCapabilities {
                         related_information: Some(true),
@@ -787,26 +822,29 @@ impl LanguageServer {
                             }),
                             active_parameter_support: Some(true),
                         }),
+                        dynamic_registration: Some(true),
                         ..SignatureHelpClientCapabilities::default()
                     }),
                     synchronization: Some(TextDocumentSyncClientCapabilities {
                         did_save: Some(true),
+                        dynamic_registration: Some(true),
                         ..TextDocumentSyncClientCapabilities::default()
                     }),
                     code_lens: Some(CodeLensClientCapabilities {
-                        dynamic_registration: Some(false),
+                        dynamic_registration: Some(true),
                     }),
                     document_symbol: Some(DocumentSymbolClientCapabilities {
                         hierarchical_document_symbol_support: Some(true),
+                        dynamic_registration: Some(true),
                         ..DocumentSymbolClientCapabilities::default()
                     }),
                     diagnostic: Some(DiagnosticClientCapabilities {
-                        dynamic_registration: Some(false),
+                        dynamic_registration: Some(true),
                         related_document_support: Some(true),
                     })
                     .filter(|_| pull_diagnostics),
                     color_provider: Some(DocumentColorClientCapabilities {
-                        dynamic_registration: Some(false),
+                        dynamic_registration: Some(true),
                     }),
                     ..TextDocumentClientCapabilities::default()
                 }),
@@ -819,7 +857,7 @@ impl LanguageServer {
                     show_message: Some(ShowMessageRequestClientCapabilities {
                         message_action_item: None,
                     }),
-                    ..Default::default()
+                    ..WindowClientCapabilities::default()
                 }),
             },
             trace: None,
@@ -831,8 +869,7 @@ impl LanguageServer {
                 }
             }),
             locale: None,
-
-            ..Default::default()
+            ..InitializeParams::default()
         }
     }
 
@@ -1036,7 +1073,9 @@ impl LanguageServer {
                                                 jsonrpc: JSON_RPC_VERSION,
                                                 id,
                                                 value: LspResult::Error(Some(Error {
+                                                    code: lsp_types::error_codes::REQUEST_FAILED,
                                                     message: error.to_string(),
+                                                    data: None,
                                                 })),
                                             },
                                         };
@@ -1057,7 +1096,9 @@ impl LanguageServer {
                                 id,
                                 result: None,
                                 error: Some(Error {
+                                    code: -32700, // Parse error
                                     message: error.to_string(),
+                                    data: None,
                                 }),
                             };
                             if let Some(response) = serde_json::to_string(&response).log_err() {
@@ -1342,7 +1383,8 @@ impl LanguageServer {
             self.notify::<DidChangeWorkspaceFolders>(&params).ok();
         }
     }
-    /// Add new workspace folder to the list.
+
+    /// Remove existing workspace folder from the list.
     pub fn remove_workspace_folder(&self, uri: Url) {
         if self
             .capabilities()
@@ -1559,7 +1601,7 @@ impl FakeLanguageServer {
             root,
             Some(workspace_folders.clone()),
             cx,
-            |_| {},
+            |_| false,
         );
         server.process_name = process_name;
         let fake = FakeLanguageServer {
@@ -1582,9 +1624,10 @@ impl FakeLanguageServer {
                         notifications_tx
                             .try_send((
                                 msg.method.to_string(),
-                                msg.params.unwrap_or(Value::Null).to_string(),
+                                msg.params.as_ref().unwrap_or(&Value::Null).to_string(),
                             ))
                             .ok();
+                        true
                     },
                 );
                 server.process_name = name.as_str().into();
@@ -1636,7 +1679,7 @@ impl LanguageServer {
             workspace_symbol_provider: Some(OneOf::Left(true)),
             implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
             type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
-            ..Default::default()
+            ..ServerCapabilities::default()
         }
     }
 }
@@ -1862,7 +1905,7 @@ mod tests {
     #[gpui::test]
     fn test_deserialize_string_digit_id() {
         let json = r#"{"jsonrpc":"2.0","id":"2","method":"workspace/configuration","params":{"items":[{"scopeUri":"file:///Users/mph/Devel/personal/hello-scala/","section":"metals"}]}}"#;
-        let notification = serde_json::from_str::<AnyNotification>(json)
+        let notification = serde_json::from_str::<NotificationOrRequest>(json)
             .expect("message with string id should be parsed");
         let expected_id = RequestId::Str("2".to_string());
         assert_eq!(notification.id, Some(expected_id));
@@ -1871,7 +1914,7 @@ mod tests {
     #[gpui::test]
     fn test_deserialize_string_id() {
         let json = r#"{"jsonrpc":"2.0","id":"anythingAtAll","method":"workspace/configuration","params":{"items":[{"scopeUri":"file:///Users/mph/Devel/personal/hello-scala/","section":"metals"}]}}"#;
-        let notification = serde_json::from_str::<AnyNotification>(json)
+        let notification = serde_json::from_str::<NotificationOrRequest>(json)
             .expect("message with string id should be parsed");
         let expected_id = RequestId::Str("anythingAtAll".to_string());
         assert_eq!(notification.id, Some(expected_id));
@@ -1880,7 +1923,7 @@ mod tests {
     #[gpui::test]
     fn test_deserialize_int_id() {
         let json = r#"{"jsonrpc":"2.0","id":2,"method":"workspace/configuration","params":{"items":[{"scopeUri":"file:///Users/mph/Devel/personal/hello-scala/","section":"metals"}]}}"#;
-        let notification = serde_json::from_str::<AnyNotification>(json)
+        let notification = serde_json::from_str::<NotificationOrRequest>(json)
             .expect("message with string id should be parsed");
         let expected_id = RequestId::Int(2);
         assert_eq!(notification.id, Some(expected_id));

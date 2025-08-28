@@ -212,7 +212,16 @@ impl HistoryStore {
     fn load_recently_opened_entries(cx: &AsyncApp) -> Task<Result<Vec<HistoryEntryId>>> {
         cx.background_spawn(async move {
             let path = paths::data_dir().join(NAVIGATION_HISTORY_PATH);
-            let contents = smol::fs::read_to_string(path).await?;
+            let contents = match smol::fs::read_to_string(path).await {
+                Ok(it) => it,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    return Ok(Vec::new());
+                }
+                Err(e) => {
+                    return Err(e)
+                        .context("deserializing persisted agent panel navigation history");
+                }
+            };
             let entries = serde_json::from_str::<Vec<SerializedRecentOpen>>(&contents)
                 .context("deserializing persisted agent panel navigation history")?
                 .into_iter()
@@ -245,10 +254,9 @@ impl HistoryStore {
     }
 
     pub fn remove_recently_opened_thread(&mut self, id: ThreadId, cx: &mut Context<Self>) {
-        self.recently_opened_entries.retain(|entry| match entry {
-            HistoryEntryId::Thread(thread_id) if thread_id == &id => false,
-            _ => true,
-        });
+        self.recently_opened_entries.retain(
+            |entry| !matches!(entry, HistoryEntryId::Thread(thread_id) if thread_id == &id),
+        );
         self.save_recently_opened_entries(cx);
     }
 

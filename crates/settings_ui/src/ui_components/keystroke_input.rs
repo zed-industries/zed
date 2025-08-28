@@ -1,6 +1,6 @@
 use gpui::{
     Animation, AnimationExt, Context, EventEmitter, FocusHandle, Focusable, FontWeight, KeyContext,
-    Keystroke, Modifiers, ModifiersChangedEvent, Subscription, Task, actions,
+    KeybindingKeystroke, Keystroke, Modifiers, ModifiersChangedEvent, Subscription, Task, actions,
 };
 use ui::{
     ActiveTheme as _, Color, IconButton, IconButtonShape, IconName, IconSize, Label, LabelSize,
@@ -19,7 +19,7 @@ actions!(
     ]
 );
 
-const KEY_CONTEXT_VALUE: &'static str = "KeystrokeInput";
+const KEY_CONTEXT_VALUE: &str = "KeystrokeInput";
 
 const CLOSE_KEYSTROKE_CAPTURE_END_TIMEOUT: std::time::Duration =
     std::time::Duration::from_millis(300);
@@ -42,8 +42,8 @@ impl PartialEq for CloseKeystrokeResult {
 }
 
 pub struct KeystrokeInput {
-    keystrokes: Vec<Keystroke>,
-    placeholder_keystrokes: Option<Vec<Keystroke>>,
+    keystrokes: Vec<KeybindingKeystroke>,
+    placeholder_keystrokes: Option<Vec<KeybindingKeystroke>>,
     outer_focus_handle: FocusHandle,
     inner_focus_handle: FocusHandle,
     intercept_subscription: Option<Subscription>,
@@ -70,7 +70,7 @@ impl KeystrokeInput {
     const KEYSTROKE_COUNT_MAX: usize = 3;
 
     pub fn new(
-        placeholder_keystrokes: Option<Vec<Keystroke>>,
+        placeholder_keystrokes: Option<Vec<KeybindingKeystroke>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -97,7 +97,7 @@ impl KeystrokeInput {
         }
     }
 
-    pub fn set_keystrokes(&mut self, keystrokes: Vec<Keystroke>, cx: &mut Context<Self>) {
+    pub fn set_keystrokes(&mut self, keystrokes: Vec<KeybindingKeystroke>, cx: &mut Context<Self>) {
         self.keystrokes = keystrokes;
         self.keystrokes_changed(cx);
     }
@@ -106,7 +106,7 @@ impl KeystrokeInput {
         self.search = search;
     }
 
-    pub fn keystrokes(&self) -> &[Keystroke] {
+    pub fn keystrokes(&self) -> &[KeybindingKeystroke] {
         if let Some(placeholders) = self.placeholder_keystrokes.as_ref()
             && self.keystrokes.is_empty()
         {
@@ -116,19 +116,19 @@ impl KeystrokeInput {
             && self
                 .keystrokes
                 .last()
-                .map_or(false, |last| last.key.is_empty())
+                .is_some_and(|last| last.key().is_empty())
         {
             return &self.keystrokes[..self.keystrokes.len() - 1];
         }
-        return &self.keystrokes;
+        &self.keystrokes
     }
 
-    fn dummy(modifiers: Modifiers) -> Keystroke {
-        return Keystroke {
+    fn dummy(modifiers: Modifiers) -> KeybindingKeystroke {
+        KeybindingKeystroke::from_keystroke(Keystroke {
             modifiers,
             key: "".to_string(),
             key_char: None,
-        };
+        })
     }
 
     fn keystrokes_changed(&self, cx: &mut Context<Self>) {
@@ -182,7 +182,7 @@ impl KeystrokeInput {
     fn end_close_keystrokes_capture(&mut self) -> Option<usize> {
         self.close_keystrokes.take();
         self.clear_close_keystrokes_timer.take();
-        return self.close_keystrokes_start.take();
+        self.close_keystrokes_start.take()
     }
 
     fn handle_possible_close_keystroke(
@@ -233,7 +233,7 @@ impl KeystrokeInput {
             return CloseKeystrokeResult::Partial;
         }
         self.end_close_keystrokes_capture();
-        return CloseKeystrokeResult::None;
+        CloseKeystrokeResult::None
     }
 
     fn on_modifiers_changed(
@@ -254,7 +254,7 @@ impl KeystrokeInput {
         self.keystrokes_changed(cx);
 
         if let Some(last) = self.keystrokes.last_mut()
-            && last.key.is_empty()
+            && last.key().is_empty()
             && keystrokes_len <= Self::KEYSTROKE_COUNT_MAX
         {
             if !self.search && !event.modifiers.modified() {
@@ -263,13 +263,14 @@ impl KeystrokeInput {
             }
             if self.search {
                 if self.previous_modifiers.modified() {
-                    last.modifiers |= event.modifiers;
+                    let modifiers = *last.modifiers() | event.modifiers;
+                    last.set_modifiers(modifiers);
                 } else {
                     self.keystrokes.push(Self::dummy(event.modifiers));
                 }
                 self.previous_modifiers |= event.modifiers;
             } else {
-                last.modifiers = event.modifiers;
+                last.set_modifiers(event.modifiers);
                 return;
             }
         } else if keystrokes_len < Self::KEYSTROKE_COUNT_MAX {
@@ -297,14 +298,15 @@ impl KeystrokeInput {
             return;
         }
 
-        let mut keystroke = keystroke.clone();
+        let keystroke = KeybindingKeystroke::new_with_mapper(
+            keystroke.clone(),
+            false,
+            cx.keyboard_mapper().as_ref(),
+        );
         if let Some(last) = self.keystrokes.last()
-            && last.key.is_empty()
+            && last.key().is_empty()
             && (!self.search || self.previous_modifiers.modified())
         {
-            let key = keystroke.key.clone();
-            keystroke = last.clone();
-            keystroke.key = key;
             self.keystrokes.pop();
         }
 
@@ -320,15 +322,19 @@ impl KeystrokeInput {
             return;
         }
 
-        self.keystrokes.push(keystroke.clone());
+        self.keystrokes.push(keystroke);
         self.keystrokes_changed(cx);
 
+        // The reason we use the real modifiers from the window instead of the keystroke's modifiers
+        // is that for keystrokes like `ctrl-$` the modifiers reported by keystroke is `ctrl` which
+        // is wrong, it should be `ctrl-shift`. The window's modifiers are always correct.
+        let real_modifiers = window.modifiers();
         if self.search {
-            self.previous_modifiers = keystroke.modifiers;
+            self.previous_modifiers = real_modifiers;
             return;
         }
-        if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX && keystroke.modifiers.modified() {
-            self.keystrokes.push(Self::dummy(keystroke.modifiers));
+        if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX && real_modifiers.modified() {
+            self.keystrokes.push(Self::dummy(real_modifiers));
         }
     }
 
@@ -364,7 +370,7 @@ impl KeystrokeInput {
             &self.keystrokes
         };
         keystrokes.iter().map(move |keystroke| {
-            h_flex().children(ui::render_keystroke(
+            h_flex().children(ui::render_keybinding_keystroke(
                 keystroke,
                 Some(Color::Default),
                 Some(rems(0.875).into()),
@@ -437,7 +443,7 @@ impl KeystrokeInput {
         // is a much more reliable check, as the intercept keystroke handlers are installed
         // on focus of the inner focus handle, thereby ensuring our recording state does
         // not get de-synced
-        return self.inner_focus_handle.is_focused(window);
+        self.inner_focus_handle.is_focused(window)
     }
 }
 
@@ -529,7 +535,7 @@ impl Render for KeystrokeInput {
             .w_full()
             .flex_1()
             .justify_between()
-            .rounded_lg()
+            .rounded_sm()
             .overflow_hidden()
             .map(|this| {
                 if is_recording {
@@ -590,7 +596,7 @@ impl Render for KeystrokeInput {
                     .map(|this| {
                         if is_recording {
                             this.child(
-                                IconButton::new("stop-record-btn", IconName::StopFilled)
+                                IconButton::new("stop-record-btn", IconName::Stop)
                                     .shape(IconButtonShape::Square)
                                     .map(|this| {
                                         this.tooltip(Tooltip::for_action_title(
@@ -629,7 +635,7 @@ impl Render for KeystrokeInput {
                         }
                     })
                     .child(
-                        IconButton::new("clear-btn", IconName::Delete)
+                        IconButton::new("clear-btn", IconName::Backspace)
                             .shape(IconButtonShape::Square)
                             .tooltip(Tooltip::for_action_title(
                                 "Clear Keystrokes",
@@ -706,8 +712,11 @@ mod tests {
 
             // Combine current modifiers with keystroke modifiers
             keystroke.modifiers |= self.current_modifiers;
+            let real_modifiers = keystroke.modifiers;
+            keystroke = to_gpui_keystroke(keystroke);
 
             self.update_input(|input, window, cx| {
+                window.set_modifiers(real_modifiers);
                 input.handle_keystroke(&keystroke, window, cx);
             });
 
@@ -735,6 +744,7 @@ mod tests {
             };
 
             self.update_input(|input, window, cx| {
+                window.set_modifiers(new_modifiers);
                 input.on_modifiers_changed(&event, window, cx);
             });
 
@@ -809,9 +819,13 @@ mod tests {
         /// Verifies that the keystrokes match the expected strings
         #[track_caller]
         pub fn expect_keystrokes(&mut self, expected: &[&str]) -> &mut Self {
-            let actual = self
-                .input
-                .read_with(&mut self.cx, |input, _| input.keystrokes.clone());
+            let actual: Vec<Keystroke> = self.input.read_with(&self.cx, |input, _| {
+                input
+                    .keystrokes
+                    .iter()
+                    .map(|keystroke| keystroke.inner().clone())
+                    .collect()
+            });
             Self::expect_keystrokes_equal(&actual, expected);
             self
         }
@@ -820,7 +834,7 @@ mod tests {
         pub fn expect_close_keystrokes(&mut self, expected: &[&str]) -> &mut Self {
             let actual = self
                 .input
-                .read_with(&mut self.cx, |input, _| input.close_keystrokes.clone())
+                .read_with(&self.cx, |input, _| input.close_keystrokes.clone())
                 .unwrap_or_default();
             Self::expect_keystrokes_equal(&actual, expected);
             self
@@ -934,12 +948,106 @@ mod tests {
             let change_tracker = KeystrokeUpdateTracker::new(self.input.clone(), &mut self.cx);
             let result = self.input.update_in(&mut self.cx, cb);
             KeystrokeUpdateTracker::finish(change_tracker, &self.cx);
-            return result;
+            result
         }
     }
 
+    /// For GPUI, when you press `ctrl-shift-2`, it produces `ctrl-@` without the shift modifier.
+    fn to_gpui_keystroke(mut keystroke: Keystroke) -> Keystroke {
+        if keystroke.modifiers.shift {
+            match keystroke.key.as_str() {
+                "`" => {
+                    keystroke.key = "~".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "1" => {
+                    keystroke.key = "!".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "2" => {
+                    keystroke.key = "@".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "3" => {
+                    keystroke.key = "#".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "4" => {
+                    keystroke.key = "$".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "5" => {
+                    keystroke.key = "%".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "6" => {
+                    keystroke.key = "^".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "7" => {
+                    keystroke.key = "&".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "8" => {
+                    keystroke.key = "*".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "9" => {
+                    keystroke.key = "(".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "0" => {
+                    keystroke.key = ")".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "-" => {
+                    keystroke.key = "_".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "=" => {
+                    keystroke.key = "+".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "[" => {
+                    keystroke.key = "{".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "]" => {
+                    keystroke.key = "}".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "\\" => {
+                    keystroke.key = "|".into();
+                    keystroke.modifiers.shift = false;
+                }
+                ";" => {
+                    keystroke.key = ":".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "'" => {
+                    keystroke.key = "\"".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "," => {
+                    keystroke.key = "<".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "." => {
+                    keystroke.key = ">".into();
+                    keystroke.modifiers.shift = false;
+                }
+                "/" => {
+                    keystroke.key = "?".into();
+                    keystroke.modifiers.shift = false;
+                }
+                _ => {}
+            }
+        }
+        keystroke
+    }
+
     struct KeystrokeUpdateTracker {
-        initial_keystrokes: Vec<Keystroke>,
+        initial_keystrokes: Vec<KeybindingKeystroke>,
         _subscription: Subscription,
         input: Entity<KeystrokeInput>,
         received_keystrokes_updated: bool,
@@ -983,8 +1091,8 @@ mod tests {
                 );
             }
 
-            fn keystrokes_str(ks: &[Keystroke]) -> String {
-                ks.iter().map(|ks| ks.unparse()).join(" ")
+            fn keystrokes_str(ks: &[KeybindingKeystroke]) -> String {
+                ks.iter().map(|ks| ks.inner().unparse()).join(" ")
             }
         }
     }
@@ -1041,7 +1149,15 @@ mod tests {
             .send_events(&["+cmd", "shift-f", "-cmd"])
             // In search mode, when completing a modifier-only keystroke with a key,
             // only the original modifiers are preserved, not the keystroke's modifiers
-            .expect_keystrokes(&["cmd-f"]);
+            //
+            // Update:
+            // This behavior was changed to preserve all modifiers in search mode, this is now reflected in the expected keystrokes.
+            // Specifically, considering the sequence: `+cmd +shift -shift 2`, we expect it to produce the same result as `+cmd +shift 2`
+            // which is `cmd-@`. But in the case of `+cmd +shift -shift 2`, the keystroke we receive is `cmd-2`, which means that
+            // we need to dynamically map the key from `2` to `@` when the shift modifier is not present, which is not possible.
+            // Therefore, we now preserve all modifiers in search mode to ensure consistent behavior.
+            // And also, VSCode seems to preserve all modifiers in search mode as well.
+            .expect_keystrokes(&["cmd-shift-f"]);
     }
 
     #[gpui::test]
@@ -1218,7 +1334,7 @@ mod tests {
             .await
             .with_search_mode(true)
             .send_events(&["+ctrl", "+shift", "-shift", "a", "-ctrl"])
-            .expect_keystrokes(&["ctrl-shift-a"]);
+            .expect_keystrokes(&["ctrl-a"]);
     }
 
     #[gpui::test]
@@ -1326,7 +1442,7 @@ mod tests {
             .await
             .with_search_mode(true)
             .send_events(&["+ctrl+alt", "-ctrl", "j"])
-            .expect_keystrokes(&["ctrl-alt-j"]);
+            .expect_keystrokes(&["alt-j"]);
     }
 
     #[gpui::test]
@@ -1348,11 +1464,11 @@ mod tests {
             .send_events(&["+ctrl+alt", "-ctrl", "+shift"])
             .expect_keystrokes(&["ctrl-shift-alt-"])
             .send_keystroke("j")
-            .expect_keystrokes(&["ctrl-shift-alt-j"])
+            .expect_keystrokes(&["shift-alt-j"])
             .send_keystroke("i")
-            .expect_keystrokes(&["ctrl-shift-alt-j", "shift-alt-i"])
+            .expect_keystrokes(&["shift-alt-j", "shift-alt-i"])
             .send_events(&["-shift-alt", "+cmd"])
-            .expect_keystrokes(&["ctrl-shift-alt-j", "shift-alt-i", "cmd-"]);
+            .expect_keystrokes(&["shift-alt-j", "shift-alt-i", "cmd-"]);
     }
 
     #[gpui::test]
@@ -1384,5 +1500,14 @@ mod tests {
             .with_search_mode(false)
             .send_events(&["+ctrl", "-ctrl", "+alt", "-alt", "+shift", "-shift"])
             .expect_empty();
+    }
+
+    #[gpui::test]
+    async fn test_not_search_shifted_keys(cx: &mut TestAppContext) {
+        init_test(cx)
+            .await
+            .with_search_mode(false)
+            .send_events(&["+ctrl", "+shift", "4", "-all"])
+            .expect_keystrokes(&["ctrl-$"]);
     }
 }

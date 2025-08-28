@@ -464,7 +464,7 @@ impl ManageProfilesModal {
                 },
             ))
             .child(ListSeparator)
-            .child(h_flex().p_2().child(mode.name_editor.clone()))
+            .child(h_flex().p_2().child(mode.name_editor))
     }
 
     fn render_view_profile(
@@ -483,7 +483,7 @@ impl ManageProfilesModal {
 
         let icon = match mode.profile_id.as_str() {
             "write" => IconName::Pencil,
-            "ask" => IconName::MessageBubbles,
+            "ask" => IconName::Chat,
             _ => IconName::UserRoundPen,
         };
 
@@ -594,7 +594,7 @@ impl ManageProfilesModal {
                                         .inset(true)
                                         .spacing(ListItemSpacing::Sparse)
                                         .start_slot(
-                                            Icon::new(IconName::Hammer)
+                                            Icon::new(IconName::ToolHammer)
                                                 .size(IconSize::Small)
                                                 .color(Color::Muted),
                                         )
@@ -763,7 +763,7 @@ impl Render for ManageProfilesModal {
                         .pb_1()
                         .child(ProfileModalHeader::new(
                             format!("{profile_name} — Configure MCP Tools"),
-                            Some(IconName::Hammer),
+                            Some(IconName::ToolHammer),
                         ))
                         .child(ListSeparator)
                         .child(tool_picker.clone())
