@@ -36,7 +36,7 @@ use util::{ResultExt, debug_panic};
 
 use crate::claude::mcp_server::{ClaudeZedMcpServer, McpConfig};
 use crate::claude::tools::ClaudeTool;
-use crate::{AgentServer, AgentServerCommand, AllAgentServersSettings};
+use crate::{AgentServer, AgentServerCommand, AgentServerDelegate, AllAgentServersSettings};
 use acp_thread::{AcpThread, AgentConnection, AuthRequired, LoadError, MentionUri};
 
 #[derive(Clone)]
@@ -51,26 +51,14 @@ impl AgentServer for ClaudeCode {
         "Claude Code".into()
     }
 
-    fn empty_state_headline(&self) -> SharedString {
-        self.name()
-    }
-
-    fn empty_state_message(&self) -> SharedString {
-        "How can I help you today?".into()
-    }
-
     fn logo(&self) -> ui::IconName {
         ui::IconName::AiClaude
-    }
-
-    fn install_command(&self) -> Option<&'static str> {
-        Some("npm install -g @anthropic-ai/claude-code@latest")
     }
 
     fn connect(
         &self,
         _root_dir: &Path,
-        _project: &Entity<Project>,
+        _delegate: AgentServerDelegate,
         _cx: &mut App,
     ) -> Task<Result<Rc<dyn AgentConnection>>> {
         let connection = ClaudeAgentConnection {
@@ -112,7 +100,7 @@ impl AgentConnection for ClaudeAgentConnection {
             )
             .await
             else {
-                return Err(LoadError::NotInstalled.into());
+                return Err(anyhow!("Failed to find Claude Code binary"));
             };
 
             let api_key =
@@ -232,6 +220,7 @@ impl AgentConnection for ClaudeAgentConnection {
                                     LoadError::Unsupported {
                                         command: command.path.to_string_lossy().to_string().into(),
                                         current_version: version.to_string().into(),
+                                        minimum_version: "1.0.0".into(),
                                     }
                                 } else {
                                     LoadError::Exited { status }

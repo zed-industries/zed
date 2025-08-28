@@ -6,7 +6,7 @@ use acp_thread::{
 use acp_thread::{AgentConnection, Plan};
 use action_log::ActionLog;
 use agent_client_protocol::{self as acp, PromptCapabilities};
-use agent_servers::{AgentServer, ClaudeCode};
+use agent_servers::{AgentServer, AgentServerDelegate, ClaudeCode};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode, NotifyWhenAgentWaiting};
 use agent2::{DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore};
 use anyhow::bail;
@@ -43,7 +43,7 @@ use text::Anchor;
 use theme::ThemeSettings;
 use ui::{
     Callout, Disclosure, Divider, DividerColor, ElevationIndex, KeyBinding, PopoverMenuHandle,
-    Scrollbar, ScrollbarState, SpinnerLabel, TintColor, Tooltip, prelude::*,
+    Scrollbar, ScrollbarState, SpinnerLabel, Tooltip, prelude::*,
 };
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use workspace::{CollaboratorId, Workspace};
@@ -278,15 +278,12 @@ pub struct AcpThreadView {
     editing_message: Option<usize>,
     prompt_capabilities: Rc<Cell<PromptCapabilities>>,
     is_loading_contents: bool,
-    install_command_markdown: Entity<Markdown>,
     _cancel_task: Option<Task<()>>,
     _subscriptions: [Subscription; 3],
 }
 
 enum ThreadState {
-    Loading {
-        _task: Task<()>,
-    },
+    Loading(Entity<LoadingView>),
     Ready {
         thread: Entity<AcpThread>,
         title_editor: Option<Entity<Editor>>,
@@ -300,6 +297,12 @@ enum ThreadState {
         pending_auth_method: Option<acp::AuthMethodId>,
         _subscription: Option<Subscription>,
     },
+}
+
+struct LoadingView {
+    title: SharedString,
+    _load_task: Task<()>,
+    _update_title_task: Task<anyhow::Result<()>>,
 }
 
 impl AcpThreadView {
@@ -392,7 +395,6 @@ impl AcpThreadView {
             hovered_recent_history_item: None,
             prompt_capabilities,
             is_loading_contents: false,
-            install_command_markdown: cx.new(|cx| Markdown::new("".into(), None, None, cx)),
             _subscriptions: subscriptions,
             _cancel_task: None,
             focus_handle: cx.focus_handle(),
@@ -413,8 +415,10 @@ impl AcpThreadView {
             .next()
             .map(|worktree| worktree.read(cx).abs_path())
             .unwrap_or_else(|| paths::home_dir().as_path().into());
+        let (tx, mut rx) = watch::channel("Loading…".into());
+        let delegate = AgentServerDelegate::new(project.clone(), tx);
 
-        let connect_task = agent.connect(&root_dir, &project, cx);
+        let connect_task = agent.connect(&root_dir, delegate, cx);
         let load_task = cx.spawn_in(window, async move |this, cx| {
             let connection = match connect_task.await {
                 Ok(connection) => connection,
@@ -564,7 +568,25 @@ impl AcpThreadView {
             .log_err();
         });
 
-        ThreadState::Loading { _task: load_task }
+        let loading_view = cx.new(|cx| {
+            let update_title_task = cx.spawn(async move |this, cx| {
+                loop {
+                    let status = rx.recv().await?;
+                    this.update(cx, |this: &mut LoadingView, cx| {
+                        this.title = status;
+                        cx.notify();
+                    })?;
+                }
+            });
+
+            LoadingView {
+                title: "Loading…".into(),
+                _load_task: load_task,
+                _update_title_task: update_title_task,
+            }
+        });
+
+        ThreadState::Loading(loading_view)
     }
 
     fn handle_auth_required(
@@ -664,13 +686,15 @@ impl AcpThreadView {
         }
     }
 
-    pub fn title(&self) -> SharedString {
+    pub fn title(&self, cx: &App) -> SharedString {
         match &self.thread_state {
             ThreadState::Ready { .. } | ThreadState::Unauthenticated { .. } => "New Thread".into(),
-            ThreadState::Loading { .. } => "Loading…".into(),
+            ThreadState::Loading(loading_view) => loading_view.read(cx).title.clone(),
             ThreadState::LoadError(error) => match error {
-                LoadError::NotInstalled { .. } => format!("Install {}", self.agent.name()).into(),
                 LoadError::Unsupported { .. } => format!("Upgrade {}", self.agent.name()).into(),
+                LoadError::FailedToInstall(_) => {
+                    format!("Failed to Install {}", self.agent.name()).into()
+                }
                 LoadError::Exited { .. } => format!("{} Exited", self.agent.name()).into(),
                 LoadError::Other(_) => format!("Error Loading {}", self.agent.name()).into(),
             },
@@ -2825,18 +2849,26 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let (message, action_slot): (SharedString, _) = match e {
-            LoadError::NotInstalled => {
-                return self.render_not_installed(None, window, cx);
-            }
+        let (title, message, action_slot): (_, SharedString, _) = match e {
             LoadError::Unsupported {
                 command: path,
                 current_version,
+                minimum_version,
             } => {
-                return self.render_not_installed(Some((path, current_version)), window, cx);
+                return self.render_unsupported(path, current_version, minimum_version, window, cx);
             }
-            LoadError::Exited { .. } => ("Server exited with status {status}".into(), None),
+            LoadError::FailedToInstall(msg) => (
+                "Failed to Install",
+                msg.into(),
+                Some(self.create_copy_button(msg.to_string()).into_any_element()),
+            ),
+            LoadError::Exited { status } => (
+                "Failed to Launch",
+                format!("Server exited with status {status}").into(),
+                None,
+            ),
             LoadError::Other(msg) => (
+                "Failed to Launch",
                 msg.into(),
                 Some(self.create_copy_button(msg.to_string()).into_any_element()),
             ),
@@ -2845,95 +2877,34 @@ impl AcpThreadView {
         Callout::new()
             .severity(Severity::Error)
             .icon(IconName::XCircleFilled)
-            .title("Failed to Launch")
+            .title(title)
             .description(message)
             .actions_slot(div().children(action_slot))
             .into_any_element()
     }
 
-    fn install_agent(&self, window: &mut Window, cx: &mut Context<Self>) {
-        telemetry::event!("Agent Install CLI", agent = self.agent.telemetry_id());
-        let Some(install_command) = self.agent.install_command().map(|s| s.to_owned()) else {
-            return;
-        };
-        let task = self
-            .workspace
-            .update(cx, |workspace, cx| {
-                let project = workspace.project().read(cx);
-                let cwd = project.first_project_directory(cx);
-                let shell = project.terminal_settings(&cwd, cx).shell.clone();
-                let spawn_in_terminal = task::SpawnInTerminal {
-                    id: task::TaskId(install_command.clone()),
-                    full_label: install_command.clone(),
-                    label: install_command.clone(),
-                    command: Some(install_command.clone()),
-                    args: Vec::new(),
-                    command_label: install_command.clone(),
-                    cwd,
-                    env: Default::default(),
-                    use_new_terminal: true,
-                    allow_concurrent_runs: true,
-                    reveal: Default::default(),
-                    reveal_target: Default::default(),
-                    hide: Default::default(),
-                    shell,
-                    show_summary: true,
-                    show_command: true,
-                    show_rerun: false,
-                };
-                workspace.spawn_in_terminal(spawn_in_terminal, window, cx)
-            })
-            .ok();
-        let Some(task) = task else { return };
-        cx.spawn_in(window, async move |this, cx| {
-            if let Some(Ok(_)) = task.await {
-                this.update_in(cx, |this, window, cx| {
-                    this.reset(window, cx);
-                })
-                .ok();
-            }
-        })
-        .detach()
-    }
-
-    fn render_not_installed(
+    fn render_unsupported(
         &self,
-        existing_version: Option<(&SharedString, &SharedString)>,
-        window: &mut Window,
+        path: &SharedString,
+        version: &SharedString,
+        minimum_version: &SharedString,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let install_command = self.agent.install_command().unwrap_or_default();
-
-        self.install_command_markdown.update(cx, |markdown, cx| {
-            if !markdown.source().contains(&install_command) {
-                markdown.replace(format!("```\n{}\n```", install_command), cx);
-            }
-        });
-
-        let (heading_label, description_label, button_label) =
-            if let Some((path, version)) = existing_version {
-                (
-                    format!("Upgrade {} to work with Zed", self.agent.name()),
-                    if version.is_empty() {
-                        format!(
-                            "Currently using {}, which does not report a valid --version",
-                            path,
-                        )
-                    } else {
-                        format!(
-                            "Currently using {}, which is only version {}",
-                            path, version
-                        )
-                    },
-                    format!("Upgrade {}", self.agent.name()),
+        let (heading_label, description_label) = (
+            format!("Upgrade {} to work with Zed", self.agent.name()),
+            if version.is_empty() {
+                format!(
+                    "Currently using {}, which does not report a valid --version",
+                    path,
                 )
             } else {
-                (
-                    format!("Get Started with {} in Zed", self.agent.name()),
-                    "Use Google's new coding agent directly in Zed.".to_string(),
-                    format!("Install {}", self.agent.name()),
+                format!(
+                    "Currently using {}, which is only version {} (need at least {minimum_version})",
+                    path, version
                 )
-            };
+            },
+        );
 
         v_flex()
             .w_full()
@@ -2953,34 +2924,6 @@ impl AcpThreadView {
                         .color(Color::Muted),
                 ),
             )
-            .child(
-                Button::new("install_gemini", button_label)
-                    .full_width()
-                    .size(ButtonSize::Medium)
-                    .style(ButtonStyle::Tinted(TintColor::Accent))
-                    .label_size(LabelSize::Small)
-                    .icon(IconName::TerminalGhost)
-                    .icon_color(Color::Muted)
-                    .icon_size(IconSize::Small)
-                    .icon_position(IconPosition::Start)
-                    .on_click(cx.listener(|this, _, window, cx| this.install_agent(window, cx))),
-            )
-            .child(
-                Label::new("Or, run the following command in your terminal:")
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-            )
-            .child(MarkdownElement::new(
-                self.install_command_markdown.clone(),
-                default_markdown_style(false, false, window, cx),
-            ))
-            .when_some(existing_version, |el, (path, _)| {
-                el.child(
-                    Label::new(format!("If this does not work you will need to upgrade manually, or uninstall your existing version from {}", path))
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                )
-            })
             .into_any_element()
     }
 
@@ -4869,18 +4812,6 @@ impl AcpThreadView {
             }))
     }
 
-    fn reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.thread_state = Self::initial_state(
-            self.agent.clone(),
-            None,
-            self.workspace.clone(),
-            self.project.clone(),
-            window,
-            cx,
-        );
-        cx.notify();
-    }
-
     pub fn delete_history_entry(&mut self, entry: HistoryEntry, cx: &mut Context<Self>) {
         let task = match entry {
             HistoryEntry::AcpThread(thread) => self.history_store.update(cx, |history, cx| {
@@ -5409,22 +5340,10 @@ pub(crate) mod tests {
             "Test".into()
         }
 
-        fn empty_state_headline(&self) -> SharedString {
-            "Test".into()
-        }
-
-        fn empty_state_message(&self) -> SharedString {
-            "Test".into()
-        }
-
-        fn install_command(&self) -> Option<&'static str> {
-            None
-        }
-
         fn connect(
             &self,
             _root_dir: &Path,
-            _project: &Entity<Project>,
+            _delegate: AgentServerDelegate,
             _cx: &mut App,
         ) -> Task<gpui::Result<Rc<dyn AgentConnection>>> {
             Task::ready(Ok(Rc::new(self.connection.clone())))
