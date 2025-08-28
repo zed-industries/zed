@@ -79,6 +79,7 @@ impl Project {
             });
         }
         let settings = TerminalSettings::get(settings_location, cx).clone();
+        let detect_venv = settings.detect_venv.as_option().is_some();
 
         let (completion_tx, completion_rx) = bounded(1);
 
@@ -122,8 +123,9 @@ impl Project {
             },
         };
 
-        let toolchain =
-            project_path_context.map(|p| self.active_toolchain(p, LanguageName::new("Python"), cx));
+        let toolchain = project_path_context
+            .filter(|_| detect_venv)
+            .map(|p| self.active_toolchain(p, LanguageName::new("Python"), cx));
         let lang_registry = self.languages.clone();
         cx.spawn(async move |project, cx| {
             let activation_script = maybe!(async {
@@ -254,6 +256,7 @@ impl Project {
             });
         }
         let settings = TerminalSettings::get(settings_location, cx).clone();
+        let detect_venv = settings.detect_venv.as_option().is_some();
 
         // Start with the environment that we might have inherited from the Zed CLI.
         let mut env = self
@@ -267,8 +270,9 @@ impl Project {
 
         let local_path = if is_via_remote { None } else { path.clone() };
 
-        let toolchain =
-            project_path_context.map(|p| self.active_toolchain(p, LanguageName::new("Python"), cx));
+        let toolchain = project_path_context
+            .filter(|_| detect_venv)
+            .map(|p| self.active_toolchain(p, LanguageName::new("Python"), cx));
         let remote_client = self.remote_client.clone();
         let shell = match &remote_client {
             Some(remote_client) => remote_client
@@ -316,7 +320,7 @@ impl Project {
                                     "-c".to_owned(),
                                     format!("{activation_script}; exec {shell} -l",),
                                 ],
-                                title_override: None,
+                                title_override: Some(shell.into()),
                             },
                             None => settings.shell,
                         },

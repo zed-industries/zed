@@ -9222,7 +9222,6 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
             SharedString::new_static("pyproject.toml").into()
         }
         fn activation_script(&self, _: &Toolchain) -> Option<String> {
-            // todo
             None
         }
     }
