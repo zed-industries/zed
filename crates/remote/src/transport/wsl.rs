@@ -71,7 +71,7 @@ impl WslRemoteConnection {
     }
 
     async fn detect_platform(&self) -> Result<RemotePlatform> {
-        let arch_str = self.wsl_command("uname", &["-m"]).await?;
+        let arch_str = self.run_wsl_command("uname", &["-m"]).await?;
         let arch_str = arch_str.trim().to_string();
         let arch = match arch_str.as_str() {
             "x86_64" => "x86_64",
@@ -83,7 +83,7 @@ impl WslRemoteConnection {
 
     async fn detect_shell(&self) -> Result<String> {
         let shell = self
-            .wsl_command("sh", &["-c", "echo $SHELL"])
+            .run_wsl_command("sh", &["-c", "echo $SHELL"])
             .await
             .unwrap_or_else(|_| "bash".to_string());
         Ok(shell.trim().split('/').last().unwrap_or("bash").to_string())
@@ -95,53 +95,11 @@ impl WslRemoteConnection {
             WslPathConverterKind::WslToWindows => "-w",
             WslPathConverterKind::WindowsToWsl => "-u",
         };
-        self.wsl_command("wslpath", &[arg, &source]).await
+        self.run_wsl_command("wslpath", &[arg, &source]).await
     }
 
-    async fn path_converter_impl(
-        options: &WslConnectionOptions,
-        source: &Path,
-        kind: WslPathConverterKind,
-    ) -> Result<String> {
-        let source = sanitize_path(source).await?;
-        let arg = match kind {
-            WslPathConverterKind::WslToWindows => "-w",
-            WslPathConverterKind::WindowsToWsl => "-u",
-        };
-        Self::wsl_command_impl(options, "wslpath", &[arg, &source]).await
-    }
-
-    async fn wsl_command(&self, program: &str, args: &[&str]) -> Result<String> {
-        Self::wsl_command_impl(&self.connection_options, program, args).await
-    }
-
-    async fn wsl_command_impl(
-        options: &WslConnectionOptions,
-        program: &str,
-        args: &[&str],
-    ) -> Result<String> {
-        let to_run = iter::once(&program)
-            .chain(args.iter())
-            .map(|token| shlex::try_quote(token).unwrap())
-            .join(" ");
-        let output = util::command::new_smol_command("wsl.exe")
-            .arg("--distribution")
-            .arg(&options.distro_name)
-            .arg("sh")
-            .arg("-c")
-            .arg(format!("cd; {to_run}"))
-            .output()
-            .await?;
-
-        if !output.status.success() {
-            return Err(anyhow!(
-                "Command '{}' failed: {}",
-                program,
-                String::from_utf8_lossy(&output.stderr).trim()
-            ));
-        }
-
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    async fn run_wsl_command(&self, program: &str, args: &[&str]) -> Result<String> {
+        run_wsl_command_impl(&self.connection_options, program, args).await
     }
 
     #[cfg(debug_assertions)]
@@ -362,7 +320,7 @@ impl WslRemoteConnection {
         );
 
         if let Some(parent) = dst_path.parent() {
-            self.wsl_command("mkdir", &["-p", &parent.to_string()])
+            self.run_wsl_command("mkdir", &["-p", &parent.to_string()])
                 .await
                 .map_err(|e| anyhow!("Failed to create directory: {}", e))?;
         }
@@ -386,7 +344,7 @@ impl WslRemoteConnection {
         }
 
         if self
-            .wsl_command(&dst_path.to_string(), &["version"])
+            .run_wsl_command(&dst_path.to_string(), &["version"])
             .await
             .is_ok()
         {
@@ -429,7 +387,7 @@ impl WslRemoteConnection {
         delegate.set_status(Some("Uploading remote server to WSL"), cx);
 
         if let Some(parent) = dst_path.parent() {
-            self.wsl_command("mkdir", &["-p", &parent.to_string()])
+            self.run_wsl_command("mkdir", &["-p", &parent.to_string()])
                 .await
                 .map_err(|e| anyhow!("Failed to create directory when uploading file: {}", e))?;
         }
@@ -446,7 +404,7 @@ impl WslRemoteConnection {
         let src_path_in_wsl = self
             .path_converter(src_path, WslPathConverterKind::WindowsToWsl)
             .await?;
-        self.wsl_command("cp", &["-f", &src_path_in_wsl, &dst_path.to_string()])
+        self.run_wsl_command("cp", &["-f", &src_path_in_wsl, &dst_path.to_string()])
             .await
             .map_err(|e| {
                 anyhow!(
@@ -488,7 +446,7 @@ impl WslRemoteConnection {
             )
         };
 
-        self.wsl_command("sh", &["-c", &script])
+        self.run_wsl_command("sh", &["-c", &script])
             .await
             .map_err(|e| anyhow!("Failed to extract server binary: {}", e))?;
         Ok(())
@@ -565,14 +523,11 @@ impl RemoteConnection for WslRemoteConnection {
         cx.background_spawn({
             let options = self.connection_options.clone();
             async move {
-                let wsl_src = Self::path_converter_impl(
-                    &options,
-                    &src_path,
-                    WslPathConverterKind::WindowsToWsl,
-                )
-                .await?;
+                let wsl_src =
+                    path_converter_impl(&options, &src_path, WslPathConverterKind::WindowsToWsl)
+                        .await?;
 
-                Self::wsl_command_impl(&options, "cp", &["-r", &wsl_src, &dest_path.to_string()])
+                run_wsl_command_impl(&options, "cp", &["-r", &wsl_src, &dest_path.to_string()])
                     .await
                     .map_err(|e| {
                         anyhow!(
@@ -673,4 +628,46 @@ async fn sanitize_path(path: &Path) -> Result<String> {
 
     let sanitized = path_str.strip_prefix(r"\\?\").unwrap_or(&path_str);
     Ok(sanitized.replace('\\', "/"))
+}
+
+async fn path_converter_impl(
+    options: &WslConnectionOptions,
+    source: &Path,
+    kind: WslPathConverterKind,
+) -> Result<String> {
+    let source = sanitize_path(source).await?;
+    let arg = match kind {
+        WslPathConverterKind::WslToWindows => "-w",
+        WslPathConverterKind::WindowsToWsl => "-u",
+    };
+    run_wsl_command_impl(options, "wslpath", &[arg, &source]).await
+}
+
+async fn run_wsl_command_impl(
+    options: &WslConnectionOptions,
+    program: &str,
+    args: &[&str],
+) -> Result<String> {
+    let to_run = iter::once(&program)
+        .chain(args.iter())
+        .map(|token| shlex::try_quote(token).unwrap())
+        .join(" ");
+    let output = util::command::new_smol_command("wsl.exe")
+        .arg("--distribution")
+        .arg(&options.distro_name)
+        .arg("sh")
+        .arg("-c")
+        .arg(format!("cd; {to_run}"))
+        .output()
+        .await?;
+
+    if !output.status.success() {
+        return Err(anyhow!(
+            "Command '{}' failed: {}",
+            program,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
