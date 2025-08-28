@@ -158,6 +158,29 @@ impl SubView {
         })
     }
 
+    pub(crate) fn stack_frame_list(
+        stack_frame_list: Entity<StackFrameList>,
+        cx: &mut App,
+    ) -> Entity<Self> {
+        let weak_list = stack_frame_list.downgrade();
+        let this = Self::new(
+            stack_frame_list.focus_handle(cx),
+            stack_frame_list.into(),
+            DebuggerPaneItem::Frames,
+            cx,
+        );
+
+        this.update(cx, |this, _| {
+            this.with_actions(Box::new(move |_, cx| {
+                weak_list
+                    .update(cx, |this, _| this.render_control_strip())
+                    .unwrap_or_else(|_| div().into_any_element())
+            }));
+        });
+
+        this
+    }
+
     pub(crate) fn console(console: Entity<Console>, cx: &mut App) -> Entity<Self> {
         let weak_console = console.downgrade();
         let this = Self::new(
