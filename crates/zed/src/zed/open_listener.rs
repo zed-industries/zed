@@ -52,6 +52,7 @@ impl OpenRequest {
     pub fn parse(request: RawOpenRequest, cx: &App) -> Result<Self> {
         let mut this = Self::default();
 
+        this.diff_paths = request.diff_paths;
         if let Some(wsl) = request.wsl {
             this.remote_connection = Some(RemoteConnectionOptions::Wsl(WslConnectionOptions {
                 distro_name: wsl,
@@ -86,9 +87,6 @@ impl OpenRequest {
                 log::error!("unhandled url: {}", url);
             }
         }
-
-        this.diff_paths = request.diff_paths;
-
 
         Ok(this)
     }
