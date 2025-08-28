@@ -1257,4 +1257,87 @@ mod tests {
             "Expected new requests after API key update"
         );
     }
+
+    #[gpui::test]
+    async fn test_ollama_debouncing(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Create a buffer with realistic code content
+        let buffer = cx.update(|cx| cx.new(|cx| Buffer::local("fn test() {\n    \n}", cx)));
+        let cursor_position = buffer.read_with(cx, |buffer, _| {
+            buffer.anchor_before(11) // Position in the middle of the function
+        });
+
+        // Setup provider state
+        let fake_http_client = Arc::new(crate::fake::FakeHttpClient::new());
+        fake_http_client.set_generate_response("println!(\"Hello\");");
+
+        let service = cx.update(|cx| {
+            State::new(
+                fake_http_client.clone(),
+                "http://localhost:11434".to_string(),
+                None,
+                cx,
+            )
+        });
+
+        cx.update(|cx| {
+            State::set_global(service.clone(), cx);
+        });
+
+        // Wait for any initial model discovery requests to complete
+        cx.background_executor.run_until_parked();
+
+        let provider = cx.update(|cx| {
+            cx.new(|cx| OllamaCompletionProvider::new("qwen2.5-coder:3b".to_string(), None, cx))
+        });
+
+        // Clear any initial requests (including model discovery)
+        fake_http_client.clear_requests();
+
+        // Simulate rapid typing - trigger refresh multiple times with debounce=true
+        provider.update(cx, |provider, cx| {
+            provider.refresh(None, buffer.clone(), cursor_position, true, cx);
+        });
+
+        provider.update(cx, |provider, cx| {
+            provider.refresh(None, buffer.clone(), cursor_position, true, cx);
+        });
+
+        provider.update(cx, |provider, cx| {
+            provider.refresh(None, buffer.clone(), cursor_position, true, cx);
+        });
+
+        // At this point, no requests should have been made due to debouncing
+        let requests_before_timeout = fake_http_client.get_requests();
+        assert_eq!(
+            requests_before_timeout.len(),
+            0,
+            "Expected no requests before debounce timeout expires"
+        );
+
+        // Advance clock by the debounce timeout
+        cx.background_executor
+            .advance_clock(OLLAMA_DEBOUNCE_TIMEOUT);
+        cx.background_executor.run_until_parked();
+
+        // Now exactly one request should have been made (the last one)
+        let requests_after_timeout = fake_http_client.get_requests();
+        assert_eq!(
+            requests_after_timeout.len(),
+            1,
+            "Expected exactly 1 request after debounce timeout, got {}",
+            requests_after_timeout.len()
+        );
+
+
+        // Verify provider is no longer refreshing
+        provider.read_with(cx, |provider, _cx| {
+            assert!(
+                !provider.is_refreshing(),
+                "Provider should not be refreshing after completion"
+            );
+        });
+    }
+
 }
