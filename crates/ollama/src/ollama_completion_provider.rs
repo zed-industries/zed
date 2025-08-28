@@ -12,6 +12,9 @@ use settings::SettingsStore;
 use project::Project;
 
 pub const OLLAMA_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
+const OLLAMA_EDIT_PREDICTION_LENGTH: i32 = 150;
+const OLLAMA_EDIT_PREDICTION_TEMP: f32 = 0.1;
+const OLLAMA_EDIT_PREDICTION_TOP_P: f32 = 0.95;
 
 // Structure for passing settings model data without circular dependencies
 #[derive(Clone, Debug)]
@@ -371,9 +374,9 @@ impl EditPredictionProvider for OllamaCompletionProvider {
                 suffix: Some(suffix),
                 stream: false,
                 options: Some(GenerateOptions {
-                    num_predict: Some(150), // Reasonable completion length
-                    temperature: Some(0.1), // Low temperature for more deterministic results
-                    top_p: Some(0.95),
+                    num_predict: Some(OLLAMA_EDIT_PREDICTION_LENGTH), // Reasonable completion length
+                    temperature: Some(OLLAMA_EDIT_PREDICTION_TEMP), // Low temperature for more deterministic results
+                    top_p: Some(OLLAMA_EDIT_PREDICTION_TOP_P),
                     stop: stop_tokens,
                 }),
                 keep_alive: None,
