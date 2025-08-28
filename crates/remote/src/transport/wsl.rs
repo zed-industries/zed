@@ -398,10 +398,12 @@ impl RemoteConnection for WslRemoteConnection {
         }
 
         if let Some(program) = program {
-            script.push_str(&program);
+            let command = shlex::try_quote(&program)?;
+            script.push_str(&command);
             for arg in args {
-                script.push(' ');
-                script.push_str(arg);
+                let arg = shlex::try_quote(&arg)?;
+                script.push_str(" ");
+                script.push_str(&arg);
             }
         } else {
             write!(&mut script, "exec {} -l", self.shell).unwrap();
@@ -413,7 +415,7 @@ impl RemoteConnection for WslRemoteConnection {
             "--".to_string(),
             self.shell.clone(),
             "-c".to_string(),
-            script,
+            shlex::try_quote(&script)?.to_string(),
         ];
 
         Ok(CommandTemplate {
