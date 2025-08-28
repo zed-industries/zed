@@ -122,12 +122,16 @@ fn handle_rpc_messages_over_child_process_stdio(
     })
 }
 
+#[cfg(debug_assertions)]
 async fn build_remote_server_from_source(
     platform: &RemotePlatform,
-    build_remote_server: String,
     delegate: &Arc<dyn RemoteClientDelegate>,
     cx: &mut AsyncApp,
-) -> Result<PathBuf> {
+) -> Result<Option<PathBuf>> {
+    let Some(build_remote_server) = std::env::var("ZED_BUILD_REMOTE_SERVER").ok() else {
+        return Ok(None);
+    };
+
     use smol::process::{Command, Stdio};
     use std::env::VarError;
 
@@ -331,5 +335,5 @@ async fn build_remote_server_from_source(
         bin_path
     };
 
-    Ok(path.canonicalize()?)
+    Ok(Some(path.canonicalize()?))
 }

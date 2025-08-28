@@ -82,11 +82,12 @@ impl WslRemoteConnection {
     }
 
     async fn detect_shell(&self) -> Result<String> {
-        let shell = self
+        Ok(self
             .run_wsl_command("sh", &["-c", "echo $SHELL"])
             .await
-            .unwrap_or_else(|_| "bash".to_string());
-        Ok(shell.trim().split('/').last().unwrap_or("bash").to_string())
+            .ok()
+            .and_then(|shell_path| shell_path.trim().split('/').next_back().map(str::to_string))
+            .unwrap_or_else(|| "bash".to_string()))
     }
 
     async fn path_converter(&self, source: &Path, kind: WslPathConverterKind) -> Result<String> {
@@ -140,26 +141,20 @@ impl WslRemoteConnection {
                 .map_err(|e| anyhow!("Failed to create directory: {}", e))?;
         }
 
-        #[allow(unused)]
-        let build_remote_server = std::env::var("ZED_BUILD_REMOTE_SERVER").ok();
         #[cfg(debug_assertions)]
-        if let Some(build_remote_server) = build_remote_server {
-            let src_path = super::build_remote_server_from_source(
-                &self.platform,
-                build_remote_server,
-                delegate,
-                cx,
-            )
-            .await?;
+        if let Some(remote_server_path) =
+            super::build_remote_server_from_source(&self.platform, delegate, cx).await?
+        {
             let tmp_path = RemotePathBuf::new(
                 paths::remote_wsl_server_dir_relative().join(format!(
                     "download-{}-{}",
                     std::process::id(),
-                    src_path.file_name().unwrap().to_string_lossy()
+                    remote_server_path.file_name().unwrap().to_string_lossy()
                 )),
                 PathStyle::Posix,
             );
-            self.upload_file(&src_path, &tmp_path, delegate, cx).await?;
+            self.upload_file(&remote_server_path, &tmp_path, delegate, cx)
+                .await?;
             self.extract_and_install(&tmp_path, &dst_path, delegate, cx)
                 .await?;
             return Ok(dst_path);
@@ -289,14 +284,13 @@ impl RemoteConnection for WslRemoteConnection {
     ) -> Task<Result<i32>> {
         delegate.set_status(Some("Starting proxy"), cx);
 
-        let Some(remote_binary_path) = self.remote_binary_path.clone() else {
+        let Some(remote_binary_path) = &self.remote_binary_path else {
             return Task::ready(Err(anyhow!("Remote binary path not set")));
         };
 
         let mut proxy_command = format!(
             "exec {} proxy --identifier {}",
-            remote_binary_path.to_string(),
-            unique_identifier
+            remote_binary_path, unique_identifier
         );
 
         if reconnect {

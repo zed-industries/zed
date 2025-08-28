@@ -447,25 +447,19 @@ impl SshRemoteConnection {
             self.ssh_path_style,
         );
 
-        let build_remote_server = std::env::var("ZED_BUILD_REMOTE_SERVER").ok();
         #[cfg(debug_assertions)]
-        if let Some(build_remote_server) = build_remote_server {
-            let src_path = super::build_remote_server_from_source(
-                &self.ssh_platform,
-                build_remote_server,
-                delegate,
-                cx,
-            )
-            .await?;
+        if let Some(remote_server_path) =
+            super::build_remote_server_from_source(&self.ssh_platform, delegate, cx).await?
+        {
             let tmp_path = RemotePathBuf::new(
                 paths::remote_server_dir_relative().join(format!(
                     "download-{}-{}",
                     std::process::id(),
-                    src_path.file_name().unwrap().to_string_lossy()
+                    remote_server_path.file_name().unwrap().to_string_lossy()
                 )),
                 self.ssh_path_style,
             );
-            self.upload_local_server_binary(&src_path, &tmp_path, delegate, cx)
+            self.upload_local_server_binary(&remote_server_path, &tmp_path, delegate, cx)
                 .await?;
             self.extract_server_binary(&dst_path, &tmp_path, delegate, cx)
                 .await?;
