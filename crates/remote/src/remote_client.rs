@@ -778,6 +778,7 @@ impl RemoteClient {
         args: &[String],
         env: &HashMap<String, String>,
         working_dir: Option<String>,
+        activation_script: Option<String>,
         port_forward: Option<(u16, String, u16)>,
     ) -> Result<CommandTemplate> {
         let Some(connection) = self
@@ -787,7 +788,14 @@ impl RemoteClient {
         else {
             return Err(anyhow!("no connection"));
         };
-        connection.build_command(program, args, env, working_dir, port_forward)
+        connection.build_command(
+            program,
+            args,
+            env,
+            working_dir,
+            activation_script,
+            port_forward,
+        )
     }
 
     pub fn upload_directory(
@@ -1051,6 +1059,7 @@ pub(crate) trait RemoteConnection: Send + Sync {
         args: &[String],
         env: &HashMap<String, String>,
         working_dir: Option<String>,
+        activation_script: Option<String>,
         port_forward: Option<(u16, String, u16)>,
     ) -> Result<CommandTemplate>;
     fn connection_options(&self) -> RemoteConnectionOptions;
@@ -1416,6 +1425,7 @@ mod fake {
             program: Option<String>,
             args: &[String],
             env: &HashMap<String, String>,
+            _: Option<String>,
             _: Option<String>,
             _: Option<(u16, String, u16)>,
         ) -> Result<CommandTemplate> {

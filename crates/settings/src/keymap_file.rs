@@ -820,7 +820,11 @@ impl KeymapFile {
                         .split_whitespace()
                         .map(|source| {
                             let keystroke = Keystroke::parse(source)?;
-                            Ok(KeybindingKeystroke::new(keystroke, false, keyboard_mapper))
+                            Ok(KeybindingKeystroke::new_with_mapper(
+                                keystroke,
+                                false,
+                                keyboard_mapper,
+                            ))
                         })
                         .collect::<Result<Vec<_>, InvalidKeystrokeError>>()
                     else {
@@ -830,7 +834,7 @@ impl KeymapFile {
                         || !keystrokes
                             .iter()
                             .zip(target.keystrokes)
-                            .all(|(a, b)| a.inner.should_match(b))
+                            .all(|(a, b)| a.inner().should_match(b))
                     {
                         continue;
                     }
@@ -1065,7 +1069,7 @@ mod tests {
         keystrokes
             .split(' ')
             .map(|s| {
-                KeybindingKeystroke::new(
+                KeybindingKeystroke::new_with_mapper(
                     Keystroke::parse(s).expect("Keystrokes valid"),
                     false,
                     &DummyKeyboardMapper,

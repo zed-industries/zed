@@ -906,7 +906,6 @@ impl WorkspaceDb {
                 conn.exec_bound(
                     sql!(
                         DELETE FROM breakpoints WHERE workspace_id = ?1;
-                        DELETE FROM toolchains WHERE workspace_id = ?1;
                     )
                 )?(workspace.id).context("Clearing old breakpoints")?;
 
@@ -1233,7 +1232,6 @@ impl WorkspaceDb {
 
     query! {
         pub async fn delete_workspace_by_id(id: WorkspaceId) -> Result<()> {
-            DELETE FROM toolchains WHERE workspace_id = ?1;
             DELETE FROM workspaces
             WHERE workspace_id IS ?
         }
@@ -1562,24 +1560,24 @@ impl WorkspaceDb {
         &self,
         workspace_id: WorkspaceId,
         worktree_id: WorktreeId,
-        relative_path: String,
+        relative_worktree_path: String,
         language_name: LanguageName,
     ) -> Result<Option<Toolchain>> {
         self.write(move |this| {
             let mut select = this
                 .select_bound(sql!(
-                    SELECT name, path, raw_json FROM toolchains WHERE workspace_id = ? AND language_name = ? AND worktree_id = ? AND relative_path = ?
+                    SELECT name, path, raw_json FROM toolchains WHERE workspace_id = ? AND language_name = ? AND worktree_id = ? AND relative_worktree_path = ?
                 ))
-                .context("Preparing insertion")?;
+                .context("select toolchain")?;
 
             let toolchain: Vec<(String, String, String)> =
-                select((workspace_id, language_name.as_ref().to_string(), worktree_id.to_usize(), relative_path))?;
+                select((workspace_id, language_name.as_ref().to_string(), worktree_id.to_usize(), relative_worktree_path))?;
 
             Ok(toolchain.into_iter().next().and_then(|(name, path, raw_json)| Some(Toolchain {
                 name: name.into(),
                 path: path.into(),
                 language_name,
-                as_json: serde_json::Value::from_str(&raw_json).ok()?
+                as_json: serde_json::Value::from_str(&raw_json).ok()?,
             })))
         })
         .await
@@ -1594,7 +1592,7 @@ impl WorkspaceDb {
                 .select_bound(sql!(
                     SELECT name, path, worktree_id, relative_worktree_path, language_name, raw_json FROM toolchains WHERE workspace_id = ?
                 ))
-                .context("Preparing insertion")?;
+                .context("select toolchains")?;
 
             let toolchain: Vec<(String, String, u64, String, String, String)> =
                 select(workspace_id)?;
@@ -1603,7 +1601,7 @@ impl WorkspaceDb {
                 name: name.into(),
                 path: path.into(),
                 language_name: LanguageName::new(&language_name),
-                as_json: serde_json::Value::from_str(&raw_json).ok()?
+                as_json: serde_json::Value::from_str(&raw_json).ok()?,
             }, WorktreeId::from_proto(worktree_id), Arc::from(relative_worktree_path.as_ref())))).collect())
         })
         .await

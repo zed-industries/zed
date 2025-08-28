@@ -1951,6 +1951,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
             server_id: LanguageServerId(1),
             buffer_id,
             buffer_abs_path: PathBuf::from(path!("/dir/a.rs")),
+            name: Some(fake_server.server.name())
         }
     );
     assert_eq!(
@@ -9188,13 +9189,14 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
         async fn list(
             &self,
             worktree_root: PathBuf,
-            subroot_relative_path: Option<Arc<Path>>,
+            subroot_relative_path: Arc<Path>,
             _: Option<HashMap<String, String>>,
         ) -> ToolchainList {
             // This lister will always return a path .venv directories within ancestors
             let ancestors = subroot_relative_path
-                .into_iter()
-                .flat_map(|path| path.ancestors().map(ToOwned::to_owned).collect::<Vec<_>>());
+                .ancestors()
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>();
             let mut toolchains = vec![];
             for ancestor in ancestors {
                 let venv_path = worktree_root.join(ancestor).join(".venv");
@@ -9219,6 +9221,9 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
         /// Returns the name of the manifest file for this toolchain.
         fn manifest_name(&self) -> ManifestName {
             SharedString::new_static("pyproject.toml").into()
+        }
+        async fn activation_script(&self, _: &Toolchain, _: &dyn Fs) -> Option<String> {
+            None
         }
     }
     Arc::new(

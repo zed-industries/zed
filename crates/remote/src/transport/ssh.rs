@@ -28,7 +28,10 @@ use std::{
     time::Instant,
 };
 use tempfile::TempDir;
-use util::paths::{PathStyle, RemotePathBuf};
+use util::{
+    get_default_system_shell,
+    paths::{PathStyle, RemotePathBuf},
+};
 
 pub(crate) struct SshRemoteConnection {
     socket: SshSocket,
@@ -111,6 +114,7 @@ impl RemoteConnection for SshRemoteConnection {
         input_args: &[String],
         input_env: &HashMap<String, String>,
         working_dir: Option<String>,
+        activation_script: Option<String>,
         port_forward: Option<(u16, String, u16)>,
     ) -> Result<CommandTemplate> {
         use std::fmt::Write as _;
@@ -132,6 +136,9 @@ impl RemoteConnection for SshRemoteConnection {
         } else {
             write!(&mut script, "cd; ").unwrap();
         };
+        if let Some(activation_script) = activation_script {
+            write!(&mut script, " {activation_script};").unwrap();
+        }
 
         for (k, v) in input_env.iter() {
             if let Some((k, v)) = shlex::try_quote(k).ok().zip(shlex::try_quote(v).ok()) {
@@ -153,7 +160,8 @@ impl RemoteConnection for SshRemoteConnection {
             write!(&mut script, "exec {shell} -l").unwrap();
         };
 
-        let shell_invocation = format!("{shell} -c {}", shlex::try_quote(&script).unwrap());
+        let sys_shell = get_default_system_shell();
+        let shell_invocation = format!("{sys_shell} -c {}", shlex::try_quote(&script).unwrap());
 
         let mut args = Vec::new();
         args.extend(self.socket.ssh_args());
@@ -165,7 +173,6 @@ impl RemoteConnection for SshRemoteConnection {
 
         args.push("-t".into());
         args.push(shell_invocation);
-
         Ok(CommandTemplate {
             program: "ssh".into(),
             args,
