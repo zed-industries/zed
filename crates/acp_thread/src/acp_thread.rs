@@ -279,14 +279,6 @@ impl ToolCall {
         }
     }
 
-    pub fn has_pending_edits(&self) -> bool {
-        self.kind == acp::ToolKind::Edit
-            || self
-                .content
-                .iter()
-                .any(|content| matches!(content, ToolCallContent::Diff(_)))
-    }
-
     pub fn diffs(&self) -> impl Iterator<Item = &Entity<Diff>> {
         self.content.iter().filter_map(|content| match content {
             ToolCallContent::Diff(diff) => Some(diff),
@@ -768,7 +760,6 @@ pub struct AcpThread {
     session_id: acp::SessionId,
     token_usage: Option<TokenUsage>,
     prompt_capabilities: acp::PromptCapabilities,
-    pending_edit_calls: collections::HashSet<acp::ToolCallId>,
     _observe_prompt_capabilities: Task<anyhow::Result<()>>,
 }
 
@@ -865,7 +856,6 @@ impl AcpThread {
             session_id,
             token_usage: None,
             prompt_capabilities,
-            pending_edit_calls: Default::default(),
             _observe_prompt_capabilities: task,
         }
     }
@@ -914,10 +904,6 @@ impl AcpThread {
         self.token_usage.as_ref()
     }
 
-    pub fn has_active_edit_tool_calls(&self) -> bool {
-        !self.pending_edit_calls.is_empty()
-    }
-
     pub fn has_pending_edit_tool_calls(&self) -> bool {
         for entry in self.entries.iter().rev() {
             match entry {
@@ -956,8 +942,6 @@ impl AcpThread {
     ) -> Result<(), acp::Error> {
         match update {
             acp::SessionUpdate::UserMessageChunk { content } => {
-                // New user message starts a new turn; clear pending edit calls.
-                self.pending_edit_calls.clear();
                 self.push_user_content_block(None, content, cx);
             }
             acp::SessionUpdate::AgentMessageChunk { content } => {
@@ -1150,24 +1134,6 @@ impl AcpThread {
             current_call.update_fields(tool_call_update.fields, language_registry, cx);
             current_call.status = status;
 
-            // Maintain pending edit call IDs based on status transitions.
-            match current_call.status {
-                ToolCallStatus::WaitingForConfirmation { .. }
-                | ToolCallStatus::Pending
-                | ToolCallStatus::InProgress
-                    if current_call.has_pending_edits() =>
-                {
-                    self.pending_edit_calls.insert(id.clone());
-                }
-                ToolCallStatus::Completed
-                | ToolCallStatus::Failed
-                | ToolCallStatus::Rejected
-                | ToolCallStatus::Canceled => {
-                    self.pending_edit_calls.remove(&id);
-                }
-                _ => {}
-            }
-
             cx.emit(AcpThreadEvent::EntryUpdated(ix));
         } else {
             let call =
@@ -1303,17 +1269,6 @@ impl AcpThread {
             respond_tx.send(option_id).log_err();
         } else if cfg!(debug_assertions) {
             panic!("tried to authorize an already authorized tool call");
-        }
-
-        // Maintain pending edit call IDs based on the new status.
-        match call.status {
-            ToolCallStatus::InProgress if call.has_pending_edits() => {
-                self.pending_edit_calls.insert(id.clone());
-            }
-            ToolCallStatus::Rejected | ToolCallStatus::Failed | ToolCallStatus::Canceled => {
-                self.pending_edit_calls.remove(&id);
-            }
-            _ => {}
         }
 
         cx.emit(AcpThreadEvent::EntryUpdated(ix));

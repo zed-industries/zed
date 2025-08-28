@@ -3071,7 +3071,7 @@ impl AcpThreadView {
         let active_color = cx.theme().colors().element_selected;
         let bg_edit_files_disclosure = editor_bg_color.blend(active_color.opacity(0.3));
 
-        let pending_edits = thread.has_active_edit_tool_calls();
+        let pending_edits = thread.has_pending_edit_tool_calls();
 
         v_flex()
             .mt_1()
