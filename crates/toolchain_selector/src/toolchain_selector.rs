@@ -124,10 +124,12 @@ impl AddToolchainState {
 
                         match t {
                             Ok(toolchain) => {
-                                this.state = AddState::Name {
-                                    toolchain,
-                                    editor: cx.new(|cx| Editor::single_line(window, cx)),
-                                };
+                                let editor = cx.new(|cx| {
+                                    let mut editor = Editor::single_line(window, cx);
+                                    editor.set_text(toolchain.name.clone(), window, cx);
+                                    editor
+                                });
+                                this.state = AddState::Name { toolchain, editor };
                             }
                             Err(err) => {
                                 *error = Some(err.to_string().into());
@@ -172,6 +174,10 @@ impl Render for AddToolchainState {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let weak = self.weak.upgrade();
+        let label = match self.state {
+            AddState::Path { .. } => SharedString::new_static("Set Path"),
+            AddState::Name { .. } => SharedString::new_static("Set Name"),
+        };
         v_flex()
             .size_full()
             .rounded_md()
@@ -229,7 +235,7 @@ impl Render for AddToolchainState {
                                 .child(Label::new(error).color(Color::Error).size(LabelSize::Small))
                         })
                         .child(
-                            Button::new("add-toolchain", "Confirm")
+                            Button::new("add-toolchain", label)
                                 .key_binding(KeyBinding::for_action(&menu::Confirm, window, cx))
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.confirm_toolchain(&menu::Confirm, window, cx);

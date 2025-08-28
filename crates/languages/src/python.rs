@@ -16,7 +16,7 @@ use lsp::LanguageServerName;
 use node_runtime::{NodeRuntime, VersionStrategy};
 use pet_core::Configuration;
 use pet_core::os_environment::Environment;
-use pet_core::python_environment::PythonEnvironmentKind;
+use pet_core::python_environment::{PythonEnvironment, PythonEnvironmentKind};
 use project::Fs;
 use project::lsp_store::language_server_settings;
 use serde_json::{Value, json};
@@ -843,32 +843,7 @@ impl ToolchainLister for PythonToolchainProvider {
 
         let mut toolchains: Vec<_> = toolchains
             .into_iter()
-            .filter_map(|toolchain| {
-                let mut name = String::from("Python");
-                if let Some(ref version) = toolchain.version {
-                    _ = write!(name, " {version}");
-                }
-
-                let name_and_kind = match (&toolchain.name, &toolchain.kind) {
-                    (Some(name), Some(kind)) => {
-                        Some(format!("({name}; {})", python_env_kind_display(kind)))
-                    }
-                    (Some(name), None) => Some(format!("({name})")),
-                    (None, Some(kind)) => Some(format!("({})", python_env_kind_display(kind))),
-                    (None, None) => None,
-                };
-
-                if let Some(nk) = name_and_kind {
-                    _ = write!(name, " {nk}");
-                }
-
-                Some(Toolchain {
-                    name: name.into(),
-                    path: toolchain.executable.as_ref()?.to_str()?.to_owned().into(),
-                    language_name: LanguageName::new("Python"),
-                    as_json: serde_json::to_value(toolchain).ok()?,
-                })
-            })
+            .filter_map(venv_to_toolchain)
             .collect();
         toolchains.dedup();
         ToolchainList {
@@ -886,13 +861,49 @@ impl ToolchainLister for PythonToolchainProvider {
             manifest_name: ManifestName::from(SharedString::new_static("pyproject.toml")),
         }
     }
+
     async fn resolve(
         &self,
-        _: PathBuf,
-        _: Option<HashMap<String, String>>,
+        path: PathBuf,
+        env: Option<HashMap<String, String>>,
     ) -> anyhow::Result<Toolchain> {
-        Err(anyhow!("not implemented"))
+        let env = env.unwrap_or_default();
+        let environment = EnvironmentApi::from_env(&env);
+        let locators = pet::locators::create_locators(
+            Arc::new(pet_conda::Conda::from(&environment)),
+            Arc::new(pet_poetry::Poetry::from(&environment)),
+            &environment,
+        );
+        let toolchain = pet::resolve::resolve_environment(&path, &locators, &environment)
+            .context("Could not find a virtual environment for provided path")?;
+        let venv = toolchain.resolved.unwrap_or(toolchain.discovered);
+        venv_to_toolchain(venv).context("Could not convert a venv into a toolchain")
     }
+}
+
+fn venv_to_toolchain(venv: PythonEnvironment) -> Option<Toolchain> {
+    let mut name = String::from("Python");
+    if let Some(ref version) = venv.version {
+        _ = write!(name, " {version}");
+    }
+
+    let name_and_kind = match (&venv.name, &venv.kind) {
+        (Some(name), Some(kind)) => Some(format!("({name}; {})", python_env_kind_display(kind))),
+        (Some(name), None) => Some(format!("({name})")),
+        (None, Some(kind)) => Some(format!("({})", python_env_kind_display(kind))),
+        (None, None) => None,
+    };
+
+    if let Some(nk) = name_and_kind {
+        _ = write!(name, " {nk}");
+    }
+
+    Some(Toolchain {
+        name: name.into(),
+        path: venv.executable.as_ref()?.to_str()?.to_owned().into(),
+        language_name: LanguageName::new("Python"),
+        as_json: serde_json::to_value(venv).ok()?,
+    })
 }
 
 pub struct EnvironmentApi<'a> {
