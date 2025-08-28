@@ -2612,33 +2612,33 @@ impl AgentPanel {
                                         }),
                                 )
                             })
-                            // .when(cx.has_flag::<ClaudeCodeFeatureFlag>(), |menu| {
-                            //     menu.item(
-                            //         ContextMenuEntry::new("New Claude Code Thread")
-                            //             .icon(IconName::AiClaude)
-                            //             .icon_color(Color::Muted)
-                            //             .handler({
-                            //                 let workspace = workspace.clone();
-                            //                 move |window, cx| {
-                            //                     if let Some(workspace) = workspace.upgrade() {
-                            //                         workspace.update(cx, |workspace, cx| {
-                            //                             if let Some(panel) =
-                            //                                 workspace.panel::<AgentPanel>(cx)
-                            //                             {
-                            //                                 panel.update(cx, |panel, cx| {
-                            //                                     panel.new_agent_thread(
-                            //                                         AgentType::ClaudeCode,
-                            //                                         window,
-                            //                                         cx,
-                            //                                     );
-                            //                                 });
-                            //                             }
-                            //                         });
-                            //                     }
-                            //                 }
-                            //             }),
-                            //     )
-                            // })
+                            .when(cx.has_flag::<ClaudeCodeFeatureFlag>(), |menu| {
+                                menu.item(
+                                    ContextMenuEntry::new("New Claude Code Thread")
+                                        .icon(IconName::AiClaude)
+                                        .icon_color(Color::Muted)
+                                        .handler({
+                                            let workspace = workspace.clone();
+                                            move |window, cx| {
+                                                if let Some(workspace) = workspace.upgrade() {
+                                                    workspace.update(cx, |workspace, cx| {
+                                                        if let Some(panel) =
+                                                            workspace.panel::<AgentPanel>(cx)
+                                                        {
+                                                            panel.update(cx, |panel, cx| {
+                                                                panel.new_agent_thread(
+                                                                    AgentType::ClaudeCode,
+                                                                    window,
+                                                                    cx,
+                                                                );
+                                                            });
+                                                        }
+                                                    });
+                                                }
+                                            }
+                                        }),
+                                )
+                            })
                             .when(cx.has_flag::<GeminiAndNativeFeatureFlag>(), |mut menu| {
                                 // Add custom agents from settings
                                 let settings =
