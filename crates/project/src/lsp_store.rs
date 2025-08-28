@@ -3180,7 +3180,7 @@ impl LocalLspStore {
             } else {
                 let (path, pattern) = match &watcher.glob_pattern {
                     lsp::GlobPattern::String(s) => {
-                        let watcher_path = SanitizedPath::from(s);
+                        let watcher_path = SanitizedPath::new(s);
                         let path = glob_literal_prefix(watcher_path.as_path());
                         let pattern = watcher_path
                             .as_path()
@@ -3272,7 +3272,7 @@ impl LocalLspStore {
             let worktree_root_path = tree.abs_path();
             match &watcher.glob_pattern {
                 lsp::GlobPattern::String(s) => {
-                    let watcher_path = SanitizedPath::from(s);
+                    let watcher_path = SanitizedPath::new(s);
                     let relative = watcher_path
                         .as_path()
                         .strip_prefix(&worktree_root_path)

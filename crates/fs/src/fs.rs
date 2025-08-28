@@ -783,7 +783,7 @@ impl Fs for RealFs {
             {
                 target = parent.join(target);
                 if let Ok(canonical) = self.canonicalize(&target).await {
-                    target = SanitizedPath::from(canonical).as_path().to_path_buf();
+                    target = SanitizedPath::new(&canonical).as_path().to_path_buf();
                 }
             }
             watcher.add(&target).ok();
