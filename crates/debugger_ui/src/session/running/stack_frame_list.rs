@@ -145,7 +145,15 @@ impl StackFrameList {
     ) -> Vec<dap::StackFrame> {
         self.entries
             .iter()
-            .flat_map(|frame| match frame {
+            .enumerate()
+            .filter(|(ix, _)| {
+                self.list_filter == StackFrameFilter::All
+                    || self
+                        .filter_entries_indices
+                        .binary_search_by_key(&ix, |ix| ix)
+                        .is_ok()
+            })
+            .flat_map(|(_, frame)| match frame {
                 StackFrameEntry::Normal(frame) => vec![frame.clone()],
                 StackFrameEntry::Label(frame) if show_labels => vec![frame.clone()],
                 StackFrameEntry::Collapsed(frames) if show_collapsed => frames.clone(),
@@ -798,15 +806,34 @@ impl StackFrameList {
         };
 
         if let Some(ThreadStatus::Stopped) = thread_status {
-            // todo! Save selected index
             match self.list_filter {
                 StackFrameFilter::All => {
                     self.list_state.reset(self.entries.len());
                 }
                 StackFrameFilter::OnlyUserFrames => {
                     self.list_state.reset(self.filter_entries_indices.len());
+                    if !self
+                        .selected_ix
+                        .map(|ix| self.filter_entries_indices.contains(&ix))
+                        .unwrap_or_default()
+                    {
+                        self.selected_ix = None;
+                    }
                 }
             }
+
+            if let Some(ix) = self.selected_ix {
+                let scroll_to = match self.list_filter {
+                    StackFrameFilter::All => ix,
+                    StackFrameFilter::OnlyUserFrames => self
+                        .filter_entries_indices
+                        .binary_search_by_key(&ix, |ix| *ix)
+                        .expect("This index will always exist"),
+                };
+                self.list_state.scroll_to_reveal_item(scroll_to);
+            }
+
+            cx.emit(StackFrameListEvent::BuiltEntries);
             cx.notify();
         }
     }
