@@ -9212,6 +9212,7 @@ dependencies = [
  "language",
  "lsp",
  "project",
+ "proto",
  "release_channel",
  "serde_json",
  "settings",
