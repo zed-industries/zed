@@ -491,7 +491,7 @@ impl ToolbarItemView for BufferSearchBar {
 
             let is_project_search = searchable_item_handle.supported_options(cx).find_in_results;
             self.active_searchable_item = Some(searchable_item_handle);
-            drop(self.update_matches(true, window, cx));
+            drop(self.update_matches(true, false, window, cx));
             if !self.dismissed {
                 if is_project_search {
                     self.dismiss(&Default::default(), window, cx);
@@ -780,9 +780,9 @@ impl BufferSearchBar {
     }
 
     pub fn search_suggested(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let search = self
-            .query_suggestion(window, cx)
-            .map(|suggestion| self.search(&suggestion, Some(self.default_options), window, cx));
+        let search = self.query_suggestion(window, cx).map(|suggestion| {
+            self.search(&suggestion, Some(self.default_options), true, window, cx)
+        });
 
         if let Some(search) = search {
             cx.spawn_in(window, async move |this, cx| {
@@ -857,6 +857,7 @@ impl BufferSearchBar {
         &mut self,
         query: &str,
         options: Option<SearchOptions>,
+        add_to_history: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<()> {
@@ -873,7 +874,7 @@ impl BufferSearchBar {
             self.clear_matches(window, cx);
             cx.notify();
         }
-        self.update_matches(!updated, window, cx)
+        self.update_matches(!updated, add_to_history, window, cx)
     }
 
     pub fn focus_editor(&mut self, _: &FocusEditor, window: &mut Window, cx: &mut Context<Self>) {
@@ -891,7 +892,7 @@ impl BufferSearchBar {
     ) {
         self.search_options.toggle(search_option);
         self.default_options = self.search_options;
-        drop(self.update_matches(false, window, cx));
+        drop(self.update_matches(false, false, window, cx));
         self.adjust_query_regex_language(cx);
         cx.notify();
     }
@@ -1035,7 +1036,7 @@ impl BufferSearchBar {
             editor::EditorEvent::Edited { .. } => {
                 self.smartcase(window, cx);
                 self.clear_matches(window, cx);
-                let search = self.update_matches(false, window, cx);
+                let search = self.update_matches(false, true, window, cx);
 
                 let width = editor.update(cx, |editor, cx| {
                     let text_layout_details = editor.text_layout_details(window);
@@ -1080,7 +1081,7 @@ impl BufferSearchBar {
     ) {
         match event {
             SearchEvent::MatchesInvalidated => {
-                drop(self.update_matches(false, window, cx));
+                drop(self.update_matches(false, false, window, cx));
             }
             SearchEvent::ActiveMatchChanged => self.update_match_index(window, cx),
         }
@@ -1113,7 +1114,7 @@ impl BufferSearchBar {
         if let Some(active_item) = self.active_searchable_item.as_mut() {
             self.selection_search_enabled = !self.selection_search_enabled;
             active_item.toggle_filtered_search_ranges(self.selection_search_enabled, window, cx);
-            drop(self.update_matches(false, window, cx));
+            drop(self.update_matches(false, false, window, cx));
             cx.notify();
         }
     }
@@ -1156,6 +1157,7 @@ impl BufferSearchBar {
     fn update_matches(
         &mut self,
         reuse_existing_query: bool,
+        add_to_history: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<()> {
@@ -1236,8 +1238,10 @@ impl BufferSearchBar {
                                 .insert(active_searchable_item.downgrade(), matches);
 
                             this.update_match_index(window, cx);
-                            this.search_history
-                                .add(&mut this.search_history_cursor, query_text);
+                            if add_to_history {
+                                this.search_history
+                                    .add(&mut this.search_history_cursor, query_text);
+                            }
                             if !this.dismissed {
                                 let matches = this
                                     .searchable_items_with_matches
@@ -1326,10 +1330,10 @@ impl BufferSearchBar {
             .next(&mut self.search_history_cursor)
             .map(str::to_string)
         {
-            drop(self.search(&new_query, Some(self.search_options), window, cx));
+            drop(self.search(&new_query, Some(self.search_options), false, window, cx));
         } else {
             self.search_history_cursor.reset();
-            drop(self.search("", Some(self.search_options), window, cx));
+            drop(self.search("", Some(self.search_options), false, window, cx));
         }
     }
 
@@ -1345,7 +1349,7 @@ impl BufferSearchBar {
                 .current(&self.search_history_cursor)
                 .map(str::to_string)
         {
-            drop(self.search(&new_query, Some(self.search_options), window, cx));
+            drop(self.search(&new_query, Some(self.search_options), false, window, cx));
             return;
         }
 
@@ -1354,7 +1358,7 @@ impl BufferSearchBar {
             .previous(&mut self.search_history_cursor)
             .map(str::to_string)
         {
-            drop(self.search(&new_query, Some(self.search_options), window, cx));
+            drop(self.search(&new_query, Some(self.search_options), false, window, cx));
         }
     }
 
@@ -1550,7 +1554,7 @@ mod tests {
         // By default, search is case-insensitive.
         search_bar
             .update_in(cx, |search_bar, window, cx| {
-                search_bar.search("us", None, window, cx)
+                search_bar.search("us", None, true, window, cx)
             })
             .await
             .unwrap();
@@ -1581,7 +1585,7 @@ mod tests {
         // within other words. By default, all results are found.
         search_bar
             .update_in(cx, |search_bar, window, cx| {
-                search_bar.search("or", None, window, cx)
+                search_bar.search("or", None, true, window, cx)
             })
             .await
             .unwrap();
@@ -1825,7 +1829,7 @@ mod tests {
         search_bar
             .update_in(cx, |search_bar, window, cx| {
                 search_bar.show(window, cx);
-                search_bar.search("us", Some(SearchOptions::CASE_SENSITIVE), window, cx)
+                search_bar.search("us", Some(SearchOptions::CASE_SENSITIVE), true, window, cx)
             })
             .await
             .unwrap();
@@ -1845,7 +1849,13 @@ mod tests {
         // toggling a search option should update the defaults
         search_bar
             .update_in(cx, |search_bar, window, cx| {
-                search_bar.search("regex", Some(SearchOptions::CASE_SENSITIVE), window, cx)
+                search_bar.search(
+                    "regex",
+                    Some(SearchOptions::CASE_SENSITIVE),
+                    true,
+                    window,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -1906,7 +1916,7 @@ mod tests {
         window
             .update(cx, |_, window, cx| {
                 search_bar.update(cx, |search_bar, cx| {
-                    search_bar.search("a", None, window, cx)
+                    search_bar.search("a", None, true, window, cx)
                 })
             })
             .unwrap()
@@ -2048,7 +2058,7 @@ mod tests {
                 search_bar.update(cx, |search_bar, cx| {
                     let handle = search_bar.query_editor.focus_handle(cx);
                     window.focus(&handle);
-                    search_bar.search("abas_nonexistent_match", None, window, cx)
+                    search_bar.search("abas_nonexistent_match", None, true, window, cx)
                 })
             })
             .unwrap()
@@ -2116,6 +2126,7 @@ mod tests {
                 search_bar.search(
                     "edit\\(",
                     Some(SearchOptions::WHOLE_WORD | SearchOptions::REGEX),
+                    true,
                     window,
                     cx,
                 )
@@ -2141,6 +2152,7 @@ mod tests {
                 search_bar.search(
                     "edit(",
                     Some(SearchOptions::WHOLE_WORD | SearchOptions::CASE_SENSITIVE),
+                    true,
                     window,
                     cx,
                 )
@@ -2164,43 +2176,24 @@ mod tests {
 
     #[gpui::test]
     async fn test_search_query_history(cx: &mut TestAppContext) {
-        init_globals(cx);
-        let buffer_text = r#"
-        A regular expression (shortened as regex or regexp;[1] also referred to as
-        rational expression[2][3]) is a sequence of characters that specifies a search
-        pattern in text. Usually such patterns are used by string-searching algorithms
-        for "find" or "find and replace" operations on strings, or for input validation.
-        "#
-        .unindent();
-        let buffer = cx.new(|cx| Buffer::local(buffer_text, cx));
-        let cx = cx.add_empty_window();
-
-        let editor =
-            cx.new_window_entity(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
-
-        let search_bar = cx.new_window_entity(|window, cx| {
-            let mut search_bar = BufferSearchBar::new(None, window, cx);
-            search_bar.set_active_pane_item(Some(&editor), window, cx);
-            search_bar.show(window, cx);
-            search_bar
-        });
+        let (_editor, search_bar, cx) = init_test(cx);
 
         // Add 3 search items into the history.
         search_bar
             .update_in(cx, |search_bar, window, cx| {
-                search_bar.search("a", None, window, cx)
+                search_bar.search("a", None, true, window, cx)
             })
             .await
             .unwrap();
         search_bar
             .update_in(cx, |search_bar, window, cx| {
-                search_bar.search("b", None, window, cx)
+                search_bar.search("b", None, true, window, cx)
             })
             .await
             .unwrap();
         search_bar
             .update_in(cx, |search_bar, window, cx| {
-                search_bar.search("c", Some(SearchOptions::CASE_SENSITIVE), window, cx)
+                search_bar.search("c", Some(SearchOptions::CASE_SENSITIVE), true, window, cx)
             })
             .await
             .unwrap();
@@ -2214,6 +2207,7 @@ mod tests {
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.next_history_query(&NextHistoryQuery, window, cx);
         });
+        cx.run_until_parked();
         search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
@@ -2221,6 +2215,7 @@ mod tests {
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.next_history_query(&NextHistoryQuery, window, cx);
         });
+        cx.run_until_parked();
         search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
@@ -2230,6 +2225,7 @@ mod tests {
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.previous_history_query(&PreviousHistoryQuery, window, cx);
         });
+        cx.run_until_parked();
         search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "c");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
@@ -2239,6 +2235,7 @@ mod tests {
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.previous_history_query(&PreviousHistoryQuery, window, cx);
         });
+        cx.run_until_parked();
         search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "b");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
@@ -2248,6 +2245,7 @@ mod tests {
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.previous_history_query(&PreviousHistoryQuery, window, cx);
         });
+        cx.run_until_parked();
         search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "a");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
@@ -2255,6 +2253,7 @@ mod tests {
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.previous_history_query(&PreviousHistoryQuery, window, cx);
         });
+        cx.run_until_parked();
         search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "a");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
@@ -2264,6 +2263,7 @@ mod tests {
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.next_history_query(&NextHistoryQuery, window, cx);
         });
+        cx.run_until_parked();
         search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "b");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
@@ -2271,7 +2271,7 @@ mod tests {
 
         search_bar
             .update_in(cx, |search_bar, window, cx| {
-                search_bar.search("ba", None, window, cx)
+                search_bar.search("ba", None, true, window, cx)
             })
             .await
             .unwrap();
@@ -2324,7 +2324,7 @@ mod tests {
 
         search_bar
             .update_in(cx, |search_bar, window, cx| {
-                search_bar.search("expression", None, window, cx)
+                search_bar.search("expression", None, true, window, cx)
             })
             .await
             .unwrap();
@@ -2350,7 +2350,7 @@ mod tests {
         // Search for word boundaries and replace just a single one.
         search_bar
             .update_in(cx, |search_bar, window, cx| {
-                search_bar.search("or", Some(SearchOptions::WHOLE_WORD), window, cx)
+                search_bar.search("or", Some(SearchOptions::WHOLE_WORD), true, window, cx)
             })
             .await
             .unwrap();
@@ -2375,7 +2375,13 @@ mod tests {
         // Let's turn on regex mode.
         search_bar
             .update_in(cx, |search_bar, window, cx| {
-                search_bar.search("\\[([^\\]]+)\\]", Some(SearchOptions::REGEX), window, cx)
+                search_bar.search(
+                    "\\[([^\\]]+)\\]",
+                    Some(SearchOptions::REGEX),
+                    true,
+                    window,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -2401,6 +2407,7 @@ mod tests {
                 search_bar.search(
                     "a\\w+s",
                     Some(SearchOptions::REGEX | SearchOptions::WHOLE_WORD),
+                    true,
                     window,
                     cx,
                 )
@@ -2445,7 +2452,13 @@ mod tests {
                 if let Some(options) = options.search_options {
                     search_bar.set_search_options(options, cx);
                 }
-                search_bar.search(options.search_text, options.search_options, window, cx)
+                search_bar.search(
+                    options.search_text,
+                    options.search_options,
+                    true,
+                    window,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -2584,7 +2597,7 @@ mod tests {
 
         search_bar
             .update_in(cx, |search_bar, window, cx| {
-                search_bar.search("aaa", None, window, cx)
+                search_bar.search("aaa", None, true, window, cx)
             })
             .await
             .unwrap();
@@ -2670,7 +2683,7 @@ mod tests {
 
         search_bar
             .update_in(cx, |search_bar, window, cx| {
-                search_bar.search("aaa", None, window, cx)
+                search_bar.search("aaa", None, true, window, cx)
             })
             .await
             .unwrap();
@@ -2694,7 +2707,7 @@ mod tests {
         search_bar
             .update_in(cx, |search_bar, window, cx| {
                 search_bar.enable_search_option(SearchOptions::REGEX, window, cx);
-                search_bar.search("expression", None, window, cx)
+                search_bar.search("expression", None, true, window, cx)
             })
             .await
             .unwrap();
@@ -2711,7 +2724,7 @@ mod tests {
         // Now, the expression is invalid
         search_bar
             .update_in(cx, |search_bar, window, cx| {
-                search_bar.search("expression (", None, window, cx)
+                search_bar.search("expression (", None, true, window, cx)
             })
             .await
             .unwrap_err();
