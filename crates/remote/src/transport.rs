@@ -1,10 +1,4 @@
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
-
 use crate::{
-    RemoteClientDelegate, RemotePlatform,
     json_log::LogRecord,
     protocol::{MESSAGE_LEN_SIZE, message_len_from_buffer, read_message_with_len, write_message},
 };
@@ -124,10 +118,12 @@ fn handle_rpc_messages_over_child_process_stdio(
 
 #[cfg(debug_assertions)]
 async fn build_remote_server_from_source(
-    platform: &RemotePlatform,
-    delegate: &Arc<dyn RemoteClientDelegate>,
+    platform: &crate::RemotePlatform,
+    delegate: &dyn crate::RemoteClientDelegate,
     cx: &mut AsyncApp,
-) -> Result<Option<PathBuf>> {
+) -> Result<Option<std::path::PathBuf>> {
+    use std::path::Path;
+
     let Some(build_remote_server) = std::env::var("ZED_BUILD_REMOTE_SERVER").ok() else {
         return Ok(None);
     };

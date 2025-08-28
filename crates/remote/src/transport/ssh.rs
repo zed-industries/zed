@@ -449,7 +449,8 @@ impl SshRemoteConnection {
 
         #[cfg(debug_assertions)]
         if let Some(remote_server_path) =
-            super::build_remote_server_from_source(&self.ssh_platform, delegate, cx).await?
+            super::build_remote_server_from_source(&self.ssh_platform, delegate.as_ref(), cx)
+                .await?
         {
             let tmp_path = RemotePathBuf::new(
                 paths::remote_server_dir_relative().join(format!(

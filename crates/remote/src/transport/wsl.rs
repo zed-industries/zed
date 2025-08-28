@@ -143,7 +143,7 @@ impl WslRemoteConnection {
 
         #[cfg(debug_assertions)]
         if let Some(remote_server_path) =
-            super::build_remote_server_from_source(&self.platform, delegate, cx).await?
+            super::build_remote_server_from_source(&self.platform, delegate.as_ref(), cx).await?
         {
             let tmp_path = RemotePathBuf::new(
                 paths::remote_wsl_server_dir_relative().join(format!(
