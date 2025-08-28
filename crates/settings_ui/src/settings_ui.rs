@@ -1,6 +1,6 @@
 mod appearance_settings_controls;
 
-use std::any::{Any, TypeId};
+use std::any::TypeId;
 use std::ops::{Not, Range};
 
 use anyhow::Context as _;
@@ -135,7 +135,7 @@ impl Item for SettingsPage {
 struct UIEntry {
     title: &'static str,
     path: &'static str,
-    depth: usize,
+    _depth: usize,
     // a
     //  b     < a descendant range < a total descendant range
     //    f   |                    |
@@ -167,7 +167,7 @@ fn build_tree_item(
     tree.push(UIEntry {
         title: "",
         path: "",
-        depth,
+        _depth: depth,
         descendant_range: index + 1..index + 1,
         total_descendant_range: index + 1..index + 1,
         render: None,
@@ -539,8 +539,8 @@ fn render_switch_field(
 fn render_toggle_button_group(
     value: SettingsValue<serde_json::Value>,
     variants: &'static [&'static str],
-    window: &mut Window,
-    cx: &mut App,
+    _: &mut Window,
+    _: &mut App,
 ) -> AnyElement {
     let value = downcast_any_item::<String>(value);
 

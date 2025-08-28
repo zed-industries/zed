@@ -1,5 +1,3 @@
-use std::any::Any;
-
 use gpui::{AnyElement, App, Window};
 use smallvec::SmallVec;
 
