@@ -61,18 +61,31 @@ If your PR fixes a panic or a crash, you should cherry-pick it to the current st
 
 You will need write access to the Zed repository to do this:
 
-- Send a PR containing your change to `main` as normal.
-- Leave a comment on the PR `/cherry-pick v0.XXX.x`. Once your PR is merged, the GitHub bot will send a PR to the branch.
-  - In case of a merge conflict, you will have to cherry-pick manually and push the change to the `v0.XXX.x` branch.
-- After the commits are cherry-picked onto the branch, run `./script/trigger-release {preview|stable}`. This will bump the version numbers, create a new release tag, and kick off a release build.
-  - This can also be run from the [GitHub Actions UI](https://github.com/zed-industries/zed/actions/workflows/bump_patch_version.yml):
-    ![](https://github.com/zed-industries/zed/assets/1486634/9e31ae95-09e1-4c7f-9591-944f4f5b63ea)
-- Wait for the builds to appear on [the Releases tab on GitHub](https://github.com/zed-industries/zed/releases) (typically takes around 30 minutes)
-- Proof-read and edit the release notes as needed.
-- Download the artifacts for each release and test that you can run them locally.
-- Publish the release.
+---
+
+1. Send a PR containing your change to `main` as normal.
+
+1. Once it is merged, you will need to cherry pick the commit locally to either of the release branches (`v0.XXX.x`).
+
+   - In some cases, you may have to handle a merge conflict.
+     More often than not, this will happen when picking to stable, as the stable branch is more "stale" than the preview branch.
+
+1. After the commits are cherry-picked onto the branch, run `./script/trigger-release {preview|stable}`.
+   This will bump the version numbers, create a new release tag, and kick off a release build.
+
+   - This can also be run from the [GitHub Actions UI](https://github.com/zed-industries/zed/actions/workflows/bump_patch_version.yml):
+     ![](https://github.com/zed-industries/zed/assets/1486634/9e31ae95-09e1-4c7f-9591-944f4f5b63ea)
+
+1. Wait for the builds to appear on [the Releases tab on GitHub](https://github.com/zed-industries/zed/releases).
+
+1. Proofread and edit the release notes as needed.
+
+1. Download the artifacts for each release and test that you can run them locally.
+
+1. Publish the release.
 
 ## Nightly release process
 
 In addition to the public releases, we also have a nightly build that we encourage employees to use.
-Nightly is released by cron once a day, and can be shipped as often as you'd like. There are no release notes or announcements, so you can just merge your changes to main and run `./script/trigger-release nightly`.
+Nightly is released by cron once a day, and can be shipped as often as you'd like.
+There are no release notes or announcements, so you can just merge your changes to main and run `./script/trigger-release nightly`.
