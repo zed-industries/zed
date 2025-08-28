@@ -40,7 +40,8 @@ impl StackFrameFilter {
     fn from_str_or_default(s: impl AsRef<str>) -> Self {
         match s.as_ref() {
             "user" => StackFrameFilter::OnlyUserFrames,
-            "all" | _ => StackFrameFilter::All,
+            "all" => StackFrameFilter::All,
+            _ => StackFrameFilter::All,
         }
     }
 }
@@ -176,7 +177,15 @@ impl StackFrameList {
         self.stack_frames(cx)
             .unwrap_or_default()
             .into_iter()
-            .map(|stack_frame| stack_frame.dap)
+            .enumerate()
+            .filter(|(ix, _)| {
+                self.list_filter == StackFrameFilter::All
+                    || self
+                        .filter_entries_indices
+                        .binary_search_by_key(&ix, |ix| ix)
+                        .is_ok()
+            })
+            .map(|(_, stack_frame)| stack_frame.dap)
             .collect()
     }
 
@@ -266,10 +275,6 @@ impl StackFrameList {
 
             if frame_in_visible_worktree {
                 filter_entries_indices.push(ix);
-            } else if !frame_in_visible_worktree
-                && self.list_filter == StackFrameFilter::OnlyUserFrames
-            {
-                continue;
             }
 
             match stack_frame.dap.presentation_hint {
