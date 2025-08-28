@@ -109,8 +109,6 @@ impl OpenRequest {
                                     }
                                 }
                                 path_to_open = wsl_path;
-
-                                dbg!(&self.remote_connection, &path_to_open);
                             }
                         }
                     }

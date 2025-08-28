@@ -796,7 +796,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
         cx.spawn(async move |cx| {
             let paths: Vec<PathBuf> = request.open_paths.into_iter().map(PathBuf::from).collect();
             open_remote_project(
-                connection_options.into(),
+                connection_options,
                 paths,
                 app_state,
                 workspace::OpenOptions::default(),
@@ -988,7 +988,7 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                     }
                     let task = cx.spawn(async move |cx| {
                         recent_projects::open_remote_project(
-                            connection_options.into(),
+                            connection_options,
                             paths.paths().into_iter().map(PathBuf::from).collect(),
                             app_state,
                             workspace::OpenOptions::default(),
