@@ -36,11 +36,11 @@ pub struct Keystroke {
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct KeybindingKeystroke {
     /// The GPUI representation of the keystroke.
-    pub inner: Keystroke,
+    inner: Keystroke,
     /// The modifiers to display.
-    pub display_modifiers: Modifiers,
+    display_modifiers: Modifiers,
     /// The key to display.
-    pub display_key: String,
+    display_key: String,
 }
 
 /// Error type for `Keystroke::parse`. This is used instead of `anyhow::Error` so that Zed can use
@@ -279,6 +279,35 @@ impl KeybindingKeystroke {
             display_modifiers: modifiers,
             display_key: key,
         }
+    }
+
+    /// Returns the modifiers.
+    ///
+    /// Platform-specific behavior:
+    /// - On macOS and Linux, this modifiers is the same as `inner.modifiers`, which is the GPUI representation of the keystroke.
+    /// - On Windows, this modifiers is the display modifiers, for example, a `ctrl-@` keystroke will have `inner.modifiers` as
+    /// `Modifiers::control()` and `display_modifiers` as `Modifiers::control_shift()`.
+    pub fn modifiers(&self) -> &Modifiers {
+        &self.display_modifiers
+    }
+
+    /// Returns the key.
+    ///
+    /// Platform-specific behavior:
+    /// - On macOS and Linux, this key is the same as `inner.key`, which is the GPUI representation of the keystroke.
+    /// - On Windows, this key is the display key, for example, a `ctrl-@` keystroke will have `inner.key` as `@` and `display_key` as `2`.
+    pub fn key(&self) -> &str {
+        &self.display_key
+    }
+
+    /// Sets the modifiers. On Windows this modifies both `inner.modifiers` and `display_modifiers`.
+    pub fn set_modifiers(&mut self, modifiers: Modifiers) {
+        self.display_modifiers = modifiers;
+    }
+
+    /// Sets the key. On Windows this modifies both `inner.key` and `display_key`.
+    pub fn set_key(&mut self, key: String) {
+        self.display_key = key;
     }
 
     /// Produces a representation of this key that Parse can understand.
