@@ -583,7 +583,7 @@ impl ToolCallContent {
                 .get(&terminal_id)
                 .cloned()
                 .map(Self::Terminal)
-                .ok_or_else(|| anyhow::anyhow!("Terminal with id {:?} not found", terminal_id)),
+                .ok_or_else(|| anyhow::anyhow!("Terminal with id `{}` not found", terminal_id)),
         }
     }
 
@@ -1950,6 +1950,21 @@ impl AcpThread {
                 terminal
             })
         })
+    }
+
+    pub fn release_terminal(
+        &mut self,
+        terminal_id: acp::TerminalId,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        self.terminals
+            .remove(&terminal_id)
+            .context("Terminal not found")?
+            .update(cx, |terminal, cx| {
+                terminal.kill(cx);
+            });
+
+        Ok(())
     }
 
     pub fn terminal_output(

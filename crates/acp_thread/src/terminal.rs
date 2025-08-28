@@ -26,7 +26,7 @@ pub struct TerminalOutput {
 }
 
 impl Terminal {
-    pub(crate) fn new(
+    pub fn new(
         id: acp::TerminalId,
         command: String,
         working_dir: Option<PathBuf>,
@@ -82,6 +82,12 @@ impl Terminal {
 
     pub fn wait(&self) -> Shared<Task<Option<ExitStatus>>> {
         self._output_task.clone()
+    }
+
+    pub fn kill(&mut self, cx: &mut App) {
+        self.terminal.update(cx, |terminal, _cx| {
+            terminal.kill_active_task();
+        });
     }
 
     pub fn current_output(&self, cx: &App) -> acp::TerminalOutputResponse {

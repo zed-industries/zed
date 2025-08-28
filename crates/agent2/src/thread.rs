@@ -49,6 +49,8 @@ use std::{
     collections::BTreeMap,
     ops::RangeInclusive,
     path::Path,
+    process::ExitStatus,
+    rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -519,6 +521,22 @@ pub enum AgentMessageContent {
     ToolUse(LanguageModelToolUse),
 }
 
+pub trait TerminalHandle {
+    fn id(&self, cx: &AsyncApp) -> Result<acp::TerminalId>;
+    fn current_output(&self, cx: &AsyncApp) -> Result<acp::TerminalOutputResponse>;
+    fn wait(&self, cx: &AsyncApp) -> Result<Shared<Task<Option<ExitStatus>>>>;
+}
+
+pub trait ThreadEnvironment {
+    fn create_terminal(
+        &self,
+        command: String,
+        cwd: Option<PathBuf>,
+        output_byte_limit: Option<u64>,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<Rc<dyn TerminalHandle>>>;
+}
+
 #[derive(Debug)]
 pub enum ThreadEvent {
     UserMessage(UserMessage),
@@ -527,7 +545,6 @@ pub enum ThreadEvent {
     ToolCall(acp::ToolCall),
     ToolCallUpdate(acp_thread::ToolCallUpdate),
     ToolCallAuthorization(ToolCallAuthorization),
-    NewTerminal(NewTerminal), // todo!(CreateTerminal?)
     Retry(acp_thread::RetryStatus),
     Stop(acp::StopReason),
 }
@@ -1029,7 +1046,11 @@ impl Thread {
         }
     }
 
-    pub fn add_default_tools(&mut self, cx: &mut Context<Self>) {
+    pub fn add_default_tools(
+        &mut self,
+        environment: Rc<dyn ThreadEnvironment>,
+        cx: &mut Context<Self>,
+    ) {
         let language_registry = self.project.read(cx).languages().clone();
         self.add_tool(CopyPathTool::new(self.project.clone()));
         self.add_tool(CreateDirectoryTool::new(self.project.clone()));
@@ -1050,7 +1071,7 @@ impl Thread {
             self.project.clone(),
             self.action_log.clone(),
         ));
-        self.add_tool(TerminalTool::new(self.project.clone()));
+        self.add_tool(TerminalTool::new(self.project.clone(), environment));
         self.add_tool(ThinkingTool);
         self.add_tool(WebSearchTool);
     }
@@ -2392,26 +2413,6 @@ impl ToolCallEventStream {
                 .into(),
             )))
             .ok();
-    }
-
-    // todo!(rename from "new" to "create")
-    pub async fn new_terminal(
-        &self,
-        command: String,
-        cwd: Option<PathBuf>,
-        output_byte_limit: Option<u64>,
-    ) -> Result<Entity<acp_thread::Terminal>> {
-        let (tx, rx) = oneshot::channel();
-        self.stream
-            .0
-            .unbounded_send(Ok(ThreadEvent::NewTerminal(NewTerminal {
-                command,
-                cwd,
-                output_byte_limit,
-                response: tx,
-            })))
-            .ok();
-        Ok(rx.await??)
     }
 
     pub fn authorize(&self, title: impl Into<String>, cx: &mut App) -> Task<Result<()>> {
