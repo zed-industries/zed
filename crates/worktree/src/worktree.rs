@@ -3151,16 +3151,6 @@ impl BackgroundScannerState {
             .work_directory_abs_path(&work_directory)
             .log_err()?;
 
-        if self
-            .snapshot
-            .git_repositories
-            .get(&work_dir_entry.id)
-            .is_some()
-        {
-            log::trace!("existing git repository for {work_directory:?}");
-            return None;
-        }
-
         let dot_git_abs_path: Arc<Path> = self
             .snapshot
             .abs_path
