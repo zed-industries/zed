@@ -36,7 +36,7 @@ use workspace::{
     register_serializable_item,
 };
 
-use crate::{
+pub use crate::{
     persistence::KEYBINDING_EDITORS,
     ui_components::{
         keystroke_input::{ClearKeystrokes, KeystrokeInput, StartRecording, StopRecording},
