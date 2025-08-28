@@ -36,7 +36,6 @@ use module_list::ModuleList;
 use project::{
     DebugScenarioContext, Project, WorktreeId,
     debugger::session::{self, Session, SessionEvent, SessionStateEvent, ThreadId, ThreadStatus},
-    terminals::TerminalKind,
 };
 use rpc::proto::ViewId;
 use serde_json::Value;
@@ -1040,12 +1039,11 @@ impl RunningState {
                 };
                 let terminal = project
                     .update(cx, |project, cx| {
-                        project.create_terminal(
-                            TerminalKind::Task(task_with_shell.clone()),
+                        project.create_terminal_task(
+                            task_with_shell.clone(),
                             cx,
                         )
-                    })?
-                    .await?;
+                    })?.await?;
 
                 let terminal_view = cx.new_window_entity(|window, cx| {
                     TerminalView::new(
@@ -1189,7 +1187,7 @@ impl RunningState {
             .filter(|title| !title.is_empty())
             .or_else(|| command.clone())
             .unwrap_or_else(|| "Debug terminal".to_string());
-        let kind = TerminalKind::Task(task::SpawnInTerminal {
+        let kind = task::SpawnInTerminal {
             id: task::TaskId("debug".to_string()),
             full_label: title.clone(),
             label: title.clone(),
@@ -1207,12 +1205,13 @@ impl RunningState {
             show_summary: false,
             show_command: false,
             show_rerun: false,
-        });
+        };
 
         let workspace = self.workspace.clone();
         let weak_project = project.downgrade();
 
-        let terminal_task = project.update(cx, |project, cx| project.create_terminal(kind, cx));
+        let terminal_task =
+            project.update(cx, |project, cx| project.create_terminal_task(kind, cx));
         let terminal_task = cx.spawn_in(window, async move |_, cx| {
             let terminal = terminal_task.await?;
 

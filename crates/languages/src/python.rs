@@ -2,6 +2,7 @@ use anyhow::{Context as _, ensure};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
+use futures::AsyncBufReadExt;
 use gpui::{App, Task};
 use gpui::{AsyncApp, SharedString};
 use language::Toolchain;
@@ -30,8 +31,6 @@ use std::{
     borrow::Cow,
     ffi::OsString,
     fmt::Write,
-    fs,
-    io::{self, BufRead},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -741,14 +740,16 @@ fn env_priority(kind: Option<PythonEnvironmentKind>) -> usize {
 /// Return the name of environment declared in <worktree-root/.venv.
 ///
 /// https://virtualfish.readthedocs.io/en/latest/plugins.html#auto-activation-auto-activation
-fn get_worktree_venv_declaration(worktree_root: &Path) -> Option<String> {
-    fs::File::open(worktree_root.join(".venv"))
-        .and_then(|file| {
-            let mut venv_name = String::new();
-            io::BufReader::new(file).read_line(&mut venv_name)?;
-            Ok(venv_name.trim().to_string())
-        })
-        .ok()
+async fn get_worktree_venv_declaration(worktree_root: &Path) -> Option<String> {
+    let file = async_fs::File::open(worktree_root.join(".venv"))
+        .await
+        .ok()?;
+    let mut venv_name = String::new();
+    smol::io::BufReader::new(file)
+        .read_line(&mut venv_name)
+        .await
+        .ok()?;
+    Some(venv_name.trim().to_string())
 }
 
 #[async_trait]
@@ -793,7 +794,7 @@ impl ToolchainLister for PythonToolchainProvider {
             .map_or(Vec::new(), |mut guard| std::mem::take(&mut guard));
 
         let wr = worktree_root;
-        let wr_venv = get_worktree_venv_declaration(&wr);
+        let wr_venv = get_worktree_venv_declaration(&wr).await;
         // Sort detected environments by:
         //     environment name matching activation file (<workdir>/.venv)
         //     environment project dir matching worktree_root
@@ -858,7 +859,7 @@ impl ToolchainLister for PythonToolchainProvider {
             .into_iter()
             .filter_map(|toolchain| {
                 let mut name = String::from("Python");
-                if let Some(ref version) = toolchain.version {
+                if let Some(version) = &toolchain.version {
                     _ = write!(name, " {version}");
                 }
 
@@ -879,7 +880,7 @@ impl ToolchainLister for PythonToolchainProvider {
                     name: name.into(),
                     path: toolchain.executable.as_ref()?.to_str()?.to_owned().into(),
                     language_name: LanguageName::new("Python"),
-                    as_json: serde_json::to_value(toolchain).ok()?,
+                    as_json: serde_json::to_value(toolchain.clone()).ok()?,
                 })
             })
             .collect();
@@ -892,6 +893,23 @@ impl ToolchainLister for PythonToolchainProvider {
     }
     fn term(&self) -> SharedString {
         self.term.clone()
+    }
+    async fn activation_script(&self, toolchain: &Toolchain, fs: &dyn Fs) -> Option<String> {
+        let toolchain = serde_json::from_value::<pet_core::python_environment::PythonEnvironment>(
+            toolchain.as_json.clone(),
+        )
+        .ok()?;
+        let mut activation_script = None;
+        if let Some(prefix) = &toolchain.prefix {
+            #[cfg(not(target_os = "windows"))]
+            let path = prefix.join(BINARY_DIR).join("activate");
+            #[cfg(target_os = "windows")]
+            let path = prefix.join(BINARY_DIR).join("activate.ps1");
+            if fs.is_file(&path).await {
+                activation_script = Some(format!(". {}", path.display()));
+            }
+        }
+        activation_script
     }
 }
 

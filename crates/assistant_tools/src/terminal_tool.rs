@@ -15,7 +15,7 @@ use language::LineEnding;
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
-use project::{Project, terminals::TerminalKind};
+use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -213,17 +213,16 @@ impl Tool for TerminalTool {
             async move |cx| {
                 let program = program.await;
                 let env = env.await;
-
                 project
                     .update(cx, |project, cx| {
-                        project.create_terminal(
-                            TerminalKind::Task(task::SpawnInTerminal {
+                        project.create_terminal_task(
+                            task::SpawnInTerminal {
                                 command: Some(program),
                                 args,
                                 cwd,
                                 env,
                                 ..Default::default()
-                            }),
+                            },
                             cx,
                         )
                     })?
