@@ -164,6 +164,11 @@ impl OpenAiCompatibleLanguageModelProvider {
                     return;
                 };
                 if &this.settings != settings {
+                    if settings.api_url != this.settings.api_url {
+                        this.api_key = None;
+                        this.api_key_from_env = false;
+                    }
+
                     this.settings = settings.clone();
                     cx.notify();
                 }
