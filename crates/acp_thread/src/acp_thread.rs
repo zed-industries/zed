@@ -10,7 +10,6 @@ use futures::future::Shared;
 use language::language_settings::FormatOnSave;
 pub use mention::*;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
-use project::terminals::TerminalKind;
 use serde::{Deserialize, Serialize};
 pub use terminal::*;
 
@@ -1921,14 +1920,14 @@ impl AcpThread {
                 let env = env.await;
                 let terminal = project
                     .update(cx, |project, cx| {
-                        project.create_terminal(
-                            TerminalKind::Task(task::SpawnInTerminal {
+                        project.create_terminal_task(
+                            task::SpawnInTerminal {
                                 command: Some(program),
                                 args,
                                 cwd: cwd.clone(),
                                 env,
                                 ..Default::default()
-                            }),
+                            },
                             cx,
                         )
                     })?
