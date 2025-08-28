@@ -23,6 +23,7 @@ gpui.workspace = true
 log.workspace = true
 picker.workspace = true
 postage.workspace = true
+project.workspace = true
 serde.workspace = true
 settings.workspace = true
 theme.workspace = true
