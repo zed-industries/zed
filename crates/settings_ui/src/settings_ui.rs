@@ -9,13 +9,14 @@ use editor::EditorSettingsControls;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
 use fs::Fs;
 use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, ReadGlobal, actions};
-use settings::{
-    SettingsStore, SettingsUIItemGroup, SettingsUIItemSingle, SettingsUIItemVariant, SettingsValue,
-};
+use settings::{SettingsStore, SettingsUIItemSingle, SettingsUIItemVariant, SettingsValue};
 use smallvec::SmallVec;
-use ui::{SwitchField, prelude::*};
-use workspace::item::{Item, ItemEvent};
-use workspace::{Workspace, with_active_or_new_workspace};
+use ui::{NumericStepper, SwitchField, prelude::*};
+use workspace::{
+    Workspace,
+    item::{Item, ItemEvent},
+    with_active_or_new_workspace,
+};
 
 use crate::appearance_settings_controls::AppearanceSettingsControls;
 
@@ -337,6 +338,12 @@ fn render_item_single(
         SettingsUIItemSingle::SwitchField => {
             render_any_item(settings_value, render_switch_field, window, cx)
         }
+        SettingsUIItemSingle::NumericStepper => {
+            render_any_item(settings_value, render_numeric_stepper, window, cx)
+        }
+        SettingsUIItemSingle::ToggleGroup => {
+            todo!()
+        }
     }
 }
 
@@ -375,6 +382,62 @@ fn render_any_item<T: serde::de::DeserializeOwned>(
         default_value,
     };
     render_fn(deserialized_setting_value, window, cx)
+}
+
+fn render_numeric_stepper(
+    value: SettingsValue<u64>,
+    _window: &mut Window,
+    _cx: &mut App,
+) -> AnyElement {
+    let id = element_id_from_path(&value.path);
+    let path = value.path.clone();
+    let num = value.value.unwrap_or_else(|| value.default_value);
+
+    NumericStepper::new(
+        id,
+        num.to_string(),
+        {
+            let path = value.path.clone();
+            move |_, _, cx| {
+                let Some(number) = serde_json::Number::from_u128(num.saturating_sub(1) as u128)
+                else {
+                    return;
+                };
+                let new_value = serde_json::Value::Number(number);
+
+                let settings_store = SettingsStore::global(cx);
+                let fs = <dyn Fs>::global(cx);
+
+                let rx = settings_store.update_settings_file_at_path(
+                    fs.clone(),
+                    &path.as_slice(),
+                    new_value,
+                );
+                cx.background_spawn(async move { rx.await?.context("Failed to update settings") })
+                    .detach_and_log_err(cx);
+            }
+        },
+        move |_, _, cx| {
+            let Some(number) = serde_json::Number::from_u128(num.saturating_add(1) as u128) else {
+                return;
+            };
+
+            let new_value = serde_json::Value::Number(number);
+
+            let settings_store = SettingsStore::global(cx);
+            let fs = <dyn Fs>::global(cx);
+
+            let rx = settings_store.update_settings_file_at_path(
+                fs.clone(),
+                &path.as_slice(),
+                new_value,
+            );
+            cx.background_spawn(async move { rx.await?.context("Failed to update settings") })
+                .detach_and_log_err(cx);
+        },
+    )
+    .style(ui::NumericStepperStyle::Outlined)
+    .into_any_element()
 }
 
 fn render_switch_field(
