@@ -14,8 +14,8 @@ use workspace::{OpenOptions, OpenVisible, Workspace};
 #[cfg(test)]
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum OpenTargetFoundBy {
-    WorktreeForeground,
-    WorktreeBackground,
+    WorktreeExact,
+    WorktreeScan,
     FileSystemBackground,
 }
 
@@ -199,7 +199,7 @@ fn possible_open_target(
                             root_path_with_position,
                             root_entry.clone(),
                             #[cfg(test)]
-                            OpenTargetFoundBy::WorktreeForeground,
+                            OpenTargetFoundBy::WorktreeExact,
                         ));
                         break 'worktree_loop;
                     }
@@ -235,7 +235,7 @@ fn possible_open_target(
                     },
                     entry.clone(),
                     #[cfg(test)]
-                    OpenTargetFoundBy::WorktreeForeground,
+                    OpenTargetFoundBy::WorktreeExact,
                 ));
                 break 'worktree_loop;
             }
@@ -330,41 +330,8 @@ fn possible_open_target(
             Vec::new()
         };
 
-    let worktree_check_task = cx.spawn(async move |cx| {
-        for (worktree, worktree_paths_to_check) in worktree_paths_to_check {
-            let found_entry = worktree
-                .update(cx, |worktree, _| {
-                    let worktree_root = worktree.abs_path();
-                    let traversal = worktree.traverse_from_path(true, true, false, "".as_ref());
-                    for entry in traversal {
-                        if let Some(path_in_worktree) = worktree_paths_to_check
-                            .iter()
-                            .find(|path_to_check| entry.path.ends_with(&path_to_check.path))
-                        {
-                            return Some(OpenTarget::Worktree(
-                                PathWithPosition {
-                                    path: worktree_root.join(&entry.path),
-                                    row: path_in_worktree.row,
-                                    column: path_in_worktree.column,
-                                },
-                                entry.clone(),
-                                #[cfg(test)]
-                                OpenTargetFoundBy::WorktreeBackground,
-                            ));
-                        }
-                    }
-                    None
-                })
-                .ok()?;
-            if let Some(found_entry) = found_entry {
-                return Some(found_entry);
-            }
-        }
-        None
-    });
-
     let fs = workspace.read(cx).project().read(cx).fs().clone();
-    cx.background_spawn(async move {
+    let background_fs_checks_task = cx.background_spawn(async move {
         for mut path_to_check in fs_paths_to_check {
             if let Some(fs_path_to_check) = fs.canonicalize(&path_to_check.path).await.ok()
                 && let Some(metadata) = fs.metadata(&fs_path_to_check).await.ok().flatten()
@@ -382,7 +349,42 @@ fn possible_open_target(
             }
         }
 
-        open_target.or(worktree_check_task.await)
+        open_target
+    });
+
+    cx.spawn(async move |cx| {
+        background_fs_checks_task.await.or_else(|| {
+            for (worktree, worktree_paths_to_check) in worktree_paths_to_check {
+                let found_entry = worktree
+                    .update(cx, |worktree, _| -> Option<OpenTarget> {
+                        let worktree_root = worktree.abs_path();
+                        let traversal = worktree.traverse_from_path(true, true, false, "".as_ref());
+                        for entry in traversal {
+                            if let Some(path_in_worktree) = worktree_paths_to_check
+                                .iter()
+                                .find(|path_to_check| entry.path.ends_with(&path_to_check.path))
+                            {
+                                return Some(OpenTarget::Worktree(
+                                    PathWithPosition {
+                                        path: worktree_root.join(&entry.path),
+                                        row: path_in_worktree.row,
+                                        column: path_in_worktree.column,
+                                    },
+                                    entry.clone(),
+                                    #[cfg(test)]
+                                    OpenTargetFoundBy::WorktreeScan,
+                                ));
+                            }
+                        }
+                        None
+                    })
+                    .ok()?;
+                if let Some(found_entry) = found_entry {
+                    return Some(found_entry);
+                }
+            }
+            None
+        })
     })
 }
 
@@ -663,7 +665,7 @@ mod tests {
         if background_fs_checks == BackgroundFsChecks::Disabled
             && open_target_found_by == OpenTargetFoundBy::FileSystemBackground
         {
-            open_target_found_by = OpenTargetFoundBy::WorktreeBackground;
+            open_target_found_by = OpenTargetFoundBy::WorktreeScan;
         }
 
         assert_eq!(
@@ -747,7 +749,7 @@ mod tests {
                         $maybe_path,
                         $tooltip,
                         $cwd,
-                        OpenTargetFoundBy::WorktreeForeground
+                        OpenTargetFoundBy::WorktreeExact
                     )
                 };
                 ($maybe_path:literal, $tooltip:literal, $cwd:tt, $found_by:ident) => {
@@ -771,7 +773,7 @@ mod tests {
                         $tooltip,
                         $cwd,
                         BackgroundFsChecks::Enabled,
-                        OpenTargetFoundBy::WorktreeForeground
+                        OpenTargetFoundBy::WorktreeExact
                     )
                 };
                 ($maybe_path:literal, $tooltip:literal, $cwd:tt, $found_by:ident) => {
@@ -796,7 +798,7 @@ mod tests {
                         $tooltip,
                         $cwd,
                         BackgroundFsChecks::Disabled,
-                        OpenTargetFoundBy::WorktreeForeground
+                        OpenTargetFoundBy::WorktreeExact
                     )
                 };
                 ($maybe_path:literal, $tooltip:literal, $cwd:tt, $found_by:ident) => {
@@ -909,7 +911,7 @@ mod tests {
                 )],
                 vec![path!("/dir1")],
                 {
-                    test!("C.py", "/dir1/dir 2/C.py", "/dir1", WorktreeBackground);
+                    test!("C.py", "/dir1/dir 2/C.py", "/dir1", WorktreeScan);
                     test!("C.py", "/dir1/dir 2/C.py", "/dir1/dir 2");
                     test!("C.py", "/dir1/dir 3/C.py", "/dir1/dir 3");
                 }
@@ -966,14 +968,14 @@ mod tests {
                         "src/only_in_lib.rs",
                         "/project/lib/src/only_in_lib.rs",
                         "/project/lib/src",
-                        WorktreeBackground
+                        WorktreeScan
                     );
                 }
             )
         }
 
         // https://github.com/zed-industries/zed/issues/28339
-        // Note: These could all be found by WorktreeForeground if we used
+        // Note: These could all be found by WorktreeExact if we used
         // `fs::normalize_path(&maybe_path)`
         #[gpui::test]
         async fn issue_28339(cx: &mut TestAppContext) {
@@ -1030,7 +1032,7 @@ mod tests {
         }
 
         // https://github.com/zed-industries/zed/issues/28339
-        // Note: These could all be found by WorktreeForeground if we used
+        // Note: These could all be found by WorktreeExact if we used
         // `fs::normalize_path(&maybe_path)`
         #[gpui::test]
         #[should_panic(expected = "Hover target should not be `None`")]
@@ -1175,13 +1177,13 @@ mod tests {
                         "subsub1/file.txt",
                         "/test/sub1/subsub1/file.txt",
                         "/test",
-                        WorktreeBackground
+                        WorktreeScan
                     );
                     test!(
                         "subsub1/file.txt",
                         "/test/sub1/subsub1/file.txt",
                         "/test",
-                        WorktreeBackground
+                        WorktreeScan
                     );
                     test!(
                         "subsub1/file.txt",
@@ -1197,7 +1199,7 @@ mod tests {
                         "subsub1/file.txt",
                         "/test/sub1/subsub1/file.txt",
                         "/test/sub1/subsub1",
-                        WorktreeBackground
+                        WorktreeScan
                     );
                 }
             )
