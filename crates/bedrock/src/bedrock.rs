@@ -18,10 +18,10 @@ pub use bedrock::types::{
     ConverseOutput as BedrockResponse, ConverseStreamOutput as BedrockStreamingResponse,
     ImageBlock as BedrockImageBlock, Message as BedrockMessage,
     ReasoningContentBlock as BedrockThinkingBlock, ReasoningTextBlock as BedrockThinkingTextBlock,
-    ResponseStream as BedrockResponseStream, ToolResultBlock as BedrockToolResultBlock,
+    ResponseStream as BedrockResponseStream, SystemContentBlock as BedrockSystemContentBlock,
+    ToolResultBlock as BedrockToolResultBlock,
     ToolResultContentBlock as BedrockToolResultContentBlock,
     ToolResultStatus as BedrockToolResultStatus, ToolUseBlock as BedrockToolUseBlock,
-    SystemContentBlock as BedrockSystemContentBlock
 };
 use futures::stream::{self, BoxStream};
 use serde::{Deserialize, Serialize};
