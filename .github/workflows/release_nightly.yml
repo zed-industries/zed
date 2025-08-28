@@ -293,7 +293,7 @@ jobs:
     if: github.repository_owner == 'zed-industries'
     # TODO: build for multiple targets?
     runs-on:
-      - buildjet-16vcpu-ubuntu-2004
+      - github-16vcpu-ubuntu-2404
     needs: tests
     steps:
       - name: Checkout repo
@@ -324,7 +324,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy target/doc --project-name=rustdoc
+          command: pages deploy target/doc --project-name=gpui-rustdoc
 
   update-nightly-tag:
     name: Update nightly tag
