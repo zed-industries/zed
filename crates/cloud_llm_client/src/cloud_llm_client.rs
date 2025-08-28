@@ -202,6 +202,15 @@ pub struct PredictEditsRecentFile {
     pub cursor_point: Point,
     /// Milliseconds between the editor for this file being active and the request time.
     pub active_to_now_ms: u32,
+    /// Number of times the editor for this file was activated.
+    pub activation_count: u32,
+    /// Rough estimate of milliseconds the user was editing the file.
+    pub cumulative_time_editing_ms: u32,
+    /// Rough estimate of milliseconds the user was navigating within the file.
+    pub cumulative_time_navigating_ms: u32,
+    /// Whether the file is a multibuffer.
+    #[serde(skip_serializing_if = "is_default", default)]
+    pub is_multibuffer: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -371,6 +380,10 @@ pub struct CurrentUsage {
 pub struct UsageData {
     pub used: u32,
     pub limit: UsageLimit,
+}
+
+fn is_default<T: Default + PartialEq>(value: &T) -> bool {
+    *value == T::default()
 }
 
 #[cfg(test)]

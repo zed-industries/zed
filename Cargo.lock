@@ -20793,6 +20793,7 @@ dependencies = [
  "language_model",
  "log",
  "menu",
+ "multi_buffer",
  "postage",
  "project",
  "rand 0.8.5",

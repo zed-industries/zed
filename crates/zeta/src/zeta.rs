@@ -35,6 +35,7 @@ use language::{
     Anchor, Buffer, BufferSnapshot, EditPreview, File, OffsetRangeExt, ToOffset, ToPoint, text_diff,
 };
 use language_model::{LlmApiToken, RefreshLlmTokenListener};
+use multi_buffer::MultiBufferPoint;
 use project::{Project, ProjectPath};
 use release_channel::AppVersion;
 use settings::WorktreeId;
@@ -86,6 +87,12 @@ const MAX_DIAGNOSTICS_BYTES: usize = 4096;
 
 /// Maximum number of edit predictions to store for feedback.
 const MAX_SHOWN_COMPLETION_COUNT: usize = 50;
+
+/// Interval between polls tracking time editing files.
+const ACTIVITY_POLL_INTERVAL: Duration = Duration::from_secs(10);
+
+/// Interval between polls of whether data collection is enabled, when it is disabled.
+const DISABLED_ACTIVITY_POLL_INTERVAL: Duration = Duration::from_secs(60 * 5);
 
 actions!(
     edit_prediction,
@@ -242,11 +249,23 @@ pub struct Zeta {
     user_store: Entity<UserStore>,
     license_detection_watchers: HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
     recent_editors: VecDeque<RecentEditor>,
+    last_activity_state: Option<ActivityState>,
+    _activity_poll_task: Option<Task<Result<()>>>,
 }
 
 struct RecentEditor {
     editor: WeakEntity<Editor>,
     last_active_at: Instant,
+    activation_count: u32,
+    cumulative_time_editing: Duration,
+    cumulative_time_navigating: Duration,
+}
+
+#[derive(Debug)]
+struct ActivityState {
+    scroll_position: gpui::Point<f32>,
+    cursor_point: MultiBufferPoint,
+    singleton_version: Option<clock::Global>,
 }
 
 impl Zeta {
@@ -298,14 +317,40 @@ impl Zeta {
         let data_collection_choice = Self::load_data_collection_choices();
         let data_collection_choice = cx.new(|_| data_collection_choice);
 
+        let mut activity_poll_task = None;
+
         if let Some(workspace) = &workspace {
-            cx.subscribe(workspace, |this, _workspace, event, cx| match event {
-                workspace::Event::ActiveItemChanged => {
-                    this.handle_active_workspace_item_changed(cx)
+            let project = workspace.read(cx).project().clone();
+            cx.subscribe(&project, |this, _project, event, cx| match event {
+                project::Event::ActiveEntryChanged(entry_id) => {
+                    this.handle_active_project_entry_changed(cx)
                 }
                 _ => {}
             })
             .detach();
+
+            // TODO: ideally this would attend to window focus when tracking time, and pause the
+            // loop for efficiency when not focused.
+            activity_poll_task = Some(cx.spawn(async move |this, cx| {
+                let mut instant_before_delay = None;
+                loop {
+                    let data_collection_is_enabled = this.read_with(cx, |this, cx| {
+                        this.data_collection_choice.read(cx).is_enabled()
+                    })?;
+                    let interval = if data_collection_is_enabled {
+                        ACTIVITY_POLL_INTERVAL
+                    } else {
+                        instant_before_delay = None;
+                        DISABLED_ACTIVITY_POLL_INTERVAL
+                    };
+                    cx.background_executor().timer(interval).await;
+                    this.update(cx, |this, cx| {
+                        let now = Instant::now();
+                        this.handle_activity_poll(instant_before_delay, now, cx);
+                        instant_before_delay = Some(now);
+                    })?
+                }
+            }));
         }
 
         Self {
@@ -336,6 +381,8 @@ impl Zeta {
             license_detection_watchers: HashMap::default(),
             user_store,
             recent_editors: VecDeque::new(),
+            last_activity_state: None,
+            _activity_poll_task: activity_poll_task,
         }
     }
 
@@ -1268,9 +1315,10 @@ and then another
         })
     }
 
-    fn handle_active_workspace_item_changed(&mut self, cx: &Context<Self>) {
+    fn handle_active_project_entry_changed(&mut self, cx: &mut Context<Self>) {
         if !self.data_collection_choice.read(cx).is_enabled() {
             self.recent_editors.clear();
+            self.last_activity_state = None;
             return;
         }
         if let Some(active_editor) = self
@@ -1284,20 +1332,35 @@ and then another
             .flatten()
         {
             let now = Instant::now();
+            let editor = active_editor.downgrade();
+            let existing_recent_editor = if let Some(existing_ix) = self
+                .recent_editors
+                .iter()
+                .rposition(|recent| &recent.editor == &editor)
+            {
+                if existing_ix + 1 != self.recent_editors.len() {
+                    self.last_activity_state = None;
+                }
+                self.recent_editors.remove(existing_ix)
+            } else {
+                None
+            };
             let new_recent = RecentEditor {
                 editor: active_editor.downgrade(),
                 last_active_at: now,
+                activation_count: existing_recent_editor
+                    .as_ref()
+                    .map_or(0, |recent| recent.activation_count + 1),
+                cumulative_time_navigating: existing_recent_editor
+                    .as_ref()
+                    .map_or(Duration::ZERO, |recent| recent.cumulative_time_navigating),
+                cumulative_time_editing: existing_recent_editor
+                    .map_or(Duration::ZERO, |recent| recent.cumulative_time_editing),
             };
-            if let Some(existing_ix) = self
-                .recent_editors
-                .iter()
-                .rposition(|recent| &recent.editor == &new_recent.editor)
-            {
-                self.recent_editors.remove(existing_ix);
-            }
             // filter out rapid changes in active item, particularly since this can happen rapidly when
             // a workspace is loaded.
             if let Some(previous_recent) = self.recent_editors.back_mut()
+                && previous_recent.activation_count == 1
                 && now.duration_since(previous_recent.last_active_at)
                     < MIN_TIME_BETWEEN_RECENT_FILES
             {
@@ -1308,6 +1371,80 @@ and then another
                 self.recent_editors.pop_front();
             }
             self.recent_editors.push_back(new_recent);
+        }
+    }
+
+    fn handle_activity_poll(
+        &mut self,
+        instant_before_delay: Option<Instant>,
+        now: Instant,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.data_collection_choice.read(cx).is_enabled() {
+            self.last_activity_state = None;
+            return;
+        }
+        if let Some(recent_editor) = self.recent_editors.back()
+            && let Some(editor) = recent_editor.editor.upgrade()
+        {
+            let (scroll_position, cursor_point, singleton_version) =
+                editor.update(cx, |editor, cx| {
+                    let scroll_position = editor.scroll_position(cx);
+                    let cursor_point = editor.selections.newest(cx).head();
+                    let singleton_version = editor
+                        .buffer()
+                        .read(cx)
+                        .as_singleton()
+                        .map(|singleton_buffer| singleton_buffer.read(cx).version());
+                    (scroll_position, cursor_point, singleton_version)
+                });
+
+            let navigated = if let Some(last_activity_state) = &self.last_activity_state {
+                last_activity_state.scroll_position != scroll_position
+                    || last_activity_state.cursor_point != cursor_point
+            } else {
+                false
+            };
+
+            let edited = if let Some(singleton_version) = &singleton_version
+                && let Some(last_activity_state) = &self.last_activity_state
+                && let Some(last_singleton_version) = &last_activity_state.singleton_version
+            {
+                singleton_version.changed_since(last_singleton_version)
+            } else {
+                false
+            };
+
+            self.last_activity_state = Some(ActivityState {
+                scroll_position,
+                cursor_point,
+                singleton_version,
+            });
+
+            let prior_recent_editor = if self.recent_editors.len() > 1 {
+                Some(&self.recent_editors[self.recent_editors.len() - 2])
+            } else {
+                None
+            };
+            let additional_time: Option<Duration> =
+                instant_before_delay.map(|instant_before_delay| {
+                    now.duration_since(prior_recent_editor.map_or(
+                        instant_before_delay,
+                        |prior_recent_editor| {
+                            prior_recent_editor.last_active_at.max(instant_before_delay)
+                        },
+                    ))
+                });
+
+            if let Some(additional_time) = additional_time {
+                let recent_editor = self.recent_editors.back_mut().unwrap();
+                if navigated {
+                    recent_editor.cumulative_time_navigating += additional_time;
+                }
+                if edited {
+                    recent_editor.cumulative_time_editing += additional_time;
+                }
+            }
         }
     }
 
@@ -1330,7 +1467,10 @@ and then another
                 .editor
                 .update(cx, |editor, cx| {
                     maybe!({
-                        let (buffer, cursor_point, _) = editor.cursor_buffer_point(cx)?;
+                        let cursor = editor.selections.newest::<MultiBufferPoint>(cx).head();
+                        let multibuffer = editor.buffer().read(cx);
+                        let (buffer, cursor_point, _) =
+                            multibuffer.point_to_buffer_point(cursor, cx)?;
                         let file = buffer.read(cx).file()?;
                         if !file_is_eligible_for_collection(file.as_ref()) {
                             return None;
@@ -1359,10 +1499,24 @@ and then another
                             .as_millis()
                             .try_into()
                             .ok()?;
+                        let cumulative_time_editing_ms = recent_editor
+                            .cumulative_time_editing
+                            .as_millis()
+                            .try_into()
+                            .ok()?;
+                        let cumulative_time_navigating_ms = recent_editor
+                            .cumulative_time_navigating
+                            .as_millis()
+                            .try_into()
+                            .ok()?;
                         results.push(PredictEditsRecentFile {
                             path: repo_path_str.to_string(),
                             cursor_point: to_cloud_llm_client_point(cursor_point),
                             active_to_now_ms,
+                            activation_count: recent_editor.activation_count,
+                            cumulative_time_editing_ms,
+                            cumulative_time_navigating_ms,
+                            is_multibuffer: !multibuffer.is_singleton(),
                         });
                         Some(())
                     })
