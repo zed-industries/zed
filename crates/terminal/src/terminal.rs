@@ -344,7 +344,6 @@ pub struct TerminalBuilder {
 impl TerminalBuilder {
     pub fn new(
         working_directory: Option<PathBuf>,
-        python_venv_directory: Option<PathBuf>,
         task: Option<TaskState>,
         shell: Shell,
         mut env: HashMap<String, String>,
@@ -353,8 +352,9 @@ impl TerminalBuilder {
         max_scroll_history_lines: Option<usize>,
         is_ssh_terminal: bool,
         window_id: u64,
-        completion_tx: Sender<Option<ExitStatus>>,
+        completion_tx: Option<Sender<Option<ExitStatus>>>,
         cx: &App,
+        activation_script: Option<String>,
     ) -> Result<TerminalBuilder> {
         // If the parent environment doesn't have a locale set
         // (As is the case when launched from a .app on MacOS),
@@ -428,12 +428,9 @@ impl TerminalBuilder {
                     .clone()
                     .or_else(|| Some(home_dir().to_path_buf())),
                 drain_on_exit: true,
-                env: env.into_iter().collect(),
+                env: env.clone().into_iter().collect(),
             }
         };
-
-        // Setup Alacritty's env, which modifies the current process's environment
-        alacritty_terminal::tty::setup_env();
 
         let default_cursor_style = AlacCursorStyle::from(cursor_shape);
         let scrolling_history = if task.is_some() {
@@ -517,11 +514,19 @@ impl TerminalBuilder {
             hyperlink_regex_searches: RegexSearches::new(),
             vi_mode_enabled: false,
             is_ssh_terminal,
-            python_venv_directory,
             last_mouse_move_time: Instant::now(),
             last_hyperlink_search_position: None,
             #[cfg(windows)]
             shell_program,
+            activation_script,
+            template: CopyTemplate {
+                shell,
+                env,
+                cursor_shape,
+                alternate_scroll,
+                max_scroll_history_lines,
+                window_id,
+            },
         };
 
         Ok(TerminalBuilder {
@@ -683,7 +688,7 @@ pub enum SelectionPhase {
 
 pub struct Terminal {
     pty_tx: Notifier,
-    completion_tx: Sender<Option<ExitStatus>>,
+    completion_tx: Option<Sender<Option<ExitStatus>>>,
     term: Arc<FairMutex<Term<ZedListener>>>,
     term_config: Config,
     events: VecDeque<InternalEvent>,
@@ -695,7 +700,6 @@ pub struct Terminal {
     pub breadcrumb_text: String,
     pub pty_info: PtyProcessInfo,
     title_override: Option<SharedString>,
-    pub python_venv_directory: Option<PathBuf>,
     scroll_px: Pixels,
     next_link_id: usize,
     selection_phase: SelectionPhase,
@@ -707,6 +711,17 @@ pub struct Terminal {
     last_hyperlink_search_position: Option<Point<Pixels>>,
     #[cfg(windows)]
     shell_program: Option<String>,
+    template: CopyTemplate,
+    activation_script: Option<String>,
+}
+
+struct CopyTemplate {
+    shell: Shell,
+    env: HashMap<String, String>,
+    cursor_shape: CursorShape,
+    alternate_scroll: AlternateScroll,
+    max_scroll_history_lines: Option<usize>,
+    window_id: u64,
 }
 
 pub struct TaskState {
@@ -1895,7 +1910,9 @@ impl Terminal {
             }
         });
 
-        self.completion_tx.try_send(e).ok();
+        if let Some(tx) = &self.completion_tx {
+            tx.try_send(e).ok();
+        }
         let task = match &mut self.task {
             Some(task) => task,
             None => {
@@ -1949,6 +1966,28 @@ impl Terminal {
 
     pub fn vi_mode_enabled(&self) -> bool {
         self.vi_mode_enabled
+    }
+
+    pub fn clone_builder(
+        &self,
+        cx: &App,
+        cwd: impl FnOnce() -> Option<PathBuf>,
+    ) -> Result<TerminalBuilder> {
+        let working_directory = self.working_directory().or_else(cwd);
+        TerminalBuilder::new(
+            working_directory,
+            None,
+            self.template.shell.clone(),
+            self.template.env.clone(),
+            self.template.cursor_shape,
+            self.template.alternate_scroll,
+            self.template.max_scroll_history_lines,
+            self.is_ssh_terminal,
+            self.template.window_id,
+            None,
+            cx,
+            self.activation_script.clone(),
+        )
     }
 }
 
@@ -2166,7 +2205,6 @@ mod tests {
             TerminalBuilder::new(
                 None,
                 None,
-                None,
                 task::Shell::WithArguments {
                     program: "echo".into(),
                     args: vec!["hello".into()],
@@ -2178,8 +2216,9 @@ mod tests {
                 None,
                 false,
                 0,
-                completion_tx,
+                Some(completion_tx),
                 cx,
+                None,
             )
             .unwrap()
             .subscribe(cx)
