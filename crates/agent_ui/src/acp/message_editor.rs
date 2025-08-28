@@ -701,7 +701,7 @@ impl MessageEditor {
             self.history_store.clone(),
         ));
         let delegate = AgentServerDelegate::new(self.project.clone(), None);
-        let connection = server.connect(Path::new(""), delegate, cx);
+        let connection = server.connect(delegate, cx);
         cx.spawn(async move |_, cx| {
             let agent = connection.await?;
             let agent = agent.downcast::<agent2::NativeAgentConnection>().unwrap();

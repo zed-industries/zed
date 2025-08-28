@@ -72,6 +72,16 @@ impl AgentServerDelegate {
                 "External agents are not yet available in remote projects."
             )));
         };
+
+        // automatic installation is not supported on remote
+        if project.read(cx).is_via_remote_server() {
+            return Task::ready(Ok(AgentServerCommand {
+                path: binary_name.to_string().into(),
+                args: Vec::new(),
+                env: Default::default(),
+            }));
+        }
+
         let status_tx = self.status_tx;
 
         cx.spawn(async move |cx| {
@@ -235,7 +245,6 @@ pub trait AgentServer: Send {
 
     fn connect(
         &self,
-        root_dir: &Path,
         delegate: AgentServerDelegate,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn AgentConnection>>>;
@@ -251,20 +260,20 @@ impl dyn AgentServer {
 
 impl std::fmt::Debug for AgentServerCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let filtered_env = self.env.as_ref().map(|env| {
-            env.iter()
-                .map(|(k, v)| {
-                    (
-                        k,
-                        if util::redact::should_redact(k) {
-                            "[REDACTED]"
-                        } else {
-                            v
-                        },
-                    )
-                })
-                .collect::<Vec<_>>()
-        });
+        let filtered_env = self
+            .env
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k,
+                    if util::redact::should_redact(k) {
+                        "[REDACTED]"
+                    } else {
+                        v
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
 
         f.debug_struct("AgentServerCommand")
             .field("path", &self.path)
@@ -280,7 +289,8 @@ pub struct AgentServerCommand {
     pub path: PathBuf,
     #[serde(default)]
     pub args: Vec<String>,
-    pub env: Option<HashMap<String, String>>,
+    #[serde(default)]
+    pub env: HashMap<String, String>,
 }
 
 impl AgentServerCommand {
@@ -301,14 +311,14 @@ impl AgentServerCommand {
                 Some(path) => Some(Self {
                     path,
                     args: extra_args.iter().map(|arg| arg.to_string()).collect(),
-                    env: None,
+                    env: Default::default(),
                 }),
                 None => fallback_path.and_then(|path| {
                     if path.exists() {
                         Some(Self {
                             path: path.to_path_buf(),
                             args: extra_args.iter().map(|arg| arg.to_string()).collect(),
-                            env: None,
+                            env: Default::default(),
                         })
                     } else {
                         None

@@ -1,4 +1,4 @@
-use std::{any::Any, path::Path, rc::Rc, sync::Arc};
+use std::{any::Any, rc::Rc, sync::Arc};
 
 use agent_servers::{AgentServer, AgentServerDelegate};
 use anyhow::Result;
@@ -35,14 +35,10 @@ impl AgentServer for NativeAgentServer {
 
     fn connect(
         &self,
-        _root_dir: &Path,
         delegate: AgentServerDelegate,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn acp_thread::AgentConnection>>> {
-        log::debug!(
-            "NativeAgentServer::connect called for path: {:?}",
-            _root_dir
-        );
+        log::debug!("NativeAgentServer::connect called");
         let project = delegate.project().clone();
         let fs = self.fs.clone();
         let history = self.history.clone();

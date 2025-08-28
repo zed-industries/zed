@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use collections::HashMap;
 use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity};
 
@@ -474,6 +474,57 @@ impl Project {
                 if let Some(path) = path {
                     command.current_dir(path);
                 }
+                Ok(command)
+            }
+        }
+    }
+
+    /// Build a smol::process::Command to execute a program with arguments and environment.
+    ///
+    /// - Uses a remote command wrapper if this is a remote project.
+    /// - Sets the current directory to the first project directory for local commands.
+    /// - Applies kill_on_drop(true) so the process is terminated when dropped.
+    pub fn new_smol_command<S>(
+        &self,
+        program: &Path,
+        args: impl IntoIterator<Item = S>,
+        env: &HashMap<String, String>,
+        cx: &App,
+    ) -> Result<smol::process::Command>
+    where
+        S: Into<String>,
+    {
+        let path = self.first_project_directory(cx);
+
+        match &self.remote_client {
+            Some(remote_client) => {
+                let command_template = remote_client.read(cx).build_command(
+                    Some(
+                        program
+                            .to_str()
+                            .context("remote path must be valid utf8")?
+                            .to_owned(),
+                    ),
+                    &args.into_iter().map(Into::into).collect::<Vec<_>>(),
+                    env,
+                    None,
+                    None,
+                )?;
+
+                let mut command = util::command::new_smol_command(&command_template.program);
+                command
+                    .args(command_template.args)
+                    .envs(command_template.env)
+                    .kill_on_drop(true);
+                Ok(command)
+            }
+            None => {
+                let mut command = util::command::new_smol_command(program);
+                command.args(args.into_iter().map(Into::into)).envs(env);
+                if let Some(path) = path {
+                    command.current_dir(path);
+                }
+                command.kill_on_drop(true);
                 Ok(command)
             }
         }

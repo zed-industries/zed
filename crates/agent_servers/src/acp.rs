@@ -42,10 +42,10 @@ pub struct AcpSession {
 pub async fn connect(
     server_name: SharedString,
     command: AgentServerCommand,
-    root_dir: &Path,
+    project: &Entity<Project>,
     cx: &mut AsyncApp,
 ) -> Result<Rc<dyn AgentConnection>> {
-    let conn = AcpConnection::stdio(server_name, command.clone(), root_dir, cx).await?;
+    let conn = AcpConnection::stdio(server_name, command.clone(), project.clone(), cx).await?;
     Ok(Rc::new(conn) as _)
 }
 
@@ -55,17 +55,16 @@ impl AcpConnection {
     pub async fn stdio(
         server_name: SharedString,
         command: AgentServerCommand,
-        root_dir: &Path,
+        project: Entity<Project>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
-        let mut child = util::command::new_smol_command(command.path)
-            .args(command.args.iter().map(|arg| arg.as_str()))
-            .envs(command.env.iter().flatten())
-            .current_dir(root_dir)
+        let mut child = project
+            .update(cx, |project, cx| {
+                project.new_smol_command(&command.path, &command.args, &command.env, cx)
+            })??
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true)
             .spawn()?;
 
         let stdout = child.stdout.take().context("Failed to take stdout")?;

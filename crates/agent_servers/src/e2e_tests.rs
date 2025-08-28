@@ -477,7 +477,7 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
                     command: AgentServerCommand {
                         path: "claude-code-acp".into(),
                         args: vec![],
-                        env: None,
+                        env: Default::default(),
                     },
                 }),
                 gemini: Some(crate::gemini::tests::local_command().into()),
@@ -500,10 +500,7 @@ pub async fn new_test_thread(
 ) -> Entity<AcpThread> {
     let delegate = AgentServerDelegate::new(project.clone(), None);
 
-    let connection = cx
-        .update(|cx| server.connect(current_dir.as_ref(), delegate, cx))
-        .await
-        .unwrap();
+    let connection = cx.update(|cx| server.connect(delegate, cx)).await.unwrap();
 
     cx.update(|cx| connection.new_thread(project.clone(), current_dir.as_ref(), cx))
         .await
