@@ -111,6 +111,195 @@ impl WslRemoteConnection {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
 
+    #[cfg(debug_assertions)]
+    #[cfg(not(target_os = "windows"))]
+    async fn build_local(
+        &self,
+        _build_remote_server: String,
+        _delegate: &Arc<dyn RemoteClientDelegate>,
+        _cx: &mut AsyncApp,
+    ) -> Result<PathBuf> {
+        Err(anyhow!(
+            "Local build of remote server is only supported on Windows"
+        ))
+    }
+
+    #[cfg(debug_assertions)]
+    #[cfg(target_os = "windows")]
+    async fn build_local(
+        &self,
+        build_remote_server: String,
+        delegate: &Arc<dyn RemoteClientDelegate>,
+        cx: &mut AsyncApp,
+    ) -> Result<PathBuf> {
+        use smol::process::{Command, Stdio};
+        use std::env::VarError;
+
+        async fn run_cmd(command: &mut Command) -> Result<()> {
+            let output = command
+                .kill_on_drop(true)
+                .stderr(Stdio::inherit())
+                .output()
+                .await?;
+            anyhow::ensure!(
+                output.status.success(),
+                "Failed to run command: {command:?}"
+            );
+            Ok(())
+        }
+
+        let use_musl = !build_remote_server.contains("nomusl");
+        let triple = format!(
+            "{}-{}",
+            self.platform.arch,
+            match self.platform.os {
+                "linux" =>
+                    if use_musl {
+                        "unknown-linux-musl"
+                    } else {
+                        "unknown-linux-gnu"
+                    },
+                _ => anyhow::bail!("can't cross compile for: {:?}", self.platform),
+            }
+        );
+        let mut rust_flags = match std::env::var("RUSTFLAGS") {
+            Ok(val) => val,
+            Err(VarError::NotPresent) => String::new(),
+            Err(e) => {
+                log::error!("Failed to get env var `RUSTFLAGS` value: {e}");
+                String::new()
+            }
+        };
+        if self.platform.os == "linux" && use_musl {
+            rust_flags.push_str(" -C target-feature=+crt-static");
+        }
+        if build_remote_server.contains("mold") {
+            rust_flags.push_str(" -C link-arg=-fuse-ld=mold");
+        }
+
+        if build_remote_server.contains("cross") {
+            use util::paths::SanitizedPath;
+
+            delegate.set_status(Some("Installing cross.rs for cross-compilation"), cx);
+            log::info!("installing cross");
+            run_cmd(Command::new("cargo").args([
+                "install",
+                "cross",
+                "--git",
+                "https://github.com/cross-rs/cross",
+            ]))
+            .await?;
+
+            delegate.set_status(
+                Some(&format!(
+                    "Building remote server binary from source for {} with Docker",
+                    &triple
+                )),
+                cx,
+            );
+            log::info!("building remote server binary from source for {}", &triple);
+
+            // On Windows, the binding needs to be set to the canonical path
+            let src =
+                SanitizedPath::from(smol::fs::canonicalize("./target").await?).to_glob_string();
+            run_cmd(
+                Command::new("cross")
+                    .args([
+                        "build",
+                        "--package",
+                        "remote_server",
+                        "--features",
+                        "debug-embed",
+                        "--target-dir",
+                        "target/remote_server",
+                        "--target",
+                        &triple,
+                    ])
+                    .env(
+                        "CROSS_CONTAINER_OPTS",
+                        format!("--mount type=bind,src={src},dst=/app/target"),
+                    )
+                    .env("RUSTFLAGS", &rust_flags),
+            )
+            .await?;
+        } else {
+            let which = cx
+                .background_spawn(async move { which::which("zig") })
+                .await;
+
+            if which.is_err() {
+                anyhow::bail!(
+                    "zig not found on $PATH, install zig (use `winget install -e --id zig.zig` or see https://ziglang.org/learn/getting-started or use zigup) or pass ZED_BUILD_REMOTE_SERVER=cross to use cross"
+                )
+            }
+
+            delegate.set_status(Some("Adding rustup target for cross-compilation"), cx);
+            log::info!("adding rustup target");
+            run_cmd(Command::new("rustup").args(["target", "add"]).arg(&triple)).await?;
+
+            delegate.set_status(Some("Installing cargo-zigbuild for cross-compilation"), cx);
+            log::info!("installing cargo-zigbuild");
+            run_cmd(Command::new("cargo").args(["install", "--locked", "cargo-zigbuild"])).await?;
+
+            delegate.set_status(
+                Some(&format!(
+                    "Building remote binary from source for {triple} with Zig"
+                )),
+                cx,
+            );
+            log::info!("building remote binary from source for {triple} with Zig");
+            run_cmd(
+                Command::new("cargo")
+                    .args([
+                        "zigbuild",
+                        "--package",
+                        "remote_server",
+                        "--features",
+                        "debug-embed",
+                        "--target-dir",
+                        "target/remote_server",
+                        "--target",
+                        &triple,
+                    ])
+                    .env("RUSTFLAGS", &rust_flags),
+            )
+            .await?;
+        };
+        let bin_path = Path::new("target")
+            .join("remote_server")
+            .join(&triple)
+            .join("debug")
+            .join("remote_server");
+
+        let path = if !build_remote_server.contains("nocompress") {
+            use anyhow::Context;
+
+            delegate.set_status(Some("Compressing binary"), cx);
+
+            // On Windows, we use 7z to compress the binary
+            let seven_zip = which::which("7z.exe").context("7z.exe not found on $PATH, install it (e.g. with `winget install -e --id 7zip.7zip`) or, if you don't want this behaviour, set $env:ZED_BUILD_REMOTE_SERVER=\"nocompress\"")?;
+            let gz_path = format!("target/remote_server/{}/debug/remote_server.gz", triple);
+            if smol::fs::metadata(&gz_path).await.is_ok() {
+                smol::fs::remove_file(&gz_path).await?;
+            }
+            run_cmd(Command::new(seven_zip).args([
+                "a",
+                "-tgzip",
+                &gz_path,
+                &bin_path.to_string_lossy(),
+            ]))
+            .await?;
+
+            let mut archive_path = bin_path;
+            archive_path.set_extension("gz");
+            std::env::current_dir()?.join(archive_path)
+        } else {
+            bin_path
+        };
+
+        Ok(path)
+    }
+
     async fn ensure_server_binary(
         &self,
         delegate: &Arc<dyn RemoteClientDelegate>,
@@ -139,6 +328,30 @@ impl WslRemoteConnection {
             PathStyle::Posix,
         );
 
+        if let Some(parent) = dst_path.parent() {
+            self.wsl_command("mkdir", &["-p", &parent.to_string()])
+                .await
+                .map_err(|e| anyhow!("Failed to create directory: {}", e))?;
+        }
+
+        let build_remote_server = std::env::var("ZED_BUILD_REMOTE_SERVER").ok();
+        #[cfg(debug_assertions)]
+        if let Some(build_remote_server) = build_remote_server {
+            let src_path = self.build_local(build_remote_server, delegate, cx).await?;
+            let tmp_path = RemotePathBuf::new(
+                PathBuf::from(format!(
+                    ".zed/download-{}-{}",
+                    std::process::id(),
+                    src_path.file_name().unwrap().to_string_lossy()
+                )),
+                PathStyle::Posix,
+            );
+            self.upload_file(&src_path, &tmp_path, delegate, cx).await?;
+            self.extract_and_install(&tmp_path, &dst_path, delegate, cx)
+                .await?;
+            return Ok(dst_path);
+        }
+
         if self
             .wsl_command(&dst_path.to_string(), &["version"])
             .await
@@ -148,12 +361,6 @@ impl WslRemoteConnection {
         }
 
         delegate.set_status(Some("Installing remote server"), cx);
-
-        if let Some(parent) = dst_path.parent() {
-            self.wsl_command("mkdir", &["-p", &parent.to_string()])
-                .await
-                .map_err(|e| anyhow!("Failed to create directory: {}", e))?;
-        }
 
         let wanted_version = match release_channel {
             ReleaseChannel::Nightly => None,
@@ -188,6 +395,12 @@ impl WslRemoteConnection {
     ) -> Result<()> {
         delegate.set_status(Some("Uploading remote server to WSL"), cx);
 
+        if let Some(parent) = dst_path.parent() {
+            self.wsl_command("mkdir", &["-p", &parent.to_string()])
+                .await
+                .map_err(|e| anyhow!("Failed to create directory when uploading file: {}", e))?;
+        }
+
         let t0 = Instant::now();
         let src_stat = fs::metadata(&src_path).await?;
         let size = src_stat.len();
@@ -200,7 +413,15 @@ impl WslRemoteConnection {
         let src_path_in_wsl = path_to_wsl(&src_path);
         self.wsl_command("cp", &["-f", &src_path_in_wsl, &dst_path.to_string()])
             .await
-            .map_err(|e| anyhow!("Failed to copy file to WSL: {}", e))?;
+            .map_err(|e| {
+                anyhow!(
+                    "Failed to copy file {}({}) to WSL {:?}: {}",
+                    src_path.display(),
+                    src_path_in_wsl,
+                    dst_path,
+                    e
+                )
+            })?;
 
         log::info!("uploaded remote server in {:?}", t0.elapsed());
         Ok(())
