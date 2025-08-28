@@ -543,23 +543,56 @@ fn render_toggle_button_group(
     cx: &mut App,
 ) -> AnyElement {
     let value = downcast_any_item::<String>(value);
+
     fn make_toggle_group<const LEN: usize>(
         group_name: &'static str,
+        value: SettingsValue<String>,
         variants: &'static [&'static str],
     ) -> AnyElement {
         let mut variants_array: [&'static str; LEN] = ["default"; LEN];
         variants_array.copy_from_slice(variants);
+        let active_value = value.read();
+
+        let selected_idx = variants_array
+            .iter()
+            .enumerate()
+            .find_map(|(idx, variant)| {
+                if variant == &active_value {
+                    Some(idx)
+                } else {
+                    None
+                }
+            });
+
         ToggleButtonGroup::single_row(
             group_name,
-            variants_array.map(|variant| ToggleButtonSimple::new(variant, |_, _, _| {})),
+            variants_array.map(|variant| {
+                let path = value.path.clone();
+                ToggleButtonSimple::new(variant, move |_, _, cx| {
+                    let settings_store = SettingsStore::global(cx);
+                    let fs = <dyn Fs>::global(cx);
+
+                    let rx = settings_store.update_settings_file_at_path(
+                        fs.clone(),
+                        &path.as_slice(),
+                        serde_json::Value::String(variant.to_string()),
+                    );
+                    cx.background_spawn(
+                        async move { rx.await?.context("Failed to update settings") },
+                    )
+                    .detach_and_log_err(cx);
+                })
+            }),
         )
+        .when_some(selected_idx, |this, ix| this.selected_index(ix))
+        .style(ui::ToggleButtonGroupStyle::Filled)
         .into_any_element()
     }
 
     macro_rules! templ_toggl_with_const_param {
         ($len:expr) => {
             if variants.len() == $len {
-                return make_toggle_group::<$len>(value.title, variants);
+                return make_toggle_group::<$len>(value.title, value, variants);
             }
         };
     }
