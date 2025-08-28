@@ -7309,7 +7309,7 @@ pub fn open_remote_project_with_new_connection(
             )
         })?;
 
-        open_ssh_project_inner(
+        open_remote_project_inner(
             project,
             paths,
             workspace_id,
@@ -7334,7 +7334,7 @@ pub fn open_remote_project_with_existing_connection(
         let (workspace_id, serialized_workspace) =
             serialize_remote_project(connection_options.clone(), paths.clone(), cx).await?;
 
-        open_ssh_project_inner(
+        open_remote_project_inner(
             project,
             paths,
             workspace_id,
@@ -7347,7 +7347,7 @@ pub fn open_remote_project_with_existing_connection(
     })
 }
 
-async fn open_ssh_project_inner(
+async fn open_remote_project_inner(
     project: Entity<Project>,
     paths: Vec<PathBuf>,
     workspace_id: WorkspaceId,

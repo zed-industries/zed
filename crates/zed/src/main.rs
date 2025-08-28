@@ -361,6 +361,7 @@ pub fn main() {
             open_listener.open(RawOpenRequest {
                 urls,
                 diff_paths: Vec::new(),
+                ..Default::default()
             })
         }
     });
@@ -696,7 +697,7 @@ pub fn main() {
         let urls: Vec<_> = args
             .paths_or_urls
             .iter()
-            .filter_map(|arg| parse_url_arg(arg, cx).log_err())
+            .map(|arg| parse_url_arg(arg, cx))
             .collect();
 
         let diff_paths: Vec<[String; 2]> = args
@@ -706,7 +707,11 @@ pub fn main() {
             .collect();
 
         if !urls.is_empty() || !diff_paths.is_empty() {
-            open_listener.open(RawOpenRequest { urls, diff_paths })
+            open_listener.open(RawOpenRequest {
+                urls,
+                diff_paths,
+                wsl: args.wsl,
+            })
         }
 
         match open_rx
@@ -1177,6 +1182,13 @@ struct Args {
     #[arg(long, value_name = "DIR")]
     user_data_dir: Option<String>,
 
+    /// The name of a WSL distribution on which the given paths should be opened.
+    /// If not specified, Zed will attempt to open the paths directly.
+    ///
+    /// Pass `-` to use the default WSL distribution.
+    #[arg(long, value_name = "DISTRO")]
+    wsl: Option<String>,
+
     /// Instructs zed to run as a dev server on this machine. (not implemented)
     #[arg(long)]
     dev_server_token: Option<String>,
@@ -1235,18 +1247,18 @@ impl ToString for IdType {
     }
 }
 
-fn parse_url_arg(arg: &str, cx: &App) -> Result<String> {
+fn parse_url_arg(arg: &str, cx: &App) -> String {
     match std::fs::canonicalize(Path::new(&arg)) {
-        Ok(path) => Ok(format!("file://{}", path.display())),
-        Err(error) => {
+        Ok(path) => format!("file://{}", path.display()),
+        Err(_) => {
             if arg.starts_with("file://")
                 || arg.starts_with("zed-cli://")
                 || arg.starts_with("ssh://")
                 || parse_zed_link(arg, cx).is_some()
             {
-                Ok(arg.into())
+                arg.into()
             } else {
-                anyhow::bail!("error parsing path argument: {error}")
+                format!("file://{arg}")
             }
         }
     }

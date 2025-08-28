@@ -85,6 +85,12 @@ struct Args {
     /// Run zed in dev-server mode
     #[arg(long)]
     dev_server_token: Option<String>,
+    /// The name of a WSL distribution on which the given paths should be opened.
+    /// If not specified, Zed will attempt to open the paths directly.
+    ///
+    /// Pass `-` to use the default WSL distribution.
+    #[arg(long, value_name = "DISTRO")]
+    wsl: Option<String>,
     /// Not supported in Zed CLI, only supported on Zed binary
     /// Will attempt to give the correct command to run
     #[arg(long)]
@@ -292,6 +298,7 @@ fn main() -> Result<()> {
                 paths,
                 urls,
                 diff_paths,
+                wsl: args.wsl,
                 wait: args.wait,
                 open_new_workspace,
                 env,

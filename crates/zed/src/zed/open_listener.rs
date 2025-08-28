@@ -18,9 +18,8 @@ use language::Point;
 use onboarding::FIRST_OPEN;
 use onboarding::show_onboarding_view;
 use recent_projects::{SshSettings, open_remote_project};
-use remote::RemoteConnectionOptions;
+use remote::{RemoteConnectionOptions, WslConnectionOptions};
 use settings::Settings;
-use std::path;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
@@ -52,6 +51,13 @@ pub enum OpenRequestKind {
 impl OpenRequest {
     pub fn parse(request: RawOpenRequest, cx: &App) -> Result<Self> {
         let mut this = Self::default();
+
+        if let Some(wsl) = request.wsl {
+            this.remote_connection = Some(RemoteConnectionOptions::Wsl(WslConnectionOptions {
+                distro_name: wsl,
+            }));
+        }
+
         for url in request.urls {
             if let Some(server_name) = url.strip_prefix("zed-cli://") {
                 this.kind = Some(OpenRequestKind::CliConnection(connect_to_cli(server_name)?));
@@ -60,9 +66,9 @@ impl OpenRequest {
                     index: action_index.parse()?,
                 });
             } else if let Some(file) = url.strip_prefix("file://") {
-                this.parse_top_level_file_path(file)
+                this.parse_file_path(file)
             } else if let Some(file) = url.strip_prefix("zed://file") {
-                this.parse_top_level_file_path(file)
+                this.parse_file_path(file)
             } else if let Some(file) = url.strip_prefix("zed://ssh") {
                 let ssh_url = "ssh:/".to_string() + file;
                 this.parse_ssh_file_path(&ssh_url, cx)?
@@ -83,40 +89,8 @@ impl OpenRequest {
 
         this.diff_paths = request.diff_paths;
 
+
         Ok(this)
-    }
-
-    fn parse_top_level_file_path(&mut self, file: &str) {
-        if let Some(path_to_open) = urlencoding::decode(file).log_err() {
-            let mut path_to_open = path_to_open.into_owned();
-            let path = Path::new(&path_to_open);
-            if let Some(path::Component::Prefix(prefix)) = path.components().next() {
-                match prefix.kind() {
-                    path::Prefix::VerbatimUNC(server, share) => {
-                        if server == "wsl$" || server == "wsl.localhost" {
-                            if let Some(distro) = share.to_str() {
-                                self.remote_connection = Some(RemoteConnectionOptions::Wsl(
-                                    remote::WslConnectionOptions {
-                                        distro_name: distro.to_string(),
-                                    },
-                                ));
-
-                                let mut wsl_path = String::new();
-                                for component in path.components() {
-                                    if let path::Component::Normal(name) = component {
-                                        wsl_path.push('/');
-                                        wsl_path.push_str(name.to_string_lossy().as_ref());
-                                    }
-                                }
-                                path_to_open = wsl_path;
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            self.open_paths.push(path_to_open)
-        }
     }
 
     fn parse_file_path(&mut self, file: &str) {
@@ -188,6 +162,7 @@ pub struct OpenListener(UnboundedSender<RawOpenRequest>);
 pub struct RawOpenRequest {
     pub urls: Vec<String>,
     pub diff_paths: Vec<[String; 2]>,
+    pub wsl: Option<String>,
 }
 
 impl Global for OpenListener {}
@@ -339,13 +314,21 @@ pub async fn handle_cli_connection(
                 paths,
                 diff_paths,
                 wait,
+                wsl,
                 open_new_workspace,
                 env,
                 user_data_dir: _,
             } => {
                 if !urls.is_empty() {
                     cx.update(|cx| {
-                        match OpenRequest::parse(RawOpenRequest { urls, diff_paths }, cx) {
+                        match OpenRequest::parse(
+                            RawOpenRequest {
+                                urls,
+                                diff_paths,
+                                wsl,
+                            },
+                            cx,
+                        ) {
                             Ok(open_request) => {
                                 handle_open_request(open_request, app_state.clone(), cx);
                                 responses.send(CliResponse::Exit { status: 0 }).log_err();
