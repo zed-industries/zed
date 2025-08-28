@@ -3307,9 +3307,9 @@ impl EditorElement {
             }
         }
         for row_segments in per_row_map.iter_mut() {
-            let merged =
-                Self::merge_overlapping_ranges(row_segments.drain(..).collect(), base_background);
-            row_segments.extend(merged);
+            let segments = mem::take(row_segments);
+            let merged = Self::merge_overlapping_ranges(segments, base_background);
+            *row_segments = merged;
         }
         per_row_map
     }
@@ -3329,7 +3329,7 @@ impl EditorElement {
             color: Hsla,
         }
 
-        let mut boundaries: Vec<Boundary> = Vec::with_capacity(ranges.len() * 2);
+        let mut boundaries: SmallVec<[Boundary; 16]> = SmallVec::with_capacity(ranges.len() * 2);
         for (index, (range, color)) in ranges.iter().enumerate() {
             debug_assert!(
                 range.start.row() == range.end.row(),
@@ -3355,7 +3355,8 @@ impl EditorElement {
             return Vec::new();
         }
 
-        boundaries.sort_by(|a, b| a.pos.cmp(&b.pos).then_with(|| a.is_start.cmp(&b.is_start)));
+        boundaries
+            .sort_unstable_by(|a, b| a.pos.cmp(&b.pos).then_with(|| a.is_start.cmp(&b.is_start)));
 
         let mut processed_ranges: Vec<(Range<DisplayPoint>, Hsla)> = Vec::new();
         let mut active_ranges: SmallVec<[(usize, Hsla); 8]> = SmallVec::new();
