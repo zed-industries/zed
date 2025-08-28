@@ -3276,8 +3276,13 @@ impl EditorElement {
                 }
             })
         });
-
-        Self::clamped_ranges_per_row(rows, highlight_iter.chain(selection_iter))
+        let mut per_row_map =
+            Self::clamped_ranges_per_row(rows, highlight_iter.chain(selection_iter));
+        for row_segments in per_row_map.iter_mut() {
+            let merged = Self::merge_overlapping_ranges(row_segments.drain(..).collect());
+            row_segments.extend(merged);
+        }
+        per_row_map
     }
 
     fn clamped_ranges_per_row<I>(
@@ -3320,9 +3325,13 @@ impl EditorElement {
 
     /// Merge overlapping ranges by splitting at all range boundaries and blending colors where
     /// multiple ranges overlap. The result contains non-overlapping ranges ordered from left to right.
-    fn merge_overlapping_ranges(ranges: Vec<(Range<u32>, Hsla)>) -> Vec<(Range<u32>, Hsla)> {
+    ///
+    /// Expects `start.row() == end.row()` for each range.
+    fn merge_overlapping_ranges(
+        ranges: Vec<(Range<DisplayPoint>, Hsla)>,
+    ) -> Vec<(Range<DisplayPoint>, Hsla)> {
         struct Boundary {
-            pos: u32,
+            pos: DisplayPoint,
             is_start: bool,
             index: usize,
             color: Hsla,
@@ -3330,6 +3339,10 @@ impl EditorElement {
 
         let mut boundaries: Vec<Boundary> = Vec::with_capacity(ranges.len() * 2);
         for (index, (range, color)) in ranges.iter().enumerate() {
+            debug_assert!(
+                range.start.row() == range.end.row(),
+                "expects single-row ranges"
+            );
             if range.start < range.end {
                 boundaries.push(Boundary {
                     pos: range.start,
@@ -3352,7 +3365,7 @@ impl EditorElement {
 
         boundaries.sort_by(|a, b| a.pos.cmp(&b.pos).then_with(|| a.is_start.cmp(&b.is_start)));
 
-        let mut processed_ranges: Vec<(Range<u32>, Hsla)> = Vec::new();
+        let mut processed_ranges: Vec<(Range<DisplayPoint>, Hsla)> = Vec::new();
         let mut active_ranges: SmallVec<[(usize, Hsla); 8]> = SmallVec::new();
 
         let mut i = 0;
