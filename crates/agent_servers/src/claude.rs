@@ -1,12 +1,13 @@
 use language_models::provider::anthropic::AnthropicLanguageModelProvider;
+use settings::SettingsStore;
 use std::any::Any;
 use std::path::Path;
 use std::rc::Rc;
 
 use anyhow::Result;
-use gpui::{App, SharedString, Task};
+use gpui::{App, AppContext as _, SharedString, Task};
 
-use crate::{AgentServer, AgentServerDelegate};
+use crate::{AgentServer, AgentServerDelegate, AllAgentServersSettings};
 use acp_thread::AgentConnection;
 
 #[derive(Clone)]
@@ -38,20 +39,26 @@ impl AgentServer for ClaudeCode {
     ) -> Task<Result<Rc<dyn AgentConnection>>> {
         let root_dir = root_dir.to_path_buf();
         let server_name = self.name();
+        let settings = cx.read_global(|settings: &SettingsStore, _| {
+            settings.get::<AllAgentServersSettings>(None).claude.clone()
+        });
 
         cx.spawn(async move |cx| {
-            let mut command = cx
-                .update(|cx| {
+            let mut command = if let Some(settings) = settings {
+                settings.command
+            } else {
+                cx.update(|cx| {
                     delegate.get_or_npm_install_builtin_agent(
                         Self::BINARY_NAME.into(),
                         Self::PACKAGE_NAME.into(),
                         format!("node_modules/{}/dist/index.js", Self::PACKAGE_NAME).into(),
-                        None,
+                        true,
                         None,
                         cx,
                     )
                 })?
-                .await?;
+                .await?
+            };
 
             if let Some(api_key) = cx
                 .update(AnthropicLanguageModelProvider::api_key)?

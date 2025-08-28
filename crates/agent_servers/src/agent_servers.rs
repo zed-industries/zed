@@ -57,16 +57,10 @@ impl AgentServerDelegate {
         binary_name: SharedString,
         package_name: SharedString,
         entrypoint_path: PathBuf,
-        settings: Option<BuiltinAgentServerSettings>,
+        ignore_system_version: bool,
         minimum_version: Option<Version>,
         cx: &mut App,
     ) -> Task<Result<AgentServerCommand>> {
-        if let Some(settings) = &settings
-            && let Some(command) = settings.clone().custom_command()
-        {
-            return Task::ready(Ok(command));
-        }
-
         let project = self.project;
         let fs = project.read(cx).fs().clone();
         let Some(node_runtime) = project.read(cx).node_runtime().cloned() else {
@@ -75,7 +69,7 @@ impl AgentServerDelegate {
         let mut status_tx = self.status_tx;
 
         cx.spawn(async move |cx| {
-            if let Some(settings) = settings && !settings.ignore_system_version.unwrap_or(true) {
+            if !ignore_system_version {
                 if let Some(bin) = find_bin_in_path(binary_name.clone(), &project, cx).await {
                     return Ok(AgentServerCommand { path: bin, args: Vec::new(), env: Default::default() })
                 }
