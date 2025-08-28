@@ -4578,6 +4578,13 @@ impl Window {
         }
         None
     }
+
+    /// For testing: set the current modifier keys state.
+    /// This does not generate any events.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_modifiers(&mut self, modifiers: Modifiers) {
+        self.modifiers = modifiers;
+    }
 }
 
 // #[derive(Clone, Copy, Eq, PartialEq, Hash)]
