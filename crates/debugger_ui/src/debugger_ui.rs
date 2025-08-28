@@ -283,7 +283,7 @@ pub fn init(cx: &mut App) {
                             .ok();
                     }
                 })
-                .on_action(move |_: &ToggleUserFrames, window, cx| {
+                .on_action(move |_: &ToggleUserFrames, _, cx| {
                     if let Some((thread_status, stack_frame_list)) = active_item
                         .read_with(cx, |item, cx| {
                             (item.thread_status(cx), item.stack_frame_list().clone())
@@ -291,7 +291,7 @@ pub fn init(cx: &mut App) {
                         .ok()
                     {
                         stack_frame_list.update(cx, |stack_frame_list, cx| {
-                            stack_frame_list.toggle_frame_filter(thread_status, window, cx);
+                            stack_frame_list.toggle_frame_filter(thread_status, cx);
                         })
                     }
                 })
