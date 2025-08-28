@@ -64,7 +64,7 @@ pub fn derive_settings_ui(input: proc_macro::TokenStream) -> proc_macro::TokenSt
     }
 
     let ui_render_fn_body =
-        generate_ui_render_body(group_name.as_ref(), path_name.as_ref(), input.data);
+        generate_ui_render_body(group_name.as_ref(), path_name.as_ref(), &input);
 
     let settings_ui_item_fn_body = path_name
         .as_ref()
@@ -112,9 +112,9 @@ fn map_ui_item_to_render(path: &str, ty: TokenStream) -> TokenStream {
 fn generate_ui_render_body(
     group_name: Option<&String>,
     path_name: Option<&String>,
-    data: syn::Data,
+    input: &syn::DeriveInput,
 ) -> TokenStream {
-    match (group_name, path_name, data) {
+    match (group_name, path_name, &input.data) {
         (_, _, Data::Union(_)) => unimplemented!("Derive SettingsUI for Unions"),
         (None, None, Data::Struct(_)) => quote! {
             settings::SettingsUIRender::None
@@ -156,12 +156,33 @@ fn generate_ui_render_body(
                 settings::SettingsUIRender::Group{ title: #group_name, items: vec![#(#fields),*] }
             }
         }
-        (None, Some(_), Data::Enum(data_enum)) => {
+        (None, _, Data::Enum(data_enum)) => {
+            let mut lowercase = false;
+            for attr in &input.attrs {
+                if attr.path().is_ident("serde") {
+                    attr.parse_nested_meta(|meta| {
+                        if meta.path.is_ident("rename_all") {
+                            meta.input.parse::<Token![=]>()?;
+                            let lit = meta.input.parse::<LitStr>()?.value();
+                            // todo! snake case
+                            lowercase = lit == "lowercase" || lit == "snake_case";
+                        }
+                        Ok(())
+                    })
+                    .ok();
+                }
+            }
             let length = data_enum.variants.len();
-            let variants = data_enum
-                .variants
-                .iter()
-                .map(|variant| variant.ident.clone().to_string());
+
+            let variants = data_enum.variants.iter().map(|variant| {
+                let string = variant.ident.clone().to_string();
+
+                if lowercase {
+                    string.to_lowercase()
+                } else {
+                    string
+                }
+            });
 
             if length > 6 {
                 quote! {
