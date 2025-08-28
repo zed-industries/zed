@@ -15,7 +15,7 @@ pub fn init(cx: &mut App) {
 #[derive(Default, Deserialize, Serialize, Clone, JsonSchema, Debug)]
 pub struct AllAgentServersSettings {
     pub gemini: Option<BuiltinAgentServerSettings>,
-    pub claude: Option<BuiltinAgentServerSettings>,
+    pub claude: Option<CustomAgentServerSettings>,
 
     /// Custom agent servers configured by the user
     #[serde(flatten)]
