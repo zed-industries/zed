@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources, SettingsUI};
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, SettingsUI)]
 #[serde(rename_all = "snake_case")]
 pub enum DebugPanelDockPosition {
     Left,
@@ -44,7 +44,6 @@ pub struct DebuggerSettings {
     /// The dock position of the debug panel
     ///
     /// Default: Bottom
-    #[settings_ui(skip)]
     pub dock: DebugPanelDockPosition,
 }
 

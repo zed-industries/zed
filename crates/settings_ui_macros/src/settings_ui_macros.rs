@@ -58,12 +58,22 @@ pub fn derive_settings_ui(input: proc_macro::TokenStream) -> proc_macro::TokenSt
         }
     }
 
-    let ui_render_fn_body = generate_ui_render_body(group_name, input.data);
+    if path_name.is_none() && group_name.is_some() {
+        // todo! derive path from settings
+        panic!("path is required when group is specified");
+    }
 
-    let settings_ui_item_fn_body = map_ui_item_to_render(
-        path_name.as_deref().unwrap_or("todo! no path specified"),
-        quote! { Self },
-    );
+    let ui_render_fn_body =
+        generate_ui_render_body(group_name.as_ref(), path_name.as_ref(), input.data);
+
+    let settings_ui_item_fn_body = path_name
+        .as_ref()
+        .map(|path_name| map_ui_item_to_render(path_name, quote! { Self }))
+        .unwrap_or(quote! {
+            settings::SettingsUIItem {
+                item:  settings::SettingsUIItemVariant::None
+            }
+        });
 
     let expanded = quote! {
         impl #impl_generics settings::SettingsUI for #name #ty_generics #where_clause {
@@ -99,13 +109,23 @@ fn map_ui_item_to_render(path: &str, ty: TokenStream) -> TokenStream {
     }
 }
 
-fn generate_ui_render_body(group_name: Option<String>, data: syn::Data) -> TokenStream {
-    match (group_name, data) {
-        (_, Data::Union(_)) => unimplemented!("Derive SettingsUI for Unions"),
-        (None, Data::Struct(_)) => quote! {
+fn generate_ui_render_body(
+    group_name: Option<&String>,
+    path_name: Option<&String>,
+    data: syn::Data,
+) -> TokenStream {
+    match (group_name, path_name, data) {
+        (_, _, Data::Union(_)) => unimplemented!("Derive SettingsUI for Unions"),
+        (None, None, Data::Struct(_)) => quote! {
             settings::SettingsUIRender::None
         },
-        (Some(group_name), Data::Struct(data_struct)) => {
+        (Some(_), None, Data::Struct(_)) => quote! {
+            settings::SettingsUIRender::None
+        },
+        (None, Some(_), Data::Struct(_)) => quote! {
+            settings::SettingsUIRender::None
+        },
+        (Some(group_name), _, Data::Struct(data_struct)) => {
             let fields = data_struct
                 .fields
                 .iter()
@@ -136,7 +156,25 @@ fn generate_ui_render_body(group_name: Option<String>, data: syn::Data) -> Token
                 settings::SettingsUIRender::Group{ title: #group_name, items: vec![#(#fields),*] }
             }
         }
-        (_, Data::Enum(data_enum)) => quote! {
+        (None, Some(_), Data::Enum(data_enum)) => {
+            let length = data_enum.variants.len();
+            let variants = data_enum
+                .variants
+                .iter()
+                .map(|variant| variant.ident.clone().to_string());
+
+            if length > 6 {
+                quote! {
+                    settings::SettingsUIRender::Item(settings::SettingsUIItemSingle::DropDown(&[#(#variants),*]))
+                }
+            } else {
+                quote! {
+                    settings::SettingsUIRender::Item(settings::SettingsUIItemSingle::ToggleGroup(&[#(#variants),*]))
+                }
+            }
+        }
+        // todo! unions
+        (_, _, Data::Enum(_)) => quote! {
             settings::SettingsUIRender::None
         },
     }
