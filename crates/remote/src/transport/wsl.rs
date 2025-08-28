@@ -2,16 +2,18 @@ use crate::{
     RemoteClientDelegate, RemotePlatform,
     remote_client::{CommandTemplate, RemoteConnection, RemoteConnectionOptions},
 };
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::channel::mpsc::{Sender, UnboundedReceiver, UnboundedSender};
 use gpui::{App, AppContext as _, AsyncApp, SemanticVersion, Task};
+use itertools::Itertools;
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use rpc::proto::Envelope;
 use smol::fs;
 use std::{
     fmt::Write as _,
+    iter,
     path::{self, Path, PathBuf},
     process::Stdio,
     sync::Arc,
@@ -29,6 +31,12 @@ pub(crate) struct WslRemoteConnection {
     platform: RemotePlatform,
     shell: String,
     connection_options: WslConnectionOptions,
+}
+
+#[allow(dead_code)]
+enum WslPathConverterKind {
+    WslToWindows,
+    WindowsToWsl,
 }
 
 impl WslRemoteConnection {
@@ -81,6 +89,28 @@ impl WslRemoteConnection {
         Ok(shell.trim().split('/').last().unwrap_or("bash").to_string())
     }
 
+    async fn path_converter(&self, source: &Path, kind: WslPathConverterKind) -> Result<String> {
+        let source = sanitize_path(source).await?;
+        let arg = match kind {
+            WslPathConverterKind::WslToWindows => "-w",
+            WslPathConverterKind::WindowsToWsl => "-u",
+        };
+        self.wsl_command("wslpath", &[arg, &source]).await
+    }
+
+    async fn path_converter_impl(
+        options: &WslConnectionOptions,
+        source: &Path,
+        kind: WslPathConverterKind,
+    ) -> Result<String> {
+        let source = sanitize_path(source).await?;
+        let arg = match kind {
+            WslPathConverterKind::WslToWindows => "-w",
+            WslPathConverterKind::WindowsToWsl => "-u",
+        };
+        Self::wsl_command_impl(options, "wslpath", &[arg, &source]).await
+    }
+
     async fn wsl_command(&self, program: &str, args: &[&str]) -> Result<String> {
         Self::wsl_command_impl(&self.connection_options, program, args).await
     }
@@ -90,13 +120,16 @@ impl WslRemoteConnection {
         program: &str,
         args: &[&str],
     ) -> Result<String> {
-        let mut command = util::command::new_smol_command("wsl.exe");
-        let output = command
+        let to_run = iter::once(&program)
+            .chain(args.iter())
+            .map(|token| shlex::try_quote(token).unwrap())
+            .join(" ");
+        let output = util::command::new_smol_command("wsl.exe")
             .arg("--distribution")
             .arg(&options.distro_name)
-            .arg("--")
-            .arg(program)
-            .args(args)
+            .arg("sh")
+            .arg("-c")
+            .arg(format!("cd; {to_run}"))
             .output()
             .await?;
 
@@ -297,7 +330,7 @@ impl WslRemoteConnection {
             bin_path
         };
 
-        Ok(path)
+        Ok(path.canonicalize()?)
     }
 
     async fn ensure_server_binary(
@@ -324,7 +357,7 @@ impl WslRemoteConnection {
         );
 
         let dst_path = RemotePathBuf::new(
-            PathBuf::from(format!(".zed/remote-servers/{}", binary_name)),
+            paths::remote_wsl_server_dir_relative().join(binary_name),
             PathStyle::Posix,
         );
 
@@ -339,8 +372,8 @@ impl WslRemoteConnection {
         if let Some(build_remote_server) = build_remote_server {
             let src_path = self.build_local(build_remote_server, delegate, cx).await?;
             let tmp_path = RemotePathBuf::new(
-                PathBuf::from(format!(
-                    ".zed/download-{}-{}",
+                paths::remote_wsl_server_dir_relative().join(format!(
+                    "download-{}-{}",
                     std::process::id(),
                     src_path.file_name().unwrap().to_string_lossy()
                 )),
@@ -410,7 +443,9 @@ impl WslRemoteConnection {
             size / 1024
         );
 
-        let src_path_in_wsl = path_to_wsl(&src_path);
+        let src_path_in_wsl = self
+            .path_converter(src_path, WslPathConverterKind::WindowsToWsl)
+            .await?;
         self.wsl_command("cp", &["-f", &src_path_in_wsl, &dst_path.to_string()])
             .await
             .map_err(|e| {
@@ -553,7 +588,12 @@ impl RemoteConnection for WslRemoteConnection {
         cx.background_spawn({
             let options = self.connection_options.clone();
             async move {
-                let wsl_src = path_to_wsl(&src_path);
+                let wsl_src = Self::path_converter_impl(
+                    &options,
+                    &src_path,
+                    WslPathConverterKind::WindowsToWsl,
+                )
+                .await?;
 
                 Self::wsl_command_impl(&options, "cp", &["-r", &wsl_src, &dest_path.to_string()])
                     .await
@@ -646,6 +686,16 @@ impl RemoteConnection for WslRemoteConnection {
     fn shell(&self) -> String {
         self.shell.clone()
     }
+}
+
+/// `wslpath` is a executable available in WSL, it's a linux binary.
+/// So it doesn't support Windows style paths.
+async fn sanitize_path(path: &Path) -> Result<String> {
+    let path = smol::fs::canonicalize(path).await?;
+    let path_str = path.to_string_lossy();
+
+    let sanitized = path_str.strip_prefix(r"\\?\").unwrap_or(&path_str);
+    Ok(sanitized.replace('\\', "/"))
 }
 
 #[cfg(test)]
