@@ -2,7 +2,7 @@ use crate::{
     RemoteClientDelegate, RemotePlatform,
     remote_client::{CommandTemplate, RemoteConnection, RemoteConnectionOptions},
 };
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::channel::mpsc::{Sender, UnboundedReceiver, UnboundedSender};
@@ -359,6 +359,10 @@ impl RemoteConnection for WslRemoteConnection {
         false
     }
 
+    fn shares_network_interface(&self) -> bool {
+        true
+    }
+
     fn build_command(
         &self,
         program: Option<String>,
@@ -368,6 +372,10 @@ impl RemoteConnection for WslRemoteConnection {
         activation_script: Option<String>,
         port_forward: Option<(u16, String, u16)>,
     ) -> Result<CommandTemplate> {
+        if port_forward.is_some() {
+            bail!("WSL shares the network interface with the host system");
+        }
+
         let mut script = String::new();
         if let Some(working_dir) = working_dir {
             let working_dir = RemotePathBuf::new(working_dir.into(), PathStyle::Posix).to_string();
@@ -407,11 +415,6 @@ impl RemoteConnection for WslRemoteConnection {
             "-c".to_string(),
             script,
         ];
-
-        // todo(max): port forwarding
-        if port_forward.is_some() {
-            log::warn!("Port forwarding is not directly supported in WSL transport");
-        }
 
         Ok(CommandTemplate {
             program: "wsl.exe".to_string(),

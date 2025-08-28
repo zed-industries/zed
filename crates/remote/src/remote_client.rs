@@ -772,6 +772,13 @@ impl RemoteClient {
         Some(self.state.as_ref()?.remote_connection()?.shell())
     }
 
+    pub fn shares_network_interface(&self) -> bool {
+        self.state
+            .as_ref()
+            .and_then(|state| state.remote_connection())
+            .map_or(false, |connection| connection.shares_network_interface())
+    }
+
     pub fn build_command(
         &self,
         program: Option<String>,
@@ -1053,6 +1060,9 @@ pub(crate) trait RemoteConnection: Send + Sync {
     ) -> Task<Result<()>>;
     async fn kill(&self) -> Result<()>;
     fn has_been_killed(&self) -> bool;
+    fn shares_network_interface(&self) -> bool {
+        false
+    }
     fn build_command(
         &self,
         program: Option<String>,
