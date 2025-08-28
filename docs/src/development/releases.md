@@ -37,16 +37,16 @@ Credentials for various services used in this process can be found in 1Password.
 1. Check the release assets.
 
    - Ensure the stable and preview release jobs have finished without error.
-   - Ensure each build has the proper number of assets—releases currently have 10 assets each.
-   - Download the artifacts for each release and test that you can run them locally.
+   - Ensure each draft has the proper number of assets—releases currently have 10 assets each.
+   - Download the artifacts for each release draft and test that you can run them locally.
 
-1. Publish each build, one at a time.
+1. Publish stable / preview drafts, one at a time.
 
-   - Use [Vercel](https://vercel.com/zed-industries/zed-dev) to check the status of each build.
+   - Use [Vercel](https://vercel.com/zed-industries/zed-dev) to check the status of the visibility of the release on zed.dev.
 
 1. Publish the release email that has been sent to [Kit](https://kit.com).
 
-   - Make sure to double check that the email is correct before publishing.
+   - Make sure to double-check that the email is correct before publishing.
    - We sometimes correct things here and there that didn't translate from GitHub's renderer to Kit's.
 
 1. Build social media posts based on the popular items in stable.
@@ -57,7 +57,8 @@ Credentials for various services used in this process can be found in 1Password.
 
 ## Patch release process
 
-If your PR fixes a panic or a crash, you should cherry-pick it to the current stable and preview branches. If your PR fixes a regression in recently released code, you should cherry-pick it to preview.
+If your PR fixes a panic or a crash, you should cherry-pick it to the current stable and preview branches.
+If your PR fixes a regression in recently released code, you should cherry-pick it to preview.
 
 You will need write access to the Zed repository to do this:
 
@@ -65,10 +66,10 @@ You will need write access to the Zed repository to do this:
 
 1. Send a PR containing your change to `main` as normal.
 
-1. Once it is merged, you will need to cherry pick the commit locally to either of the release branches (`v0.XXX.x`).
+1. Once it is merged, you will need to cherry-pick the commit locally to either of the release branches (`v0.XXX.x`).
 
    - In some cases, you may have to handle a merge conflict.
-     More often than not, this will happen when picking to stable, as the stable branch is more "stale" than the preview branch.
+     More often than not, this will happen when cherry-picking to stable, as the stable branch is more "stale" than the preview branch.
 
 1. After the commits are cherry-picked onto the branch, run `./script/trigger-release {preview|stable}`.
    This will bump the version numbers, create a new release tag, and kick off a release build.
@@ -76,13 +77,19 @@ You will need write access to the Zed repository to do this:
    - This can also be run from the [GitHub Actions UI](https://github.com/zed-industries/zed/actions/workflows/bump_patch_version.yml):
      ![](https://github.com/zed-industries/zed/assets/1486634/9e31ae95-09e1-4c7f-9591-944f4f5b63ea)
 
-1. Wait for the builds to appear on [the Releases tab on GitHub](https://github.com/zed-industries/zed/releases).
+1. Once release drafts are up on [GitHub Releases](https://github.com/zed-industries/zed/releases), proofread and edit the release notes as needed and **save**.
 
-1. Proofread and edit the release notes as needed.
+   - **Do not publish the drafts, yet.**
 
-1. Download the artifacts for each release and test that you can run them locally.
+1. Check the release assets.
 
-1. Publish the release.
+   - Ensure the patch release jobs have finished without error.
+   - Ensure each draft has the proper number of assets—releases currently have 10 assets each.
+   - Download the artifacts for each release draft and test that you can run them locally.
+
+1. Publish the patch drafts, one at a time.
+
+   - Use [Vercel](https://vercel.com/zed-industries/zed-dev) to check the status of the visibility of the release on zed.dev.
 
 ## Nightly release process
 
