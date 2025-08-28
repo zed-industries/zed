@@ -21,6 +21,7 @@ pub use bedrock::types::{
     ResponseStream as BedrockResponseStream, ToolResultBlock as BedrockToolResultBlock,
     ToolResultContentBlock as BedrockToolResultContentBlock,
     ToolResultStatus as BedrockToolResultStatus, ToolUseBlock as BedrockToolUseBlock,
+    SystemContentBlock as BedrockSystemContentBlock
 };
 use futures::stream::{self, BoxStream};
 use serde::{Deserialize, Serialize};
@@ -73,7 +74,7 @@ pub async fn stream_completion(
 
     if let Some(system) = request.system {
         if !system.is_empty() {
-            response = response.system(system);
+            response = response.system(BedrockSystemContentBlock::Text(system));
         }
     }
 
