@@ -10963,4 +10963,139 @@ mod tests {
             .cloned()
             .collect()
     }
+
+    #[gpui::test]
+    fn test_merge_overlapping_ranges() {
+        let base_bg = Hsla::default();
+        let color1 = Hsla {
+            h: 0.0,
+            s: 0.5,
+            l: 0.5,
+            a: 0.5,
+        };
+        let color2 = Hsla {
+            h: 120.0,
+            s: 0.5,
+            l: 0.5,
+            a: 0.5,
+        };
+        // Test overlapping ranges - should blend colors
+        let overlapping = vec![
+            (
+                DisplayPoint::new(DisplayRow(0), 5)..DisplayPoint::new(DisplayRow(0), 15),
+                color1,
+            ),
+            (
+                DisplayPoint::new(DisplayRow(0), 10)..DisplayPoint::new(DisplayRow(0), 20),
+                color2,
+            ),
+        ];
+        let result = EditorElement::merge_overlapping_ranges(overlapping, base_bg);
+        assert_eq!(result.len(), 3);
+        assert_eq!(
+            result[0].0,
+            DisplayPoint::new(DisplayRow(0), 5)..DisplayPoint::new(DisplayRow(0), 10)
+        );
+        assert_eq!(
+            result[1].0,
+            DisplayPoint::new(DisplayRow(0), 10)..DisplayPoint::new(DisplayRow(0), 15)
+        );
+        assert_eq!(
+            result[2].0,
+            DisplayPoint::new(DisplayRow(0), 15)..DisplayPoint::new(DisplayRow(0), 20)
+        );
+        // Middle segment should have blended color
+        let blended = Hsla::blend(Hsla::blend(base_bg, color1), color2);
+        assert_eq!(result[1].1, blended);
+
+        // Test adjacent ranges with same color - should merge
+        let adjacent_same_color = vec![
+            (
+                DisplayPoint::new(DisplayRow(0), 5)..DisplayPoint::new(DisplayRow(0), 10),
+                color1,
+            ),
+            (
+                DisplayPoint::new(DisplayRow(0), 10)..DisplayPoint::new(DisplayRow(0), 15),
+                color1,
+            ),
+        ];
+        let result = EditorElement::merge_overlapping_ranges(adjacent_same_color, base_bg);
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0].0,
+            DisplayPoint::new(DisplayRow(0), 5)..DisplayPoint::new(DisplayRow(0), 15)
+        );
+
+        // Test fully contained ranges
+        let contained = vec![
+            (
+                DisplayPoint::new(DisplayRow(0), 5)..DisplayPoint::new(DisplayRow(0), 20),
+                color1,
+            ),
+            (
+                DisplayPoint::new(DisplayRow(0), 10)..DisplayPoint::new(DisplayRow(0), 15),
+                color2,
+            ),
+        ];
+        let result = EditorElement::merge_overlapping_ranges(contained, base_bg);
+        assert_eq!(result.len(), 3);
+        assert_eq!(
+            result[0].0,
+            DisplayPoint::new(DisplayRow(0), 5)..DisplayPoint::new(DisplayRow(0), 10)
+        );
+        assert_eq!(
+            result[1].0,
+            DisplayPoint::new(DisplayRow(0), 10)..DisplayPoint::new(DisplayRow(0), 15)
+        );
+        assert_eq!(
+            result[2].0,
+            DisplayPoint::new(DisplayRow(0), 15)..DisplayPoint::new(DisplayRow(0), 20)
+        );
+
+        // Test multiple overlapping ranges
+        let color3 = Hsla {
+            h: 240.0,
+            s: 0.5,
+            l: 0.5,
+            a: 0.5,
+        };
+
+        let complex = vec![
+            (
+                DisplayPoint::new(DisplayRow(0), 5)..DisplayPoint::new(DisplayRow(0), 12),
+                color1,
+            ),
+            (
+                DisplayPoint::new(DisplayRow(0), 8)..DisplayPoint::new(DisplayRow(0), 16),
+                color2,
+            ),
+            (
+                DisplayPoint::new(DisplayRow(0), 10)..DisplayPoint::new(DisplayRow(0), 14),
+                color3,
+            ),
+        ];
+        let result = EditorElement::merge_overlapping_ranges(complex, base_bg);
+        // Should create segments: [5,8), [8,10), [10,12), [12,14), [14,16)
+        assert_eq!(result.len(), 5);
+        assert_eq!(
+            result[0].0,
+            DisplayPoint::new(DisplayRow(0), 5)..DisplayPoint::new(DisplayRow(0), 8)
+        );
+        assert_eq!(
+            result[1].0,
+            DisplayPoint::new(DisplayRow(0), 8)..DisplayPoint::new(DisplayRow(0), 10)
+        );
+        assert_eq!(
+            result[2].0,
+            DisplayPoint::new(DisplayRow(0), 10)..DisplayPoint::new(DisplayRow(0), 12)
+        );
+        assert_eq!(
+            result[3].0,
+            DisplayPoint::new(DisplayRow(0), 12)..DisplayPoint::new(DisplayRow(0), 14)
+        );
+        assert_eq!(
+            result[4].0,
+            DisplayPoint::new(DisplayRow(0), 14)..DisplayPoint::new(DisplayRow(0), 16)
+        );
+    }
 }
