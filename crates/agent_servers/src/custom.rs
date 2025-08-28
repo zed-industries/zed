@@ -57,6 +57,10 @@ impl crate::AgentServer for CustomAgentServer {
         })
     }
 
+    fn install_command(&self) -> Option<&'static str> {
+        None
+    }
+
     fn into_any(self: Rc<Self>) -> Rc<dyn std::any::Any> {
         self
     }

@@ -1,14 +1,15 @@
 # Agent Panel
 
-The Agent Panel provides you with a surface to interact with LLMs, enabling various types of tasks, such as generating code, asking questions about your codebase, and general inquiries like emails, documentation, and more.
+The Agent Panel allows you to interact with many LLMs and coding agents that can support you in various types of tasks, such as generating code, codebase understanding, and other general inquiries like writing emails, documentation, and more.
 
 To open it, use the `agent: new thread` action in [the Command Palette](../getting-started.md#command-palette) or click the ✨ (sparkles) icon in the status bar.
 
-If you're using the Agent Panel for the first time, you need to have at least one LLM provider configured.
+If you're using the Agent Panel for the first time, you need to have at least one LLM or agent provider configured.
 You can do that by:
 
 1. [subscribing to our Pro plan](https://zed.dev/pricing), so you have access to our hosted models
-2. or by [bringing your own API keys](./llm-providers.md#use-your-own-keys) for your desired provider
+2. [bringing your own API keys](./llm-providers.md#use-your-own-keys) for your desired provider
+3. using an external agent like [Gemini CLI](./external-agents.md#gemini-cli)
 
 ## Overview {#overview}
 
@@ -16,6 +17,15 @@ After you've configured one or more LLM providers, type at the message editor an
 If you need extra room to type, you can expand the message editor with {#kb agent::ExpandMessageEditor}.
 
 You should start to see the responses stream in with indications of [which tools](./tools.md) the model is using to fulfill your prompt.
+
+> Note that, at the moment, not all features outlined below work for external agents, like [Gemini CLI](./external-agents.md#gemini-cli)—features like _checkpoints_, _token usage display_, and _model selection_ may be supported in the future.
+
+### Creating New Threads
+
+By default, the Agent Panel uses Zed's first-party agent.
+
+To change that, go to the plus button in the top-right of the Agent Panel and choose another option.
+You choose to create a new [Text Thread](./text-threads.md) or, if you have [external agents](/.external-agents.md) connected, you can create new threads with them.
 
 ### Editing Messages {#editing-messages}
 
@@ -30,7 +40,7 @@ The checkpoint button appears even if you interrupt the thread midway through an
 
 ### Navigating History {#navigating-history}
 
-To quickly navigate through recently opened threads, use the {#kb agent::ToggleNavigationMenu} binding, when focused on the panel's editor, or click the menu icon button at the top left of the panel to open the dropdown that shows you the six most recent threads.
+To quickly navigate through recently opened threads, use the {#kb agent::ToggleNavigationMenu} binding, when focused on the panel's editor, or click the menu icon button at the top right of the panel to open the dropdown that shows you the six most recent threads.
 
 The items in this menu function similarly to tabs, and closing them doesn’t delete the thread; instead, it simply removes them from the recent list.
 
@@ -70,16 +80,13 @@ So, if your active tab had edits made by the AI, you'll see diffs with the same 
 
 Although Zed's agent is very efficient at reading through your code base to autonomously pick up relevant files, directories, and other context, manually adding context is still encouraged as a way to speed up and improve the AI's response quality.
 
-If you have a tab open while using the Agent Panel, that tab appears as a suggested context in form of a dashed button.
-You can also add other forms of context by either mentioning them with `@` or hitting the `+` icon button.
-
-You can even add previous threads as context by mentioning them with `@thread`, or by selecting the "New From Summary" option from the `+` menu to continue a longer conversation, keeping it within the context window.
+To add any file, directory, symbol, previous threads, rules files, or even web pages as context, type `@` to mention them in the editor.
 
 Pasting images as context is also supported by the Agent Panel.
 
 ### Token Usage {#token-usage}
 
-Zed surfaces how many tokens you are consuming for your currently active thread in the panel's toolbar.
+Zed surfaces how many tokens you are consuming for your currently active thread nearby the profile selector in the panel's message editor.
 Depending on how many pieces of context you add, your token consumption can grow rapidly.
 
 With that in mind, once you get close to the model's context window, a banner appears below the message editor suggesting to start a new thread with the current one summarized and added as context.
@@ -145,7 +152,7 @@ Zed's UI will inform about this via a warning icon that appears close to the mod
 
 ## Text Threads {#text-threads}
 
-["Text threads"](./text-threads.md) present your conversation with the LLM in a different format—as raw text.
+["Text Threads"](./text-threads.md) present your conversation with the LLM in a different format—as raw text.
 With text threads, you have full control over the conversation data.
 You can remove and edit responses from the LLM, swap roles, and include more context earlier in the conversation.
 

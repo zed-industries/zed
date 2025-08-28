@@ -43,10 +43,10 @@ use gpui::{
     Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle,
     DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable as _, FontId,
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero,
-    Keystroke, Length, ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta, ScrollHandle,
-    ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled,
-    TextRun, TextStyleRefinement, WeakEntity, Window, anchored, deferred, div, fill,
+    KeybindingKeystroke, Length, ModifiersChangedEvent, MouseButton, MouseClickEvent,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta,
+    ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement,
+    Style, Styled, TextRun, TextStyleRefinement, WeakEntity, Window, anchored, deferred, div, fill,
     linear_color_stop, linear_gradient, outline, point, px, quad, relative, size, solid_background,
     transparent_black,
 };
@@ -585,6 +585,9 @@ impl EditorElement {
         register_action(editor, window, Editor::edit_log_breakpoint);
         register_action(editor, window, Editor::enable_breakpoint);
         register_action(editor, window, Editor::disable_breakpoint);
+        if editor.read(cx).enable_wrap_selections_in_tag(cx) {
+            register_action(editor, window, Editor::wrap_selections_in_tag);
+        }
     }
 
     fn register_key_listeners(&self, window: &mut Window, _: &mut App, layout: &EditorLayout) {
@@ -7150,7 +7153,7 @@ fn header_jump_data(
 pub struct AcceptEditPredictionBinding(pub(crate) Option<gpui::KeyBinding>);
 
 impl AcceptEditPredictionBinding {
-    pub fn keystroke(&self) -> Option<&Keystroke> {
+    pub fn keystroke(&self) -> Option<&KeybindingKeystroke> {
         if let Some(binding) = self.0.as_ref() {
             match &binding.keystrokes() {
                 [keystroke, ..] => Some(keystroke),

@@ -25,8 +25,8 @@ use xkbcommon::xkb::{self, Keycode, Keysym, State};
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, LinuxDispatcher, Menu, MenuItem, OwnedMenu, PathPromptOptions,
-    Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformTextSystem, PlatformWindow,
-    Point, Result, Task, WindowAppearance, WindowParams, px,
+    Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformTextSystem, PlatformWindow, Point, Result, Task, WindowAppearance, WindowParams, px,
 };
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -142,6 +142,10 @@ impl<P: LinuxClient + 'static> Platform for P {
 
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
         self.keyboard_layout()
+    }
+
+    fn keyboard_mapper(&self) -> Rc<dyn PlatformKeyboardMapper> {
+        Rc::new(crate::DummyKeyboardMapper)
     }
 
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>) {

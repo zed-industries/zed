@@ -222,7 +222,7 @@ pub fn init(cx: &mut App) {
 
     cx.observe_new(move |workspace: &mut Workspace, _, cx| {
         let project = workspace.project();
-        if project.read(cx).is_local() || project.read(cx).is_via_ssh() {
+        if project.read(cx).is_local() || project.read(cx).is_via_remote_server() {
             log_store.update(cx, |store, cx| {
                 store.add_project(project, cx);
             });
@@ -231,7 +231,7 @@ pub fn init(cx: &mut App) {
         let log_store = log_store.clone();
         workspace.register_action(move |workspace, _: &OpenLanguageServerLogs, window, cx| {
             let project = workspace.project().read(cx);
-            if project.is_local() || project.is_via_ssh() {
+            if project.is_local() || project.is_via_remote_server() {
                 let project = workspace.project().clone();
                 let log_store = log_store.clone();
                 get_or_create_tool(
@@ -321,7 +321,7 @@ impl LogStore {
                             .retain(|_, state| state.kind.project() != Some(&weak_project));
                     }),
                     cx.subscribe(project, |this, project, event, cx| {
-                        let server_kind = if project.read(cx).is_via_ssh() {
+                        let server_kind = if project.read(cx).is_via_remote_server() {
                             LanguageServerKind::Remote {
                                 project: project.downgrade(),
                             }
@@ -1743,6 +1743,5 @@ pub enum Event {
 }
 
 impl EventEmitter<Event> for LogStore {}
-impl EventEmitter<Event> for LspLogView {}
 impl EventEmitter<EditorEvent> for LspLogView {}
 impl EventEmitter<SearchEvent> for LspLogView {}

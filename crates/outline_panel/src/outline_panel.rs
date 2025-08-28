@@ -5102,9 +5102,9 @@ impl EventEmitter<PanelEvent> for OutlinePanel {}
 
 impl Render for OutlinePanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (is_local, is_via_ssh) = self
-            .project
-            .read_with(cx, |project, _| (project.is_local(), project.is_via_ssh()));
+        let (is_local, is_via_ssh) = self.project.read_with(cx, |project, _| {
+            (project.is_local(), project.is_via_remote_server())
+        });
         let query = self.query(cx);
         let pinned = self.pinned;
         let settings = OutlinePanelSettings::get_global(cx);

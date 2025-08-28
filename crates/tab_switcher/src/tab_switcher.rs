@@ -268,7 +268,7 @@ impl TabMatch {
             .flatten();
         let colored_icon = icon.color(git_status_color.unwrap_or_default());
 
-        let most_sever_diagostic_level = if show_diagnostics == ShowDiagnostics::Off {
+        let most_severe_diagnostic_level = if show_diagnostics == ShowDiagnostics::Off {
             None
         } else {
             let buffer_store = project.read(cx).buffer_store().read(cx);
@@ -287,7 +287,7 @@ impl TabMatch {
         };
 
         let decorations =
-            entry_diagnostic_aware_icon_decoration_and_color(most_sever_diagostic_level)
+            entry_diagnostic_aware_icon_decoration_and_color(most_severe_diagnostic_level)
                 .filter(|(d, _)| {
                     *d != IconDecorationKind::Triangle
                         || show_diagnostics != ShowDiagnostics::Errors

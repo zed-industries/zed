@@ -9188,13 +9188,14 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
         async fn list(
             &self,
             worktree_root: PathBuf,
-            subroot_relative_path: Option<Arc<Path>>,
+            subroot_relative_path: Arc<Path>,
             _: Option<HashMap<String, String>>,
         ) -> ToolchainList {
             // This lister will always return a path .venv directories within ancestors
             let ancestors = subroot_relative_path
-                .into_iter()
-                .flat_map(|path| path.ancestors().map(ToOwned::to_owned).collect::<Vec<_>>());
+                .ancestors()
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>();
             let mut toolchains = vec![];
             for ancestor in ancestors {
                 let venv_path = worktree_root.join(ancestor).join(".venv");
