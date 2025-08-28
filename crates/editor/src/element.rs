@@ -3352,21 +3352,8 @@ impl EditorElement {
 
         boundaries.sort_by(|a, b| a.pos.cmp(&b.pos).then_with(|| a.is_start.cmp(&b.is_start)));
 
-        let blended_color = |active: &[(usize, Hsla)]| -> Hsla {
-            if active.is_empty() {
-                return Hsla::transparent_black();
-            }
-            let mut sorted = active.to_vec();
-            sorted.sort_by_key(|(idx, _)| *idx);
-            let mut acc = Hsla::transparent_black();
-            for &(_, c) in &sorted {
-                acc = Hsla::blend(acc, c);
-            }
-            acc
-        };
-
         let mut processed_ranges: Vec<(Range<u32>, Hsla)> = Vec::new();
-        let mut active_ranges: Vec<(usize, Hsla)> = Vec::new();
+        let mut active_ranges: SmallVec<[(usize, Hsla); 8]> = SmallVec::new();
 
         let mut i = 0;
         let mut start_pos = boundaries[0].pos;
@@ -3376,7 +3363,10 @@ impl EditorElement {
             let current_boundary_pos = boundaries[i].pos;
             if start_pos < current_boundary_pos {
                 if !active_ranges.is_empty() {
-                    let color = blended_color(&active_ranges);
+                    let mut color = active_ranges[0].1;
+                    for &(_, c) in &active_ranges[1..] {
+                        color = Hsla::blend(color, c);
+                    }
                     if color.a > 0.0 {
                         if let Some((last_range, last_color)) = processed_ranges.last_mut() {
                             if *last_color == color && last_range.end == start_pos {
@@ -3393,13 +3383,15 @@ impl EditorElement {
             while i < boundaries_len && boundaries[i].pos == current_boundary_pos {
                 let active_range = &boundaries[i];
                 if active_range.is_start {
-                    active_ranges.push((active_range.index, active_range.color));
+                    let idx = active_range.index;
+                    let pos = active_ranges
+                        .binary_search_by_key(&idx, |(i, _)| *i)
+                        .unwrap_or_else(|p| p);
+                    active_ranges.insert(pos, (idx, active_range.color));
                 } else {
-                    if let Some(j) = active_ranges
-                        .iter()
-                        .position(|(idx, _)| *idx == active_range.index)
-                    {
-                        active_ranges.swap_remove(j);
+                    let idx = active_range.index;
+                    if let Ok(pos) = active_ranges.binary_search_by_key(&idx, |(i, _)| *i) {
+                        active_ranges.remove(pos);
                     }
                 }
                 i += 1;
