@@ -57,7 +57,7 @@ impl OpenTarget {
     #[cfg(test)]
     fn found_by(&self) -> OpenTargetFoundBy {
         match self {
-            OpenTarget::Worktree(_, _, found_by) => *found_by,
+            OpenTarget::Worktree(.., found_by) => *found_by,
             OpenTarget::File(..) => OpenTargetFoundBy::FileSystemBackground,
         }
     }
@@ -382,11 +382,7 @@ fn possible_open_target(
             }
         }
 
-        if open_target.is_some() {
-            return open_target;
-        }
-
-        worktree_check_task.await
+        open_target.or(worktree_check_task.await)
     })
 }
 
@@ -540,10 +536,7 @@ mod tests {
 
         let project = Project::test(
             fs.clone(),
-            worktree_roots
-                .into_iter()
-                .map(Path::new)
-                .collect::<Vec<_>>(),
+            worktree_roots.into_iter().map(Path::new),
             app_cx,
         )
         .await;
