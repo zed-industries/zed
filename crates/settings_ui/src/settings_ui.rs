@@ -224,8 +224,8 @@ impl SettingsUITree {
 
         Self {
             entries: tree,
-            root_entry_indices,
             active_entry_index: root_entry_indices[0],
+            root_entry_indices,
         }
     }
 }
