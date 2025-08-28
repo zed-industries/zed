@@ -1,10 +1,10 @@
 pub mod disconnected_overlay;
+mod remote_connections;
 mod remote_servers;
 mod ssh_config;
-mod ssh_connections;
 
 use remote::RemoteConnectionOptions;
-pub use ssh_connections::{is_connecting_over_ssh, open_remote_project};
+pub use remote_connections::open_remote_project;
 
 use disconnected_overlay::DisconnectedOverlay;
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -17,9 +17,9 @@ use picker::{
     Picker, PickerDelegate,
     highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
 };
+pub use remote_connections::SshSettings;
 pub use remote_servers::RemoteServerProjects;
 use settings::Settings;
-pub use ssh_connections::SshSettings;
 use std::{path::Path, sync::Arc};
 use ui::{KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*, tooltip_container};
 use util::{ResultExt, paths::PathExt};

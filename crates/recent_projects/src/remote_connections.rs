@@ -139,7 +139,7 @@ impl Settings for SshSettings {
     fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
-pub struct SshPrompt {
+pub struct RemoteConnectionPrompt {
     connection_string: SharedString,
     nickname: Option<SharedString>,
     status_message: Option<SharedString>,
@@ -148,7 +148,7 @@ pub struct SshPrompt {
     editor: Entity<Editor>,
 }
 
-impl Drop for SshPrompt {
+impl Drop for RemoteConnectionPrompt {
     fn drop(&mut self) {
         if let Some(cancel) = self.cancellation.take() {
             cancel.send(()).ok();
@@ -156,13 +156,13 @@ impl Drop for SshPrompt {
     }
 }
 
-pub struct SshConnectionModal {
-    pub(crate) prompt: Entity<SshPrompt>,
+pub struct RemoteConnectionModal {
+    pub(crate) prompt: Entity<RemoteConnectionPrompt>,
     paths: Vec<PathBuf>,
     finished: bool,
 }
 
-impl SshPrompt {
+impl RemoteConnectionPrompt {
     pub(crate) fn new(
         connection_string: String,
         nickname: Option<String>,
@@ -234,7 +234,7 @@ impl SshPrompt {
     }
 }
 
-impl Render for SshPrompt {
+impl Render for RemoteConnectionPrompt {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = ThemeSettings::get_global(cx);
 
@@ -299,7 +299,7 @@ impl Render for SshPrompt {
     }
 }
 
-impl SshConnectionModal {
+impl RemoteConnectionModal {
     pub(crate) fn new(
         connection_options: &RemoteConnectionOptions,
         paths: Vec<PathBuf>,
@@ -313,7 +313,8 @@ impl SshConnectionModal {
             RemoteConnectionOptions::Wsl(options) => (options.distro_name.clone(), None),
         };
         Self {
-            prompt: cx.new(|cx| SshPrompt::new(connection_string, nickname, window, cx)),
+            prompt: cx
+                .new(|cx| RemoteConnectionPrompt::new(connection_string, nickname, window, cx)),
             finished: false,
             paths,
         }
@@ -394,7 +395,7 @@ impl RenderOnce for SshConnectionHeader {
     }
 }
 
-impl Render for SshConnectionModal {
+impl Render for RemoteConnectionModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         let nickname = self.prompt.read(cx).nickname.clone();
         let connection_string = self.prompt.read(cx).connection_string.clone();
@@ -431,15 +432,15 @@ impl Render for SshConnectionModal {
     }
 }
 
-impl Focusable for SshConnectionModal {
+impl Focusable for RemoteConnectionModal {
     fn focus_handle(&self, cx: &gpui::App) -> gpui::FocusHandle {
         self.prompt.read(cx).editor.focus_handle(cx)
     }
 }
 
-impl EventEmitter<DismissEvent> for SshConnectionModal {}
+impl EventEmitter<DismissEvent> for RemoteConnectionModal {}
 
-impl ModalView for SshConnectionModal {
+impl ModalView for RemoteConnectionModal {
     fn on_before_dismiss(
         &mut self,
         _window: &mut Window,
@@ -454,13 +455,13 @@ impl ModalView for SshConnectionModal {
 }
 
 #[derive(Clone)]
-pub struct SshClientDelegate {
+pub struct RemoteClientDelegate {
     window: AnyWindowHandle,
-    ui: WeakEntity<SshPrompt>,
+    ui: WeakEntity<RemoteConnectionPrompt>,
     known_password: Option<String>,
 }
 
-impl remote::RemoteClientDelegate for SshClientDelegate {
+impl remote::RemoteClientDelegate for RemoteClientDelegate {
     fn ask_password(&self, prompt: String, tx: oneshot::Sender<String>, cx: &mut AsyncApp) {
         let mut known_password = self.known_password.clone();
         if let Some(password) = known_password.take() {
@@ -530,7 +531,7 @@ impl remote::RemoteClientDelegate for SshClientDelegate {
     }
 }
 
-impl SshClientDelegate {
+impl RemoteClientDelegate {
     fn update_status(&self, status: Option<&str>, cx: &mut AsyncApp) {
         self.window
             .update(cx, |_, _, cx| {
@@ -542,14 +543,10 @@ impl SshClientDelegate {
     }
 }
 
-pub fn is_connecting_over_ssh(workspace: &Workspace, cx: &App) -> bool {
-    workspace.active_modal::<SshConnectionModal>(cx).is_some()
-}
-
 pub fn connect_over_ssh(
     unique_identifier: ConnectionIdentifier,
     connection_options: SshConnectionOptions,
-    ui: Entity<SshPrompt>,
+    ui: Entity<RemoteConnectionPrompt>,
     window: &mut Window,
     cx: &mut App,
 ) -> Task<Result<Option<Entity<RemoteClient>>>> {
@@ -562,7 +559,7 @@ pub fn connect_over_ssh(
         unique_identifier,
         connection_options,
         rx,
-        Arc::new(SshClientDelegate {
+        Arc::new(RemoteClientDelegate {
             window,
             ui: ui.downgrade(),
             known_password,
@@ -618,11 +615,11 @@ pub async fn open_remote_project(
             move |workspace, window, cx| {
                 window.activate_window();
                 workspace.toggle_modal(window, cx, |window, cx| {
-                    SshConnectionModal::new(&connection_options, paths, window, cx)
+                    RemoteConnectionModal::new(&connection_options, paths, window, cx)
                 });
 
                 let ui = workspace
-                    .active_modal::<SshConnectionModal>(cx)?
+                    .active_modal::<RemoteConnectionModal>(cx)?
                     .read(cx)
                     .prompt
                     .clone();
@@ -631,7 +628,7 @@ pub async fn open_remote_project(
                     ui.set_cancellation_tx(cancel_tx);
                 });
 
-                Some(Arc::new(SshClientDelegate {
+                Some(Arc::new(RemoteClientDelegate {
                     window: window.window_handle(),
                     ui: ui.downgrade(),
                     known_password: if let RemoteConnectionOptions::Ssh(options) =
@@ -663,7 +660,7 @@ pub async fn open_remote_project(
 
         window
             .update(cx, |workspace, _, cx| {
-                if let Some(ui) = workspace.active_modal::<SshConnectionModal>(cx) {
+                if let Some(ui) = workspace.active_modal::<RemoteConnectionModal>(cx) {
                     ui.update(cx, |modal, cx| modal.finished(cx))
                 }
             })
@@ -675,7 +672,10 @@ pub async fn open_remote_project(
                 .update(cx, |_, window, cx| {
                     window.prompt(
                         PromptLevel::Critical,
-                        "Failed to connect over SSH",
+                        match connection_options {
+                            RemoteConnectionOptions::Ssh(_) => "Failed to connect over SSH",
+                            RemoteConnectionOptions::Wsl(_) => "Failed to connect to WSL",
+                        },
                         Some(&e.to_string()),
                         &["Retry", "Ok"],
                         cx,

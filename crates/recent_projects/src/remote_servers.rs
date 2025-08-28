@@ -1,71 +1,52 @@
-use std::any::Any;
-use std::borrow::Cow;
-use std::collections::BTreeSet;
-use std::path::PathBuf;
-use std::rc::Rc;
-use std::sync::Arc;
-use std::sync::atomic;
-use std::sync::atomic::AtomicUsize;
-
+use crate::{
+    remote_connections::{
+        RemoteConnectionModal, RemoteConnectionPrompt, RemoteSettingsContent, SshConnection,
+        SshConnectionHeader, SshProject, SshSettings, connect_over_ssh, open_remote_project,
+    },
+    ssh_config::parse_ssh_config_hosts,
+};
 use editor::Editor;
 use file_finder::OpenPathDelegate;
-use futures::FutureExt;
-use futures::channel::oneshot;
-use futures::future::Shared;
-use futures::select;
-use gpui::ClickEvent;
-use gpui::ClipboardItem;
-use gpui::Subscription;
-use gpui::Task;
-use gpui::WeakEntity;
-use gpui::canvas;
+use futures::{FutureExt, channel::oneshot, future::Shared, select};
 use gpui::{
-    AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    PromptLevel, ScrollHandle, Window,
+    AnyElement, App, ClickEvent, ClipboardItem, Context, DismissEvent, Entity, EventEmitter,
+    FocusHandle, Focusable, PromptLevel, ScrollHandle, Subscription, Task, WeakEntity, Window,
+    canvas,
 };
-use paths::global_ssh_config_file;
-use paths::user_ssh_config_file;
+use paths::{global_ssh_config_file, user_ssh_config_file};
 use picker::Picker;
-use project::Fs;
-use project::Project;
-use remote::RemoteConnectionOptions;
-use remote::remote_client::ConnectionIdentifier;
-use remote::{RemoteClient, SshConnectionOptions};
-use settings::Settings;
-use settings::SettingsStore;
-use settings::update_settings_file;
-use settings::watch_config_file;
+use project::{Fs, Project};
+use remote::{
+    RemoteClient, RemoteConnectionOptions, SshConnectionOptions,
+    remote_client::ConnectionIdentifier,
+};
+use settings::{Settings, SettingsStore, update_settings_file, watch_config_file};
 use smol::stream::StreamExt as _;
-use ui::Navigable;
-use ui::NavigableEntry;
+use std::{
+    any::Any,
+    borrow::Cow,
+    collections::BTreeSet,
+    path::PathBuf,
+    rc::Rc,
+    sync::{
+        Arc,
+        atomic::{self, AtomicUsize},
+    },
+};
 use ui::{
-    IconButtonShape, List, ListItem, ListSeparator, Modal, ModalHeader, Scrollbar, ScrollbarState,
-    Section, Tooltip, prelude::*,
+    IconButtonShape, List, ListItem, ListSeparator, Modal, ModalHeader, Navigable, NavigableEntry,
+    Scrollbar, ScrollbarState, Section, Tooltip, prelude::*,
 };
 use util::{
     ResultExt,
     paths::{PathStyle, RemotePathBuf},
 };
-use workspace::OpenOptions;
-use workspace::Toast;
-use workspace::notifications::NotificationId;
 use workspace::{
-    ModalView, Workspace, notifications::DetachAndPromptErr,
+    ModalView, OpenOptions, Toast, Workspace,
+    notifications::{DetachAndPromptErr, NotificationId},
     open_remote_project_with_existing_connection,
 };
 
-use crate::ssh_config::parse_ssh_config_hosts;
-use crate::ssh_connections::RemoteSettingsContent;
-use crate::ssh_connections::SshConnection;
-use crate::ssh_connections::SshConnectionHeader;
-use crate::ssh_connections::SshConnectionModal;
-use crate::ssh_connections::SshProject;
-use crate::ssh_connections::SshPrompt;
-use crate::ssh_connections::SshSettings;
-use crate::ssh_connections::connect_over_ssh;
-use crate::ssh_connections::open_remote_project;
-
-mod navigation_base {}
 pub struct RemoteServerProjects {
     mode: Mode,
     focus_handle: FocusHandle,
@@ -80,7 +61,7 @@ pub struct RemoteServerProjects {
 struct CreateRemoteServer {
     address_editor: Entity<Editor>,
     address_error: Option<SharedString>,
-    ssh_prompt: Option<Entity<SshPrompt>>,
+    ssh_prompt: Option<Entity<RemoteConnectionPrompt>>,
     _creating: Option<Task<Option<()>>>,
 }
 
@@ -479,7 +460,7 @@ impl RemoteServerProjects {
             }
         };
         let ssh_prompt = cx.new(|cx| {
-            SshPrompt::new(
+            RemoteConnectionPrompt::new(
                 connection_options.connection_string(),
                 connection_options.nickname.clone(),
                 window,
@@ -570,7 +551,7 @@ impl RemoteServerProjects {
             cx.defer_in(window, move |workspace, window, cx| {
                 let app_state = workspace.app_state().clone();
                 workspace.toggle_modal(window, cx, |window, cx| {
-                    SshConnectionModal::new(
+                    RemoteConnectionModal::new(
                         &RemoteConnectionOptions::Ssh(connection_options.clone()),
                         Vec::new(),
                         window,
@@ -578,7 +559,7 @@ impl RemoteServerProjects {
                     )
                 });
                 let prompt = workspace
-                    .active_modal::<SshConnectionModal>(cx)
+                    .active_modal::<RemoteConnectionModal>(cx)
                     .unwrap()
                     .read(cx)
                     .prompt
@@ -597,7 +578,7 @@ impl RemoteServerProjects {
                     let session = connect.await;
 
                     workspace.update(cx, |workspace, cx| {
-                        if let Some(prompt) = workspace.active_modal::<SshConnectionModal>(cx) {
+                        if let Some(prompt) = workspace.active_modal::<RemoteConnectionModal>(cx) {
                             prompt.update(cx, |prompt, cx| prompt.finished(cx))
                         }
                     })?;
