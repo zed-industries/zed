@@ -28,7 +28,6 @@ globset.workspace = true
 itertools.workspace = true
 log.workspace = true
 rand = { workspace = true, optional = true }
-ref-cast.workspace = true
 regex.workspace = true
 rust-embed.workspace = true
 schemars.workspace = true

@@ -1,5 +1,4 @@
 use globset::{Glob, GlobSet, GlobSetBuilder};
-use ref_cast::RefCast;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -103,17 +102,22 @@ impl<T: AsRef<Path>> PathExt for T {
 
 /// In memory, this is identical to `Path`. On non-Windows conversions to this type are no-ops. On
 /// windows, these conversions sanitize UNC paths by removing the `\\\\?\\` prefix.
-#[derive(RefCast, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Eq, PartialEq, Hash, Ord, PartialOrd)]
 #[repr(transparent)]
 pub struct SanitizedPath(Path);
 
 impl SanitizedPath {
     pub fn new<T: AsRef<Path> + ?Sized>(path: &T) -> &Self {
         #[cfg(not(target_os = "windows"))]
-        return Self::ref_cast(path.as_ref());
+        return Self::unchecked_new(path.as_ref());
 
         #[cfg(target_os = "windows")]
-        return Self::ref_cast(dunce::simplified(path));
+        return Self::unchecked_new(dunce::simplified(path.as_ref()));
+    }
+
+    pub fn unchecked_new<T: AsRef<Path> + ?Sized>(path: &T) -> &Self {
+        // safe because `Path` and `SanitizedPath` have the same repr and Drop impl
+        unsafe { mem::transmute::<&Path, &Self>(path.as_ref()) }
     }
 
     pub fn from_arc(path: Arc<Path>) -> Arc<Self> {
@@ -121,8 +125,9 @@ impl SanitizedPath {
         #[cfg(not(target_os = "windows"))]
         return unsafe { mem::transmute::<Arc<Path>, Arc<Self>>(path) };
 
+        // TODO: could avoid allocating here if dunce::simplified results in the same path
         #[cfg(target_os = "windows")]
-        return Arc::new(Self::new(&path));
+        return Self::new(&path).into();
     }
 
     pub fn new_arc<T: AsRef<Path> + ?Sized>(path: &T) -> Arc<Self> {
@@ -160,7 +165,7 @@ impl SanitizedPath {
     }
 
     pub fn parent(&self) -> Option<&Self> {
-        self.0.parent().map(Self::ref_cast)
+        self.0.parent().map(Self::unchecked_new)
     }
 
     pub fn strip_prefix(&self, base: &Self) -> Result<&Path, StripPrefixError> {
@@ -1248,14 +1253,14 @@ mod tests {
     #[cfg(target_os = "windows")]
     fn test_sanitized_path() {
         let path = Path::new("C:\\Users\\someone\\test_file.rs");
-        let sanitized_path = SanitizedPath::from(path);
+        let sanitized_path = SanitizedPath::new(path);
         assert_eq!(
             sanitized_path.to_string(),
             "C:\\Users\\someone\\test_file.rs"
         );
 
         let path = Path::new("\\\\?\\C:\\Users\\someone\\test_file.rs");
-        let sanitized_path = SanitizedPath::from(path);
+        let sanitized_path = SanitizedPath::new(path);
         assert_eq!(
             sanitized_path.to_string(),
             "C:\\Users\\someone\\test_file.rs"
