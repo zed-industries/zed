@@ -2,7 +2,7 @@ use dap_types::SteppingGranularity;
 use gpui::{App, Global};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{SettingsUI, Settings, SettingsSources};
+use settings::{Settings, SettingsSources, SettingsUI};
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -14,10 +14,12 @@ pub enum DebugPanelDockPosition {
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, SettingsUI)]
 #[serde(default)]
+#[settings_ui(group = "Debugger", path = "debugger")]
 pub struct DebuggerSettings {
     /// Determines the stepping granularity.
     ///
     /// Default: line
+    #[settings_ui(skip)]
     pub stepping_granularity: SteppingGranularity,
     /// Whether the breakpoints should be reused across Zed sessions.
     ///
@@ -42,6 +44,7 @@ pub struct DebuggerSettings {
     /// The dock position of the debug panel
     ///
     /// Default: Bottom
+    #[settings_ui(skip)]
     pub dock: DebugPanelDockPosition,
 }
 

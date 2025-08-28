@@ -101,6 +101,21 @@ pub fn derive_settings_ui(input: proc_macro::TokenStream) -> proc_macro::TokenSt
             syn::Data::Struct(data_struct) => data_struct
                 .fields
                 .iter()
+                .filter(|field| {
+                    !field.attrs.iter().any(|attr| {
+                        let mut has_skip = false;
+                        if attr.path().is_ident("settings_ui") {
+                            let _ = attr.parse_nested_meta(|meta| {
+                                if meta.path.is_ident("skip") {
+                                    has_skip = true;
+                                }
+                                Ok(())
+                            });
+                        }
+
+                        has_skip
+                    })
+                })
                 .map(|field| {
                     (
                         field.ident.clone().expect("tuple fields").to_string(),

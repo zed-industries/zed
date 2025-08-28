@@ -38,6 +38,8 @@ pub struct SettingsUIItemGroup {
 pub enum SettingsUIItemSingle {
     // TODO: default/builtin variants
     SwitchField,
+    NumericStepper,
+    ToggleGroup,
     Custom(Box<dyn Fn(&dyn Any, &mut Window, &mut App) -> AnyElement>),
 }
 
@@ -73,6 +75,18 @@ pub enum SettingsUIRender {
 impl SettingsUI for bool {
     fn settings_ui_render() -> SettingsUIRender {
         SettingsUIRender::Item(SettingsUIItemSingle::SwitchField)
+    }
+
+    fn settings_ui_item() -> SettingsUIItem {
+        SettingsUIItem {
+            item: SettingsUIItemVariant::None,
+        }
+    }
+}
+
+impl SettingsUI for u64 {
+    fn settings_ui_render() -> SettingsUIRender {
+        SettingsUIRender::Item(SettingsUIItemSingle::NumericStepper)
     }
 
     fn settings_ui_item() -> SettingsUIItem {
