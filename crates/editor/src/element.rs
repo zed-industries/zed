@@ -3281,10 +3281,10 @@ impl EditorElement {
                 }
             }
         }
-        Self::clamped_highlight_ranges_per_row(rows, &all_ranges);
+        Self::clamped_ranges_per_row(rows, &all_ranges);
     }
 
-    fn clamped_highlight_ranges_per_row(
+    fn clamped_ranges_per_row(
         rows: Range<DisplayRow>,
         ranges: &[(Range<DisplayPoint>, Hsla)],
     ) -> Vec<Vec<(Range<DisplayPoint>, Hsla)>> {
