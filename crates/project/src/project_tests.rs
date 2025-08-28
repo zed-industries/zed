@@ -9232,6 +9232,9 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
                 manifest_name: ManifestName::from(SharedString::new_static("pyproject.toml")),
             }
         }
+        async fn activation_script(&self, _: &Toolchain, _: &dyn Fs) -> Option<String> {
+            None
+        }
     }
     Arc::new(
         Language::new(
