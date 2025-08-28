@@ -2,7 +2,10 @@ use crate::{
     SshConnectionOptions,
     protocol::MessageId,
     proxy::ProxyLaunchError,
-    transport::{ssh::SshRemoteConnection, wsl::WslConnectionOptions},
+    transport::{
+        ssh::SshRemoteConnection,
+        wsl::{WslConnectionOptions, WslRemoteConnection},
+    },
 };
 use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
@@ -959,7 +962,11 @@ impl ConnectionPool {
                                 .await
                                 .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
                         }
-                        RemoteConnectionOptions::Wsl(wsl_connection_options) => todo!("WSL"),
+                        RemoteConnectionOptions::Wsl(opts) => {
+                            WslRemoteConnection::new(opts, delegate, cx)
+                                .await
+                                .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
+                        }
                     };
 
                     cx.update_global(|pool: &mut Self, _| {

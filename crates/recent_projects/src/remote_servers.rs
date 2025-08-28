@@ -478,7 +478,14 @@ impl RemoteServerProjects {
                 return;
             }
         };
-        let ssh_prompt = cx.new(|cx| SshPrompt::new(&connection_options, window, cx));
+        let ssh_prompt = cx.new(|cx| {
+            SshPrompt::new(
+                connection_options.connection_string(),
+                connection_options.nickname.clone(),
+                window,
+                cx,
+            )
+        });
 
         let connection = connect_over_ssh(
             ConnectionIdentifier::setup(),
@@ -558,12 +565,17 @@ impl RemoteServerProjects {
         };
 
         let create_new_window = self.create_new_window;
-        let connection_options = ssh_connection.into();
+        let connection_options: SshConnectionOptions = ssh_connection.into();
         workspace.update(cx, |_, cx| {
             cx.defer_in(window, move |workspace, window, cx| {
                 let app_state = workspace.app_state().clone();
                 workspace.toggle_modal(window, cx, |window, cx| {
-                    SshConnectionModal::new(&connection_options, Vec::new(), window, cx)
+                    SshConnectionModal::new(
+                        &RemoteConnectionOptions::Ssh(connection_options.clone()),
+                        Vec::new(),
+                        window,
+                        cx,
+                    )
                 });
                 let prompt = workspace
                     .active_modal::<SshConnectionModal>(cx)

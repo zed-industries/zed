@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{path::PathBuf, process::Stdio, sync::Arc};
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -26,6 +26,36 @@ pub(crate) struct WslRemoteConnection {
     platform: RemotePlatform,
     shell: String,
     connection_options: WslConnectionOptions,
+}
+
+impl WslRemoteConnection {
+    pub(crate) async fn new(
+        connection_options: WslConnectionOptions,
+        delegate: Arc<dyn RemoteClientDelegate>,
+        cx: &mut AsyncApp,
+    ) -> Result<Self> {
+        let mut command = util::command::new_smol_command("wsl.exe");
+
+        let wsl_process = command
+            .kill_on_drop(true)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .arg("--distribution")
+            .arg(&connection_options.distro_name)
+            .spawn()?;
+
+        Ok(Self {
+            wsl_process: Mutex::new(Some(wsl_process)),
+            remote_binary_path: None,
+            platform: RemotePlatform {
+                os: "linux",
+                arch: "todo",
+            },
+            shell: "sh".into(),
+            connection_options,
+        })
+    }
 }
 
 #[async_trait(?Send)]

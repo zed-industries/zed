@@ -19,8 +19,8 @@ use onboarding::FIRST_OPEN;
 use onboarding::show_onboarding_view;
 use recent_projects::{SshSettings, open_remote_project};
 use remote::RemoteConnectionOptions;
-use remote::SshConnectionOptions;
 use settings::Settings;
+use std::path;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
@@ -38,7 +38,7 @@ pub struct OpenRequest {
     pub diff_paths: Vec<[String; 2]>,
     pub open_channel_notes: Vec<(u64, Option<String>)>,
     pub join_channel: Option<u64>,
-    pub ssh_connection: Option<SshConnectionOptions>,
+    pub remote_connection: Option<RemoteConnectionOptions>,
 }
 
 #[derive(Debug)]
@@ -60,9 +60,9 @@ impl OpenRequest {
                     index: action_index.parse()?,
                 });
             } else if let Some(file) = url.strip_prefix("file://") {
-                this.parse_file_path(file)
+                this.parse_top_level_file_path(file)
             } else if let Some(file) = url.strip_prefix("zed://file") {
-                this.parse_file_path(file)
+                this.parse_top_level_file_path(file)
             } else if let Some(file) = url.strip_prefix("zed://ssh") {
                 let ssh_url = "ssh:/".to_string() + file;
                 this.parse_ssh_file_path(&ssh_url, cx)?
@@ -84,6 +84,41 @@ impl OpenRequest {
         this.diff_paths = request.diff_paths;
 
         Ok(this)
+    }
+
+    fn parse_top_level_file_path(&mut self, file: &str) {
+        if let Some(path_to_open) = urlencoding::decode(file).log_err() {
+            let mut path_to_open = path_to_open.into_owned();
+            let path = Path::new(&path_to_open);
+            if let Some(path::Component::Prefix(prefix)) = path.components().next() {
+                match prefix.kind() {
+                    path::Prefix::VerbatimUNC(server, share) => {
+                        if server == "wsl$" || server == "wsl.localhost" {
+                            if let Some(distro) = share.to_str() {
+                                self.remote_connection = Some(RemoteConnectionOptions::Wsl(
+                                    remote::WslConnectionOptions {
+                                        distro_name: distro.to_string(),
+                                    },
+                                ));
+
+                                let mut wsl_path = String::new();
+                                for component in path.components() {
+                                    if let path::Component::Normal(name) = component {
+                                        wsl_path.push('/');
+                                        wsl_path.push_str(name.to_string_lossy().as_ref());
+                                    }
+                                }
+                                path_to_open = wsl_path;
+
+                                dbg!(&self.remote_connection, &path_to_open);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            self.open_paths.push(path_to_open)
+        }
     }
 
     fn parse_file_path(&mut self, file: &str) {
@@ -109,13 +144,15 @@ impl OpenRequest {
         if let Some(password) = url.password() {
             connection_options.password = Some(password.to_string());
         }
-        if let Some(ssh_connection) = &self.ssh_connection {
+
+        let connection_options = RemoteConnectionOptions::Ssh(connection_options);
+        if let Some(ssh_connection) = &self.remote_connection {
             anyhow::ensure!(
                 *ssh_connection == connection_options,
-                "cannot open multiple ssh connections"
+                "cannot open multiple different remote connections"
             );
         }
-        self.ssh_connection = Some(connection_options);
+        self.remote_connection = Some(connection_options);
         self.parse_file_path(url.path());
         Ok(())
     }
@@ -584,6 +621,7 @@ mod tests {
     };
     use editor::Editor;
     use gpui::TestAppContext;
+    use remote::SshConnectionOptions;
     use serde_json::json;
     use std::sync::Arc;
     use util::path;
@@ -606,8 +644,8 @@ mod tests {
             .unwrap()
         });
         assert_eq!(
-            request.ssh_connection.unwrap(),
-            SshConnectionOptions {
+            request.remote_connection.unwrap(),
+            RemoteConnectionOptions::Ssh(SshConnectionOptions {
                 host: "localhost".into(),
                 username: Some("me".into()),
                 port: None,
@@ -616,7 +654,7 @@ mod tests {
                 port_forwards: None,
                 nickname: None,
                 upload_binary_over_ssh: false,
-            }
+            })
         );
         assert_eq!(request.open_paths, vec!["/"]);
     }

@@ -164,16 +164,14 @@ pub struct SshConnectionModal {
 
 impl SshPrompt {
     pub(crate) fn new(
-        connection_options: &SshConnectionOptions,
+        connection_string: String,
+        nickname: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let connection_string = connection_options.connection_string().into();
-        let nickname = connection_options.nickname.clone().map(|s| s.into());
-
         Self {
-            connection_string,
-            nickname,
+            connection_string: connection_string.into(),
+            nickname: nickname.map(|nickname| nickname.into()),
             editor: cx.new(|cx| Editor::single_line(window, cx)),
             status_message: None,
             cancellation: None,
@@ -303,13 +301,19 @@ impl Render for SshPrompt {
 
 impl SshConnectionModal {
     pub(crate) fn new(
-        connection_options: &SshConnectionOptions,
+        connection_options: &RemoteConnectionOptions,
         paths: Vec<PathBuf>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let (connection_string, nickname) = match connection_options {
+            RemoteConnectionOptions::Ssh(options) => {
+                (options.connection_string(), options.nickname.clone())
+            }
+            RemoteConnectionOptions::Wsl(options) => (options.distro_name.clone(), None),
+        };
         Self {
-            prompt: cx.new(|cx| SshPrompt::new(connection_options, window, cx)),
+            prompt: cx.new(|cx| SshPrompt::new(connection_string, nickname, window, cx)),
             finished: false,
             paths,
         }
@@ -608,34 +612,38 @@ pub async fn open_remote_project(
 
     loop {
         let (cancel_tx, cancel_rx) = oneshot::channel();
-        let delegate = match connection_options.clone() {
-            RemoteConnectionOptions::Ssh(options) => window.update(cx, {
-                let paths = paths.clone();
-                move |workspace, window, cx| {
-                    window.activate_window();
-                    workspace.toggle_modal(window, cx, |window, cx| {
-                        SshConnectionModal::new(&options, paths, window, cx)
-                    });
+        let delegate = window.update(cx, {
+            let paths = paths.clone();
+            let connection_options = connection_options.clone();
+            move |workspace, window, cx| {
+                window.activate_window();
+                workspace.toggle_modal(window, cx, |window, cx| {
+                    SshConnectionModal::new(&connection_options, paths, window, cx)
+                });
 
-                    let ui = workspace
-                        .active_modal::<SshConnectionModal>(cx)?
-                        .read(cx)
-                        .prompt
-                        .clone();
+                let ui = workspace
+                    .active_modal::<SshConnectionModal>(cx)?
+                    .read(cx)
+                    .prompt
+                    .clone();
 
-                    ui.update(cx, |ui, _cx| {
-                        ui.set_cancellation_tx(cancel_tx);
-                    });
+                ui.update(cx, |ui, _cx| {
+                    ui.set_cancellation_tx(cancel_tx);
+                });
 
-                    Some(Arc::new(SshClientDelegate {
-                        window: window.window_handle(),
-                        ui: ui.downgrade(),
-                        known_password: options.password.clone(),
-                    }))
-                }
-            })?,
-            RemoteConnectionOptions::Wsl(options) => todo!("WSL"),
-        };
+                Some(Arc::new(SshClientDelegate {
+                    window: window.window_handle(),
+                    ui: ui.downgrade(),
+                    known_password: if let RemoteConnectionOptions::Ssh(options) =
+                        &connection_options
+                    {
+                        options.password.clone()
+                    } else {
+                        None
+                    },
+                }))
+            }
+        })?;
 
         let Some(delegate) = delegate else { break };
 
