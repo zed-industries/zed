@@ -48,7 +48,7 @@ impl PartialEq for Toolchain {
 }
 
 #[async_trait]
-pub trait ToolchainLister: Send + Sync {
+pub trait ToolchainLister: Send + Sync + 'static {
     /// List all available toolchains for a given path.
     async fn list(
         &self,
@@ -61,10 +61,8 @@ pub trait ToolchainLister: Send + Sync {
     /// Put another way: fill in the details of the toolchain so the user does not have to.
     async fn resolve(
         &self,
-        worktree_root: PathBuf,
-        subroot_relative_path: Option<Arc<Path>>,
-        project_env: Option<HashMap<String, String>>,
         path: PathBuf,
+        project_env: Option<HashMap<String, String>>,
     ) -> anyhow::Result<Toolchain>;
 
     /// Returns various "static" bits of information about this toolchain lister. This function should be pure.

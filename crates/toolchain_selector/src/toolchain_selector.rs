@@ -5,15 +5,20 @@ use convert_case::Casing as _;
 use editor::Editor;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ParentElement,
-    Render, Styled, Task, WeakEntity, Window, actions,
+    Animation, AnimationExt, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, ParentElement, Render, Styled, Task, WeakEntity, Window, actions, pulsating_between,
 };
-use language::{LanguageName, Toolchain, ToolchainList};
+use language::{Language, LanguageName, Toolchain, ToolchainList, ToolchainLister};
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectPath, WorktreeId};
-use std::{borrow::Cow, path::Path, sync::Arc};
-use ui::{Divider, HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
-use util::ResultExt;
+use std::{
+    borrow::Cow,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
+use ui::{Divider, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, prelude::*};
+use util::{ResultExt, maybe};
 use workspace::{ModalView, Workspace};
 
 actions!(
@@ -31,6 +36,7 @@ pub fn init(cx: &mut App) {
 pub struct ToolchainSelector {
     state: State,
     create_search_state: Arc<dyn Fn(&mut Window, &mut Context<Self>) -> SearchState + 'static>,
+    language: Option<Arc<Language>>,
 }
 
 #[derive(Clone)]
@@ -38,35 +44,132 @@ struct SearchState {
     picker: Entity<Picker<ToolchainSelectorDelegate>>,
 }
 
-#[derive(Clone)]
 struct AddToolchainState {
-    path: Entity<Editor>,
+    state: AddState,
+    project: Entity<Project>,
+    language_name: LanguageName,
     weak: WeakEntity<ToolchainSelector>,
 }
 
+enum AddState {
+    Path {
+        editor: Entity<Editor>,
+        error: Option<Arc<str>>,
+        confirm_task: Option<Task<()>>,
+    },
+    Name {
+        toolchain: Toolchain,
+        editor: Entity<Editor>,
+    },
+}
+
 impl AddToolchainState {
-    fn new(window: &mut Window, cx: &mut Context<ToolchainSelector>) -> Self {
+    fn new(
+        project: Entity<Project>,
+        language_name: LanguageName,
+        window: &mut Window,
+        cx: &mut Context<ToolchainSelector>,
+    ) -> Entity<Self> {
+        let weak = cx.weak_entity();
         let path = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text("Enter path", cx);
             editor
         });
-        Self {
-            path,
-            weak: cx.weak_entity(),
+        cx.new(|_| Self {
+            state: AddState::Path {
+                editor: path,
+                error: None,
+                confirm_task: None,
+            },
+            project,
+            language_name,
+            weak,
+        })
+    }
+    fn confirm_toolchain(
+        &mut self,
+        _: &menu::Confirm,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match &mut self.state {
+            AddState::Path {
+                editor,
+                confirm_task,
+                ..
+            } => {
+                // Set of a confirmation task with our lister.
+                let text = editor.read(cx).text(cx);
+
+                if text.is_empty() {
+                    return;
+                }
+                let task = self.project.read(cx).resolve_toolchain(
+                    PathBuf::from(text),
+                    self.language_name.clone(),
+                    cx,
+                );
+                *confirm_task = Some(cx.spawn_in(window, async move |this, cx| {
+                    let t = task.await;
+                    this.update_in(cx, |this, window, cx| {
+                        let AddState::Path {
+                            error,
+                            confirm_task,
+                            ..
+                        } = &mut this.state
+                        else {
+                            unreachable!("This closure should not complete concurrently")
+                        };
+
+                        match t {
+                            Ok(toolchain) => {
+                                this.state = AddState::Name {
+                                    toolchain,
+                                    editor: cx.new(|cx| Editor::single_line(window, cx)),
+                                };
+                            }
+                            Err(err) => {
+                                *error = Some(err.to_string().into());
+                                confirm_task.take();
+                            }
+                        }
+
+                        cx.notify();
+                    })
+                    .ok();
+                }));
+            }
+            AddState::Name { toolchain, editor } => {
+                let text = editor.read(cx).text(cx);
+                if text.is_empty() {
+                    return;
+                }
+            }
+        }
+    }
+    fn editor(&self) -> &Entity<Editor> {
+        match &self.state {
+            AddState::Path { editor, .. } | AddState::Name { editor, .. } => editor,
         }
     }
 }
+impl Focusable for AddToolchainState {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.editor().focus_handle(cx)
+    }
+}
+
 impl Focusable for State {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match self {
             State::Search(state) => state.picker.focus_handle(cx),
-            State::AddToolchain(state) => state.path.focus_handle(cx),
+            State::AddToolchain(state) => state.focus_handle(cx),
         }
     }
 }
-impl RenderOnce for AddToolchainState {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+impl Render for AddToolchainState {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let weak = self.weak.upgrade();
         v_flex()
@@ -83,6 +186,7 @@ impl RenderOnce for AddToolchainState {
                     },
                 ))
             })
+            .on_action(cx.listener(Self::confirm_toolchain))
             .bg(theme.colors().background)
             .child(
                 h_flex().w_full().child(
@@ -93,19 +197,60 @@ impl RenderOnce for AddToolchainState {
                         .rounded_sm()
                         .border_1()
                         .border_color(theme.colors().border)
-                        .child(self.path),
+                        .child(self.editor().clone()),
                 ),
             )
             .child(
                 h_flex()
                     .rounded_md()
+                    .w_full()
                     .bg(theme.colors().background)
                     .p_2()
-                    .child(
-                        Label::new("Enter path to the python3 executable")
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    ),
+                    .justify_end()
+                    .map(|this| {
+                        let is_disabled = match &self.state {
+                            AddState::Path {
+                                confirm_task,
+                                editor,
+                                ..
+                            } => confirm_task.is_some() || editor.read(cx).is_empty(cx),
+                            AddState::Name { editor, .. } => editor.read(cx).is_empty(cx),
+                        };
+                        let (error, confirm_underway) = match &self.state {
+                            AddState::Path {
+                                error,
+                                confirm_task,
+                                ..
+                            } => (error.clone(), confirm_task.is_some()),
+                            _ => (None, false),
+                        };
+                        this.when_some(error, |this, error| {
+                            this.justify_between()
+                                .child(Label::new(error).color(Color::Error).size(LabelSize::Small))
+                        })
+                        .child(
+                            Button::new("add-toolchain", "Confirm")
+                                .key_binding(KeyBinding::for_action(&menu::Confirm, window, cx))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.confirm_toolchain(&menu::Confirm, window, cx);
+                                }))
+                                .disabled(is_disabled)
+                                .map(|this| {
+                                    if confirm_underway {
+                                        this.with_animation(
+                                            "inspecting-user-toolchain",
+                                            Animation::new(Duration::from_millis(500))
+                                                .repeat()
+                                                .with_easing(pulsating_between(0.4, 0.8)),
+                                            |label, delta| label.alpha(delta),
+                                        )
+                                        .into_any()
+                                    } else {
+                                        this.into_any_element()
+                                    }
+                                }),
+                        )
+                    }),
             )
     }
 }
@@ -113,14 +258,14 @@ impl RenderOnce for AddToolchainState {
 #[derive(Clone)]
 enum State {
     Search(SearchState),
-    AddToolchain(AddToolchainState),
+    AddToolchain(Entity<AddToolchainState>),
 }
 
 impl RenderOnce for State {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
         match self {
             State::Search(state) => state.picker.into_any_element(),
-            State::AddToolchain(state) => state.render(window, cx).into_any_element(),
+            State::AddToolchain(state) => state.into_any_element(),
         }
     }
 }
@@ -198,6 +343,22 @@ impl ToolchainSelector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let language_registry = project.read(cx).languages().clone();
+        cx.spawn({
+            let language_name = language_name.clone();
+            async move |this, cx| {
+                let language = language_registry
+                    .language_for_name(&language_name.0)
+                    .await
+                    .ok();
+                this.update(cx, |this, cx| {
+                    this.language = language;
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
         let create_search_state = Arc::new(move |window: &mut Window, cx: &mut Context<Self>| {
             let toolchain_selector = cx.entity().downgrade();
             let picker = cx.new(|cx| {
@@ -221,6 +382,7 @@ impl ToolchainSelector {
         Self {
             state: State::Search(create_search_state(window, cx)),
             create_search_state,
+            language: None,
         }
     }
 }
@@ -253,6 +415,8 @@ pub struct ToolchainSelectorDelegate {
     relative_path: Arc<Path>,
     placeholder_text: Arc<str>,
     add_toolchain_text: Arc<str>,
+    project: Entity<Project>,
+    language_name: LanguageName,
     _fetch_candidates_task: Task<Option<()>>,
 }
 
@@ -269,9 +433,12 @@ impl ToolchainSelectorDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Self {
+        let language = language_name.clone();
+        let _project = project.clone();
+
         let _fetch_candidates_task = cx.spawn_in(window, {
             async move |this, cx| {
-                let meta = project
+                let meta = _project
                     .read_with(cx, |this, _| {
                         Project::toolchain_metadata(this.languages().clone(), language_name.clone())
                     })
@@ -289,7 +456,7 @@ impl ToolchainSelectorDelegate {
                     })
                     .ok()?;
 
-                let (available_toolchains, relative_path) = project
+                let (available_toolchains, relative_path) = _project
                     .update(cx, |this, cx| {
                         this.available_toolchains(
                             ProjectPath {
@@ -349,6 +516,8 @@ impl ToolchainSelectorDelegate {
             placeholder_text,
             relative_path,
             _fetch_candidates_task,
+            project,
+            language_name: language,
             add_toolchain_text: Arc::from("Add Toolchain"),
         }
     }
@@ -535,23 +704,34 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                 .rounded_b_md()
                 .child(Divider::horizontal())
                 .child(
-                    h_flex().p_1().child(
+                    h_flex().justify_end().p_1().child(
                         Button::new("xd", self.add_toolchain_text.clone())
                             .icon(IconName::Plus)
                             .style(ButtonStyle::Filled)
                             .icon_position(IconPosition::Start)
-                            .on_click(cx.listener(|picker, _, window, cx| {
-                                picker
-                                    .delegate
-                                    .toolchain_selector
-                                    .update(cx, |this, cx| {
-                                        this.state =
-                                            State::AddToolchain(AddToolchainState::new(window, cx));
-                                        this.state.focus_handle(cx).focus(window);
+                            .on_click(cx.listener({
+                                let project = self.project.clone();
+                                let language = self.language_name.clone();
+                                move |picker, _, window, cx| {
+                                    maybe!({
+                                        picker
+                                            .delegate
+                                            .toolchain_selector
+                                            .update(cx, |this, cx| {
+                                                this.state =
+                                                    State::AddToolchain(AddToolchainState::new(
+                                                        project.clone(),
+                                                        language.clone(),
+                                                        window,
+                                                        cx,
+                                                    ));
+                                                this.state.focus_handle(cx).focus(window);
 
-                                        cx.notify();
-                                    })
-                                    .ok();
+                                                cx.notify();
+                                            })
+                                            .ok()
+                                    });
+                                }
                             })),
                     ),
                 )

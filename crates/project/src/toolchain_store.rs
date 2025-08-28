@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Result, bail};
+use anyhow::{Context as _, Result, bail};
 
 use async_trait::async_trait;
 use collections::BTreeMap;
@@ -87,6 +87,21 @@ impl ToolchainStore {
             }
             ToolchainStoreInner::Remote(remote, _) => {
                 remote.update(cx, |this, cx| this.activate_toolchain(path, toolchain, cx))
+            }
+        }
+    }
+    pub(crate) fn resolve_toolchain(
+        &self,
+        path: PathBuf,
+        language_name: LanguageName,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Toolchain>> {
+        match &self.0 {
+            ToolchainStoreInner::Local(local, _) => local.update(cx, |this, cx| {
+                this.resolve_toolchain(path, language_name, cx)
+            }),
+            ToolchainStoreInner::Remote(remote, _) => {
+                todo!()
             }
         }
     }
@@ -413,6 +428,33 @@ impl LocalToolchainStore {
                     .find_map(|root_path| paths.get(root_path))
             })
             .cloned()
+    }
+
+    fn resolve_toolchain(
+        &self,
+        path: PathBuf,
+        language_name: LanguageName,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Toolchain>> {
+        let registry = self.languages.clone();
+        let environment = self.project_environment.clone();
+        cx.spawn(async move |_, cx| {
+            let language = cx
+                .background_spawn(registry.language_for_name(&language_name.0))
+                .await
+                .with_context(|| format!("Language {} not found", language_name.0))?;
+            let toolchain_lister = language.toolchain_lister().with_context(|| {
+                format!("Language {} does not support toolchains", language_name.0)
+            })?;
+
+            let project_env = environment
+                .update(cx, |environment, cx| {
+                    environment.get_directory_environment(path.as_path().into(), cx)
+                })?
+                .await;
+            cx.background_spawn(async move { toolchain_lister.resolve(path, project_env).await })
+                .await
+        })
     }
 }
 
