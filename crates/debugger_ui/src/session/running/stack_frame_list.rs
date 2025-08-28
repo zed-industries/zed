@@ -28,7 +28,7 @@ pub enum StackFrameListEvent {
 }
 
 /// Represents the filter applied to the stack frame list
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Copy, Clone)]
 enum StackFrameFilter {
     /// Show all frames
     All,
@@ -46,11 +46,11 @@ impl StackFrameFilter {
     }
 }
 
-impl From<StackFrameFilter> for &'static str {
+impl From<StackFrameFilter> for String {
     fn from(filter: StackFrameFilter) -> Self {
         match filter {
-            StackFrameFilter::All => "all",
-            StackFrameFilter::OnlyUserFrames => "user",
+            StackFrameFilter::All => "all".to_string(),
+            StackFrameFilter::OnlyUserFrames => "user".to_string(),
         }
     }
 }
@@ -809,6 +809,24 @@ impl StackFrameList {
             StackFrameFilter::All => StackFrameFilter::OnlyUserFrames,
             StackFrameFilter::OnlyUserFrames => StackFrameFilter::All,
         };
+
+        if let Some(database_id) = self
+            .workspace
+            .read_with(cx, |workspace, _| workspace.database_id())
+            .ok()
+            .flatten()
+        {
+            let database_id: i64 = database_id.into();
+            let save_task = KEY_VALUE_STORE.write_kvp(
+                format!(
+                    "stack-frame-list-filter-{}-{}",
+                    self.session.read(cx).adapter().0,
+                    database_id,
+                ),
+                self.list_filter.into(),
+            );
+            cx.background_spawn(save_task).detach();
+        }
 
         if let Some(ThreadStatus::Stopped) = thread_status {
             match self.list_filter {
