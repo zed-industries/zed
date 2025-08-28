@@ -1421,6 +1421,16 @@ or
 
 Each option controls displaying of a particular toolbar element. If all elements are hidden, the editor toolbar is not displayed.
 
+## Use System Tabs
+
+- Description: Whether to allow windows to tab together based on the user’s tabbing preference (macOS only).
+- Setting: `use_system_window_tabs`
+- Default: `false`
+
+**Options**
+
+This setting enables integration with macOS’s native window tabbing feature. When set to `true`, Zed windows can be grouped together as tabs in a single macOS window, following the system-wide tabbing preferences set by the user (such as "Always", "In Full Screen", or "Never"). This setting is only available on macOS.
+
 ## Enable Language Server
 
 - Description: Whether or not to use language servers to provide code intelligence.
