@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "additionalDirectories": [
+      "/Users/mikaylamaki/projects/zed-work/zed-monorepo-real/claude-code-acp/",
+      "/Users/mikaylamaki/projects/zed-work/zed-monorepo-real/agentic-coding-protocol/"
+    ],
+    "allow": [
+      "Read(/Users/mikaylamaki/projects/zed-work/zed-monorepo-real/**)"
+    ]
+  }
+}
