@@ -36,11 +36,13 @@ pub struct Keystroke {
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct KeybindingKeystroke {
     /// The GPUI representation of the keystroke.
-    pub inner: Keystroke,
+    inner: Keystroke,
     /// The modifiers to display.
-    pub display_modifiers: Modifiers,
+    #[cfg(target_os = "windows")]
+    display_modifiers: Modifiers,
     /// The key to display.
-    pub display_key: String,
+    #[cfg(target_os = "windows")]
+    display_key: String,
 }
 
 /// Error type for `Keystroke::parse`. This is used instead of `anyhow::Error` so that Zed can use
@@ -262,8 +264,17 @@ impl Keystroke {
 }
 
 impl KeybindingKeystroke {
-    /// Create a new keybinding keystroke from the given keystroke
-    pub fn new(
+    #[cfg(target_os = "windows")]
+    pub(crate) fn new(inner: Keystroke, display_modifiers: Modifiers, display_key: String) -> Self {
+        KeybindingKeystroke {
+            inner,
+            display_modifiers,
+            display_key,
+        }
+    }
+
+    /// Create a new keybinding keystroke from the given keystroke using the given keyboard mapper.
+    pub fn new_with_mapper(
         inner: Keystroke,
         use_key_equivalents: bool,
         keyboard_mapper: &dyn PlatformKeyboardMapper,
@@ -271,19 +282,95 @@ impl KeybindingKeystroke {
         keyboard_mapper.map_key_equivalent(inner, use_key_equivalents)
     }
 
-    pub(crate) fn from_keystroke(keystroke: Keystroke) -> Self {
-        let key = keystroke.key.clone();
-        let modifiers = keystroke.modifiers;
-        KeybindingKeystroke {
-            inner: keystroke,
-            display_modifiers: modifiers,
-            display_key: key,
+    /// Create a new keybinding keystroke from the given keystroke, without any platform-specific mapping.
+    pub fn from_keystroke(keystroke: Keystroke) -> Self {
+        #[cfg(target_os = "windows")]
+        {
+            let key = keystroke.key.clone();
+            let modifiers = keystroke.modifiers;
+            KeybindingKeystroke {
+                inner: keystroke,
+                display_modifiers: modifiers,
+                display_key: key,
+            }
         }
+        #[cfg(not(target_os = "windows"))]
+        {
+            KeybindingKeystroke { inner: keystroke }
+        }
+    }
+
+    /// Returns the GPUI representation of the keystroke.
+    pub fn inner(&self) -> &Keystroke {
+        &self.inner
+    }
+
+    /// Returns the modifiers.
+    ///
+    /// Platform-specific behavior:
+    /// - On macOS and Linux, this modifiers is the same as `inner.modifiers`, which is the GPUI representation of the keystroke.
+    /// - On Windows, this modifiers is the display modifiers, for example, a `ctrl-@` keystroke will have `inner.modifiers` as
+    /// `Modifiers::control()` and `display_modifiers` as `Modifiers::control_shift()`.
+    pub fn modifiers(&self) -> &Modifiers {
+        #[cfg(target_os = "windows")]
+        {
+            &self.display_modifiers
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            &self.inner.modifiers
+        }
+    }
+
+    /// Returns the key.
+    ///
+    /// Platform-specific behavior:
+    /// - On macOS and Linux, this key is the same as `inner.key`, which is the GPUI representation of the keystroke.
+    /// - On Windows, this key is the display key, for example, a `ctrl-@` keystroke will have `inner.key` as `@` and `display_key` as `2`.
+    pub fn key(&self) -> &str {
+        #[cfg(target_os = "windows")]
+        {
+            &self.display_key
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            &self.inner.key
+        }
+    }
+
+    /// Sets the modifiers. On Windows this modifies both `inner.modifiers` and `display_modifiers`.
+    pub fn set_modifiers(&mut self, modifiers: Modifiers) {
+        self.inner.modifiers = modifiers;
+        #[cfg(target_os = "windows")]
+        {
+            self.display_modifiers = modifiers;
+        }
+    }
+
+    /// Sets the key. On Windows this modifies both `inner.key` and `display_key`.
+    pub fn set_key(&mut self, key: String) {
+        #[cfg(target_os = "windows")]
+        {
+            self.display_key = key.clone();
+        }
+        self.inner.key = key;
     }
 
     /// Produces a representation of this key that Parse can understand.
     pub fn unparse(&self) -> String {
-        unparse(&self.display_modifiers, &self.display_key)
+        #[cfg(target_os = "windows")]
+        {
+            unparse(&self.display_modifiers, &self.display_key)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            unparse(&self.inner.modifiers, &self.inner.key)
+        }
+    }
+
+    /// Removes the key_char
+    pub fn remove_key_char(&mut self) {
+        self.inner.key_char = None;
     }
 }
 
@@ -350,8 +437,8 @@ impl std::fmt::Display for Keystroke {
 
 impl std::fmt::Display for KeybindingKeystroke {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        display_modifiers(&self.display_modifiers, f)?;
-        display_key(&self.display_key, f)
+        display_modifiers(self.modifiers(), f)?;
+        display_key(self.key(), f)
     }
 }
 
