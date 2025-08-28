@@ -38,8 +38,10 @@ pub struct KeybindingKeystroke {
     /// The GPUI representation of the keystroke.
     inner: Keystroke,
     /// The modifiers to display.
+    #[cfg(target_os = "windows")]
     display_modifiers: Modifiers,
     /// The key to display.
+    #[cfg(target_os = "windows")]
     display_key: String,
 }
 
@@ -271,13 +273,21 @@ impl KeybindingKeystroke {
         keyboard_mapper.map_key_equivalent(inner, use_key_equivalents)
     }
 
-    pub(crate) fn from_keystroke(keystroke: Keystroke) -> Self {
-        let key = keystroke.key.clone();
-        let modifiers = keystroke.modifiers;
-        KeybindingKeystroke {
-            inner: keystroke,
-            display_modifiers: modifiers,
-            display_key: key,
+    /// Create a new keybinding keystroke from the given keystroke, without any platform-specific mapping.
+    pub fn from_keystroke(keystroke: Keystroke) -> Self {
+        #[cfg(target_os = "windows")]
+        {
+            let key = keystroke.key.clone();
+            let modifiers = keystroke.modifiers;
+            KeybindingKeystroke {
+                inner: keystroke,
+                display_modifiers: modifiers,
+                display_key: key,
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            KeybindingKeystroke { inner: keystroke }
         }
     }
 
@@ -288,7 +298,14 @@ impl KeybindingKeystroke {
     /// - On Windows, this modifiers is the display modifiers, for example, a `ctrl-@` keystroke will have `inner.modifiers` as
     /// `Modifiers::control()` and `display_modifiers` as `Modifiers::control_shift()`.
     pub fn modifiers(&self) -> &Modifiers {
-        &self.display_modifiers
+        #[cfg(target_os = "windows")]
+        {
+            &self.display_modifiers
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            &self.inner.modifiers
+        }
     }
 
     /// Returns the key.
@@ -297,22 +314,44 @@ impl KeybindingKeystroke {
     /// - On macOS and Linux, this key is the same as `inner.key`, which is the GPUI representation of the keystroke.
     /// - On Windows, this key is the display key, for example, a `ctrl-@` keystroke will have `inner.key` as `@` and `display_key` as `2`.
     pub fn key(&self) -> &str {
-        &self.display_key
+        #[cfg(target_os = "windows")]
+        {
+            &self.display_key
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            &self.inner.key
+        }
     }
 
     /// Sets the modifiers. On Windows this modifies both `inner.modifiers` and `display_modifiers`.
     pub fn set_modifiers(&mut self, modifiers: Modifiers) {
-        self.display_modifiers = modifiers;
+        self.inner.modifiers = modifiers;
+        #[cfg(target_os = "windows")]
+        {
+            self.display_modifiers = modifiers;
+        }
     }
 
     /// Sets the key. On Windows this modifies both `inner.key` and `display_key`.
     pub fn set_key(&mut self, key: String) {
-        self.display_key = key;
+        #[cfg(target_os = "windows")]
+        {
+            self.display_key = key.clone();
+        }
+        self.inner.key = key;
     }
 
     /// Produces a representation of this key that Parse can understand.
     pub fn unparse(&self) -> String {
-        unparse(&self.display_modifiers, &self.display_key)
+        #[cfg(target_os = "windows")]
+        {
+            unparse(&self.display_modifiers, &self.display_key)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            unparse(&self.inner.modifiers, &self.inner.key)
+        }
     }
 }
 
