@@ -7517,11 +7517,15 @@ impl LineWithInvisibles {
             if let Some(replacement) = highlighted_chunk.replacement {
                 if !line.is_empty() {
                     let segments = bg_segments_per_row.get(row).map(|v| &v[..]).unwrap_or(&[]);
-                    let text_runs = Self::split_runs_by_bg_segments(&styles, segments, cx);
+                    let text_runs: &[TextRun] = if segments.is_empty() {
+                        &styles
+                    } else {
+                        &Self::split_runs_by_bg_segments(&styles, segments, cx)
+                    };
                     let shaped_line = window.text_system().shape_line(
                         line.clone().into(),
                         font_size,
-                        &text_runs,
+                        text_runs,
                         None,
                     );
                     width += shaped_line.width;
@@ -7600,11 +7604,15 @@ impl LineWithInvisibles {
                 for (ix, mut line_chunk) in highlighted_chunk.text.split('\n').enumerate() {
                     if ix > 0 {
                         let segments = bg_segments_per_row.get(row).map(|v| &v[..]).unwrap_or(&[]);
-                        let text_runs = Self::split_runs_by_bg_segments(&styles, segments, cx);
+                        let text_runs = if segments.is_empty() {
+                            &styles
+                        } else {
+                            &Self::split_runs_by_bg_segments(&styles, segments, cx)
+                        };
                         let shaped_line = window.text_system().shape_line(
                             line.clone().into(),
                             font_size,
-                            &text_runs,
+                            text_runs,
                             None,
                         );
                         width += shaped_line.width;
@@ -7702,6 +7710,7 @@ impl LineWithInvisibles {
         let mut output_runs: Vec<TextRun> = Vec::with_capacity(text_runs.len());
         let mut line_col = 0usize;
         let mut segment_ix = 0usize;
+        let min_contrast = EditorSettings::get_global(cx).minimum_contrast_for_highlights;
 
         for text_run in text_runs.iter() {
             let run_start_col = line_col;
@@ -7734,11 +7743,8 @@ impl LineWithInvisibles {
                 }
                 let segment_slice_end_col = segment_end_col.min(run_end_col);
                 if segment_slice_end_col > cursor_col {
-                    let new_text_color = ensure_minimum_contrast(
-                        text_run.color,
-                        *segment_color,
-                        EditorSettings::get_global(cx).minimum_contrast_for_highlights,
-                    );
+                    let new_text_color =
+                        ensure_minimum_contrast(text_run.color, *segment_color, min_contrast);
                     output_runs.push(TextRun {
                         len: segment_slice_end_col - cursor_col,
                         font: text_run.font.clone(),
