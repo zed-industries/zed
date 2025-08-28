@@ -2,12 +2,11 @@ use std::rc::Rc;
 use std::{any::Any, path::Path};
 
 use crate::acp::AcpConnection;
-use crate::{AgentServer, AgentServerCommand};
+use crate::{AgentServer, AgentServerDelegate};
 use acp_thread::{AgentConnection, LoadError};
 use anyhow::Result;
-use gpui::{App, Entity, SharedString, Task};
+use gpui::{App, SharedString, Task};
 use language_models::provider::google::GoogleLanguageModelProvider;
-use project::Project;
 use settings::SettingsStore;
 
 use crate::AllAgentServersSettings;
@@ -26,29 +25,16 @@ impl AgentServer for Gemini {
         "Gemini CLI".into()
     }
 
-    fn empty_state_headline(&self) -> SharedString {
-        self.name()
-    }
-
-    fn empty_state_message(&self) -> SharedString {
-        "Ask questions, edit files, run commands".into()
-    }
-
     fn logo(&self) -> ui::IconName {
         ui::IconName::AiGemini
-    }
-
-    fn install_command(&self) -> Option<&'static str> {
-        Some("npm install --engine-strict -g @google/gemini-cli@latest")
     }
 
     fn connect(
         &self,
         root_dir: &Path,
-        project: &Entity<Project>,
+        delegate: AgentServerDelegate,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn AgentConnection>>> {
-        let project = project.clone();
         let root_dir = root_dir.to_path_buf();
         let server_name = self.name();
         cx.spawn(async move |cx| {
@@ -56,12 +42,19 @@ impl AgentServer for Gemini {
                 settings.get::<AllAgentServersSettings>(None).gemini.clone()
             })?;
 
-            let Some(mut command) =
-                AgentServerCommand::resolve("gemini", &[ACP_ARG], None, settings, &project, cx)
-                    .await
-            else {
-                return Err(LoadError::NotInstalled.into());
-            };
+            let mut command = cx
+                .update(|cx| {
+                    delegate.get_or_npm_install_builtin_agent(
+                        Self::BINARY_NAME.into(),
+                        Self::PACKAGE_NAME.into(),
+                        format!("node_modules/{}/dist/index.js", Self::PACKAGE_NAME).into(),
+                        settings,
+                        Some("0.2.1".parse().unwrap()),
+                        cx,
+                    )
+                })?
+                .await?;
+            command.args.push("--experimental-acp".into());
 
             if let Some(api_key) = cx.update(GoogleLanguageModelProvider::api_key)?.await.ok() {
                 command
@@ -87,12 +80,8 @@ impl AgentServer for Gemini {
                         if !connection.prompt_capabilities().image {
                             return Err(LoadError::Unsupported {
                                 current_version: current_version.into(),
-                                command: format!(
-                                    "{} {}",
-                                    command.path.to_string_lossy(),
-                                    command.args.join(" ")
-                                )
-                                .into(),
+                                command: command.path.to_string_lossy().to_string().into(),
+                                minimum_version: Self::MINIMUM_VERSION.into(),
                             }
                             .into());
                         }
@@ -114,13 +103,16 @@ impl AgentServer for Gemini {
                     let (version_output, help_output) =
                         futures::future::join(version_fut, help_fut).await;
 
-                    let current_version = String::from_utf8(version_output?.stdout)?;
+                    let current_version = std::str::from_utf8(&version_output?.stdout)?
+                        .trim()
+                        .to_string();
                     let supported = String::from_utf8(help_output?.stdout)?.contains(ACP_ARG);
 
                     if !supported {
                         return Err(LoadError::Unsupported {
                             current_version: current_version.into(),
                             command: command.path.to_string_lossy().to_string().into(),
+                            minimum_version: Self::MINIMUM_VERSION.into(),
                         }
                         .into());
                     }
@@ -136,17 +128,11 @@ impl AgentServer for Gemini {
 }
 
 impl Gemini {
-    pub fn binary_name() -> &'static str {
-        "gemini"
-    }
+    const PACKAGE_NAME: &str = "@google/gemini-cli";
 
-    pub fn install_command() -> &'static str {
-        "npm install --engine-strict -g @google/gemini-cli@latest"
-    }
+    const MINIMUM_VERSION: &str = "0.2.1";
 
-    pub fn upgrade_command() -> &'static str {
-        "npm install -g @google/gemini-cli@latest"
-    }
+    const BINARY_NAME: &str = "gemini";
 }
 
 #[cfg(test)]

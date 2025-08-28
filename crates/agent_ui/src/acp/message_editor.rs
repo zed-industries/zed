@@ -4,7 +4,7 @@ use crate::{
 };
 use acp_thread::{MentionUri, selection_name};
 use agent_client_protocol as acp;
-use agent_servers::AgentServer;
+use agent_servers::{AgentServer, AgentServerDelegate};
 use agent2::HistoryStore;
 use anyhow::{Result, anyhow};
 use assistant_slash_commands::codeblock_fence_for_path;
@@ -645,7 +645,8 @@ impl MessageEditor {
             self.project.read(cx).fs().clone(),
             self.history_store.clone(),
         ));
-        let connection = server.connect(Path::new(""), &self.project, cx);
+        let delegate = AgentServerDelegate::new(self.project.clone(), watch::channel("".into()).0);
+        let connection = server.connect(Path::new(""), delegate, cx);
         cx.spawn(async move |_, cx| {
             let agent = connection.await?;
             let agent = agent.downcast::<agent2::NativeAgentConnection>().unwrap();
