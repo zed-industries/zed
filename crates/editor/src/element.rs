@@ -3312,7 +3312,7 @@ impl EditorElement {
                 let seg_end = if row == range.end.row() && range.end.column() != 0 {
                     range.end
                 } else {
-                    DisplayPoint::new(row.next_row(), 0)
+                    DisplayPoint::new(row, u32::MAX)
                 };
                 let ix = row.minus(rows.start) as usize;
                 debug_assert!(row >= rows.start && row < rows.end);
