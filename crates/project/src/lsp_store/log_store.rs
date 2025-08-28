@@ -23,11 +23,11 @@ const SERVER_INFO: &str = "Server Info";
 
 pub fn init(store_logs: bool, cx: &mut App) -> Entity<LogStore> {
     let log_store = cx.new(|cx| LogStore::new(store_logs, cx));
-    cx.set_global(GlobalLogStore(log_store.downgrade()));
+    cx.set_global(GlobalLogStore(log_store.clone()));
     log_store
 }
 
-pub struct GlobalLogStore(pub WeakEntity<LogStore>);
+pub struct GlobalLogStore(pub Entity<LogStore>);
 
 impl Global for GlobalLogStore {}
 

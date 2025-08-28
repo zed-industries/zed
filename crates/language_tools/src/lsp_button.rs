@@ -124,7 +124,7 @@ impl LanguageServerState {
         menu = menu.align_popover_bottom();
         let lsp_logs = cx
             .try_global::<GlobalLogStore>()
-            .and_then(|lsp_logs| lsp_logs.0.upgrade());
+            .map(|lsp_logs| lsp_logs.0.clone());
         let Some(lsp_logs) = lsp_logs else {
             return menu;
         };

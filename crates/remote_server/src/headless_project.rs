@@ -310,7 +310,7 @@ impl HeadlessProject {
             LspStoreEvent::LanguageServerAdded(id, name, worktree_id) => {
                 let log_store = cx
                     .try_global::<GlobalLogStore>()
-                    .and_then(|lsp_logs| lsp_logs.0.upgrade());
+                    .map(|lsp_logs| lsp_logs.0.clone());
                 if let Some(log_store) = log_store {
                     log_store.update(cx, |log_store, cx| {
                         log_store.add_language_server(
@@ -329,7 +329,7 @@ impl HeadlessProject {
             LspStoreEvent::LanguageServerRemoved(id) => {
                 let log_store = cx
                     .try_global::<GlobalLogStore>()
-                    .and_then(|lsp_logs| lsp_logs.0.upgrade());
+                    .map(|lsp_logs| lsp_logs.0.clone());
                 if let Some(log_store) = log_store {
                     log_store.update(cx, |log_store, cx| {
                         log_store.remove_language_server(*id, cx);
@@ -541,7 +541,7 @@ impl HeadlessProject {
         let lsp_logs = cx
             .update(|cx| {
                 cx.try_global::<GlobalLogStore>()
-                    .and_then(|lsp_logs| lsp_logs.0.upgrade())
+                    .map(|lsp_logs| lsp_logs.0.clone())
             })?
             .context("lsp logs store is missing")?;
 
