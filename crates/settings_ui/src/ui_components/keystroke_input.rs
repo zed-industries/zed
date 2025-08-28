@@ -298,8 +298,11 @@ impl KeystrokeInput {
             return;
         }
 
-        let keystroke =
-            KeybindingKeystroke::new(keystroke.clone(), false, cx.keyboard_mapper().as_ref());
+        let keystroke = KeybindingKeystroke::new_with_mapper(
+            keystroke.clone(),
+            false,
+            cx.keyboard_mapper().as_ref(),
+        );
         if let Some(last) = self.keystrokes.last()
             && last.key().is_empty()
             && (!self.search || self.previous_modifiers.modified())
@@ -653,7 +656,7 @@ impl Render for KeystrokeInput {
 mod tests {
     use super::*;
     use fs::FakeFs;
-    use gpui::{AsKeystroke, Entity, TestAppContext, VisualTestContext};
+    use gpui::{Entity, TestAppContext, VisualTestContext};
     use itertools::Itertools as _;
     use project::Project;
     use settings::SettingsStore;
@@ -820,7 +823,7 @@ mod tests {
                 input
                     .keystrokes
                     .iter()
-                    .map(|keystroke| keystroke.as_keystroke().clone())
+                    .map(|keystroke| keystroke.inner().clone())
                     .collect()
             });
             Self::expect_keystrokes_equal(&actual, expected);
@@ -1089,7 +1092,7 @@ mod tests {
             }
 
             fn keystrokes_str(ks: &[KeybindingKeystroke]) -> String {
-                ks.iter().map(|ks| ks.as_keystroke().unparse()).join(" ")
+                ks.iter().map(|ks| ks.inner().unparse()).join(" ")
             }
         }
     }

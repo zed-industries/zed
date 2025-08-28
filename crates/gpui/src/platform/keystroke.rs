@@ -264,8 +264,17 @@ impl Keystroke {
 }
 
 impl KeybindingKeystroke {
-    /// Create a new keybinding keystroke from the given keystroke
-    pub fn new(
+    #[cfg(target_os = "windows")]
+    pub(crate) fn new(inner: Keystroke, display_modifiers: Modifiers, display_key: String) -> Self {
+        KeybindingKeystroke {
+            inner,
+            display_modifiers,
+            display_key,
+        }
+    }
+
+    /// Create a new keybinding keystroke from the given keystroke using the given keyboard mapper.
+    pub fn new_with_mapper(
         inner: Keystroke,
         use_key_equivalents: bool,
         keyboard_mapper: &dyn PlatformKeyboardMapper,
@@ -289,6 +298,11 @@ impl KeybindingKeystroke {
         {
             KeybindingKeystroke { inner: keystroke }
         }
+    }
+
+    /// Returns the GPUI representation of the keystroke.
+    pub fn inner(&self) -> &Keystroke {
+        &self.inner
     }
 
     /// Returns the modifiers.
@@ -352,6 +366,11 @@ impl KeybindingKeystroke {
         {
             unparse(&self.inner.modifiers, &self.inner.key)
         }
+    }
+
+    /// Removes the key_char
+    pub fn remove_key_char(&mut self) {
+        self.inner.key_char = None;
     }
 }
 
