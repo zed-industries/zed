@@ -113,14 +113,10 @@ impl AgentTool for TerminalTool {
                 ..Default::default()
             });
 
-            let exit_status = terminal.wait(cx)?.await;
+            let exit_status = terminal.wait_for_exit(cx)?.await;
             let output = terminal.current_output(cx)?;
 
-            Ok(process_content(
-                output,
-                &input.command,
-                exit_status.map(portable_pty::ExitStatus::from),
-            ))
+            Ok(process_content(output, &input.command, exit_status))
         })
     }
 }
@@ -128,7 +124,7 @@ impl AgentTool for TerminalTool {
 fn process_content(
     output: acp::TerminalOutputResponse,
     command: &str,
-    exit_status: Option<portable_pty::ExitStatus>,
+    exit_status: acp::TerminalExitStatus,
 ) -> String {
     let content = output.output.trim();
     let is_empty = content.is_empty();
@@ -143,24 +139,21 @@ fn process_content(
         content
     };
 
-    let content = match exit_status {
-        Some(exit_status) if exit_status.success() => {
+    let content = match exit_status.exit_code {
+        Some(0) => {
             if is_empty {
                 "Command executed successfully.".to_string()
             } else {
                 content
             }
         }
-        Some(exit_status) => {
+        Some(exit_code) => {
             if is_empty {
-                format!(
-                    "Command \"{command}\" failed with exit code {}.",
-                    exit_status.exit_code()
-                )
+                format!("Command \"{command}\" failed with exit code {}.", exit_code)
             } else {
                 format!(
                     "Command \"{command}\" failed with exit code {}.\n\n{content}",
-                    exit_status.exit_code()
+                    exit_code
                 )
             }
         }

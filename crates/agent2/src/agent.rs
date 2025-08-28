@@ -25,7 +25,6 @@ use settings::update_settings_file;
 use std::any::Any;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::ExitStatus;
 use std::rc::Rc;
 use std::sync::Arc;
 use util::ResultExt;
@@ -1165,8 +1164,9 @@ impl TerminalHandle for AcpTerminalHandle {
         self.terminal.read_with(cx, |term, _cx| term.id().clone())
     }
 
-    fn wait(&self, cx: &AsyncApp) -> Result<Shared<Task<Option<ExitStatus>>>> {
-        self.terminal.read_with(cx, |term, _cx| term.wait())
+    fn wait_for_exit(&self, cx: &AsyncApp) -> Result<Shared<Task<acp::TerminalExitStatus>>> {
+        self.terminal
+            .read_with(cx, |term, _cx| term.wait_for_exit())
     }
 
     fn current_output(&self, cx: &AsyncApp) -> Result<acp::TerminalOutputResponse> {

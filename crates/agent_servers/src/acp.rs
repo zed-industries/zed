@@ -440,12 +440,29 @@ impl acp::Client for ClientDelegate {
         &self,
         args: acp::TerminalOutputRequest,
     ) -> Result<acp::TerminalOutputResponse, acp::Error> {
-        let resp = self
+        self.session_thread(&args.session_id)?
+            .read_with(&mut self.cx.clone(), |thread, cx| {
+                let out = thread
+                    .terminal(args.terminal_id)?
+                    .read(cx)
+                    .current_output(cx);
+
+                Ok(out)
+            })?
+    }
+
+    async fn wait_for_terminal_exit(
+        &self,
+        args: acp::WaitForTerminalExitRequest,
+    ) -> Result<acp::WaitForTerminalExitResponse, acp::Error> {
+        let exit_status = self
             .session_thread(&args.session_id)?
             .update(&mut self.cx.clone(), |thread, cx| {
-                thread.terminal_output(args, cx)
-            })?;
-        Ok(resp?)
+                anyhow::Ok(thread.terminal(args.terminal_id)?.read(cx).wait_for_exit())
+            })??
+            .await;
+
+        Ok(acp::WaitForTerminalExitResponse { exit_status })
     }
 }
 

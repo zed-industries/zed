@@ -14,7 +14,7 @@ pub struct Terminal {
     started_at: Instant,
     output: Option<TerminalOutput>,
     output_byte_limit: Option<usize>,
-    _output_task: Shared<Task<Option<ExitStatus>>>,
+    _output_task: Shared<Task<acp::TerminalExitStatus>>,
 }
 
 pub struct TerminalOutput {
@@ -70,7 +70,12 @@ impl Terminal {
                     })
                     .ok();
 
-                    exit_status
+                    let exit_status = exit_status.map(portable_pty::ExitStatus::from);
+
+                    acp::TerminalExitStatus {
+                        exit_code: exit_status.as_ref().map(|e| e.exit_code()),
+                        signal: exit_status.and_then(|e| e.signal().map(Into::into)),
+                    }
                 })
                 .shared(),
         }
@@ -80,7 +85,7 @@ impl Terminal {
         &self.id
     }
 
-    pub fn wait(&self) -> Shared<Task<Option<ExitStatus>>> {
+    pub fn wait_for_exit(&self) -> Shared<Task<acp::TerminalExitStatus>> {
         self._output_task.clone()
     }
 
@@ -97,9 +102,10 @@ impl Terminal {
             acp::TerminalOutputResponse {
                 output: output.content.clone(),
                 truncated: output.original_content_len > output.content.len(),
-                finished: true,
-                exit_code: exit_status.as_ref().map(|e| e.exit_code()),
-                signal: exit_status.and_then(|e| e.signal().map(Into::into)),
+                exit_status: Some(acp::TerminalExitStatus {
+                    exit_code: exit_status.as_ref().map(|e| e.exit_code()),
+                    signal: exit_status.and_then(|e| e.signal().map(Into::into)),
+                }),
             }
         } else {
             let (current_content, original_len) = self.truncated_output(cx);
@@ -107,9 +113,7 @@ impl Terminal {
             acp::TerminalOutputResponse {
                 truncated: current_content.len() < original_len,
                 output: current_content,
-                finished: false,
-                exit_code: None,
-                signal: None,
+                exit_status: None,
             }
         }
     }

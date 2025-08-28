@@ -49,7 +49,6 @@ use std::{
     collections::BTreeMap,
     ops::RangeInclusive,
     path::Path,
-    process::ExitStatus,
     rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
@@ -524,7 +523,7 @@ pub enum AgentMessageContent {
 pub trait TerminalHandle {
     fn id(&self, cx: &AsyncApp) -> Result<acp::TerminalId>;
     fn current_output(&self, cx: &AsyncApp) -> Result<acp::TerminalOutputResponse>;
-    fn wait(&self, cx: &AsyncApp) -> Result<Shared<Task<Option<ExitStatus>>>>;
+    fn wait_for_exit(&self, cx: &AsyncApp) -> Result<Shared<Task<acp::TerminalExitStatus>>>;
 }
 
 pub trait ThreadEnvironment {

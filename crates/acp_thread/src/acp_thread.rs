@@ -1967,18 +1967,11 @@ impl AcpThread {
         Ok(())
     }
 
-    pub fn terminal_output(
-        &self,
-        args: acp::TerminalOutputRequest,
-        cx: &mut Context<Self>,
-    ) -> Result<acp::TerminalOutputResponse> {
-        let output = self
-            .terminals
-            .get(&args.terminal_id)
-            .context("Terminal not found")?
-            .read(cx)
-            .current_output(cx);
-        Ok(output)
+    pub fn terminal(&self, terminal_id: acp::TerminalId) -> Result<Entity<Terminal>> {
+        self.terminals
+            .get(&terminal_id)
+            .context("Terminal not found")
+            .cloned()
     }
 
     pub fn to_markdown(&self, cx: &App) -> String {
