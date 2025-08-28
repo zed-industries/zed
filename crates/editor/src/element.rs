@@ -11099,3 +11099,103 @@ mod tests {
         );
     }
 }
+
+#[gpui::test]
+fn test_bg_segments_per_row() {
+    let base_bg = Hsla::default();
+
+    // Case A: selection spans three display rows: row 1 [5, end), full row 2, row 3 [0, 7)
+    {
+        let selection_color = Hsla {
+            h: 200.0,
+            s: 0.5,
+            l: 0.5,
+            a: 0.5,
+        };
+        let player_color = PlayerColor {
+            cursor: selection_color,
+            background: selection_color,
+            selection: selection_color,
+        };
+
+        let spanning_selection = SelectionLayout {
+            head: DisplayPoint::new(DisplayRow(3), 7),
+            cursor_shape: CursorShape::Bar,
+            is_newest: true,
+            is_local: true,
+            range: DisplayPoint::new(DisplayRow(1), 5)..DisplayPoint::new(DisplayRow(3), 7),
+            active_rows: DisplayRow(1)..DisplayRow(4),
+            user_name: None,
+        };
+
+        let selections = vec![(player_color, vec![spanning_selection])];
+        let result = EditorElement::bg_segments_per_row(
+            DisplayRow(0)..DisplayRow(5),
+            &selections,
+            &[],
+            base_bg,
+        );
+
+        assert_eq!(result.len(), 5);
+        assert!(result[0].is_empty());
+        assert_eq!(result[1].len(), 1);
+        assert_eq!(result[2].len(), 1);
+        assert_eq!(result[3].len(), 1);
+        assert!(result[4].is_empty());
+
+        assert_eq!(result[1][0].0.start, DisplayPoint::new(DisplayRow(1), 5));
+        assert_eq!(result[1][0].0.end.row(), DisplayRow(1));
+        assert_eq!(result[1][0].0.end.column(), u32::MAX);
+        assert_eq!(result[2][0].0.start, DisplayPoint::new(DisplayRow(2), 0));
+        assert_eq!(result[2][0].0.end.row(), DisplayRow(2));
+        assert_eq!(result[2][0].0.end.column(), u32::MAX);
+        assert_eq!(result[3][0].0.start, DisplayPoint::new(DisplayRow(3), 0));
+        assert_eq!(result[3][0].0.end, DisplayPoint::new(DisplayRow(3), 7));
+    }
+
+    // Case B: selection ends exactly at the start of row 3, excluding row 3
+    {
+        let selection_color = Hsla {
+            h: 120.0,
+            s: 0.5,
+            l: 0.5,
+            a: 0.5,
+        };
+        let player_color = PlayerColor {
+            cursor: selection_color,
+            background: selection_color,
+            selection: selection_color,
+        };
+
+        let selection = SelectionLayout {
+            head: DisplayPoint::new(DisplayRow(2), 0),
+            cursor_shape: CursorShape::Bar,
+            is_newest: true,
+            is_local: true,
+            range: DisplayPoint::new(DisplayRow(1), 5)..DisplayPoint::new(DisplayRow(3), 0),
+            active_rows: DisplayRow(1)..DisplayRow(3),
+            user_name: None,
+        };
+
+        let selections = vec![(player_color, vec![selection])];
+        let result = EditorElement::bg_segments_per_row(
+            DisplayRow(0)..DisplayRow(4),
+            &selections,
+            &[],
+            base_bg,
+        );
+
+        assert_eq!(result.len(), 4);
+        assert!(result[0].is_empty());
+        assert_eq!(result[1].len(), 1);
+        assert_eq!(result[2].len(), 1);
+        assert!(result[3].is_empty());
+
+        assert_eq!(result[1][0].0.start, DisplayPoint::new(DisplayRow(1), 5));
+        assert_eq!(result[1][0].0.end.row(), DisplayRow(1));
+        assert_eq!(result[1][0].0.end.column(), u32::MAX);
+        assert_eq!(result[2][0].0.start, DisplayPoint::new(DisplayRow(2), 0));
+        assert_eq!(result[2][0].0.end.row(), DisplayRow(2));
+        assert_eq!(result[2][0].0.end.column(), u32::MAX);
+    }
+}
