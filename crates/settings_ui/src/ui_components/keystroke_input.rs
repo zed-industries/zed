@@ -1158,7 +1158,7 @@ mod tests {
             // which is `cmd-@`. But in the case of `+cmd +shift -shift 2`, the keystroke we receive is `cmd-2`, which means that
             // we need to dynamically map the key from `2` to `@` when the shift modifier is not present, which is not possible.
             // Therefore, we now preserve all modifiers in search mode to ensure consistent behavior.
-            // And alse, VSCode seems to preserve all modifiers in search mode as well.
+            // And also, VSCode seems to preserve all modifiers in search mode as well.
             .expect_keystrokes(&["cmd-shift-f"]);
     }
 
