@@ -10,7 +10,7 @@ use gpui::{App, AppContext as _, AsyncApp, SemanticVersion, Task};
 use itertools::Itertools;
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use rpc::proto::Envelope;
-use smol::fs;
+use smol::{fs, process};
 use std::{
     fmt::Write as _,
     iter,
@@ -96,6 +96,10 @@ impl WslRemoteConnection {
             WslPathConverterKind::WindowsToWsl => "-u",
         };
         self.run_wsl_command("wslpath", &[arg, &source]).await
+    }
+
+    fn wsl_command(&self, program: &str, args: &[&str]) -> process::Command {
+        wsl_command_impl(&self.connection_options, program, args)
     }
 
     async fn run_wsl_command(&self, program: &str, args: &[&str]) -> Result<String> {
@@ -472,7 +476,7 @@ impl RemoteConnection for WslRemoteConnection {
         };
 
         let mut proxy_command = format!(
-            "cd; exec {} proxy --identifier {}",
+            "exec {} proxy --identifier {}",
             remote_binary_path.to_string(),
             unique_identifier
         );
@@ -486,17 +490,9 @@ impl RemoteConnection for WslRemoteConnection {
                 proxy_command = format!("{}='{}' {}", env_var, value, proxy_command);
             }
         }
-
-        let proxy_process = match util::command::new_smol_command("wsl.exe")
-            .arg("--distribution")
-            .arg(&self.connection_options.distro_name)
-            .arg("sh")
-            .arg("-lc")
-            .arg(&proxy_command)
+        let proxy_process = match self
+            .wsl_command("sh", &["-lc", &proxy_command])
             .kill_on_drop(true)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
             .spawn()
         {
             Ok(process) => process,
@@ -643,23 +639,36 @@ async fn path_converter_impl(
     run_wsl_command_impl(options, "wslpath", &[arg, &source]).await
 }
 
+fn wsl_command_impl(
+    options: &WslConnectionOptions,
+    program: &str,
+    args: &[&str],
+) -> process::Command {
+    let to_run = iter::once(&program)
+        .chain(args.iter())
+        .map(|token| shlex::try_quote(token).unwrap())
+        .join(" ");
+
+    let mut command = util::command::new_smol_command("wsl.exe");
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .arg("--distribution")
+        .arg(&options.distro_name)
+        .arg("sh")
+        .arg("-c")
+        .arg(format!("cd; {to_run}"));
+
+    command
+}
+
 async fn run_wsl_command_impl(
     options: &WslConnectionOptions,
     program: &str,
     args: &[&str],
 ) -> Result<String> {
-    let to_run = iter::once(&program)
-        .chain(args.iter())
-        .map(|token| shlex::try_quote(token).unwrap())
-        .join(" ");
-    let output = util::command::new_smol_command("wsl.exe")
-        .arg("--distribution")
-        .arg(&options.distro_name)
-        .arg("sh")
-        .arg("-c")
-        .arg(format!("cd; {to_run}"))
-        .output()
-        .await?;
+    let output = wsl_command_impl(options, program, args).output().await?;
 
     if !output.status.success() {
         return Err(anyhow!(
