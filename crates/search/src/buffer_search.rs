@@ -1520,18 +1520,25 @@ mod tests {
                 cx,
             )
         });
-        let cx = cx.add_empty_window();
-        let editor =
-            cx.new_window_entity(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
-
-        let search_bar = cx.new_window_entity(|window, cx| {
+        let mut editor = None;
+        let window = cx.add_window(|window, cx| {
+            let default_key_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+                "keymaps/default-macos.json",
+                cx,
+            )
+            .unwrap();
+            cx.bind_keys(default_key_bindings);
+            editor = Some(cx.new(|cx| Editor::for_buffer(buffer.clone(), None, window, cx)));
             let mut search_bar = BufferSearchBar::new(None, window, cx);
-            search_bar.set_active_pane_item(Some(&editor), window, cx);
+            search_bar.set_active_pane_item(Some(&editor.clone().unwrap()), window, cx);
             search_bar.show(window, cx);
             search_bar
         });
+        let search_bar = window.root(cx).unwrap();
 
-        (editor, search_bar, cx)
+        let cx = VisualTestContext::from_window(*window, cx).into_mut();
+
+        (editor.unwrap(), search_bar, cx)
     }
 
     #[gpui::test]
