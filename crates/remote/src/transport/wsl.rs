@@ -2,7 +2,7 @@ use crate::{
     RemoteClientDelegate, RemotePlatform,
     remote_client::{CommandTemplate, RemoteConnection, RemoteConnectionOptions},
 };
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::channel::mpsc::{Sender, UnboundedReceiver, UnboundedSender};
@@ -14,7 +14,7 @@ use smol::fs;
 use std::{
     fmt::Write as _,
     iter,
-    path::{self, Path, PathBuf},
+    path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
     time::Instant,
@@ -495,28 +495,6 @@ impl WslRemoteConnection {
     }
 }
 
-fn path_to_wsl(path: &Path) -> String {
-    let mut components = path.components();
-
-    if let Some(path::Component::Prefix(prefix)) = components.next() {
-        if let path::Prefix::Disk(drive_byte) | path::Prefix::VerbatimDisk(drive_byte) =
-            prefix.kind()
-        {
-            let drive_letter = (drive_byte as char).to_ascii_lowercase();
-            let mut wsl_path = format!("/mnt/{}", drive_letter);
-            for component in components.skip(1) {
-                if let path::Component::Normal(part) = component {
-                    wsl_path.push('/');
-                    wsl_path.push_str(&part.to_string_lossy());
-                }
-            }
-
-            return wsl_path;
-        }
-    }
-    path.to_string_lossy().replace('\\', "/")
-}
-
 #[async_trait(?Send)]
 impl RemoteConnection for WslRemoteConnection {
     fn start_proxy(
@@ -695,18 +673,4 @@ async fn sanitize_path(path: &Path) -> Result<String> {
 
     let sanitized = path_str.strip_prefix(r"\\?\").unwrap_or(&path_str);
     Ok(sanitized.replace('\\', "/"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_path_to_wsl() {
-        let path = Path::new("C:\\Users\\User\\Documents\\file.txt");
-        assert_eq!(path_to_wsl(&path), "/mnt/c/Users/User/Documents/file.txt");
-
-        let path = Path::new("F:\\file.txt");
-        assert_eq!(path_to_wsl(&path), "/mnt/f/file.txt");
-    }
 }
