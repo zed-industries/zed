@@ -320,6 +320,10 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
+    fn stash_entries(&self) -> BoxFuture<'_, Result<git::stash::GitStash>> {
+        async { Ok(git::stash::GitStash::default()) }.boxed()
+    }
+
     fn branches(&self) -> BoxFuture<'_, Result<Vec<Branch>>> {
         self.with_state_async(false, move |state| {
             let current_branch = &state.current_branch_name;
@@ -412,7 +416,27 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
-    fn stash_pop(&self, _env: Arc<HashMap<String, String>>) -> BoxFuture<'_, Result<()>> {
+    fn stash_pop(
+        &self,
+        _index: Option<usize>,
+        _env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        unimplemented!()
+    }
+
+    fn stash_apply(
+        &self,
+        _index: Option<usize>,
+        _env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        unimplemented!()
+    }
+
+    fn stash_drop(
+        &self,
+        _index: Option<usize>,
+        _env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
         unimplemented!()
     }
 
