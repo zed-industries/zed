@@ -1951,6 +1951,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
             server_id: LanguageServerId(1),
             buffer_id,
             buffer_abs_path: PathBuf::from(path!("/dir/a.rs")),
+            name: Some(fake_server.server.name())
         }
     );
     assert_eq!(
@@ -9220,6 +9221,9 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
         /// Returns the name of the manifest file for this toolchain.
         fn manifest_name(&self) -> ManifestName {
             SharedString::new_static("pyproject.toml").into()
+        }
+        async fn activation_script(&self, _: &Toolchain, _: &dyn Fs) -> Option<String> {
+            None
         }
     }
     Arc::new(

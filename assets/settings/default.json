@@ -363,6 +363,8 @@
     // Whether to show code action buttons in the editor toolbar.
     "code_actions": false
   },
+  // Whether to allow windows to tab together based on the user’s tabbing preference (macOS only).
+  "use_system_window_tabs": false,
   // Titlebar related settings
   "title_bar": {
     // Whether to show the branch icon beside branch switcher in the titlebar.

@@ -809,7 +809,7 @@ impl Database {
                 server: proto::LanguageServer {
                     id: language_server.id as u64,
                     name: language_server.name,
-                    worktree_id: None,
+                    worktree_id: language_server.worktree_id.map(|id| id as u64),
                 },
                 capabilities: language_server.capabilities,
             })

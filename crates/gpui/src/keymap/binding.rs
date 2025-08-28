@@ -57,7 +57,7 @@ impl KeyBinding {
             .split_whitespace()
             .map(|source| {
                 let keystroke = Keystroke::parse(source)?;
-                Ok(KeybindingKeystroke::new(
+                Ok(KeybindingKeystroke::new_with_mapper(
                     keystroke,
                     use_key_equivalents,
                     keyboard_mapper,
