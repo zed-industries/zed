@@ -119,8 +119,8 @@ impl SelectionsCollection {
         cx: &mut App,
     ) -> Option<Selection<D>> {
         let map = self.display_map(cx);
-        let selection = resolve_selections(self.pending_anchor().as_ref(), &map).next();
-        selection
+
+        resolve_selections(self.pending_anchor().as_ref(), &map).next()
     }
 
     pub(crate) fn pending_mode(&self) -> Option<SelectMode> {
@@ -276,18 +276,18 @@ impl SelectionsCollection {
         cx: &mut App,
     ) -> Selection<D> {
         let map = self.display_map(cx);
-        let selection = resolve_selections([self.newest_anchor()], &map)
+
+        resolve_selections([self.newest_anchor()], &map)
             .next()
-            .unwrap();
-        selection
+            .unwrap()
     }
 
     pub fn newest_display(&self, cx: &mut App) -> Selection<DisplayPoint> {
         let map = self.display_map(cx);
-        let selection = resolve_selections_display([self.newest_anchor()], &map)
+
+        resolve_selections_display([self.newest_anchor()], &map)
             .next()
-            .unwrap();
-        selection
+            .unwrap()
     }
 
     pub fn oldest_anchor(&self) -> &Selection<Anchor> {
@@ -303,10 +303,10 @@ impl SelectionsCollection {
         cx: &mut App,
     ) -> Selection<D> {
         let map = self.display_map(cx);
-        let selection = resolve_selections([self.oldest_anchor()], &map)
+
+        resolve_selections([self.oldest_anchor()], &map)
             .next()
-            .unwrap();
-        selection
+            .unwrap()
     }
 
     pub fn first_anchor(&self) -> Selection<Anchor> {

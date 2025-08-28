@@ -746,21 +746,21 @@ impl Database {
                     let current_merge_conflicts = db_repository
                         .current_merge_conflicts
                         .as_ref()
-                        .map(|conflicts| serde_json::from_str(&conflicts))
+                        .map(|conflicts| serde_json::from_str(conflicts))
                         .transpose()?
                         .unwrap_or_default();
 
                     let branch_summary = db_repository
                         .branch_summary
                         .as_ref()
-                        .map(|branch_summary| serde_json::from_str(&branch_summary))
+                        .map(|branch_summary| serde_json::from_str(branch_summary))
                         .transpose()?
                         .unwrap_or_default();
 
                     let head_commit_details = db_repository
                         .head_commit_details
                         .as_ref()
-                        .map(|head_commit_details| serde_json::from_str(&head_commit_details))
+                        .map(|head_commit_details| serde_json::from_str(head_commit_details))
                         .transpose()?
                         .unwrap_or_default();
 
@@ -793,6 +793,7 @@ impl Database {
                             abs_path: db_repository.abs_path,
                             scan_id: db_repository.scan_id as u64,
                             is_last_update: true,
+                            merge_message: db_repository.merge_message,
                         });
                     }
                 }

@@ -1,0 +1,45 @@
+[package]
+name = "action_log"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lib]
+path = "src/action_log.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+buffer_diff.workspace = true
+clock.workspace = true
+collections.workspace = true
+futures.workspace = true
+gpui.workspace = true
+language.workspace = true
+project.workspace = true
+text.workspace = true
+util.workspace = true
+watch.workspace = true
+workspace-hack.workspace = true
+
+
+[dev-dependencies]
+buffer_diff = { workspace = true, features = ["test-support"] }
+collections = { workspace = true, features = ["test-support"] }
+clock = { workspace = true, features = ["test-support"] }
+ctor.workspace = true
+gpui = { workspace = true, features = ["test-support"] }
+indoc.workspace = true
+language = { workspace = true, features = ["test-support"] }
+log.workspace = true
+pretty_assertions.workspace = true
+project = { workspace = true, features = ["test-support"] }
+rand.workspace = true
+serde_json.workspace = true
+settings = { workspace = true, features = ["test-support"] }
+text = { workspace = true, features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }
+zlog.workspace = true

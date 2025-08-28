@@ -65,7 +65,7 @@ impl Render for IndentGuidesStory {
                             },
                         )
                         .with_compute_indents_fn(
-                            cx.entity().clone(),
+                            cx.entity(),
                             |this, range, _cx, _context| {
                                 this.depths
                                     .iter()

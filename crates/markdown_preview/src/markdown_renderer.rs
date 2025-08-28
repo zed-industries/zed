@@ -111,11 +111,10 @@ impl RenderContext {
     /// buffer font size changes. The callees of this function should be reimplemented to use real
     /// relative sizing once that is implemented in GPUI
     pub fn scaled_rems(&self, rems: f32) -> Rems {
-        return self
-            .buffer_text_style
+        self.buffer_text_style
             .font_size
             .to_rems(self.window_rem_size)
-            .mul(rems);
+            .mul(rems)
     }
 
     /// This ensures that children inside of block quotes
@@ -459,13 +458,13 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
     let mut max_lengths: Vec<usize> = vec![0; parsed.header.children.len()];
 
     for (index, cell) in parsed.header.children.iter().enumerate() {
-        let length = paragraph_len(&cell);
+        let length = paragraph_len(cell);
         max_lengths[index] = length;
     }
 
     for row in &parsed.body {
         for (index, cell) in row.children.iter().enumerate() {
-            let length = paragraph_len(&cell);
+            let length = paragraph_len(cell);
 
             if length > max_lengths[index] {
                 max_lengths[index] = length;

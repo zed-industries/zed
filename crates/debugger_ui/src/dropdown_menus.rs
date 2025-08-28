@@ -272,10 +272,9 @@ impl DebugPanel {
             .child(session_entry.label_element(self_depth, cx))
             .child(
                 IconButton::new("close-debug-session", IconName::Close)
-                    .visible_on_hover(id.clone())
+                    .visible_on_hover(id)
                     .icon_size(IconSize::Small)
                     .on_click({
-                        let weak = weak.clone();
                         move |_, window, cx| {
                             weak.update(cx, |panel, cx| {
                                 panel.close_session(session_entity_id, window, cx);

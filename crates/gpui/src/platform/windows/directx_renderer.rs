@@ -207,7 +207,7 @@ impl DirectXRenderer {
 
     fn present(&mut self) -> Result<()> {
         unsafe {
-            let result = self.resources.swap_chain.Present(1, DXGI_PRESENT(0));
+            let result = self.resources.swap_chain.Present(0, DXGI_PRESENT(0));
             // Presenting the swap chain can fail if the DirectX device was removed or reset.
             if result == DXGI_ERROR_DEVICE_REMOVED || result == DXGI_ERROR_DEVICE_RESET {
                 let reason = self.devices.device.GetDeviceRemovedReason();
@@ -435,7 +435,7 @@ impl DirectXRenderer {
                 xy_position: v.xy_position,
                 st_position: v.st_position,
                 color: path.color,
-                bounds: path.bounds.intersect(&path.content_mask.bounds),
+                bounds: path.clipped_bounds(),
             }));
         }
 
@@ -487,13 +487,13 @@ impl DirectXRenderer {
             paths
                 .iter()
                 .map(|path| PathSprite {
-                    bounds: path.bounds,
+                    bounds: path.clipped_bounds(),
                 })
                 .collect::<Vec<_>>()
         } else {
-            let mut bounds = first_path.bounds;
+            let mut bounds = first_path.clipped_bounds();
             for path in paths.iter().skip(1) {
-                bounds = bounds.union(&path.bounds);
+                bounds = bounds.union(&path.clipped_bounds());
             }
             vec![PathSprite { bounds }]
         };
@@ -758,7 +758,7 @@ impl DirectXRenderPipelines {
 
 impl DirectComposition {
     pub fn new(dxgi_device: &IDXGIDevice, hwnd: HWND) -> Result<Self> {
-        let comp_device = get_comp_device(&dxgi_device)?;
+        let comp_device = get_comp_device(dxgi_device)?;
         let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
         let comp_visual = unsafe { comp_device.CreateVisual() }?;
 
@@ -1144,7 +1144,7 @@ fn create_resources(
     [D3D11_VIEWPORT; 1],
 )> {
     let (render_target, render_target_view) =
-        create_render_target_and_its_view(&swap_chain, &devices.device)?;
+        create_render_target_and_its_view(swap_chain, &devices.device)?;
     let (path_intermediate_texture, path_intermediate_srv) =
         create_path_intermediate_texture(&devices.device, width, height)?;
     let (path_intermediate_msaa_texture, path_intermediate_msaa_view) =
@@ -1624,11 +1624,10 @@ mod nvidia {
         os::raw::{c_char, c_int, c_uint},
     };
 
-    use anyhow::{Context, Result};
-    use windows::{
-        Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryA},
-        core::s,
-    };
+    use anyhow::Result;
+    use windows::{Win32::System::LibraryLoader::GetProcAddress, core::s};
+
+    use crate::with_dll_library;
 
     // https://github.com/NVIDIA/nvapi/blob/7cb76fce2f52de818b3da497af646af1ec16ce27/nvapi_lite_common.h#L180
     const NVAPI_SHORT_STRING_MAX: usize = 64;
@@ -1645,13 +1644,12 @@ mod nvidia {
     ) -> c_int;
 
     pub(super) fn get_driver_version() -> Result<String> {
-        unsafe {
-            // Try to load the NVIDIA driver DLL
-            #[cfg(target_pointer_width = "64")]
-            let nvidia_dll = LoadLibraryA(s!("nvapi64.dll")).context("Can't load nvapi64.dll")?;
-            #[cfg(target_pointer_width = "32")]
-            let nvidia_dll = LoadLibraryA(s!("nvapi.dll")).context("Can't load nvapi.dll")?;
+        #[cfg(target_pointer_width = "64")]
+        let nvidia_dll_name = s!("nvapi64.dll");
+        #[cfg(target_pointer_width = "32")]
+        let nvidia_dll_name = s!("nvapi.dll");
 
+        with_dll_library(nvidia_dll_name, |nvidia_dll| unsafe {
             let nvapi_query_addr = GetProcAddress(nvidia_dll, s!("nvapi_QueryInterface"))
                 .ok_or_else(|| anyhow::anyhow!("Failed to get nvapi_QueryInterface address"))?;
             let nvapi_query: extern "C" fn(u32) -> *mut () = std::mem::transmute(nvapi_query_addr);
@@ -1686,18 +1684,17 @@ mod nvidia {
                 minor,
                 branch_string.to_string_lossy()
             ))
-        }
+        })
     }
 }
 
 mod amd {
     use std::os::raw::{c_char, c_int, c_void};
 
-    use anyhow::{Context, Result};
-    use windows::{
-        Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryA},
-        core::s,
-    };
+    use anyhow::Result;
+    use windows::{Win32::System::LibraryLoader::GetProcAddress, core::s};
+
+    use crate::with_dll_library;
 
     // https://github.com/GPUOpen-LibrariesAndSDKs/AGS_SDK/blob/5d8812d703d0335741b6f7ffc37838eeb8b967f7/ags_lib/inc/amd_ags.h#L145
     const AGS_CURRENT_VERSION: i32 = (6 << 22) | (3 << 12);
@@ -1731,14 +1728,12 @@ mod amd {
     type agsDeInitialize_t = unsafe extern "C" fn(context: *mut AGSContext) -> c_int;
 
     pub(super) fn get_driver_version() -> Result<String> {
-        unsafe {
-            #[cfg(target_pointer_width = "64")]
-            let amd_dll =
-                LoadLibraryA(s!("amd_ags_x64.dll")).context("Failed to load AMD AGS library")?;
-            #[cfg(target_pointer_width = "32")]
-            let amd_dll =
-                LoadLibraryA(s!("amd_ags_x86.dll")).context("Failed to load AMD AGS library")?;
+        #[cfg(target_pointer_width = "64")]
+        let amd_dll_name = s!("amd_ags_x64.dll");
+        #[cfg(target_pointer_width = "32")]
+        let amd_dll_name = s!("amd_ags_x86.dll");
 
+        with_dll_library(amd_dll_name, |amd_dll| unsafe {
             let ags_initialize_addr = GetProcAddress(amd_dll, s!("agsInitialize"))
                 .ok_or_else(|| anyhow::anyhow!("Failed to get agsInitialize address"))?;
             let ags_deinitialize_addr = GetProcAddress(amd_dll, s!("agsDeInitialize"))
@@ -1784,7 +1779,7 @@ mod amd {
 
             ags_deinitialize(context);
             Ok(format!("{} ({})", software_version, driver_version))
-        }
+        })
     }
 }
 

@@ -37,7 +37,7 @@ pub(crate) fn should_auto_close(
         let text = buffer
             .text_for_range(edited_range.clone())
             .collect::<String>();
-        let edited_range = edited_range.to_offset(&buffer);
+        let edited_range = edited_range.to_offset(buffer);
         if !text.ends_with(">") {
             continue;
         }
@@ -51,12 +51,11 @@ pub(crate) fn should_auto_close(
             continue;
         };
         let mut jsx_open_tag_node = node;
-        if node.grammar_name() != config.open_tag_node_name {
-            if let Some(parent) = node.parent() {
-                if parent.grammar_name() == config.open_tag_node_name {
-                    jsx_open_tag_node = parent;
-                }
-            }
+        if node.grammar_name() != config.open_tag_node_name
+            && let Some(parent) = node.parent()
+            && parent.grammar_name() == config.open_tag_node_name
+        {
+            jsx_open_tag_node = parent;
         }
         if jsx_open_tag_node.grammar_name() != config.open_tag_node_name {
             continue;
@@ -87,9 +86,9 @@ pub(crate) fn should_auto_close(
         });
     }
     if to_auto_edit.is_empty() {
-        return None;
+        None
     } else {
-        return Some(to_auto_edit);
+        Some(to_auto_edit)
     }
 }
 
@@ -182,12 +181,12 @@ pub(crate) fn generate_auto_close_edits(
          */
         {
             let tag_node_name_equals = |node: &Node, name: &str| {
-                let is_empty = name.len() == 0;
+                let is_empty = name.is_empty();
                 if let Some(node_name) = node.named_child(TS_NODE_TAG_NAME_CHILD_INDEX) {
                     let range = node_name.byte_range();
                     return buffer.text_for_range(range).equals_str(name);
                 }
-                return is_empty;
+                is_empty
             };
 
             let tree_root_node = {
@@ -208,7 +207,7 @@ pub(crate) fn generate_auto_close_edits(
                     cur = descendant;
                 }
 
-                assert!(ancestors.len() > 0);
+                assert!(!ancestors.is_empty());
 
                 let mut tree_root_node = open_tag;
 
@@ -228,7 +227,7 @@ pub(crate) fn generate_auto_close_edits(
                             let has_open_tag_with_same_tag_name = ancestor
                                 .named_child(0)
                                 .filter(|n| n.kind() == config.open_tag_node_name)
-                                .map_or(false, |element_open_tag_node| {
+                                .is_some_and(|element_open_tag_node| {
                                     tag_node_name_equals(&element_open_tag_node, &tag_name)
                                 });
                             if has_open_tag_with_same_tag_name {
@@ -264,8 +263,7 @@ pub(crate) fn generate_auto_close_edits(
             }
 
             let is_after_open_tag = |node: &Node| {
-                return node.start_byte() < open_tag.start_byte()
-                    && node.end_byte() < open_tag.start_byte();
+                node.start_byte() < open_tag.start_byte() && node.end_byte() < open_tag.start_byte()
             };
 
             // perf: use cursor for more efficient traversal
@@ -284,10 +282,8 @@ pub(crate) fn generate_auto_close_edits(
                         unclosed_open_tag_count -= 1;
                     }
                 } else if has_erroneous_close_tag && kind == erroneous_close_tag_node_name {
-                    if tag_node_name_equals(&node, &tag_name) {
-                        if !is_after_open_tag(&node) {
-                            unclosed_open_tag_count -= 1;
-                        }
+                    if tag_node_name_equals(&node, &tag_name) && !is_after_open_tag(&node) {
+                        unclosed_open_tag_count -= 1;
                     }
                 } else if kind == config.jsx_element_node_name {
                     // perf: filter only open,close,element,erroneous nodes
@@ -304,7 +300,7 @@ pub(crate) fn generate_auto_close_edits(
         let edit_range = edit_anchor..edit_anchor;
         edits.push((edit_range, format!("</{}>", tag_name)));
     }
-    return Ok(edits);
+    Ok(edits)
 }
 
 pub(crate) fn refresh_enabled_in_any_buffer(
@@ -370,7 +366,7 @@ pub(crate) fn construct_initial_buffer_versions_map<
             initial_buffer_versions.insert(buffer_id, buffer_version);
         }
     }
-    return initial_buffer_versions;
+    initial_buffer_versions
 }
 
 pub(crate) fn handle_from(
@@ -458,12 +454,9 @@ pub(crate) fn handle_from(
             let ensure_no_edits_since_start = || -> Option<()> {
                 let has_edits_since_start = this
                     .read_with(cx, |this, cx| {
-                        this.buffer
-                            .read(cx)
-                            .buffer(buffer_id)
-                            .map_or(true, |buffer| {
-                                buffer.read(cx).has_edits_since(&buffer_version_initial)
-                            })
+                        this.buffer.read(cx).buffer(buffer_id).is_none_or(|buffer| {
+                            buffer.read(cx).has_edits_since(&buffer_version_initial)
+                        })
                     })
                     .ok()?;
 
@@ -514,7 +507,7 @@ pub(crate) fn handle_from(
 
             {
                 let selections = this
-                    .read_with(cx, |this, _| this.selections.disjoint_anchors().clone())
+                    .read_with(cx, |this, _| this.selections.disjoint_anchors())
                     .ok()?;
                 for selection in selections.iter() {
                     let Some(selection_buffer_offset_head) =
@@ -815,10 +808,7 @@ mod jsx_tag_autoclose_tests {
             );
             buf
         });
-        let buffer_c = cx.new(|cx| {
-            let buf = language::Buffer::local("<span", cx);
-            buf
-        });
+        let buffer_c = cx.new(|cx| language::Buffer::local("<span", cx));
         let buffer = cx.new(|cx| {
             let mut buf = MultiBuffer::new(language::Capability::ReadWrite);
             buf.push_excerpts(

@@ -34,6 +34,7 @@ impl ClaudeTool {
             // Known tools
             "mcp__zed__Read" => Self::ReadFile(serde_json::from_value(input).log_err()),
             "mcp__zed__Edit" => Self::Edit(serde_json::from_value(input).log_err()),
+            "mcp__zed__Write" => Self::Write(serde_json::from_value(input).log_err()),
             "MultiEdit" => Self::MultiEdit(serde_json::from_value(input).log_err()),
             "Write" => Self::Write(serde_json::from_value(input).log_err()),
             "LS" => Self::Ls(serde_json::from_value(input).log_err()),
@@ -57,7 +58,7 @@ impl ClaudeTool {
                     Self::Terminal(None)
                 } else {
                     Self::Other {
-                        name: tool_name.to_string(),
+                        name: tool_name,
                         input,
                     }
                 }
@@ -93,7 +94,7 @@ impl ClaudeTool {
             }
             Self::MultiEdit(None) => "Multi Edit".into(),
             Self::Write(Some(params)) => {
-                format!("Write {}", params.file_path.display())
+                format!("Write {}", params.abs_path.display())
             }
             Self::Write(None) => "Write".into(),
             Self::Glob(Some(params)) => {
@@ -143,25 +144,6 @@ impl ClaudeTool {
             Self::Grep(Some(params)) => vec![format!("`{params}`").into()],
             Self::WebFetch(Some(params)) => vec![params.prompt.clone().into()],
             Self::WebSearch(Some(params)) => vec![params.to_string().into()],
-            Self::TodoWrite(Some(params)) => vec![
-                params
-                    .todos
-                    .iter()
-                    .map(|todo| {
-                        format!(
-                            "- {} {}: {}",
-                            match todo.status {
-                                TodoStatus::Completed => "✅",
-                                TodoStatus::InProgress => "🚧",
-                                TodoStatus::Pending => "⬜",
-                            },
-                            todo.priority,
-                            todo.content
-                        )
-                    })
-                    .join("\n")
-                    .into(),
-            ],
             Self::ExitPlanMode(Some(params)) => vec![params.plan.clone().into()],
             Self::Edit(Some(params)) => vec![acp::ToolCallContent::Diff {
                 diff: acp::Diff {
@@ -172,7 +154,7 @@ impl ClaudeTool {
             }],
             Self::Write(Some(params)) => vec![acp::ToolCallContent::Diff {
                 diff: acp::Diff {
-                    path: params.file_path.clone(),
+                    path: params.abs_path.clone(),
                     old_text: None,
                     new_text: params.content.clone(),
                 },
@@ -192,6 +174,10 @@ impl ClaudeTool {
                         }]
                     })
                     .unwrap_or_default()
+            }
+            Self::TodoWrite(Some(_)) => {
+                // These are mapped to plan updates later
+                vec![]
             }
             Self::Task(None)
             | Self::NotebookRead(None)
@@ -244,7 +230,10 @@ impl ClaudeTool {
                     line: None,
                 }]
             }
-            Self::Write(Some(WriteToolParams { file_path, .. })) => {
+            Self::Write(Some(WriteToolParams {
+                abs_path: file_path,
+                ..
+            })) => {
                 vec![acp::ToolCallLocation {
                     path: file_path.clone(),
                     line: None,
@@ -312,10 +301,25 @@ impl ClaudeTool {
             content: self.content(),
             locations: self.locations(),
             raw_input: None,
+            raw_output: None,
         }
     }
 }
 
+/// Edit a file.
+///
+/// In sessions with mcp__zed__Edit always use it instead of Edit as it will
+/// allow the user to conveniently review changes.
+///
+/// File editing instructions:
+/// - The `old_text` param must match existing file content, including indentation.
+/// - The `old_text` param must come from the actual file, not an outline.
+/// - The `old_text` section must not be empty.
+/// - Be minimal with replacements:
+///     - For unique lines, include only those lines.
+///     - For non-unique lines, include enough context to identify them.
+/// - Do not escape quotes, newlines, or other characters.
+/// - Only edit the specified file.
 #[derive(Deserialize, JsonSchema, Debug)]
 pub struct EditToolParams {
     /// The absolute path to the file to read.
@@ -326,6 +330,11 @@ pub struct EditToolParams {
     pub new_text: String,
 }
 
+/// Reads the content of the given file in the project.
+///
+/// Never attempt to read a path that hasn't been previously mentioned.
+///
+/// In sessions with mcp__zed__Read always use it instead of Read as it contains the most up-to-date contents.
 #[derive(Deserialize, JsonSchema, Debug)]
 pub struct ReadToolParams {
     /// The absolute path to the file to read.
@@ -338,11 +347,15 @@ pub struct ReadToolParams {
     pub limit: Option<u32>,
 }
 
+/// Writes content to the specified file in the project.
+///
+/// In sessions with mcp__zed__Write always use it instead of Write as it will
+/// allow the user to conveniently review changes.
 #[derive(Deserialize, JsonSchema, Debug)]
 pub struct WriteToolParams {
-    /// Absolute path for new file
-    pub file_path: PathBuf,
-    /// File content
+    /// The absolute path of the file to write.
+    pub abs_path: PathBuf,
+    /// The full content to write.
     pub content: String,
 }
 
@@ -488,10 +501,11 @@ impl std::fmt::Display for GrepToolParams {
     }
 }
 
-#[derive(Deserialize, Serialize, JsonSchema, strum::Display, Debug)]
+#[derive(Default, Deserialize, Serialize, JsonSchema, strum::Display, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum TodoPriority {
     High,
+    #[default]
     Medium,
     Low,
 }
@@ -526,14 +540,13 @@ impl Into<acp::PlanEntryStatus> for TodoStatus {
 
 #[derive(Deserialize, Serialize, JsonSchema, Debug)]
 pub struct Todo {
-    /// Unique identifier
-    pub id: String,
     /// Task description
     pub content: String,
-    /// Priority level of the todo
-    pub priority: TodoPriority,
     /// Current status of the todo
     pub status: TodoStatus,
+    /// Priority level of the todo
+    #[serde(default)]
+    pub priority: TodoPriority,
 }
 
 impl Into<acp::PlanEntry> for Todo {

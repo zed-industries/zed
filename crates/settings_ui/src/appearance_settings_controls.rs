@@ -83,7 +83,7 @@ impl RenderOnce for ThemeControl {
 
         DropdownMenu::new(
             "theme",
-            value.clone(),
+            value,
             ContextMenu::build(window, cx, |mut menu, _, cx| {
                 let theme_registry = ThemeRegistry::global(cx);
 
@@ -204,7 +204,7 @@ impl RenderOnce for UiFontFamilyControl {
             .child(Icon::new(IconName::Font))
             .child(DropdownMenu::new(
                 "ui-font-family",
-                value.clone(),
+                value,
                 ContextMenu::build(window, cx, |mut menu, _, cx| {
                     let font_family_cache = FontFamilyCache::global(cx);
 

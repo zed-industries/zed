@@ -1,5 +1,5 @@
 use anyhow::{Context as _, bail};
-use collections::{FxHashMap, HashMap};
+use collections::{FxHashMap, HashMap, HashSet};
 use language::LanguageRegistry;
 use std::{
     borrow::Cow,
@@ -343,10 +343,10 @@ impl NewProcessModal {
             return;
         }
 
-        if let NewProcessMode::Launch = &self.mode {
-            if self.configure_mode.read(cx).save_to_debug_json.selected() {
-                self.save_debug_scenario(window, cx);
-            }
+        if let NewProcessMode::Launch = &self.mode
+            && self.configure_mode.read(cx).save_to_debug_json.selected()
+        {
+            self.save_debug_scenario(window, cx);
         }
 
         let Some(debugger) = self.debugger.clone() else {
@@ -413,7 +413,7 @@ impl NewProcessModal {
         let Some(adapter) = self.debugger.as_ref() else {
             return;
         };
-        let scenario = self.debug_scenario(&adapter, cx);
+        let scenario = self.debug_scenario(adapter, cx);
         cx.spawn_in(window, async move |this, cx| {
             let scenario = scenario.await.context("no scenario to save")?;
             let worktree_id = task_contexts
@@ -450,7 +450,7 @@ impl NewProcessModal {
             .and_then(|buffer| buffer.read(cx).language())
             .cloned();
 
-        let mut available_adapters = workspace
+        let mut available_adapters: Vec<_> = workspace
             .update(cx, |_, cx| DapRegistry::global(cx).enumerate_adapters())
             .unwrap_or_default();
         if let Some(language) = active_buffer_language {
@@ -659,12 +659,7 @@ impl Render for NewProcessModal {
                             this.mode = NewProcessMode::Attach;
 
                             if let Some(debugger) = this.debugger.as_ref() {
-                                Self::update_attach_picker(
-                                    &this.attach_mode,
-                                    &debugger,
-                                    window,
-                                    cx,
-                                );
+                                Self::update_attach_picker(&this.attach_mode, debugger, window, cx);
                             }
                             this.mode_focus_handle(cx).focus(window);
                             cx.notify();
@@ -790,7 +785,7 @@ impl RenderOnce for AttachMode {
         v_flex()
             .w_full()
             .track_focus(&self.attach_picker.focus_handle(cx))
-            .child(self.attach_picker.clone())
+            .child(self.attach_picker)
     }
 }
 
@@ -1054,6 +1049,9 @@ impl DebugDelegate {
                 })
             })
         });
+
+        let valid_adapters: HashSet<_> = cx.global::<DapRegistry>().enumerate_adapters();
+
         cx.spawn(async move |this, cx| {
             let (recent, scenarios) = if let Some(task) = task {
                 task.await
@@ -1080,7 +1078,7 @@ impl DebugDelegate {
                     .into_iter()
                     .map(|(scenario, context)| {
                         let (kind, scenario) =
-                            Self::get_scenario_kind(&languages, &dap_registry, scenario);
+                            Self::get_scenario_kind(&languages, dap_registry, scenario);
                         (kind, scenario, Some(context))
                     })
                     .chain(
@@ -1094,9 +1092,10 @@ impl DebugDelegate {
                                 } => !(hide_vscode && dir.ends_with(".vscode")),
                                 _ => true,
                             })
+                            .filter(|(_, scenario)| valid_adapters.contains(&scenario.adapter))
                             .map(|(kind, scenario)| {
                                 let (language, scenario) =
-                                    Self::get_scenario_kind(&languages, &dap_registry, scenario);
+                                    Self::get_scenario_kind(&languages, dap_registry, scenario);
                                 (language.or(Some(kind)), scenario, None)
                             }),
                     )
@@ -1384,14 +1383,28 @@ impl PickerDelegate for DebugDelegate {
             .border_color(cx.theme().colors().border_variant)
             .children({
                 let action = menu::SecondaryConfirm.boxed_clone();
-                KeyBinding::for_action(&*action, window, cx).map(|keybind| {
-                    Button::new("edit-debug-task", "Edit in debug.json")
-                        .label_size(LabelSize::Small)
-                        .key_binding(keybind)
-                        .on_click(move |_, window, cx| {
-                            window.dispatch_action(action.boxed_clone(), cx)
-                        })
-                })
+                if self.matches.is_empty() {
+                    Some(
+                        Button::new("edit-debug-json", "Edit debug.json")
+                            .label_size(LabelSize::Small)
+                            .on_click(cx.listener(|_picker, _, window, cx| {
+                                window.dispatch_action(
+                                    zed_actions::OpenProjectDebugTasks.boxed_clone(),
+                                    cx,
+                                );
+                                cx.emit(DismissEvent);
+                            })),
+                    )
+                } else {
+                    KeyBinding::for_action(&*action, window, cx).map(|keybind| {
+                        Button::new("edit-debug-task", "Edit in debug.json")
+                            .label_size(LabelSize::Small)
+                            .key_binding(keybind)
+                            .on_click(move |_, window, cx| {
+                                window.dispatch_action(action.boxed_clone(), cx)
+                            })
+                    })
+                }
             })
             .map(|this| {
                 if (current_modifiers.alt || self.matches.is_empty()) && !self.prompt.is_empty() {

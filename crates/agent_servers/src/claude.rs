@@ -1,19 +1,27 @@
+mod edit_tool;
 mod mcp_server;
+mod permission_tool;
+mod read_tool;
 pub mod tools;
+mod write_tool;
 
+use action_log::ActionLog;
 use collections::HashMap;
 use context_server::listener::McpServerTool;
+use language_models::provider::anthropic::AnthropicLanguageModelProvider;
 use project::Project;
 use settings::SettingsStore;
 use smol::process::Child;
+use std::any::Any;
 use std::cell::RefCell;
 use std::fmt::Display;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use util::command::new_smol_command;
 use uuid::Uuid;
 
 use agent_client_protocol as acp;
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use futures::channel::oneshot;
 use futures::{AsyncBufReadExt, AsyncWriteExt};
 use futures::{
@@ -22,33 +30,41 @@ use futures::{
     io::BufReader,
     select_biased,
 };
-use gpui::{App, AppContext, AsyncApp, Entity, Task, WeakEntity};
+use gpui::{App, AppContext, AsyncApp, Entity, SharedString, Task, WeakEntity};
 use serde::{Deserialize, Serialize};
-use util::ResultExt;
+use util::{ResultExt, debug_panic};
 
 use crate::claude::mcp_server::{ClaudeZedMcpServer, McpConfig};
 use crate::claude::tools::ClaudeTool;
 use crate::{AgentServer, AgentServerCommand, AllAgentServersSettings};
-use acp_thread::{AcpThread, AgentConnection};
+use acp_thread::{AcpThread, AgentConnection, AuthRequired, LoadError, MentionUri};
 
 #[derive(Clone)]
 pub struct ClaudeCode;
 
 impl AgentServer for ClaudeCode {
-    fn name(&self) -> &'static str {
-        "Claude Code"
+    fn telemetry_id(&self) -> &'static str {
+        "claude-code"
     }
 
-    fn empty_state_headline(&self) -> &'static str {
+    fn name(&self) -> SharedString {
+        "Claude Code".into()
+    }
+
+    fn empty_state_headline(&self) -> SharedString {
         self.name()
     }
 
-    fn empty_state_message(&self) -> &'static str {
-        "How can I help you today?"
+    fn empty_state_message(&self) -> SharedString {
+        "How can I help you today?".into()
     }
 
     fn logo(&self) -> ui::IconName {
         ui::IconName::AiClaude
+    }
+
+    fn install_command(&self) -> Option<&'static str> {
+        Some("npm install -g @anthropic-ai/claude-code@latest")
     }
 
     fn connect(
@@ -63,6 +79,10 @@ impl AgentServer for ClaudeCode {
 
         Task::ready(Ok(Rc::new(connection) as _))
     }
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+        self
+    }
 }
 
 struct ClaudeAgentConnection {
@@ -74,12 +94,43 @@ impl AgentConnection for ClaudeAgentConnection {
         self: Rc<Self>,
         project: Entity<Project>,
         cwd: &Path,
-        cx: &mut AsyncApp,
+        cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
         let cwd = cwd.to_owned();
         cx.spawn(async move |cx| {
+            let settings = cx.read_global(|settings: &SettingsStore, _| {
+                settings.get::<AllAgentServersSettings>(None).claude.clone()
+            })?;
+
+            let Some(command) = AgentServerCommand::resolve(
+                "claude",
+                &[],
+                Some(&util::paths::home_dir().join(".claude/local/claude")),
+                settings,
+                &project,
+                cx,
+            )
+            .await
+            else {
+                return Err(LoadError::NotInstalled.into());
+            };
+
+            let api_key =
+                cx.update(AnthropicLanguageModelProvider::api_key)?
+                    .await
+                    .map_err(|err| {
+                        if err.is::<language_model::AuthenticateError>() {
+                            anyhow!(AuthRequired::new().with_language_model_provider(
+                                language_model::ANTHROPIC_PROVIDER_ID
+                            ))
+                        } else {
+                            anyhow!(err)
+                        }
+                    })?;
+
             let (mut thread_tx, thread_rx) = watch::channel(WeakEntity::new_invalid());
-            let permission_mcp_server = ClaudeZedMcpServer::new(thread_rx.clone(), cx).await?;
+            let fs = project.read_with(cx, |project, _cx| project.fs().clone())?;
+            let permission_mcp_server = ClaudeZedMcpServer::new(thread_rx.clone(), fs, cx).await?;
 
             let mut mcp_servers = HashMap::default();
             mcp_servers.insert(
@@ -97,16 +148,6 @@ impl AgentConnection for ClaudeAgentConnection {
                 .await?;
             mcp_config_file.flush().await?;
 
-            let settings = cx.read_global(|settings: &SettingsStore, _| {
-                settings.get::<AllAgentServersSettings>(None).claude.clone()
-            })?;
-
-            let Some(command) =
-                AgentServerCommand::resolve("claude", &[], settings, &project, cx).await
-            else {
-                anyhow::bail!("Failed to find claude binary");
-            };
-
             let (incoming_message_tx, mut incoming_message_rx) = mpsc::unbounded();
             let (outgoing_tx, outgoing_rx) = mpsc::unbounded();
 
@@ -118,15 +159,29 @@ impl AgentConnection for ClaudeAgentConnection {
                 &command,
                 ClaudeSessionMode::Start,
                 session_id.clone(),
+                api_key,
                 &mcp_config_path,
                 &cwd,
             )?;
 
-            let stdin = child.stdin.take().unwrap();
-            let stdout = child.stdout.take().unwrap();
+            let stdout = child.stdout.take().context("Failed to take stdout")?;
+            let stdin = child.stdin.take().context("Failed to take stdin")?;
+            let stderr = child.stderr.take().context("Failed to take stderr")?;
 
             let pid = child.id();
             log::trace!("Spawned (pid: {})", pid);
+
+            cx.background_spawn(async move {
+                let mut stderr = BufReader::new(stderr);
+                let mut line = String::new();
+                while let Ok(n) = stderr.read_line(&mut line).await
+                    && n > 0
+                {
+                    log::warn!("agent stderr: {}", &line);
+                    line.clear();
+                }
+            })
+            .detach();
 
             cx.background_spawn(async move {
                 let mut outgoing_rx = Some(outgoing_rx);
@@ -146,42 +201,70 @@ impl AgentConnection for ClaudeAgentConnection {
             })
             .detach();
 
-            let end_turn_tx = Rc::new(RefCell::new(None));
+            let turn_state = Rc::new(RefCell::new(TurnState::None));
+
             let handler_task = cx.spawn({
-                let end_turn_tx = end_turn_tx.clone();
+                let turn_state = turn_state.clone();
                 let mut thread_rx = thread_rx.clone();
                 async move |cx| {
                     while let Some(message) = incoming_message_rx.next().await {
                         ClaudeAgentSession::handle_message(
                             thread_rx.clone(),
                             message,
-                            end_turn_tx.clone(),
+                            turn_state.clone(),
                             cx,
                         )
                         .await
                     }
 
-                    if let Some(status) = child.status().await.log_err() {
-                        if let Some(thread) = thread_rx.recv().await.ok() {
-                            thread
-                                .update(cx, |thread, cx| {
-                                    thread.emit_server_exited(status, cx);
-                                })
-                                .ok();
-                        }
+                    if let Some(status) = child.status().await.log_err()
+                        && let Some(thread) = thread_rx.recv().await.ok()
+                    {
+                        let version = claude_version(command.path.clone(), cx).await.log_err();
+                        let help = claude_help(command.path.clone(), cx).await.log_err();
+                        thread
+                            .update(cx, |thread, cx| {
+                                let error = if let Some(version) = version
+                                    && let Some(help) = help
+                                    && (!help.contains("--input-format")
+                                        || !help.contains("--session-id"))
+                                {
+                                    LoadError::Unsupported {
+                                        command: command.path.to_string_lossy().to_string().into(),
+                                        current_version: version.to_string().into(),
+                                    }
+                                } else {
+                                    LoadError::Exited { status }
+                                };
+                                thread.emit_load_error(error, cx);
+                            })
+                            .ok();
                     }
                 }
             });
 
+            let action_log = cx.new(|_| ActionLog::new(project.clone()))?;
             let thread = cx.new(|cx| {
-                AcpThread::new("Claude Code", self.clone(), project, session_id.clone(), cx)
+                AcpThread::new(
+                    "Claude Code",
+                    self.clone(),
+                    project,
+                    action_log,
+                    session_id.clone(),
+                    watch::Receiver::constant(acp::PromptCapabilities {
+                        image: true,
+                        audio: false,
+                        embedded_context: true,
+                    }),
+                    cx,
+                )
             })?;
 
             thread_tx.send(thread.downgrade())?;
 
             let session = ClaudeAgentSession {
                 outgoing_tx,
-                end_turn_tx,
+                turn_state,
                 _handler_task: handler_task,
                 _mcp_server: Some(permission_mcp_server),
             };
@@ -200,7 +283,12 @@ impl AgentConnection for ClaudeAgentConnection {
         Task::ready(Err(anyhow!("Authentication not supported")))
     }
 
-    fn prompt(&self, params: acp::PromptRequest, cx: &mut App) -> Task<Result<()>> {
+    fn prompt(
+        &self,
+        _id: Option<acp_thread::UserMessageId>,
+        params: acp::PromptRequest,
+        cx: &mut App,
+    ) -> Task<Result<acp::PromptResponse>> {
         let sessions = self.sessions.borrow();
         let Some(session) = sessions.get(&params.session_id) else {
             return Task::ready(Err(anyhow!(
@@ -209,30 +297,15 @@ impl AgentConnection for ClaudeAgentConnection {
             )));
         };
 
-        let (tx, rx) = oneshot::channel();
-        session.end_turn_tx.borrow_mut().replace(tx);
+        let (end_tx, end_rx) = oneshot::channel();
+        session.turn_state.replace(TurnState::InProgress { end_tx });
 
-        let mut content = String::new();
-        for chunk in params.prompt {
-            match chunk {
-                acp::ContentBlock::Text(text_content) => {
-                    content.push_str(&text_content.text);
-                }
-                acp::ContentBlock::ResourceLink(resource_link) => {
-                    content.push_str(&format!("@{}", resource_link.uri));
-                }
-                acp::ContentBlock::Audio(_)
-                | acp::ContentBlock::Image(_)
-                | acp::ContentBlock::Resource(_) => {
-                    // TODO
-                }
-            }
-        }
+        let content = acp_content_to_claude(params.prompt);
 
         if let Err(err) = session.outgoing_tx.unbounded_send(SdkMessage::User {
             message: Message {
                 role: Role::User,
-                content: Content::UntaggedText(content),
+                content: Content::Chunks(content),
                 id: None,
                 model: None,
                 stop_reason: None,
@@ -244,23 +317,41 @@ impl AgentConnection for ClaudeAgentConnection {
             return Task::ready(Err(anyhow!(err)));
         }
 
-        cx.foreground_executor().spawn(async move {
-            rx.await??;
-            Ok(())
-        })
+        cx.foreground_executor().spawn(async move { end_rx.await? })
     }
 
     fn cancel(&self, session_id: &acp::SessionId, _cx: &mut App) {
         let sessions = self.sessions.borrow();
-        let Some(session) = sessions.get(&session_id) else {
+        let Some(session) = sessions.get(session_id) else {
             log::warn!("Attempted to cancel nonexistent session {}", session_id);
             return;
         };
 
+        let request_id = new_request_id();
+
+        let turn_state = session.turn_state.take();
+        let TurnState::InProgress { end_tx } = turn_state else {
+            // Already canceled or idle, put it back
+            session.turn_state.replace(turn_state);
+            return;
+        };
+
+        session.turn_state.replace(TurnState::CancelRequested {
+            end_tx,
+            request_id: request_id.clone(),
+        });
+
         session
             .outgoing_tx
-            .unbounded_send(SdkMessage::new_interrupt_message())
+            .unbounded_send(SdkMessage::ControlRequest {
+                request_id,
+                request: ControlRequest::Interrupt,
+            })
             .log_err();
+    }
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+        self
     }
 }
 
@@ -275,6 +366,7 @@ fn spawn_claude(
     command: &AgentServerCommand,
     mode: ClaudeSessionMode,
     session_id: acp::SessionId,
+    api_key: language_models::provider::anthropic::ApiKey,
     mcp_config_path: &Path,
     root_dir: &Path,
 ) -> Result<Child> {
@@ -292,56 +384,204 @@ fn spawn_claude(
             &format!(
                 "mcp__{}__{}",
                 mcp_server::SERVER_NAME,
-                mcp_server::PermissionTool::NAME,
+                permission_tool::PermissionTool::NAME,
             ),
             "--allowedTools",
             &format!(
-                "mcp__{}__{},mcp__{}__{}",
+                "mcp__{}__{}",
                 mcp_server::SERVER_NAME,
-                mcp_server::EditTool::NAME,
-                mcp_server::SERVER_NAME,
-                mcp_server::ReadTool::NAME
+                read_tool::ReadTool::NAME
             ),
             "--disallowedTools",
-            "Read,Edit",
+            "Read,Write,Edit,MultiEdit",
         ])
         .args(match mode {
             ClaudeSessionMode::Start => ["--session-id".to_string(), session_id.to_string()],
             ClaudeSessionMode::Resume => ["--resume".to_string(), session_id.to_string()],
         })
         .args(command.args.iter().map(|arg| arg.as_str()))
+        .envs(command.env.iter().flatten())
+        .env("ANTHROPIC_API_KEY", api_key.key)
         .current_dir(root_dir)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::piped())
         .kill_on_drop(true)
         .spawn()?;
 
     Ok(child)
 }
 
+fn claude_version(path: PathBuf, cx: &mut AsyncApp) -> Task<Result<semver::Version>> {
+    cx.background_spawn(async move {
+        let output = new_smol_command(path).arg("--version").output().await?;
+        let output = String::from_utf8(output.stdout)?;
+        let version = output
+            .trim()
+            .strip_suffix(" (Claude Code)")
+            .context("parsing Claude version")?;
+        let version = semver::Version::parse(version)?;
+        anyhow::Ok(version)
+    })
+}
+
+fn claude_help(path: PathBuf, cx: &mut AsyncApp) -> Task<Result<String>> {
+    cx.background_spawn(async move {
+        let output = new_smol_command(path).arg("--help").output().await?;
+        let output = String::from_utf8(output.stdout)?;
+        anyhow::Ok(output)
+    })
+}
+
 struct ClaudeAgentSession {
     outgoing_tx: UnboundedSender<SdkMessage>,
-    end_turn_tx: Rc<RefCell<Option<oneshot::Sender<Result<()>>>>>,
+    turn_state: Rc<RefCell<TurnState>>,
     _mcp_server: Option<ClaudeZedMcpServer>,
     _handler_task: Task<()>,
+}
+
+#[derive(Debug, Default)]
+enum TurnState {
+    #[default]
+    None,
+    InProgress {
+        end_tx: oneshot::Sender<Result<acp::PromptResponse>>,
+    },
+    CancelRequested {
+        end_tx: oneshot::Sender<Result<acp::PromptResponse>>,
+        request_id: String,
+    },
+    CancelConfirmed {
+        end_tx: oneshot::Sender<Result<acp::PromptResponse>>,
+    },
+}
+
+impl TurnState {
+    fn is_canceled(&self) -> bool {
+        matches!(self, TurnState::CancelConfirmed { .. })
+    }
+
+    fn end_tx(self) -> Option<oneshot::Sender<Result<acp::PromptResponse>>> {
+        match self {
+            TurnState::None => None,
+            TurnState::InProgress { end_tx, .. } => Some(end_tx),
+            TurnState::CancelRequested { end_tx, .. } => Some(end_tx),
+            TurnState::CancelConfirmed { end_tx } => Some(end_tx),
+        }
+    }
+
+    fn confirm_cancellation(self, id: &str) -> Self {
+        match self {
+            TurnState::CancelRequested { request_id, end_tx } if request_id == id => {
+                TurnState::CancelConfirmed { end_tx }
+            }
+            _ => self,
+        }
+    }
 }
 
 impl ClaudeAgentSession {
     async fn handle_message(
         mut thread_rx: watch::Receiver<WeakEntity<AcpThread>>,
         message: SdkMessage,
-        end_turn_tx: Rc<RefCell<Option<oneshot::Sender<Result<()>>>>>,
+        turn_state: Rc<RefCell<TurnState>>,
         cx: &mut AsyncApp,
     ) {
         match message {
             // we should only be sending these out, they don't need to be in the thread
             SdkMessage::ControlRequest { .. } => {}
-            SdkMessage::Assistant {
+            SdkMessage::User {
                 message,
                 session_id: _,
+            } => {
+                let Some(thread) = thread_rx
+                    .recv()
+                    .await
+                    .log_err()
+                    .and_then(|entity| entity.upgrade())
+                else {
+                    log::error!("Received an SDK message but thread is gone");
+                    return;
+                };
+
+                for chunk in message.content.chunks() {
+                    match chunk {
+                        ContentChunk::Text { text } | ContentChunk::UntaggedText(text) => {
+                            if !turn_state.borrow().is_canceled() {
+                                thread
+                                    .update(cx, |thread, cx| {
+                                        thread.push_user_content_block(None, text.into(), cx)
+                                    })
+                                    .log_err();
+                            }
+                        }
+                        ContentChunk::ToolResult {
+                            content,
+                            tool_use_id,
+                        } => {
+                            let content = content.to_string();
+                            thread
+                                .update(cx, |thread, cx| {
+                                    let id = acp::ToolCallId(tool_use_id.into());
+                                    let set_new_content = !content.is_empty()
+                                        && thread.tool_call(&id).is_none_or(|(_, tool_call)| {
+                                            // preserve rich diff if we have one
+                                            tool_call.diffs().next().is_none()
+                                        });
+
+                                    thread.update_tool_call(
+                                        acp::ToolCallUpdate {
+                                            id,
+                                            fields: acp::ToolCallUpdateFields {
+                                                status: if turn_state.borrow().is_canceled() {
+                                                    // Do not set to completed if turn was canceled
+                                                    None
+                                                } else {
+                                                    Some(acp::ToolCallStatus::Completed)
+                                                },
+                                                content: set_new_content
+                                                    .then(|| vec![content.into()]),
+                                                ..Default::default()
+                                            },
+                                        },
+                                        cx,
+                                    )
+                                })
+                                .log_err();
+                        }
+                        ContentChunk::Thinking { .. }
+                        | ContentChunk::RedactedThinking
+                        | ContentChunk::ToolUse { .. } => {
+                            debug_panic!(
+                                "Should not get {:?} with role: assistant. should we handle this?",
+                                chunk
+                            );
+                        }
+                        ContentChunk::Image { source } => {
+                            if !turn_state.borrow().is_canceled() {
+                                thread
+                                    .update(cx, |thread, cx| {
+                                        thread.push_user_content_block(None, source.into(), cx)
+                                    })
+                                    .log_err();
+                            }
+                        }
+
+                        ContentChunk::Document | ContentChunk::WebSearchToolResult => {
+                            thread
+                                .update(cx, |thread, cx| {
+                                    thread.push_assistant_content_block(
+                                        format!("Unsupported content: {:?}", chunk).into(),
+                                        false,
+                                        cx,
+                                    )
+                                })
+                                .log_err();
+                        }
+                    }
+                }
             }
-            | SdkMessage::User {
+            SdkMessage::Assistant {
                 message,
                 session_id: _,
             } => {
@@ -361,6 +601,24 @@ impl ClaudeAgentSession {
                             thread
                                 .update(cx, |thread, cx| {
                                     thread.push_assistant_content_block(text.into(), false, cx)
+                                })
+                                .log_err();
+                        }
+                        ContentChunk::Thinking { thinking } => {
+                            thread
+                                .update(cx, |thread, cx| {
+                                    thread.push_assistant_content_block(thinking.into(), true, cx)
+                                })
+                                .log_err();
+                        }
+                        ContentChunk::RedactedThinking => {
+                            thread
+                                .update(cx, |thread, cx| {
+                                    thread.push_assistant_content_block(
+                                        "[REDACTED]".into(),
+                                        true,
+                                        cx,
+                                    )
                                 })
                                 .log_err();
                         }
@@ -384,38 +642,25 @@ impl ClaudeAgentSession {
                                         thread.upsert_tool_call(
                                             claude_tool.as_acp(acp::ToolCallId(id.into())),
                                             cx,
-                                        );
+                                        )?;
                                     }
+                                    anyhow::Ok(())
                                 })
                                 .log_err();
                         }
-                        ContentChunk::ToolResult {
-                            content,
-                            tool_use_id,
-                        } => {
-                            let content = content.to_string();
+                        ContentChunk::ToolResult { .. } | ContentChunk::WebSearchToolResult => {
+                            debug_panic!(
+                                "Should not get tool results with role: assistant. should we handle this?"
+                            );
+                        }
+                        ContentChunk::Image { source } => {
                             thread
                                 .update(cx, |thread, cx| {
-                                    thread.update_tool_call(
-                                        acp::ToolCallUpdate {
-                                            id: acp::ToolCallId(tool_use_id.into()),
-                                            fields: acp::ToolCallUpdateFields {
-                                                status: Some(acp::ToolCallStatus::Completed),
-                                                content: (!content.is_empty())
-                                                    .then(|| vec![content.into()]),
-                                                ..Default::default()
-                                            },
-                                        },
-                                        cx,
-                                    )
+                                    thread.push_assistant_content_block(source.into(), false, cx)
                                 })
                                 .log_err();
                         }
-                        ContentChunk::Image
-                        | ContentChunk::Document
-                        | ContentChunk::Thinking
-                        | ContentChunk::RedactedThinking
-                        | ContentChunk::WebSearchToolResult => {
+                        ContentChunk::Document => {
                             thread
                                 .update(cx, |thread, cx| {
                                     thread.push_assistant_content_block(
@@ -435,20 +680,40 @@ impl ClaudeAgentSession {
                 result,
                 ..
             } => {
-                if let Some(end_turn_tx) = end_turn_tx.borrow_mut().take() {
-                    if is_error {
-                        end_turn_tx
-                            .send(Err(anyhow!(
-                                "Error: {}",
-                                result.unwrap_or_else(|| subtype.to_string())
-                            )))
-                            .ok();
-                    } else {
-                        end_turn_tx.send(Ok(())).ok();
-                    }
+                let turn_state = turn_state.take();
+                let was_canceled = turn_state.is_canceled();
+                let Some(end_turn_tx) = turn_state.end_tx() else {
+                    debug_panic!("Received `SdkMessage::Result` but there wasn't an active turn");
+                    return;
+                };
+
+                if is_error || (!was_canceled && subtype == ResultErrorType::ErrorDuringExecution) {
+                    end_turn_tx
+                        .send(Err(anyhow!(
+                            "Error: {}",
+                            result.unwrap_or_else(|| subtype.to_string())
+                        )))
+                        .ok();
+                } else {
+                    let stop_reason = match subtype {
+                        ResultErrorType::Success => acp::StopReason::EndTurn,
+                        ResultErrorType::ErrorMaxTurns => acp::StopReason::MaxTurnRequests,
+                        ResultErrorType::ErrorDuringExecution => acp::StopReason::Cancelled,
+                    };
+                    end_turn_tx
+                        .send(Ok(acp::PromptResponse { stop_reason }))
+                        .ok();
                 }
             }
-            SdkMessage::System { .. } | SdkMessage::ControlResponse { .. } => {}
+            SdkMessage::ControlResponse { response } => {
+                if matches!(response.subtype, ResultErrorType::Success) {
+                    let new_state = turn_state.take().confirm_cancellation(&response.request_id);
+                    turn_state.replace(new_state);
+                } else {
+                    log::error!("Control response error: {:?}", response);
+                }
+            }
+            SdkMessage::System { .. } => {}
         }
     }
 
@@ -523,7 +788,7 @@ impl Content {
     pub fn chunks(self) -> impl Iterator<Item = ContentChunk> {
         match self {
             Self::Chunks(chunks) => chunks.into_iter(),
-            Self::UntaggedText(text) => vec![ContentChunk::Text { text: text.clone() }].into_iter(),
+            Self::UntaggedText(text) => vec![ContentChunk::Text { text }].into_iter(),
         }
     }
 }
@@ -557,26 +822,58 @@ enum ContentChunk {
         content: Content,
         tool_use_id: String,
     },
-    // TODO
-    Image,
-    Document,
-    Thinking,
+    Thinking {
+        thinking: String,
+    },
     RedactedThinking,
+    Image {
+        source: ImageSource,
+    },
+    // TODO
+    Document,
     WebSearchToolResult,
     #[serde(untagged)]
     UntaggedText(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ImageSource {
+    Base64 { data: String, media_type: String },
+    Url { url: String },
+}
+
+impl Into<acp::ContentBlock> for ImageSource {
+    fn into(self) -> acp::ContentBlock {
+        match self {
+            ImageSource::Base64 { data, media_type } => {
+                acp::ContentBlock::Image(acp::ImageContent {
+                    annotations: None,
+                    data,
+                    mime_type: media_type,
+                    uri: None,
+                })
+            }
+            ImageSource::Url { url } => acp::ContentBlock::Image(acp::ImageContent {
+                annotations: None,
+                data: "".to_string(),
+                mime_type: "".to_string(),
+                uri: Some(url),
+            }),
+        }
+    }
 }
 
 impl Display for ContentChunk {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ContentChunk::Text { text } => write!(f, "{}", text),
+            ContentChunk::Thinking { thinking } => write!(f, "Thinking: {}", thinking),
+            ContentChunk::RedactedThinking => write!(f, "Thinking: [REDACTED]"),
             ContentChunk::UntaggedText(text) => write!(f, "{}", text),
             ContentChunk::ToolResult { content, .. } => write!(f, "{}", content),
-            ContentChunk::Image
+            ContentChunk::Image { .. }
             | ContentChunk::Document
-            | ContentChunk::Thinking
-            | ContentChunk::RedactedThinking
             | ContentChunk::ToolUse { .. }
             | ContentChunk::WebSearchToolResult => {
                 write!(f, "\n{:?}\n", &self)
@@ -669,7 +966,7 @@ struct ControlResponse {
     subtype: ResultErrorType,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 enum ResultErrorType {
     Success,
@@ -687,22 +984,84 @@ impl Display for ResultErrorType {
     }
 }
 
-impl SdkMessage {
-    fn new_interrupt_message() -> Self {
-        use rand::Rng;
-        // In the Claude Code TS SDK they just generate a random 12 character string,
-        // `Math.random().toString(36).substring(2, 15)`
-        let request_id = rand::thread_rng()
-            .sample_iter(&rand::distributions::Alphanumeric)
-            .take(12)
-            .map(char::from)
-            .collect();
+fn acp_content_to_claude(prompt: Vec<acp::ContentBlock>) -> Vec<ContentChunk> {
+    let mut content = Vec::with_capacity(prompt.len());
+    let mut context = Vec::with_capacity(prompt.len());
 
-        Self::ControlRequest {
-            request_id,
-            request: ControlRequest::Interrupt,
+    for chunk in prompt {
+        match chunk {
+            acp::ContentBlock::Text(text_content) => {
+                content.push(ContentChunk::Text {
+                    text: text_content.text,
+                });
+            }
+            acp::ContentBlock::ResourceLink(resource_link) => {
+                match MentionUri::parse(&resource_link.uri) {
+                    Ok(uri) => {
+                        content.push(ContentChunk::Text {
+                            text: format!("{}", uri.as_link()),
+                        });
+                    }
+                    Err(_) => {
+                        content.push(ContentChunk::Text {
+                            text: resource_link.uri,
+                        });
+                    }
+                }
+            }
+            acp::ContentBlock::Resource(resource) => match resource.resource {
+                acp::EmbeddedResourceResource::TextResourceContents(resource) => {
+                    match MentionUri::parse(&resource.uri) {
+                        Ok(uri) => {
+                            content.push(ContentChunk::Text {
+                                text: format!("{}", uri.as_link()),
+                            });
+                        }
+                        Err(_) => {
+                            content.push(ContentChunk::Text {
+                                text: resource.uri.clone(),
+                            });
+                        }
+                    }
+
+                    context.push(ContentChunk::Text {
+                        text: format!(
+                            "\n<context ref=\"{}\">\n{}\n</context>",
+                            resource.uri, resource.text
+                        ),
+                    });
+                }
+                acp::EmbeddedResourceResource::BlobResourceContents(_) => {
+                    // Unsupported by SDK
+                }
+            },
+            acp::ContentBlock::Image(acp::ImageContent {
+                data, mime_type, ..
+            }) => content.push(ContentChunk::Image {
+                source: ImageSource::Base64 {
+                    data,
+                    media_type: mime_type,
+                },
+            }),
+            acp::ContentBlock::Audio(_) => {
+                // Unsupported by SDK
+            }
         }
     }
+
+    content.extend(context);
+    content
+}
+
+fn new_request_id() -> String {
+    use rand::Rng;
+    // In the Claude Code TS SDK they just generate a random 12 character string,
+    // `Math.random().toString(36).substring(2, 15)`
+    rand::thread_rng()
+        .sample_iter(&rand::distributions::Alphanumeric)
+        .take(12)
+        .map(char::from)
+        .collect()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -723,9 +1082,11 @@ enum PermissionMode {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::e2e_tests;
+    use gpui::TestAppContext;
     use serde_json::json;
 
-    crate::common_e2e_tests!(ClaudeCode, allow_option_id = "allow");
+    crate::common_e2e_tests!(async |_, _, _| ClaudeCode, allow_option_id = "allow");
 
     pub fn local_command() -> AgentServerCommand {
         AgentServerCommand {
@@ -733,6 +1094,68 @@ pub(crate) mod tests {
             args: vec![],
             env: None,
         }
+    }
+
+    #[gpui::test]
+    #[cfg_attr(not(feature = "e2e"), ignore)]
+    async fn test_todo_plan(cx: &mut TestAppContext) {
+        let fs = e2e_tests::init_test(cx).await;
+        let project = Project::test(fs, [], cx).await;
+        let thread =
+            e2e_tests::new_test_thread(ClaudeCode, project.clone(), "/private/tmp", cx).await;
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.send_raw(
+                    "Create a todo plan for initializing a new React app. I'll follow it myself, do not execute on it.",
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        let mut entries_len = 0;
+
+        thread.read_with(cx, |thread, _| {
+            entries_len = thread.plan().entries.len();
+            assert!(!thread.plan().entries.is_empty(), "Empty plan");
+        });
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.send_raw(
+                    "Mark the first entry status as in progress without acting on it.",
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        thread.read_with(cx, |thread, _| {
+            assert!(matches!(
+                thread.plan().entries[0].status,
+                acp::PlanEntryStatus::InProgress
+            ));
+            assert_eq!(thread.plan().entries.len(), entries_len);
+        });
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.send_raw(
+                    "Now mark the first entry as completed without acting on it.",
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        thread.read_with(cx, |thread, _| {
+            assert!(matches!(
+                thread.plan().entries[0].status,
+                acp::PlanEntryStatus::Completed
+            ));
+            assert_eq!(thread.plan().entries.len(), entries_len);
+        });
     }
 
     #[test]
@@ -844,6 +1267,102 @@ pub(crate) mod tests {
                 assert_eq!(tool_use_id, "tool_789");
             }
             _ => panic!("Expected ToolResult variant"),
+        }
+    }
+
+    #[test]
+    fn test_acp_content_to_claude() {
+        let acp_content = vec![
+            acp::ContentBlock::Text(acp::TextContent {
+                text: "Hello world".to_string(),
+                annotations: None,
+            }),
+            acp::ContentBlock::Image(acp::ImageContent {
+                data: "base64data".to_string(),
+                mime_type: "image/png".to_string(),
+                annotations: None,
+                uri: None,
+            }),
+            acp::ContentBlock::ResourceLink(acp::ResourceLink {
+                uri: "file:///path/to/example.rs".to_string(),
+                name: "example.rs".to_string(),
+                annotations: None,
+                description: None,
+                mime_type: None,
+                size: None,
+                title: None,
+            }),
+            acp::ContentBlock::Resource(acp::EmbeddedResource {
+                annotations: None,
+                resource: acp::EmbeddedResourceResource::TextResourceContents(
+                    acp::TextResourceContents {
+                        mime_type: None,
+                        text: "fn main() { println!(\"Hello!\"); }".to_string(),
+                        uri: "file:///path/to/code.rs".to_string(),
+                    },
+                ),
+            }),
+            acp::ContentBlock::ResourceLink(acp::ResourceLink {
+                uri: "invalid_uri_format".to_string(),
+                name: "invalid.txt".to_string(),
+                annotations: None,
+                description: None,
+                mime_type: None,
+                size: None,
+                title: None,
+            }),
+        ];
+
+        let claude_content = acp_content_to_claude(acp_content);
+
+        assert_eq!(claude_content.len(), 6);
+
+        match &claude_content[0] {
+            ContentChunk::Text { text } => assert_eq!(text, "Hello world"),
+            _ => panic!("Expected Text chunk"),
+        }
+
+        match &claude_content[1] {
+            ContentChunk::Image { source } => match source {
+                ImageSource::Base64 { data, media_type } => {
+                    assert_eq!(data, "base64data");
+                    assert_eq!(media_type, "image/png");
+                }
+                _ => panic!("Expected Base64 image source"),
+            },
+            _ => panic!("Expected Image chunk"),
+        }
+
+        match &claude_content[2] {
+            ContentChunk::Text { text } => {
+                assert!(text.contains("example.rs"));
+                assert!(text.contains("file:///path/to/example.rs"));
+            }
+            _ => panic!("Expected Text chunk for ResourceLink"),
+        }
+
+        match &claude_content[3] {
+            ContentChunk::Text { text } => {
+                assert!(text.contains("code.rs"));
+                assert!(text.contains("file:///path/to/code.rs"));
+            }
+            _ => panic!("Expected Text chunk for Resource"),
+        }
+
+        match &claude_content[4] {
+            ContentChunk::Text { text } => {
+                assert_eq!(text, "invalid_uri_format");
+            }
+            _ => panic!("Expected Text chunk for invalid URI"),
+        }
+
+        match &claude_content[5] {
+            ContentChunk::Text { text } => {
+                assert!(text.contains("<context ref=\"file:///path/to/code.rs\">"));
+                assert!(text.contains("fn main() { println!(\"Hello!\"); }"));
+                assert!(text.contains("</context>"));
+            }
+            _ => panic!("Expected Text chunk for context"),
         }
     }
 }

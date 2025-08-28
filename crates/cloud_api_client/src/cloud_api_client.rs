@@ -1,11 +1,19 @@
+mod websocket;
+
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
+use cloud_api_types::websocket_protocol::{PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER_NAME};
 pub use cloud_api_types::*;
 use futures::AsyncReadExt as _;
+use gpui::{App, Task};
+use gpui_tokio::Tokio;
 use http_client::http::request;
 use http_client::{AsyncBody, HttpClientWithUrl, Method, Request, StatusCode};
 use parking_lot::RwLock;
+use yawc::WebSocket;
+
+use crate::websocket::Connection;
 
 struct Credentials {
     user_id: u32,
@@ -78,32 +86,33 @@ impl CloudApiClient {
         Ok(serde_json::from_str(&body)?)
     }
 
-    pub async fn accept_terms_of_service(&self) -> Result<AcceptTermsOfServiceResponse> {
-        let request = self.build_request(
-            Request::builder().method(Method::POST).uri(
-                self.http_client
-                    .build_zed_cloud_url("/client/terms_of_service/accept", &[])?
-                    .as_ref(),
-            ),
-            AsyncBody::default(),
-        )?;
+    pub fn connect(&self, cx: &App) -> Result<Task<Result<Connection>>> {
+        let mut connect_url = self
+            .http_client
+            .build_zed_cloud_url("/client/users/connect", &[])?;
+        connect_url
+            .set_scheme(match connect_url.scheme() {
+                "https" => "wss",
+                "http" => "ws",
+                scheme => Err(anyhow!("invalid URL scheme: {scheme}"))?,
+            })
+            .map_err(|_| anyhow!("failed to set URL scheme"))?;
 
-        let mut response = self.http_client.send(request).await?;
+        let credentials = self.credentials.read();
+        let credentials = credentials.as_ref().context("no credentials provided")?;
+        let authorization_header = format!("{} {}", credentials.user_id, credentials.access_token);
 
-        if !response.status().is_success() {
-            let mut body = String::new();
-            response.body_mut().read_to_string(&mut body).await?;
+        Ok(Tokio::spawn_result(cx, async move {
+            let ws = WebSocket::connect(connect_url)
+                .with_request(
+                    request::Builder::new()
+                        .header("Authorization", authorization_header)
+                        .header(PROTOCOL_VERSION_HEADER_NAME, PROTOCOL_VERSION.to_string()),
+                )
+                .await?;
 
-            anyhow::bail!(
-                "Failed to accept terms of service.\nStatus: {:?}\nBody: {body}",
-                response.status()
-            )
-        }
-
-        let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
-
-        Ok(serde_json::from_str(&body)?)
+            Ok(Connection::new(ws))
+        }))
     }
 
     pub async fn create_llm_token(
@@ -162,12 +171,12 @@ impl CloudApiClient {
             let mut body = String::new();
             response.body_mut().read_to_string(&mut body).await?;
             if response.status() == StatusCode::UNAUTHORIZED {
-                return Ok(false);
+                Ok(false)
             } else {
-                return Err(anyhow!(
+                Err(anyhow!(
                     "Failed to get authenticated user.\nStatus: {:?}\nBody: {body}",
                     response.status()
-                ));
+                ))
             }
         }
     }

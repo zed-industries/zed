@@ -20,7 +20,7 @@ use text::{Anchor, OffsetRangeExt as _};
 use util::markdown::MarkdownCodeBlock;
 use util::{ResultExt as _, post_inc};
 
-pub const RULES_ICON: IconName = IconName::Context;
+pub const RULES_ICON: IconName = IconName::Reader;
 
 pub enum ContextKind {
     File,
@@ -40,8 +40,8 @@ impl ContextKind {
             ContextKind::File => IconName::File,
             ContextKind::Directory => IconName::Folder,
             ContextKind::Symbol => IconName::Code,
-            ContextKind::Selection => IconName::Context,
-            ContextKind::FetchedUrl => IconName::Globe,
+            ContextKind::Selection => IconName::Reader,
+            ContextKind::FetchedUrl => IconName::ToolWeb,
             ContextKind::Thread => IconName::Thread,
             ContextKind::TextThread => IconName::TextThread,
             ContextKind::Rules => RULES_ICON,
@@ -201,24 +201,24 @@ impl FileContextHandle {
                         parse_status.changed().await.log_err();
                     }
 
-                    if let Ok(snapshot) = buffer.read_with(cx, |buffer, _| buffer.snapshot()) {
-                        if let Some(outline) = snapshot.outline(None) {
-                            let items = outline
-                                .items
-                                .into_iter()
-                                .map(|item| item.to_point(&snapshot));
+                    if let Ok(snapshot) = buffer.read_with(cx, |buffer, _| buffer.snapshot())
+                        && let Some(outline) = snapshot.outline(None)
+                    {
+                        let items = outline
+                            .items
+                            .into_iter()
+                            .map(|item| item.to_point(&snapshot));
 
-                            if let Ok(outline_text) =
-                                outline::render_outline(items, None, 0, usize::MAX).await
-                            {
-                                let context = AgentContext::File(FileContext {
-                                    handle: self,
-                                    full_path,
-                                    text: outline_text.into(),
-                                    is_outline: true,
-                                });
-                                return Some((context, vec![buffer]));
-                            }
+                        if let Ok(outline_text) =
+                            outline::render_outline(items, None, 0, usize::MAX).await
+                        {
+                            let context = AgentContext::File(FileContext {
+                                handle: self,
+                                full_path,
+                                text: outline_text.into(),
+                                is_outline: true,
+                            });
+                            return Some((context, vec![buffer]));
                         }
                     }
                 }
@@ -362,7 +362,7 @@ impl Display for DirectoryContext {
         let mut is_first = true;
         for descendant in &self.descendants {
             if !is_first {
-                write!(f, "\n")?;
+                writeln!(f)?;
             } else {
                 is_first = false;
             }
@@ -650,7 +650,7 @@ impl TextThreadContextHandle {
 impl Display for TextThreadContext {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         // TODO: escape title?
-        write!(f, "<text_thread title=\"{}\">\n", self.title)?;
+        writeln!(f, "<text_thread title=\"{}\">", self.title)?;
         write!(f, "{}", self.text.trim())?;
         write!(f, "\n</text_thread>")
     }
@@ -716,7 +716,7 @@ impl RulesContextHandle {
 impl Display for RulesContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(title) = &self.title {
-            write!(f, "Rules title: {}\n", title)?;
+            writeln!(f, "Rules title: {}", title)?;
         }
         let code_block = MarkdownCodeBlock {
             tag: "",
