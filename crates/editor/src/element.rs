@@ -3421,6 +3421,7 @@ impl EditorElement {
         style: &EditorStyle,
         editor_width: Pixels,
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
+        bg_segments_per_row: &[Vec<(Range<DisplayPoint>, Hsla)>],
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<LineWithInvisibles> {
@@ -3476,6 +3477,7 @@ impl EditorElement {
                 &snapshot.mode,
                 editor_width,
                 is_row_soft_wrapped,
+                bg_segments_per_row,
                 window,
                 cx,
             )
@@ -7495,6 +7497,7 @@ impl LineWithInvisibles {
         editor_mode: &EditorMode,
         text_width: Pixels,
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
+        bg_segments_per_row: &[Vec<(Range<DisplayPoint>, Hsla)>],
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<Self> {
@@ -8607,7 +8610,11 @@ impl Element for EditorElement {
                         cx,
                     );
 
-                    Self::bg_segments_per_row(start_row..end_row, &selections, &highlighted_ranges);
+                    let bg_segments_per_row = Self::bg_segments_per_row(
+                        start_row..end_row,
+                        &selections,
+                        &highlighted_ranges,
+                    );
 
                     let mut line_layouts = Self::layout_lines(
                         start_row..end_row,
@@ -8615,6 +8622,7 @@ impl Element for EditorElement {
                         &self.style,
                         editor_width,
                         is_row_soft_wrapped,
+                        &bg_segments_per_row,
                         window,
                         cx,
                     );
@@ -9974,6 +9982,7 @@ pub fn layout_line(
         &snapshot.mode,
         text_width,
         is_row_soft_wrapped,
+        &[],
         window,
         cx,
     )
