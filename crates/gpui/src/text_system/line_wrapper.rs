@@ -147,7 +147,7 @@ impl LineWrapper {
         for (ix, c) in char_indices {
             let char_width = self.width_for_char(c);
 
-            if (width + char_width + suffix_width).floor() >= truncate_width {
+            if (width + char_width + suffix_width).floor() > truncate_width {
                 return Some(truncation_ix);
             }
 
@@ -191,6 +191,7 @@ impl LineWrapper {
             }
             (Some(mut ix), TextDirection::RightToLeft) => {
                 ix += 1;
+
                 let result = SharedString::from(format!("{}{}", truncation_suffix, &line[ix..]));
                 update_runs_after_truncation(
                     line.len() - ix + truncation_suffix.len(),
@@ -365,6 +366,7 @@ mod tests {
     };
     #[cfg(target_os = "macos")]
     use crate::{TextRun, WindowTextSystem, WrapBoundary};
+    use metal::MTLVisibilityResultMode;
     use rand::prelude::*;
 
     fn build_wrapper() -> LineWrapper {
@@ -603,19 +605,21 @@ mod tests {
         fn perform_test(
             wrapper: &mut LineWrapper,
             text: &'static str,
-            result: &str,
+            expected_result: &str,
             run_lens: &[usize],
             result_run_len: &[usize],
             direction: TextDirection,
             line_width: Pixels,
         ) {
             let mut dummy_runs = generate_test_runs(run_lens);
-            assert_eq!(
-                wrapper.truncate_line(text.into(), line_width, "…", direction, &mut dummy_runs),
-                result
-            );
+            let result =
+                wrapper.truncate_line(text.into(), line_width, "…", direction, &mut dummy_runs);
+            assert_eq!(result, expected_result);
             for (run, result_len) in dummy_runs.iter().zip(result_run_len) {
-                assert_eq!(run.len, *result_len);
+                assert_eq!(
+                    run.len, *result_len,
+                    "Run length mismatch {dummy_runs:?}, {result_run_len:?}"
+                );
             }
         }
         // Case 0: Normal
@@ -623,13 +627,13 @@ mod tests {
         // Runs: Run0 { len: 12, ... }
         //
         // Truncate res: abcd… (truncate_at = 4)
-        // Run res: Run0 { string: abcd…, len: 7, ... }
+        // Run res: Run0 { string: abc…, len: 7, ... }
         perform_test(
             &mut wrapper,
             "abcdefghijkl",
-            "abcd…",
+            "abc…",
             &[12],
-            &[7],
+            &[6],
             TextDirection::LeftToRight,
             px(50.),
         );
@@ -641,9 +645,9 @@ mod tests {
         perform_test(
             &mut wrapper,
             "abcdefghijkl",
-            "…ijkl",
+            "…jkl",
             &[12],
-            &[7],
+            &[6],
             TextDirection::RightToLeft,
             px(50.),
         );
@@ -657,9 +661,9 @@ mod tests {
         perform_test(
             &mut wrapper,
             "abcdefghijkl",
-            "abcdef…",
+            "abcde…",
             &[4, 4, 4],
-            &[4, 5],
+            &[4, 4],
             TextDirection::LeftToRight,
             px(70.),
         );
@@ -672,9 +676,9 @@ mod tests {
         perform_test(
             &mut wrapper,
             "abcdefghijkl",
-            "…ghijkl",
+            "…hijkl",
             &[4, 4, 4],
-            &[4, 5],
+            &[4, 4],
             TextDirection::RightToLeft,
             px(70.),
         );
@@ -688,9 +692,9 @@ mod tests {
         perform_test(
             &mut wrapper,
             "abcdefghijkl",
-            "abcdefgh…",
+            "abcdefg…",
             &[4, 4, 4],
-            &[4, 4, 3],
+            &[4, 6],
             TextDirection::LeftToRight,
             px(90.),
         );
@@ -703,9 +707,9 @@ mod tests {
         perform_test(
             &mut wrapper,
             "abcdefghijkl",
-            "…efghijkl",
+            "…fghijkl",
             &[4, 4, 4],
-            &[4, 4, 3],
+            &[4, 6],
             TextDirection::RightToLeft,
             px(90.),
         );
