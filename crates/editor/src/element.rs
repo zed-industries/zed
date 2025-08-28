@@ -3267,6 +3267,7 @@ impl EditorElement {
         rows: Range<DisplayRow>,
         selections: &[(PlayerColor, Vec<SelectionLayout>)],
         highlight_ranges: &[(Range<DisplayPoint>, Hsla)],
+        base_background: Hsla,
     ) -> Vec<Vec<(Range<DisplayPoint>, Hsla)>> {
         if rows.start >= rows.end {
             return Vec::new();
@@ -3308,7 +3309,8 @@ impl EditorElement {
             }
         }
         for row_segments in per_row_map.iter_mut() {
-            let merged = Self::merge_overlapping_ranges(row_segments.drain(..).collect());
+            let merged =
+                Self::merge_overlapping_ranges(row_segments.drain(..).collect(), base_background);
             row_segments.extend(merged);
         }
         per_row_map
@@ -3320,6 +3322,7 @@ impl EditorElement {
     /// Expects `start.row() == end.row()` for each range.
     fn merge_overlapping_ranges(
         ranges: Vec<(Range<DisplayPoint>, Hsla)>,
+        base_background: Hsla,
     ) -> Vec<(Range<DisplayPoint>, Hsla)> {
         struct Boundary {
             pos: DisplayPoint,
@@ -3367,20 +3370,18 @@ impl EditorElement {
             let current_boundary_pos = boundaries[i].pos;
             if start_pos < current_boundary_pos {
                 if !active_ranges.is_empty() {
-                    let mut color = active_ranges[0].1;
-                    for &(_, c) in &active_ranges[1..] {
+                    let mut color = base_background;
+                    for &(_, c) in &active_ranges {
                         color = Hsla::blend(color, c);
                     }
-                    if color.a > 0.0 {
-                        if let Some((last_range, last_color)) = processed_ranges.last_mut() {
-                            if *last_color == color && last_range.end == start_pos {
-                                last_range.end = current_boundary_pos;
-                            } else {
-                                processed_ranges.push((start_pos..current_boundary_pos, color));
-                            }
+                    if let Some((last_range, last_color)) = processed_ranges.last_mut() {
+                        if *last_color == color && last_range.end == start_pos {
+                            last_range.end = current_boundary_pos;
                         } else {
                             processed_ranges.push((start_pos..current_boundary_pos, color));
                         }
+                    } else {
+                        processed_ranges.push((start_pos..current_boundary_pos, color));
                     }
                 }
             }
@@ -8686,6 +8687,7 @@ impl Element for EditorElement {
                         start_row..end_row,
                         &selections,
                         &highlighted_ranges,
+                        self.style.background,
                     );
 
                     let mut line_layouts = Self::layout_lines(
