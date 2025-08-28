@@ -133,7 +133,7 @@ impl Terminal {
             }
             // Don't truncate mid-line, clear the remainder of the last line
             end_ix = content[..end_ix].rfind('\n').unwrap_or(end_ix);
-            content.truncate(end_ix + 1);
+            content.truncate(end_ix);
         }
 
         (content, original_content_len)

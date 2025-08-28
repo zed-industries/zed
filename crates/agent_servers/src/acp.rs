@@ -403,14 +403,14 @@ impl acp::Client for ClientDelegate {
         Ok(())
     }
 
-    async fn new_terminal(
+    async fn create_terminal(
         &self,
-        args: acp::NewTerminalRequest,
-    ) -> Result<acp::NewTerminalResponse, acp::Error> {
+        args: acp::CreateTerminalRequest,
+    ) -> Result<acp::CreateTerminalResponse, acp::Error> {
         let terminal = self
             .session_thread(&args.session_id)?
             .update(&mut self.cx.clone(), |thread, cx| {
-                thread.new_terminal(
+                thread.create_terminal(
                     args.command,
                     args.args,
                     args.env,
@@ -421,7 +421,7 @@ impl acp::Client for ClientDelegate {
             })?
             .await?;
         Ok(
-            terminal.read_with(&self.cx, |terminal, _| acp::NewTerminalResponse {
+            terminal.read_with(&self.cx, |terminal, _| acp::CreateTerminalResponse {
                 terminal_id: terminal.id().clone(),
             })?,
         )

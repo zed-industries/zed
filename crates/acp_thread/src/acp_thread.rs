@@ -1861,7 +1861,7 @@ impl AcpThread {
         })
     }
 
-    pub fn new_terminal(
+    pub fn create_terminal(
         &self,
         mut command: String,
         args: Vec<String>,
