@@ -71,6 +71,12 @@ pub async fn stream_completion(
 
     response = response.inference_config(inference_config);
 
+    if let Some(system) = request.system {
+        if !system.is_empty() {
+            response = response.system(system);
+        }
+    }
+
     let output = response
         .send()
         .await
