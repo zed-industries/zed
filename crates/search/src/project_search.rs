@@ -1069,7 +1069,9 @@ impl ProjectSearchView {
         let will_autosave = can_autosave
             && matches!(
                 autosave_setting,
-                AutosaveSetting::OnFocusChange | AutosaveSetting::OnWindowChange
+                AutosaveSetting::OnFocusChange
+                    | AutosaveSetting::OnWindowChange
+                    | AutosaveSetting::AfterDelay { .. }
             );
 
         let is_dirty = self.is_dirty(cx);
