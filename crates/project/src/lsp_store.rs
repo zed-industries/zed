@@ -11,6 +11,7 @@
 //! Most of the interesting work happens at the local layer, as bulk of the complexity is with managing the lifecycle of language servers. The actual implementation of the LSP protocol is handled by [`lsp`] crate.
 pub mod clangd_ext;
 pub mod json_language_server_ext;
+pub mod log_store;
 pub mod lsp_ext_command;
 pub mod rust_analyzer_ext;
 

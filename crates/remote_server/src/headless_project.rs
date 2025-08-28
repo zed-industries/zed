@@ -1,6 +1,5 @@
 use ::proto::{FromProto, ToProto};
 use anyhow::{Context as _, Result, anyhow};
-use language_tools::lsp_log::{GlobalLogStore, LanguageServerKind};
 use lsp::LanguageServerId;
 
 use extension::ExtensionHostProxy;
@@ -16,6 +15,7 @@ use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
     debugger::{breakpoint_store::BreakpointStore, dap_store::DapStore},
     git_store::GitStore,
+    lsp_store::log_store::{self, GlobalLogStore, LanguageServerKind},
     project_settings::SettingsObserver,
     search::SearchQuery,
     task_store::TaskStore,
@@ -67,7 +67,7 @@ impl HeadlessProject {
         settings::init(cx);
         language::init(cx);
         project::Project::init_settings(cx);
-        language_tools::lsp_log::init(false, cx);
+        log_store::init(false, cx);
     }
 
     pub fn new(

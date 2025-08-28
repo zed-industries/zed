@@ -13501,7 +13501,6 @@ dependencies = [
  "language",
  "language_extension",
  "language_model",
- "language_tools",
  "languages",
  "libc",
  "log",

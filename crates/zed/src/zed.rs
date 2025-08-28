@@ -32,7 +32,8 @@ use gpui::{
 };
 use image_viewer::ImageInfo;
 use language::Capability;
-use language_tools::lsp_tool::{self, LspTool};
+use language_tools::lsp_button::{self, LspButton};
+use language_tools::lsp_log_view::LspLogToolbarItemView;
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
 use migrator::{migrate_keymap, migrate_settings};
 use onboarding::DOCS_URL;
@@ -396,12 +397,12 @@ pub fn initialize_workspace(
         let vim_mode_indicator = cx.new(|cx| vim::ModeIndicator::new(window, cx));
         let image_info = cx.new(|_cx| ImageInfo::new(workspace));
 
-        let lsp_tool_menu_handle = PopoverMenuHandle::default();
-        let lsp_tool =
-            cx.new(|cx| LspTool::new(workspace, lsp_tool_menu_handle.clone(), window, cx));
+        let lsp_button_menu_handle = PopoverMenuHandle::default();
+        let lsp_button =
+            cx.new(|cx| LspButton::new(workspace, lsp_button_menu_handle.clone(), window, cx));
         workspace.register_action({
-            move |_, _: &lsp_tool::ToggleMenu, window, cx| {
-                lsp_tool_menu_handle.toggle(window, cx);
+            move |_, _: &lsp_button::ToggleMenu, window, cx| {
+                lsp_button_menu_handle.toggle(window, cx);
             }
         });
 
@@ -409,7 +410,7 @@ pub fn initialize_workspace(
             cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(search_button, window, cx);
-            status_bar.add_left_item(lsp_tool, window, cx);
+            status_bar.add_left_item(lsp_button, window, cx);
             status_bar.add_left_item(diagnostic_summary, window, cx);
             status_bar.add_left_item(activity_indicator, window, cx);
             status_bar.add_right_item(edit_prediction_button, window, cx);
@@ -988,7 +989,7 @@ fn initialize_pane(
             toolbar.add_item(diagnostic_editor_controls, window, cx);
             let project_search_bar = cx.new(|_| ProjectSearchBar::new());
             toolbar.add_item(project_search_bar, window, cx);
-            let lsp_log_item = cx.new(|_| language_tools::LspLogToolbarItemView::new());
+            let lsp_log_item = cx.new(|_| LspLogToolbarItemView::new());
             toolbar.add_item(lsp_log_item, window, cx);
             let dap_log_item = cx.new(|_| debugger_tools::DapLogToolbarItemView::new());
             toolbar.add_item(dap_log_item, window, cx);
