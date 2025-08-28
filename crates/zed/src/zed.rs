@@ -4514,6 +4514,7 @@ mod tests {
                 "zed",
                 "zed_predict_onboarding",
                 "zeta",
+                "window",
             ];
             assert_eq!(
                 all_namespaces,
