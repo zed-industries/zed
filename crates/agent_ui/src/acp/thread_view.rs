@@ -3071,7 +3071,45 @@ impl AcpThreadView {
         let active_color = cx.theme().colors().element_selected;
         let bg_edit_files_disclosure = editor_bg_color.blend(active_color.opacity(0.3));
 
-        let pending_edits = thread.has_pending_edit_tool_calls();
+        let pending_edits = {
+            use std::path::PathBuf;
+
+            // Collect paths for buffers with unreviewed edits
+            let mut changed_paths = HashSet::default();
+            for (buffer, _diff) in &changed_buffers {
+                if let Some(file) = buffer.read(cx).file() {
+                    changed_paths.insert(file.path().to_path_buf());
+                }
+            }
+
+            // Only consider pending edit tool calls that touch one of the changed files
+            let mut pending = false;
+            for entry in thread.entries().iter().rev() {
+                match entry {
+                    AgentThreadEntry::UserMessage(_) => break, // stop scanning at last user message
+                    AgentThreadEntry::ToolCall(call)
+                        if matches!(
+                            call.status,
+                            ToolCallStatus::InProgress | ToolCallStatus::Pending
+                        ) && call.diffs().next().is_some() =>
+                    {
+                        // If the tool call reports locations, gate only when those overlap changed files.
+                        if !call.locations.is_empty()
+                            && call
+                                .locations
+                                .iter()
+                                .any(|loc| changed_paths.contains(&loc.path))
+                        {
+                            pending = true;
+                            break;
+                        }
+                        // If there are no locations, ignore for gating ACP buttons to match buffer controls behavior.
+                    }
+                    _ => {}
+                }
+            }
+            pending
+        };
 
         v_flex()
             .mt_1()
