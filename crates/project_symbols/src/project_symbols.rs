@@ -34,7 +34,7 @@ pub fn init(cx: &mut App) {
 
                         let width = {
                             let settings = ProjectSymbolsSettings::get_global(&cx);
-                            rems(settings.width.unwrap_or_else(|| 34.0))
+                            rems(settings.width.unwrap_or(34.0))
                         };
 
                         Picker::uniform_list(delegate, window, cx).width(width)
