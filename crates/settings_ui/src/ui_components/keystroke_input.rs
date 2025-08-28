@@ -1151,6 +1151,14 @@ mod tests {
             .send_events(&["+cmd", "shift-f", "-cmd"])
             // In search mode, when completing a modifier-only keystroke with a key,
             // only the original modifiers are preserved, not the keystroke's modifiers
+            //
+            // Update:
+            // This behavior was changed to preserve all modifiers in search mode, this is now reflected in the expected keystrokes.
+            // Specifically, considering the sequence: `+cmd +shift -shift 2`, we expect it to produce the same result as `+cmd +shift 2`
+            // which is `cmd-@`. But in the case of `+cmd +shift -shift 2`, the keystroke we receive is `cmd-2`, which means that
+            // we need to dynamically map the key from `2` to `@` when the shift modifier is not present, which is not possible.
+            // Therefore, we now preserve all modifiers in search mode to ensure consistent behavior.
+            // And alse, VSCode seems to preserve all modifiers in search mode as well.
             .expect_keystrokes(&["cmd-shift-f"]);
     }
 
