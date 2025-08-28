@@ -3268,6 +3268,9 @@ impl EditorElement {
         selections: &[(PlayerColor, Vec<SelectionLayout>)],
         highlight_ranges: &[(Range<DisplayPoint>, Hsla)],
     ) -> Vec<Vec<(Range<DisplayPoint>, Hsla)>> {
+        if rows.start >= rows.end {
+            return Vec::new();
+        }
         let highlight_iter = highlight_ranges.iter().cloned();
         let selection_iter = selections.iter().flat_map(|(player_color, layouts)| {
             let color = player_color.selection;
@@ -3279,27 +3282,8 @@ impl EditorElement {
                 }
             })
         });
-        let mut per_row_map =
-            Self::clamped_ranges_per_row(rows, highlight_iter.chain(selection_iter));
-        for row_segments in per_row_map.iter_mut() {
-            let merged = Self::merge_overlapping_ranges(row_segments.drain(..).collect());
-            row_segments.extend(merged);
-        }
-        per_row_map
-    }
-
-    fn clamped_ranges_per_row<I>(
-        rows: Range<DisplayRow>,
-        ranges: I,
-    ) -> Vec<Vec<(Range<DisplayPoint>, Hsla)>>
-    where
-        I: IntoIterator<Item = (Range<DisplayPoint>, Hsla)>,
-    {
-        if rows.start >= rows.end {
-            return Vec::new();
-        }
-        let mut buckets = vec![Vec::new(); rows.len()];
-        for (range, color) in ranges {
+        let mut per_row_map = vec![Vec::new(); rows.len()];
+        for (range, color) in highlight_iter.chain(selection_iter) {
             let covered_rows = if range.end.column() == 0 {
                 cmp::max(range.start.row(), rows.start)..cmp::min(range.end.row(), rows.end)
             } else {
@@ -3319,11 +3303,15 @@ impl EditorElement {
                 };
                 let ix = row.minus(rows.start) as usize;
                 debug_assert!(row >= rows.start && row < rows.end);
-                debug_assert!(ix < buckets.len());
-                buckets[ix].push((seg_start..seg_end, color));
+                debug_assert!(ix < per_row_map.len());
+                per_row_map[ix].push((seg_start..seg_end, color));
             }
         }
-        buckets
+        for row_segments in per_row_map.iter_mut() {
+            let merged = Self::merge_overlapping_ranges(row_segments.drain(..).collect());
+            row_segments.extend(merged);
+        }
+        per_row_map
     }
 
     /// Merge overlapping ranges by splitting at all range boundaries and blending colors where
