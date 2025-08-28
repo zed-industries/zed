@@ -54,8 +54,8 @@ Similar to Zed's first-party agent, you can use Gemini CLI to do anything that y
 
 You can @-mention files, recent threads, symbols, or fetch the web.
 
-Note that some first-party agent features don't yet work with Gemini CLI: editing past messages, resuming threads from history, checkpointing, and using the agent in SSH projects.
-We hope to add these features in the near future.
+> Note that some first-party agent features don't yet work with Gemini CLI: editing past messages, resuming threads from history, checkpointing, and using the agent in SSH projects.
+> We hope to add these features in the near future.
 
 ## Add Custom Agents {#add-custom-agents}
 
