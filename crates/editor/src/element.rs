@@ -3264,35 +3264,34 @@ impl EditorElement {
         rows: Range<DisplayRow>,
         selections: &[(PlayerColor, Vec<SelectionLayout>)],
         highlight_ranges: &[(Range<DisplayPoint>, Hsla)],
-    ) {
-        let mut all_ranges: Vec<(Range<DisplayPoint>, Hsla)> = Vec::with_capacity(
-            highlight_ranges.len()
-                + selections
-                    .iter()
-                    .map(|(_, layouts)| layouts.len())
-                    .sum::<usize>(),
-        );
-        all_ranges.extend_from_slice(highlight_ranges);
-        for (player_color, layouts) in selections {
+    ) -> Vec<Vec<(Range<DisplayPoint>, Hsla)>> {
+        let highlight_iter = highlight_ranges.iter().cloned();
+        let selection_iter = selections.iter().flat_map(|(player_color, layouts)| {
             let color = player_color.selection;
-            for selection_layout in layouts {
+            layouts.iter().filter_map(move |selection_layout| {
                 if selection_layout.range.start != selection_layout.range.end {
-                    all_ranges.push((selection_layout.range.clone(), color));
+                    Some((selection_layout.range.clone(), color))
+                } else {
+                    None
                 }
-            }
-        }
-        Self::clamped_ranges_per_row(rows, &all_ranges);
+            })
+        });
+
+        Self::clamped_ranges_per_row(rows, highlight_iter.chain(selection_iter))
     }
 
-    fn clamped_ranges_per_row(
+    fn clamped_ranges_per_row<I>(
         rows: Range<DisplayRow>,
-        ranges: &[(Range<DisplayPoint>, Hsla)],
-    ) -> Vec<Vec<(Range<DisplayPoint>, Hsla)>> {
+        ranges: I,
+    ) -> Vec<Vec<(Range<DisplayPoint>, Hsla)>>
+    where
+        I: IntoIterator<Item = (Range<DisplayPoint>, Hsla)>,
+    {
         if rows.start >= rows.end {
             return Vec::new();
         }
         let mut buckets = vec![Vec::new(); rows.len()];
-        for (range, color) in ranges.iter().cloned() {
+        for (range, color) in ranges {
             let covered_rows = if range.end.column() == 0 {
                 cmp::max(range.start.row(), rows.start)..cmp::min(range.end.row(), rows.end)
             } else {
@@ -3311,9 +3310,9 @@ impl EditorElement {
                     DisplayPoint::new(row.next_row(), 0)
                 };
                 let ix = row.minus(rows.start) as usize;
-                if let Some(bucket) = buckets.get_mut(ix) {
-                    bucket.push((seg_start..seg_end, color));
-                }
+                debug_assert!(row >= rows.start && row < rows.end);
+                debug_assert!(ix < buckets.len());
+                buckets[ix].push((seg_start..seg_end, color));
             }
         }
         buckets
