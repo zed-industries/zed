@@ -25,7 +25,7 @@ You should start to see the responses stream in with indications of [which tools
 By default, the Agent Panel uses Zed's first-party agent.
 
 To change that, go to the plus button in the top-right of the Agent Panel and choose another option.
-You choose to create a new [Text Thread](./text-threads.md) or, if you have [external agents](/.external-agents.md) connected, you can create new threads with them.
+You choose to create a new [Text Thread](./text-threads.md) or, if you have [external agents](./external-agents.md) connected, you can create new threads with them.
 
 ### Editing Messages {#editing-messages}
 

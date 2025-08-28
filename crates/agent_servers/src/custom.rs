@@ -1,9 +1,8 @@
-use crate::{AgentServerCommand, AgentServerSettings};
+use crate::{AgentServerCommand, AgentServerDelegate};
 use acp_thread::AgentConnection;
 use anyhow::Result;
-use gpui::{App, Entity, SharedString, Task};
+use gpui::{App, SharedString, Task};
 use language_models::provider::anthropic::AnthropicLanguageModelProvider;
-use project::Project;
 use std::{path::Path, rc::Rc};
 use ui::IconName;
 
@@ -14,11 +13,8 @@ pub struct CustomAgentServer {
 }
 
 impl CustomAgentServer {
-    pub fn new(name: SharedString, settings: &AgentServerSettings) -> Self {
-        Self {
-            name,
-            command: settings.command.clone(),
-        }
+    pub fn new(name: SharedString, command: AgentServerCommand) -> Self {
+        Self { name, command }
     }
 }
 
@@ -35,18 +31,10 @@ impl crate::AgentServer for CustomAgentServer {
         IconName::Terminal
     }
 
-    fn empty_state_headline(&self) -> SharedString {
-        "No conversations yet".into()
-    }
-
-    fn empty_state_message(&self) -> SharedString {
-        format!("Start a conversation with {}", self.name).into()
-    }
-
     fn connect(
         &self,
         root_dir: &Path,
-        _project: &Entity<Project>,
+        _delegate: AgentServerDelegate,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn AgentConnection>>> {
         let server_name = self.name();
@@ -68,10 +56,6 @@ impl crate::AgentServer for CustomAgentServer {
 
             crate::acp::connect(server_name, command, &root_dir, &mut cx).await
         })
-    }
-
-    fn install_command(&self) -> Option<&'static str> {
-        None
     }
 
     fn into_any(self: Rc<Self>) -> Rc<dyn std::any::Any> {

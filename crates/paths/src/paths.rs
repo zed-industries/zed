@@ -68,7 +68,7 @@ pub fn set_custom_data_dir(dir: &str) -> &'static PathBuf {
             let abs_path = path
                 .canonicalize()
                 .expect("failed to canonicalize custom data directory's path to an absolute path");
-            path = PathBuf::from(util::paths::SanitizedPath::from(abs_path))
+            path = util::paths::SanitizedPath::new(&abs_path).into()
         }
         std::fs::create_dir_all(&path).expect("failed to create custom data directory");
         path

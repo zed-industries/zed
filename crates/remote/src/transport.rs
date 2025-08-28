@@ -222,9 +222,10 @@ async fn build_remote_server_from_source(
 
         // On Windows, the binding needs to be set to the canonical path
         #[cfg(target_os = "windows")]
-        let src = SanitizedPath::from(smol::fs::canonicalize("./target").await?).to_glob_string();
+        let src = SanitizedPath::new(&smol::fs::canonicalize("./target").await?).to_glob_string();
         #[cfg(not(target_os = "windows"))]
         let src = "./target";
+
         run_cmd(
             Command::new("cross")
                 .args([
