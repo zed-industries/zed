@@ -67,7 +67,7 @@ impl EntryViewState {
 
         match thread_entry {
             AgentThreadEntry::UserMessage(message) => {
-                let has_id = message.id.is_some();
+                let has_id = message.prompt_id.is_some();
                 let chunks = message.chunks.clone();
                 if let Some(Entry::UserMessage(editor)) = self.entries.get_mut(index) {
                     if !editor.focus_handle(cx).is_focused(window) {

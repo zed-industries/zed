@@ -1,5 +1,5 @@
 use crate::{AgentMessage, AgentMessageContent, UserMessage, UserMessageContent};
-use acp_thread::UserMessageId;
+use acp_thread::new_prompt_id;
 use agent::{thread::DetailedSummaryState, thread_store};
 use agent_client_protocol as acp;
 use agent_settings::{AgentProfileId, CompletionMode};
@@ -43,7 +43,7 @@ pub struct DbThread {
     #[serde(default)]
     pub cumulative_token_usage: language_model::TokenUsage,
     #[serde(default)]
-    pub request_token_usage: HashMap<acp_thread::UserMessageId, language_model::TokenUsage>,
+    pub request_token_usage: HashMap<acp::PromptId, language_model::TokenUsage>,
     #[serde(default)]
     pub model: Option<DbLanguageModel>,
     #[serde(default)]
@@ -97,7 +97,7 @@ impl DbThread {
                         content.push(UserMessageContent::Text(msg.context));
                     }
 
-                    let id = UserMessageId::new();
+                    let id = new_prompt_id();
                     last_user_message_id = Some(id.clone());
 
                     crate::Message::User(UserMessage {
