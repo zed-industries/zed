@@ -640,7 +640,8 @@ async fn request_models(
         .uri(models_url.as_ref())
         .header("Authorization", format!("Bearer {}", api_token))
         .header("Content-Type", "application/json")
-        .header("Editor-Version", "vscode/1.101.0")
+        .header("Copilot-Integration-Id", "vscode-chat")
+        .header("Editor-Version", "vscode/1.103.2")
         .header("x-github-api-version", "2025-05-01");
 
     let request = request_builder.body(AsyncBody::empty())?;
