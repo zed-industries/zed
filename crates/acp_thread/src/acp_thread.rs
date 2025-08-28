@@ -186,30 +186,35 @@ impl ToolCall {
         language_registry: Arc<LanguageRegistry>,
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
         cx: &mut App,
-    ) -> Self {
+    ) -> Result<Self> {
         let title = if let Some((first_line, _)) = tool_call.title.split_once("\n") {
             first_line.to_owned() + "…"
         } else {
             tool_call.title
         };
-        Self {
+        let mut content = Vec::with_capacity(tool_call.content.len());
+        for item in tool_call.content {
+            content.push(ToolCallContent::from_acp(
+                item,
+                language_registry.clone(),
+                terminals,
+                cx,
+            )?);
+        }
+
+        let result = Self {
             id: tool_call.id,
             label: cx
                 .new(|cx| Markdown::new(title.into(), Some(language_registry.clone()), None, cx)),
             kind: tool_call.kind,
-            content: tool_call
-                .content
-                .into_iter()
-                .map(|content| {
-                    ToolCallContent::from_acp(content, language_registry.clone(), terminals, cx)
-                })
-                .collect(),
+            content,
             locations: tool_call.locations,
             resolved_locations: Vec::default(),
             status,
             raw_input: tool_call.raw_input,
             raw_output: tool_call.raw_output,
-        }
+        };
+        Ok(result)
     }
 
     fn update_fields(
@@ -218,7 +223,7 @@ impl ToolCall {
         language_registry: Arc<LanguageRegistry>,
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
         cx: &mut App,
-    ) {
+    ) -> Result<()> {
         let acp::ToolCallUpdateFields {
             kind,
             status,
@@ -253,7 +258,7 @@ impl ToolCall {
 
             // Reuse existing content if we can
             for (old, new) in self.content.iter_mut().zip(content.by_ref()) {
-                old.update_from_acp(new, language_registry.clone(), terminals, cx);
+                old.update_from_acp(new, language_registry.clone(), terminals, cx)?;
             }
             for new in content {
                 self.content.push(ToolCallContent::from_acp(
@@ -261,7 +266,7 @@ impl ToolCall {
                     language_registry.clone(),
                     terminals,
                     cx,
-                ))
+                )?)
             }
             self.content.truncate(new_content_len);
         }
@@ -285,6 +290,7 @@ impl ToolCall {
             }
             self.raw_output = Some(raw_output);
         }
+        Ok(())
     }
 
     pub fn diffs(&self) -> impl Iterator<Item = &Entity<Diff>> {
@@ -557,12 +563,14 @@ impl ToolCallContent {
         language_registry: Arc<LanguageRegistry>,
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
         cx: &mut App,
-    ) -> Self {
+    ) -> Result<Self> {
         match content {
-            acp::ToolCallContent::Content { content } => {
-                Self::ContentBlock(ContentBlock::new(content, &language_registry, cx))
-            }
-            acp::ToolCallContent::Diff { diff } => Self::Diff(cx.new(|cx| {
+            acp::ToolCallContent::Content { content } => Ok(Self::ContentBlock(ContentBlock::new(
+                content,
+                &language_registry,
+                cx,
+            ))),
+            acp::ToolCallContent::Diff { diff } => Ok(Self::Diff(cx.new(|cx| {
                 Diff::finalized(
                     diff.path,
                     diff.old_text,
@@ -570,11 +578,12 @@ impl ToolCallContent {
                     language_registry,
                     cx,
                 )
-            })),
-            acp::ToolCallContent::Terminal { terminal_id } => {
-                // todo!
-                Self::Terminal(terminals.get(&terminal_id).unwrap().clone())
-            }
+            }))),
+            acp::ToolCallContent::Terminal { terminal_id } => terminals
+                .get(&terminal_id)
+                .cloned()
+                .map(Self::Terminal)
+                .ok_or_else(|| anyhow::anyhow!("Terminal with id {:?} not found", terminal_id)),
         }
     }
 
@@ -584,7 +593,7 @@ impl ToolCallContent {
         language_registry: Arc<LanguageRegistry>,
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
         cx: &mut App,
-    ) {
+    ) -> Result<()> {
         let needs_update = match (&self, &new) {
             (Self::Diff(old_diff), acp::ToolCallContent::Diff { diff: new_diff }) => {
                 old_diff.read(cx).needs_update(
@@ -597,8 +606,9 @@ impl ToolCallContent {
         };
 
         if needs_update {
-            *self = Self::from_acp(new, language_registry, terminals, cx);
+            *self = Self::from_acp(new, language_registry, terminals, cx)?;
         }
+        Ok(())
     }
 
     pub fn to_markdown(&self, cx: &App) -> String {
@@ -1117,7 +1127,7 @@ impl AcpThread {
         match update {
             ToolCallUpdate::UpdateFields(update) => {
                 let location_updated = update.fields.locations.is_some();
-                call.update_fields(update.fields, languages, &self.terminals, cx);
+                call.update_fields(update.fields, languages, &self.terminals, cx)?;
                 if location_updated {
                     self.resolve_locations(update.id, cx);
                 }
@@ -1163,7 +1173,7 @@ impl AcpThread {
                 unreachable!()
             };
 
-            call.update_fields(update.fields, language_registry, &self.terminals, cx);
+            call.update_fields(update.fields, language_registry, &self.terminals, cx)?;
             call.status = status;
 
             cx.emit(AcpThreadEvent::EntryUpdated(ix));
@@ -1174,7 +1184,7 @@ impl AcpThread {
                 language_registry,
                 &self.terminals,
                 cx,
-            );
+            )?;
             self.push_entry(AgentThreadEntry::ToolCall(call), cx);
         };
 
