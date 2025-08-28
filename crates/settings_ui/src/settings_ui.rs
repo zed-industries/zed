@@ -1,6 +1,7 @@
 mod appearance_settings_controls;
 
-use std::any::TypeId;
+use std::any::{Any, TypeId};
+use std::ops::Range;
 
 use anyhow::Context as _;
 use command_palette_hooks::CommandPaletteFilter;
@@ -8,7 +9,9 @@ use editor::EditorSettingsControls;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
 use fs::Fs;
 use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, ReadGlobal, actions};
-use settings::{SettingsStore, SettingsUIItemSingle, SettingsUIItemVariant, SettingsValue};
+use settings::{
+    SettingsStore, SettingsUIItemGroup, SettingsUIItemSingle, SettingsUIItemVariant, SettingsValue,
+};
 use smallvec::SmallVec;
 use ui::{SwitchField, prelude::*};
 use workspace::item::{Item, ItemEvent};
@@ -116,6 +119,196 @@ impl Item for SettingsPage {
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {
         f(*event)
     }
+}
+
+// We want to iterate over the side bar with root groups
+// - this is a loop over top level groups, and if any are expanded, recursively displaying their items
+// - Should be able to get all items from a group (flatten a group)
+// - Should be able to toggle/untoggle groups in UI (at least in sidebar)
+// - Search should be available
+//  - there should be an index of text -> item mappings, for using fuzzy::match
+//   - Do we want to show the parent groups when a item is matched?
+
+struct UIEntry {
+    title: &'static str,
+    path: &'static str,
+    depth: usize,
+    // a
+    //  b     < a descendant range < a total descendant range
+    //    f   |                    |
+    //    g   |                    |
+    //  c     <                    |
+    //    d                        |
+    //    e                        <
+    descendant_range: Range<usize>,
+    total_descendant_range: Range<usize>,
+    next_sibling: Option<usize>,
+    // expanded: bool,
+    // todo! rename SettingsUIItemSingle
+    render: Option<SettingsUIItemSingle>,
+}
+
+struct SettingsUITree {
+    user_settings: serde_json::Value,
+    default_settings: serde_json::Value,
+    root_entry_indices: Vec<usize>,
+    tree: Vec<UIEntry>,
+    active_entry_index: usize,
+}
+
+fn build_tree_item(
+    tree: &mut Vec<UIEntry>,
+    group: SettingsUIItemVariant,
+    depth: usize,
+    prev_index: Option<usize>,
+) {
+    let index = tree.len();
+    tree.push(UIEntry {
+        title: "",
+        path: "",
+        depth,
+        descendant_range: index + 1..index + 1,
+        total_descendant_range: index + 1..index + 1,
+        render: None,
+        next_sibling: None,
+    });
+    if let Some(prev_index) = prev_index {
+        tree[prev_index].next_sibling = Some(index);
+    }
+    match group {
+        SettingsUIItemVariant::Group { path, title, group } => {
+            tree[index].path = path;
+            tree[index].title = title;
+            for group_item in group.items {
+                let prev_index = Some(tree[index].descendant_range.end - 1)
+                    .filter(|_| !tree[index].descendant_range.is_empty());
+                tree[index].descendant_range.end = tree.len() + 1;
+                build_tree_item(tree, group_item.item, depth + 1, prev_index);
+                tree[index].total_descendant_range.end = tree.len();
+            }
+        }
+        SettingsUIItemVariant::Item { path, item } => {
+            tree[index].path = path;
+            tree[index].title = path; // todo! title
+            tree[index].render = Some(item);
+        }
+        SettingsUIItemVariant::None => {
+            return;
+        }
+    }
+}
+
+impl SettingsUITree {
+    fn new(cx: &App) -> Self {
+        let settings_store = SettingsStore::global(cx);
+        // todo! remove clones somehow?
+        let user_settings = settings_store.raw_user_settings.clone();
+        let default_settings = settings_store.raw_default_settings.clone();
+        let mut tree = vec![];
+        let mut root_entry_indices = vec![];
+        for item in settings_store.settings_ui_items() {
+            assert!(
+                matches!(
+                    item.item,
+                    SettingsUIItemVariant::Group { .. } | SettingsUIItemVariant::None
+                ),
+                "top level items must be groups"
+            );
+            let prev_root_entry_index = root_entry_indices.last().copied();
+            root_entry_indices.push(tree.len());
+            build_tree_item(&mut tree, item.item, 0, prev_root_entry_index);
+        }
+
+        Self {
+            tree,
+            root_entry_indices,
+            user_settings,
+            default_settings,
+            active_entry_index: 0,
+        }
+    }
+
+    fn render_nav(&self, _window: &mut Window, cx: &mut Context<SettingsPage>) -> impl IntoElement {
+        let mut nav = v_flex()
+            .items_start()
+            .p_4()
+            .bg(cx.theme().colors().background)
+            .size_full()
+            .gap_4();
+        for index in &self.root_entry_indices {
+            nav = nav.child(
+                Label::new(SharedString::new_static(self.tree[*index].title))
+                    .size(LabelSize::Large)
+                    .when(self.active_entry_index == *index, |this| {
+                        this.color(Color::Selected)
+                    }),
+            );
+        }
+        nav
+    }
+
+    fn render_content(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<SettingsPage>,
+    ) -> impl IntoElement {
+        let Some(entry) = self.tree.get(self.active_entry_index) else {
+            return div().size_full().child(
+                Label::new(SharedString::new_static("No settings found")).color(Color::Error),
+            );
+        };
+        return div()
+            .size_full()
+            .child(Label::new(SharedString::new_static("Content goes here")));
+    }
+}
+
+impl Render for SettingsPage {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let settings_tree = SettingsUITree::new(cx);
+
+        h_flex()
+            .p_4()
+            .bg(cx.theme().colors().editor_background)
+            .size_full()
+            .gap_4()
+            .child(
+                div()
+                    .w_1_4()
+                    .h_full()
+                    .child(settings_tree.render_nav(window, cx)),
+            )
+            .child(
+                div()
+                    .w_3_4()
+                    .h_full()
+                    .child(settings_tree.render_content(window, cx)),
+            )
+    }
+}
+
+// TODO: remove, only here as inspiration
+#[allow(dead_code)]
+fn render_old_appearance_settings(cx: &mut App) -> impl IntoElement {
+    v_flex()
+        .p_4()
+        .size_full()
+        .gap_4()
+        .child(Label::new("Settings").size(LabelSize::Large))
+        .child(
+            v_flex().gap_1().child(Label::new("Appearance")).child(
+                v_flex()
+                    .elevation_2(cx)
+                    .child(AppearanceSettingsControls::new()),
+            ),
+        )
+        .child(
+            v_flex().gap_1().child(Label::new("Editor")).child(
+                v_flex()
+                    .elevation_2(cx)
+                    .child(EditorSettingsControls::new()),
+            ),
+        )
 }
 
 fn element_id_from_path(path: &[&'static str]) -> ElementId {
@@ -241,101 +434,4 @@ fn settings_value_from_settings_and_path(
         title: path.last().expect("todo! pass path"),
     };
     return settings_value;
-}
-
-impl Render for SettingsPage {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let user_settings;
-        let default_settings;
-        let items;
-        // todo! this feels like it wants to be separated into 2 layers:
-        // 1. Load settings, and ui_items tree. Construct intermediate representation of tree, that is more uniform, and possibly more caching-friendly
-        // 2. Render from the intermediate representation
-        // With this structure:
-        // - changing how the tree is rendered completely should be easier (we don't know the final design yet)
-        // - caching of IR is possible
-        // IR can hold (and possibly cache):
-        // - The settings values (i.e. don't store serde_json::Value and deserialize per frame, just downcast_ref)
-        // - The structure of the tree (for panel)
-        {
-            let settings_store = SettingsStore::global(cx);
-            // todo! remove clones somehow?
-            user_settings = settings_store.raw_user_settings.clone();
-            default_settings = settings_store.raw_default_settings.clone();
-            items = settings_store
-                .settings_ui_items()
-                .into_iter()
-                .collect::<Vec<_>>();
-        }
-
-        v_flex()
-            .p_4()
-            .size_full()
-            .gap_4()
-            .children(items.into_iter().flat_map(|item| {
-                match item.item {
-                    settings::SettingsUIItemVariant::Group {
-                        title,
-                        path: group_path,
-                        group,
-                    } => Some(
-                        div()
-                            .child(Label::new(title).size(LabelSize::Large))
-                            .children(group.items.iter().map(|item| {
-                                match &item.item {
-                                    settings::SettingsUIItemVariant::Group {
-                                        path,
-                                        title,
-                                        group,
-                                    } => div()
-                                        .child(format!("Subgroup: {}", title))
-                                        .into_any_element(),
-                                    settings::SettingsUIItemVariant::Item {
-                                        path: item_path,
-                                        item,
-                                    } => {
-                                        let path = smallvec::smallvec![group_path, *item_path];
-                                        let settings_value = settings_value_from_settings_and_path(
-                                            path,
-                                            &user_settings,
-                                            &default_settings,
-                                        );
-                                        render_item_single(settings_value, item, window, cx)
-                                    }
-                                    settings::SettingsUIItemVariant::None => {
-                                        div().child("None").into_any_element()
-                                    }
-                                }
-                            })),
-                    ),
-
-                    settings::SettingsUIItemVariant::Item { path, item } => todo!(),
-                    settings::SettingsUIItemVariant::None => None,
-                }
-            }))
-    }
-}
-
-// TODO: remove, only here as inspiration
-#[allow(dead_code)]
-fn render_old_appearance_settings(cx: &mut App) -> impl IntoElement {
-    v_flex()
-        .p_4()
-        .size_full()
-        .gap_4()
-        .child(Label::new("Settings").size(LabelSize::Large))
-        .child(
-            v_flex().gap_1().child(Label::new("Appearance")).child(
-                v_flex()
-                    .elevation_2(cx)
-                    .child(AppearanceSettingsControls::new()),
-            ),
-        )
-        .child(
-            v_flex().gap_1().child(Label::new("Editor")).child(
-                v_flex()
-                    .elevation_2(cx)
-                    .child(EditorSettingsControls::new()),
-            ),
-        )
 }

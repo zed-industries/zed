@@ -38,7 +38,7 @@ pub struct SettingsUIItemGroup {
 pub enum SettingsUIItemSingle {
     // TODO: default/builtin variants
     SwitchField,
-    Custom(Box<dyn Fn(&dyn Any, &mut Window, &mut App) -> AnyElement>),
+    Custom(Box<dyn Fn(SettingsValue<serde_json::Value>, &mut Window, &mut App) -> AnyElement>),
 }
 
 pub struct SettingsValue<T> {
