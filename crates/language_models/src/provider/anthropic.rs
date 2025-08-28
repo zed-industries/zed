@@ -156,7 +156,18 @@ impl State {
         let key = AnthropicLanguageModelProvider::api_key(cx);
 
         cx.spawn(async move |this, cx| {
-            let key = key.await?;
+            let key = key.await.map_err(|e| {
+                if let Some(auth_err) = e.downcast_ref::<AuthenticateError>() {
+                    match auth_err {
+                        AuthenticateError::CredentialsNotFound => {
+                            AuthenticateError::CredentialsNotFound
+                        }
+                        AuthenticateError::Other(_) => AuthenticateError::Other(e),
+                    }
+                } else {
+                    AuthenticateError::Other(e)
+                }
+            })?;
 
             this.update(cx, |this, cx| {
                 this.api_key = Some(key.key);
