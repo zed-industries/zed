@@ -42,7 +42,8 @@ Credentials for various services used in this process can be found in 1Password.
 
 1. Publish stable / preview drafts, one at a time.
 
-   - Use [Vercel](https://vercel.com/zed-industries/zed-dev) to check the status of the visibility of the release on zed.dev.
+   - Use [Vercel](https://vercel.com/zed-industries/zed-dev) to check the progress of the website rebuild.
+     The release will be public once the rebuild has completed.
 
 1. Publish the release email that has been sent to [Kit](https://kit.com).
 
@@ -66,12 +67,12 @@ You will need write access to the Zed repository to do this:
 
 1. Send a PR containing your change to `main` as normal.
 
-1. Once it is merged, you will need to cherry-pick the commit locally to either of the release branches (`v0.XXX.x`).
+1. Once it is merged, cherry-pick the commit locally to either of the release branches (`v0.XXX.x`).
 
    - In some cases, you may have to handle a merge conflict.
      More often than not, this will happen when cherry-picking to stable, as the stable branch is more "stale" than the preview branch.
 
-1. After the commits are cherry-picked onto the branch, run `./script/trigger-release {preview|stable}`.
+1. After the commit is cherry-picked, run `./script/trigger-release {preview|stable}`.
    This will bump the version numbers, create a new release tag, and kick off a release build.
 
    - This can also be run from the [GitHub Actions UI](https://github.com/zed-industries/zed/actions/workflows/bump_patch_version.yml):
@@ -83,13 +84,14 @@ You will need write access to the Zed repository to do this:
 
 1. Check the release assets.
 
-   - Ensure the patch release jobs have finished without error.
+   - Ensure the stable / preview release jobs have finished without error.
    - Ensure each draft has the proper number of assets—releases currently have 10 assets each.
    - Download the artifacts for each release draft and test that you can run them locally.
 
-1. Publish the patch drafts, one at a time.
+1. Publish stable / preview drafts, one at a time.
 
-   - Use [Vercel](https://vercel.com/zed-industries/zed-dev) to check the status of the visibility of the release on zed.dev.
+   - Use [Vercel](https://vercel.com/zed-industries/zed-dev) to check the progress of the website rebuild.
+     The release will be public once the rebuild has completed.
 
 ## Nightly release process
 
