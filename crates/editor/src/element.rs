@@ -95,8 +95,6 @@ use workspace::{
     item::Item, notifications::NotifyTaskExt,
 };
 
-const MIN_APCA_CONTRAST_FOR_HIGHLIGHTS: f32 = 60.0;
-
 /// Determines what kinds of highlights should be applied to a lines background.
 #[derive(Clone, Copy, Default)]
 struct LineHighlightSpec {
@@ -7518,7 +7516,7 @@ impl LineWithInvisibles {
             if let Some(replacement) = highlighted_chunk.replacement {
                 if !line.is_empty() {
                     let segments = bg_segments_per_row.get(row).map(|v| &v[..]).unwrap_or(&[]);
-                    let text_runs = Self::split_runs_by_bg_segments(&styles, segments);
+                    let text_runs = Self::split_runs_by_bg_segments(&styles, segments, cx);
                     let shaped_line = window.text_system().shape_line(
                         line.clone().into(),
                         font_size,
@@ -7601,7 +7599,7 @@ impl LineWithInvisibles {
                 for (ix, mut line_chunk) in highlighted_chunk.text.split('\n').enumerate() {
                     if ix > 0 {
                         let segments = bg_segments_per_row.get(row).map(|v| &v[..]).unwrap_or(&[]);
-                        let text_runs = Self::split_runs_by_bg_segments(&styles, segments);
+                        let text_runs = Self::split_runs_by_bg_segments(&styles, segments, cx);
                         let shaped_line = window.text_system().shape_line(
                             line.clone().into(),
                             font_size,
@@ -7698,6 +7696,7 @@ impl LineWithInvisibles {
     fn split_runs_by_bg_segments(
         text_runs: &[TextRun],
         bg_segments: &[(Range<DisplayPoint>, Hsla)],
+        cx: &mut App,
     ) -> Vec<TextRun> {
         let mut output_runs: Vec<TextRun> = Vec::with_capacity(text_runs.len());
         let mut line_col = 0usize;
@@ -7737,7 +7736,7 @@ impl LineWithInvisibles {
                     let new_text_color = ensure_minimum_contrast(
                         text_run.color,
                         *segment_color,
-                        MIN_APCA_CONTRAST_FOR_HIGHLIGHTS,
+                        EditorSettings::get_global(cx).minimum_contrast_for_highlights,
                     );
                     output_runs.push(TextRun {
                         len: segment_slice_end_col - cursor_col,
