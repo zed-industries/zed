@@ -479,11 +479,14 @@ impl AcpThreadView {
                             .set(thread.read(cx).prompt_capabilities());
 
                         let count = thread.read(cx).entries().len();
-                        this.list_state.splice(0..0, count);
                         this.entry_view_state.update(cx, |view_state, cx| {
                             for ix in 0..count {
                                 view_state.sync_entry(ix, &thread, window, cx);
                             }
+                            this.list_state.splice_focusable(
+                                0..0,
+                                (0..count).map(|ix| view_state.entry(ix)?.focus_handle(cx)),
+                            );
                         });
 
                         if let Some(resume) = resume_thread {
@@ -905,9 +908,10 @@ impl AcpThreadView {
         self.editing_message.take();
         self.thread_feedback.clear();
 
-        let Some(thread) = self.thread().cloned() else {
+        let Some(thread) = self.thread() else {
             return;
         };
+        let thread = thread.downgrade();
         if self.should_be_following {
             self.workspace
                 .update(cx, |workspace, cx| {
@@ -1115,9 +1119,14 @@ impl AcpThreadView {
                 let len = thread.read(cx).entries().len();
                 let index = len - 1;
                 self.entry_view_state.update(cx, |view_state, cx| {
-                    view_state.sync_entry(index, thread, window, cx)
+                    view_state.sync_entry(index, thread, window, cx);
+                    self.list_state.splice_focusable(
+                        index..index,
+                        [view_state
+                            .entry(index)
+                            .and_then(|entry| entry.focus_handle(cx))],
+                    );
                 });
-                self.list_state.splice(index..index, 1);
             }
             AcpThreadEvent::EntryUpdated(index) => {
                 self.entry_view_state.update(cx, |view_state, cx| {

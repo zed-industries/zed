@@ -585,6 +585,9 @@ impl EditorElement {
         register_action(editor, window, Editor::edit_log_breakpoint);
         register_action(editor, window, Editor::enable_breakpoint);
         register_action(editor, window, Editor::disable_breakpoint);
+        if editor.read(cx).enable_wrap_selections_in_tag(cx) {
+            register_action(editor, window, Editor::wrap_selections_in_tag);
+        }
     }
 
     fn register_key_listeners(&self, window: &mut Window, _: &mut App, layout: &EditorLayout) {
