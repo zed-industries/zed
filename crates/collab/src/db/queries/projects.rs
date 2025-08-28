@@ -694,6 +694,7 @@ impl Database {
                 project_id: ActiveValue::set(project_id),
                 id: ActiveValue::set(server.id as i64),
                 name: ActiveValue::set(server.name.clone()),
+                worktree_id: ActiveValue::set(server.worktree_id.map(|id| id as i64)),
                 capabilities: ActiveValue::set(update.capabilities.clone()),
             })
             .on_conflict(
@@ -704,6 +705,7 @@ impl Database {
                 .update_columns([
                     language_server::Column::Name,
                     language_server::Column::Capabilities,
+                    language_server::Column::WorktreeId,
                 ])
                 .to_owned(),
             )
@@ -1065,7 +1067,7 @@ impl Database {
                     server: proto::LanguageServer {
                         id: language_server.id as u64,
                         name: language_server.name,
-                        worktree_id: None,
+                        worktree_id: language_server.worktree_id.map(|id| id as u64),
                     },
                     capabilities: language_server.capabilities,
                 })
