@@ -354,19 +354,19 @@ impl MacPlatform {
                             let mut mask = NSEventModifierFlags::empty();
                             for (modifier, flag) in &[
                                 (
-                                    keystroke.display_modifiers.platform,
+                                    keystroke.modifiers().platform,
                                     NSEventModifierFlags::NSCommandKeyMask,
                                 ),
                                 (
-                                    keystroke.display_modifiers.control,
+                                    keystroke.modifiers().control,
                                     NSEventModifierFlags::NSControlKeyMask,
                                 ),
                                 (
-                                    keystroke.display_modifiers.alt,
+                                    keystroke.modifiers().alt,
                                     NSEventModifierFlags::NSAlternateKeyMask,
                                 ),
                                 (
-                                    keystroke.display_modifiers.shift,
+                                    keystroke.modifiers().shift,
                                     NSEventModifierFlags::NSShiftKeyMask,
                                 ),
                             ] {
@@ -379,7 +379,7 @@ impl MacPlatform {
                                 .initWithTitle_action_keyEquivalent_(
                                     ns_string(name),
                                     selector,
-                                    ns_string(key_to_native(&keystroke.display_key).as_ref()),
+                                    ns_string(key_to_native(keystroke.key()).as_ref()),
                                 )
                                 .autorelease();
                             if Self::os_version() >= SemanticVersion::new(12, 0, 0) {

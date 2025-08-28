@@ -116,7 +116,7 @@ impl KeystrokeInput {
             && self
                 .keystrokes
                 .last()
-                .is_some_and(|last| last.display_key.is_empty())
+                .is_some_and(|last| last.key().is_empty())
         {
             return &self.keystrokes[..self.keystrokes.len() - 1];
         }
@@ -124,15 +124,11 @@ impl KeystrokeInput {
     }
 
     fn dummy(modifiers: Modifiers) -> KeybindingKeystroke {
-        KeybindingKeystroke {
-            inner: Keystroke {
-                modifiers,
-                key: "".to_string(),
-                key_char: None,
-            },
-            display_modifiers: modifiers,
-            display_key: "".to_string(),
-        }
+        KeybindingKeystroke::from_keystroke(Keystroke {
+            modifiers,
+            key: "".to_string(),
+            key_char: None,
+        })
     }
 
     fn keystrokes_changed(&self, cx: &mut Context<Self>) {
@@ -258,7 +254,7 @@ impl KeystrokeInput {
         self.keystrokes_changed(cx);
 
         if let Some(last) = self.keystrokes.last_mut()
-            && last.display_key.is_empty()
+            && last.key().is_empty()
             && keystrokes_len <= Self::KEYSTROKE_COUNT_MAX
         {
             if !self.search && !event.modifiers.modified() {
@@ -267,15 +263,14 @@ impl KeystrokeInput {
             }
             if self.search {
                 if self.previous_modifiers.modified() {
-                    last.display_modifiers |= event.modifiers;
-                    last.inner.modifiers |= event.modifiers;
+                    let modifiers = *last.modifiers() | event.modifiers;
+                    last.set_modifiers(modifiers);
                 } else {
                     self.keystrokes.push(Self::dummy(event.modifiers));
                 }
                 self.previous_modifiers |= event.modifiers;
             } else {
-                last.display_modifiers = event.modifiers;
-                last.inner.modifiers = event.modifiers;
+                last.set_modifiers(event.modifiers);
                 return;
             }
         } else if keystrokes_len < Self::KEYSTROKE_COUNT_MAX {
@@ -303,10 +298,13 @@ impl KeystrokeInput {
             return;
         }
 
-        let keystroke =
-            KeybindingKeystroke::new(keystroke.clone(), false, cx.keyboard_mapper().as_ref());
+        let keystroke = KeybindingKeystroke::new_with_mapper(
+            keystroke.clone(),
+            false,
+            cx.keyboard_mapper().as_ref(),
+        );
         if let Some(last) = self.keystrokes.last()
-            && last.display_key.is_empty()
+            && last.key().is_empty()
             && (!self.search || self.previous_modifiers.modified())
         {
             self.keystrokes.pop();
@@ -825,7 +823,7 @@ mod tests {
                 input
                     .keystrokes
                     .iter()
-                    .map(|keystroke| keystroke.inner.clone())
+                    .map(|keystroke| keystroke.inner().clone())
                     .collect()
             });
             Self::expect_keystrokes_equal(&actual, expected);
@@ -1094,7 +1092,7 @@ mod tests {
             }
 
             fn keystrokes_str(ks: &[KeybindingKeystroke]) -> String {
-                ks.iter().map(|ks| ks.inner.unparse()).join(" ")
+                ks.iter().map(|ks| ks.inner().unparse()).join(" ")
             }
         }
     }
