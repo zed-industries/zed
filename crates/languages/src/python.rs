@@ -894,7 +894,7 @@ impl ToolchainLister for PythonToolchainProvider {
     fn term(&self) -> SharedString {
         self.term.clone()
     }
-    fn activation_script(&self, toolchain: &Toolchain) -> Option<String> {
+    async fn activation_script(&self, toolchain: &Toolchain, fs: &dyn Fs) -> Option<String> {
         let toolchain = serde_json::from_value::<pet_core::python_environment::PythonEnvironment>(
             toolchain.as_json.clone(),
         )
@@ -905,8 +905,7 @@ impl ToolchainLister for PythonToolchainProvider {
             let path = prefix.join(BINARY_DIR).join("activate");
             #[cfg(target_os = "windows")]
             let path = prefix.join(BINARY_DIR).join("activate.ps1");
-            // todo: sync fs access
-            if path.exists() && path.is_file() {
+            if fs.is_file(&path).await {
                 activation_script = Some(format!(". {}", path.display()));
             }
         }

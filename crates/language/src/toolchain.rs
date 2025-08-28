@@ -11,6 +11,7 @@ use std::{
 
 use async_trait::async_trait;
 use collections::HashMap;
+use fs::Fs;
 use gpui::{AsyncApp, SharedString};
 use settings::WorktreeId;
 
@@ -67,7 +68,7 @@ pub trait ToolchainLister: Send + Sync {
     fn term(&self) -> SharedString;
     /// Returns the name of the manifest file for this toolchain.
     fn manifest_name(&self) -> ManifestName;
-    fn activation_script(&self, toolchain: &Toolchain) -> Option<String>;
+    async fn activation_script(&self, toolchain: &Toolchain, fs: &dyn Fs) -> Option<String>;
 }
 
 #[async_trait(?Send)]

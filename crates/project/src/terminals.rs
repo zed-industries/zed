@@ -127,6 +127,7 @@ impl Project {
             .filter(|_| detect_venv)
             .map(|p| self.active_toolchain(p, LanguageName::new("Python"), cx));
         let lang_registry = self.languages.clone();
+        let fs = self.fs.clone();
         cx.spawn(async move |project, cx| {
             let activation_script = maybe!(async {
                 let toolchain = toolchain?.await?;
@@ -135,7 +136,8 @@ impl Project {
                     .await
                     .ok()?
                     .toolchain_lister()?
-                    .activation_script(&toolchain)
+                    .activation_script(&toolchain, fs.as_ref())
+                    .await
             })
             .await;
 
@@ -291,6 +293,7 @@ impl Project {
         };
 
         let lang_registry = self.languages.clone();
+        let fs = self.fs.clone();
         cx.spawn(async move |project, cx| {
             let activation_script = maybe!(async {
                 let toolchain = toolchain?.await?;
@@ -299,7 +302,7 @@ impl Project {
                     .await
                     .ok();
                 let lister = language?.toolchain_lister();
-                lister?.activation_script(&toolchain)
+                lister?.activation_script(&toolchain, fs.as_ref()).await
             })
             .await;
             project.update(cx, move |this, cx| {
