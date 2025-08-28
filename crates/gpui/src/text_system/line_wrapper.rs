@@ -148,7 +148,6 @@ impl LineWrapper {
             let char_width = self.width_for_char(c);
 
             if (width + char_width + suffix_width).floor() >= truncate_width {
-                println!("Final width is {}", width.floor());
                 return Some(truncation_ix);
             }
 
@@ -168,7 +167,6 @@ impl LineWrapper {
         text_direction: TextDirection,
         runs: &mut Vec<TextRun>,
     ) -> SharedString {
-        println!(" ==> Truncating line '{line}' {truncate_width}");
         let truncation_index = match text_direction {
             TextDirection::LeftToRight => {
                 self.truncate_line_impl(truncate_width, truncation_suffix, line.char_indices())
@@ -189,7 +187,6 @@ impl LineWrapper {
                     truncation_suffix.len(),
                     runs,
                 );
-                println!("Truncated to {result}");
                 result
             }
             (Some(mut ix), TextDirection::RightToLeft) => {
@@ -200,7 +197,6 @@ impl LineWrapper {
                     truncation_suffix.len(),
                     runs,
                 );
-                println!("Truncated to {result}");
                 result
             }
         }
