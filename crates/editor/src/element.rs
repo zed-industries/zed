@@ -3262,9 +3262,26 @@ impl EditorElement {
 
     fn bg_segments_per_row(
         rows: Range<DisplayRow>,
+        selections: &[(PlayerColor, Vec<SelectionLayout>)],
         highlight_ranges: &[(Range<DisplayPoint>, Hsla)],
-    ) -> Vec<Vec<(Range<DisplayPoint>, Hsla)>> {
-        Self::clamped_highlight_ranges_per_row(rows, highlight_ranges)
+    ) {
+        let mut all_ranges: Vec<(Range<DisplayPoint>, Hsla)> = Vec::with_capacity(
+            highlight_ranges.len()
+                + selections
+                    .iter()
+                    .map(|(_, layouts)| layouts.len())
+                    .sum::<usize>(),
+        );
+        all_ranges.extend_from_slice(highlight_ranges);
+        for (player_color, layouts) in selections {
+            let color = player_color.selection;
+            for selection_layout in layouts {
+                if selection_layout.range.start != selection_layout.range.end {
+                    all_ranges.push((selection_layout.range.clone(), color));
+                }
+            }
+        }
+        Self::clamped_highlight_ranges_per_row(rows, &all_ranges);
     }
 
     fn clamped_highlight_ranges_per_row(
@@ -8494,8 +8511,7 @@ impl Element for EditorElement {
                         cx,
                     );
 
-                    let _highlight_ranges_per_row =
-                        Self::bg_segments_per_row(start_row..end_row, &highlighted_ranges);
+                    Self::bg_segments_per_row(start_row..end_row, &selections, &highlighted_ranges);
 
                     let mut line_layouts = Self::layout_lines(
                         start_row..end_row,
