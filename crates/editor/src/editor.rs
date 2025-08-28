@@ -2588,7 +2588,7 @@ impl Editor {
                 || binding
                     .keystrokes()
                     .first()
-                    .is_some_and(|keystroke| keystroke.display_modifiers.modified())
+                    .is_some_and(|keystroke| keystroke.modifiers().modified())
         }))
     }
 
@@ -7686,16 +7686,16 @@ impl Editor {
             .keystroke()
         {
             modifiers_held = modifiers_held
-                || (&accept_keystroke.display_modifiers == modifiers
-                    && accept_keystroke.display_modifiers.modified());
+                || (accept_keystroke.modifiers() == modifiers
+                    && accept_keystroke.modifiers().modified());
         };
         if let Some(accept_partial_keystroke) = self
             .accept_edit_prediction_keybind(true, window, cx)
             .keystroke()
         {
             modifiers_held = modifiers_held
-                || (&accept_partial_keystroke.display_modifiers == modifiers
-                    && accept_partial_keystroke.display_modifiers.modified());
+                || (accept_partial_keystroke.modifiers() == modifiers
+                    && accept_partial_keystroke.modifiers().modified());
         }
 
         if modifiers_held {
@@ -9044,7 +9044,7 @@ impl Editor {
 
         let is_platform_style_mac = PlatformStyle::platform() == PlatformStyle::Mac;
 
-        let modifiers_color = if accept_keystroke.display_modifiers == window.modifiers() {
+        let modifiers_color = if *accept_keystroke.modifiers() == window.modifiers() {
             Color::Accent
         } else {
             Color::Muted
@@ -9056,19 +9056,19 @@ impl Editor {
             .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
             .text_size(TextSize::XSmall.rems(cx))
             .child(h_flex().children(ui::render_modifiers(
-                &accept_keystroke.display_modifiers,
+                accept_keystroke.modifiers(),
                 PlatformStyle::platform(),
                 Some(modifiers_color),
                 Some(IconSize::XSmall.rems().into()),
                 true,
             )))
             .when(is_platform_style_mac, |parent| {
-                parent.child(accept_keystroke.display_key.clone())
+                parent.child(accept_keystroke.key().to_string())
             })
             .when(!is_platform_style_mac, |parent| {
                 parent.child(
                     Key::new(
-                        util::capitalize(&accept_keystroke.display_key),
+                        util::capitalize(accept_keystroke.key()),
                         Some(Color::Default),
                     )
                     .size(Some(IconSize::XSmall.rems().into())),
@@ -9251,7 +9251,7 @@ impl Editor {
                                         accept_keystroke.as_ref(),
                                         |el, accept_keystroke| {
                                             el.child(h_flex().children(ui::render_modifiers(
-                                                &accept_keystroke.display_modifiers,
+                                                accept_keystroke.modifiers(),
                                                 PlatformStyle::platform(),
                                                 Some(Color::Default),
                                                 Some(IconSize::XSmall.rems().into()),
@@ -9321,7 +9321,7 @@ impl Editor {
                         .child(completion),
                 )
                 .when_some(accept_keystroke, |el, accept_keystroke| {
-                    if !accept_keystroke.display_modifiers.modified() {
+                    if !accept_keystroke.modifiers().modified() {
                         return el;
                     }
 
@@ -9340,7 +9340,7 @@ impl Editor {
                                     .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
                                     .when(is_platform_style_mac, |parent| parent.gap_1())
                                     .child(h_flex().children(ui::render_modifiers(
-                                        &accept_keystroke.display_modifiers,
+                                        accept_keystroke.modifiers(),
                                         PlatformStyle::platform(),
                                         Some(if !has_completion {
                                             Color::Muted
@@ -10447,6 +10447,86 @@ impl Editor {
             let mut seen = HashSet::default();
             lines.retain(|line| seen.insert(*line));
         })
+    }
+
+    fn enable_wrap_selections_in_tag(&self, cx: &App) -> bool {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        for selection in self.selections.disjoint_anchors().iter() {
+            if snapshot
+                .language_at(selection.start)
+                .and_then(|lang| lang.config().wrap_characters.as_ref())
+                .is_some()
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn wrap_selections_in_tag(
+        &mut self,
+        _: &WrapSelectionsInTag,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
+
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+
+        let mut edits = Vec::new();
+        let mut boundaries = Vec::new();
+
+        for selection in self.selections.all::<Point>(cx).iter() {
+            let Some(wrap_config) = snapshot
+                .language_at(selection.start)
+                .and_then(|lang| lang.config().wrap_characters.clone())
+            else {
+                continue;
+            };
+
+            let open_tag = format!("{}{}", wrap_config.start_prefix, wrap_config.start_suffix);
+            let close_tag = format!("{}{}", wrap_config.end_prefix, wrap_config.end_suffix);
+
+            let start_before = snapshot.anchor_before(selection.start);
+            let end_after = snapshot.anchor_after(selection.end);
+
+            edits.push((start_before..start_before, open_tag));
+            edits.push((end_after..end_after, close_tag));
+
+            boundaries.push((
+                start_before,
+                end_after,
+                wrap_config.start_prefix.len(),
+                wrap_config.end_suffix.len(),
+            ));
+        }
+
+        if edits.is_empty() {
+            return;
+        }
+
+        self.transact(window, cx, |this, window, cx| {
+            let buffer = this.buffer.update(cx, |buffer, cx| {
+                buffer.edit(edits, None, cx);
+                buffer.snapshot(cx)
+            });
+
+            let mut new_selections = Vec::with_capacity(boundaries.len() * 2);
+            for (start_before, end_after, start_prefix_len, end_suffix_len) in
+                boundaries.into_iter()
+            {
+                let open_offset = start_before.to_offset(&buffer) + start_prefix_len;
+                let close_offset = end_after.to_offset(&buffer).saturating_sub(end_suffix_len);
+                new_selections.push(open_offset..open_offset);
+                new_selections.push(close_offset..close_offset);
+            }
+
+            this.change_selections(Default::default(), window, cx, |s| {
+                s.select_ranges(new_selections);
+            });
+
+            this.request_autoscroll(Autoscroll::fit(), cx);
+        });
     }
 
     pub fn reload_file(&mut self, _: &ReloadFile, window: &mut Window, cx: &mut Context<Self>) {

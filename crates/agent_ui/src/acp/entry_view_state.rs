@@ -6,8 +6,8 @@ use agent2::HistoryStore;
 use collections::HashMap;
 use editor::{Editor, EditorMode, MinimapVisibility};
 use gpui::{
-    AnyEntity, App, AppContext as _, Entity, EntityId, EventEmitter, Focusable, ScrollHandle,
-    TextStyleRefinement, WeakEntity, Window,
+    AnyEntity, App, AppContext as _, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
+    ScrollHandle, TextStyleRefinement, WeakEntity, Window,
 };
 use language::language_settings::SoftWrap;
 use project::Project;
@@ -247,6 +247,13 @@ pub enum Entry {
 }
 
 impl Entry {
+    pub fn focus_handle(&self, cx: &App) -> Option<FocusHandle> {
+        match self {
+            Self::UserMessage(editor) => Some(editor.read(cx).focus_handle(cx)),
+            Self::AssistantMessage(_) | Self::Content(_) => None,
+        }
+    }
+
     pub fn message_editor(&self) -> Option<&Entity<MessageEditor>> {
         match self {
             Self::UserMessage(editor) => Some(editor),

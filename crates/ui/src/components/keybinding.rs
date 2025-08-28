@@ -124,7 +124,7 @@ impl RenderOnce for KeyBinding {
                     "KEY_BINDING-{}",
                     self.keystrokes
                         .iter()
-                        .map(|k| k.display_key.to_string())
+                        .map(|k| k.key().to_string())
                         .collect::<Vec<_>>()
                         .join(" ")
                 )
@@ -165,8 +165,8 @@ pub fn render_keybinding_keystroke(
     if use_text {
         let element = Key::new(
             keystroke_text(
-                &keystroke.display_modifiers,
-                &keystroke.display_key,
+                keystroke.modifiers(),
+                keystroke.key(),
                 platform_style,
                 vim_mode,
             ),
@@ -178,18 +178,13 @@ pub fn render_keybinding_keystroke(
     } else {
         let mut elements = Vec::new();
         elements.extend(render_modifiers(
-            &keystroke.display_modifiers,
+            keystroke.modifiers(),
             platform_style,
             color,
             size,
             true,
         ));
-        elements.push(render_key(
-            &keystroke.display_key,
-            color,
-            platform_style,
-            size,
-        ));
+        elements.push(render_key(keystroke.key(), color, platform_style, size));
         elements
     }
 }
@@ -418,8 +413,8 @@ pub fn text_for_keybinding_keystrokes(keystrokes: &[KeybindingKeystroke], cx: &A
         .iter()
         .map(|keystroke| {
             keystroke_text(
-                &keystroke.display_modifiers,
-                &keystroke.display_key,
+                keystroke.modifiers(),
+                keystroke.key(),
                 platform_style,
                 vim_enabled,
             )
