@@ -306,6 +306,7 @@ dependencies = [
  "libc",
  "log",
  "nix 0.29.0",
+ "node_runtime",
  "paths",
  "project",
  "rand 0.8.5",
