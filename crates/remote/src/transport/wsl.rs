@@ -536,7 +536,7 @@ impl RemoteConnection for WslRemoteConnection {
         };
 
         let mut proxy_command = format!(
-            "exec {} proxy --identifier {}",
+            "cd; exec {} proxy --identifier {}",
             remote_binary_path.to_string(),
             unique_identifier
         );
@@ -554,7 +554,6 @@ impl RemoteConnection for WslRemoteConnection {
         let proxy_process = match util::command::new_smol_command("wsl.exe")
             .arg("--distribution")
             .arg(&self.connection_options.distro_name)
-            .arg("--")
             .arg("sh")
             .arg("-lc")
             .arg(&proxy_command)
