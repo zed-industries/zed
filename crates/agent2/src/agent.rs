@@ -2,7 +2,7 @@ use crate::{
     ContextServerRegistry, Thread, ThreadEvent, ThreadsDatabase, ToolCallAuthorization,
     UserMessageContent, templates::Templates,
 };
-use crate::{HistoryStore, TitleUpdated, TokenUsageUpdated};
+use crate::{HistoryStore, NewTerminal, TitleUpdated, TokenUsageUpdated};
 use acp_thread::{AcpThread, AgentModelSelector};
 use action_log::ActionLog;
 use agent_client_protocol as acp;
@@ -789,6 +789,30 @@ impl NativeAgentConnection {
                                 acp_thread.update(cx, |thread, cx| {
                                     thread.update_tool_call(update, cx)
                                 })??;
+                            }
+                            ThreadEvent::NewTerminal(NewTerminal {
+                                command,
+                                output_byte_limit,
+                                cwd,
+                                response,
+                            }) => {
+                                let terminal = acp_thread.update(cx, |thread, cx| {
+                                    thread.new_terminal(
+                                        command,
+                                        vec![],
+                                        vec![],
+                                        cwd,
+                                        output_byte_limit,
+                                        cx,
+                                    )
+                                })?;
+                                cx.background_spawn(async move {
+                                    response
+                                        .send(terminal.await)
+                                        .map(|_| anyhow!("terminal receiver was dropped"))
+                                        .log_err();
+                                })
+                                .detach();
                             }
                             ThreadEvent::Retry(status) => {
                                 acp_thread.update(cx, |thread, cx| {

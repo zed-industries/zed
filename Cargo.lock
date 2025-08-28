@@ -38,6 +38,7 @@ dependencies = [
  "util",
  "uuid",
  "watch",
+ "which 6.0.3",
  "workspace-hack",
 ]
 

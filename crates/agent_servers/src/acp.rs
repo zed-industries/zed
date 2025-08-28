@@ -407,13 +407,24 @@ impl acp::Client for ClientDelegate {
         &self,
         args: acp::NewTerminalRequest,
     ) -> Result<acp::NewTerminalResponse, acp::Error> {
-        let resp = self
+        let terminal = self
             .session_thread(&args.session_id)?
             .update(&mut self.cx.clone(), |thread, cx| {
-                thread.new_terminal(args, cx)
+                thread.new_terminal(
+                    args.command,
+                    args.args,
+                    args.env,
+                    args.cwd,
+                    args.output_byte_limit,
+                    cx,
+                )
             })?
             .await?;
-        Ok(resp)
+        Ok(
+            terminal.read_with(&self.cx, |terminal, _| acp::NewTerminalResponse {
+                terminal_id: terminal.id().clone(),
+            })?,
+        )
     }
 
     async fn terminal_output(
@@ -424,9 +435,8 @@ impl acp::Client for ClientDelegate {
             .session_thread(&args.session_id)?
             .update(&mut self.cx.clone(), |thread, cx| {
                 thread.terminal_output(args, cx)
-            })?
-            .await?;
-        Ok(resp)
+            })?;
+        Ok(resp?)
     }
 }
 

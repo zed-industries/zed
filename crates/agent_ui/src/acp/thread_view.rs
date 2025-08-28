@@ -2248,7 +2248,8 @@ impl AcpThreadView {
 
         let output = terminal_data.output();
         let command_finished = output.is_some();
-        let truncated_output = output.is_some_and(|output| output.was_content_truncated);
+        let truncated_output =
+            output.is_some_and(|output| output.original_content_len > output.content.len());
         let output_line_count = output.map(|output| output.content_line_count).unwrap_or(0);
 
         let command_failed = command_finished
@@ -2374,6 +2375,7 @@ impl AcpThreadView {
                             truncated, the model received the first 16 KB."
                             .to_string()
                     } else {
+                        // todo! based on limit
                         format!(
                             "Output is {} long, and to avoid unexpected token usage, \
                                 only 16 KB was sent back to the model.",

@@ -1,19 +1,18 @@
 use agent_client_protocol as acp;
 use anyhow::Result;
-use futures::{FutureExt as _, future::Shared};
-use gpui::{App, AppContext, Entity, SharedString, Task};
-use project::{Project, terminals::TerminalKind};
+use gpui::{App, Entity, SharedString, Task};
+use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{ResultExt, get_system_shell, markdown::MarkdownInlineCode};
+use util::markdown::MarkdownInlineCode;
 
 use crate::{AgentTool, ToolCallEventStream};
 
-const COMMAND_OUTPUT_LIMIT: usize = 16 * 1024;
+const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 
 /// Executes a shell one-liner and returns the combined output.
 ///
@@ -36,26 +35,11 @@ pub struct TerminalToolInput {
 
 pub struct TerminalTool {
     project: Entity<Project>,
-    determine_shell: Shared<Task<String>>,
 }
 
 impl TerminalTool {
-    pub fn new(project: Entity<Project>, cx: &mut App) -> Self {
-        let determine_shell = cx.background_spawn(async move {
-            if cfg!(windows) {
-                return get_system_shell();
-            }
-
-            if which::which("bash").is_ok() {
-                "bash".into()
-            } else {
-                get_system_shell()
-            }
-        });
-        Self {
-            project,
-            determine_shell: determine_shell.shared(),
-        }
+    pub fn new(project: Entity<Project>) -> Self {
+        Self { project }
     }
 }
 
@@ -99,128 +83,53 @@ impl AgentTool for TerminalTool {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
-        let language_registry = self.project.read(cx).languages().clone();
         let working_dir = match working_dir(&input, &self.project, cx) {
             Ok(dir) => dir,
             Err(err) => return Task::ready(Err(err)),
         };
-        let program = self.determine_shell.clone();
-        let command = if cfg!(windows) {
-            format!("$null | & {{{}}}", input.command.replace("\"", "'"))
-        } else if let Some(cwd) = working_dir
-            .as_ref()
-            .and_then(|cwd| cwd.as_os_str().to_str())
-        {
-            // Make sure once we're *inside* the shell, we cd into `cwd`
-            format!("(cd {cwd}; {}) </dev/null", input.command)
-        } else {
-            format!("({}) </dev/null", input.command)
-        };
-        let args = vec!["-c".into(), command];
-
-        let env = match &working_dir {
-            Some(dir) => self.project.update(cx, |project, cx| {
-                project.directory_environment(dir.as_path().into(), cx)
-            }),
-            None => Task::ready(None).shared(),
-        };
-
-        let env = cx.spawn(async move |_| {
-            let mut env = env.await.unwrap_or_default();
-            if cfg!(unix) {
-                env.insert("PAGER".into(), "cat".into());
-            }
-            env
-        });
 
         let authorize = event_stream.authorize(self.initial_title(Ok(input.clone())), cx);
+        cx.spawn(async move |cx| {
+            authorize.await?;
 
-        cx.spawn({
-            async move |cx| {
-                authorize.await?;
+            let terminal = event_stream
+                .new_terminal(
+                    input.command.clone(),
+                    working_dir,
+                    Some(COMMAND_OUTPUT_LIMIT),
+                )
+                .await?;
 
-                let program = program.await;
-                let env = env.await;
-                let terminal = self
-                    .project
-                    .update(cx, |project, cx| {
-                        project.create_terminal(
-                            TerminalKind::Task(task::SpawnInTerminal {
-                                command: Some(program),
-                                args,
-                                cwd: working_dir.clone(),
-                                env,
-                                ..Default::default()
-                            }),
-                            cx,
-                        )
-                    })?
-                    .await?;
-                let acp_terminal = cx.new(|cx| {
-                    acp_thread::Terminal::new(
-                        input.command.clone(),
-                        working_dir.clone(),
-                        terminal.clone(),
-                        language_registry,
-                        cx,
-                    )
-                })?;
-                event_stream.update_terminal(acp_terminal.clone());
+            let terminal_id = terminal.read_with(cx, |terminal, _| terminal.id().clone())?;
+            event_stream.update_fields(acp::ToolCallUpdateFields {
+                content: Some(vec![acp::ToolCallContent::Terminal { terminal_id }]),
+                ..Default::default()
+            });
 
-                let exit_status = terminal
-                    .update(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
-                    .await;
-                let (content, content_line_count) = terminal.read_with(cx, |terminal, _| {
-                    (terminal.get_content(), terminal.total_lines())
-                })?;
+            let exit_status = terminal
+                .read_with(cx, |terminal, _cx| terminal.wait())?
+                .await;
+            let output = terminal.read_with(cx, |terminal, cx| terminal.current_output(cx))?;
 
-                let (processed_content, finished_with_empty_output) = process_content(
-                    &content,
-                    &input.command,
-                    exit_status.map(portable_pty::ExitStatus::from),
-                );
-
-                acp_terminal
-                    .update(cx, |terminal, cx| {
-                        terminal.finish(
-                            exit_status,
-                            content.len(),
-                            processed_content.len(),
-                            content_line_count,
-                            finished_with_empty_output,
-                            cx,
-                        );
-                    })
-                    .log_err();
-
-                Ok(processed_content)
-            }
+            Ok(process_content(
+                output,
+                &input.command,
+                exit_status.map(portable_pty::ExitStatus::from),
+            ))
         })
     }
 }
 
 fn process_content(
-    content: &str,
+    output: acp::TerminalOutputResponse,
     command: &str,
     exit_status: Option<portable_pty::ExitStatus>,
-) -> (String, bool) {
-    let should_truncate = content.len() > COMMAND_OUTPUT_LIMIT;
-
-    let content = if should_truncate {
-        let mut end_ix = COMMAND_OUTPUT_LIMIT.min(content.len());
-        while !content.is_char_boundary(end_ix) {
-            end_ix -= 1;
-        }
-        // Don't truncate mid-line, clear the remainder of the last line
-        end_ix = content[..end_ix].rfind('\n').unwrap_or(end_ix);
-        &content[..end_ix]
-    } else {
-        content
-    };
-    let content = content.trim();
+) -> String {
+    let content = output.output.trim();
     let is_empty = content.is_empty();
+
     let content = format!("```\n{content}\n```");
-    let content = if should_truncate {
+    let content = if output.truncated {
         format!(
             "Command output too long. The first {} bytes:\n\n{content}",
             content.len(),
@@ -257,7 +166,7 @@ fn process_content(
             )
         }
     };
-    (content, is_empty)
+    content
 }
 
 fn working_dir(
@@ -359,8 +268,8 @@ mod tests {
                 .to_string(),
         };
         let (event_stream_tx, mut event_stream_rx) = ToolCallEventStream::test();
-        let result = cx
-            .update(|cx| Arc::new(TerminalTool::new(project, cx)).run(input, event_stream_tx, cx));
+        let result =
+            cx.update(|cx| Arc::new(TerminalTool::new(project)).run(input, event_stream_tx, cx));
 
         let auth = event_stream_rx.expect_authorization().await;
         auth.response.send(auth.options[0].id.clone()).unwrap();
@@ -387,7 +296,7 @@ mod tests {
         let check = |input, expected, cx: &mut TestAppContext| {
             let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
             let result = cx.update(|cx| {
-                Arc::new(TerminalTool::new(project.clone(), cx)).run(input, stream_tx, cx)
+                Arc::new(TerminalTool::new(project.clone())).run(input, stream_tx, cx)
             });
             cx.run_until_parked();
             let event = stream_rx.try_next();
