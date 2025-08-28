@@ -1,7 +1,7 @@
 mod appearance_settings_controls;
 
 use std::any::{Any, TypeId};
-use std::ops::Range;
+use std::ops::{Not, Range};
 
 use anyhow::Context as _;
 use command_palette_hooks::CommandPaletteFilter;
@@ -84,12 +84,14 @@ pub fn init(cx: &mut App) {
 
 pub struct SettingsPage {
     focus_handle: FocusHandle,
+    settings_tree: SettingsUITree,
 }
 
 impl SettingsPage {
     pub fn new(_workspace: &Workspace, cx: &mut Context<Workspace>) -> Entity<Self> {
         cx.new(|cx| Self {
             focus_handle: cx.focus_handle(),
+            settings_tree: SettingsUITree::new(cx),
         })
     }
 }
@@ -150,10 +152,8 @@ struct UIEntry {
 }
 
 struct SettingsUITree {
-    user_settings: serde_json::Value,
-    default_settings: serde_json::Value,
     root_entry_indices: Vec<usize>,
-    tree: Vec<UIEntry>,
+    entries: Vec<UIEntry>,
     active_entry_index: usize,
 }
 
@@ -181,8 +181,11 @@ fn build_tree_item(
             tree[index].path = path;
             tree[index].title = title;
             for group_item in group.items {
-                let prev_index = Some(tree[index].descendant_range.end - 1)
-                    .filter(|_| !tree[index].descendant_range.is_empty());
+                let prev_index = tree[index]
+                    .descendant_range
+                    .is_empty()
+                    .not()
+                    .then_some(tree[index].descendant_range.end - 1);
                 tree[index].descendant_range.end = tree.len() + 1;
                 build_tree_item(tree, group_item.item, depth + 1, prev_index);
                 tree[index].total_descendant_range.end = tree.len();
@@ -202,17 +205,14 @@ fn build_tree_item(
 impl SettingsUITree {
     fn new(cx: &App) -> Self {
         let settings_store = SettingsStore::global(cx);
-        // todo! remove clones somehow?
-        let user_settings = settings_store.raw_user_settings.clone();
-        let default_settings = settings_store.raw_default_settings.clone();
         let mut tree = vec![];
         let mut root_entry_indices = vec![];
         for item in settings_store.settings_ui_items() {
+            if matches!(item.item, SettingsUIItemVariant::None) {
+                continue;
+            }
             assert!(
-                matches!(
-                    item.item,
-                    SettingsUIItemVariant::Group { .. } | SettingsUIItemVariant::None
-                ),
+                matches!(item.item, SettingsUIItemVariant::Group { .. }),
                 "top level items must be groups"
             );
             let prev_root_entry_index = root_entry_indices.last().copied();
@@ -220,71 +220,113 @@ impl SettingsUITree {
             build_tree_item(&mut tree, item.item, 0, prev_root_entry_index);
         }
 
+        root_entry_indices.sort_by_key(|i| tree[*i].title);
+
         Self {
-            tree,
+            entries: tree,
             root_entry_indices,
-            user_settings,
-            default_settings,
-            active_entry_index: 0,
+            active_entry_index: root_entry_indices[0],
         }
     }
+}
 
-    fn render_nav(&self, _window: &mut Window, cx: &mut Context<SettingsPage>) -> impl IntoElement {
-        let mut nav = v_flex()
-            .items_start()
-            .p_4()
-            .bg(cx.theme().colors().background)
-            .size_full()
-            .gap_4();
-        for index in &self.root_entry_indices {
-            nav = nav.child(
-                Label::new(SharedString::new_static(self.tree[*index].title))
-                    .size(LabelSize::Large)
-                    .when(self.active_entry_index == *index, |this| {
-                        this.color(Color::Selected)
-                    }),
-            );
-        }
-        nav
+fn render_nav(tree: &SettingsUITree, _window: &mut Window, cx: &mut Context<SettingsPage>) -> Div {
+    let mut nav = v_flex().p_4().gap_2();
+    for &index in &tree.root_entry_indices {
+        nav = nav.child(
+            div()
+                .id(index)
+                .on_click(cx.listener(move |settings, _, _, _| {
+                    settings.settings_tree.active_entry_index = index;
+                }))
+                .child(
+                    Label::new(SharedString::new_static(tree.entries[index].title))
+                        .size(LabelSize::Large)
+                        .when(tree.active_entry_index == index, |this| {
+                            this.color(Color::Selected)
+                        }),
+                ),
+        );
     }
+    nav
+}
 
-    fn render_content(
-        &self,
-        _window: &mut Window,
-        _cx: &mut Context<SettingsPage>,
-    ) -> impl IntoElement {
-        let Some(entry) = self.tree.get(self.active_entry_index) else {
-            return div().size_full().child(
-                Label::new(SharedString::new_static("No settings found")).color(Color::Error),
-            );
-        };
+fn render_content(
+    tree: &SettingsUITree,
+    window: &mut Window,
+    cx: &mut Context<SettingsPage>,
+) -> impl IntoElement {
+    let Some(entry) = tree.entries.get(tree.active_entry_index) else {
         return div()
             .size_full()
-            .child(Label::new(SharedString::new_static("Content goes here")));
+            .child(Label::new(SharedString::new_static("No settings found")).color(Color::Error));
+    };
+    let mut content = v_flex().size_full().gap_4();
+
+    let mut child_index = entry
+        .descendant_range
+        .is_empty()
+        .not()
+        .then_some(entry.descendant_range.start);
+    let mut path = smallvec::smallvec![entry.path];
+
+    while let Some(index) = child_index {
+        if !tree.entries[index].render.is_some() {
+            // TODO: subgroups?
+            continue;
+        }
+        let child = &tree.entries[index];
+        path.push(child.path);
+        let settings_value = settings_value_from_settings_and_path(
+            path.clone(),
+            // TODO: how to structure this better? There feels like theres away to avoid the clone
+            // and every value lookup
+            &SettingsStore::global(cx).raw_user_settings,
+            &SettingsStore::global(cx).raw_default_settings,
+        );
+        content = content.child(
+            div()
+                .child(
+                    Label::new(SharedString::new_static(tree.entries[index].title))
+                        .size(LabelSize::Large)
+                        .when(tree.active_entry_index == index, |this| {
+                            this.color(Color::Selected)
+                        }),
+                )
+                .child(render_item_single(
+                    settings_value,
+                    child.render.as_ref().unwrap(),
+                    window,
+                    cx,
+                )),
+        );
+
+        path.pop();
+        child_index = child.next_sibling;
     }
+
+    return content;
 }
 
 impl Render for SettingsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let settings_tree = SettingsUITree::new(cx);
-
-        h_flex()
+        div()
+            .grid()
+            .grid_cols(16)
             .p_4()
             .bg(cx.theme().colors().editor_background)
             .size_full()
-            .gap_4()
             .child(
                 div()
-                    .w_1_4()
+                    .col_span(2)
                     .h_full()
-                    .child(settings_tree.render_nav(window, cx)),
+                    .child(render_nav(&self.settings_tree, window, cx)),
             )
-            .child(
-                div()
-                    .w_3_4()
-                    .h_full()
-                    .child(settings_tree.render_content(window, cx)),
-            )
+            .child(div().col_span(4).h_full().child(render_content(
+                &self.settings_tree,
+                window,
+                cx,
+            )))
     }
 }
 
