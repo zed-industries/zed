@@ -136,6 +136,7 @@ impl AcpConnection {
                         read_text_file: true,
                         write_text_file: true,
                     },
+                    terminal: false,
                 },
             })
             .await?;

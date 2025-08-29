@@ -4,7 +4,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use acp_thread::MentionUri;
+use acp_thread::{AgentSessionCommands, MentionUri};
 use agent_client_protocol as acp;
 use agent2::{HistoryEntry, HistoryStore};
 use anyhow::Result;
@@ -67,6 +67,7 @@ pub struct ContextPickerCompletionProvider {
     history_store: Entity<HistoryStore>,
     prompt_store: Option<Entity<PromptStore>>,
     prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
+    command_provider: Cell<Option<Rc<dyn AgentSessionCommands>>>,
 }
 
 impl ContextPickerCompletionProvider {
@@ -83,7 +84,12 @@ impl ContextPickerCompletionProvider {
             history_store,
             prompt_store,
             prompt_capabilities,
+            command_provider: Cell::default(),
         }
+    }
+
+    pub fn set_command_provider(&self, provider: Option<Rc<dyn AgentSessionCommands>>) {
+        self.command_provider.set(provider);
     }
 
     fn completion_for_entry(

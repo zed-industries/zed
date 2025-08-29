@@ -486,6 +486,11 @@ impl AcpThreadView {
                     Ok(thread) => {
                         let action_log = thread.read(cx).action_log().clone();
 
+                        this.message_editor.update(cx, |editor, cx| {
+                            let session_id = thread.read(cx).session_id();
+                            editor.set_command_provider(connection.commands(session_id, cx));
+                        });
+
                         this.prompt_capabilities
                             .set(thread.read(cx).prompt_capabilities());
 
@@ -5506,6 +5511,7 @@ pub(crate) mod tests {
                         image: true,
                         audio: true,
                         embedded_context: true,
+                        supports_commands: true,
                     }),
                     cx,
                 )

@@ -2,7 +2,7 @@ use crate::{
     acp::completion_provider::ContextPickerCompletionProvider,
     context_picker::{ContextPickerAction, fetch_context_picker::fetch_url_content},
 };
-use acp_thread::{MentionUri, selection_name};
+use acp_thread::{AgentSessionCommands, MentionUri, selection_name};
 use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use agent2::HistoryStore;
@@ -65,6 +65,7 @@ pub struct MessageEditor {
     prompt_store: Option<Entity<PromptStore>>,
     prevent_slash_commands: bool,
     prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
+    completion_provider: Rc<ContextPickerCompletionProvider>,
     _subscriptions: Vec<Subscription>,
     _parse_slash_command_task: Task<()>,
 }
@@ -99,13 +100,13 @@ impl MessageEditor {
             },
             None,
         );
-        let completion_provider = ContextPickerCompletionProvider::new(
+        let completion_provider = Rc::new(ContextPickerCompletionProvider::new(
             cx.weak_entity(),
             workspace.clone(),
             history_store.clone(),
             prompt_store.clone(),
             prompt_capabilities.clone(),
-        );
+        ));
         let semantics_provider = Rc::new(SlashCommandSemanticsProvider {
             range: Cell::new(None),
         });
@@ -119,7 +120,7 @@ impl MessageEditor {
             editor.set_show_indent_guides(false, cx);
             editor.set_soft_wrap();
             editor.set_use_modal_editing(true);
-            editor.set_completion_provider(Some(Rc::new(completion_provider)));
+            editor.set_completion_provider(Some(completion_provider.clone()));
             editor.set_context_menu_options(ContextMenuOptions {
                 min_entries_visible: 12,
                 max_entries_visible: 12,
@@ -170,6 +171,7 @@ impl MessageEditor {
             prompt_store,
             prevent_slash_commands,
             prompt_capabilities,
+            completion_provider,
             _subscriptions: subscriptions,
             _parse_slash_command_task: Task::ready(()),
         }
@@ -225,6 +227,10 @@ impl MessageEditor {
             .values()
             .map(|(uri, _)| uri.clone())
             .collect()
+    }
+
+    pub fn set_command_provider(&mut self, provider: Option<Rc<dyn AgentSessionCommands>>) {
+        self.completion_provider.set_command_provider(provider);
     }
 
     pub fn confirm_completion(
@@ -1905,6 +1911,7 @@ mod tests {
             image: true,
             audio: true,
             embedded_context: true,
+            supports_commands: true,
         });
 
         cx.simulate_input("Lorem ");
@@ -1976,6 +1983,7 @@ mod tests {
             image: true,
             audio: true,
             embedded_context: true,
+            supports_commands: true,
         };
 
         let contents = message_editor
