@@ -429,6 +429,10 @@ impl TerminalBuilder {
                     .or_else(|| Some(home_dir().to_path_buf())),
                 drain_on_exit: true,
                 env: env.clone().into_iter().collect(),
+                // Don't know what the correct value for Zed to use here is, just making it compile for now.
+                #[cfg(target_os = "windows")]
+                escape_args: false,
+
             }
         };
 
