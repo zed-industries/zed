@@ -7504,6 +7504,7 @@ impl LineWithInvisibles {
         let mut row = 0;
         let mut line_exceeded_max_len = false;
         let font_size = text_style.font_size.to_pixels(window.rem_size());
+        let min_contrast = EditorSettings::get_global(cx).minimum_contrast_for_highlights;
 
         let ellipsis = SharedString::from("⋯");
 
@@ -7520,7 +7521,7 @@ impl LineWithInvisibles {
                     let text_runs: &[TextRun] = if segments.is_empty() {
                         &styles
                     } else {
-                        &Self::split_runs_by_bg_segments(&styles, segments, cx)
+                        &Self::split_runs_by_bg_segments(&styles, segments, min_contrast)
                     };
                     let shaped_line = window.text_system().shape_line(
                         line.clone().into(),
@@ -7607,7 +7608,7 @@ impl LineWithInvisibles {
                         let text_runs = if segments.is_empty() {
                             &styles
                         } else {
-                            &Self::split_runs_by_bg_segments(&styles, segments, cx)
+                            &Self::split_runs_by_bg_segments(&styles, segments, min_contrast)
                         };
                         let shaped_line = window.text_system().shape_line(
                             line.clone().into(),
@@ -7705,12 +7706,11 @@ impl LineWithInvisibles {
     fn split_runs_by_bg_segments(
         text_runs: &[TextRun],
         bg_segments: &[(Range<DisplayPoint>, Hsla)],
-        cx: &mut App,
+        min_contrast: f32,
     ) -> Vec<TextRun> {
         let mut output_runs: Vec<TextRun> = Vec::with_capacity(text_runs.len());
         let mut line_col = 0usize;
         let mut segment_ix = 0usize;
-        let min_contrast = EditorSettings::get_global(cx).minimum_contrast_for_highlights;
 
         for text_run in text_runs.iter() {
             let run_start_col = line_col;
@@ -11033,135 +11033,106 @@ mod tests {
             vec![(5, 8), (8, 10), (10, 12), (12, 14), (14, 16)]
         );
     }
-}
 
-#[gpui::test]
-fn test_bg_segments_per_row() {
-    let base_bg = Hsla::default();
+    #[gpui::test]
+    fn test_bg_segments_per_row() {
+        let base_bg = Hsla::default();
 
-    // Case A: selection spans three display rows: row 1 [5, end), full row 2, row 3 [0, 7)
-    {
-        let selection_color = Hsla {
-            h: 200.0,
-            s: 0.5,
-            l: 0.5,
-            a: 0.5,
-        };
-        let player_color = PlayerColor {
-            cursor: selection_color,
-            background: selection_color,
-            selection: selection_color,
-        };
+        // Case A: selection spans three display rows: row 1 [5, end), full row 2, row 3 [0, 7)
+        {
+            let selection_color = Hsla {
+                h: 200.0,
+                s: 0.5,
+                l: 0.5,
+                a: 0.5,
+            };
+            let player_color = PlayerColor {
+                cursor: selection_color,
+                background: selection_color,
+                selection: selection_color,
+            };
 
-        let spanning_selection = SelectionLayout {
-            head: DisplayPoint::new(DisplayRow(3), 7),
-            cursor_shape: CursorShape::Bar,
-            is_newest: true,
-            is_local: true,
-            range: DisplayPoint::new(DisplayRow(1), 5)..DisplayPoint::new(DisplayRow(3), 7),
-            active_rows: DisplayRow(1)..DisplayRow(4),
-            user_name: None,
-        };
+            let spanning_selection = SelectionLayout {
+                head: DisplayPoint::new(DisplayRow(3), 7),
+                cursor_shape: CursorShape::Bar,
+                is_newest: true,
+                is_local: true,
+                range: DisplayPoint::new(DisplayRow(1), 5)..DisplayPoint::new(DisplayRow(3), 7),
+                active_rows: DisplayRow(1)..DisplayRow(4),
+                user_name: None,
+            };
 
-        let selections = vec![(player_color, vec![spanning_selection])];
-        let result = EditorElement::bg_segments_per_row(
-            DisplayRow(0)..DisplayRow(5),
-            &selections,
-            &[],
-            base_bg,
-        );
+            let selections = vec![(player_color, vec![spanning_selection])];
+            let result = EditorElement::bg_segments_per_row(
+                DisplayRow(0)..DisplayRow(5),
+                &selections,
+                &[],
+                base_bg,
+            );
 
-        assert_eq!(result.len(), 5);
-        assert!(result[0].is_empty());
-        assert_eq!(result[1].len(), 1);
-        assert_eq!(result[2].len(), 1);
-        assert_eq!(result[3].len(), 1);
-        assert!(result[4].is_empty());
+            assert_eq!(result.len(), 5);
+            assert!(result[0].is_empty());
+            assert_eq!(result[1].len(), 1);
+            assert_eq!(result[2].len(), 1);
+            assert_eq!(result[3].len(), 1);
+            assert!(result[4].is_empty());
 
-        assert_eq!(result[1][0].0.start, DisplayPoint::new(DisplayRow(1), 5));
-        assert_eq!(result[1][0].0.end.row(), DisplayRow(1));
-        assert_eq!(result[1][0].0.end.column(), u32::MAX);
-        assert_eq!(result[2][0].0.start, DisplayPoint::new(DisplayRow(2), 0));
-        assert_eq!(result[2][0].0.end.row(), DisplayRow(2));
-        assert_eq!(result[2][0].0.end.column(), u32::MAX);
-        assert_eq!(result[3][0].0.start, DisplayPoint::new(DisplayRow(3), 0));
-        assert_eq!(result[3][0].0.end, DisplayPoint::new(DisplayRow(3), 7));
+            assert_eq!(result[1][0].0.start, DisplayPoint::new(DisplayRow(1), 5));
+            assert_eq!(result[1][0].0.end.row(), DisplayRow(1));
+            assert_eq!(result[1][0].0.end.column(), u32::MAX);
+            assert_eq!(result[2][0].0.start, DisplayPoint::new(DisplayRow(2), 0));
+            assert_eq!(result[2][0].0.end.row(), DisplayRow(2));
+            assert_eq!(result[2][0].0.end.column(), u32::MAX);
+            assert_eq!(result[3][0].0.start, DisplayPoint::new(DisplayRow(3), 0));
+            assert_eq!(result[3][0].0.end, DisplayPoint::new(DisplayRow(3), 7));
+        }
+
+        // Case B: selection ends exactly at the start of row 3, excluding row 3
+        {
+            let selection_color = Hsla {
+                h: 120.0,
+                s: 0.5,
+                l: 0.5,
+                a: 0.5,
+            };
+            let player_color = PlayerColor {
+                cursor: selection_color,
+                background: selection_color,
+                selection: selection_color,
+            };
+
+            let selection = SelectionLayout {
+                head: DisplayPoint::new(DisplayRow(2), 0),
+                cursor_shape: CursorShape::Bar,
+                is_newest: true,
+                is_local: true,
+                range: DisplayPoint::new(DisplayRow(1), 5)..DisplayPoint::new(DisplayRow(3), 0),
+                active_rows: DisplayRow(1)..DisplayRow(3),
+                user_name: None,
+            };
+
+            let selections = vec![(player_color, vec![selection])];
+            let result = EditorElement::bg_segments_per_row(
+                DisplayRow(0)..DisplayRow(4),
+                &selections,
+                &[],
+                base_bg,
+            );
+
+            assert_eq!(result.len(), 4);
+            assert!(result[0].is_empty());
+            assert_eq!(result[1].len(), 1);
+            assert_eq!(result[2].len(), 1);
+            assert!(result[3].is_empty());
+
+            assert_eq!(result[1][0].0.start, DisplayPoint::new(DisplayRow(1), 5));
+            assert_eq!(result[1][0].0.end.row(), DisplayRow(1));
+            assert_eq!(result[1][0].0.end.column(), u32::MAX);
+            assert_eq!(result[2][0].0.start, DisplayPoint::new(DisplayRow(2), 0));
+            assert_eq!(result[2][0].0.end.row(), DisplayRow(2));
+            assert_eq!(result[2][0].0.end.column(), u32::MAX);
+        }
     }
-
-    // Case B: selection ends exactly at the start of row 3, excluding row 3
-    {
-        let selection_color = Hsla {
-            h: 120.0,
-            s: 0.5,
-            l: 0.5,
-            a: 0.5,
-        };
-        let player_color = PlayerColor {
-            cursor: selection_color,
-            background: selection_color,
-            selection: selection_color,
-        };
-
-        let selection = SelectionLayout {
-            head: DisplayPoint::new(DisplayRow(2), 0),
-            cursor_shape: CursorShape::Bar,
-            is_newest: true,
-            is_local: true,
-            range: DisplayPoint::new(DisplayRow(1), 5)..DisplayPoint::new(DisplayRow(3), 0),
-            active_rows: DisplayRow(1)..DisplayRow(3),
-            user_name: None,
-        };
-
-        let selections = vec![(player_color, vec![selection])];
-        let result = EditorElement::bg_segments_per_row(
-            DisplayRow(0)..DisplayRow(4),
-            &selections,
-            &[],
-            base_bg,
-        );
-
-        assert_eq!(result.len(), 4);
-        assert!(result[0].is_empty());
-        assert_eq!(result[1].len(), 1);
-        assert_eq!(result[2].len(), 1);
-        assert!(result[3].is_empty());
-
-        assert_eq!(result[1][0].0.start, DisplayPoint::new(DisplayRow(1), 5));
-        assert_eq!(result[1][0].0.end.row(), DisplayRow(1));
-        assert_eq!(result[1][0].0.end.column(), u32::MAX);
-        assert_eq!(result[2][0].0.start, DisplayPoint::new(DisplayRow(2), 0));
-        assert_eq!(result[2][0].0.end.row(), DisplayRow(2));
-        assert_eq!(result[2][0].0.end.column(), u32::MAX);
-    }
-}
-
-#[gpui::test]
-fn test_split_runs_by_bg_segments(cx: &mut App) {
-    use gpui::UpdateGlobal;
-    let store = settings::SettingsStore::test(cx);
-    settings::SettingsStore::set_global(cx, store);
-    settings::SettingsStore::update_global(cx, |store, cx| {
-        store.register_setting::<EditorSettings>(cx);
-    });
-    let text_color = Hsla {
-        h: 210.0,
-        s: 0.1,
-        l: 0.4,
-        a: 1.0,
-    };
-    let bg1 = Hsla {
-        h: 30.0,
-        s: 0.6,
-        l: 0.8,
-        a: 1.0,
-    };
-    let bg2 = Hsla {
-        h: 200.0,
-        s: 0.6,
-        l: 0.2,
-        a: 1.0,
-    };
-    let min_contrast = EditorSettings::get_global(cx).minimum_contrast_for_highlights;
 
     #[cfg(test)]
     fn generate_test_run(len: usize, color: Hsla) -> TextRun {
@@ -11175,50 +11146,75 @@ fn test_split_runs_by_bg_segments(cx: &mut App) {
         }
     }
 
-    // Case A: single run; disjoint segments inside the run
-    let runs = vec![generate_test_run(20, text_color)];
-    let segs = vec![
-        (
-            DisplayPoint::new(DisplayRow(0), 5)..DisplayPoint::new(DisplayRow(0), 10),
-            bg1,
-        ),
-        (
-            DisplayPoint::new(DisplayRow(0), 12)..DisplayPoint::new(DisplayRow(0), 16),
-            bg2,
-        ),
-    ];
-    let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, cx);
-    // Expected slices: [0,5) [5,10) [10,12) [12,16) [16,20)
-    assert_eq!(
-        out.iter().map(|r| r.len).collect::<Vec<_>>(),
-        vec![5, 5, 2, 4, 4]
-    );
-    assert_eq!(out[0].color, text_color);
-    assert_eq!(
-        out[1].color,
-        ensure_minimum_contrast(text_color, bg1, min_contrast)
-    );
-    assert_eq!(out[2].color, text_color);
-    assert_eq!(
-        out[3].color,
-        ensure_minimum_contrast(text_color, bg2, min_contrast)
-    );
-    assert_eq!(out[4].color, text_color);
+    #[gpui::test]
+    fn test_split_runs_by_bg_segments(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
 
-    // Case B: multiple runs; segment extends to end of line (u32::MAX)
-    let runs = vec![
-        generate_test_run(8, text_color),
-        generate_test_run(7, text_color),
-    ];
-    let segs = vec![(
-        DisplayPoint::new(DisplayRow(0), 6)..DisplayPoint::new(DisplayRow(0), u32::MAX),
-        bg1,
-    )];
-    let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, cx);
-    // Expected slices across runs: [0,6) [6,8) | [0,7)
-    assert_eq!(out.iter().map(|r| r.len).collect::<Vec<_>>(), vec![6, 2, 7]);
-    let adjusted = ensure_minimum_contrast(text_color, bg1, min_contrast);
-    assert_eq!(out[0].color, text_color);
-    assert_eq!(out[1].color, adjusted);
-    assert_eq!(out[2].color, adjusted);
+        let text_color = Hsla {
+            h: 210.0,
+            s: 0.1,
+            l: 0.4,
+            a: 1.0,
+        };
+        let bg1 = Hsla {
+            h: 30.0,
+            s: 0.6,
+            l: 0.8,
+            a: 1.0,
+        };
+        let bg2 = Hsla {
+            h: 200.0,
+            s: 0.6,
+            l: 0.2,
+            a: 1.0,
+        };
+        let min_contrast = 45.0;
+
+        // Case A: single run; disjoint segments inside the run
+        let runs = vec![generate_test_run(20, text_color)];
+        let segs = vec![
+            (
+                DisplayPoint::new(DisplayRow(0), 5)..DisplayPoint::new(DisplayRow(0), 10),
+                bg1,
+            ),
+            (
+                DisplayPoint::new(DisplayRow(0), 12)..DisplayPoint::new(DisplayRow(0), 16),
+                bg2,
+            ),
+        ];
+        let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, min_contrast);
+        // Expected slices: [0,5) [5,10) [10,12) [12,16) [16,20)
+        assert_eq!(
+            out.iter().map(|r| r.len).collect::<Vec<_>>(),
+            vec![5, 5, 2, 4, 4]
+        );
+        assert_eq!(out[0].color, text_color);
+        assert_eq!(
+            out[1].color,
+            ensure_minimum_contrast(text_color, bg1, min_contrast)
+        );
+        assert_eq!(out[2].color, text_color);
+        assert_eq!(
+            out[3].color,
+            ensure_minimum_contrast(text_color, bg2, min_contrast)
+        );
+        assert_eq!(out[4].color, text_color);
+
+        // Case B: multiple runs; segment extends to end of line (u32::MAX)
+        let runs = vec![
+            generate_test_run(8, text_color),
+            generate_test_run(7, text_color),
+        ];
+        let segs = vec![(
+            DisplayPoint::new(DisplayRow(0), 6)..DisplayPoint::new(DisplayRow(0), u32::MAX),
+            bg1,
+        )];
+        let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, min_contrast);
+        // Expected slices across runs: [0,6) [6,8) | [0,7)
+        assert_eq!(out.iter().map(|r| r.len).collect::<Vec<_>>(), vec![6, 2, 7]);
+        let adjusted = ensure_minimum_contrast(text_color, bg1, min_contrast);
+        assert_eq!(out[0].color, text_color);
+        assert_eq!(out[1].color, adjusted);
+        assert_eq!(out[2].color, adjusted);
+    }
 }
