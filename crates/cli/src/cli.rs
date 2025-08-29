@@ -14,7 +14,7 @@ pub enum CliRequest {
         paths: Vec<String>,
         urls: Vec<String>,
         diff_paths: Vec<[String; 2]>,
-        wsl: Option<String>,
+        wsl_args: Option<WslArgs>,
         wait: bool,
         open_new_workspace: Option<bool>,
         env: Option<HashMap<String, String>>,
@@ -28,6 +28,22 @@ pub enum CliResponse {
     Stdout { message: String },
     Stderr { message: String },
     Exit { status: i32 },
+}
+
+/// Command line arguments related to WSL remote support.
+#[derive(clap::Args, Debug, Clone, Serialize, Deserialize)]
+pub struct WslArgs {
+    /// The name of a WSL distribution on which the given paths should be opened.
+    /// If not specified, Zed will attempt to open the paths directly.
+    ///
+    /// Pass `-` to use the default WSL distribution.
+    #[arg(long, value_name = "DISTRO")]
+    pub wsl: String,
+
+    /// The username to use when connecting to the WSL distribution, will use
+    /// the default user if not specified.
+    #[arg(long)]
+    pub wsl_user: Option<String>,
 }
 
 /// When Zed started not as an *.app but as a binary (e.g. local development),

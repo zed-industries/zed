@@ -5,7 +5,7 @@
 
 use anyhow::{Context as _, Result};
 use clap::Parser;
-use cli::{CliRequest, CliResponse, IpcHandshake, ipc::IpcOneShotServer};
+use cli::{CliRequest, CliResponse, IpcHandshake, WslArgs, ipc::IpcOneShotServer};
 use parking_lot::Mutex;
 use std::{
     env, fs, io,
@@ -84,12 +84,9 @@ struct Args {
     /// Run zed in dev-server mode
     #[arg(long)]
     dev_server_token: Option<String>,
-    /// The name of a WSL distribution on which the given paths should be opened.
-    /// If not specified, Zed will attempt to open the paths directly.
-    ///
-    /// Pass `-` to use the default WSL distribution.
-    #[arg(long, value_name = "DISTRO")]
-    wsl: Option<String>,
+    /// Used for remote WSL support.
+    #[command(flatten)]
+    wsl_args: Option<WslArgs>,
     /// Not supported in Zed CLI, only supported on Zed binary
     /// Will attempt to give the correct command to run
     #[arg(long)]
@@ -134,15 +131,23 @@ fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
     Ok(canonicalized.to_string(|path| path.to_string_lossy().to_string()))
 }
 
-fn parse_path_in_wsl(source: &str, dist: &str) -> Result<String> {
-    let output = util::command::new_std_command("wsl.exe")
+fn parse_path_in_wsl(source: &str, wsl_args: &WslArgs) -> Result<String> {
+    let mut command = util::command::new_std_command("wsl.exe");
+
+    if let Some(user) = &wsl_args.wsl_user {
+        command.arg("--user").arg(user);
+    }
+
+    let output = command
+        .arg("--distribution")
+        .arg(&wsl_args.wsl)
         .arg("wslpath")
         .arg("-m")
         .arg(source)
         .output()?;
 
     let result = String::from_utf8_lossy(&output.stdout);
-    let prefix = format!("//wsl.localhost/{}", dist);
+    let prefix = format!("//wsl.localhost/{}", wsl_args.wsl);
 
     Ok(result
         .trim()
@@ -299,8 +304,8 @@ fn main() -> Result<()> {
             paths.push(tmp_file.path().to_string_lossy().to_string());
             let (tmp_file, _) = tmp_file.keep()?;
             anonymous_fd_tmp_files.push((file, tmp_file));
-        } else if let Some(dist) = args.wsl.as_deref() {
-            urls.push(format!("file://{}", parse_path_in_wsl(path, dist)?));
+        } else if let Some(wsl_args) = &args.wsl_args {
+            urls.push(format!("file://{}", parse_path_in_wsl(path, wsl_args)?));
         } else {
             paths.push(parse_path_with_position(path)?);
         }
@@ -322,7 +327,7 @@ fn main() -> Result<()> {
                 paths,
                 urls,
                 diff_paths,
-                wsl: args.wsl,
+                wsl_args: args.wsl_args,
                 wait: args.wait,
                 open_new_workspace,
                 env,

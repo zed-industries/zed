@@ -1,6 +1,7 @@
 use crate::handle_open_request;
 use crate::restorable_workspace_locations;
 use anyhow::{Context as _, Result, anyhow};
+use cli::WslArgs;
 use cli::{CliRequest, CliResponse, ipc::IpcSender};
 use cli::{IpcHandshake, ipc};
 use client::parse_zed_link;
@@ -53,9 +54,10 @@ impl OpenRequest {
         let mut this = Self::default();
 
         this.diff_paths = request.diff_paths;
-        if let Some(wsl) = request.wsl {
+        if let Some(wsl_args) = request.wsl_args {
             this.remote_connection = Some(RemoteConnectionOptions::Wsl(WslConnectionOptions {
-                distro_name: wsl,
+                distro_name: wsl_args.wsl,
+                user: wsl_args.wsl_user,
             }));
         }
 
@@ -160,7 +162,7 @@ pub struct OpenListener(UnboundedSender<RawOpenRequest>);
 pub struct RawOpenRequest {
     pub urls: Vec<String>,
     pub diff_paths: Vec<[String; 2]>,
-    pub wsl: Option<String>,
+    pub wsl_args: Option<WslArgs>,
 }
 
 impl Global for OpenListener {}
@@ -312,7 +314,7 @@ pub async fn handle_cli_connection(
                 paths,
                 diff_paths,
                 wait,
-                wsl,
+                wsl_args,
                 open_new_workspace,
                 env,
                 user_data_dir: _,
@@ -323,7 +325,7 @@ pub async fn handle_cli_connection(
                             RawOpenRequest {
                                 urls,
                                 diff_paths,
-                                wsl,
+                                wsl_args,
                             },
                             cx,
                         ) {

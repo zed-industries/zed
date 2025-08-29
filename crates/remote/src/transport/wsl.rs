@@ -24,6 +24,7 @@ use util::paths::{PathStyle, RemotePathBuf};
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct WslConnectionOptions {
     pub distro_name: String,
+    pub user: Option<String>,
 }
 
 pub(crate) struct WslRemoteConnection {
@@ -39,6 +40,11 @@ impl WslRemoteConnection {
         delegate: Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
+        log::info!(
+            "Connecting to WSL distro {} with user {:?}",
+            connection_options.distro_name,
+            connection_options.user
+        );
         let (release_channel, version, commit) = cx.update(|cx| {
             (
                 ReleaseChannel::global(cx),
@@ -452,6 +458,11 @@ fn wsl_command_impl(
         .join(" ");
 
     let mut command = util::command::new_smol_command("wsl.exe");
+
+    if let Some(user) = &options.user {
+        command.arg("--user").arg(user);
+    }
+
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

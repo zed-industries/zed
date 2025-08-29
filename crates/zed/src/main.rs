@@ -4,7 +4,7 @@ mod zed;
 use agent_ui::AgentPanel;
 use anyhow::{Context as _, Error, Result};
 use clap::{Parser, command};
-use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
+use cli::{FORCE_CLI_MODE_ENV_VAR_NAME, WslArgs};
 use client::{Client, ProxySettings, UserStore, parse_zed_link};
 use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
@@ -710,7 +710,7 @@ pub fn main() {
             open_listener.open(RawOpenRequest {
                 urls,
                 diff_paths,
-                wsl: args.wsl,
+                wsl_args: args.wsl_args,
             })
         }
 
@@ -1182,12 +1182,9 @@ struct Args {
     #[arg(long, value_name = "DIR")]
     user_data_dir: Option<String>,
 
-    /// The name of a WSL distribution on which the given paths should be opened.
-    /// If not specified, Zed will attempt to open the paths directly.
-    ///
-    /// Pass `-` to use the default WSL distribution.
-    #[arg(long, value_name = "DISTRO")]
-    wsl: Option<String>,
+    /// Used for remote WSL support.
+    #[command(flatten)]
+    wsl_args: Option<WslArgs>,
 
     /// Instructs zed to run as a dev server on this machine. (not implemented)
     #[arg(long)]
