@@ -11,6 +11,9 @@ use std::{ops::Index, sync::LazyLock};
 const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`']+"#;
 // Optional suffix matches MSBuild diagnostic suffixes for path parsing in PathLikeWithPosition
 // https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks
+// It is not important for this to match the specification for valid file names on various operating
+// systems. It is used to identify something that might be a path--invalid paths will be filtered
+// out later.
 const WORD_REGEX: &str = r#"\S+(?:\((?:\d+|\d+,\d+)\))|\S+"#;
 
 const PYTHON_FILE_LINE_REGEX: &str = r#"File "(?P<file>[^"]+)", line (?P<line>\d+)"#;
@@ -90,41 +93,34 @@ pub(super) fn find_from_grid_point<T: EventListener>(
         let file_path = term.bounds_to_string(*word_match.start(), *word_match.end());
 
         let (sanitized_match, sanitized_word) = 'sanitize: {
-            fn shrink_by<'a, T>(
-                left: usize,
-                right: usize,
-                term: &Term<T>,
-                word_match: Match,
-                file_path: &'a str,
-            ) -> (Match, &'a str) {
-                (
-                    Match::new(
+            let shrink_by =
+                |left: usize, right: usize, word_match: &mut Match, file_path: &mut &str| {
+                    *word_match = Match::new(
                         word_match.start().add(term, Boundary::Grid, left),
                         word_match.end().sub(term, Boundary::Grid, right),
-                    ),
-                    &file_path[left..file_path.len() - right],
-                )
-            }
+                    );
+                    *file_path = &file_path[left..file_path.len() - right];
+                };
 
             let mut word_match = word_match;
             let mut file_path = file_path.as_str();
 
             if is_path_surrounded_by_common_symbols(file_path) {
-                (word_match, file_path) = shrink_by(1, 1, term, word_match, file_path);
+                shrink_by(1, 1, &mut word_match, &mut file_path);
                 if is_path_surrounded_by_quotes(file_path) {
-                    (word_match, file_path) = shrink_by(1, 1, term, word_match, file_path);
+                    shrink_by(1, 1, &mut word_match, &mut file_path);
                 }
             }
 
             if is_path_surrounded_by_quotes(file_path) {
-                (word_match, file_path) = shrink_by(1, 1, term, word_match, file_path);
+                shrink_by(1, 1, &mut word_match, &mut file_path);
                 if is_path_surrounded_by_common_symbols(file_path) {
-                    (word_match, file_path) = shrink_by(1, 1, term, word_match, file_path);
+                    shrink_by(1, 1, &mut word_match, &mut file_path);
                 }
             }
 
             while file_path.ends_with(':') {
-                (word_match, file_path) = shrink_by(0, 1, term, word_match, file_path);
+                shrink_by(0, 1, &mut word_match, &mut file_path);
             }
             let mut colon_count = 0;
             for c in file_path.chars() {
@@ -148,8 +144,12 @@ pub(super) fn find_from_grid_point<T: EventListener>(
                         .nth(last_index + 1)
                         .is_none_or(|c| c.is_ascii_digit());
                 if prev_is_digit && !next_is_digit {
-                    (word_match, file_path) =
-                        shrink_by(0, file_path.len() - last_index, term, word_match, file_path);
+                    shrink_by(
+                        0,
+                        file_path.len() - last_index,
+                        &mut word_match,
+                        &mut file_path,
+                    );
                 }
             }
 
