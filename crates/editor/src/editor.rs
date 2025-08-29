@@ -24079,7 +24079,11 @@ fn render_diff_hunk_controls(
 }
 
 pub fn multibuffer_context_lines(cx: &App) -> u32 {
-    EditorSettings::get_global(cx)
-        .excerpt_context_lines
-        .clamp(1, 32)
+    if cx.has_global::<SettingsStore>() {
+        EditorSettings::get_global(cx)
+            .excerpt_context_lines
+            .clamp(1, 32)
+    } else {
+        2
+    }
 }
