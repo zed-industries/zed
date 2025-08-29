@@ -1400,6 +1400,16 @@ impl AcpThreadView {
                 .path
                 .to_str()
                 .with_context(|| format!("invalid login command: {:?}", login_command.path))?;
+            let command = shlex::try_quote(command)?;
+            let args = login_command
+                .arguments
+                .iter()
+                .map(|arg| {
+                    Ok(shlex::try_quote(arg)
+                        .context("Failed to quote argument")?
+                        .to_string())
+                })
+                .collect::<Result<Vec<_>>>()?;
 
             let terminal = terminal_panel.update_in(cx, |terminal_panel, window, cx| {
                 terminal_panel.spawn_task(
@@ -1408,7 +1418,7 @@ impl AcpThreadView {
                         full_label: "claude /login".to_owned(),
                         label: "claude /login".to_owned(),
                         command: Some(command.into()),
-                        args: login_command.arguments,
+                        args,
                         command_label: "claude /login".to_owned(),
                         cwd,
                         use_new_terminal: true,
