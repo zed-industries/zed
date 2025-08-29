@@ -3,14 +3,17 @@ mod active_toolchain;
 pub use active_toolchain::ActiveToolchain;
 use convert_case::Casing as _;
 use editor::Editor;
+use file_finder::OpenPathDelegate;
+use futures::channel::oneshot;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     Animation, AnimationExt, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, ParentElement, Render, Styled, Task, WeakEntity, Window, actions, pulsating_between,
+    Focusable, ParentElement, Render, Styled, Subscription, Task, WeakEntity, Window, actions,
+    pulsating_between,
 };
-use language::{Language, LanguageName, Toolchain, ToolchainList, ToolchainLister};
+use language::{Language, LanguageName, Toolchain, ToolchainList};
 use picker::{Picker, PickerDelegate};
-use project::{Project, ProjectPath, WorktreeId};
+use project::{DirectoryLister, Project, ProjectPath, WorktreeId};
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
@@ -18,7 +21,7 @@ use std::{
     time::Duration,
 };
 use ui::{Divider, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, prelude::*};
-use util::{ResultExt, maybe};
+use util::{ResultExt, maybe, paths::PathStyle};
 use workspace::{ModalView, Workspace};
 
 actions!(
@@ -51,11 +54,21 @@ struct AddToolchainState {
     weak: WeakEntity<ToolchainSelector>,
 }
 
+#[expect(
+    dead_code,
+    reason = "These tasks have to be kept alive to run to completion"
+)]
+enum PathInputState {
+    WaitingForPath(Task<()>),
+    Resolving(Task<()>),
+}
+
 enum AddState {
     Path {
-        editor: Entity<Editor>,
+        picker: Entity<Picker<file_finder::OpenPathDelegate>>,
         error: Option<Arc<str>>,
-        confirm_task: Option<Task<()>>,
+        input_state: PathInputState,
+        _subscription: Subscription,
     },
     Name {
         toolchain: Toolchain,
@@ -71,94 +84,201 @@ impl AddToolchainState {
         cx: &mut Context<ToolchainSelector>,
     ) -> Entity<Self> {
         let weak = cx.weak_entity();
-        let path = cx.new(|cx| {
-            let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Enter path", cx);
-            editor
-        });
-        cx.new(|_| Self {
+
+        let (lister, rx) = Self::create_path_browser_delegate(project.clone());
+        let picker = cx.new(|cx| Picker::uniform_list(lister, window, cx));
+        cx.new(|cx| Self {
             state: AddState::Path {
-                editor: path,
+                _subscription: cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| {
+                    cx.stop_propagation();
+                }),
+                picker,
                 error: None,
-                confirm_task: None,
+                input_state: Self::wait_for_path(rx, window, cx),
             },
             project,
             language_name,
             weak,
         })
     }
+
+    fn create_path_browser_delegate(
+        project: Entity<Project>,
+    ) -> (OpenPathDelegate, oneshot::Receiver<Option<Vec<PathBuf>>>) {
+        let (tx, rx) = oneshot::channel();
+        let lister = OpenPathDelegate::new(
+            tx,
+            DirectoryLister::Project(project.clone()),
+            false,
+            PathStyle::current(),
+        );
+
+        (lister, rx)
+    }
+    fn resolve_path(
+        path: PathBuf,
+        language_name: LanguageName,
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> PathInputState {
+        PathInputState::Resolving(cx.spawn_in(window, async move |this, cx| {
+            _ = maybe!(async move {
+                let toolchain = project
+                    .update(cx, |this, cx| {
+                        this.resolve_toolchain(path.clone(), language_name, cx)
+                    })?
+                    .await;
+                let Ok(toolchain) = toolchain else {
+                    // Go back to the path input state
+                    _ = this.update_in(cx, |this, window, cx| {
+                        if let AddState::Path {
+                            input_state,
+                            picker,
+                            error,
+                            ..
+                        } = &mut this.state
+                            && matches!(input_state, PathInputState::Resolving(_))
+                        {
+                            let Err(e) = toolchain else { unreachable!() };
+                            *error = Some(Arc::from(e.to_string()));
+                            let (delegate, rx) =
+                                Self::create_path_browser_delegate(this.project.clone());
+                            picker.update(cx, |picker, cx| {
+                                *picker = Picker::uniform_list(delegate, window, cx);
+                                picker.set_query(
+                                    Arc::from(path.to_string_lossy().as_ref()),
+                                    window,
+                                    cx,
+                                );
+                            });
+                            *input_state = Self::wait_for_path(rx, window, cx);
+                        }
+                    });
+                    return Err(anyhow::anyhow!("Failed to resolve toolchain"));
+                };
+                _ = this.update_in(cx, |this, window, cx| {
+                    this.state = AddState::Name {
+                        editor: cx.new(|cx| {
+                            let mut editor = Editor::single_line(window, cx);
+                            editor.set_text(toolchain.name.as_ref(), window, cx);
+                            editor
+                        }),
+                        toolchain,
+                    };
+                    this.focus_handle(cx).focus(window);
+                });
+
+                Result::<_, anyhow::Error>::Ok(())
+            })
+            .await;
+        }))
+    }
+
+    fn wait_for_path(
+        rx: oneshot::Receiver<Option<Vec<PathBuf>>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> PathInputState {
+        let task = cx.spawn_in(window, async move |this, cx| {
+            maybe!(async move {
+                let result = rx.await.log_err()?;
+
+                let path = result
+                    .into_iter()
+                    .flat_map(|paths| paths.into_iter())
+                    .next()?;
+                this.update_in(cx, |this, window, cx| {
+                    if let AddState::Path { input_state, .. } = &mut this.state
+                        && matches!(input_state, PathInputState::WaitingForPath(_))
+                    {
+                        *input_state = Self::resolve_path(
+                            path,
+                            this.language_name.clone(),
+                            this.project.clone(),
+                            window,
+                            cx,
+                        );
+                    }
+                })
+                .ok()?;
+                Some(())
+            })
+            .await;
+        });
+        PathInputState::WaitingForPath(task)
+    }
+
     fn confirm_toolchain(
         &mut self,
         _: &menu::Confirm,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match &mut self.state {
-            AddState::Path {
-                editor,
-                confirm_task,
-                ..
-            } => {
-                // Set of a confirmation task with our lister.
-                let text = editor.read(cx).text(cx);
-
-                if text.is_empty() {
-                    return;
-                }
-                let task = self.project.read(cx).resolve_toolchain(
-                    PathBuf::from(text),
-                    self.language_name.clone(),
-                    cx,
-                );
-                *confirm_task = Some(cx.spawn_in(window, async move |this, cx| {
-                    let t = task.await;
-                    this.update_in(cx, |this, window, cx| {
-                        let AddState::Path {
-                            error,
-                            confirm_task,
-                            ..
-                        } = &mut this.state
-                        else {
-                            unreachable!("This closure should not complete concurrently")
-                        };
-
-                        match t {
-                            Ok(toolchain) => {
-                                let editor = cx.new(|cx| {
-                                    let mut editor = Editor::single_line(window, cx);
-                                    editor.set_text(toolchain.name.clone(), window, cx);
-                                    editor
-                                });
-                                this.state = AddState::Name { toolchain, editor };
-                            }
-                            Err(err) => {
-                                *error = Some(err.to_string().into());
-                                confirm_task.take();
-                            }
-                        }
-
-                        cx.notify();
-                    })
-                    .ok();
-                }));
-            }
-            AddState::Name { toolchain, editor } => {
-                let text = editor.read(cx).text(cx);
-                if text.is_empty() {
-                    return;
-                }
-            }
+        let AddState::Name { toolchain, editor } = &mut self.state else {
+            return;
+        };
+        let text = editor.read(cx).text(cx);
+        if text.is_empty() {
+            return;
         }
-    }
-    fn editor(&self) -> &Entity<Editor> {
-        match &self.state {
-            AddState::Path { editor, .. } | AddState::Name { editor, .. } => editor,
-        }
+
+        // match &mut self.state {
+        //     AddState::Path { confirm_task, .. } => {
+        //         todo!();
+        // Set of a confirmation task with our lister.
+        // let text = editor.read(cx).text(cx);
+
+        // if text.is_empty() {
+        //     return;
+        // }
+        // let task = self.project.read(cx).resolve_toolchain(
+        //     PathBuf::from(text),
+        //     self.language_name.clone(),
+        //     cx,
+        // );
+        // *confirm_task = Some(cx.spawn_in(window, async move |this, cx| {
+        //     let t = task.await;
+        //     this.update_in(cx, |this, window, cx| {
+        //         let AddState::Path {
+        //             error,
+        //             confirm_task,
+        //             ..
+        //         } = &mut this.state
+        //         else {
+        //             unreachable!("This closure should not complete concurrently")
+        //         };
+
+        //         match t {
+        //             Ok(toolchain) => {
+        //                 let editor = cx.new(|cx| {
+        //                     let mut editor = Editor::single_line(window, cx);
+        //                     editor.set_text(toolchain.name.clone(), window, cx);
+        //                     editor
+        //                 });
+        //                 this.state = AddState::Name { toolchain, editor };
+        //             }
+        //             Err(err) => {
+        //                 *error = Some(err.to_string().into());
+        //                 confirm_task.take();
+        //             }
+        //         }
+
+        //         cx.notify();
+        //     })
+        //     .ok();
+        // }));
+        //     }
+
+        // }
     }
 }
 impl Focusable for AddToolchainState {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.editor().focus_handle(cx)
+        match &self.state {
+            AddState::Path { picker, .. } => picker.focus_handle(cx),
+            AddState::Name { editor, .. } => editor.focus_handle(cx),
+        }
     }
 }
 
@@ -194,70 +314,79 @@ impl Render for AddToolchainState {
             })
             .on_action(cx.listener(Self::confirm_toolchain))
             .bg(theme.colors().background)
-            .child(
-                h_flex().w_full().child(
-                    h_flex()
-                        .w_full()
-                        .bg(theme.colors().editor_background)
-                        .p_2()
-                        .rounded_sm()
-                        .border_1()
-                        .border_color(theme.colors().border)
-                        .child(self.editor().clone()),
-                ),
-            )
-            .child(
-                h_flex()
-                    .rounded_md()
-                    .w_full()
-                    .bg(theme.colors().background)
-                    .p_2()
-                    .justify_end()
-                    .map(|this| {
-                        let is_disabled = match &self.state {
-                            AddState::Path {
-                                confirm_task,
-                                editor,
-                                ..
-                            } => confirm_task.is_some() || editor.read(cx).is_empty(cx),
-                            AddState::Name { editor, .. } => editor.read(cx).is_empty(cx),
-                        };
-                        let (error, confirm_underway) = match &self.state {
-                            AddState::Path {
-                                error,
-                                confirm_task,
-                                ..
-                            } => (error.clone(), confirm_task.is_some()),
-                            _ => (None, false),
-                        };
-                        this.when_some(error, |this, error| {
-                            this.justify_between()
-                                .child(Label::new(error).color(Color::Error).size(LabelSize::Small))
-                        })
-                        .child(
-                            Button::new("add-toolchain", label)
-                                .key_binding(KeyBinding::for_action(&menu::Confirm, window, cx))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.confirm_toolchain(&menu::Confirm, window, cx);
-                                }))
-                                .disabled(is_disabled)
-                                .map(|this| {
-                                    if confirm_underway {
-                                        this.with_animation(
-                                            "inspecting-user-toolchain",
-                                            Animation::new(Duration::from_millis(500))
-                                                .repeat()
-                                                .with_easing(pulsating_between(0.4, 0.8)),
-                                            |label, delta| label.alpha(delta),
-                                        )
-                                        .into_any()
-                                    } else {
-                                        this.into_any_element()
-                                    }
-                                }),
-                        )
+            .map(|this| match &self.state {
+                AddState::Path { picker, error, .. } => this
+                    .child(picker.clone())
+                    .when_some(error.clone(), |this, error| {
+                        this.child(Label::new(error).color(Color::Error))
                     }),
-            )
+                AddState::Name { toolchain, editor } => this
+                    .child(
+                        h_flex().w_full().child(
+                            h_flex()
+                                .w_full()
+                                .bg(theme.colors().editor_background)
+                                .p_2()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(theme.colors().border)
+                                .child(editor.clone()),
+                        ),
+                    )
+                    .child(
+                        h_flex()
+                            .rounded_md()
+                            .w_full()
+                            .bg(theme.colors().background)
+                            .p_2()
+                            .justify_end()
+                            .map(|this| {
+                                let is_disabled = editor.read(cx).is_empty(cx);
+
+                                let (error, confirm_underway) = match &self.state {
+                                    AddState::Path {
+                                        error,
+                                        input_state: confirm_task,
+                                        ..
+                                    } => (error.clone(), true), // todo
+                                    _ => (None, false),
+                                };
+                                this.when_some(error, |this, error| {
+                                    this.justify_between().child(
+                                        Label::new(error)
+                                            .color(Color::Error)
+                                            .size(LabelSize::Small),
+                                    )
+                                })
+                                .child(
+                                    Button::new("add-toolchain", label)
+                                        .key_binding(KeyBinding::for_action(
+                                            &menu::Confirm,
+                                            window,
+                                            cx,
+                                        ))
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.confirm_toolchain(&menu::Confirm, window, cx);
+                                        }))
+                                        .disabled(is_disabled)
+                                        .map(|this| {
+                                            if confirm_underway {
+                                                this.with_animation(
+                                                    "inspecting-user-toolchain",
+                                                    Animation::new(Duration::from_millis(500))
+                                                        .repeat()
+                                                        .with_easing(pulsating_between(0.4, 0.8)),
+                                                    |label, delta| label.alpha(delta),
+                                                )
+                                                .into_any()
+                                            } else {
+                                                this.into_any_element()
+                                            }
+                                        }),
+                                )
+                            }),
+                    ),
+            })
     }
 }
 

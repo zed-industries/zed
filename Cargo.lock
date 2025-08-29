@@ -16960,8 +16960,11 @@ checksum = "bfb942dfe1d8e29a7ee7fcbde5bd2b9a25fb89aa70caea2eba3bee836ff41076"
 name = "toolchain_selector"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "convert_case 0.8.0",
  "editor",
+ "file_finder",
+ "futures 0.3.31",
  "fuzzy",
  "gpui",
  "language",
