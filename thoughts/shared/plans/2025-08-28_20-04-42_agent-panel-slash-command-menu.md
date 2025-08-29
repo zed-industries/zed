@@ -100,8 +100,8 @@ agent-client-protocol = "0.2.0-alpha.1"  # or appropriate version
 
 ### **Cross-Repository Verification**
 Before opening PRs:
-- [ ] ACP protocol extension compiles and tests pass
-- [ ] Zed compiles against local ACP changes
+- [x] ACP protocol extension compiles and tests pass
+- [x] Zed compiles against local ACP changes
 - [ ] End-to-end slash command flow works locally
 - [ ] Claude ACP adapter works with generated types
 
@@ -330,26 +330,26 @@ pub fn supports_custom_commands(&self, cx: &App) -> bool {
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Protocol crate compiles: `cd /Users/nathan/src/agent-client-protocol && cargo check`
-- [ ] Protocol tests pass: `cd /Users/nathan/src/agent-client-protocol && cargo test`
+- [x] Protocol crate compiles: `cd /Users/nathan/src/agent-client-protocol && cargo check`
+- [x] Protocol tests pass: `cd /Users/nathan/src/agent-client-protocol && cargo test`
 - [ ] Schema generation works: `cd /Users/nathan/src/agent-client-protocol && cargo run --bin generate`
 - [ ] Schema includes new methods: `grep -A5 -B5 "session/list_commands\|session/run_command" /Users/nathan/src/agent-client-protocol/schema/schema.json`
-- [ ] Zed compiles successfully: `./script/clippy`
-- [ ] No linting errors: `cargo clippy --package agent_servers --package acp_thread`
-- [ ] ACP thread capability method compiles: `cargo check --package acp_thread`
+- [x] Zed compiles successfully: `./script/clippy`
+- [x] No linting errors: `cargo clippy --package agent_servers --package acp_thread`
+- [x] ACP thread capability method compiles: `cargo check --package acp_thread`
 
 #### Manual Verification:
-- [ ] New trait methods are properly defined in Agent trait (`/Users/nathan/src/agent-client-protocol/rust/agent.rs`)
+- [x] New trait methods are properly defined in Agent trait (`/Users/nathan/src/agent-client-protocol/rust/agent.rs`)
   - Verify `list_commands()` method signature at line ~115
   - Verify `run_command()` method signature at line ~127
-- [ ] Request/response enums updated in ClientRequest (`agent.rs:~423`) and AgentResponse enums
-- [ ] Method constants added (`SESSION_LIST_COMMANDS`, `SESSION_RUN_COMMAND`) after line 415
-- [ ] PromptCapabilities extended with `supports_custom_commands: bool` field
-- [ ] ClientSideConnection methods implemented with proper error handling
+- [x] Request/response enums updated in ClientRequest (`agent.rs:~423`) and AgentResponse enums
+- [x] Method constants added (`SESSION_LIST_COMMANDS`, `SESSION_RUN_COMMAND`) after line 415
+- [x] PromptCapabilities extended with `supports_custom_commands: bool` field
+- [x] ClientSideConnection methods implemented with proper error handling
 - [ ] Message dispatch logic updated in `AgentSide::decode_request()`
-- [ ] AgentConnection trait extends with new methods (`crates/acp_thread/src/connection.rs`)
-- [ ] AcpConnection implements trait methods (`crates/agent_servers/src/acp.rs`)
-- [ ] AcpThread has `supports_custom_commands()` helper method
+- [x] AgentConnection trait extends with new methods (`crates/acp_thread/src/connection.rs`)
+- [x] AcpConnection implements trait methods (`crates/agent_servers/src/acp.rs`)
+- [x] AcpThread has `supports_custom_commands()` helper method
 
 ---
 
@@ -634,24 +634,27 @@ pub fn run_command(
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Code compiles successfully: `./script/clippy`
-- [ ] No linting errors: `cargo clippy --package agent_ui --package acp_thread`
-- [ ] Type checking passes: `cargo check --package agent_ui --package acp_thread`
-- [ ] Completion provider compiles: `cargo check --package agent_ui --lib`
-- [ ] Slash command parsing works: Test `SlashCommandCompletion::try_parse()` with various inputs
+- [x] Code compiles successfully: `./script/clippy`
+- [x] No linting errors: `cargo clippy --package agent_ui --package acp_thread`
+- [x] Type checking passes: `cargo check --package agent_ui --package acp_thread`
+- [x] Completion provider compiles: `cargo check --package agent_ui --lib`
+- [x] Slash command parsing works: Test `SlashCommandCompletion::try_parse()` with various inputs
 
-#### Manual Verification:
-- [ ] SlashCommandCompletion struct added to `crates/agent_ui/src/acp/completion_provider.rs`
-  - Verify `try_parse()` method implementation
-  - Test parsing of "/", "/create", "/research_codebase" patterns
-- [ ] ContextPickerCompletionProvider updated:
-  - `is_completion_trigger()` method extended (around line 763)
-  - `completions()` method handles slash commands (around line 700)
-  - `complete_slash_commands()` method added (around line 850)
-- [ ] SlashCommandConfirmation struct implements CompletionConfirm trait
-  - Handles immediate execution for commands without arguments
-  - Allows continued typing for commands requiring arguments
-- [ ] AcpThread has `run_command()` method for command execution
+#### Manual Verification (REVISED - Simpler Approach):
+- [ ] **Refactored to Simpler Architecture**: 
+  - [ ] Remove complex `CompositeCompletionProvider` and `AgentSlashCommandCompletionProvider`
+  - [ ] Extend existing `ContextPickerCompletionProvider` with optional thread field
+  - [ ] Add `set_thread()` method for lifecycle management
+  - [ ] Add slash command detection to `is_completion_trigger()`
+  - [ ] Add slash command completion to `completions()` method
+- [ ] **Slash Command Integration**: 
+  - [ ] Parse slash commands using existing `SlashCommandLine` from assistant_slash_command
+  - [ ] Fetch commands via ACP `list_commands()` RPC when thread supports it
+  - [ ] Execute commands via ACP `run_command()` RPC with proper confirmation
+  - [ ] Only show slash completions when `supports_custom_commands = true`
+- [ ] **MessageEditor Integration**:
+  - [ ] Add `set_thread()` method to update completion provider when thread is ready
+  - [ ] Call `set_thread()` in ThreadView when thread transitions to Ready state
 - [ ] Integration Testing:
   - [ ] Typing "/" in agent panel triggers completion when `supports_custom_commands = true`
   - [ ] No "/" completion appears when `supports_custom_commands = false`

@@ -1,14 +1,15 @@
 ---
 date: 2025-08-28 15:34:28 PDT
 researcher: Mikayla Maki
-git_commit: 565782a1c769c90e58e012a80ea1c2d0cfcdb837
+git_commit: 425291f0aed2abe148e1a8ea4eda74569e25c2b7
 branch: claude-experiments
 repository: zed
 topic: "Custom Slash Commands for Agent Client Protocol"
 tags: [research, codebase, acp, slash-commands, claude-code, protocol-extension]
 status: complete
 last_updated: 2025-08-28
-last_updated_by: Mikayla Maki
+last_updated_by: Nathan
+last_updated_note: "Added detailed findings from agent-client-protocol and claude-code-acp repositories"
 ---
 
 # Research: Custom Slash Commands for Agent Client Protocol
@@ -86,28 +87,40 @@ The agent panel is **completely separate** from the assistant/text thread system
 
 ### Agent Client Protocol RPC Patterns
 
-**Core Structure** (`agentic-coding-protocol/`):
+**Core Structure** (`agent-client-protocol/rust/`):
 
-- JSON-RPC based bidirectional communication
-- Type-safe request/response enums with static dispatch
-- Capability negotiation for feature opt-in
-- Auto-generated JSON Schema from Rust types
+- JSON-RPC based bidirectional communication via symmetric `Agent`/`Client` traits
+- Type-safe request/response enums with `#[serde(untagged)]` routing
+- Capability negotiation via `AgentCapabilities` and `ClientCapabilities`
+- Auto-generated JSON Schema from Rust types via `JsonSchema` derives
 
-**RPC Method Pattern**:
+**Agent Trait Methods** (`agent.rs:18-108`):
+- `initialize()` - Connection establishment and capability negotiation
+- `authenticate()` - Authentication using advertised methods
+- `new_session()` - Creates conversation contexts
+- `load_session()` - Loads existing sessions (capability-gated)
+- `prompt()` - Processes user prompts with full lifecycle
+- `cancel()` - Cancels ongoing operations
 
-1. Define request/response structs with `#[derive(Serialize, Deserialize, JsonSchema)]`
-2. Add method name constant: `const NEW_METHOD_NAME: &str = "new/method"`
-3. Add variants to `ClientRequest`/`AgentRequest` enums
-4. Update trait definition with async method signature
-5. Add to dispatch logic in `decode_request()` and `handle_request()`
+**Client Trait Methods** (`client.rs:19-114`):
+- `request_permission()` - Requests user permission for tool calls
+- `write_text_file()` / `read_text_file()` - File operations (capability-gated)
+- `session_notification()` - Handles session updates from agent
 
-**Existing Methods**:
+**RPC Infrastructure Pattern**:
 
-- `initialize` - Capability negotiation and authentication
-- `session/new`, `session/load` - Session management
-- `session/prompt` - Message processing
-- `fs/read_text_file`, `fs/write_text_file` - File operations
-- `session/request_permission` - Permission requests
+1. **Method Constants** - Define at lines `agent.rs:395-415` / `client.rs:451-485`
+2. **Request/Response Structs** - With `#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]`
+3. **Schema Annotations** - `#[schemars(extend("x-side" = "agent", "x-method" = "method_name"))]`
+4. **Untagged Enums** - Add to `ClientRequest`/`AgentResponse` enums for message routing
+5. **Trait Methods** - Add to `Agent`/`Client` traits with `impl Future` signatures
+6. **Connection Methods** - Implement in `ClientSideConnection`/`AgentSideConnection`
+7. **Message Handling** - Update `MessageHandler` implementations for dispatch
+
+**Protocol Versioning** (`version.rs:4-20`):
+- Current: V1 with backward compatibility
+- Breaking changes require version bump
+- Non-breaking additions use capability flags
 
 ### .claude/commands Directory Structure
 
@@ -128,66 +141,78 @@ The agent panel is **completely separate** from the assistant/text thread system
 
 [Instructions]
 
-## Important Guidelines
-
-[Constraints and behaviors]
-```
-
-**Metadata Extraction Points**:
-
-- H1 title for command name and description
-- "Initial Response" section for invocation behavior
-- Sequential process steps under "Process Steps"
-- Checkbox lists (`- [ ]`, `- [x]`) for progress tracking
-- Code blocks with executable commands
-
-**Command Categories**:
-
-- Development workflow: `create_plan.md`, `implement_plan.md`, `validate_plan.md`, `commit.md`
-- Research: `research_codebase.md`, `debug.md`
-- Project management: `ralph_plan.md`, `founder_mode.md`
-
 ### Claude Code ACP Adapter Implementation
 
 **Architecture** (`claude-code-acp/src/`):
 
-- `acp-agent.ts` - Main `ClaudeAcpAgent` implementing ACP Agent interface
-- `mcp-server.ts` - Internal MCP server for file operations and permissions
-- `tools.ts` - Tool conversion between Claude and ACP formats
-- Session management with unique IDs and Claude SDK `Query` objects
+- `acp-agent.ts:51` - `ClaudeAcpAgent` class implementing complete ACP `Agent` interface
+- `mcp-server.ts:9` - Internal MCP proxy server for file operations and permissions
+- `tools.ts:22` - Tool format conversion between Claude SDK and ACP representations
+- Session management with UUID tracking and Claude SDK `Query` objects
 
-**Integration Pattern**:
+**Agent Interface Implementation** (`acp-agent.ts:51-218`):
+- `initialize()` at line 63: Declares capabilities (image, embedded_context) and auth methods
+- `newSession()` at line 84: Creates UUID sessions with MCP server integration
+- `prompt()` at line 140: Main query execution using Claude SDK with real-time streaming
+- `cancel()` at line 211: Properly handles session cancellation and cleanup
 
-```typescript
-let q = query({
-  prompt: input,
-  options: {
-    cwd: params.cwd,
-    mcpServers: { acp: mcpServerConfig },
-    allowedTools: ["mcp__acp__read"],
-    disallowedTools: ["Read", "Write", "Edit", "MultiEdit"],
-  },
-});
-```
+**Session Lifecycle** (`acp-agent.ts:84-134`):
+1. Generate UUID session ID and create pushable input stream
+2. Configure MCP servers from ACP request parameters
+3. Start internal HTTP-based MCP proxy server on dynamic port
+4. Initialize Claude SDK query with working directory, MCP servers, tool permissions
+5. Enable `mcp__acp__read` while disabling direct file tools for security
 
-**Tool Execution Flow**:
+**Query Execution Flow** (`acp-agent.ts:140-209`):
+1. Convert ACP prompt to Claude format via `promptToClaude()` at line 237
+2. Push user message to Claude SDK input stream
+3. Iterate through Claude SDK responses with real-time streaming
+4. Handle system, result, user, and assistant message types
+5. Convert Claude messages to ACP format via `toAcpNotifications()` at line 312
+6. Stream session updates back to ACP client
 
-1. ACP client makes tool request
-2. Claude ACP agent converts to Claude SDK format
-3. Internal MCP server proxies to ACP client capabilities
-4. Results converted back to ACP format
+**MCP Proxy Architecture** (`mcp-server.ts:9-449`):
+- **Internal HTTP Server**: Creates MCP server for Claude SDK integration
+- **Tool Implementations**:
+  - `read` (lines 19-94): Proxies to ACP client's `readTextFile()`
+  - `write` (lines 96-149): Proxies to ACP client's `writeTextFile()`
+  - `edit` (lines 152-239): Text replacement with line tracking
+  - `multi-edit` (lines 241-318): Sequential edit operations
+- **Permission Integration**: Routes tool permission requests through ACP client
+
+**Current Command Support**:
+- **No existing slash command infrastructure** - all interactions use standard prompt interface
+- **No `.claude/commands` directory integration** currently implemented
+- **Command detection would require preprocessing** before Claude SDK integration
 
 ## Code References
 
+### Zed Integration Layer
 - `crates/agent_ui/src/agent_panel.rs:24` - Main AgentPanel component
 - `crates/agent_ui/src/acp/thread_view.rs:315` - AcpThreadView UI component
 - `crates/agent_ui/src/acp/message_editor.rs` - Agent panel message input
 - `crates/agent_servers/src/acp.rs:63-162` - ACP connection establishment
 - `crates/acp_thread/src/acp_thread.rs:826` - ACP thread creation
-- `agentic-coding-protocol/rust/agent.rs:604-610` - ACP request enum pattern
-- `agentic-coding-protocol/rust/acp.rs:355-371` - Method dispatch logic
-- `claude-code-acp/src/acp-agent.ts:1-500` - ACP adapter implementation
-- `.claude/commands/*.md` - Command definition files
+
+### Agent Client Protocol
+- `agent-client-protocol/rust/agent.rs:18-108` - Agent trait with 6 core methods
+- `agent-client-protocol/rust/client.rs:19-114` - Client trait for bidirectional communication
+- `agent-client-protocol/rust/acp.rs:120` - ClientSideConnection implementation
+- `agent-client-protocol/rust/acp.rs:341` - AgentSideConnection implementation
+- `agent-client-protocol/rust/rpc.rs:30-367` - RPC connection infrastructure
+- `agent-client-protocol/rust/agent.rs:333-371` - AgentCapabilities and PromptCapabilities
+- `agent-client-protocol/rust/agent.rs:423-432` - ClientRequest/AgentResponse enum routing
+- `agent-client-protocol/rust/generate.rs:24-77` - JSON schema generation
+
+### Claude Code ACP Adapter
+- `claude-code-acp/src/acp-agent.ts:51-218` - ClaudeAcpAgent implementing Agent interface
+- `claude-code-acp/src/mcp-server.ts:9-449` - Internal MCP proxy server
+- `claude-code-acp/src/tools.ts:22-395` - Tool format conversion
+- `claude-code-acp/src/utils.ts:7-75` - Stream processing utilities
+
+### Command Infrastructure
+- `.claude/commands/*.md` - Command definition files (markdown format)
+- No existing slash command infrastructure in claude-code-acp currently
 
 ## Architecture Insights
 
@@ -203,33 +228,73 @@ let q = query({
 
 ### 1. Protocol Extension for Custom Commands
 
-Add new RPC methods to ACP schema following existing patterns in `agentic-coding-protocol/rust/`:
+Add new RPC methods following exact ACP patterns in `agent-client-protocol/rust/`:
 
+**Method Constants** (`agent.rs:395-415`):
 ```rust
-// New request types
+pub const SESSION_LIST_COMMANDS: &str = "session/list_commands";
+pub const SESSION_RUN_COMMAND: &str = "session/run_command";
+```
+
+**Request/Response Types** (after `agent.rs:371`):
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(extend("x-side" = "agent", "x-method" = "session/list_commands"))]
+#[serde(rename_all = "camelCase")]
 pub struct ListCommandsRequest {
     pub session_id: SessionId,
 }
 
-pub struct RunCommandRequest {
-    pub session_id: SessionId,
-    pub command: String,
-    pub args: Option<String>,
-}
-
-// Response types
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(extend("x-side" = "agent", "x-method" = "session/list_commands"))]
+#[serde(rename_all = "camelCase")]
 pub struct ListCommandsResponse {
     pub commands: Vec<CommandInfo>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct CommandInfo {
     pub name: String,
     pub description: String,
     pub requires_argument: bool,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(extend("x-side" = "agent", "x-method" = "session/run_command"))]
+#[serde(rename_all = "camelCase")]
+pub struct RunCommandRequest {
+    pub session_id: SessionId,
+    pub command: String,
+    pub args: Option<String>,
+}
 ```
 
-Add to request/response enums and implement in dispatch logic similar to existing ACP methods.
+**Trait Extension** (add to `Agent` trait after `cancel()` at line 107):
+```rust
+fn list_commands(
+    &self,
+    arguments: ListCommandsRequest,
+) -> impl Future<Output = Result<ListCommandsResponse, Error>>;
+
+fn run_command(
+    &self,
+    arguments: RunCommandRequest,
+) -> impl Future<Output = Result<(), Error>>;
+```
+
+**Enum Routing** (add to `ClientRequest` at line 423 and `AgentResponse`):
+```rust
+ListCommandsRequest(ListCommandsRequest),
+RunCommandRequest(RunCommandRequest),
+```
+
+**Capability Extension** (add to `PromptCapabilities` at line 358):
+```rust
+/// Agent supports custom slash commands via `list_commands` and `run_command`.
+#[serde(default)]
+pub supports_custom_commands: bool,
+```
 
 ### 2. Agent Panel UI Integration
 
@@ -245,19 +310,88 @@ Add to request/response enums and implement in dispatch logic similar to existin
 
 ### 3. ACP Agent Implementation
 
-In Claude Code ACP adapter (`claude-code-acp/src/acp-agent.ts`):
+In Claude Code ACP adapter, extend `ClaudeAcpAgent` class at `claude-code-acp/src/acp-agent.ts:51`:
 
+**Add Command Parser** (new module at `src/command-parser.ts`):
 ```typescript
-async listCommands(request: ListCommandsRequest): Promise<ListCommandsResponse> {
-  // Read .claude/commands directory
-  // Parse markdown files for metadata
-  // Return CommandInfo array
+export interface CommandInfo {
+  name: string;
+  description: string;
+  requires_argument: boolean;
+  content?: string;
 }
 
-async runCommand(request: RunCommandRequest): Promise<RunCommandResponse> {
-  // Find command definition in .claude/commands/
-  // Execute via Claude SDK query with command content
-  // Stream results back via session notifications using existing session update mechanism
+export class CommandParser {
+  private commandsDir: string;
+  private cachedCommands?: CommandInfo[];
+
+  constructor(cwd: string) {
+    this.commandsDir = path.join(cwd, '.claude', 'commands');
+  }
+
+  async listCommands(): Promise<CommandInfo[]> {
+    // Parse *.md files, extract H1 titles and descriptions
+  }
+
+  async getCommand(name: string): Promise<CommandInfo | null> {
+    // Return specific command with full content for execution
+  }
+}
+```
+
+**Extend ClaudeAcpAgent** (add after line 218):
+```typescript
+private commandParser?: CommandParser;
+
+// In constructor around line 60:
+if (options.cwd && fs.existsSync(path.join(options.cwd, '.claude', 'commands'))) {
+  this.commandParser = new CommandParser(options.cwd);
+}
+
+// Update initialize() around line 68 to advertise capability:
+agent_capabilities: {
+  prompt_capabilities: {
+    image: true,
+    audio: false,
+    embedded_context: true,
+    supports_custom_commands: !!this.commandParser,
+  },
+}
+
+async listCommands(request: ListCommandsRequest): Promise<ListCommandsResponse> {
+  if (!this.commandParser) return { commands: [] };
+
+  const commands = await this.commandParser.listCommands();
+  return {
+    commands: commands.map(cmd => ({
+      name: cmd.name,
+      description: cmd.description,
+      requires_argument: cmd.requires_argument,
+    }))
+  };
+}
+
+async runCommand(request: RunCommandRequest): Promise<void> {
+  if (!this.commandParser) throw new Error('Commands not supported');
+
+  const command = await this.commandParser.getCommand(request.command);
+  if (!command) throw new Error(`Command not found: ${request.command}`);
+
+  // Execute command via existing session mechanism
+  const session = this.sessions.get(request.session_id);
+  if (!session) throw new Error('Session not found');
+
+  // Create system prompt from command content
+  let prompt = command.content;
+  if (command.requires_argument && request.args) {
+    prompt += `\n\nArguments: ${request.args}`;
+  }
+
+  // Inject as system message and process via existing prompt flow
+  session.input.push({ role: 'user', content: prompt });
+
+  // Stream results back via existing session update mechanism
+  // (handled automatically by query execution loop at line 150)
 }
 ```
 
@@ -292,7 +426,28 @@ Execute commands by sending command content as system prompt to Claude SDK, simi
 
 7. **UI Integration**: How should command execution progress and results be displayed within the `AcpThreadView` component?
 
-###### FINAL CLAUDE PROMPT:
+## Follow-up Research 2025-08-28 20:29:47 MDT
+
+After gaining access to the actual `agent-client-protocol` and `claude-code-acp` repositories, I updated this research document with concrete implementation details:
+
+### Key New Findings
+
+**Agent Client Protocol Structure**: The protocol uses a symmetric `Agent`/`Client` trait design with `#[serde(untagged)]` enum routing, JSON schema generation, and explicit capability negotiation. Adding new RPC methods requires specific patterns for method constants, request/response structs, trait extensions, and enum routing.
+
+**Claude Code ACP Adapter**: Implements the full Agent interface using Claude SDK integration via MCP proxy servers. Currently has no slash command infrastructure - all interactions use the standard prompt interface. Command detection would require preprocessing before Claude SDK integration.
+
+**Implementation Requirements**: More complex than initially understood - requires protocol extension, trait implementations, enum routing updates, capability advertisement, and coordination between three repositories (zed, agent-client-protocol, claude-code-acp).
+
+### Updated Implementation Approach
+
+1. **Protocol Extension**: Add `session/list_commands` and `session/run_command` methods following exact ACP patterns
+2. **Capability System**: Extend `PromptCapabilities` with `supports_custom_commands` flag
+3. **Agent Implementation**: Create command parser module in claude-code-acp to read `.claude/commands/*.md` files
+4. **UI Integration**: Use existing completion provider patterns in Zed's agent panel message editor
+
+The research now includes specific file:line references and concrete code examples for all three layers of the implementation.
+
+###### ORIGINAL CLAUDE PROMPT (2025-08-28 15:34:28 PDT):
 
 ⏺ I've completed comprehensive research on adding custom
 slash commands to the Agent Client Protocol for the

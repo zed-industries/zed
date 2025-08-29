@@ -551,10 +551,16 @@ impl AcpThreadView {
                                 None
                             };
                         this.thread_state = ThreadState::Ready {
-                            thread,
+                            thread: thread.clone(),
                             title_editor,
                             _subscriptions: subscriptions,
                         };
+                        
+                        // Update the message editor with the thread reference for slash command completion
+                        this.message_editor.update(cx, |editor, cx| {
+                            editor.set_thread(thread.downgrade(), cx);
+                        });
+                        
                         this.message_editor.focus_handle(cx).focus(window);
 
                         this.profile_selector = this.as_native_thread(cx).map(|thread| {

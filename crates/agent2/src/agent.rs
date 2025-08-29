@@ -1027,6 +1027,19 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         Some(Rc::new(self.clone()) as Rc<dyn acp_thread::AgentTelemetry>)
     }
 
+    fn list_commands(&self, session_id: &acp::SessionId, _cx: &mut App) -> Task<Result<acp::ListCommandsResponse>> {
+        // Native agent doesn't support custom commands yet
+        let _session_id = session_id.clone();
+        Task::ready(Ok(acp::ListCommandsResponse {
+            commands: vec![],
+        }))
+    }
+
+    fn run_command(&self, _request: acp::RunCommandRequest, _cx: &mut App) -> Task<Result<()>> {
+        // Native agent doesn't support custom commands yet
+        Task::ready(Err(anyhow!("Custom commands not supported")))
+    }
+
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
         self
     }

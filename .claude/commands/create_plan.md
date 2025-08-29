@@ -12,6 +12,7 @@ When this command is invoked:
    - Begin the research process
 
 2. **If no parameters provided**, respond with:
+
 ```
 I'll help you create a detailed implementation plan. Let me start by understanding what we're building.
 
@@ -43,11 +44,8 @@ Then wait for the user's input.
 
 2. **Spawn initial research tasks to gather context**:
    Before asking the user any questions, use specialized agents to research in parallel:
-
    - Use the **codebase-locator** agent to find all files related to the ticket/task
    - Use the **codebase-analyzer** agent to understand how the current implementation works
-   - If relevant, use the **thoughts-locator** agent to find any existing thoughts documents about this feature
-   - If a Linear ticket is mentioned, use the **linear-ticket-reader** agent to get full details
 
    These agents will:
    - Find relevant source files, configs, and tests
@@ -67,6 +65,7 @@ Then wait for the user's input.
    - Determine true scope based on codebase reality
 
 5. **Present informed understanding and focused questions**:
+
    ```
    Based on the ticket and my research of the codebase, I understand we need to [accurate summary].
 
@@ -118,9 +117,10 @@ After getting initial clarifications:
    - Return specific file:line references
    - Find tests and examples
 
-3. **Wait for ALL sub-tasks to complete** before proceeding
+4. **Wait for ALL sub-tasks to complete** before proceeding
 
-4. **Present findings and design options**:
+5. **Present findings and design options**:
+
    ```
    Based on my research, here's what I found:
 
@@ -144,6 +144,7 @@ After getting initial clarifications:
 Once aligned on approach:
 
 1. **Create initial plan outline**:
+
    ```
    Here's my proposed plan structure:
 
@@ -167,7 +168,7 @@ After structure approval:
 1. **Write the plan** to `thoughts/shared/plans/{descriptive_name}.md`
 2. **Use this template structure**:
 
-```markdown
+````markdown
 # [Feature/Task Name] Implementation Plan
 
 ## Overview
@@ -183,6 +184,7 @@ After structure approval:
 [A Specification of the desired end state after this plan is complete, and how to verify it]
 
 ### Key Discoveries:
+
 - [Important finding with file:line reference]
 - [Pattern to follow]
 - [Constraint to work within]
@@ -198,21 +200,25 @@ After structure approval:
 ## Phase 1: [Descriptive Name]
 
 ### Overview
+
 [What this phase accomplishes]
 
 ### Changes Required:
 
 #### 1. [Component/File Group]
+
 **File**: `path/to/file.ext`
 **Changes**: [Summary of changes]
 
 ```[language]
 // Specific code to add/modify
 ```
+````
 
 ### Success Criteria:
 
 #### Automated Verification:
+
 - [ ] Migration applies cleanly: `make migrate`
 - [ ] Unit tests pass: `make test-component`
 - [ ] Type checking passes: `npm run typecheck`
@@ -220,6 +226,7 @@ After structure approval:
 - [ ] Integration tests pass: `make test-integration`
 
 #### Manual Verification:
+
 - [ ] Feature works as expected when tested via UI
 - [ ] Performance is acceptable under load
 - [ ] Edge case handling verified manually
@@ -236,13 +243,16 @@ After structure approval:
 ## Testing Strategy
 
 ### Unit Tests:
+
 - [What to test]
 - [Key edge cases]
 
 ### Integration Tests:
+
 - [End-to-end scenarios]
 
 ### Manual Testing Steps:
+
 1. [Specific step to verify feature]
 2. [Another verification step]
 3. [Edge case to test manually]
@@ -260,6 +270,7 @@ After structure approval:
 - Original ticket: `thoughts/allison/tickets/eng_XXXX.md`
 - Related research: `thoughts/shared/research/[relevant].md`
 - Similar implementation: `[file:line]`
+
 ```
 
 ### Step 5: Sync and Review
@@ -269,80 +280,83 @@ After structure approval:
    - This ensures the plan is properly indexed and available
 
 2. **Present the draft plan location**:
-   ```
-   I've created the initial implementation plan at:
-   `thoughts/shared/plans/[filename].md`
+```
 
-   Please review it and let me know:
-   - Are the phases properly scoped?
-   - Are the success criteria specific enough?
-   - Any technical details that need adjustment?
-   - Missing edge cases or considerations?
-   ```
+I've created the initial implementation plan at:
+`thoughts/shared/plans/[filename].md`
+
+Please review it and let me know:
+
+- Are the phases properly scoped?
+- Are the success criteria specific enough?
+- Any technical details that need adjustment?
+- Missing edge cases or considerations?
+
+````
 
 3. **Iterate based on feedback** - be ready to:
-   - Add missing phases
-   - Adjust technical approach
-   - Clarify success criteria (both automated and manual)
-   - Add/remove scope items
-   - After making changes, run `humanlayer thoughts sync` again
+- Add missing phases
+- Adjust technical approach
+- Clarify success criteria (both automated and manual)
+- Add/remove scope items
+- After making changes, run `humanlayer thoughts sync` again
 
 4. **Continue refining** until the user is satisfied
 
 ## Important Guidelines
 
 1. **Be Skeptical**:
-   - Question vague requirements
-   - Identify potential issues early
-   - Ask "why" and "what about"
-   - Don't assume - verify with code
+- Question vague requirements
+- Identify potential issues early
+- Ask "why" and "what about"
+- Don't assume - verify with code
 
 2. **Be Interactive**:
-   - Don't write the full plan in one shot
-   - Get buy-in at each major step
-   - Allow course corrections
-   - Work collaboratively
+- Don't write the full plan in one shot
+- Get buy-in at each major step
+- Allow course corrections
+- Work collaboratively
 
 3. **Be Thorough**:
-   - Read all context files COMPLETELY before planning
-   - Research actual code patterns using parallel sub-tasks
-   - Include specific file paths and line numbers
-   - Write measurable success criteria with clear automated vs manual distinction
-   - automated steps should use `make` whenever possible - for example `make -C humanlayer-wui check` instead of `cd humanalyer-wui && bun run fmt`
+- Read all context files COMPLETELY before planning
+- Research actual code patterns using parallel sub-tasks
+- Include specific file paths and line numbers
+- Write measurable success criteria with clear automated vs manual distinction
+- automated steps should use `make` whenever possible - for example `make -C humanlayer-wui check` instead of `cd humanalyer-wui && bun run fmt`
 
 4. **Be Practical**:
-   - Focus on incremental, testable changes
-   - Consider migration and rollback
-   - Think about edge cases
-   - Include "what we're NOT doing"
+- Focus on incremental, testable changes
+- Consider migration and rollback
+- Think about edge cases
+- Include "what we're NOT doing"
 
 5. **Track Progress**:
-   - Use TodoWrite to track planning tasks
-   - Update todos as you complete research
-   - Mark planning tasks complete when done
+- Use TodoWrite to track planning tasks
+- Update todos as you complete research
+- Mark planning tasks complete when done
 
 6. **No Open Questions in Final Plan**:
-   - If you encounter open questions during planning, STOP
-   - Research or ask for clarification immediately
-   - Do NOT write the plan with unresolved questions
-   - The implementation plan must be complete and actionable
-   - Every decision must be made before finalizing the plan
+- If you encounter open questions during planning, STOP
+- Research or ask for clarification immediately
+- Do NOT write the plan with unresolved questions
+- The implementation plan must be complete and actionable
+- Every decision must be made before finalizing the plan
 
 ## Success Criteria Guidelines
 
 **Always separate success criteria into two categories:**
 
 1. **Automated Verification** (can be run by execution agents):
-   - Commands that can be run: `make test`, `npm run lint`, etc.
-   - Specific files that should exist
-   - Code compilation/type checking
-   - Automated test suites
+- Commands that can be run: `make test`, `npm run lint`, etc.
+- Specific files that should exist
+- Code compilation/type checking
+- Automated test suites
 
 2. **Manual Verification** (requires human testing):
-   - UI/UX functionality
-   - Performance under real conditions
-   - Edge cases that are hard to automate
-   - User acceptance criteria
+- UI/UX functionality
+- Performance under real conditions
+- Edge cases that are hard to automate
+- User acceptance criteria
 
 **Format example:**
 ```markdown
@@ -359,11 +373,12 @@ After structure approval:
 - [ ] Performance is acceptable with 1000+ items
 - [ ] Error messages are user-friendly
 - [ ] Feature works correctly on mobile devices
-```
+````
 
 ## Common Patterns
 
 ### For Database Changes:
+
 - Start with schema/migration
 - Add store methods
 - Update business logic
@@ -371,6 +386,7 @@ After structure approval:
 - Update clients
 
 ### For New Features:
+
 - Research existing patterns first
 - Start with data model
 - Build backend logic
@@ -378,6 +394,7 @@ After structure approval:
 - Implement UI last
 
 ### For Refactoring:
+
 - Document current behavior
 - Plan incremental changes
 - Maintain backwards compatibility
@@ -394,20 +411,16 @@ When spawning research sub-tasks:
    - Which directories to focus on
    - What information to extract
    - Expected output format
-4. **Be EXTREMELY specific about directories**:
-   - If the ticket mentions "WUI", specify `humanlayer-wui/` directory
-   - If it mentions "daemon", specify `hld/` directory
-   - Never use generic terms like "UI" when you mean "WUI"
-   - Include the full path context in your prompts
-5. **Specify read-only tools** to use
-6. **Request specific file:line references** in responses
-7. **Wait for all tasks to complete** before synthesizing
-8. **Verify sub-task results**:
+4. **Specify read-only tools** to use
+5. **Request specific file:line references** in responses
+6. **Wait for all tasks to complete** before synthesizing
+7. **Verify sub-task results**:
    - If a sub-task returns unexpected results, spawn follow-up tasks
    - Cross-check findings against the actual codebase
    - Don't accept results that seem incorrect
 
 Example of spawning multiple tasks:
+
 ```python
 # Spawn these tasks concurrently:
 tasks = [

@@ -868,6 +868,11 @@ impl AcpThread {
         &self.connection
     }
 
+    /// Returns true if the agent supports custom slash commands.
+    pub fn supports_custom_commands(&self) -> bool {
+        self.prompt_capabilities.supports_custom_commands
+    }
+
     pub fn action_log(&self) -> &Entity<ActionLog> {
         &self.action_log
     }

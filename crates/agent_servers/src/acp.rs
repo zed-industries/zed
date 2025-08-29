@@ -136,6 +136,7 @@ impl AcpConnection {
                         read_text_file: true,
                         write_text_file: true,
                     },
+                    terminal: true,
                 },
             })
             .await?;
@@ -326,6 +327,23 @@ impl AgentConnection for AcpConnection {
         cx.foreground_executor()
             .spawn(async move { conn.cancel(params).await })
             .detach();
+    }
+
+    fn list_commands(&self, session_id: &acp::SessionId, cx: &mut App) -> Task<Result<acp::ListCommandsResponse>> {
+        let conn = self.connection.clone();
+        let session_id = session_id.clone();
+        cx.foreground_executor().spawn(async move {
+            conn.list_commands(acp::ListCommandsRequest { session_id }).await
+                .map_err(Into::into)
+        })
+    }
+
+    fn run_command(&self, request: acp::RunCommandRequest, cx: &mut App) -> Task<Result<()>> {
+        let conn = self.connection.clone();
+        cx.foreground_executor().spawn(async move {
+            conn.run_command(request).await
+                .map_err(Into::into)
+        })
     }
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {

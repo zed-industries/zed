@@ -1,11 +1,31 @@
 {
   "permissions": {
+    "allow": [
+      "Read(/Users/mikaylamaki/projects/zed-work/zed-monorepo-real/**)",
+      "Read(/Users/nathan/src/agent-client-protocol/rust/**)",
+      "Read(/Users/nathan/src/agent-client-protocol/rust/**)",
+      "Read(/Users/nathan/src/agent-client-protocol/rust/**)",
+      "Read(/Users/nathan/src/agent-client-protocol/rust/**)",
+      "Bash(git add:*)",
+      "Read(/Users/nathan/src/agent-client-protocol/rust/**)",
+      "Bash(./script/spec_metadata.sh:*)",
+      "Bash(npm run generate:*)",
+      "Bash(npm run typecheck:*)",
+      "Bash(npm run:*)",
+      "Bash(npm install)",
+      "Bash(grep:*)",
+      "Bash(find:*)",
+      "Bash(node:*)",
+      "Bash(cargo check:*)",
+      "Bash(cargo test)",
+      "Bash(npx tsc:*)"
+    ],
     "additionalDirectories": [
       "/Users/mikaylamaki/projects/zed-work/zed-monorepo-real/claude-code-acp/",
-      "/Users/mikaylamaki/projects/zed-work/zed-monorepo-real/agentic-coding-protocol/"
-    ],
-    "allow": [
-      "Read(/Users/mikaylamaki/projects/zed-work/zed-monorepo-real/**)"
+      "/Users/mikaylamaki/projects/zed-work/zed-monorepo-real/agentic-coding-protocol/",
+      "/Users/nathan/src/agent",
+      "/Users/nathan/src/agent-client-protocol/",
+      "/Users/nathan/src/claude-code-acp"
     ]
   }
 }

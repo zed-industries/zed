@@ -65,6 +65,7 @@ pub struct MessageEditor {
     prompt_store: Option<Entity<PromptStore>>,
     prevent_slash_commands: bool,
     prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
+    completion_provider: Rc<ContextPickerCompletionProvider>,
     _subscriptions: Vec<Subscription>,
     _parse_slash_command_task: Task<()>,
 }
@@ -99,13 +100,15 @@ impl MessageEditor {
             },
             None,
         );
-        let completion_provider = ContextPickerCompletionProvider::new(
+        let context_completion_provider = ContextPickerCompletionProvider::new(
             cx.weak_entity(),
             workspace.clone(),
             history_store.clone(),
             prompt_store.clone(),
             prompt_capabilities.clone(),
         );
+        
+        let completion_provider = Rc::new(context_completion_provider);
         let semantics_provider = Rc::new(SlashCommandSemanticsProvider {
             range: Cell::new(None),
         });
@@ -119,7 +122,7 @@ impl MessageEditor {
             editor.set_show_indent_guides(false, cx);
             editor.set_soft_wrap();
             editor.set_use_modal_editing(true);
-            editor.set_completion_provider(Some(Rc::new(completion_provider)));
+            editor.set_completion_provider(Some(completion_provider.clone()));
             editor.set_context_menu_options(ContextMenuOptions {
                 min_entries_visible: 12,
                 max_entries_visible: 12,
@@ -170,9 +173,15 @@ impl MessageEditor {
             prompt_store,
             prevent_slash_commands,
             prompt_capabilities,
+            completion_provider,
             _subscriptions: subscriptions,
             _parse_slash_command_task: Task::ready(()),
         }
+    }
+
+    pub fn set_thread(&mut self, thread: WeakEntity<acp_thread::AcpThread>, _cx: &mut Context<Self>) {
+        // Update the completion provider with the thread reference
+        self.completion_provider.set_thread(thread);
     }
 
     pub fn insert_thread_summary(

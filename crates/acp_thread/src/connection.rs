@@ -76,6 +76,9 @@ pub trait AgentConnection {
         None
     }
 
+    fn list_commands(&self, session_id: &acp::SessionId, cx: &mut App) -> Task<Result<acp::ListCommandsResponse>>;
+    fn run_command(&self, request: acp::RunCommandRequest, cx: &mut App) -> Task<Result<()>>;
+
     fn into_any(self: Rc<Self>) -> Rc<dyn Any>;
 }
 
@@ -438,6 +441,14 @@ mod test_support {
             _cx: &App,
         ) -> Option<Rc<dyn AgentSessionTruncate>> {
             Some(Rc::new(StubAgentSessionEditor))
+        }
+
+        fn list_commands(&self, _session_id: &acp::SessionId, _cx: &mut App) -> Task<Result<acp::ListCommandsResponse>> {
+            Task::ready(Ok(acp::ListCommandsResponse { commands: vec![] }))
+        }
+
+        fn run_command(&self, _request: acp::RunCommandRequest, _cx: &mut App) -> Task<Result<()>> {
+            Task::ready(Ok(()))
         }
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {

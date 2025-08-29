@@ -244,6 +244,7 @@ impl AgentConnection for ClaudeAgentConnection {
                         image: true,
                         audio: false,
                         embedded_context: true,
+                        supports_custom_commands: false,
                     }),
                     cx,
                 )
@@ -337,6 +338,19 @@ impl AgentConnection for ClaudeAgentConnection {
                 request: ControlRequest::Interrupt,
             })
             .log_err();
+    }
+
+    fn list_commands(&self, session_id: &acp::SessionId, _cx: &mut App) -> Task<Result<acp::ListCommandsResponse>> {
+        // Claude agent doesn't support custom commands yet
+        let _session_id = session_id.clone();
+        Task::ready(Ok(acp::ListCommandsResponse {
+            commands: vec![],
+        }))
+    }
+
+    fn run_command(&self, _request: acp::RunCommandRequest, _cx: &mut App) -> Task<Result<()>> {
+        // Claude agent doesn't support custom commands yet
+        Task::ready(Err(anyhow!("Custom commands not supported")))
     }
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {

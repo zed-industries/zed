@@ -928,6 +928,7 @@ impl MentionCompletion {
     }
 }
 
+
 #[cfg(test)]
 mod tests {
     use super::*;
