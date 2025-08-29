@@ -2128,7 +2128,7 @@ mod tests {
                     lsp::SymbolInformation {
                         name: "MySymbol".into(),
                         location: lsp::Location {
-                            uri: lsp::Url::from_file_path(path!("/dir/a/one.txt")).unwrap(),
+                            uri: lsp::Uri::from_file_path(path!("/dir/a/one.txt")).unwrap(),
                             range: lsp::Range::new(
                                 lsp::Position::new(0, 0),
                                 lsp::Position::new(0, 1),
