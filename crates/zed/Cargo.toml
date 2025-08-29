@@ -131,6 +131,7 @@ serde_json.workspace = true
 session.workspace = true
 settings.workspace = true
 settings_ui.workspace = true
+keymap_editor.workspace = true
 shellexpand.workspace = true
 smol.workspace = true
 snippet_provider.workspace = true

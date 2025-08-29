@@ -8952,6 +8952,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "keymap_editor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "command_palette",
+ "component",
+ "db",
+ "editor",
+ "fs",
+ "fuzzy",
+ "gpui",
+ "itertools 0.14.0",
+ "language",
+ "log",
+ "menu",
+ "notifications",
+ "paths",
+ "project",
+ "search",
+ "serde",
+ "serde_json",
+ "settings",
+ "telemetry",
+ "tempfile",
+ "theme",
+ "tree-sitter-json",
+ "tree-sitter-rust",
+ "ui",
+ "ui_input",
+ "util",
+ "vim",
+ "workspace",
+ "workspace-hack",
+ "zed_actions",
+]
+
+[[package]]
 name = "khronos-egl"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14856,6 +14894,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "serde_json_lenient",
+ "settings_ui_macros",
  "smallvec",
  "tree-sitter",
  "tree-sitter-json",
@@ -14891,39 +14930,28 @@ name = "settings_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "collections",
- "command_palette",
  "command_palette_hooks",
- "component",
- "db",
  "editor",
  "feature_flags",
- "fs",
- "fuzzy",
  "gpui",
- "itertools 0.14.0",
- "language",
- "log",
- "menu",
- "notifications",
- "paths",
- "project",
- "search",
  "serde",
  "serde_json",
  "settings",
- "telemetry",
- "tempfile",
+ "smallvec",
  "theme",
- "tree-sitter-json",
- "tree-sitter-rust",
  "ui",
- "ui_input",
- "util",
- "vim",
  "workspace",
  "workspace-hack",
- "zed_actions",
+]
+
+[[package]]
+name = "settings_ui_macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.101",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -16739,6 +16767,7 @@ dependencies = [
  "db",
  "gpui",
  "http_client",
+ "keymap_editor",
  "notifications",
  "pretty_assertions",
  "project",
@@ -16747,7 +16776,6 @@ dependencies = [
  "schemars",
  "serde",
  "settings",
- "settings_ui",
  "smallvec",
  "story",
  "telemetry",
@@ -20458,6 +20486,7 @@ dependencies = [
  "itertools 0.14.0",
  "jj_ui",
  "journal",
+ "keymap_editor",
  "language",
  "language_extension",
  "language_model",

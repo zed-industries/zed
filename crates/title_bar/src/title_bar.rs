@@ -29,10 +29,10 @@ use gpui::{
     IntoElement, MouseButton, ParentElement, Render, StatefulInteractiveElement, Styled,
     Subscription, WeakEntity, Window, actions, div,
 };
+use keymap_editor;
 use onboarding_banner::OnboardingBanner;
 use project::Project;
 use settings::Settings as _;
-use settings_ui::keybindings;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use title_bar_settings::TitleBarSettings;
@@ -684,7 +684,7 @@ impl TitleBar {
                             "Settings Profiles",
                             zed_actions::settings_profile_selector::Toggle.boxed_clone(),
                         )
-                        .action("Key Bindings", Box::new(keybindings::OpenKeymapEditor))
+                        .action("Key Bindings", Box::new(keymap_editor::OpenKeymapEditor))
                         .action(
                             "Themes…",
                             zed_actions::theme_selector::Toggle::default().boxed_clone(),
@@ -732,7 +732,7 @@ impl TitleBar {
                                 "Settings Profiles",
                                 zed_actions::settings_profile_selector::Toggle.boxed_clone(),
                             )
-                            .action("Key Bindings", Box::new(keybindings::OpenKeymapEditor))
+                            .action("Key Bindings", Box::new(keymap_editor::OpenKeymapEditor))
                             .action(
                                 "Themes…",
                                 zed_actions::theme_selector::Toggle::default().boxed_clone(),
