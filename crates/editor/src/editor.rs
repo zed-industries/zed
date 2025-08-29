@@ -24079,11 +24079,14 @@ fn render_diff_hunk_controls(
 }
 
 pub fn multibuffer_context_lines(cx: &App) -> u32 {
+    const DEFAULT_MULTIBUFFER_CONTEXT_LINES: u32 = 2;
+
     if cx.has_global::<SettingsStore>() {
-        EditorSettings::get_global(cx)
-            .excerpt_context_lines
+        EditorSettings::try_get(cx)
+            .map(|settings| settings.excerpt_context_lines)
+            .unwrap_or(DEFAULT_MULTIBUFFER_CONTEXT_LINES)
             .clamp(1, 32)
     } else {
-        2
+        DEFAULT_MULTIBUFFER_CONTEXT_LINES
     }
 }
