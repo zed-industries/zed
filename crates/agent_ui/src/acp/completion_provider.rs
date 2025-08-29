@@ -1021,17 +1021,18 @@ impl SlashCommandCompletion {
 
         if let Some(command_text) = rest_of_line.split_whitespace().next() {
             command = Some(command_text.to_string());
+            end += command_text.len();
 
             // Find the start of arguments after the command
             if let Some(args_start) =
                 rest_of_line[command_text.len()..].find(|c: char| !c.is_whitespace())
             {
-                let args = &rest_of_line[command_text.len() + args_start..];
+                let args = &rest_of_line[command_text.len() + args_start..].trim_end();
                 if !args.is_empty() {
                     argument = Some(args.to_string());
+                    end += args.len() + 1;
                 }
             }
-            end += rest_of_line.len();
         }
 
         Some(Self {
@@ -1106,6 +1107,67 @@ impl MentionCompletion {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_slash_command_completion_parse() {
+        assert_eq!(SlashCommandCompletion::try_parse("Lorem Ipsum", 0), None);
+
+        assert_eq!(
+            SlashCommandCompletion::try_parse("Lorem /", 0),
+            Some(SlashCommandCompletion {
+                source_range: 6..7,
+                command: None,
+                argument: None,
+            })
+        );
+
+        assert_eq!(
+            SlashCommandCompletion::try_parse("Lorem /help", 0),
+            Some(SlashCommandCompletion {
+                source_range: 6..11,
+                command: Some("help".to_string()),
+                argument: None,
+            })
+        );
+
+        assert_eq!(
+            SlashCommandCompletion::try_parse("Lorem /help ", 0),
+            Some(SlashCommandCompletion {
+                source_range: 6..11,
+                command: Some("help".to_string()),
+                argument: None,
+            })
+        );
+
+        assert_eq!(
+            SlashCommandCompletion::try_parse("Lorem /help main.rs", 0),
+            Some(SlashCommandCompletion {
+                source_range: 6..19,
+                command: Some("help".to_string()),
+                argument: Some("main.rs".to_string()),
+            })
+        );
+
+        assert_eq!(
+            SlashCommandCompletion::try_parse("Lorem /help main.rs ", 0),
+            Some(SlashCommandCompletion {
+                source_range: 6..19,
+                command: Some("help".to_string()),
+                argument: Some("main.rs".to_string()),
+            })
+        );
+
+        assert_eq!(
+            SlashCommandCompletion::try_parse("Lorem /help main.rs index.js", 0),
+            Some(SlashCommandCompletion {
+                source_range: 6..28,
+                command: Some("help".to_string()),
+                argument: Some("main.rs index.js".to_string()),
+            })
+        );
+
+        assert_eq!(SlashCommandCompletion::try_parse("test/", 0), None);
+    }
 
     #[test]
     fn test_mention_completion_parse() {
