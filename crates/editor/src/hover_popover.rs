@@ -428,7 +428,7 @@ fn show_hover(
             };
 
             let hovers_response = if let Some(hover_request) = hover_request {
-                hover_request.await
+                hover_request.await.unwrap_or_default()
             } else {
                 Vec::new()
             };
@@ -896,7 +896,7 @@ impl InfoPopover {
             .into_any_element()
     }
 
-    pub fn scroll(&self, amount: &ScrollAmount, window: &mut Window, cx: &mut Context<Editor>) {
+    pub fn scroll(&self, amount: ScrollAmount, window: &mut Window, cx: &mut Context<Editor>) {
         let mut current = self.scroll_handle.offset();
         current.y -= amount.pixels(
             window.line_height(),

@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use gpui::{ClickEvent, DismissEvent, EventEmitter, FocusHandle, Focusable, Render, WeakEntity};
 use project::project_settings::ProjectSettings;
 use remote::SshConnectionOptions;
@@ -66,8 +64,8 @@ impl DisconnectedOverlay {
                 }
                 let handle = cx.entity().downgrade();
 
-                let ssh_connection_options = project.read(cx).ssh_connection_options(cx);
-                let host = if let Some(ssh_connection_options) = ssh_connection_options {
+                let remote_connection_options = project.read(cx).remote_connection_options(cx);
+                let host = if let Some(ssh_connection_options) = remote_connection_options {
                     Host::SshRemoteProject(ssh_connection_options)
                 } else {
                     Host::RemoteProject
@@ -103,17 +101,17 @@ impl DisconnectedOverlay {
             return;
         };
 
-        let Some(ssh_project) = workspace.read(cx).serialized_ssh_project() else {
-            return;
-        };
-
         let Some(window_handle) = window.window_handle().downcast::<Workspace>() else {
             return;
         };
 
         let app_state = workspace.read(cx).app_state().clone();
-
-        let paths = ssh_project.paths.iter().map(PathBuf::from).collect();
+        let paths = workspace
+            .read(cx)
+            .root_paths(cx)
+            .iter()
+            .map(|path| path.to_path_buf())
+            .collect();
 
         cx.spawn_in(window, async move |_, cx| {
             open_ssh_project(

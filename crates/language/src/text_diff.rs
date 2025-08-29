@@ -186,7 +186,7 @@ fn tokenize(text: &str, language_scope: Option<LanguageScope>) -> impl Iterator<
     let mut prev = None;
     let mut start_ix = 0;
     iter::from_fn(move || {
-        while let Some((ix, c)) = chars.next() {
+        for (ix, c) in chars.by_ref() {
             let mut token = None;
             let kind = classifier.kind(c);
             if let Some((prev_char, prev_kind)) = prev

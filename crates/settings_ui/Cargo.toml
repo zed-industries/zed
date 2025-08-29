@@ -11,45 +11,26 @@ workspace = true
 [lib]
 path = "src/settings_ui.rs"
 
+[features]
+default = []
+
 [dependencies]
 anyhow.workspace = true
-collections.workspace = true
-command_palette.workspace = true
 command_palette_hooks.workspace = true
-component.workspace = true
-db.workspace = true
 editor.workspace = true
 feature_flags.workspace = true
-fs.workspace = true
-fuzzy.workspace = true
 gpui.workspace = true
-itertools.workspace = true
-language.workspace = true
-log.workspace = true
-menu.workspace = true
-notifications.workspace = true
-paths.workspace = true
-project.workspace = true
-search.workspace = true
-serde.workspace = true
 serde_json.workspace = true
+serde.workspace = true
 settings.workspace = true
-telemetry.workspace = true
-tempfile.workspace = true
+smallvec.workspace = true
 theme.workspace = true
-tree-sitter-json.workspace = true
-tree-sitter-rust.workspace = true
 ui.workspace = true
-ui_input.workspace = true
-util.workspace = true
-vim.workspace = true
-workspace-hack.workspace = true
 workspace.workspace = true
-zed_actions.workspace = true
+workspace-hack.workspace = true
 
-[dev-dependencies]
-db = {"workspace"= true, "features" = ["test-support"]}
-fs = { workspace = true, features = ["test-support"] }
-gpui = { workspace = true, features = ["test-support"] }
-project = { workspace = true, features = ["test-support"] }
-workspace = { workspace = true, features = ["test-support"] }
+# Uncomment other workspace dependencies as needed
+# assistant.workspace = true
+# client.workspace = true
+# project.workspace = true
+# settings.workspace = true

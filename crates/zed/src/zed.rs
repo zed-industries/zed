@@ -32,7 +32,8 @@ use gpui::{
 };
 use image_viewer::ImageInfo;
 use language::Capability;
-use language_tools::lsp_tool::{self, LspTool};
+use language_tools::lsp_button::{self, LspButton};
+use language_tools::lsp_log_view::LspLogToolbarItemView;
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
 use migrator::{migrate_keymap, migrate_settings};
 use onboarding::DOCS_URL;
@@ -282,6 +283,8 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
         _ => gpui::WindowDecorations::Client,
     };
 
+    let use_system_window_tabs = WorkspaceSettings::get_global(cx).use_system_window_tabs;
+
     WindowOptions {
         titlebar: Some(TitlebarOptions {
             title: None,
@@ -301,6 +304,12 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
             width: px(360.0),
             height: px(240.0),
         }),
+        tabbing_identifier: if use_system_window_tabs {
+            Some(String::from("zed"))
+        } else {
+            None
+        },
+        ..Default::default()
     }
 }
 
@@ -344,7 +353,17 @@ pub fn initialize_workspace(
 
         if let Some(specs) = window.gpu_specs() {
             log::info!("Using GPU: {:?}", specs);
-            show_software_emulation_warning_if_needed(specs, window, cx);
+            show_software_emulation_warning_if_needed(specs.clone(), window, cx);
+            if let Some((crash_server, message)) = crashes::CRASH_HANDLER
+                .get()
+                .zip(bincode::serialize(&specs).ok())
+                && let Err(err) = crash_server.send_message(3, message)
+            {
+                log::warn!(
+                    "Failed to store active gpu info for crash reporting: {}",
+                    err
+                );
+            }
         }
 
         let edit_prediction_menu_handle = PopoverMenuHandle::default();
@@ -378,12 +397,12 @@ pub fn initialize_workspace(
         let vim_mode_indicator = cx.new(|cx| vim::ModeIndicator::new(window, cx));
         let image_info = cx.new(|_cx| ImageInfo::new(workspace));
 
-        let lsp_tool_menu_handle = PopoverMenuHandle::default();
-        let lsp_tool =
-            cx.new(|cx| LspTool::new(workspace, lsp_tool_menu_handle.clone(), window, cx));
+        let lsp_button_menu_handle = PopoverMenuHandle::default();
+        let lsp_button =
+            cx.new(|cx| LspButton::new(workspace, lsp_button_menu_handle.clone(), window, cx));
         workspace.register_action({
-            move |_, _: &lsp_tool::ToggleMenu, window, cx| {
-                lsp_tool_menu_handle.toggle(window, cx);
+            move |_, _: &lsp_button::ToggleMenu, window, cx| {
+                lsp_button_menu_handle.toggle(window, cx);
             }
         });
 
@@ -391,7 +410,7 @@ pub fn initialize_workspace(
             cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(search_button, window, cx);
-            status_bar.add_left_item(lsp_tool, window, cx);
+            status_bar.add_left_item(lsp_button, window, cx);
             status_bar.add_left_item(diagnostic_summary, window, cx);
             status_bar.add_left_item(activity_indicator, window, cx);
             status_bar.add_right_item(edit_prediction_button, window, cx);
@@ -908,7 +927,7 @@ fn register_actions(
             capture_audio(workspace, window, cx);
         });
 
-    if workspace.project().read(cx).is_via_ssh() {
+    if workspace.project().read(cx).is_via_remote_server() {
         workspace.register_action({
             move |workspace, _: &OpenServerSettings, window, cx| {
                 let open_server_settings = workspace
@@ -970,7 +989,7 @@ fn initialize_pane(
             toolbar.add_item(diagnostic_editor_controls, window, cx);
             let project_search_bar = cx.new(|_| ProjectSearchBar::new());
             toolbar.add_item(project_search_bar, window, cx);
-            let lsp_log_item = cx.new(|_| language_tools::LspLogToolbarItemView::new());
+            let lsp_log_item = cx.new(|_| LspLogToolbarItemView::new());
             toolbar.add_item(lsp_log_item, window, cx);
             let dap_log_item = cx.new(|_| debugger_tools::DapLogToolbarItemView::new());
             toolbar.add_item(dap_log_item, window, cx);
@@ -1298,11 +1317,11 @@ pub fn handle_keymap_file_changes(
     })
     .detach();
 
-    let mut current_mapping = settings::get_key_equivalents(cx.keyboard_layout().id());
+    let mut current_layout_id = cx.keyboard_layout().id().to_string();
     cx.on_keyboard_layout_change(move |cx| {
-        let next_mapping = settings::get_key_equivalents(cx.keyboard_layout().id());
-        if next_mapping != current_mapping {
-            current_mapping = next_mapping;
+        let next_layout_id = cx.keyboard_layout().id();
+        if next_layout_id != current_layout_id {
+            current_layout_id = next_layout_id.to_string();
             keyboard_layout_tx.unbounded_send(()).ok();
         }
     })
@@ -1472,7 +1491,7 @@ fn reload_keymaps(cx: &mut App, mut user_key_bindings: Vec<KeyBinding>) {
         workspace::NewWindow,
     )]);
     // todo: nicer api here?
-    settings_ui::keybindings::KeymapEventChannel::trigger_keymap_changed(cx);
+    keymap_editor::KeymapEventChannel::trigger_keymap_changed(cx);
 }
 
 pub fn load_default_keymap(cx: &mut App) {
@@ -1533,7 +1552,7 @@ pub fn open_new_ssh_project_from_project(
     cx: &mut Context<Workspace>,
 ) -> Task<anyhow::Result<()>> {
     let app_state = workspace.app_state().clone();
-    let Some(ssh_client) = workspace.project().read(cx).ssh_client() else {
+    let Some(ssh_client) = workspace.project().read(cx).remote_client() else {
         return Task::ready(Err(anyhow::anyhow!("Not an ssh project")));
     };
     let connection_options = ssh_client.read(cx).connection_options();
@@ -4496,6 +4515,7 @@ mod tests {
                 "zed",
                 "zed_predict_onboarding",
                 "zeta",
+                "window",
             ];
             assert_eq!(
                 all_namespaces,
@@ -4614,7 +4634,7 @@ mod tests {
             gpui_tokio::init(cx);
             vim_mode_setting::init(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
-            audio::init((), cx);
+            audio::init(cx);
             channel::init(&app_state.client, app_state.user_store.clone(), cx);
             call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
@@ -4719,7 +4739,7 @@ mod tests {
                 // and key strokes contain the given key
                 bindings
                     .into_iter()
-                    .any(|binding| binding.keystrokes().iter().any(|k| k.key == key)),
+                    .any(|binding| binding.keystrokes().iter().any(|k| k.key() == key)),
                 "On {} Failed to find {} with key binding {}",
                 line,
                 action.name(),

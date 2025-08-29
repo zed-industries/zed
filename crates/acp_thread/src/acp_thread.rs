@@ -3,6 +3,7 @@ mod diff;
 mod mention;
 mod terminal;
 
+use agent_settings::AgentSettings;
 use collections::HashSet;
 pub use connection::*;
 pub use diff::*;
@@ -10,6 +11,7 @@ use language::language_settings::FormatOnSave;
 pub use mention::*;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use serde::{Deserialize, Serialize};
+use settings::Settings as _;
 pub use terminal::*;
 
 use action_log::ActionLog;
@@ -183,16 +185,15 @@ impl ToolCall {
         language_registry: Arc<LanguageRegistry>,
         cx: &mut App,
     ) -> Self {
+        let title = if let Some((first_line, _)) = tool_call.title.split_once("\n") {
+            first_line.to_owned() + "…"
+        } else {
+            tool_call.title
+        };
         Self {
             id: tool_call.id,
-            label: cx.new(|cx| {
-                Markdown::new(
-                    tool_call.title.into(),
-                    Some(language_registry.clone()),
-                    None,
-                    cx,
-                )
-            }),
+            label: cx
+                .new(|cx| Markdown::new(title.into(), Some(language_registry.clone()), None, cx)),
             kind: tool_call.kind,
             content: tool_call
                 .content
@@ -233,15 +234,30 @@ impl ToolCall {
 
         if let Some(title) = title {
             self.label.update(cx, |label, cx| {
-                label.replace(title, cx);
+                if let Some((first_line, _)) = title.split_once("\n") {
+                    label.replace(first_line.to_owned() + "…", cx)
+                } else {
+                    label.replace(title, cx);
+                }
             });
         }
 
         if let Some(content) = content {
-            self.content = content
-                .into_iter()
-                .map(|chunk| ToolCallContent::from_acp(chunk, language_registry.clone(), cx))
-                .collect();
+            let new_content_len = content.len();
+            let mut content = content.into_iter();
+
+            // Reuse existing content if we can
+            for (old, new) in self.content.iter_mut().zip(content.by_ref()) {
+                old.update_from_acp(new, language_registry.clone(), cx);
+            }
+            for new in content {
+                self.content.push(ToolCallContent::from_acp(
+                    new,
+                    language_registry.clone(),
+                    cx,
+                ))
+            }
+            self.content.truncate(new_content_len);
         }
 
         if let Some(locations) = locations {
@@ -498,7 +514,7 @@ impl ContentBlock {
         "`Image`".into()
     }
 
-    fn to_markdown<'a>(&'a self, cx: &'a App) -> &'a str {
+    pub fn to_markdown<'a>(&'a self, cx: &'a App) -> &'a str {
         match self {
             ContentBlock::Empty => "",
             ContentBlock::Markdown { markdown } => markdown.read(cx).source(),
@@ -548,6 +564,28 @@ impl ToolCallContent {
                     cx,
                 )
             })),
+        }
+    }
+
+    pub fn update_from_acp(
+        &mut self,
+        new: acp::ToolCallContent,
+        language_registry: Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) {
+        let needs_update = match (&self, &new) {
+            (Self::Diff(old_diff), acp::ToolCallContent::Diff { diff: new_diff }) => {
+                old_diff.read(cx).needs_update(
+                    new_diff.old_text.as_deref().unwrap_or(""),
+                    &new_diff.new_text,
+                    cx,
+                )
+            }
+            _ => true,
+        };
+
+        if needs_update {
+            *self = Self::from_acp(new, language_registry, cx);
         }
     }
 
@@ -723,6 +761,8 @@ pub struct AcpThread {
     connection: Rc<dyn AgentConnection>,
     session_id: acp::SessionId,
     token_usage: Option<TokenUsage>,
+    prompt_capabilities: acp::PromptCapabilities,
+    _observe_prompt_capabilities: Task<anyhow::Result<()>>,
 }
 
 #[derive(Debug)]
@@ -737,11 +777,12 @@ pub enum AcpThreadEvent {
     Stopped,
     Error,
     LoadError(LoadError),
+    PromptCapabilitiesUpdated,
 }
 
 impl EventEmitter<AcpThreadEvent> for AcpThread {}
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Debug)]
 pub enum ThreadStatus {
     Idle,
     WaitingForToolConfirmation,
@@ -750,16 +791,12 @@ pub enum ThreadStatus {
 
 #[derive(Debug, Clone)]
 pub enum LoadError {
-    NotInstalled {
-        error_message: SharedString,
-        install_message: SharedString,
-        install_command: String,
-    },
     Unsupported {
-        error_message: SharedString,
-        upgrade_message: SharedString,
-        upgrade_command: String,
+        command: SharedString,
+        current_version: SharedString,
+        minimum_version: SharedString,
     },
+    FailedToInstall(SharedString),
     Exited {
         status: ExitStatus,
     },
@@ -769,12 +806,19 @@ pub enum LoadError {
 impl Display for LoadError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            LoadError::NotInstalled { error_message, .. }
-            | LoadError::Unsupported { error_message, .. } => {
-                write!(f, "{error_message}")
+            LoadError::Unsupported {
+                command: path,
+                current_version,
+                minimum_version,
+            } => {
+                write!(
+                    f,
+                    "version {current_version} from {path} is not supported (need at least {minimum_version})"
+                )
             }
+            LoadError::FailedToInstall(msg) => write!(f, "Failed to install: {msg}"),
             LoadError::Exited { status } => write!(f, "Server exited with status {status}"),
-            LoadError::Other(msg) => write!(f, "{}", msg),
+            LoadError::Other(msg) => write!(f, "{msg}"),
         }
     }
 }
@@ -788,7 +832,20 @@ impl AcpThread {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         session_id: acp::SessionId,
+        mut prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
+        cx: &mut Context<Self>,
     ) -> Self {
+        let prompt_capabilities = *prompt_capabilities_rx.borrow();
+        let task = cx.spawn::<_, anyhow::Result<()>>(async move |this, cx| {
+            loop {
+                let caps = prompt_capabilities_rx.recv().await?;
+                this.update(cx, |this, cx| {
+                    this.prompt_capabilities = caps;
+                    cx.emit(AcpThreadEvent::PromptCapabilitiesUpdated);
+                })?;
+            }
+        });
+
         Self {
             action_log,
             shared_buffers: Default::default(),
@@ -800,7 +857,13 @@ impl AcpThread {
             connection,
             session_id,
             token_usage: None,
+            prompt_capabilities,
+            _observe_prompt_capabilities: task,
         }
+    }
+
+    pub fn prompt_capabilities(&self) -> acp::PromptCapabilities {
+        self.prompt_capabilities
     }
 
     pub fn connection(&self) -> &Rc<dyn AgentConnection> {
@@ -987,10 +1050,19 @@ impl AcpThread {
         cx.emit(AcpThreadEvent::NewEntry);
     }
 
-    pub fn update_title(&mut self, title: SharedString, cx: &mut Context<Self>) -> Result<()> {
-        self.title = title;
-        cx.emit(AcpThreadEvent::TitleUpdated);
-        Ok(())
+    pub fn can_set_title(&mut self, cx: &mut Context<Self>) -> bool {
+        self.connection.set_title(&self.session_id, cx).is_some()
+    }
+
+    pub fn set_title(&mut self, title: SharedString, cx: &mut Context<Self>) -> Task<Result<()>> {
+        if title != self.title {
+            self.title = title.clone();
+            cx.emit(AcpThreadEvent::TitleUpdated);
+            if let Some(set_title) = self.connection.set_title(&self.session_id, cx) {
+                return set_title.run(title, cx);
+            }
+        }
+        Task::ready(Ok(()))
     }
 
     pub fn update_token_usage(&mut self, usage: Option<TokenUsage>, cx: &mut Context<Self>) {
@@ -1160,8 +1232,28 @@ impl AcpThread {
         tool_call: acp::ToolCallUpdate,
         options: Vec<acp::PermissionOption>,
         cx: &mut Context<Self>,
-    ) -> Result<oneshot::Receiver<acp::PermissionOptionId>, acp::Error> {
+    ) -> Result<BoxFuture<'static, acp::RequestPermissionOutcome>> {
         let (tx, rx) = oneshot::channel();
+
+        if AgentSettings::get_global(cx).always_allow_tool_actions {
+            // Don't use AllowAlways, because then if you were to turn off always_allow_tool_actions,
+            // some tools would (incorrectly) continue to auto-accept.
+            if let Some(allow_once_option) = options.iter().find_map(|option| {
+                if matches!(option.kind, acp::PermissionOptionKind::AllowOnce) {
+                    Some(option.id.clone())
+                } else {
+                    None
+                }
+            }) {
+                self.upsert_tool_call_inner(tool_call, ToolCallStatus::Pending, cx)?;
+                return Ok(async {
+                    acp::RequestPermissionOutcome::Selected {
+                        option_id: allow_once_option,
+                    }
+                }
+                .boxed());
+            }
+        }
 
         let status = ToolCallStatus::WaitingForConfirmation {
             options,
@@ -1170,7 +1262,16 @@ impl AcpThread {
 
         self.upsert_tool_call_inner(tool_call, status, cx)?;
         cx.emit(AcpThreadEvent::ToolAuthorizationRequired);
-        Ok(rx)
+
+        let fut = async {
+            match rx.await {
+                Ok(option) => acp::RequestPermissionOutcome::Selected { option_id: option },
+                Err(oneshot::Canceled) => acp::RequestPermissionOutcome::Cancelled,
+            }
+        }
+        .boxed();
+
+        Ok(fut)
     }
 
     pub fn authorize_tool_call(
@@ -1293,11 +1394,7 @@ impl AcpThread {
         };
         let git_store = self.project.read(cx).git_store().clone();
 
-        let message_id = if self
-            .connection
-            .session_editor(&self.session_id, cx)
-            .is_some()
-        {
+        let message_id = if self.connection.truncate(&self.session_id, cx).is_some() {
             Some(UserMessageId::new())
         } else {
             None
@@ -1333,6 +1430,10 @@ impl AcpThread {
             })?
             .await
         })
+    }
+
+    pub fn can_resume(&self, cx: &App) -> bool {
+        self.connection.resume(&self.session_id, cx).is_some()
     }
 
     pub fn resume(&mut self, cx: &mut Context<Self>) -> BoxFuture<'static, Result<()>> {
@@ -1381,7 +1482,7 @@ impl AcpThread {
                         let canceled = matches!(
                             result,
                             Ok(Ok(acp::PromptResponse {
-                                stop_reason: acp::StopReason::Canceled
+                                stop_reason: acp::StopReason::Cancelled
                             }))
                         );
 
@@ -1443,7 +1544,7 @@ impl AcpThread {
     /// Rewinds this thread to before the entry at `index`, removing it and all
     /// subsequent entries while reverting any changes made from that point.
     pub fn rewind(&mut self, id: UserMessageId, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let Some(session_editor) = self.connection.session_editor(&self.session_id, cx) else {
+        let Some(truncate) = self.connection.truncate(&self.session_id, cx) else {
             return Task::ready(Err(anyhow!("not supported")));
         };
         let Some(message) = self.user_message(&id) else {
@@ -1463,8 +1564,7 @@ impl AcpThread {
                     .await?;
             }
 
-            cx.update(|cx| session_editor.truncate(id.clone(), cx))?
-                .await?;
+            cx.update(|cx| truncate.run(id.clone(), cx))?.await?;
             this.update(cx, |this, cx| {
                 if let Some((ix, _)) = this.user_message_mut(&id) {
                     let range = ix..this.entries.len();
@@ -2558,13 +2658,19 @@ mod tests {
                     .into(),
             );
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
-            let thread = cx.new(|_cx| {
+            let thread = cx.new(|cx| {
                 AcpThread::new(
                     "Test",
                     self.clone(),
                     project,
                     action_log,
                     session_id.clone(),
+                    watch::Receiver::constant(acp::PromptCapabilities {
+                        image: true,
+                        audio: true,
+                        embedded_context: true,
+                    }),
+                    cx,
                 )
             });
             self.sessions.lock().insert(session_id, thread.downgrade());
@@ -2611,11 +2717,11 @@ mod tests {
             .detach();
         }
 
-        fn session_editor(
+        fn truncate(
             &self,
             session_id: &acp::SessionId,
-            _cx: &mut App,
-        ) -> Option<Rc<dyn AgentSessionEditor>> {
+            _cx: &App,
+        ) -> Option<Rc<dyn AgentSessionTruncate>> {
             Some(Rc::new(FakeAgentSessionEditor {
                 _session_id: session_id.clone(),
             }))
@@ -2630,8 +2736,8 @@ mod tests {
         _session_id: acp::SessionId,
     }
 
-    impl AgentSessionEditor for FakeAgentSessionEditor {
-        fn truncate(&self, _message_id: UserMessageId, _cx: &mut App) -> Task<Result<()>> {
+    impl AgentSessionTruncate for FakeAgentSessionEditor {
+        fn run(&self, _message_id: UserMessageId, _cx: &mut App) -> Task<Result<()>> {
             Task::ready(Ok(()))
         }
     }

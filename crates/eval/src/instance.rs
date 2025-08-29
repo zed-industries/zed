@@ -913,9 +913,9 @@ impl RequestMarkdown {
             for tool in &request.tools {
                 write!(&mut tools, "# {}\n\n", tool.name).unwrap();
                 write!(&mut tools, "{}\n\n", tool.description).unwrap();
-                write!(
+                writeln!(
                     &mut tools,
-                    "{}\n",
+                    "{}",
                     MarkdownCodeBlock {
                         tag: "json",
                         text: &format!("{:#}", tool.input_schema)

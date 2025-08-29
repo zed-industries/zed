@@ -24,7 +24,7 @@ use collections::{HashMap, HashSet, VecDeque};
 use futures::AsyncReadExt;
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EntityId, Global, SemanticVersion,
-    Subscription, Task, WeakEntity, actions,
+    SharedString, Subscription, Task, actions,
 };
 use http_client::{AsyncBody, HttpClient, Method, Request, Response};
 use input_excerpt::excerpt_for_cursor_position;
@@ -51,8 +51,7 @@ use telemetry_events::EditPredictionRating;
 use thiserror::Error;
 use util::ResultExt;
 use uuid::Uuid;
-use workspace::Workspace;
-use workspace::notifications::{ErrorMessagePrompt, NotificationId};
+use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
 use worktree::Worktree;
 
 const CURSOR_MARKER: &str = "<|user_cursor_is_here|>";
@@ -118,12 +117,8 @@ impl Dismissable for ZedPredictUpsell {
     }
 }
 
-pub fn should_show_upsell_modal(user_store: &Entity<UserStore>, cx: &App) -> bool {
-    if user_store.read(cx).has_accepted_terms_of_service() {
-        !ZedPredictUpsell::dismissed()
-    } else {
-        true
-    }
+pub fn should_show_upsell_modal() -> bool {
+    !ZedPredictUpsell::dismissed()
 }
 
 #[derive(Clone)]
@@ -216,7 +211,6 @@ impl std::fmt::Debug for EditPrediction {
 }
 
 pub struct Zeta {
-    workspace: Option<WeakEntity<Workspace>>,
     client: Arc<Client>,
     events: VecDeque<Event>,
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
@@ -237,14 +231,13 @@ impl Zeta {
     }
 
     pub fn register(
-        workspace: Option<WeakEntity<Workspace>>,
         worktree: Option<Entity<Worktree>>,
         client: Arc<Client>,
         user_store: Entity<UserStore>,
         cx: &mut App,
     ) -> Entity<Self> {
         let this = Self::global(cx).unwrap_or_else(|| {
-            let entity = cx.new(|cx| Self::new(workspace, client, user_store, cx));
+            let entity = cx.new(|cx| Self::new(client, user_store, cx));
             cx.set_global(ZetaGlobal(entity.clone()));
             entity
         });
@@ -269,19 +262,13 @@ impl Zeta {
         self.user_store.read(cx).edit_prediction_usage()
     }
 
-    fn new(
-        workspace: Option<WeakEntity<Workspace>>,
-        client: Arc<Client>,
-        user_store: Entity<UserStore>,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
         let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
 
         let data_collection_choice = Self::load_data_collection_choices();
         let data_collection_choice = cx.new(|_| data_collection_choice);
 
         Self {
-            workspace,
             client,
             events: VecDeque::new(),
             shown_completions: VecDeque::new(),
@@ -374,7 +361,6 @@ impl Zeta {
 
     fn request_completion_impl<F, R>(
         &mut self,
-        workspace: Option<Entity<Workspace>>,
         project: Option<&Entity<Project>>,
         buffer: &Entity<Buffer>,
         cursor: language::Anchor,
@@ -457,23 +443,20 @@ impl Zeta {
                                 zeta.update_required = true;
                             });
 
-                            if let Some(workspace) = workspace {
-                                workspace.update(cx, |workspace, cx| {
-                                    workspace.show_notification(
-                                        NotificationId::unique::<ZedUpdateRequiredError>(),
-                                        cx,
-                                        |cx| {
-                                            cx.new(|cx| {
-                                                ErrorMessagePrompt::new(err.to_string(), cx)
-                                                    .with_link_button(
-                                                        "Update Zed",
-                                                        "https://zed.dev/releases",
-                                                    )
-                                            })
-                                        },
-                                    );
-                                });
-                            }
+                            let error_message: SharedString = err.to_string().into();
+                            show_app_notification(
+                                NotificationId::unique::<ZedUpdateRequiredError>(),
+                                cx,
+                                move |cx| {
+                                    cx.new(|cx| {
+                                        ErrorMessagePrompt::new(error_message.clone(), cx)
+                                            .with_link_button(
+                                                "Update Zed",
+                                                "https://zed.dev/releases",
+                                            )
+                                    })
+                                },
+                            );
                         })
                         .ok();
                     }
@@ -693,7 +676,7 @@ and then another
     ) -> Task<Result<Option<EditPrediction>>> {
         use std::future::ready;
 
-        self.request_completion_impl(None, project, buffer, position, false, cx, |_params| {
+        self.request_completion_impl(project, buffer, position, false, cx, |_params| {
             ready(Ok((response, None)))
         })
     }
@@ -706,12 +689,7 @@ and then another
         can_collect_data: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<EditPrediction>>> {
-        let workspace = self
-            .workspace
-            .as_ref()
-            .and_then(|workspace| workspace.upgrade());
         self.request_completion_impl(
-            workspace,
             project,
             buffer,
             position,
@@ -1547,16 +1525,6 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
     ) -> bool {
         true
     }
-
-    fn needs_terms_acceptance(&self, cx: &App) -> bool {
-        !self
-            .zeta
-            .read(cx)
-            .user_store
-            .read(cx)
-            .has_accepted_terms_of_service()
-    }
-
     fn is_refreshing(&self) -> bool {
         !self.pending_completions.is_empty()
     }
@@ -1569,10 +1537,6 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
         _debounce: bool,
         cx: &mut Context<Self>,
     ) {
-        if self.needs_terms_acceptance(cx) {
-            return;
-        }
-
         if self.zeta.read(cx).update_required {
             return;
         }
@@ -2047,7 +2011,7 @@ mod tests {
         // Construct the fake server to authenticate.
         let _server = FakeServer::for_client(42, &client, cx).await;
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        let zeta = cx.new(|cx| Zeta::new(None, client, user_store.clone(), cx));
+        let zeta = cx.new(|cx| Zeta::new(client, user_store.clone(), cx));
 
         let buffer = cx.new(|cx| Buffer::local(buffer_content, cx));
         let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 0)));
@@ -2111,7 +2075,7 @@ mod tests {
         // Construct the fake server to authenticate.
         let _server = FakeServer::for_client(42, &client, cx).await;
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        let zeta = cx.new(|cx| Zeta::new(None, client, user_store.clone(), cx));
+        let zeta = cx.new(|cx| Zeta::new(client, user_store.clone(), cx));
 
         let buffer = cx.new(|cx| Buffer::local(buffer_content, cx));
         let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());

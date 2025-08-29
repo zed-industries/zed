@@ -10,7 +10,8 @@ use project::{AgentLocation, ImageItem, Project, WorktreeSettings, image_store};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
+use util::markdown::MarkdownCodeBlock;
 
 use crate::{AgentTool, ToolCallEventStream};
 
@@ -21,8 +22,7 @@ use crate::{AgentTool, ToolCallEventStream};
 pub struct ReadFileToolInput {
     /// The relative path of the file to read.
     ///
-    /// This path should never be absolute, and the first component
-    /// of the path should always be a root directory in a project.
+    /// This path should never be absolute, and the first component of the path should always be a root directory in a project.
     ///
     /// <example>
     /// If the project has the following root directories:
@@ -34,11 +34,9 @@ pub struct ReadFileToolInput {
     /// If you want to access `file.txt` in `directory2`, you should use the path `directory2/file.txt`.
     /// </example>
     pub path: String,
-
     /// Optional line number to start reading on (1-based index)
     #[serde(default)]
     pub start_line: Option<u32>,
-
     /// Optional line number to end reading on (1-based index, inclusive)
     #[serde(default)]
     pub end_line: Option<u32>,
@@ -62,36 +60,21 @@ impl AgentTool for ReadFileTool {
     type Input = ReadFileToolInput;
     type Output = LanguageModelToolResultContent;
 
-    fn name(&self) -> SharedString {
-        "read_file".into()
+    fn name() -> &'static str {
+        "read_file"
     }
 
-    fn kind(&self) -> acp::ToolKind {
+    fn kind() -> acp::ToolKind {
         acp::ToolKind::Read
     }
 
     fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString {
-        if let Ok(input) = input {
-            let path = &input.path;
-            match (input.start_line, input.end_line) {
-                (Some(start), Some(end)) => {
-                    format!(
-                        "[Read file `{}` (lines {}-{})](@selection:{}:({}-{}))",
-                        path, start, end, path, start, end
-                    )
-                }
-                (Some(start), None) => {
-                    format!(
-                        "[Read file `{}` (from line {})](@selection:{}:({}-{}))",
-                        path, start, path, start, start
-                    )
-                }
-                _ => format!("[Read file `{}`](@file:{})", path, path),
-            }
-            .into()
-        } else {
-            "Read file".into()
-        }
+        input
+            .ok()
+            .as_ref()
+            .and_then(|input| Path::new(&input.path).file_name())
+            .map(|file_name| file_name.to_string_lossy().to_string().into())
+            .unwrap_or_default()
     }
 
     fn run(
@@ -261,6 +244,19 @@ impl AgentTool for ReadFileTool {
                         }]),
                         ..Default::default()
                     });
+                    if let Ok(LanguageModelToolResultContent::Text(text)) = &result {
+                        let markdown = MarkdownCodeBlock {
+                            tag: &input.path,
+                            text,
+                        }
+                        .to_string();
+                        event_stream.update_fields(ToolCallUpdateFields {
+                            content: Some(vec![acp::ToolCallContent::Content {
+                                content: markdown.into(),
+                            }]),
+                            ..Default::default()
+                        })
+                    }
                 }
             })?;
 

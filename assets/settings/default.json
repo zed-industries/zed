@@ -162,6 +162,12 @@
   //  2. Always quit the application
   //         "on_last_window_closed": "quit_app",
   "on_last_window_closed": "platform_default",
+  // Whether to show padding for zoomed panels.
+  // When enabled, zoomed center panels (e.g. code editor) will have padding all around,
+  // while zoomed bottom/left/right panels will have padding to the top/right/left (respectively).
+  //
+  // Default: true
+  "zoomed_padding": true,
   // Whether to use the system provided dialogs for Open and Save As.
   // When set to false, Zed will use the built-in keyboard-first pickers.
   "use_system_path_prompts": true,
@@ -220,6 +226,20 @@
   // The debounce delay before querying highlights from the language
   // server based on the current cursor location.
   "lsp_highlight_debounce": 75,
+  // The minimum APCA perceptual contrast between foreground and background colors.
+  // APCA (Accessible Perceptual Contrast Algorithm) is more accurate than WCAG 2.x,
+  // especially for dark mode. Values range from 0 to 106.
+  //
+  // Based on APCA Readability Criterion (ARC) Bronze Simple Mode:
+  // https://readtech.org/ARC/tests/bronze-simple-mode/
+  // - 0: No contrast adjustment
+  // - 45: Minimum for large fluent text (36px+)
+  // - 60: Minimum for other content text
+  // - 75: Minimum for body text
+  // - 90: Preferred for body text
+  //
+  // This only affects text drawn over highlight backgrounds in the editor.
+  "minimum_contrast_for_highlights": 45,
   // Whether to pop the completions menu while typing in an editor without
   // explicitly requesting it.
   "show_completions_on_input": true,
@@ -273,6 +293,8 @@
   "redact_private_values": false,
   // The default number of lines to expand excerpts in the multibuffer by.
   "expand_excerpt_lines": 5,
+  // The default number of context lines shown in multibuffer excerpts.
+  "excerpt_context_lines": 2,
   // Globs to match against file paths to determine if a file is private.
   "private_files": ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"],
   // Whether to use additional LSP queries to format (and amend) the code after
@@ -357,6 +379,8 @@
     // Whether to show code action buttons in the editor toolbar.
     "code_actions": false
   },
+  // Whether to allow windows to tab together based on the user’s tabbing preference (macOS only).
+  "use_system_window_tabs": false,
   // Titlebar related settings
   "title_bar": {
     // Whether to show the branch icon beside branch switcher in the titlebar.
@@ -647,6 +671,8 @@
       //    "never"
       "show": "always"
     },
+    // Whether to enable drag-and-drop operations in the project panel.
+    "drag_and_drop": true,
     // Whether to hide the root entry when only one folder is open in the window.
     "hide_root": false
   },
@@ -1133,11 +1159,6 @@
       // The minimum severity of the diagnostics to show inline.
       // Inherits editor's diagnostics' max severity settings when `null`.
       "max_severity": null
-    },
-    "cargo": {
-      // When enabled, Zed disables rust-analyzer's check on save and starts to query
-      // Cargo diagnostics separately.
-      "fetch_cargo_diagnostics": false
     }
   },
   // Files or globs of files that will be excluded by Zed entirely. They will be skipped during file
@@ -1503,6 +1524,11 @@
     //
     // Default: fallback
     "words": "fallback",
+    // Minimum number of characters required to automatically trigger word-based completions.
+    // Before that value, it's still possible to trigger the words-based completion manually with the corresponding editor command.
+    //
+    // Default: 3
+    "words_min_length": 3,
     // Whether to fetch LSP completions or not.
     //
     // Default: true
@@ -1575,7 +1601,7 @@
       "ensure_final_newline_on_save": false
     },
     "Elixir": {
-      "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
+      "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."]
     },
     "Elm": {
       "tab_size": 4
@@ -1600,7 +1626,7 @@
       }
     },
     "HEEX": {
-      "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
+      "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."]
     },
     "HTML": {
       "prettier": {
@@ -1629,6 +1655,9 @@
         "allowed": true
       }
     },
+    "Kotlin": {
+      "language_servers": ["kotlin-language-server", "!kotlin-lsp", "..."]
+    },
     "LaTeX": {
       "formatter": "language_server",
       "language_servers": ["texlab", "..."],
@@ -1642,9 +1671,6 @@
       "use_on_type_format": false,
       "allow_rewrap": "anywhere",
       "soft_wrap": "editor_width",
-      "completions": {
-        "words": "disabled"
-      },
       "prettier": {
         "allowed": true
       }
@@ -1658,9 +1684,6 @@
       }
     },
     "Plain Text": {
-      "completions": {
-        "words": "disabled"
-      },
       "allow_rewrap": "anywhere"
     },
     "Python": {
@@ -1899,7 +1922,10 @@
   "debugger": {
     "stepping_granularity": "line",
     "save_breakpoints": true,
+    "timeout": 2000,
     "dock": "bottom",
+    "log_dap_communications": true,
+    "format_dap_log_messages": true,
     "button": true
   },
   // Configures any number of settings profiles that are temporarily applied on

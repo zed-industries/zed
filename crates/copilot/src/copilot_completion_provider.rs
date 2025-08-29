@@ -301,6 +301,7 @@ mod tests {
         init_test(cx, |settings| {
             settings.defaults.completions = Some(CompletionSettings {
                 words: WordsCompletionMode::Disabled,
+                words_min_length: 0,
                 lsp: true,
                 lsp_fetch_timeout_ms: 0,
                 lsp_insert_mode: LspInsertMode::Insert,
@@ -533,6 +534,7 @@ mod tests {
         init_test(cx, |settings| {
             settings.defaults.completions = Some(CompletionSettings {
                 words: WordsCompletionMode::Disabled,
+                words_min_length: 0,
                 lsp: true,
                 lsp_fetch_timeout_ms: 0,
                 lsp_insert_mode: LspInsertMode::Insert,

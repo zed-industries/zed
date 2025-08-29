@@ -1,4 +1,5 @@
 use crate::{
+    QuoteSelection,
     language_model_selector::{LanguageModelSelector, language_model_selector},
     ui::BurnModeTooltip,
 };
@@ -89,8 +90,6 @@ actions!(
         CycleMessageRole,
         /// Inserts the selected text into the active editor.
         InsertIntoEditor,
-        /// Quotes the current selection in the assistant conversation.
-        QuoteSelection,
         /// Splits the conversation at the current cursor position.
         Split,
     ]
@@ -191,7 +190,6 @@ pub struct TextThreadEditor {
     invoked_slash_command_creases: HashMap<InvokedSlashCommandId, CreaseId>,
     _subscriptions: Vec<Subscription>,
     last_error: Option<AssistError>,
-    show_accept_terms: bool,
     pub(crate) slash_menu_handle:
         PopoverMenuHandle<Picker<slash_command_picker::SlashCommandDelegate>>,
     // dragged_file_worktrees is used to keep references to worktrees that were added
@@ -290,7 +288,6 @@ impl TextThreadEditor {
             invoked_slash_command_creases: HashMap::default(),
             _subscriptions,
             last_error: None,
-            show_accept_terms: false,
             slash_menu_handle: Default::default(),
             dragged_file_worktrees: Vec::new(),
             language_model_selector: cx.new(|cx| {
@@ -364,24 +361,12 @@ impl TextThreadEditor {
         if self.sending_disabled(cx) {
             return;
         }
+        telemetry::event!("Agent Message Sent", agent = "zed-text");
         self.send_to_model(window, cx);
     }
 
     fn send_to_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let provider = LanguageModelRegistry::read_global(cx)
-            .default_model()
-            .map(|default| default.provider);
-        if provider
-            .as_ref()
-            .is_some_and(|provider| provider.must_accept_terms(cx))
-        {
-            self.show_accept_terms = true;
-            cx.notify();
-            return;
-        }
-
         self.last_error = None;
-
         if let Some(user_message) = self.context.update(cx, |context, cx| context.assist(cx)) {
             let new_selection = {
                 let cursor = user_message
@@ -1872,6 +1857,53 @@ impl TextThreadEditor {
             .update(cx, |context, cx| context.summarize(true, cx));
     }
 
+    fn render_remaining_tokens(&self, cx: &App) -> Option<impl IntoElement + use<>> {
+        let (token_count_color, token_count, max_token_count, tooltip) =
+            match token_state(&self.context, cx)? {
+                TokenState::NoTokensLeft {
+                    max_token_count,
+                    token_count,
+                } => (
+                    Color::Error,
+                    token_count,
+                    max_token_count,
+                    Some("Token Limit Reached"),
+                ),
+                TokenState::HasMoreTokens {
+                    max_token_count,
+                    token_count,
+                    over_warn_threshold,
+                } => {
+                    let (color, tooltip) = if over_warn_threshold {
+                        (Color::Warning, Some("Token Limit is Close to Exhaustion"))
+                    } else {
+                        (Color::Muted, None)
+                    };
+                    (color, token_count, max_token_count, tooltip)
+                }
+            };
+
+        Some(
+            h_flex()
+                .id("token-count")
+                .gap_0p5()
+                .child(
+                    Label::new(humanize_token_count(token_count))
+                        .size(LabelSize::Small)
+                        .color(token_count_color),
+                )
+                .child(Label::new("/").size(LabelSize::Small).color(Color::Muted))
+                .child(
+                    Label::new(humanize_token_count(max_token_count))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+                .when_some(tooltip, |element, tooltip| {
+                    element.tooltip(Tooltip::text(tooltip))
+                }),
+        )
+    }
+
     fn render_send_button(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
 
@@ -1931,7 +1963,6 @@ impl TextThreadEditor {
             ConfigurationError::NoProvider
             | ConfigurationError::ModelNotFound
             | ConfigurationError::ProviderNotAuthenticated(_) => true,
-            ConfigurationError::ProviderPendingTermsAcceptance(_) => self.show_accept_terms,
         }
     }
 
@@ -2436,9 +2467,14 @@ impl Render for TextThreadEditor {
                     )
                     .child(
                         h_flex()
-                            .gap_1()
-                            .child(self.render_language_model_selector(window, cx))
-                            .child(self.render_send_button(window, cx)),
+                            .gap_2p5()
+                            .children(self.render_remaining_tokens(cx))
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .child(self.render_language_model_selector(window, cx))
+                                    .child(self.render_send_button(window, cx)),
+                            ),
                     ),
             )
     }
@@ -2724,58 +2760,6 @@ impl FollowableItem for TextThreadEditor {
             None
         }
     }
-}
-
-pub fn render_remaining_tokens(
-    context_editor: &Entity<TextThreadEditor>,
-    cx: &App,
-) -> Option<impl IntoElement + use<>> {
-    let context = &context_editor.read(cx).context;
-
-    let (token_count_color, token_count, max_token_count, tooltip) = match token_state(context, cx)?
-    {
-        TokenState::NoTokensLeft {
-            max_token_count,
-            token_count,
-        } => (
-            Color::Error,
-            token_count,
-            max_token_count,
-            Some("Token Limit Reached"),
-        ),
-        TokenState::HasMoreTokens {
-            max_token_count,
-            token_count,
-            over_warn_threshold,
-        } => {
-            let (color, tooltip) = if over_warn_threshold {
-                (Color::Warning, Some("Token Limit is Close to Exhaustion"))
-            } else {
-                (Color::Muted, None)
-            };
-            (color, token_count, max_token_count, tooltip)
-        }
-    };
-
-    Some(
-        h_flex()
-            .id("token-count")
-            .gap_0p5()
-            .child(
-                Label::new(humanize_token_count(token_count))
-                    .size(LabelSize::Small)
-                    .color(token_count_color),
-            )
-            .child(Label::new("/").size(LabelSize::Small).color(Color::Muted))
-            .child(
-                Label::new(humanize_token_count(max_token_count))
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-            )
-            .when_some(tooltip, |element, tooltip| {
-                element.tooltip(Tooltip::text(tooltip))
-            }),
-    )
 }
 
 enum PendingSlashCommand {}

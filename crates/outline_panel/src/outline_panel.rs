@@ -4393,12 +4393,13 @@ impl OutlinePanel {
             })
             .filter(|(match_range, _)| {
                 let editor = active_editor.read(cx);
-                if let Some(buffer_id) = match_range.start.buffer_id
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                if let Some(buffer_id) = snapshot.buffer_id_for_anchor(match_range.start)
                     && editor.is_buffer_folded(buffer_id, cx)
                 {
                     return false;
                 }
-                if let Some(buffer_id) = match_range.start.buffer_id
+                if let Some(buffer_id) = snapshot.buffer_id_for_anchor(match_range.end)
                     && editor.is_buffer_folded(buffer_id, cx)
                 {
                     return false;
@@ -5101,9 +5102,9 @@ impl EventEmitter<PanelEvent> for OutlinePanel {}
 
 impl Render for OutlinePanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (is_local, is_via_ssh) = self
-            .project
-            .read_with(cx, |project, _| (project.is_local(), project.is_via_ssh()));
+        let (is_local, is_via_ssh) = self.project.read_with(cx, |project, _| {
+            (project.is_local(), project.is_via_remote_server())
+        });
         let query = self.query(cx);
         let pinned = self.pinned;
         let settings = OutlinePanelSettings::get_global(cx);

@@ -1492,7 +1492,7 @@ impl OnMatchingLines {
         let mut search = String::new();
         let mut escaped = false;
 
-        while let Some(c) = chars.next() {
+        for c in chars.by_ref() {
             if escaped {
                 escaped = false;
                 // unescape escaped parens
@@ -1924,7 +1924,9 @@ impl ShellExec {
 
         let Some(range) = input_range else { return };
 
-        let mut process = project.read(cx).exec_in_shell(command, cx);
+        let Some(mut process) = project.read(cx).exec_in_shell(command, cx).log_err() else {
+            return;
+        };
         process.stdout(Stdio::piped());
         process.stderr(Stdio::piped());
 

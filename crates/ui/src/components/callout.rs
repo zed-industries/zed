@@ -132,6 +132,7 @@ impl RenderOnce for Callout {
 
         h_flex()
             .min_w_0()
+            .w_full()
             .p_2()
             .gap_2()
             .items_start()

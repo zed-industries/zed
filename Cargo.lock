@@ -8,6 +8,7 @@ version = "0.1.0"
 dependencies = [
  "action_log",
  "agent-client-protocol",
+ "agent_settings",
  "anyhow",
  "buffer_diff",
  "collections",
@@ -36,6 +37,26 @@ dependencies = [
  "util",
  "uuid",
  "watch",
+ "workspace-hack",
+]
+
+[[package]]
+name = "acp_tools"
+version = "0.1.0"
+dependencies = [
+ "agent-client-protocol",
+ "collections",
+ "gpui",
+ "language",
+ "markdown",
+ "project",
+ "serde",
+ "serde_json",
+ "settings",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
  "workspace-hack",
 ]
 
@@ -171,11 +192,12 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.0.26"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "160971bb53ca0b2e70ebc857c21e24eb448745f1396371015f4c59e9a9e51ed0"
+checksum = "6b91e5ec3ce05e8effb2a7a3b7b1a587daa6699b9f98bbde6a35e44b8c6c773a"
 dependencies = [
  "anyhow",
+ "async-broadcast",
  "futures 0.3.31",
  "log",
  "parking_lot",
@@ -244,6 +266,7 @@ dependencies = [
  "terminal",
  "text",
  "theme",
+ "thiserror 2.0.12",
  "tree-sitter-rust",
  "ui",
  "unindent",
@@ -263,39 +286,39 @@ name = "agent_servers"
 version = "0.1.0"
 dependencies = [
  "acp_thread",
+ "acp_tools",
  "action_log",
  "agent-client-protocol",
  "agent_settings",
- "agentic-coding-protocol",
  "anyhow",
+ "client",
  "collections",
- "context_server",
  "env_logger 0.11.8",
+ "fs",
  "futures 0.3.31",
  "gpui",
+ "gpui_tokio",
  "indoc",
- "itertools 0.14.0",
  "language",
  "language_model",
  "language_models",
  "libc",
  "log",
  "nix 0.29.0",
+ "node_runtime",
  "paths",
  "project",
- "rand 0.8.5",
+ "reqwest_client",
  "schemars",
  "semver",
  "serde",
  "serde_json",
  "settings",
  "smol",
- "strum 0.27.1",
  "tempfile",
  "thiserror 2.0.12",
  "ui",
  "util",
- "uuid",
  "watch",
  "which 6.0.3",
  "workspace-hack",
@@ -377,6 +400,7 @@ dependencies = [
  "parking_lot",
  "paths",
  "picker",
+ "postage",
  "pretty_assertions",
  "project",
  "prompt_store",
@@ -391,6 +415,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
+ "shlex",
  "smol",
  "streaming_diff",
  "task",
@@ -414,24 +439,6 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
-]
-
-[[package]]
-name = "agentic-coding-protocol"
-version = "0.0.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3e6ae951b36fa2f8d9dd6e1af6da2fcaba13d7c866cf6a9e65deda9dc6c5fe4"
-dependencies = [
- "anyhow",
- "chrono",
- "derive_more 2.0.1",
- "futures 0.3.31",
- "log",
- "parking_lot",
- "schemars",
- "semver",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -849,7 +856,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "collections",
- "derive_more 0.99.19",
+ "derive_more",
  "extension",
  "futures 0.3.31",
  "gpui",
@@ -912,7 +919,7 @@ dependencies = [
  "clock",
  "collections",
  "ctor",
- "derive_more 0.99.19",
+ "derive_more",
  "gpui",
  "icons",
  "indoc",
@@ -949,7 +956,7 @@ dependencies = [
  "cloud_llm_client",
  "collections",
  "component",
- "derive_more 0.99.19",
+ "derive_more",
  "diffy",
  "editor",
  "feature_flags",
@@ -1375,10 +1382,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "derive_more 0.99.19",
  "gpui",
- "parking_lot",
  "rodio",
+ "schemars",
+ "serde",
+ "settings",
  "util",
  "workspace-hack",
 ]
@@ -3061,7 +3069,7 @@ dependencies = [
  "cocoa 0.26.0",
  "collections",
  "credentials_provider",
- "derive_more 0.99.19",
+ "derive_more",
  "feature_flags",
  "fs",
  "futures 0.3.31",
@@ -3493,7 +3501,7 @@ name = "command_palette_hooks"
 version = "0.1.0"
 dependencies = [
  "collections",
- "derive_more 0.99.19",
+ "derive_more",
  "gpui",
  "workspace-hack",
 ]
@@ -4044,6 +4052,7 @@ dependencies = [
 name = "crashes"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "crash-handler",
  "log",
  "mach2 0.5.0",
@@ -4053,6 +4062,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
+ "system_specs",
  "workspace-hack",
 ]
 
@@ -4655,27 +4665,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "derive_more"
-version = "2.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "093242cf7570c207c83073cf82f79706fe7b8317e98620a47d5be7c3d8497678"
-dependencies = [
- "derive_more-impl",
-]
-
-[[package]]
-name = "derive_more-impl"
-version = "2.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bda628edc44c4bb645fbe0f758797143e4e07926f7ebf4e9bdfbd3d2ce621df3"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.101",
- "unicode-xid",
-]
-
-[[package]]
 name = "derive_refineable"
 version = "0.1.0"
 dependencies = [
@@ -4695,7 +4684,6 @@ dependencies = [
  "component",
  "ctor",
  "editor",
- "futures 0.3.31",
  "gpui",
  "indoc",
  "language",
@@ -5732,14 +5720,10 @@ dependencies = [
 name = "feedback"
 version = "0.1.0"
 dependencies = [
- "client",
  "editor",
  "gpui",
- "human_bytes",
  "menu",
- "release_channel",
- "serde",
- "sysinfo",
+ "system_specs",
  "ui",
  "urlencoding",
  "util",
@@ -6415,7 +6399,7 @@ dependencies = [
  "askpass",
  "async-trait",
  "collections",
- "derive_more 0.99.19",
+ "derive_more",
  "futures 0.3.31",
  "git2",
  "gpui",
@@ -7445,7 +7429,7 @@ dependencies = [
  "core-video",
  "cosmic-text",
  "ctor",
- "derive_more 0.99.19",
+ "derive_more",
  "embed-resource",
  "env_logger 0.11.8",
  "etagere",
@@ -7534,6 +7518,7 @@ dependencies = [
 name = "gpui_tokio"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "gpui",
  "tokio",
  "util",
@@ -7970,7 +7955,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytes 1.10.1",
- "derive_more 0.99.19",
+ "derive_more",
  "futures 0.3.31",
  "http 1.3.1",
  "http-body 1.0.1",
@@ -8482,6 +8467,7 @@ dependencies = [
  "theme",
  "ui",
  "util",
+ "util_macros",
  "workspace",
  "workspace-hack",
  "zed_actions",
@@ -8967,6 +8953,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "keymap_editor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "command_palette",
+ "component",
+ "db",
+ "editor",
+ "fs",
+ "fuzzy",
+ "gpui",
+ "itertools 0.14.0",
+ "language",
+ "log",
+ "menu",
+ "notifications",
+ "paths",
+ "project",
+ "search",
+ "serde",
+ "serde_json",
+ "settings",
+ "telemetry",
+ "tempfile",
+ "theme",
+ "tree-sitter-json",
+ "tree-sitter-rust",
+ "ui",
+ "ui_input",
+ "util",
+ "vim",
+ "workspace",
+ "workspace-hack",
+ "zed_actions",
+]
+
+[[package]]
 name = "khronos-egl"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9226,6 +9250,7 @@ dependencies = [
  "language",
  "lsp",
  "project",
+ "proto",
  "release_channel",
  "serde_json",
  "settings",
@@ -9618,6 +9643,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "audio",
  "collections",
  "core-foundation 0.10.0",
  "core-video",
@@ -9640,6 +9666,7 @@ dependencies = [
  "scap",
  "serde",
  "serde_json",
+ "settings",
  "sha2",
  "simplelog",
  "smallvec",
@@ -9784,7 +9811,7 @@ dependencies = [
 [[package]]
 name = "lsp-types"
 version = "0.95.1"
-source = "git+https://github.com/zed-industries/lsp-types?rev=39f629bdd03d59abd786ed9fc27e8bca02c0c0ec#39f629bdd03d59abd786ed9fc27e8bca02c0c0ec"
+source = "git+https://github.com/zed-industries/lsp-types?rev=0874f8742fe55b4dc94308c1e3c0069710d8eeaf#0874f8742fe55b4dc94308c1e3c0069710d8eeaf"
 dependencies = [
  "bitflags 1.3.2",
  "serde",
@@ -11625,6 +11652,12 @@ dependencies = [
  "digest",
  "hmac",
 ]
+
+[[package]]
+name = "pciid-parser"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0008e816fcdaf229cdd540e9b6ca2dc4a10d65c31624abb546c6420a02846e61"
 
 [[package]]
 name = "pem"
@@ -13526,6 +13559,7 @@ dependencies = [
  "smol",
  "sysinfo",
  "telemetry_events",
+ "thiserror 2.0.12",
  "toml 0.8.20",
  "unindent",
  "util",
@@ -14365,12 +14399,10 @@ version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fe8c9d1c68d67dd9f97ecbc6f932b60eb289c5dbddd8aa1405484a8fd2fcd984"
 dependencies = [
- "chrono",
  "dyn-clone",
  "indexmap",
  "ref-cast",
  "schemars_derive",
- "semver",
  "serde",
  "serde_json",
 ]
@@ -14863,6 +14895,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "serde_json_lenient",
+ "settings_ui_macros",
  "smallvec",
  "tree-sitter",
  "tree-sitter-json",
@@ -14898,39 +14931,28 @@ name = "settings_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "collections",
- "command_palette",
  "command_palette_hooks",
- "component",
- "db",
  "editor",
  "feature_flags",
- "fs",
- "fuzzy",
  "gpui",
- "itertools 0.14.0",
- "language",
- "log",
- "menu",
- "notifications",
- "paths",
- "project",
- "search",
  "serde",
  "serde_json",
  "settings",
- "telemetry",
- "tempfile",
+ "smallvec",
  "theme",
- "tree-sitter-json",
- "tree-sitter-rust",
  "ui",
- "ui_input",
- "util",
- "vim",
  "workspace",
  "workspace-hack",
- "zed_actions",
+]
+
+[[package]]
+name = "settings_ui_macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.101",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -16147,6 +16169,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "system_specs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "gpui",
+ "human_bytes",
+ "pciid-parser",
+ "release_channel",
+ "serde",
+ "sysinfo",
+ "workspace-hack",
+]
+
+[[package]]
 name = "tab_switcher"
 version = "0.1.0"
 dependencies = [
@@ -16439,7 +16476,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "derive_more 0.99.19",
+ "derive_more",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -16731,6 +16768,7 @@ dependencies = [
  "db",
  "gpui",
  "http_client",
+ "keymap_editor",
  "notifications",
  "pretty_assertions",
  "project",
@@ -16739,7 +16777,6 @@ dependencies = [
  "schemars",
  "serde",
  "settings",
- "settings_ui",
  "smallvec",
  "story",
  "telemetry",
@@ -17176,8 +17213,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-cpp"
 version = "0.23.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df2196ea9d47b4ab4a31b9297eaa5a5d19a0b121dceb9f118f6790ad0ab94743"
+source = "git+https://github.com/tree-sitter/tree-sitter-cpp?rev=5cb9b693cfd7bfacab1d9ff4acac1a4150700609#5cb9b693cfd7bfacab1d9ff4acac1a4150700609"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -19780,7 +19816,6 @@ dependencies = [
  "any_vec",
  "anyhow",
  "async-recursion",
- "bincode",
  "call",
  "client",
  "clock",
@@ -19799,6 +19834,7 @@ dependencies = [
  "node_runtime",
  "parking_lot",
  "postage",
+ "pretty_assertions",
  "project",
  "remote",
  "schemars",
@@ -19954,7 +19990,6 @@ dependencies = [
  "rustix 1.0.7",
  "rustls 0.23.26",
  "rustls-webpki 0.103.1",
- "schemars",
  "scopeguard",
  "sea-orm",
  "sea-query-binder",
@@ -20388,8 +20423,9 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.201.0"
+version = "0.203.0"
 dependencies = [
+ "acp_tools",
  "activity_indicator",
  "agent",
  "agent_servers",
@@ -20405,6 +20441,7 @@ dependencies = [
  "auto_update",
  "auto_update_ui",
  "backtrace",
+ "bincode",
  "breadcrumbs",
  "call",
  "channel",
@@ -20450,6 +20487,7 @@ dependencies = [
  "itertools 0.14.0",
  "jj_ui",
  "journal",
+ "keymap_editor",
  "language",
  "language_extension",
  "language_model",
@@ -20503,6 +20541,7 @@ dependencies = [
  "supermaven",
  "svg_preview",
  "sysinfo",
+ "system_specs",
  "tab_switcher",
  "task",
  "tasks_ui",
@@ -20579,7 +20618,7 @@ dependencies = [
 
 [[package]]
 name = "zed_html"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
@@ -20792,6 +20831,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "strum 0.27.1",
  "telemetry",
  "telemetry_events",
  "theme",

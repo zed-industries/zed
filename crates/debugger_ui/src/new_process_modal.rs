@@ -1383,14 +1383,28 @@ impl PickerDelegate for DebugDelegate {
             .border_color(cx.theme().colors().border_variant)
             .children({
                 let action = menu::SecondaryConfirm.boxed_clone();
-                KeyBinding::for_action(&*action, window, cx).map(|keybind| {
-                    Button::new("edit-debug-task", "Edit in debug.json")
-                        .label_size(LabelSize::Small)
-                        .key_binding(keybind)
-                        .on_click(move |_, window, cx| {
-                            window.dispatch_action(action.boxed_clone(), cx)
-                        })
-                })
+                if self.matches.is_empty() {
+                    Some(
+                        Button::new("edit-debug-json", "Edit debug.json")
+                            .label_size(LabelSize::Small)
+                            .on_click(cx.listener(|_picker, _, window, cx| {
+                                window.dispatch_action(
+                                    zed_actions::OpenProjectDebugTasks.boxed_clone(),
+                                    cx,
+                                );
+                                cx.emit(DismissEvent);
+                            })),
+                    )
+                } else {
+                    KeyBinding::for_action(&*action, window, cx).map(|keybind| {
+                        Button::new("edit-debug-task", "Edit in debug.json")
+                            .label_size(LabelSize::Small)
+                            .key_binding(keybind)
+                            .on_click(move |_, window, cx| {
+                                window.dispatch_action(action.boxed_clone(), cx)
+                            })
+                    })
+                }
             })
             .map(|this| {
                 if (current_modifiers.alt || self.matches.is_empty()) && !self.prompt.is_empty() {

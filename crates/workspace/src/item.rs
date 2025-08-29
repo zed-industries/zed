@@ -1,6 +1,7 @@
 use crate::{
     CollaboratorId, DelayedDebouncedEditAction, FollowableViewRegistry, ItemNavHistory,
     SerializableItemRegistry, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
+    invalid_buffer_view::InvalidBufferView,
     pane::{self, Pane},
     persistence::model::ItemId,
     searchable::SearchableItemHandle,
@@ -16,12 +17,13 @@ use gpui::{
 use project::{Project, ProjectEntryId, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsLocation, SettingsSources};
+use settings::{Settings, SettingsLocation, SettingsSources, SettingsUi};
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
     ops::Range,
+    path::Path,
     rc::Rc,
     sync::Arc,
     time::Duration,
@@ -47,7 +49,7 @@ impl Default for SaveOptions {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, SettingsUi)]
 pub struct ItemSettings {
     pub git_status: bool,
     pub close_position: ClosePosition,
@@ -57,7 +59,7 @@ pub struct ItemSettings {
     pub show_close_button: ShowCloseButton,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, SettingsUi)]
 pub struct PreviewTabsSettings {
     pub enabled: bool,
     pub enable_preview_from_file_finder: bool,
@@ -1161,6 +1163,22 @@ pub trait ProjectItem: Item {
     ) -> Self
     where
         Self: Sized;
+
+    /// A fallback handler, which will be called after [`project::ProjectItem::try_open`] fails,
+    /// with the error from that failure as an argument.
+    /// Allows to open an item that can gracefully display and handle errors.
+    fn for_broken_project_item(
+        _abs_path: &Path,
+        _is_local: bool,
+        _e: &anyhow::Error,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Option<InvalidBufferView>
+    where
+        Self: Sized,
+    {
+        None
+    }
 }
 
 #[derive(Debug)]

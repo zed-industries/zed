@@ -15,13 +15,14 @@ use editor::{
     },
 };
 use fs::Fs;
-use futures::{StreamExt, lock::Mutex};
+use futures::{SinkExt, StreamExt, channel::mpsc, lock::Mutex};
 use gpui::{App, Rgba, TestAppContext, UpdateGlobal, VisualContext, VisualTestContext};
 use indoc::indoc;
 use language::{
     FakeLspAdapter,
     language_settings::{AllLanguageSettings, InlayHintSettings},
 };
+use lsp::LSP_REQUEST_TIMEOUT;
 use project::{
     ProjectPath, SERVER_PROGRESS_THROTTLE_TIMEOUT,
     lsp_store::lsp_ext_command::{ExpandedMacro, LspExtExpandMacro},
@@ -368,7 +369,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         .set_request_handler::<lsp::request::Completion, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri,
-                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
             );
             assert_eq!(
                 params.text_document_position.position,
@@ -487,7 +488,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         .set_request_handler::<lsp::request::Completion, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri,
-                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
             );
             assert_eq!(
                 params.text_document_position.position,
@@ -614,7 +615,7 @@ async fn test_collaborating_with_code_actions(
         .set_request_handler::<lsp::request::CodeActionRequest, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
             );
             assert_eq!(params.range.start, lsp::Position::new(0, 0));
             assert_eq!(params.range.end, lsp::Position::new(0, 0));
@@ -636,7 +637,7 @@ async fn test_collaborating_with_code_actions(
         .set_request_handler::<lsp::request::CodeActionRequest, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
             );
             assert_eq!(params.range.start, lsp::Position::new(1, 31));
             assert_eq!(params.range.end, lsp::Position::new(1, 31));
@@ -648,7 +649,7 @@ async fn test_collaborating_with_code_actions(
                         changes: Some(
                             [
                                 (
-                                    lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                                    lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
                                     vec![lsp::TextEdit::new(
                                         lsp::Range::new(
                                             lsp::Position::new(1, 22),
@@ -658,7 +659,7 @@ async fn test_collaborating_with_code_actions(
                                     )],
                                 ),
                                 (
-                                    lsp::Url::from_file_path(path!("/a/other.rs")).unwrap(),
+                                    lsp::Uri::from_file_path(path!("/a/other.rs")).unwrap(),
                                     vec![lsp::TextEdit::new(
                                         lsp::Range::new(
                                             lsp::Position::new(0, 0),
@@ -720,7 +721,7 @@ async fn test_collaborating_with_code_actions(
                     changes: Some(
                         [
                             (
-                                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
                                 vec![lsp::TextEdit::new(
                                     lsp::Range::new(
                                         lsp::Position::new(1, 22),
@@ -730,7 +731,7 @@ async fn test_collaborating_with_code_actions(
                                 )],
                             ),
                             (
-                                lsp::Url::from_file_path(path!("/a/other.rs")).unwrap(),
+                                lsp::Uri::from_file_path(path!("/a/other.rs")).unwrap(),
                                 vec![lsp::TextEdit::new(
                                     lsp::Range::new(
                                         lsp::Position::new(0, 0),
@@ -948,14 +949,14 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
                 changes: Some(
                     [
                         (
-                            lsp::Url::from_file_path(path!("/dir/one.rs")).unwrap(),
+                            lsp::Uri::from_file_path(path!("/dir/one.rs")).unwrap(),
                             vec![lsp::TextEdit::new(
                                 lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
                                 "THREE".to_string(),
                             )],
                         ),
                         (
-                            lsp::Url::from_file_path(path!("/dir/two.rs")).unwrap(),
+                            lsp::Uri::from_file_path(path!("/dir/two.rs")).unwrap(),
                             vec![
                                 lsp::TextEdit::new(
                                     lsp::Range::new(
@@ -1015,6 +1016,211 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
         editor.redo(&Redo, window, cx);
         assert_eq!(editor.text(cx), "const THREE: usize = 1;");
     })
+}
+
+#[gpui::test]
+async fn test_slow_lsp_server(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    let mut server = TestServer::start(cx_a.executor()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    cx_b.update(editor::init);
+
+    let command_name = "test_command";
+    let capabilities = lsp::ServerCapabilities {
+        code_lens_provider: Some(lsp::CodeLensOptions {
+            resolve_provider: None,
+        }),
+        execute_command_provider: Some(lsp::ExecuteCommandOptions {
+            commands: vec![command_name.to_string()],
+            ..lsp::ExecuteCommandOptions::default()
+        }),
+        ..lsp::ServerCapabilities::default()
+    };
+    client_a.language_registry().add(rust_lang());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: capabilities.clone(),
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities,
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/dir"),
+            json!({
+                "one.rs": "const ONE: usize = 1;"
+            }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/dir"), cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+    let editor_b = workspace_b
+        .update_in(cx_b, |workspace, window, cx| {
+            workspace.open_path((worktree_id, "one.rs"), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    let (lsp_store_b, buffer_b) = editor_b.update(cx_b, |editor, cx| {
+        let lsp_store = editor.project().unwrap().read(cx).lsp_store();
+        let buffer = editor.buffer().read(cx).as_singleton().unwrap();
+        (lsp_store, buffer)
+    });
+    let fake_language_server = fake_language_servers.next().await.unwrap();
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    let long_request_time = LSP_REQUEST_TIMEOUT / 2;
+    let (request_started_tx, mut request_started_rx) = mpsc::unbounded();
+    let requests_started = Arc::new(AtomicUsize::new(0));
+    let requests_completed = Arc::new(AtomicUsize::new(0));
+    let _lens_requests = fake_language_server
+        .set_request_handler::<lsp::request::CodeLensRequest, _, _>({
+            let request_started_tx = request_started_tx.clone();
+            let requests_started = requests_started.clone();
+            let requests_completed = requests_completed.clone();
+            move |params, cx| {
+                let mut request_started_tx = request_started_tx.clone();
+                let requests_started = requests_started.clone();
+                let requests_completed = requests_completed.clone();
+                async move {
+                    assert_eq!(
+                        params.text_document.uri.as_str(),
+                        uri!("file:///dir/one.rs")
+                    );
+                    requests_started.fetch_add(1, atomic::Ordering::Release);
+                    request_started_tx.send(()).await.unwrap();
+                    cx.background_executor().timer(long_request_time).await;
+                    let i = requests_completed.fetch_add(1, atomic::Ordering::Release) + 1;
+                    Ok(Some(vec![lsp::CodeLens {
+                        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 9)),
+                        command: Some(lsp::Command {
+                            title: format!("LSP Command {i}"),
+                            command: command_name.to_string(),
+                            arguments: None,
+                        }),
+                        data: None,
+                    }]))
+                }
+            }
+        });
+
+    // Move cursor to a location, this should trigger the code lens call.
+    editor_b.update_in(cx_b, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([7..7])
+        });
+    });
+    let () = request_started_rx.next().await.unwrap();
+    assert_eq!(
+        requests_started.load(atomic::Ordering::Acquire),
+        1,
+        "Selection change should have initiated the first request"
+    );
+    assert_eq!(
+        requests_completed.load(atomic::Ordering::Acquire),
+        0,
+        "Slow requests should be running still"
+    );
+    let _first_task = lsp_store_b.update(cx_b, |lsp_store, cx| {
+        lsp_store
+            .forget_code_lens_task(buffer_b.read(cx).remote_id())
+            .expect("Should have the fetch task started")
+    });
+
+    editor_b.update_in(cx_b, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([1..1])
+        });
+    });
+    let () = request_started_rx.next().await.unwrap();
+    assert_eq!(
+        requests_started.load(atomic::Ordering::Acquire),
+        2,
+        "Selection change should have initiated the second request"
+    );
+    assert_eq!(
+        requests_completed.load(atomic::Ordering::Acquire),
+        0,
+        "Slow requests should be running still"
+    );
+    let _second_task = lsp_store_b.update(cx_b, |lsp_store, cx| {
+        lsp_store
+            .forget_code_lens_task(buffer_b.read(cx).remote_id())
+            .expect("Should have the fetch task started for the 2nd time")
+    });
+
+    editor_b.update_in(cx_b, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([2..2])
+        });
+    });
+    let () = request_started_rx.next().await.unwrap();
+    assert_eq!(
+        requests_started.load(atomic::Ordering::Acquire),
+        3,
+        "Selection change should have initiated the third request"
+    );
+    assert_eq!(
+        requests_completed.load(atomic::Ordering::Acquire),
+        0,
+        "Slow requests should be running still"
+    );
+
+    _first_task.await.unwrap();
+    _second_task.await.unwrap();
+    cx_b.run_until_parked();
+    assert_eq!(
+        requests_started.load(atomic::Ordering::Acquire),
+        3,
+        "No selection changes should trigger no more code lens requests"
+    );
+    assert_eq!(
+        requests_completed.load(atomic::Ordering::Acquire),
+        3,
+        "After enough time, all 3 LSP requests should have been served by the language server"
+    );
+    let resulting_lens_actions = editor_b
+        .update(cx_b, |editor, cx| {
+            let lsp_store = editor.project().unwrap().read(cx).lsp_store();
+            lsp_store.update(cx, |lsp_store, cx| {
+                lsp_store.code_lens_actions(&buffer_b, cx)
+            })
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        resulting_lens_actions.len(),
+        1,
+        "Should have fetched one code lens action, but got: {resulting_lens_actions:?}"
+    );
+    assert_eq!(
+        resulting_lens_actions.first().unwrap().lsp_action.title(),
+        "LSP Command 3",
+        "Only the final code lens action should be in the data"
+    )
 }
 
 #[gpui::test(iterations = 10)]
@@ -1368,7 +1574,7 @@ async fn test_on_input_format_from_host_to_guest(
         |params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri,
-                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
             );
             assert_eq!(
                 params.text_document_position.position,
@@ -1511,7 +1717,7 @@ async fn test_on_input_format_from_guest_to_host(
         .set_request_handler::<lsp::request::OnTypeFormatting, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri,
-                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
             );
             assert_eq!(
                 params.text_document_position.position,
@@ -1695,7 +1901,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
             async move {
                 assert_eq!(
                     params.text_document.uri,
-                    lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                    lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
                 );
                 let edits_made = task_edits_made.load(atomic::Ordering::Acquire);
                 Ok(Some(vec![lsp::InlayHint {
@@ -1945,7 +2151,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
             async move {
                 assert_eq!(
                     params.text_document.uri,
-                    lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                    lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
                 );
                 let other_hints = task_other_hints.load(atomic::Ordering::Acquire);
                 let character = if other_hints { 0 } else { 2 };
@@ -2126,7 +2332,7 @@ async fn test_lsp_document_color(cx_a: &mut TestAppContext, cx_b: &mut TestAppCo
             async move {
                 assert_eq!(
                     params.text_document.uri,
-                    lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                    lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
                 );
                 requests_made.fetch_add(1, atomic::Ordering::Release);
                 Ok(vec![lsp::ColorInformation {
@@ -2415,11 +2621,11 @@ async fn test_lsp_pull_diagnostics(
             let requests_made = closure_diagnostics_pulls_made.clone();
             let diagnostics_pulls_result_ids = closure_diagnostics_pulls_result_ids.clone();
             async move {
-                let message = if lsp::Url::from_file_path(path!("/a/main.rs")).unwrap()
+                let message = if lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap()
                     == params.text_document.uri
                 {
                     expected_pull_diagnostic_main_message.to_string()
-                } else if lsp::Url::from_file_path(path!("/a/lib.rs")).unwrap()
+                } else if lsp::Uri::from_file_path(path!("/a/lib.rs")).unwrap()
                     == params.text_document.uri
                 {
                     expected_pull_diagnostic_lib_message.to_string()
@@ -2511,7 +2717,7 @@ async fn test_lsp_pull_diagnostics(
                         items: vec![
                             lsp::WorkspaceDocumentDiagnosticReport::Full(
                                 lsp::WorkspaceFullDocumentDiagnosticReport {
-                                    uri: lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                                    uri: lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
                                     version: None,
                                     full_document_diagnostic_report:
                                         lsp::FullDocumentDiagnosticReport {
@@ -2540,7 +2746,7 @@ async fn test_lsp_pull_diagnostics(
                             ),
                             lsp::WorkspaceDocumentDiagnosticReport::Full(
                                 lsp::WorkspaceFullDocumentDiagnosticReport {
-                                    uri: lsp::Url::from_file_path(path!("/a/lib.rs")).unwrap(),
+                                    uri: lsp::Uri::from_file_path(path!("/a/lib.rs")).unwrap(),
                                     version: None,
                                     full_document_diagnostic_report:
                                         lsp::FullDocumentDiagnosticReport {
@@ -2615,7 +2821,7 @@ async fn test_lsp_pull_diagnostics(
 
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
         &lsp::PublishDiagnosticsParams {
-            uri: lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+            uri: lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
             diagnostics: vec![lsp::Diagnostic {
                 range: lsp::Range {
                     start: lsp::Position {
@@ -2636,7 +2842,7 @@ async fn test_lsp_pull_diagnostics(
     );
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
         &lsp::PublishDiagnosticsParams {
-            uri: lsp::Url::from_file_path(path!("/a/lib.rs")).unwrap(),
+            uri: lsp::Uri::from_file_path(path!("/a/lib.rs")).unwrap(),
             diagnostics: vec![lsp::Diagnostic {
                 range: lsp::Range {
                     start: lsp::Position {
@@ -2664,7 +2870,7 @@ async fn test_lsp_pull_diagnostics(
                     items: vec![
                         lsp::WorkspaceDocumentDiagnosticReport::Full(
                             lsp::WorkspaceFullDocumentDiagnosticReport {
-                                uri: lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                                uri: lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
                                 version: None,
                                 full_document_diagnostic_report:
                                     lsp::FullDocumentDiagnosticReport {
@@ -2696,7 +2902,7 @@ async fn test_lsp_pull_diagnostics(
                         ),
                         lsp::WorkspaceDocumentDiagnosticReport::Full(
                             lsp::WorkspaceFullDocumentDiagnosticReport {
-                                uri: lsp::Url::from_file_path(path!("/a/lib.rs")).unwrap(),
+                                uri: lsp::Uri::from_file_path(path!("/a/lib.rs")).unwrap(),
                                 version: None,
                                 full_document_diagnostic_report:
                                     lsp::FullDocumentDiagnosticReport {
@@ -2845,7 +3051,7 @@ async fn test_lsp_pull_diagnostics(
                 lsp::WorkspaceDiagnosticReportResult::Report(lsp::WorkspaceDiagnosticReport {
                     items: vec![lsp::WorkspaceDocumentDiagnosticReport::Full(
                         lsp::WorkspaceFullDocumentDiagnosticReport {
-                            uri: lsp::Url::from_file_path(path!("/a/lib.rs")).unwrap(),
+                            uri: lsp::Uri::from_file_path(path!("/a/lib.rs")).unwrap(),
                             version: None,
                             full_document_diagnostic_report: lsp::FullDocumentDiagnosticReport {
                                 result_id: Some(format!(
@@ -3834,7 +4040,7 @@ async fn test_client_can_query_lsp_ext(cx_a: &mut TestAppContext, cx_b: &mut Tes
         |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
             );
             assert_eq!(params.position, lsp::Position::new(0, 0));
             Ok(Some(ExpandedMacro {
@@ -3869,7 +4075,7 @@ async fn test_client_can_query_lsp_ext(cx_a: &mut TestAppContext, cx_b: &mut Tes
         |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
             );
             assert_eq!(
                 params.position,

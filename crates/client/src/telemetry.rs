@@ -76,7 +76,7 @@ static ZED_CLIENT_CHECKSUM_SEED: LazyLock<Option<Vec<u8>>> = LazyLock::new(|| {
 
 pub static MINIDUMP_ENDPOINT: LazyLock<Option<String>> = LazyLock::new(|| {
     option_env!("ZED_MINIDUMP_ENDPOINT")
-        .map(|s| s.to_owned())
+        .map(str::to_string)
         .or_else(|| env::var("ZED_MINIDUMP_ENDPOINT").ok())
 });
 

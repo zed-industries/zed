@@ -387,7 +387,6 @@ pub struct Thread {
     cumulative_token_usage: TokenUsage,
     exceeded_window_error: Option<ExceededWindowError>,
     tool_use_limit_reached: bool,
-    feedback: Option<ThreadFeedback>,
     retry_state: Option<RetryState>,
     message_feedback: HashMap<MessageId, ThreadFeedback>,
     last_received_chunk_at: Option<Instant>,
@@ -487,7 +486,6 @@ impl Thread {
             cumulative_token_usage: TokenUsage::default(),
             exceeded_window_error: None,
             tool_use_limit_reached: false,
-            feedback: None,
             retry_state: None,
             message_feedback: HashMap::default(),
             last_error_context: None,
@@ -612,7 +610,6 @@ impl Thread {
             cumulative_token_usage: serialized.cumulative_token_usage,
             exceeded_window_error: None,
             tool_use_limit_reached: serialized.tool_use_limit_reached,
-            feedback: None,
             message_feedback: HashMap::default(),
             last_error_context: None,
             last_received_chunk_at: None,
@@ -2787,10 +2784,6 @@ impl Thread {
         cx.emit(ThreadEvent::CancelEditing);
     }
 
-    pub fn feedback(&self) -> Option<ThreadFeedback> {
-        self.feedback
-    }
-
     pub fn message_feedback(&self, message_id: MessageId) -> Option<ThreadFeedback> {
         self.message_feedback.get(&message_id).copied()
     }
@@ -2850,52 +2843,6 @@ impl Thread {
 
             Ok(())
         })
-    }
-
-    pub fn report_feedback(
-        &mut self,
-        feedback: ThreadFeedback,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        let last_assistant_message_id = self
-            .messages
-            .iter()
-            .rev()
-            .find(|msg| msg.role == Role::Assistant)
-            .map(|msg| msg.id);
-
-        if let Some(message_id) = last_assistant_message_id {
-            self.report_message_feedback(message_id, feedback, cx)
-        } else {
-            let final_project_snapshot = Self::project_snapshot(self.project.clone(), cx);
-            let serialized_thread = self.serialize(cx);
-            let thread_id = self.id().clone();
-            let client = self.project.read(cx).client();
-            self.feedback = Some(feedback);
-            cx.notify();
-
-            cx.background_spawn(async move {
-                let final_project_snapshot = final_project_snapshot.await;
-                let serialized_thread = serialized_thread.await?;
-                let thread_data = serde_json::to_value(serialized_thread)
-                    .unwrap_or_else(|_| serde_json::Value::Null);
-
-                let rating = match feedback {
-                    ThreadFeedback::Positive => "positive",
-                    ThreadFeedback::Negative => "negative",
-                };
-                telemetry::event!(
-                    "Assistant Thread Rated",
-                    rating,
-                    thread_id,
-                    thread_data,
-                    final_project_snapshot
-                );
-                client.telemetry().flush_events().await;
-
-                Ok(())
-            })
-        }
     }
 
     /// Create a snapshot of the current project state including git information and unsaved buffers.

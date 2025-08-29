@@ -334,7 +334,9 @@ TBD: Centered layout related settings
 ```json
 {
   // The default number of lines to expand excerpts in the multibuffer by.
-  "expand_excerpt_lines": 5
+  "expand_excerpt_lines": 5,
+  // The default number of lines of context provided for excerpts in the multibuffer by.
+  "excerpt_context_lines": 2
 }
 ```
 
@@ -430,6 +432,8 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
     "indent_size": 20,              // Pixels for each successive indent
     "auto_reveal_entries": true,    // Show file in panel when activating its buffer
     "auto_fold_dirs": true,         // Fold dirs with single subdir
+    "sticky_scroll": true,          // Stick parent directories at top of the project panel.
+    "drag_and_drop": true,          // Whether drag and drop is enabled
     "scrollbar": {                  // Project panel scrollbar settings
       "show": null                  // Show/hide: (auto, system, always, never)
     },

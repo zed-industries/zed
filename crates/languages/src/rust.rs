@@ -510,20 +510,6 @@ impl LspAdapter for RustLspAdapter {
             }
         }
 
-        let cargo_diagnostics_fetched_separately = ProjectSettings::get_global(cx)
-            .diagnostics
-            .fetch_cargo_diagnostics();
-        if cargo_diagnostics_fetched_separately {
-            let disable_check_on_save = json!({
-                "checkOnSave": false,
-            });
-            if let Some(initialization_options) = &mut original.initialization_options {
-                merge_json_value_into(disable_check_on_save, initialization_options);
-            } else {
-                original.initialization_options = Some(disable_check_on_save);
-            }
-        }
-
         Ok(original)
     }
 }
@@ -1072,7 +1058,7 @@ mod tests {
     #[gpui::test]
     async fn test_process_rust_diagnostics() {
         let mut params = lsp::PublishDiagnosticsParams {
-            uri: lsp::Url::from_file_path(path!("/a")).unwrap(),
+            uri: lsp::Uri::from_file_path(path!("/a")).unwrap(),
             version: None,
             diagnostics: vec![
                 // no newlines

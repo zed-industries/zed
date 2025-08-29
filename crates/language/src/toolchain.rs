@@ -11,13 +11,15 @@ use std::{
 
 use async_trait::async_trait;
 use collections::HashMap;
+use fs::Fs;
 use gpui::{AsyncApp, SharedString};
 use settings::WorktreeId;
+use task::ShellKind;
 
 use crate::{LanguageName, ManifestName};
 
 /// Represents a single toolchain.
-#[derive(Clone, Debug, Eq)]
+#[derive(Clone, Eq, Debug)]
 pub struct Toolchain {
     /// User-facing label
     pub name: SharedString,
@@ -29,21 +31,29 @@ pub struct Toolchain {
 
 impl std::hash::Hash for Toolchain {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.name.hash(state);
-        self.path.hash(state);
-        self.language_name.hash(state);
+        let Self {
+            name,
+            path,
+            language_name,
+            as_json: _,
+        } = self;
+        name.hash(state);
+        path.hash(state);
+        language_name.hash(state);
     }
 }
 
 impl PartialEq for Toolchain {
     fn eq(&self, other: &Self) -> bool {
+        let Self {
+            name,
+            path,
+            language_name,
+            as_json: _,
+        } = self;
         // Do not use as_json for comparisons; it shouldn't impact equality, as it's not user-surfaced.
         // Thus, there could be multiple entries that look the same in the UI.
-        (&self.name, &self.path, &self.language_name).eq(&(
-            &other.name,
-            &other.path,
-            &other.language_name,
-        ))
+        (name, path, language_name).eq(&(&other.name, &other.path, &other.language_name))
     }
 }
 
@@ -52,13 +62,19 @@ pub trait ToolchainLister: Send + Sync {
     async fn list(
         &self,
         worktree_root: PathBuf,
-        subroot_relative_path: Option<Arc<Path>>,
+        subroot_relative_path: Arc<Path>,
         project_env: Option<HashMap<String, String>>,
     ) -> ToolchainList;
     // Returns a term which we should use in UI to refer to a toolchain.
     fn term(&self) -> SharedString;
     /// Returns the name of the manifest file for this toolchain.
     fn manifest_name(&self) -> ManifestName;
+    async fn activation_script(
+        &self,
+        toolchain: &Toolchain,
+        shell: ShellKind,
+        fs: &dyn Fs,
+    ) -> Vec<String>;
 }
 
 #[async_trait(?Send)]
@@ -82,7 +98,7 @@ pub trait LocalLanguageToolchainStore: Send + Sync + 'static {
     ) -> Option<Toolchain>;
 }
 
-#[async_trait(?Send )]
+#[async_trait(?Send)]
 impl<T: LocalLanguageToolchainStore> LanguageToolchainStore for T {
     async fn active_toolchain(
         self: Arc<Self>,
@@ -96,7 +112,7 @@ impl<T: LocalLanguageToolchainStore> LanguageToolchainStore for T {
 }
 
 type DefaultIndex = usize;
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct ToolchainList {
     pub toolchains: Vec<Toolchain>,
     pub default: Option<DefaultIndex>,

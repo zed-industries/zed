@@ -19,6 +19,10 @@ static KEYMAP_LINUX: LazyLock<KeymapFile> = LazyLock::new(|| {
     load_keymap("keymaps/default-linux.json").expect("Failed to load Linux keymap")
 });
 
+static KEYMAP_WINDOWS: LazyLock<KeymapFile> = LazyLock::new(|| {
+    load_keymap("keymaps/default-windows.json").expect("Failed to load Windows keymap")
+});
+
 static ALL_ACTIONS: LazyLock<Vec<ActionDef>> = LazyLock::new(dump_all_gpui_actions);
 
 const FRONT_MATTER_COMMENT: &str = "<!-- ZED_META {} -->";
@@ -99,6 +103,7 @@ fn handle_preprocessing() -> Result<()> {
     let mut errors = HashSet::<PreprocessorError>::new();
 
     handle_frontmatter(&mut book, &mut errors);
+    template_big_table_of_actions(&mut book);
     template_and_validate_keybindings(&mut book, &mut errors);
     template_and_validate_actions(&mut book, &mut errors);
 
@@ -143,6 +148,18 @@ fn handle_frontmatter(book: &mut Book, errors: &mut HashSet<PreprocessorError>) 
         });
         if let Cow::Owned(content) = new_content {
             chapter.content = content;
+        }
+    });
+}
+
+fn template_big_table_of_actions(book: &mut Book) {
+    for_each_chapter_mut(book, |chapter| {
+        let needle = "{#ACTIONS_TABLE#}";
+        if let Some(start) = chapter.content.rfind(needle) {
+            chapter.content.replace_range(
+                start..start + needle.len(),
+                &generate_big_table_of_actions(),
+            );
         }
     });
 }
@@ -203,6 +220,7 @@ fn find_binding(os: &str, action: &str) -> Option<String> {
     let keymap = match os {
         "macos" => &KEYMAP_MACOS,
         "linux" | "freebsd" => &KEYMAP_LINUX,
+        "windows" => &KEYMAP_WINDOWS,
         _ => unreachable!("Not a valid OS: {}", os),
     };
 
@@ -277,6 +295,7 @@ struct ActionDef {
     name: &'static str,
     human_name: String,
     deprecated_aliases: &'static [&'static str],
+    docs: Option<&'static str>,
 }
 
 fn dump_all_gpui_actions() -> Vec<ActionDef> {
@@ -285,6 +304,7 @@ fn dump_all_gpui_actions() -> Vec<ActionDef> {
             name: action.name,
             human_name: command_palette::humanize_action_name(action.name),
             deprecated_aliases: action.deprecated_aliases,
+            docs: action.documentation,
         })
         .collect::<Vec<ActionDef>>();
 
@@ -417,4 +437,55 @@ fn handle_postprocessing() -> Result<()> {
 fn title_regex() -> &'static Regex {
     static TITLE_REGEX: OnceLock<Regex> = OnceLock::new();
     TITLE_REGEX.get_or_init(|| Regex::new(r"<title>\s*(.*?)\s*</title>").unwrap())
+}
+
+fn generate_big_table_of_actions() -> String {
+    let actions = &*ALL_ACTIONS;
+    let mut output = String::new();
+
+    let mut actions_sorted = actions.iter().collect::<Vec<_>>();
+    actions_sorted.sort_by_key(|a| a.name);
+
+    // Start the definition list with custom styling for better spacing
+    output.push_str("<dl style=\"line-height: 1.8;\">\n");
+
+    for action in actions_sorted.into_iter() {
+        // Add the humanized action name as the term with margin
+        output.push_str(
+            "<dt style=\"margin-top: 1.5em; margin-bottom: 0.5em; font-weight: bold;\"><code>",
+        );
+        output.push_str(&action.human_name);
+        output.push_str("</code></dt>\n");
+
+        // Add the definition with keymap name and description
+        output.push_str("<dd style=\"margin-left: 2em; margin-bottom: 1em;\">\n");
+
+        // Add the description, escaping HTML if needed
+        if let Some(description) = action.docs {
+            output.push_str(
+                &description
+                    .replace("&", "&amp;")
+                    .replace("<", "&lt;")
+                    .replace(">", "&gt;"),
+            );
+            output.push_str("<br>\n");
+        }
+        output.push_str("Keymap Name: <code>");
+        output.push_str(action.name);
+        output.push_str("</code><br>\n");
+        if !action.deprecated_aliases.is_empty() {
+            output.push_str("Deprecated Aliases:");
+            for alias in action.deprecated_aliases.iter() {
+                output.push_str("<code>");
+                output.push_str(alias);
+                output.push_str("</code>, ");
+            }
+        }
+        output.push_str("\n</dd>\n");
+    }
+
+    // Close the definition list
+    output.push_str("</dl>\n");
+
+    output
 }

@@ -2,7 +2,7 @@ mod reliability;
 mod zed;
 
 use agent_ui::AgentPanel;
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Error, Result};
 use clap::{Parser, command};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{Client, ProxySettings, UserStore, parse_zed_link};
@@ -16,7 +16,7 @@ use extension_host::ExtensionStore;
 use fs::{Fs, RealFs};
 use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
-use gpui::{App, AppContext as _, Application, AsyncApp, Focusable as _, UpdateGlobal as _};
+use gpui::{App, AppContext, Application, AsyncApp, Focusable as _, UpdateGlobal as _};
 
 use gpui_tokio::Tokio;
 use http_client::{Url, read_proxy_from_env};
@@ -47,8 +47,8 @@ use theme::{
 use util::{ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
 use workspace::{
-    AppState, SerializedWorkspaceLocation, Toast, Workspace, WorkspaceSettings, WorkspaceStore,
-    notifications::NotificationId,
+    AppState, PathList, SerializedWorkspaceLocation, Toast, Workspace, WorkspaceSettings,
+    WorkspaceStore, notifications::NotificationId,
 };
 use zed::{
     OpenListener, OpenRequest, RawOpenRequest, app_menus, build_window_options,
@@ -240,7 +240,7 @@ pub fn main() {
         option_env!("ZED_COMMIT_SHA").map(|commit_sha| AppCommitSha::new(commit_sha.to_string()));
 
     if args.system_specs {
-        let system_specs = feedback::system_specs::SystemSpecs::new_stateless(
+        let system_specs = system_specs::SystemSpecs::new_stateless(
             app_version,
             app_commit_sha,
             *release_channel::RELEASE_CHANNEL,
@@ -566,6 +566,7 @@ pub fn main() {
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         agent_settings::init(cx);
         agent_servers::init(cx);
+        acp_tools::init(cx);
         web_search::init(cx);
         web_search_providers::init(app_state.client.clone(), cx);
         snippet_provider::init(cx);
@@ -598,7 +599,7 @@ pub fn main() {
         repl::notebook::init(cx);
         diagnostics::init(cx);
 
-        audio::init(Assets, cx);
+        audio::init(cx);
         workspace::init(app_state.clone(), cx);
         ui_prompt::init(cx);
 
@@ -631,6 +632,7 @@ pub fn main() {
         svg_preview::init(cx);
         onboarding::init(cx);
         settings_ui::init(cx);
+        keymap_editor::init(cx);
         extensions_ui::init(cx);
         zeta::init(cx);
         inspector_ui::init(app_state.clone(), cx);
@@ -946,17 +948,20 @@ async fn installation_id() -> Result<IdType> {
 
 async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp) -> Result<()> {
     if let Some(locations) = restorable_workspace_locations(cx, &app_state).await {
+        let use_system_window_tabs = cx
+            .update(|cx| WorkspaceSettings::get(None, cx).use_system_window_tabs)
+            .unwrap_or(false);
+        let mut results: Vec<Result<(), Error>> = Vec::new();
         let mut tasks = Vec::new();
 
-        for location in locations {
+        for (index, (location, paths)) in locations.into_iter().enumerate() {
             match location {
-                SerializedWorkspaceLocation::Local(location, _) => {
+                SerializedWorkspaceLocation::Local => {
                     let app_state = app_state.clone();
-                    let paths = location.paths().to_vec();
                     let task = cx.spawn(async move |cx| {
                         let open_task = cx.update(|cx| {
                             workspace::open_paths(
-                                &paths,
+                                &paths.paths(),
                                 app_state,
                                 workspace::OpenOptions::default(),
                                 cx,
@@ -964,7 +969,14 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                         })?;
                         open_task.await.map(|_| ())
                     });
-                    tasks.push(task);
+
+                    // If we're using system window tabs and this is the first workspace,
+                    // wait for it to finish so that the other windows can be added as tabs.
+                    if use_system_window_tabs && index == 0 {
+                        results.push(task.await);
+                    } else {
+                        tasks.push(task);
+                    }
                 }
                 SerializedWorkspaceLocation::Ssh(ssh) => {
                     let app_state = app_state.clone();
@@ -978,7 +990,7 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                         match connection_options {
                             Ok(connection_options) => recent_projects::open_ssh_project(
                                 connection_options,
-                                ssh.paths.into_iter().map(PathBuf::from).collect(),
+                                paths.paths().into_iter().map(PathBuf::from).collect(),
                                 app_state,
                                 workspace::OpenOptions::default(),
                                 cx,
@@ -998,7 +1010,7 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
         }
 
         // Wait for all workspaces to open concurrently
-        let results = future::join_all(tasks).await;
+        results.extend(future::join_all(tasks).await);
 
         // Show notifications for any errors that occurred
         let mut error_count = 0;
@@ -1069,7 +1081,7 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
 pub(crate) async fn restorable_workspace_locations(
     cx: &mut AsyncApp,
     app_state: &Arc<AppState>,
-) -> Option<Vec<SerializedWorkspaceLocation>> {
+) -> Option<Vec<(SerializedWorkspaceLocation, PathList)>> {
     let mut restore_behavior = cx
         .update(|cx| WorkspaceSettings::get(None, cx).restore_on_startup)
         .ok()?;

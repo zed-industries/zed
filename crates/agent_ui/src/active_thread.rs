@@ -1595,11 +1595,6 @@ impl ActiveThread {
             return;
         };
 
-        if model.provider.must_accept_terms(cx) {
-            cx.notify();
-            return;
-        }
-
         let edited_text = state.editor.read(cx).text(cx);
 
         let creases = state.editor.update(cx, extract_message_creases);
@@ -2349,7 +2344,6 @@ impl ActiveThread {
                                     this.submit_feedback_message(message_id, cx);
                                     cx.notify();
                                 }))
-                                .on_action(cx.listener(Self::confirm_editing_message))
                                 .mb_2()
                                 .mx_4()
                                 .p_2()

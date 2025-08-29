@@ -188,22 +188,26 @@ impl Editor {
 
     pub fn scroll_hover(
         &mut self,
-        amount: &ScrollAmount,
+        amount: ScrollAmount,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
         let selection = self.selections.newest_anchor().head();
         let snapshot = self.snapshot(window, cx);
 
-        let Some(popover) = self.hover_state.info_popovers.iter().find(|popover| {
+        if let Some(popover) = self.hover_state.info_popovers.iter().find(|popover| {
             popover
                 .symbol_range
                 .point_within_range(&TriggerPoint::Text(selection), &snapshot)
-        }) else {
-            return false;
-        };
-        popover.scroll(amount, window, cx);
-        true
+        }) {
+            popover.scroll(amount, window, cx);
+            true
+        } else if let Some(context_menu) = self.context_menu.borrow_mut().as_mut() {
+            context_menu.scroll_aside(amount, window, cx);
+            true
+        } else {
+            false
+        }
     }
 
     fn cmd_click_reveal_task(
@@ -321,7 +325,10 @@ pub fn update_inlay_link_and_hover_points(
             if let Some(cached_hint) = inlay_hint_cache.hint_by_id(excerpt_id, hovered_hint.id) {
                 match cached_hint.resolve_state {
                     ResolveState::CanResolve(_, _) => {
-                        if let Some(buffer_id) = previous_valid_anchor.buffer_id {
+                        if let Some(buffer_id) = snapshot
+                            .buffer_snapshot
+                            .buffer_id_for_anchor(previous_valid_anchor)
+                        {
                             inlay_hint_cache.spawn_hint_resolve(
                                 buffer_id,
                                 excerpt_id,
@@ -559,7 +566,7 @@ pub fn show_link_definition(
                             provider.definitions(&buffer, buffer_position, preferred_kind, cx)
                         })?;
                         if let Some(task) = task {
-                            task.await.ok().map(|definition_result| {
+                            task.await.ok().flatten().map(|definition_result| {
                                 (
                                     definition_result.iter().find_map(|link| {
                                         link.origin.as_ref().and_then(|origin| {

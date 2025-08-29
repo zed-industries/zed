@@ -446,7 +446,6 @@ pub enum ResponseStreamResult {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ResponseStreamEvent {
-    pub model: String,
     pub choices: Vec<ChoiceDelta>,
     pub usage: Option<Usage>,
 }
@@ -462,7 +461,7 @@ pub async fn stream_completion(
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key));
+        .header("Authorization", format!("Bearer {}", api_key.trim()));
 
     let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
@@ -566,7 +565,7 @@ pub fn embed<'a>(
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Authorization", format!("Bearer {}", api_key.trim()))
         .body(body)
         .map(|request| client.send(request));
 

@@ -72,7 +72,7 @@ pub(super) fn refresh_linked_ranges(
                         // Throw away selections spanning multiple buffers.
                         continue;
                     }
-                    if let Some(buffer) = end_position.buffer_id.and_then(|id| buffer.buffer(id)) {
+                    if let Some(buffer) = buffer.buffer_for_anchor(end_position, cx) {
                         applicable_selections.push((
                             buffer,
                             start_position.text_anchor,

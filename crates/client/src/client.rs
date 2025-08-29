@@ -31,7 +31,7 @@ use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EnvelopedMessage, PeerId, RequestMessage};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsSources, SettingsUi};
 use std::{
     any::TypeId,
     convert::TryFrom,
@@ -66,6 +66,8 @@ pub static IMPERSONATE_LOGIN: LazyLock<Option<String>> = LazyLock::new(|| {
         .and_then(|s| if s.is_empty() { None } else { Some(s) })
 });
 
+pub static USE_WEB_LOGIN: LazyLock<bool> = LazyLock::new(|| std::env::var("ZED_WEB_LOGIN").is_ok());
+
 pub static ADMIN_API_TOKEN: LazyLock<Option<String>> = LazyLock::new(|| {
     std::env::var("ZED_ADMIN_API_TOKEN")
         .ok()
@@ -99,7 +101,7 @@ pub struct ClientSettingsContent {
     server_url: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, SettingsUi)]
 pub struct ClientSettings {
     pub server_url: String,
 }
@@ -125,7 +127,7 @@ pub struct ProxySettingsContent {
     proxy: Option<String>,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, SettingsUi)]
 pub struct ProxySettings {
     pub proxy: Option<String>,
 }
@@ -285,6 +287,7 @@ pub enum Status {
     },
     ConnectionLost,
     Reauthenticating,
+    Reauthenticated,
     Reconnecting,
     ReconnectionError {
         next_reconnection: Instant,
@@ -294,6 +297,21 @@ pub enum Status {
 impl Status {
     pub fn is_connected(&self) -> bool {
         matches!(self, Self::Connected { .. })
+    }
+
+    pub fn was_connected(&self) -> bool {
+        matches!(
+            self,
+            Self::ConnectionLost
+                | Self::Reauthenticating
+                | Self::Reauthenticated
+                | Self::Reconnecting
+        )
+    }
+
+    /// Returns whether the client is currently connected or was connected at some point.
+    pub fn is_or_was_connected(&self) -> bool {
+        self.is_connected() || self.was_connected()
     }
 
     pub fn is_signing_in(&self) -> bool {
@@ -502,7 +520,7 @@ impl<T: 'static> Drop for PendingEntitySubscription<T> {
     }
 }
 
-#[derive(Copy, Clone, Deserialize, Debug)]
+#[derive(Copy, Clone, Deserialize, Debug, SettingsUi)]
 pub struct TelemetrySettings {
     pub diagnostics: bool,
     pub metrics: bool,
@@ -855,11 +873,13 @@ impl Client {
         try_provider: bool,
         cx: &AsyncApp,
     ) -> Result<Credentials> {
-        if self.status().borrow().is_signed_out() {
+        let is_reauthenticating = if self.status().borrow().is_signed_out() {
             self.set_status(Status::Authenticating, cx);
+            false
         } else {
             self.set_status(Status::Reauthenticating, cx);
-        }
+            true
+        };
 
         let mut credentials = None;
 
@@ -917,7 +937,14 @@ impl Client {
         self.cloud_client
             .set_credentials(credentials.user_id as u32, credentials.access_token.clone());
         self.state.write().credentials = Some(credentials.clone());
-        self.set_status(Status::Authenticated, cx);
+        self.set_status(
+            if is_reauthenticating {
+                Status::Reauthenticated
+            } else {
+                Status::Authenticated
+            },
+            cx,
+        );
 
         Ok(credentials)
     }
@@ -1032,6 +1059,7 @@ impl Client {
             | Status::Authenticating
             | Status::AuthenticationError
             | Status::Reauthenticating
+            | Status::Reauthenticated
             | Status::ReconnectionError { .. } => false,
             Status::Connected { .. } | Status::Connecting | Status::Reconnecting => {
                 return ConnectionResult::Result(Ok(()));
@@ -1290,19 +1318,21 @@ impl Client {
                 "http" => Http,
                 _ => Err(anyhow!("invalid rpc url: {}", rpc_url))?,
             };
-            let rpc_host = rpc_url
-                .host_str()
-                .zip(rpc_url.port_or_known_default())
-                .context("missing host in rpc url")?;
 
-            let stream = {
-                let handle = cx.update(|cx| gpui_tokio::Tokio::handle(cx)).ok().unwrap();
-                let _guard = handle.enter();
-                match proxy {
-                    Some(proxy) => connect_proxy_stream(&proxy, rpc_host).await?,
-                    None => Box::new(TcpStream::connect(rpc_host).await?),
+            let stream = gpui_tokio::Tokio::spawn_result(cx, {
+                let rpc_url = rpc_url.clone();
+                async move {
+                    let rpc_host = rpc_url
+                        .host_str()
+                        .zip(rpc_url.port_or_known_default())
+                        .context("missing host in rpc url")?;
+                    Ok(match proxy {
+                        Some(proxy) => connect_proxy_stream(&proxy, rpc_host).await?,
+                        None => Box::new(TcpStream::connect(rpc_host).await?),
+                    })
                 }
-            };
+            })?
+            .await?;
 
             log::info!("connected to rpc endpoint {}", rpc_url);
 
@@ -1390,11 +1420,13 @@ impl Client {
                     if let Some((login, token)) =
                         IMPERSONATE_LOGIN.as_ref().zip(ADMIN_API_TOKEN.as_ref())
                     {
-                        eprintln!("authenticate as admin {login}, {token}");
+                        if !*USE_WEB_LOGIN {
+                            eprintln!("authenticate as admin {login}, {token}");
 
-                        return this
-                            .authenticate_as_admin(http, login.clone(), token.clone())
-                            .await;
+                            return this
+                                .authenticate_as_admin(http, login.clone(), token.clone())
+                                .await;
+                        }
                     }
 
                     // Start an HTTP server to receive the redirect from Zed's sign-in page.
@@ -1664,21 +1696,10 @@ impl Client {
             );
             cx.spawn(async move |_| match future.await {
                 Ok(()) => {
-                    log::debug!(
-                        "rpc message handled. client_id:{}, sender_id:{:?}, type:{}",
-                        client_id,
-                        original_sender_id,
-                        type_name
-                    );
+                    log::debug!("rpc message handled. client_id:{client_id}, sender_id:{original_sender_id:?}, type:{type_name}");
                 }
                 Err(error) => {
-                    log::error!(
-                        "error handling message. client_id:{}, sender_id:{:?}, type:{}, error:{:?}",
-                        client_id,
-                        original_sender_id,
-                        type_name,
-                        error
-                    );
+                    log::error!("error handling message. client_id:{client_id}, sender_id:{original_sender_id:?}, type:{type_name}, error:{error:#}");
                 }
             })
             .detach();

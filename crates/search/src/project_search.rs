@@ -11,6 +11,7 @@ use editor::{
     Anchor, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN, MultiBuffer, SelectionEffects,
     actions::{Backtab, SelectAll, Tab},
     items::active_match_index,
+    multibuffer_context_lines,
 };
 use futures::{StreamExt, stream::FuturesOrdered};
 use gpui::{
@@ -345,7 +346,7 @@ impl ProjectSearch {
                                     excerpts.set_anchored_excerpts_for_path(
                                         buffer,
                                         ranges,
-                                        editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                                        multibuffer_context_lines(cx),
                                         cx,
                                     )
                                 })
@@ -1139,7 +1140,7 @@ impl ProjectSearchView {
 
     fn build_search_query(&mut self, cx: &mut Context<Self>) -> Option<SearchQuery> {
         // Do not bail early in this function, as we want to fill out `self.panels_with_errors`.
-        let text = self.query_editor.read(cx).text(cx);
+        let text = self.search_query_text(cx);
         let open_buffers = if self.included_opened_only {
             Some(self.open_buffers(cx))
         } else {
@@ -3905,7 +3906,7 @@ pub mod tests {
                 assert_eq!(workspace.active_pane(), &second_pane);
                 second_pane.update(cx, |this, cx| {
                     assert_eq!(this.active_item_index(), 1);
-                    this.activate_prev_item(false, window, cx);
+                    this.activate_previous_item(&Default::default(), window, cx);
                     assert_eq!(this.active_item_index(), 0);
                 });
                 workspace.activate_pane_in_direction(workspace::SplitDirection::Left, window, cx);
@@ -3940,7 +3941,9 @@ pub mod tests {
         // Focus the second pane's non-search item
         window
             .update(cx, |_workspace, window, cx| {
-                second_pane.update(cx, |pane, cx| pane.activate_next_item(true, window, cx));
+                second_pane.update(cx, |pane, cx| {
+                    pane.activate_next_item(&Default::default(), window, cx)
+                });
             })
             .unwrap();
 

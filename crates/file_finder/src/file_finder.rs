@@ -1381,7 +1381,7 @@ impl PickerDelegate for FileFinderDelegate {
                         project
                             .worktree_for_id(history_item.project.worktree_id, cx)
                             .is_some()
-                            || ((project.is_local() || project.is_via_ssh())
+                            || ((project.is_local() || project.is_via_remote_server())
                                 && history_item.absolute.is_some())
                     }),
                     self.currently_opened_path.as_ref(),
@@ -1401,13 +1401,16 @@ impl PickerDelegate for FileFinderDelegate {
             #[cfg(windows)]
             let raw_query = raw_query.trim().to_owned().replace("/", "\\");
             #[cfg(not(windows))]
-            let raw_query = raw_query.trim().to_owned();
+            let raw_query = raw_query.trim();
 
-            let file_query_end = if path_position.path.to_str().unwrap_or(&raw_query) == raw_query {
+            let raw_query = raw_query.trim_end_matches(':').to_owned();
+            let path = path_position.path.to_str();
+            let path_trimmed = path.unwrap_or(&raw_query).trim_end_matches(':');
+            let file_query_end = if path_trimmed == raw_query {
                 None
             } else {
                 // Safe to unwrap as we won't get here when the unwrap in if fails
-                Some(path_position.path.to_str().unwrap().len())
+                Some(path.unwrap().len())
             };
 
             let query = FileSearchQuery {

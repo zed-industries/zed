@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gpui::{ClickEvent, CursorStyle};
+use gpui::{ClickEvent, CursorStyle, SharedString};
 
 use crate::{Color, IconButton, IconButtonShape, IconName, IconSize, prelude::*};
 
@@ -14,6 +14,7 @@ pub struct Disclosure {
     cursor_style: CursorStyle,
     opened_icon: IconName,
     closed_icon: IconName,
+    visible_on_hover: Option<SharedString>,
 }
 
 impl Disclosure {
@@ -27,6 +28,7 @@ impl Disclosure {
             cursor_style: CursorStyle::PointingHand,
             opened_icon: IconName::ChevronDown,
             closed_icon: IconName::ChevronRight,
+            visible_on_hover: None,
         }
     }
 
@@ -73,6 +75,13 @@ impl Clickable for Disclosure {
     }
 }
 
+impl VisibleOnHover for Disclosure {
+    fn visible_on_hover(mut self, group_name: impl Into<SharedString>) -> Self {
+        self.visible_on_hover = Some(group_name.into());
+        self
+    }
+}
+
 impl RenderOnce for Disclosure {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         IconButton::new(
@@ -87,6 +96,9 @@ impl RenderOnce for Disclosure {
         .icon_size(IconSize::Small)
         .disabled(self.disabled)
         .toggle_state(self.selected)
+        .when_some(self.visible_on_hover.clone(), |this, group_name| {
+            this.visible_on_hover(group_name)
+        })
         .when_some(self.on_toggle, move |this, on_toggle| {
             this.on_click(move |event, window, cx| on_toggle(event, window, cx))
         })

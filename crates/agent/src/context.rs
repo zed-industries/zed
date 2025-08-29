@@ -362,7 +362,7 @@ impl Display for DirectoryContext {
         let mut is_first = true;
         for descendant in &self.descendants {
             if !is_first {
-                write!(f, "\n")?;
+                writeln!(f)?;
             } else {
                 is_first = false;
             }
@@ -650,7 +650,7 @@ impl TextThreadContextHandle {
 impl Display for TextThreadContext {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         // TODO: escape title?
-        write!(f, "<text_thread title=\"{}\">\n", self.title)?;
+        writeln!(f, "<text_thread title=\"{}\">", self.title)?;
         write!(f, "{}", self.text.trim())?;
         write!(f, "\n</text_thread>")
     }
@@ -716,7 +716,7 @@ impl RulesContextHandle {
 impl Display for RulesContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(title) = &self.title {
-            write!(f, "Rules title: {}\n", title)?;
+            writeln!(f, "Rules title: {}", title)?;
         }
         let code_block = MarkdownCodeBlock {
             tag: "",

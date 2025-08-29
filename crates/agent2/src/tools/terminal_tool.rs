@@ -2,7 +2,7 @@ use agent_client_protocol as acp;
 use anyhow::Result;
 use futures::{FutureExt as _, future::Shared};
 use gpui::{App, AppContext, Entity, SharedString, Task};
-use project::{Project, terminals::TerminalKind};
+use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -63,11 +63,11 @@ impl AgentTool for TerminalTool {
     type Input = TerminalToolInput;
     type Output = String;
 
-    fn name(&self) -> SharedString {
-        "terminal".into()
+    fn name() -> &'static str {
+        "terminal"
     }
 
-    fn kind(&self) -> acp::ToolKind {
+    fn kind() -> acp::ToolKind {
         acp::ToolKind::Execute
     }
 
@@ -144,14 +144,14 @@ impl AgentTool for TerminalTool {
                 let terminal = self
                     .project
                     .update(cx, |project, cx| {
-                        project.create_terminal(
-                            TerminalKind::Task(task::SpawnInTerminal {
+                        project.create_terminal_task(
+                            task::SpawnInTerminal {
                                 command: Some(program),
                                 args,
                                 cwd: working_dir.clone(),
                                 env,
                                 ..Default::default()
-                            }),
+                            },
                             cx,
                         )
                     })?

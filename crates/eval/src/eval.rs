@@ -706,7 +706,7 @@ fn print_report(
             println!("Average thread score: {average_thread_score}%");
         }
 
-        println!("");
+        println!();
 
         print_h2("CUMULATIVE TOOL METRICS");
         println!("{}", cumulative_tool_metrics);
