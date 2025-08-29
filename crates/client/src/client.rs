@@ -31,7 +31,7 @@ use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EnvelopedMessage, PeerId, RequestMessage};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{SettingsUI, Settings, SettingsSources};
+use settings::{Settings, SettingsSources, SettingsUi};
 use std::{
     any::TypeId,
     convert::TryFrom,
@@ -101,7 +101,7 @@ pub struct ClientSettingsContent {
     server_url: Option<String>,
 }
 
-#[derive(Deserialize, SettingsUI)]
+#[derive(Deserialize, SettingsUi)]
 pub struct ClientSettings {
     pub server_url: String,
 }
@@ -127,7 +127,7 @@ pub struct ProxySettingsContent {
     proxy: Option<String>,
 }
 
-#[derive(Deserialize, Default, SettingsUI)]
+#[derive(Deserialize, Default, SettingsUi)]
 pub struct ProxySettings {
     pub proxy: Option<String>,
 }
@@ -504,7 +504,7 @@ impl<T: 'static> Drop for PendingEntitySubscription<T> {
     }
 }
 
-#[derive(Copy, Clone, Deserialize, Debug, SettingsUI)]
+#[derive(Copy, Clone, Deserialize, Debug, SettingsUi)]
 pub struct TelemetrySettings {
     pub diagnostics: bool,
     pub metrics: bool,

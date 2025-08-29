@@ -6,9 +6,9 @@ use collections::HashMap;
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{SettingsUI, Settings, SettingsSources};
+use settings::{Settings, SettingsSources, SettingsUi};
 
-#[derive(Deserialize, SettingsUI)]
+#[derive(Deserialize, SettingsUi)]
 pub struct WorkspaceSettings {
     pub active_pane_modifiers: ActivePanelModifiers,
     pub bottom_dock_layout: BottomDockLayout,
@@ -211,7 +211,7 @@ pub struct WorkspaceSettingsContent {
     pub zoomed_padding: Option<bool>,
 }
 
-#[derive(Deserialize, SettingsUI)]
+#[derive(Deserialize, SettingsUi)]
 pub struct TabBarSettings {
     pub show: bool,
     pub show_nav_history_buttons: bool,

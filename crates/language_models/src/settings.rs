@@ -5,7 +5,7 @@ use collections::HashMap;
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{SettingsUI, Settings, SettingsSources};
+use settings::{Settings, SettingsSources, SettingsUi};
 
 use crate::provider::{
     self,
@@ -29,7 +29,7 @@ pub fn init_settings(cx: &mut App) {
     AllLanguageModelSettings::register(cx);
 }
 
-#[derive(Default, SettingsUI)]
+#[derive(Default, SettingsUi)]
 pub struct AllLanguageModelSettings {
     pub anthropic: AnthropicSettings,
     pub bedrock: AmazonBedrockSettings,

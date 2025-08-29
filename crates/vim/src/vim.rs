@@ -39,9 +39,7 @@ use object::Object;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_derive::Serialize;
-use settings::{
-    SettingsUI, Settings, SettingsSources, SettingsStore, update_settings_file,
-};
+use settings::{Settings, SettingsSources, SettingsStore, SettingsUi, update_settings_file};
 use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
 use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
@@ -1776,7 +1774,7 @@ struct CursorShapeSettings {
     pub insert: Option<CursorShape>,
 }
 
-#[derive(Deserialize, SettingsUI)]
+#[derive(Deserialize, SettingsUi)]
 struct VimSettings {
     pub default_mode: Mode,
     pub toggle_relative_line_numbers: bool,

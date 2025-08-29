@@ -26,7 +26,7 @@ pub use settings_store::{
 };
 pub use settings_ui::*;
 // Re-export the derive macro
-pub use settings_ui_macros::SettingsUI;
+pub use settings_ui_macros::SettingsUi;
 pub use vscode_import::{VsCodeSettings, VsCodeSettingsSource};
 
 #[derive(Clone, Debug, PartialEq)]

@@ -2,9 +2,9 @@ use dap_types::SteppingGranularity;
 use gpui::{App, Global};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsUI};
+use settings::{Settings, SettingsSources, SettingsUi};
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, SettingsUI)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, SettingsUi)]
 #[serde(rename_all = "snake_case")]
 pub enum DebugPanelDockPosition {
     Left,
@@ -12,7 +12,7 @@ pub enum DebugPanelDockPosition {
     Right,
 }
 
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, SettingsUI)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, SettingsUi)]
 #[serde(default)]
 #[settings_ui(group = "Debugger", path = "debugger")]
 pub struct DebuggerSettings {

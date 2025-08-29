@@ -9,7 +9,7 @@ use editor::EditorSettingsControls;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
 use fs::Fs;
 use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, ReadGlobal, actions};
-use settings::{SettingsStore, SettingsUIItemSingle, SettingsUIItemVariant, SettingsValue};
+use settings::{SettingsStore, SettingsUiItemSingle, SettingsUiItemVariant, SettingsValue};
 use smallvec::SmallVec;
 use ui::{NumericStepper, SwitchField, ToggleButtonGroup, ToggleButtonSimple, prelude::*};
 use workspace::{
@@ -84,14 +84,14 @@ pub fn init(cx: &mut App) {
 
 pub struct SettingsPage {
     focus_handle: FocusHandle,
-    settings_tree: SettingsUITree,
+    settings_tree: SettingsUiTree,
 }
 
 impl SettingsPage {
     pub fn new(_workspace: &Workspace, cx: &mut Context<Workspace>) -> Entity<Self> {
         cx.new(|cx| Self {
             focus_handle: cx.focus_handle(),
-            settings_tree: SettingsUITree::new(cx),
+            settings_tree: SettingsUiTree::new(cx),
         })
     }
 }
@@ -147,11 +147,11 @@ struct UIEntry {
     total_descendant_range: Range<usize>,
     next_sibling: Option<usize>,
     // expanded: bool,
-    // todo! rename SettingsUIItemSingle
-    render: Option<SettingsUIItemSingle>,
+    // todo! rename SettingsUiItemSingle
+    render: Option<SettingsUiItemSingle>,
 }
 
-struct SettingsUITree {
+struct SettingsUiTree {
     root_entry_indices: Vec<usize>,
     entries: Vec<UIEntry>,
     active_entry_index: usize,
@@ -159,7 +159,7 @@ struct SettingsUITree {
 
 fn build_tree_item(
     tree: &mut Vec<UIEntry>,
-    group: SettingsUIItemVariant,
+    group: SettingsUiItemVariant,
     depth: usize,
     prev_index: Option<usize>,
 ) {
@@ -177,7 +177,7 @@ fn build_tree_item(
         tree[prev_index].next_sibling = Some(index);
     }
     match group {
-        SettingsUIItemVariant::Group { path, title, group } => {
+        SettingsUiItemVariant::Group { path, title, group } => {
             tree[index].path = path;
             tree[index].title = title;
             for group_item in group.items {
@@ -191,32 +191,32 @@ fn build_tree_item(
                 tree[index].total_descendant_range.end = tree.len();
             }
         }
-        SettingsUIItemVariant::Item { path, item } => {
+        SettingsUiItemVariant::Item { path, item } => {
             tree[index].path = path;
             tree[index].title = path; // todo! title
             tree[index].render = Some(item);
         }
-        SettingsUIItemVariant::None => {
+        SettingsUiItemVariant::None => {
             return;
         }
     }
 }
 
-impl SettingsUITree {
+impl SettingsUiTree {
     fn new(cx: &App) -> Self {
         let settings_store = SettingsStore::global(cx);
         let mut tree = vec![];
         let mut root_entry_indices = vec![];
         for item in settings_store.settings_ui_items() {
-            if matches!(item.item, SettingsUIItemVariant::None) {
+            if matches!(item.item, SettingsUiItemVariant::None) {
                 continue;
             }
 
             assert!(
-                matches!(item.item, SettingsUIItemVariant::Group { .. }),
+                matches!(item.item, SettingsUiItemVariant::Group { .. }),
                 "top level items must be groups: {:?}",
                 match item.item {
-                    SettingsUIItemVariant::Item { path, .. } => path,
+                    SettingsUiItemVariant::Item { path, .. } => path,
                     _ => unreachable!(),
                 }
             );
@@ -236,7 +236,7 @@ impl SettingsUITree {
     }
 }
 
-fn render_nav(tree: &SettingsUITree, _window: &mut Window, cx: &mut Context<SettingsPage>) -> Div {
+fn render_nav(tree: &SettingsUiTree, _window: &mut Window, cx: &mut Context<SettingsPage>) -> Div {
     let mut nav = v_flex().p_4().gap_2();
     for &index in &tree.root_entry_indices {
         nav = nav.child(
@@ -258,7 +258,7 @@ fn render_nav(tree: &SettingsUITree, _window: &mut Window, cx: &mut Context<Sett
 }
 
 fn render_content(
-    tree: &SettingsUITree,
+    tree: &SettingsUiTree,
     window: &mut Window,
     cx: &mut Context<SettingsPage>,
 ) -> impl IntoElement {
@@ -375,24 +375,24 @@ fn element_id_from_path(path: &[&'static str]) -> ElementId {
 
 fn render_item_single(
     settings_value: SettingsValue<serde_json::Value>,
-    item: &SettingsUIItemSingle,
+    item: &SettingsUiItemSingle,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
     match item {
-        SettingsUIItemSingle::Custom(_) => div()
+        SettingsUiItemSingle::Custom(_) => div()
             .child(format!("Item: {}", settings_value.path.join(".")))
             .into_any_element(),
-        SettingsUIItemSingle::SwitchField => {
+        SettingsUiItemSingle::SwitchField => {
             render_any_item(settings_value, render_switch_field, window, cx)
         }
-        SettingsUIItemSingle::NumericStepper => {
+        SettingsUiItemSingle::NumericStepper => {
             render_any_item(settings_value, render_numeric_stepper, window, cx)
         }
-        SettingsUIItemSingle::ToggleGroup(variants) => {
+        SettingsUiItemSingle::ToggleGroup(variants) => {
             render_toggle_button_group(settings_value, variants, window, cx)
         }
-        SettingsUIItemSingle::DropDown(_) => {
+        SettingsUiItemSingle::DropDown(_) => {
             unimplemented!("This")
         }
     }

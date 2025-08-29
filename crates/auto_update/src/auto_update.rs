@@ -10,7 +10,7 @@ use paths::remote_servers_dir;
 use release_channel::{AppCommitSha, ReleaseChannel};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{SettingsUI, Settings, SettingsSources, SettingsStore};
+use settings::{Settings, SettingsSources, SettingsStore, SettingsUi};
 use smol::{fs, io::AsyncReadExt};
 use smol::{fs::File, process::Command};
 use std::{
@@ -113,7 +113,7 @@ impl Drop for MacOsUnmounter {
     }
 }
 
-#[derive(SettingsUI)]
+#[derive(SettingsUi)]
 struct AutoUpdateSetting(bool);
 
 /// Whether or not to automatically check for updates.

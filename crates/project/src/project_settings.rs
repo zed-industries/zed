@@ -18,8 +18,8 @@ use rpc::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    SettingsUI, InvalidSettingsError, LocalSettingsKind, Settings,
-    SettingsLocation, SettingsSources, SettingsStore, parse_json_with_comments, watch_config_file,
+    InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation, SettingsSources,
+    SettingsStore, SettingsUi, parse_json_with_comments, watch_config_file,
 };
 use std::{
     collections::BTreeMap,
@@ -36,7 +36,7 @@ use crate::{
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUI)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
 pub struct ProjectSettings {
     /// Configuration for language servers.
     ///

@@ -1,39 +1,39 @@
 use gpui::{AnyElement, App, Window};
 use smallvec::SmallVec;
 
-pub trait SettingsUI {
-    fn settings_ui_render() -> SettingsUIRender {
-        SettingsUIRender::None
+pub trait SettingsUi {
+    fn settings_ui_render() -> SettingsUiRender {
+        SettingsUiRender::None
     }
-    fn settings_ui_item() -> SettingsUIItem;
+    fn settings_ui_item() -> SettingsUiItem;
 }
 
-pub struct SettingsUIItem {
+pub struct SettingsUiItem {
     // TODO: move this back here once there isn't a None variant
     // pub path: &'static str,
     // pub title: &'static str,
-    pub item: SettingsUIItemVariant,
+    pub item: SettingsUiItemVariant,
 }
 
-pub enum SettingsUIItemVariant {
+pub enum SettingsUiItemVariant {
     Group {
         path: &'static str,
         title: &'static str,
-        group: SettingsUIItemGroup,
+        group: SettingsUiItemGroup,
     },
     Item {
         path: &'static str,
-        item: SettingsUIItemSingle,
+        item: SettingsUiItemSingle,
     },
     // TODO: remove
     None,
 }
 
-pub struct SettingsUIItemGroup {
-    pub items: Vec<SettingsUIItem>,
+pub struct SettingsUiItemGroup {
+    pub items: Vec<SettingsUiItem>,
 }
 
-pub enum SettingsUIItemSingle {
+pub enum SettingsUiItemSingle {
     // TODO: default/builtin variants
     SwitchField,
     NumericStepper,
@@ -63,44 +63,44 @@ impl<T> SettingsValue<T> {
     }
 }
 
-pub enum SettingsUIRender {
+pub enum SettingsUiRender {
     Group {
         title: &'static str,
-        items: Vec<SettingsUIItem>,
+        items: Vec<SettingsUiItem>,
     },
-    Item(SettingsUIItemSingle),
+    Item(SettingsUiItemSingle),
     None,
 }
 
-impl SettingsUI for bool {
-    fn settings_ui_render() -> SettingsUIRender {
-        SettingsUIRender::Item(SettingsUIItemSingle::SwitchField)
+impl SettingsUi for bool {
+    fn settings_ui_render() -> SettingsUiRender {
+        SettingsUiRender::Item(SettingsUiItemSingle::SwitchField)
     }
 
-    fn settings_ui_item() -> SettingsUIItem {
-        SettingsUIItem {
-            item: SettingsUIItemVariant::None,
+    fn settings_ui_item() -> SettingsUiItem {
+        SettingsUiItem {
+            item: SettingsUiItemVariant::None,
         }
     }
 }
 
-impl SettingsUI for u64 {
-    fn settings_ui_render() -> SettingsUIRender {
-        SettingsUIRender::Item(SettingsUIItemSingle::NumericStepper)
+impl SettingsUi for u64 {
+    fn settings_ui_render() -> SettingsUiRender {
+        SettingsUiRender::Item(SettingsUiItemSingle::NumericStepper)
     }
 
-    fn settings_ui_item() -> SettingsUIItem {
-        SettingsUIItem {
-            item: SettingsUIItemVariant::None,
+    fn settings_ui_item() -> SettingsUiItem {
+        SettingsUiItem {
+            item: SettingsUiItemVariant::None,
         }
     }
 }
 
 /*
 FOR DOC COMMENTS ON "Contents" TYPES:
-define trait: SettingsUIDocProvider with derive
+define trait: SettingsUiDocProvider with derive
 derive creates:
-impl SettingsUIDocProvider for Foo {
+impl SettingsUiDocProvider for Foo {
     fn settings_ui_doc() -> Hashmap<&'static str, &'static str> {
         Hashmap::from(Foo.fields.map(|field| (field.name, field.doc_comment)))
     }
@@ -109,7 +109,7 @@ impl SettingsUIDocProvider for Foo {
 on derive settings_ui, have attr
 #[settings_ui(doc_from = "Foo")]
 
-and have derive(SettingsUI) do
+and have derive(SettingsUi) do
 
 if doc_from {
 quote! {
@@ -131,7 +131,7 @@ like so: #[settings_ui(doc_from = "Foo", path = "foo")]
  */
 
 /*
-#[derive(SettingsUI)]
+#[derive(SettingsUi)]
 #[settings_ui(group = "Foo")]
 struct Foo {
     // #[settings_ui(render = "my_render_function")]
@@ -143,7 +143,7 @@ struct Foo {
 
 macro code:
 settings_ui_item() {
- group.items = struct.fields.map((field_name, field_type) => quote! { SettingsUIItem::Item {path: #field_type::settings_ui_path().unwrap_or_else(|| #field_name), item:  if field.attrs.render { #render } else field::settings_ui_render()}})
+ group.items = struct.fields.map((field_name, field_type) => quote! { SettingsUiItem::Item {path: #field_type::settings_ui_path().unwrap_or_else(|| #field_name), item:  if field.attrs.render { #render } else field::settings_ui_render()}})
  }
  */
 

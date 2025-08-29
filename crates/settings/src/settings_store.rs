@@ -31,15 +31,15 @@ use util::{
 pub type EditorconfigProperties = ec4rs::Properties;
 
 use crate::{
-    ActiveSettingsProfileName, ParameterizedJsonSchema, SettingsJsonSchemaParams, SettingsUIItem,
+    ActiveSettingsProfileName, ParameterizedJsonSchema, SettingsJsonSchemaParams, SettingsUiItem,
     VsCodeSettings, WorktreeId, parse_json_with_comments, replace_value_in_json_text,
-    settings_ui::SettingsUI, update_value_in_json_text,
+    settings_ui::SettingsUi, update_value_in_json_text,
 };
 
 /// A value that can be defined as a user setting.
 ///
 /// Settings can be loaded from a combination of multiple JSON files.
-pub trait Settings: SettingsUI + 'static + Send + Sync {
+pub trait Settings: SettingsUi + 'static + Send + Sync {
     /// The name of a key within the JSON file from which this setting should
     /// be deserialized. If this is `None`, then the setting will be deserialized
     /// from the root object.
@@ -275,7 +275,7 @@ trait AnySettingValue: 'static + Send + Sync {
         text: &mut String,
         edits: &mut Vec<(Range<usize>, String)>,
     );
-    fn settings_ui_item(&self) -> SettingsUIItem;
+    fn settings_ui_item(&self) -> SettingsUiItem;
 }
 
 struct DeserializedSetting(Box<dyn Any>);
@@ -619,7 +619,7 @@ impl SettingsStore {
         })
     }
 
-    pub fn settings_ui_items(&self) -> impl IntoIterator<Item = SettingsUIItem> {
+    pub fn settings_ui_items(&self) -> impl IntoIterator<Item = SettingsUiItem> {
         self.setting_values
             .values()
             .map(|item| item.settings_ui_item())
@@ -1519,8 +1519,8 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
         );
     }
 
-    fn settings_ui_item(&self) -> SettingsUIItem {
-        <T as SettingsUI>::settings_ui_item()
+    fn settings_ui_item(&self) -> SettingsUiItem {
+        <T as SettingsUi>::settings_ui_item()
     }
 }
 
@@ -1529,10 +1529,10 @@ mod tests {
     use crate::VsCodeSettingsSource;
 
     use super::*;
-    // This is so the SettingsUI macro can still work properly
+    // This is so the SettingsUi macro can still work properly
     use crate as settings;
     use serde_derive::Deserialize;
-    use settings_ui_macros::SettingsUI;
+    use settings_ui_macros::SettingsUi;
     use unindent::Unindent;
 
     #[gpui::test]
@@ -2075,14 +2075,14 @@ mod tests {
         pretty_assertions::assert_eq!(new, expected);
     }
 
-    #[derive(Debug, PartialEq, Deserialize, SettingsUI)]
+    #[derive(Debug, PartialEq, Deserialize, SettingsUi)]
     struct UserSettings {
         name: String,
         age: u32,
         staff: bool,
     }
 
-    #[derive(Default, Clone, Serialize, Deserialize, JsonSchema, SettingsUI)]
+    #[derive(Default, Clone, Serialize, Deserialize, JsonSchema, SettingsUi)]
     struct UserSettingsContent {
         name: Option<String>,
         age: Option<u32>,
@@ -2102,7 +2102,7 @@ mod tests {
         }
     }
 
-    #[derive(Debug, Deserialize, PartialEq, SettingsUI)]
+    #[derive(Debug, Deserialize, PartialEq, SettingsUi)]
     struct TurboSetting(bool);
 
     impl Settings for TurboSetting {
@@ -2116,7 +2116,7 @@ mod tests {
         fn import_from_vscode(_vscode: &VsCodeSettings, _current: &mut Self::FileContent) {}
     }
 
-    #[derive(Clone, Debug, PartialEq, Deserialize, SettingsUI)]
+    #[derive(Clone, Debug, PartialEq, Deserialize, SettingsUi)]
     struct MultiKeySettings {
         #[serde(default)]
         key1: String,
@@ -2149,7 +2149,7 @@ mod tests {
         }
     }
 
-    #[derive(Debug, Deserialize, SettingsUI)]
+    #[derive(Debug, Deserialize, SettingsUi)]
     struct JournalSettings {
         pub path: String,
         pub hour_format: HourFormat,
@@ -2250,7 +2250,7 @@ mod tests {
         );
     }
 
-    #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, SettingsUI)]
+    #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
     struct LanguageSettings {
         #[serde(default)]
         languages: HashMap<String, LanguageSettingEntry>,

@@ -8,7 +8,7 @@ use gpui::{App, Pixels, SharedString};
 use language_model::LanguageModel;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
-use settings::{SettingsUI, Settings, SettingsSources};
+use settings::{Settings, SettingsSources, SettingsUi};
 use std::borrow::Cow;
 
 pub use crate::agent_profile::*;
@@ -48,7 +48,7 @@ pub enum NotifyWhenAgentWaiting {
     Never,
 }
 
-#[derive(Default, Clone, Debug, SettingsUI)]
+#[derive(Default, Clone, Debug, SettingsUi)]
 pub struct AgentSettings {
     pub enabled: bool,
     pub button: bool,

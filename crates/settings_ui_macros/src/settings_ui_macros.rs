@@ -2,26 +2,26 @@ use proc_macro2::TokenStream;
 use quote::{ToTokens, quote};
 use syn::{Data, DeriveInput, LitStr, Token, parse_macro_input};
 
-/// Derive macro for the `SettingsUI` marker trait.
+/// Derive macro for the `SettingsUi` marker trait.
 ///
-/// This macro automatically implements the `SettingsUI` trait for the annotated type.
-/// The `SettingsUI` trait is a marker trait used to indicate that a type can be
+/// This macro automatically implements the `SettingsUi` trait for the annotated type.
+/// The `SettingsUi` trait is a marker trait used to indicate that a type can be
 /// displayed in the settings UI.
 ///
 /// # Example
 ///
 /// ```
-/// use settings::SettingsUI;
-/// use settings_ui_macros::SettingsUI;
+/// use settings::SettingsUi;
+/// use settings_ui_macros::SettingsUi;
 ///
-/// #[derive(SettingsUI)]
+/// #[derive(SettingsUi)]
 /// #[settings_ui(group = "Standard")]
 /// struct MySettings {
 ///     enabled: bool,
 ///     count: usize,
 /// }
 /// ```
-#[proc_macro_derive(SettingsUI, attributes(settings_ui))]
+#[proc_macro_derive(SettingsUi, attributes(settings_ui))]
 pub fn derive_settings_ui(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
@@ -70,18 +70,18 @@ pub fn derive_settings_ui(input: proc_macro::TokenStream) -> proc_macro::TokenSt
         .as_ref()
         .map(|path_name| map_ui_item_to_render(path_name, quote! { Self }))
         .unwrap_or(quote! {
-            settings::SettingsUIItem {
-                item:  settings::SettingsUIItemVariant::None
+            settings::SettingsUiItem {
+                item:  settings::SettingsUiItemVariant::None
             }
         });
 
     let expanded = quote! {
-        impl #impl_generics settings::SettingsUI for #name #ty_generics #where_clause {
-            fn settings_ui_render() -> settings::SettingsUIRender {
+        impl #impl_generics settings::SettingsUi for #name #ty_generics #where_clause {
+            fn settings_ui_render() -> settings::SettingsUiRender {
                 #ui_render_fn_body
             }
 
-            fn settings_ui_item() -> settings::SettingsUIItem {
+            fn settings_ui_item() -> settings::SettingsUiItem {
                 #settings_ui_item_fn_body
             }
         }
@@ -92,18 +92,18 @@ pub fn derive_settings_ui(input: proc_macro::TokenStream) -> proc_macro::TokenSt
 
 fn map_ui_item_to_render(path: &str, ty: TokenStream) -> TokenStream {
     quote! {
-        settings::SettingsUIItem {
+        settings::SettingsUiItem {
             item: match #ty::settings_ui_render() {
-                settings::SettingsUIRender::Group{title, items} => settings::SettingsUIItemVariant::Group {
+                settings::SettingsUiRender::Group{title, items} => settings::SettingsUiItemVariant::Group {
                     title,
                     path: #path,
-                    group: settings::SettingsUIItemGroup { items },
+                    group: settings::SettingsUiItemGroup { items },
                 },
-                settings::SettingsUIRender::Item(item) => settings::SettingsUIItemVariant::Item {
+                settings::SettingsUiRender::Item(item) => settings::SettingsUiItemVariant::Item {
                     path: #path,
                     item,
                 },
-                settings::SettingsUIRender::None => settings::SettingsUIItemVariant::None,
+                settings::SettingsUiRender::None => settings::SettingsUiItemVariant::None,
             }
         }
     }
@@ -115,15 +115,15 @@ fn generate_ui_render_body(
     input: &syn::DeriveInput,
 ) -> TokenStream {
     match (group_name, path_name, &input.data) {
-        (_, _, Data::Union(_)) => unimplemented!("Derive SettingsUI for Unions"),
+        (_, _, Data::Union(_)) => unimplemented!("Derive SettingsUi for Unions"),
         (None, None, Data::Struct(_)) => quote! {
-            settings::SettingsUIRender::None
+            settings::SettingsUiRender::None
         },
         (Some(_), None, Data::Struct(_)) => quote! {
-            settings::SettingsUIRender::None
+            settings::SettingsUiRender::None
         },
         (None, Some(_), Data::Struct(_)) => quote! {
-            settings::SettingsUIRender::None
+            settings::SettingsUiRender::None
         },
         (Some(group_name), _, Data::Struct(data_struct)) => {
             let fields = data_struct
@@ -153,7 +153,7 @@ fn generate_ui_render_body(
                 .map(|(name, ty)| map_ui_item_to_render(&name, ty));
 
             quote! {
-                settings::SettingsUIRender::Group{ title: #group_name, items: vec![#(#fields),*] }
+                settings::SettingsUiRender::Group{ title: #group_name, items: vec![#(#fields),*] }
             }
         }
         (None, _, Data::Enum(data_enum)) => {
@@ -186,17 +186,17 @@ fn generate_ui_render_body(
 
             if length > 6 {
                 quote! {
-                    settings::SettingsUIRender::Item(settings::SettingsUIItemSingle::DropDown(&[#(#variants),*]))
+                    settings::SettingsUiRender::Item(settings::SettingsUiItemSingle::DropDown(&[#(#variants),*]))
                 }
             } else {
                 quote! {
-                    settings::SettingsUIRender::Item(settings::SettingsUIItemSingle::ToggleGroup(&[#(#variants),*]))
+                    settings::SettingsUiRender::Item(settings::SettingsUiItemSingle::ToggleGroup(&[#(#variants),*]))
                 }
             }
         }
         // todo! unions
         (_, _, Data::Enum(_)) => quote! {
-            settings::SettingsUIRender::None
+            settings::SettingsUiRender::None
         },
     }
 }
