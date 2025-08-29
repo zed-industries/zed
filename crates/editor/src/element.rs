@@ -10980,9 +10980,7 @@ mod tests {
             a: 0.5,
         };
 
-        // helper
-        let row = DisplayRow(0);
-        let dp = |c| DisplayPoint::new(row, c);
+        let display_point = |col| DisplayPoint::new(DisplayRow(0), col);
         let cols = |v: &Vec<(Range<DisplayPoint>, Hsla)>| -> Vec<(u32, u32)> {
             v.iter()
                 .map(|(r, _)| (r.start.column(), r.end.column()))
@@ -10990,7 +10988,10 @@ mod tests {
         };
 
         // Test overlapping ranges blend colors
-        let overlapping = vec![(dp(5)..dp(15), color1), (dp(10)..dp(20), color2)];
+        let overlapping = vec![
+            (display_point(5)..display_point(15), color1),
+            (display_point(10)..display_point(20), color2),
+        ];
         let result = EditorElement::merge_overlapping_ranges(overlapping, base_bg);
         assert_eq!(cols(&result), vec![(5, 10), (10, 15), (15, 20)]);
 
@@ -10999,12 +11000,18 @@ mod tests {
         assert_eq!(result[1].1, blended);
 
         // Test adjacent same-color ranges merge
-        let adjacent_same = vec![(dp(5)..dp(10), color1), (dp(10)..dp(15), color1)];
+        let adjacent_same = vec![
+            (display_point(5)..display_point(10), color1),
+            (display_point(10)..display_point(15), color1),
+        ];
         let result = EditorElement::merge_overlapping_ranges(adjacent_same, base_bg);
         assert_eq!(cols(&result), vec![(5, 15)]);
 
         // Test contained range splits
-        let contained = vec![(dp(5)..dp(20), color1), (dp(10)..dp(15), color2)];
+        let contained = vec![
+            (display_point(5)..display_point(20), color1),
+            (display_point(10)..display_point(15), color2),
+        ];
         let result = EditorElement::merge_overlapping_ranges(contained, base_bg);
         assert_eq!(cols(&result), vec![(5, 10), (10, 15), (15, 20)]);
 
@@ -11016,9 +11023,9 @@ mod tests {
             a: 0.5,
         };
         let complex = vec![
-            (dp(5)..dp(12), color1),
-            (dp(8)..dp(16), color2),
-            (dp(10)..dp(14), color3),
+            (display_point(5)..display_point(12), color1),
+            (display_point(8)..display_point(16), color2),
+            (display_point(10)..display_point(14), color3),
         ];
         let result = EditorElement::merge_overlapping_ranges(complex, base_bg);
         assert_eq!(
@@ -11126,4 +11133,92 @@ fn test_bg_segments_per_row() {
         assert_eq!(result[2][0].0.end.row(), DisplayRow(2));
         assert_eq!(result[2][0].0.end.column(), u32::MAX);
     }
+}
+
+#[gpui::test]
+fn test_split_runs_by_bg_segments(cx: &mut App) {
+    use gpui::UpdateGlobal;
+    let store = settings::SettingsStore::test(cx);
+    settings::SettingsStore::set_global(cx, store);
+    settings::SettingsStore::update_global(cx, |store, cx| {
+        store.register_setting::<EditorSettings>(cx);
+    });
+    let text_color = Hsla {
+        h: 210.0,
+        s: 0.1,
+        l: 0.4,
+        a: 1.0,
+    };
+    let bg1 = Hsla {
+        h: 30.0,
+        s: 0.6,
+        l: 0.8,
+        a: 1.0,
+    };
+    let bg2 = Hsla {
+        h: 200.0,
+        s: 0.6,
+        l: 0.2,
+        a: 1.0,
+    };
+    let min_contrast = EditorSettings::get_global(cx).minimum_contrast_for_highlights;
+
+    #[cfg(test)]
+    fn generate_test_run(len: usize, color: Hsla) -> TextRun {
+        TextRun {
+            len,
+            font: gpui::font(".SystemUIFont"),
+            color,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        }
+    }
+
+    // Case A: single run; disjoint segments inside the run
+    let runs = vec![generate_test_run(20, text_color)];
+    let segs = vec![
+        (
+            DisplayPoint::new(DisplayRow(0), 5)..DisplayPoint::new(DisplayRow(0), 10),
+            bg1,
+        ),
+        (
+            DisplayPoint::new(DisplayRow(0), 12)..DisplayPoint::new(DisplayRow(0), 16),
+            bg2,
+        ),
+    ];
+    let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, cx);
+    // Expected slices: [0,5) [5,10) [10,12) [12,16) [16,20)
+    assert_eq!(
+        out.iter().map(|r| r.len).collect::<Vec<_>>(),
+        vec![5, 5, 2, 4, 4]
+    );
+    assert_eq!(out[0].color, text_color);
+    assert_eq!(
+        out[1].color,
+        ensure_minimum_contrast(text_color, bg1, min_contrast)
+    );
+    assert_eq!(out[2].color, text_color);
+    assert_eq!(
+        out[3].color,
+        ensure_minimum_contrast(text_color, bg2, min_contrast)
+    );
+    assert_eq!(out[4].color, text_color);
+
+    // Case B: multiple runs; segment extends to end of line (u32::MAX)
+    let runs = vec![
+        generate_test_run(8, text_color),
+        generate_test_run(7, text_color),
+    ];
+    let segs = vec![(
+        DisplayPoint::new(DisplayRow(0), 6)..DisplayPoint::new(DisplayRow(0), u32::MAX),
+        bg1,
+    )];
+    let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, cx);
+    // Expected slices across runs: [0,6) [6,8) | [0,7)
+    assert_eq!(out.iter().map(|r| r.len).collect::<Vec<_>>(), vec![6, 2, 7]);
+    let adjusted = ensure_minimum_contrast(text_color, bg1, min_contrast);
+    assert_eq!(out[0].color, text_color);
+    assert_eq!(out[1].color, adjusted);
+    assert_eq!(out[2].color, adjusted);
 }
