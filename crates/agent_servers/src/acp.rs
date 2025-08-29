@@ -343,7 +343,7 @@ impl acp::Client for ClientDelegate {
     ) -> Result<acp::RequestPermissionResponse, acp::Error> {
         let cx = &mut self.cx.clone();
 
-        let outcome = self
+        let task = self
             .sessions
             .borrow()
             .get(&arguments.session_id)
@@ -351,8 +351,9 @@ impl acp::Client for ClientDelegate {
             .thread
             .update(cx, |thread, cx| {
                 thread.request_tool_call_authorization(arguments.tool_call, arguments.options, cx)
-            })??
-            .await;
+            })??;
+
+        let outcome = task.await;
 
         Ok(acp::RequestPermissionResponse { outcome })
     }
