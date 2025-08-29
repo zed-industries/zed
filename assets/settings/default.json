@@ -239,7 +239,7 @@
   // - 90: Preferred for body text
   //
   // This only affects text drawn over highlight backgrounds in the editor.
-  "minimum_contrast_for_highlights": 48,
+  "minimum_contrast_for_highlights": 45,
   // Whether to pop the completions menu while typing in an editor without
   // explicitly requesting it.
   "show_completions_on_input": true,

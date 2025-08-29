@@ -549,7 +549,7 @@ pub struct EditorSettingsContent {
     /// rendering text over highlight backgrounds in the editor.
     ///
     /// Values range from 0 to 106. Set to 0 to disable adjustments.
-    /// Default: 48
+    /// Default: 45
     pub minimum_contrast_for_highlights: Option<f32>,
 
     /// Whether to follow-up empty go to definition responses from the language server or not.
