@@ -433,33 +433,34 @@ impl MacTextSystemState {
         self.zwnjs_scratch_space.clear();
         // Construct the attributed string, converting UTF8 ranges to UTF16 ranges.
         let mut string = CFMutableAttributedString::new();
+
         {
             let mut ix_converter = StringIndexConverter::new(&text);
             let mut last_font_run = None;
             for run in font_runs {
                 let text = &text[ix_converter.utf8_ix..][..run.len];
-                let needs_zwnj = last_font_run == Some(run.font_id);
-                last_font_run = Some(run.font_id);
+                // if the fonts are the same, we need to disconnect the text with a ZWNJ
+                // to prevent core text from forming ligatures between them
+                let needs_zwnj = last_font_run.replace(run.font_id) == Some(run.font_id);
 
-                let utf8_end = ix_converter.utf8_ix + run.len;
                 let n_zwnjs = self.zwnjs_scratch_space.len();
                 let utf16_start = ix_converter.utf16_ix + n_zwnjs * ZWNJ_SIZE_16;
-
-                ix_converter.advance_to_utf8_ix(utf8_end);
+                ix_converter.advance_to_utf8_ix(ix_converter.utf8_ix + run.len);
 
                 string.replace_str(&CFString::new(text), CFRange::init(utf16_start as isize, 0));
                 if needs_zwnj {
-                    let utf16_end_pre = string.char_len();
-                    self.zwnjs_scratch_space
-                        .push((n_zwnjs, utf16_end_pre as usize));
-                    string.replace_str(&CFString::new(ZWNJ_STR), CFRange::init(utf16_end_pre, 0));
+                    let zwnjs_pos = string.char_len();
+                    self.zwnjs_scratch_space.push((n_zwnjs, zwnjs_pos as usize));
+                    string.replace_str(
+                        &CFString::from_static_string(ZWNJ_STR),
+                        CFRange::init(zwnjs_pos, 0),
+                    );
                 }
                 let utf16_end = string.char_len() as usize;
 
-                let font: &FontKitFont = &self.fonts[run.font_id.0];
-
                 let cf_range =
                     CFRange::init(utf16_start as isize, (utf16_end - utf16_start) as isize);
+                let font = &self.fonts[run.font_id.0];
                 unsafe {
                     string.set_attribute(
                         cf_range,
@@ -505,7 +506,9 @@ impl MacTextSystemState {
                     .zwnjs_scratch_space
                     .binary_search_by(|&(_, it)| it.cmp(&glyph_utf16_ix));
                 match r {
+                    // this glyph is a ZWNJ, skip it
                     Ok(_) => continue,
+                    // adjust the index to account for the ZWNJs we've inserted
                     Err(idx) => glyph_utf16_ix -= idx * ZWNJ_SIZE_16,
                 }
                 if ix_converter.utf16_ix > glyph_utf16_ix {

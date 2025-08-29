@@ -541,7 +541,8 @@ impl WindowTextSystem {
                 && last_run.color == run.color
                 && last_run.underline == run.underline
                 && last_run.strikethrough == run.strikethrough
-                && last_run.background_color == run.background_color
+            // we do not consider differing background color relevant, as it does not affect glyphs
+            // && last_run.background_color == run.background_color
             {
                 false
             } else {
