@@ -43,7 +43,6 @@ struct DirectWriteComponent {
     builder: IDWriteFontSetBuilder1,
     text_renderer: Arc<TextRendererWrapper>,
 
-    render_params: IDWriteRenderingParams3,
     gpu_state: GPUState,
 }
 
@@ -89,24 +88,6 @@ impl DirectWriteComponent {
             let locale = String::from_utf16_lossy(&locale_vec);
             let text_renderer = Arc::new(TextRendererWrapper::new(&locale));
 
-            let render_params = {
-                let default_params: IDWriteRenderingParams3 =
-                    factory.CreateRenderingParams()?.cast()?;
-                let cleartype_level = default_params.GetClearTypeLevel();
-                let grid_fit_mode = default_params.GetGridFitMode();
-
-                // contrast / gamma adjustments happen in the shader
-                factory.CreateCustomRenderingParams(
-                    1.0,
-                    0.0,
-                    0.0,
-                    cleartype_level,
-                    DWRITE_PIXEL_GEOMETRY_RGB,
-                    DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC,
-                    grid_fit_mode,
-                )?
-            };
-
             let gpu_state = GPUState::new(gpu_context)?;
 
             Ok(DirectWriteComponent {
@@ -115,7 +96,6 @@ impl DirectWriteComponent {
                 in_memory_loader,
                 builder,
                 text_renderer,
-                render_params,
                 gpu_state,
             })
         }
@@ -763,7 +743,7 @@ impl DirectWriteState {
                 false,
                 DWRITE_OUTLINE_THRESHOLD_ANTIALIASED,
                 DWRITE_MEASURING_MODE_NATURAL,
-                &self.components.render_params,
+                None,
                 &mut rendering_mode,
                 &mut grid_fit_mode,
             )?;
@@ -870,7 +850,6 @@ impl DirectWriteState {
         let glyph_analysis = self.create_glyph_run_analysis(params, true)?;
         unsafe {
             glyph_analysis.CreateAlphaTexture(
-                // We're using cleartype not grayscale for monochrome is because it provides better quality
                 DWRITE_TEXTURE_ALIASED_1x1,
                 &RECT {
                     left: glyph_bounds.origin.x.0,
