@@ -19,3 +19,4 @@ default = []
 proc-macro2.workspace = true
 quote.workspace = true
 syn.workspace = true
+workspace-hack.workspace = true
