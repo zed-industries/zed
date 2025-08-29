@@ -56,6 +56,7 @@ pub struct EditorSettings {
     pub inline_code_actions: bool,
     pub drag_and_drop_selection: DragAndDropSelection,
     pub lsp_document_colors: DocumentColorsRenderMode,
+    pub minimum_contrast_for_highlights: f32,
 }
 
 /// How to render LSP `textDocument/documentColor` colors in the editor.
@@ -550,6 +551,12 @@ pub struct EditorSettingsContent {
     ///
     /// Default: false
     pub show_signature_help_after_edits: Option<bool>,
+    /// The minimum APCA perceptual contrast to maintain when
+    /// rendering text over highlight backgrounds in the editor.
+    ///
+    /// Values range from 0 to 106. Set to 0 to disable adjustments.
+    /// Default: 45
+    pub minimum_contrast_for_highlights: Option<f32>,
 
     /// Whether to follow-up empty go to definition responses from the language server or not.
     /// `FindAllReferences` allows to look up references of the same symbol instead.
