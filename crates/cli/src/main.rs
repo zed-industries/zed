@@ -85,7 +85,7 @@ struct Args {
     #[arg(long)]
     dev_server_token: Option<String>,
     /// Used for remote WSL support.
-    #[command(flatten)]
+    #[clap(flatten)]
     wsl_args: Option<WslArgs>,
     /// Not supported in Zed CLI, only supported on Zed binary
     /// Will attempt to give the correct command to run

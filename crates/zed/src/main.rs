@@ -1183,7 +1183,7 @@ struct Args {
     user_data_dir: Option<String>,
 
     /// Used for remote WSL support.
-    #[command(flatten)]
+    #[clap(flatten)]
     wsl_args: Option<WslArgs>,
 
     /// Instructs zed to run as a dev server on this machine. (not implemented)
