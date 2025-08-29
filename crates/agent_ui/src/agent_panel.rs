@@ -230,6 +230,7 @@ enum ActiveView {
         _subscriptions: Vec<gpui::Subscription>,
     },
     ExternalAgentThread {
+        agent: ExternalAgent,
         thread_view: Entity<AcpThreadView>,
     },
     TextThread {
@@ -248,7 +249,6 @@ enum WhichFontSize {
     None,
 }
 
-// TODO unify this with ExternalAgent
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AgentType {
     #[default]
@@ -285,6 +285,25 @@ impl AgentType {
 }
 
 impl ActiveView {
+    fn agent_type(&self) -> Option<AgentType> {
+        match self {
+            ActiveView::Thread { .. } => AgentType::Zed.into(),
+            ActiveView::ExternalAgentThread { agent, .. } => match agent {
+                ExternalAgent::Gemini => AgentType::Gemini.into(),
+                ExternalAgent::ClaudeCode => AgentType::ClaudeCode.into(),
+                ExternalAgent::NativeAgent => AgentType::NativeAgent.into(),
+                ExternalAgent::Custom { name, command } => AgentType::Custom {
+                    name: name.clone(),
+                    command: command.clone(),
+                }
+                .into(),
+            },
+            ActiveView::TextThread { .. } => AgentType::TextThread.into(),
+            ActiveView::History => None,
+            ActiveView::Configuration => None,
+        }
+    }
+
     pub fn which_font_size_used(&self) -> WhichFontSize {
         match self {
             ActiveView::Thread { .. }
@@ -1154,7 +1173,14 @@ impl AgentPanel {
                     )
                 });
 
-                this.set_active_view(ActiveView::ExternalAgentThread { thread_view }, window, cx);
+                this.set_active_view(
+                    ActiveView::ExternalAgentThread {
+                        agent: ext_agent,
+                        thread_view,
+                    },
+                    window,
+                    cx,
+                );
             })
         })
         .detach_and_log_err(cx);
@@ -1325,7 +1351,7 @@ impl AgentPanel {
                         ActiveView::Thread { message_editor, .. } => {
                             message_editor.focus_handle(cx).focus(window);
                         }
-                        ActiveView::ExternalAgentThread { thread_view } => {
+                        ActiveView::ExternalAgentThread { thread_view, .. } => {
                             thread_view.focus_handle(cx).focus(window);
                         }
                         ActiveView::TextThread { context_editor, .. } => {
@@ -1515,7 +1541,7 @@ impl AgentPanel {
                 )
                 .detach_and_log_err(cx);
             }
-            ActiveView::ExternalAgentThread { thread_view } => {
+            ActiveView::ExternalAgentThread { thread_view, .. } => {
                 thread_view
                     .update(cx, |thread_view, cx| {
                         thread_view.open_thread_as_markdown(workspace, window, cx)
@@ -1703,6 +1729,13 @@ impl AgentPanel {
             }
             ActiveView::ExternalAgentThread { .. } => {}
             ActiveView::History | ActiveView::Configuration => {}
+        }
+
+        if let Some(selected_agent) = new_view.agent_type() {
+            if self.selected_agent != selected_agent {
+                self.selected_agent = selected_agent;
+                self.serialize(cx);
+            }
         }
 
         if current_is_special && !new_is_special {
@@ -2091,7 +2124,7 @@ impl AgentPanel {
                         .into_any_element(),
                 }
             }
-            ActiveView::ExternalAgentThread { thread_view } => {
+            ActiveView::ExternalAgentThread { thread_view, .. } => {
                 if let Some(title_editor) = thread_view.read(cx).title_editor() {
                     div()
                         .w_full()
@@ -2471,7 +2504,7 @@ impl AgentPanel {
         let focus_handle = self.focus_handle(cx);
 
         let active_thread = match &self.active_view {
-            ActiveView::ExternalAgentThread { thread_view } => {
+            ActiveView::ExternalAgentThread { thread_view, .. } => {
                 thread_view.read(cx).as_native_thread(cx)
             }
             ActiveView::Thread { .. }
@@ -3677,7 +3710,7 @@ impl AgentPanel {
                     .detach();
                 });
             }
-            ActiveView::ExternalAgentThread { thread_view } => {
+            ActiveView::ExternalAgentThread { thread_view, .. } => {
                 thread_view.update(cx, |thread_view, cx| {
                     thread_view.insert_dragged_files(paths, added_worktrees, window, cx);
                 });
