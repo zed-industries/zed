@@ -7,7 +7,7 @@ use std::{
 use anyhow::{Context as _, Result, bail};
 
 use async_trait::async_trait;
-use collections::BTreeMap;
+use collections::{BTreeMap, IndexSet};
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
 };
@@ -30,7 +30,7 @@ use crate::{
 
 pub struct ToolchainStore {
     mode: ToolchainStoreInner,
-    user_toolchains: Vec<Toolchain>,
+    user_toolchains: IndexSet<Toolchain>,
     _sub: Subscription,
 }
 
@@ -66,7 +66,7 @@ impl ToolchainStore {
         });
         Self {
             mode: ToolchainStoreInner::Local(entity),
-            user_toolchains: vec![],
+            user_toolchains: Default::default(),
             _sub,
         }
     }
@@ -78,7 +78,7 @@ impl ToolchainStore {
         });
         Self {
             mode: ToolchainStoreInner::Remote(entity),
-            user_toolchains: vec![],
+            user_toolchains: Default::default(),
             _sub,
         }
     }
@@ -119,7 +119,7 @@ impl ToolchainStore {
         language_name: LanguageName,
         cx: &mut Context<Self>,
     ) -> Task<Option<(ToolchainList, Arc<Path>)>> {
-        let mut user_toolchains = self.user_toolchains.clone();
+        let mut user_toolchains = self.user_toolchains.iter().cloned().collect::<Vec<_>>();
         let task = match &self.mode {
             ToolchainStoreInner::Local(local) => {
                 local.update(cx, |this, cx| this.list_toolchains(path, language_name, cx))
