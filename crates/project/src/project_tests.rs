@@ -9216,10 +9216,8 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
         }
         async fn resolve(
             &self,
-            worktree_root: PathBuf,
-            subroot_relative_path: Option<Arc<Path>>,
-            project_env: Option<HashMap<String, String>>,
-            path: PathBuf,
+            _: PathBuf,
+            _: Option<HashMap<String, String>>,
         ) -> anyhow::Result<Toolchain> {
             Err(anyhow::anyhow!("Not implemented"))
         }
