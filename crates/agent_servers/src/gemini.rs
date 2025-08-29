@@ -86,14 +86,12 @@ impl AgentServer for Gemini {
                             .await;
                         let current_version =
                             String::from_utf8(version_output?.stdout)?.trim().to_owned();
-                        if !connection.prompt_capabilities().image {
-                            return Err(LoadError::Unsupported {
-                                current_version: current_version.into(),
-                                command: command.path.to_string_lossy().to_string().into(),
-                                minimum_version: Self::MINIMUM_VERSION.into(),
-                            }
-                            .into());
+                        return Err(LoadError::Unsupported {
+                            current_version: current_version.into(),
+                            command: command.path.to_string_lossy().to_string().into(),
+                            minimum_version: Self::MINIMUM_VERSION.into(),
                         }
+                        .into());
                     }
                 }
                 Err(_) => {
