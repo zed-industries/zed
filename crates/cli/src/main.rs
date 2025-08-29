@@ -327,7 +327,7 @@ fn main() -> Result<()> {
                 paths,
                 urls,
                 diff_paths,
-                wsl_args: args.wsl_args,
+                wsl: args.wsl_args,
                 wait: args.wait,
                 open_new_workspace,
                 env,

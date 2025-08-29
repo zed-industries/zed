@@ -22,7 +22,7 @@ use util::paths::{PathStyle, RemotePathBuf};
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct WslConnectionOptions {
     pub distro_name: String,
-    pub user: Option<String>,
+    pub user: String,
 }
 
 pub(crate) struct WslRemoteConnection {
@@ -391,31 +391,18 @@ impl RemoteConnection for WslRemoteConnection {
             write!(&mut script, "exec {} -l", self.shell).unwrap();
         }
 
-        let wsl_args = if let Some(user) = &self.connection_options.user {
-            vec![
-                "--distribution".to_string(),
-                self.connection_options.distro_name.clone(),
-                "--user".to_string(),
-                user.clone(),
-                "--cd".to_string(),
-                working_dir,
-                "--".to_string(),
-                self.shell.clone(),
-                "-c".to_string(),
-                shlex::try_quote(&script)?.to_string(),
-            ]
-        } else {
-            vec![
-                "--distribution".to_string(),
-                self.connection_options.distro_name.clone(),
-                "--cd".to_string(),
-                working_dir,
-                "--".to_string(),
-                self.shell.clone(),
-                "-c".to_string(),
-                shlex::try_quote(&script)?.to_string(),
-            ]
-        };
+        let wsl_args = vec![
+            "--distribution".to_string(),
+            self.connection_options.distro_name.clone(),
+            "--user".to_string(),
+            self.connection_options.user.clone(),
+            "--cd".to_string(),
+            working_dir,
+            "--".to_string(),
+            self.shell.clone(),
+            "-c".to_string(),
+            shlex::try_quote(&script)?.to_string(),
+        ];
 
         Ok(CommandTemplate {
             program: "wsl.exe".to_string(),
@@ -462,16 +449,14 @@ fn wsl_command_impl(
 ) -> process::Command {
     let mut command = util::command::new_smol_command("wsl.exe");
 
-    if let Some(user) = &options.user {
-        command.arg("--user").arg(user);
-    }
-
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .arg("--distribution")
         .arg(&options.distro_name)
+        .arg("--user")
+        .arg(&options.user)
         .arg("--cd")
         .arg("~")
         .arg(program)
