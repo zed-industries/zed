@@ -294,10 +294,7 @@ impl Render for AddToolchainState {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let weak = self.weak.upgrade();
-        let label = match self.state {
-            AddState::Path { .. } => SharedString::new_static("Set Path"),
-            AddState::Name { .. } => SharedString::new_static("Set Name"),
-        };
+        let label = SharedString::new_static("Add");
         v_flex()
             .size_full()
             .rounded_md()
@@ -339,25 +336,15 @@ impl Render for AddToolchainState {
                             .w_full()
                             .bg(theme.colors().background)
                             .p_2()
-                            .justify_end()
+                            .justify_between()
                             .map(|this| {
                                 let is_disabled = editor.read(cx).is_empty(cx);
 
-                                let (error, confirm_underway) = match &self.state {
-                                    AddState::Path {
-                                        error,
-                                        input_state: confirm_task,
-                                        ..
-                                    } => (error.clone(), true), // todo
-                                    _ => (None, false),
-                                };
-                                this.when_some(error, |this, error| {
-                                    this.justify_between().child(
-                                        Label::new(error)
-                                            .color(Color::Error)
-                                            .size(LabelSize::Small),
-                                    )
-                                })
+                                this.child(
+                                    Label::new("Name")
+                                        .color(Color::Disabled)
+                                        .size(LabelSize::Small),
+                                )
                                 .child(
                                     Button::new("add-toolchain", label)
                                         .key_binding(KeyBinding::for_action(
@@ -370,7 +357,7 @@ impl Render for AddToolchainState {
                                         }))
                                         .disabled(is_disabled)
                                         .map(|this| {
-                                            if confirm_underway {
+                                            if false {
                                                 this.with_animation(
                                                     "inspecting-user-toolchain",
                                                     Animation::new(Duration::from_millis(500))
