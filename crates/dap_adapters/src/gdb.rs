@@ -1,9 +1,9 @@
-use std::{collections::HashMap, ffi::OsStr};
-
 use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
+use collections::HashMap;
 use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use gpui::AsyncApp;
+use std::ffi::OsStr;
 use task::{DebugScenario, ZedDebugConfig};
 
 use crate::*;
@@ -13,6 +13,14 @@ pub(crate) struct GdbDebugAdapter;
 
 impl GdbDebugAdapter {
     const ADAPTER_NAME: &'static str = "GDB";
+}
+
+/// Ensures that "-i=dap" is present in the GDB argument list.
+fn ensure_dap_interface(mut gdb_args: Vec<String>) -> Vec<String> {
+    if !gdb_args.iter().any(|arg| arg.trim() == "-i=dap") {
+        gdb_args.insert(0, "-i=dap".to_string());
+    }
+    gdb_args
 }
 
 #[async_trait(?Send)]
@@ -98,6 +106,18 @@ impl DebugAdapter for GdbDebugAdapter {
                                     "type": "string",
                                     "description": "Working directory for the debugged program. GDB will change its working directory to this directory."
                                 },
+                                "gdb_path": {
+                                    "type": "string",
+                                    "description": "Alternertive path to the GDB executable, if the one in standart path is not disireable"
+                                },
+                                "gdb_args": {
+                                    "type": "array",
+                                    "items": {
+                                        "type":"string"
+                                    },
+                                    "description": "aditional arguments given to GDB at startup, not the program debugged",
+                                    "default": []
+                                },
                                 "env": {
                                     "type": "object",
                                     "description": "Environment variables for the debugged program. Each key is the name of an environment variable; each value is the value of that variable."
@@ -162,21 +182,49 @@ impl DebugAdapter for GdbDebugAdapter {
         user_args: Option<Vec<String>>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
-        let user_setting_path = user_installed_path
-            .filter(|p| p.exists())
-            .and_then(|p| p.to_str().map(|s| s.to_string()));
+        // Try to get gdb_path from config
+        let gdb_path_from_config = config
+            .config
+            .get("gdb_path")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
 
-        let gdb_path = delegate
-            .which(OsStr::new("gdb"))
-            .await
-            .and_then(|p| p.to_str().map(|s| s.to_string()))
-            .context("Could not find gdb in path");
+        let gdb_path = if let Some(path) = gdb_path_from_config {
+            path
+        } else {
+            // Original logic: use user_installed_path or search in system path
+            let user_setting_path = user_installed_path
+                .filter(|p| p.exists())
+                .and_then(|p| p.to_str().map(|s| s.to_string()));
 
-        if gdb_path.is_err() && user_setting_path.is_none() {
-            bail!("Could not find gdb path or it's not installed");
-        }
+            let gdb_path_result = delegate
+                .which(OsStr::new("gdb"))
+                .await
+                .and_then(|p| p.to_str().map(|s| s.to_string()))
+                .context("Could not find gdb in path");
 
-        let gdb_path = user_setting_path.unwrap_or(gdb_path?);
+            if gdb_path_result.is_err() && user_setting_path.is_none() {
+                bail!("Could not find gdb path or it's not installed");
+            }
+
+            user_setting_path.unwrap_or_else(|| gdb_path_result.unwrap())
+        };
+
+        // Arguments: use gdb_args from config if present, else user_args, else default
+        let gdb_args = {
+            let args = config
+                .config
+                .get("gdb_args")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect::<Vec<_>>()
+                })
+                .or(user_args)
+                .unwrap_or_else(|| vec!["-i=dap".into()]);
+            ensure_dap_interface(args)
+        };
 
         let mut configuration = config.config.clone();
         if let Some(configuration) = configuration.as_object_mut() {
@@ -185,10 +233,22 @@ impl DebugAdapter for GdbDebugAdapter {
                 .or_insert_with(|| delegate.worktree_root_path().to_string_lossy().into());
         }
 
+        // Extract env from config if present, ensuring type matches HashMap<String, String, FxBuildHasher>
+        let envs: HashMap<String, String> = config
+            .config
+            .get("env")
+            .and_then(|v| v.as_object())
+            .map(|obj| {
+                obj.iter()
+                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                    .collect::<HashMap<String, String>>()
+            })
+            .unwrap_or_else(HashMap::default);
+
         Ok(DebugAdapterBinary {
             command: Some(gdb_path),
-            arguments: user_args.unwrap_or_else(|| vec!["-i=dap".into()]),
-            envs: HashMap::default(),
+            arguments: gdb_args,
+            envs,
             cwd: Some(delegate.worktree_root_path().to_path_buf()),
             connection: None,
             request_args: StartDebuggingRequestArguments {
