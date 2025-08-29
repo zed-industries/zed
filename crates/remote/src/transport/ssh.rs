@@ -30,10 +30,7 @@ use std::{
     time::Instant,
 };
 use tempfile::TempDir;
-use util::{
-    get_default_system_shell,
-    paths::{PathStyle, RemotePathBuf},
-};
+use util::paths::{PathStyle, RemotePathBuf};
 
 pub(crate) struct SshRemoteConnection {
     socket: SshSocket,
@@ -116,7 +113,6 @@ impl RemoteConnection for SshRemoteConnection {
         input_args: &[String],
         input_env: &HashMap<String, String>,
         working_dir: Option<String>,
-        activation_script: Option<String>,
         port_forward: Option<(u16, String, u16)>,
     ) -> Result<CommandTemplate> {
         use std::fmt::Write as _;
@@ -129,18 +125,16 @@ impl RemoteConnection for SshRemoteConnection {
             // shlex will wrap the command in single quotes (''), disabling ~ expansion,
             // replace ith with something that works
             const TILDE_PREFIX: &'static str = "~/";
-            if working_dir.starts_with(TILDE_PREFIX) {
+            let working_dir = if working_dir.starts_with(TILDE_PREFIX) {
                 let working_dir = working_dir.trim_start_matches("~").trim_start_matches("/");
-                write!(&mut script, "cd \"$HOME/{working_dir}\"; ").unwrap();
+                format!("$HOME/{working_dir}")
             } else {
-                write!(&mut script, "cd \"{working_dir}\"; ").unwrap();
-            }
+                working_dir
+            };
+            write!(&mut script, "cd \"{working_dir}\"; ",).unwrap();
         } else {
             write!(&mut script, "cd; ").unwrap();
         };
-        if let Some(activation_script) = activation_script {
-            write!(&mut script, " {activation_script};").unwrap();
-        }
 
         for (k, v) in input_env.iter() {
             if let Some((k, v)) = shlex::try_quote(k).ok().zip(shlex::try_quote(v).ok()) {
@@ -162,8 +156,7 @@ impl RemoteConnection for SshRemoteConnection {
             write!(&mut script, "exec {shell} -l").unwrap();
         };
 
-        let sys_shell = get_default_system_shell();
-        let shell_invocation = format!("{sys_shell} -c {}", shlex::try_quote(&script).unwrap());
+        let shell_invocation = format!("{shell} -c {}", shlex::try_quote(&script).unwrap());
 
         let mut args = Vec::new();
         args.extend(self.socket.ssh_args());
@@ -902,7 +895,7 @@ impl SshRemoteConnection {
             // On Windows, the binding needs to be set to the canonical path
             #[cfg(target_os = "windows")]
             let src =
-                SanitizedPath::from(smol::fs::canonicalize("./target").await?).to_glob_string();
+                SanitizedPath::new(&smol::fs::canonicalize("./target").await?).to_glob_string();
             #[cfg(not(target_os = "windows"))]
             let src = "./target";
             run_cmd(

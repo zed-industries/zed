@@ -14,7 +14,7 @@ use ui::{Context, Window};
 use workspace::{Item, ItemHandle, SplitDirection, Workspace};
 
 pub fn init(cx: &mut App) {
-    lsp_log_view::init(true, cx);
+    lsp_log_view::init(false, cx);
     syntax_tree_view::init(cx);
     key_context_view::init(cx);
 }

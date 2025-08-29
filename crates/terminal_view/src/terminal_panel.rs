@@ -485,7 +485,7 @@ impl TerminalPanel {
             .detach_and_log_err(cx);
     }
 
-    fn spawn_task(
+    pub fn spawn_task(
         &mut self,
         task: &SpawnInTerminal,
         window: &mut Window,

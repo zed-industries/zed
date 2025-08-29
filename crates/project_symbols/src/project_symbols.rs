@@ -437,7 +437,7 @@ mod tests {
             deprecated: None,
             container_name: None,
             location: lsp::Location::new(
-                lsp::Url::from_file_path(path.as_ref()).unwrap(),
+                lsp::Uri::from_file_path(path.as_ref()).unwrap(),
                 lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
             ),
         }

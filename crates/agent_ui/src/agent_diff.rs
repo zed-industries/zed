@@ -10,6 +10,7 @@ use editor::{
     Direction, Editor, EditorEvent, EditorSettings, MultiBuffer, MultiBufferSnapshot,
     SelectionEffects, ToPoint,
     actions::{GoToHunk, GoToPreviousHunk},
+    multibuffer_context_lines,
     scroll::Autoscroll,
 };
 use gpui::{
@@ -257,7 +258,7 @@ impl AgentDiffPane {
                         path_key.clone(),
                         buffer.clone(),
                         diff_hunk_ranges,
-                        editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                        multibuffer_context_lines(cx),
                         cx,
                     );
                     multibuffer.add_diff(diff_handle, cx);

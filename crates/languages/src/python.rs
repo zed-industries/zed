@@ -34,7 +34,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{TaskTemplate, TaskTemplates, VariableName};
+use task::{ShellKind, TaskTemplate, TaskTemplates, VariableName};
 use util::ResultExt;
 
 pub(crate) struct PyprojectTomlManifestProvider;
@@ -328,41 +328,35 @@ impl LspAdapter for PythonLspAdapter {
                     .unwrap_or_default();
 
             // If we have a detected toolchain, configure Pyright to use it
-            if let Some(toolchain) = toolchain {
+            if let Some(toolchain) = toolchain
+                && let Ok(env) = serde_json::from_value::<
+                    pet_core::python_environment::PythonEnvironment,
+                >(toolchain.as_json.clone())
+            {
                 if user_settings.is_null() {
                     user_settings = Value::Object(serde_json::Map::default());
                 }
                 let object = user_settings.as_object_mut().unwrap();
 
                 let interpreter_path = toolchain.path.to_string();
+                if let Some(venv_dir) = env.prefix {
+                    // Set venvPath and venv at the root level
+                    // This matches the format of a pyrightconfig.json file
+                    if let Some(parent) = venv_dir.parent() {
+                        // Use relative path if the venv is inside the workspace
+                        let venv_path = if parent == adapter.worktree_root_path() {
+                            ".".to_string()
+                        } else {
+                            parent.to_string_lossy().into_owned()
+                        };
+                        object.insert("venvPath".to_string(), Value::String(venv_path));
+                    }
 
-                // Detect if this is a virtual environment
-                if let Some(interpreter_dir) = Path::new(&interpreter_path).parent()
-                    && let Some(venv_dir) = interpreter_dir.parent()
-                {
-                    // Check if this looks like a virtual environment
-                    if venv_dir.join("pyvenv.cfg").exists()
-                        || venv_dir.join("bin/activate").exists()
-                        || venv_dir.join("Scripts/activate.bat").exists()
-                    {
-                        // Set venvPath and venv at the root level
-                        // This matches the format of a pyrightconfig.json file
-                        if let Some(parent) = venv_dir.parent() {
-                            // Use relative path if the venv is inside the workspace
-                            let venv_path = if parent == adapter.worktree_root_path() {
-                                ".".to_string()
-                            } else {
-                                parent.to_string_lossy().into_owned()
-                            };
-                            object.insert("venvPath".to_string(), Value::String(venv_path));
-                        }
-
-                        if let Some(venv_name) = venv_dir.file_name() {
-                            object.insert(
-                                "venv".to_owned(),
-                                Value::String(venv_name.to_string_lossy().into_owned()),
-                            );
-                        }
+                    if let Some(venv_name) = venv_dir.file_name() {
+                        object.insert(
+                            "venv".to_owned(),
+                            Value::String(venv_name.to_string_lossy().into_owned()),
+                        );
                     }
                 }
 
@@ -894,20 +888,66 @@ impl ToolchainLister for PythonToolchainProvider {
     fn term(&self) -> SharedString {
         self.term.clone()
     }
-    async fn activation_script(&self, toolchain: &Toolchain, fs: &dyn Fs) -> Option<String> {
-        let toolchain = serde_json::from_value::<pet_core::python_environment::PythonEnvironment>(
+    async fn activation_script(
+        &self,
+        toolchain: &Toolchain,
+        shell: ShellKind,
+        fs: &dyn Fs,
+    ) -> Vec<String> {
+        let Ok(toolchain) = serde_json::from_value::<pet_core::python_environment::PythonEnvironment>(
             toolchain.as_json.clone(),
-        )
-        .ok()?;
-        let mut activation_script = None;
-        if let Some(prefix) = &toolchain.prefix {
-            #[cfg(not(target_os = "windows"))]
-            let path = prefix.join(BINARY_DIR).join("activate");
-            #[cfg(target_os = "windows")]
-            let path = prefix.join(BINARY_DIR).join("activate.ps1");
-            if fs.is_file(&path).await {
-                activation_script = Some(format!(". {}", path.display()));
+        ) else {
+            return vec![];
+        };
+        let mut activation_script = vec![];
+
+        match toolchain.kind {
+            Some(PythonEnvironmentKind::Pixi) => {
+                let env = toolchain.name.as_deref().unwrap_or("default");
+                activation_script.push(format!("pixi shell -e {env}"))
             }
+            Some(PythonEnvironmentKind::Venv | PythonEnvironmentKind::VirtualEnv) => {
+                if let Some(prefix) = &toolchain.prefix {
+                    let activate_keyword = match shell {
+                        ShellKind::Cmd => ".",
+                        ShellKind::Nushell => "overlay use",
+                        ShellKind::Powershell => ".",
+                        ShellKind::Fish => "source",
+                        ShellKind::Csh => "source",
+                        ShellKind::Posix => "source",
+                    };
+                    let activate_script_name = match shell {
+                        ShellKind::Posix => "activate",
+                        ShellKind::Csh => "activate.csh",
+                        ShellKind::Fish => "activate.fish",
+                        ShellKind::Nushell => "activate.nu",
+                        ShellKind::Powershell => "activate.ps1",
+                        ShellKind::Cmd => "activate.bat",
+                    };
+                    let path = prefix.join(BINARY_DIR).join(activate_script_name);
+                    if fs.is_file(&path).await {
+                        activation_script
+                            .push(format!("{activate_keyword} \"{}\"", path.display()));
+                    }
+                }
+            }
+            Some(PythonEnvironmentKind::Pyenv) => {
+                let Some(manager) = toolchain.manager else {
+                    return vec![];
+                };
+                let version = toolchain.version.as_deref().unwrap_or("system");
+                let pyenv = manager.executable;
+                let pyenv = pyenv.display();
+                activation_script.extend(match shell {
+                    ShellKind::Fish => Some(format!("\"{pyenv}\" shell - fish {version}")),
+                    ShellKind::Posix => Some(format!("\"{pyenv}\" shell - sh {version}")),
+                    ShellKind::Nushell => Some(format!("\"{pyenv}\" shell - nu {version}")),
+                    ShellKind::Powershell => None,
+                    ShellKind::Csh => None,
+                    ShellKind::Cmd => None,
+                })
+            }
+            _ => {}
         }
         activation_script
     }
@@ -1063,10 +1103,10 @@ impl LspAdapter for PyLspAdapter {
                 arguments: vec![],
             })
         } else {
-            let venv = toolchain?;
-            let pylsp_path = Path::new(venv.path.as_ref()).parent()?.join("pylsp");
+            let toolchain = toolchain?;
+            let pylsp_path = Path::new(toolchain.path.as_ref()).parent()?.join("pylsp");
             pylsp_path.exists().then(|| LanguageServerBinary {
-                path: venv.path.to_string().into(),
+                path: toolchain.path.to_string().into(),
                 arguments: vec![pylsp_path.into()],
                 env: None,
             })
@@ -1530,41 +1570,35 @@ impl LspAdapter for BasedPyrightLspAdapter {
                     .unwrap_or_default();
 
             // If we have a detected toolchain, configure Pyright to use it
-            if let Some(toolchain) = toolchain {
+            if let Some(toolchain) = toolchain
+                && let Ok(env) = serde_json::from_value::<
+                    pet_core::python_environment::PythonEnvironment,
+                >(toolchain.as_json.clone())
+            {
                 if user_settings.is_null() {
                     user_settings = Value::Object(serde_json::Map::default());
                 }
                 let object = user_settings.as_object_mut().unwrap();
 
                 let interpreter_path = toolchain.path.to_string();
+                if let Some(venv_dir) = env.prefix {
+                    // Set venvPath and venv at the root level
+                    // This matches the format of a pyrightconfig.json file
+                    if let Some(parent) = venv_dir.parent() {
+                        // Use relative path if the venv is inside the workspace
+                        let venv_path = if parent == adapter.worktree_root_path() {
+                            ".".to_string()
+                        } else {
+                            parent.to_string_lossy().into_owned()
+                        };
+                        object.insert("venvPath".to_string(), Value::String(venv_path));
+                    }
 
-                // Detect if this is a virtual environment
-                if let Some(interpreter_dir) = Path::new(&interpreter_path).parent()
-                    && let Some(venv_dir) = interpreter_dir.parent()
-                {
-                    // Check if this looks like a virtual environment
-                    if venv_dir.join("pyvenv.cfg").exists()
-                        || venv_dir.join("bin/activate").exists()
-                        || venv_dir.join("Scripts/activate.bat").exists()
-                    {
-                        // Set venvPath and venv at the root level
-                        // This matches the format of a pyrightconfig.json file
-                        if let Some(parent) = venv_dir.parent() {
-                            // Use relative path if the venv is inside the workspace
-                            let venv_path = if parent == adapter.worktree_root_path() {
-                                ".".to_string()
-                            } else {
-                                parent.to_string_lossy().into_owned()
-                            };
-                            object.insert("venvPath".to_string(), Value::String(venv_path));
-                        }
-
-                        if let Some(venv_name) = venv_dir.file_name() {
-                            object.insert(
-                                "venv".to_owned(),
-                                Value::String(venv_name.to_string_lossy().into_owned()),
-                            );
-                        }
+                    if let Some(venv_name) = venv_dir.file_name() {
+                        object.insert(
+                            "venv".to_owned(),
+                            Value::String(venv_name.to_string_lossy().into_owned()),
+                        );
                     }
                 }
 
