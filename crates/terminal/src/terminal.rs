@@ -432,7 +432,6 @@ impl TerminalBuilder {
                 // Don't know what the correct value for Zed to use here is, just making it compile for now.
                 #[cfg(target_os = "windows")]
                 escape_args: false,
-
             }
         };
 
