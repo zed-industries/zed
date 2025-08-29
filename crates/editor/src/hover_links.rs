@@ -200,15 +200,14 @@ impl Editor {
                 .symbol_range
                 .point_within_range(&TriggerPoint::Text(selection), &snapshot)
         }) {
-            popover.scroll(&amount, window, cx);
-            return true;
-        };
-        if let Some(context_menu) = self.context_menu.borrow_mut().as_mut() {
+            popover.scroll(amount, window, cx);
+            true
+        } else if let Some(context_menu) = self.context_menu.borrow_mut().as_mut() {
             context_menu.scroll_aside(amount, window, cx);
-            return true;
+            true
+        } else {
+            false
         }
-
-        return false;
     }
 
     fn cmd_click_reveal_task(
