@@ -328,41 +328,35 @@ impl LspAdapter for PythonLspAdapter {
                     .unwrap_or_default();
 
             // If we have a detected toolchain, configure Pyright to use it
-            if let Some(toolchain) = toolchain {
+            if let Some(toolchain) = toolchain
+                && let Ok(env) = serde_json::from_value::<
+                    pet_core::python_environment::PythonEnvironment,
+                >(toolchain.as_json.clone())
+            {
                 if user_settings.is_null() {
                     user_settings = Value::Object(serde_json::Map::default());
                 }
                 let object = user_settings.as_object_mut().unwrap();
 
                 let interpreter_path = toolchain.path.to_string();
+                if let Some(venv_dir) = env.prefix {
+                    // Set venvPath and venv at the root level
+                    // This matches the format of a pyrightconfig.json file
+                    if let Some(parent) = venv_dir.parent() {
+                        // Use relative path if the venv is inside the workspace
+                        let venv_path = if parent == adapter.worktree_root_path() {
+                            ".".to_string()
+                        } else {
+                            parent.to_string_lossy().into_owned()
+                        };
+                        object.insert("venvPath".to_string(), Value::String(venv_path));
+                    }
 
-                // Detect if this is a virtual environment
-                if let Some(interpreter_dir) = Path::new(&interpreter_path).parent()
-                    && let Some(venv_dir) = interpreter_dir.parent()
-                {
-                    // Check if this looks like a virtual environment
-                    if venv_dir.join("pyvenv.cfg").exists()
-                        || venv_dir.join("bin/activate").exists()
-                        || venv_dir.join("Scripts/activate.bat").exists()
-                    {
-                        // Set venvPath and venv at the root level
-                        // This matches the format of a pyrightconfig.json file
-                        if let Some(parent) = venv_dir.parent() {
-                            // Use relative path if the venv is inside the workspace
-                            let venv_path = if parent == adapter.worktree_root_path() {
-                                ".".to_string()
-                            } else {
-                                parent.to_string_lossy().into_owned()
-                            };
-                            object.insert("venvPath".to_string(), Value::String(venv_path));
-                        }
-
-                        if let Some(venv_name) = venv_dir.file_name() {
-                            object.insert(
-                                "venv".to_owned(),
-                                Value::String(venv_name.to_string_lossy().into_owned()),
-                            );
-                        }
+                    if let Some(venv_name) = venv_dir.file_name() {
+                        object.insert(
+                            "venv".to_owned(),
+                            Value::String(venv_name.to_string_lossy().into_owned()),
+                        );
                     }
                 }
 
@@ -932,7 +926,8 @@ impl ToolchainLister for PythonToolchainProvider {
                     };
                     let path = prefix.join(BINARY_DIR).join(activate_script_name);
                     if fs.is_file(&path).await {
-                        activation_script.push(format!("{activate_keyword} {}", path.display()));
+                        activation_script
+                            .push(format!("{activate_keyword} \"{}\"", path.display()));
                     }
                 }
             }
@@ -944,9 +939,9 @@ impl ToolchainLister for PythonToolchainProvider {
                 let pyenv = manager.executable;
                 let pyenv = pyenv.display();
                 activation_script.extend(match shell {
-                    ShellKind::Fish => Some(format!("{pyenv} shell - fish {version}")),
-                    ShellKind::Posix => Some(format!("{pyenv} shell - sh {version}")),
-                    ShellKind::Nushell => Some(format!("{pyenv} shell - nu {version}")),
+                    ShellKind::Fish => Some(format!("\"{pyenv}\" shell - fish {version}")),
+                    ShellKind::Posix => Some(format!("\"{pyenv}\" shell - sh {version}")),
+                    ShellKind::Nushell => Some(format!("\"{pyenv}\" shell - nu {version}")),
                     ShellKind::Powershell => None,
                     ShellKind::Csh => None,
                     ShellKind::Cmd => None,
@@ -1108,10 +1103,10 @@ impl LspAdapter for PyLspAdapter {
                 arguments: vec![],
             })
         } else {
-            let venv = toolchain?;
-            let pylsp_path = Path::new(venv.path.as_ref()).parent()?.join("pylsp");
+            let toolchain = toolchain?;
+            let pylsp_path = Path::new(toolchain.path.as_ref()).parent()?.join("pylsp");
             pylsp_path.exists().then(|| LanguageServerBinary {
-                path: venv.path.to_string().into(),
+                path: toolchain.path.to_string().into(),
                 arguments: vec![pylsp_path.into()],
                 env: None,
             })
@@ -1575,41 +1570,35 @@ impl LspAdapter for BasedPyrightLspAdapter {
                     .unwrap_or_default();
 
             // If we have a detected toolchain, configure Pyright to use it
-            if let Some(toolchain) = toolchain {
+            if let Some(toolchain) = toolchain
+                && let Ok(env) = serde_json::from_value::<
+                    pet_core::python_environment::PythonEnvironment,
+                >(toolchain.as_json.clone())
+            {
                 if user_settings.is_null() {
                     user_settings = Value::Object(serde_json::Map::default());
                 }
                 let object = user_settings.as_object_mut().unwrap();
 
                 let interpreter_path = toolchain.path.to_string();
+                if let Some(venv_dir) = env.prefix {
+                    // Set venvPath and venv at the root level
+                    // This matches the format of a pyrightconfig.json file
+                    if let Some(parent) = venv_dir.parent() {
+                        // Use relative path if the venv is inside the workspace
+                        let venv_path = if parent == adapter.worktree_root_path() {
+                            ".".to_string()
+                        } else {
+                            parent.to_string_lossy().into_owned()
+                        };
+                        object.insert("venvPath".to_string(), Value::String(venv_path));
+                    }
 
-                // Detect if this is a virtual environment
-                if let Some(interpreter_dir) = Path::new(&interpreter_path).parent()
-                    && let Some(venv_dir) = interpreter_dir.parent()
-                {
-                    // Check if this looks like a virtual environment
-                    if venv_dir.join("pyvenv.cfg").exists()
-                        || venv_dir.join("bin/activate").exists()
-                        || venv_dir.join("Scripts/activate.bat").exists()
-                    {
-                        // Set venvPath and venv at the root level
-                        // This matches the format of a pyrightconfig.json file
-                        if let Some(parent) = venv_dir.parent() {
-                            // Use relative path if the venv is inside the workspace
-                            let venv_path = if parent == adapter.worktree_root_path() {
-                                ".".to_string()
-                            } else {
-                                parent.to_string_lossy().into_owned()
-                            };
-                            object.insert("venvPath".to_string(), Value::String(venv_path));
-                        }
-
-                        if let Some(venv_name) = venv_dir.file_name() {
-                            object.insert(
-                                "venv".to_owned(),
-                                Value::String(venv_name.to_string_lossy().into_owned()),
-                            );
-                        }
+                    if let Some(venv_name) = venv_dir.file_name() {
+                        object.insert(
+                            "venv".to_owned(),
+                            Value::String(venv_name.to_string_lossy().into_owned()),
+                        );
                     }
                 }
 
