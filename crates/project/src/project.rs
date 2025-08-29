@@ -114,7 +114,7 @@ use terminals::Terminals;
 use text::{Anchor, BufferId, OffsetRangeExt, Point, Rope};
 use toolchain_store::EmptyToolchainStore;
 use util::{
-    ResultExt as _,
+    ResultExt as _, maybe,
     paths::{PathStyle, RemotePathBuf, SanitizedPath, compare_paths},
 };
 use worktree::{CreatedEntry, Snapshot, Traversal};
@@ -3358,6 +3358,14 @@ impl Project {
             .map(|lister| lister.meta())
     }
 
+    pub fn add_toolchain(&self, toolchain: Toolchain, cx: &mut Context<Self>) {
+        maybe!({
+            self.toolchain_store.as_ref()?.update(cx, |this, cx| {
+                this.add_toolchain(toolchain);
+            });
+            Some(())
+        });
+    }
     pub fn resolve_toolchain(
         &self,
         path: PathBuf,

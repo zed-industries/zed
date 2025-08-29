@@ -279,6 +279,9 @@ impl AddToolchainState {
             return;
         }
         toolchain.name = SharedString::from(text);
+        self.project.update(cx, |this, cx| {
+            this.add_toolchain(toolchain.clone(), cx);
+        });
     }
 }
 impl Focusable for AddToolchainState {

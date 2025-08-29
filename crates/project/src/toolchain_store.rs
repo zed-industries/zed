@@ -97,6 +97,11 @@ impl ToolchainStore {
             }
         }
     }
+
+    pub(crate) fn add_toolchain(&mut self, toolchain: Toolchain) {
+        self.user_toolchains.insert(toolchain);
+    }
+
     pub(crate) fn resolve_toolchain(
         &self,
         abs_path: PathBuf,
