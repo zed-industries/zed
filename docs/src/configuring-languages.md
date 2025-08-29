@@ -107,6 +107,7 @@ Zed simplifies language server management for users:
 1. Automatic Download: When you open a file with a matching file type, Zed automatically downloads the appropriate language server. Zed may prompt you to install an extension for known file types.
 
 2. Storage Location:
+
    - macOS: `~/Library/Application Support/Zed/languages`
    - Linux: `$XDG_DATA_HOME/languages`, `$FLATPAK_XDG_DATA_HOME/languages`, or `$HOME/.local/share`
 
