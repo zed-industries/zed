@@ -113,7 +113,7 @@ impl AgentServerDelegate {
 
                 versions.sort();
                 let newest_version = if let Some((version, file_name)) = versions.last().cloned()
-                    && minimum_version.is_none_or(|minimum_version| version > minimum_version)
+                    && minimum_version.is_none_or(|minimum_version| version >= minimum_version)
                 {
                     versions.pop();
                     Some(file_name)
