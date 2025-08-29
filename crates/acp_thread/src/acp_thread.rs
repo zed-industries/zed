@@ -1879,7 +1879,6 @@ impl AcpThread {
             command.push_str(&arg);
         }
 
-        // todo!("should we let the agent take care of the command sanitization?")
         let shell_command = if cfg!(windows) {
             format!("$null | & {{{}}}", command.replace("\"", "'"))
         } else if let Some(cwd) = cwd.as_ref().and_then(|cwd| cwd.as_os_str().to_str()) {
