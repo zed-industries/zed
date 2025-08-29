@@ -1491,7 +1491,7 @@ fn reload_keymaps(cx: &mut App, mut user_key_bindings: Vec<KeyBinding>) {
         workspace::NewWindow,
     )]);
     // todo: nicer api here?
-    settings_ui::keybindings::KeymapEventChannel::trigger_keymap_changed(cx);
+    keymap_editor::KeymapEventChannel::trigger_keymap_changed(cx);
 }
 
 pub fn load_default_keymap(cx: &mut App) {

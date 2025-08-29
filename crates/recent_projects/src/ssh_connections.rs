@@ -20,7 +20,7 @@ use remote::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsSources, SettingsUi};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Color, Context, Icon, IconName, IconSize, InteractiveElement, IntoElement, Label,
@@ -29,7 +29,7 @@ use ui::{
 use util::serde::default_true;
 use workspace::{AppState, ModalView, Workspace};
 
-#[derive(Deserialize)]
+#[derive(Deserialize, SettingsUi)]
 pub struct SshSettings {
     pub ssh_connections: Option<Vec<SshConnection>>,
     /// Whether to read ~/.ssh/config for ssh connection sources.
