@@ -51,7 +51,6 @@ Credentials for various services used in this process can be found in 1Password.
    - We sometimes correct things here and there that didn't translate from GitHub's renderer to Kit's.
 
 1. Build social media posts based on the popular items in stable.
-
    - You can use the [prior week's post chain](https://zed.dev/channel/tweets-23331) as your outline.
    - Stage the copy and assets using [Buffer](https://buffer.com), for both X and BlueSky.
    - Publish both, one at a time, ensuring both are posted to each respective platform.
@@ -89,7 +88,6 @@ You will need write access to the Zed repository to do this:
    - Download the artifacts for each release draft and test that you can run them locally.
 
 1. Publish stable / preview drafts, one at a time.
-
    - Use [Vercel](https://vercel.com/zed-industries/zed-dev) to check the progress of the website rebuild.
      The release will be public once the rebuild has completed.
 

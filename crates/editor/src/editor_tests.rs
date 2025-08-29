@@ -19867,7 +19867,7 @@ async fn test_display_diff_hunks(cx: &mut TestAppContext) {
                 PathKey::namespaced(0, buffer.read(cx).file().unwrap().path().clone()),
                 buffer.clone(),
                 vec![text::Anchor::MIN.to_point(&snapshot)..text::Anchor::MAX.to_point(&snapshot)],
-                DEFAULT_MULTIBUFFER_CONTEXT,
+                2,
                 cx,
             );
         }

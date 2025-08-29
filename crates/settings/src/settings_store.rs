@@ -104,6 +104,18 @@ pub trait Settings: 'static + Send + Sync {
     }
 
     #[track_caller]
+    fn try_get(cx: &App) -> Option<&Self>
+    where
+        Self: Sized,
+    {
+        if cx.has_global::<SettingsStore>() {
+            cx.global::<SettingsStore>().try_get(None)
+        } else {
+            None
+        }
+    }
+
+    #[track_caller]
     fn try_read_global<R>(cx: &AsyncApp, f: impl FnOnce(&Self) -> R) -> Option<R>
     where
         Self: Sized,
@@ -405,6 +417,17 @@ impl SettingsStore {
             .value_for_path(path)
             .downcast_ref::<T>()
             .expect("no default value for setting type")
+    }
+
+    /// Get the value of a setting.
+    ///
+    /// Panics if the given setting type has not been registered, or if there is no
+    /// value for this setting.
+    pub fn try_get<T: Settings>(&self, path: Option<SettingsLocation>) -> Option<&T> {
+        self.setting_values
+            .get(&TypeId::of::<T>())
+            .map(|value| value.value_for_path(path))
+            .and_then(|value| value.downcast_ref::<T>())
     }
 
     /// Get all values from project specific settings
