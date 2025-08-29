@@ -18,7 +18,7 @@ If you need extra room to type, you can expand the message editor with {#kb agen
 
 You should start to see the responses stream in with indications of [which tools](./tools.md) the model is using to fulfill your prompt.
 
-> Note that, at the moment, not all features outlined below work for external agents, like [Gemini CLI](./external-agents.md#gemini-cli)—features like _restoring threads from history_, _checkpoints_, _token usage display_, _model selection_, and others may be supported in the future.
+> Note that, at the moment, not all features outlined below work for external agents, like [Gemini CLI](./external-agents.md#gemini-cli) or [Claude Code](./external-agents.md#claude-code)—features like _restoring threads from history_, _checkpoints_, _token usage display_, _model selection_, and others may be supported in the future.
 
 ### Creating New Threads
 
