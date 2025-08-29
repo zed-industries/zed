@@ -17,6 +17,8 @@ pub enum Model {
     FourPointOne,
     #[serde(rename = "openai-o3")]
     O3,
+    #[serde(rename = "gpt-5")]
+    Five,
     #[serde(rename = "grok3")]
     Grok3,
     #[serde(rename = "grok4")]
@@ -62,6 +64,7 @@ impl Model {
         match self {
             Self::FourPointOne => "oca/gpt-4.1",
             Self::O3 => "oca/openai-o3",
+            Self::Five => "oca/gpt5",
             Self::Grok3 => "oca/grok3",
             Self::Grok4 => "oca/grok4",
             Self::Llama4 => "oca/llama4",
@@ -73,6 +76,7 @@ impl Model {
         match self {
             Self::FourPointOne => "OpenAI GPT-4.1",
             Self::O3 => "OpenAI O3",
+            Self::Five => "OpenAI GPT 5",
             Self::Grok3 => "Grok 3",
             Self::Grok4 => "Grok 4",
             Self::Llama4 => "Llama 4",
@@ -84,7 +88,7 @@ impl Model {
 
     pub fn model_vendor(&self) -> ModelVendor {
         match self {
-            Self::FourPointOne | Self::O3 => ModelVendor::OpenAI,
+            Self::FourPointOne | Self::O3 | Self::Five => ModelVendor::OpenAI,
             Self::Grok3 | Self::Grok4 => ModelVendor::XAi,
             Self::Llama4 => ModelVendor::Meta,
             // Assume custom models are OpenAI compatible
@@ -96,6 +100,7 @@ impl Model {
         match self {
             Self::FourPointOne => 1_047_576,
             Self::O3 => 200_000,
+            Self::Five => 272_000,
             Self::Grok3 => 131_072,
             Self::Grok4 => 256_000,
             Self::Llama4 => 128_000,
@@ -110,6 +115,7 @@ impl Model {
             } => *max_output_tokens,
             Self::FourPointOne => Some(32_768),
             Self::O3 => Some(100_000),
+            Self::Five => Some(128_000),
             Self::Grok3 => Some(8_192),
             Self::Grok4 => Some(64_000),
             Self::Llama4 => None,
@@ -130,7 +136,7 @@ impl Model {
     /// If the model does not support the parameter, do not pass it up, or the API will return an error.
     pub fn supports_parallel_tool_calls(&self) -> bool {
         match self {
-            Self::FourPointOne | Self::Grok3 | Self::Grok4 | Self::Llama4 => true,
+            Self::FourPointOne | Self::Grok3 | Self::Grok4 | Self::Llama4 | Self::Five => true,
             Self::O3 | Model::Custom { .. } => false,
         }
     }
@@ -140,7 +146,7 @@ impl Model {
     /// If the model does not support the parameter, do not pass it up.
     pub fn supports_prompt_cache_key(&self) -> bool {
         match self {
-            Self::FourPointOne | Self::O3 => true,
+            Self::FourPointOne | Self::O3 | Self::Five => true,
             Self::Grok3 | Self::Grok4 | Self::Llama4 | Model::Custom { .. } => false,
         }
     }
