@@ -331,6 +331,7 @@ impl AgentConfiguration {
                             .gap_0p5()
                             .child(
                                 h_flex()
+                                    .pr_1()
                                     .w_full()
                                     .gap_2()
                                     .justify_between()
@@ -1022,6 +1023,7 @@ impl AgentConfiguration {
                             .gap_0p5()
                             .child(
                                 h_flex()
+                                    .pr_1()
                                     .w_full()
                                     .gap_2()
                                     .justify_between()
