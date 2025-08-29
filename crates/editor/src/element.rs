@@ -82,6 +82,7 @@ use std::{
 use sum_tree::Bias;
 use text::{BufferId, SelectionGoal};
 use theme::{ActiveTheme, Appearance, BufferLineHeight, PlayerColor};
+use ui::utils::ensure_minimum_contrast;
 use ui::{
     ButtonLike, ContextMenu, Indicator, KeyBinding, POPOVER_Y_PADDING, Tooltip, h_flex, prelude::*,
     right_click_menu,
@@ -3260,12 +3261,161 @@ impl EditorElement {
             .collect()
     }
 
+    fn bg_segments_per_row(
+        rows: Range<DisplayRow>,
+        selections: &[(PlayerColor, Vec<SelectionLayout>)],
+        highlight_ranges: &[(Range<DisplayPoint>, Hsla)],
+        base_background: Hsla,
+    ) -> Vec<Vec<(Range<DisplayPoint>, Hsla)>> {
+        if rows.start >= rows.end {
+            return Vec::new();
+        }
+        let highlight_iter = highlight_ranges.iter().cloned();
+        let selection_iter = selections.iter().flat_map(|(player_color, layouts)| {
+            let color = player_color.selection;
+            layouts.iter().filter_map(move |selection_layout| {
+                if selection_layout.range.start != selection_layout.range.end {
+                    Some((selection_layout.range.clone(), color))
+                } else {
+                    None
+                }
+            })
+        });
+        let mut per_row_map = vec![Vec::new(); rows.len()];
+        for (range, color) in highlight_iter.chain(selection_iter) {
+            let covered_rows = if range.end.column() == 0 {
+                cmp::max(range.start.row(), rows.start)..cmp::min(range.end.row(), rows.end)
+            } else {
+                cmp::max(range.start.row(), rows.start)
+                    ..cmp::min(range.end.row().next_row(), rows.end)
+            };
+            for row in covered_rows.iter_rows() {
+                let seg_start = if row == range.start.row() {
+                    range.start
+                } else {
+                    DisplayPoint::new(row, 0)
+                };
+                let seg_end = if row == range.end.row() && range.end.column() != 0 {
+                    range.end
+                } else {
+                    DisplayPoint::new(row, u32::MAX)
+                };
+                let ix = row.minus(rows.start) as usize;
+                debug_assert!(row >= rows.start && row < rows.end);
+                debug_assert!(ix < per_row_map.len());
+                per_row_map[ix].push((seg_start..seg_end, color));
+            }
+        }
+        for row_segments in per_row_map.iter_mut() {
+            if row_segments.is_empty() {
+                continue;
+            }
+            let segments = mem::take(row_segments);
+            let merged = Self::merge_overlapping_ranges(segments, base_background);
+            *row_segments = merged;
+        }
+        per_row_map
+    }
+
+    /// Merge overlapping ranges by splitting at all range boundaries and blending colors where
+    /// multiple ranges overlap. The result contains non-overlapping ranges ordered from left to right.
+    ///
+    /// Expects `start.row() == end.row()` for each range.
+    fn merge_overlapping_ranges(
+        ranges: Vec<(Range<DisplayPoint>, Hsla)>,
+        base_background: Hsla,
+    ) -> Vec<(Range<DisplayPoint>, Hsla)> {
+        struct Boundary {
+            pos: DisplayPoint,
+            is_start: bool,
+            index: usize,
+            color: Hsla,
+        }
+
+        let mut boundaries: SmallVec<[Boundary; 16]> = SmallVec::with_capacity(ranges.len() * 2);
+        for (index, (range, color)) in ranges.iter().enumerate() {
+            debug_assert!(
+                range.start.row() == range.end.row(),
+                "expects single-row ranges"
+            );
+            if range.start < range.end {
+                boundaries.push(Boundary {
+                    pos: range.start,
+                    is_start: true,
+                    index,
+                    color: *color,
+                });
+                boundaries.push(Boundary {
+                    pos: range.end,
+                    is_start: false,
+                    index,
+                    color: *color,
+                });
+            }
+        }
+
+        if boundaries.is_empty() {
+            return Vec::new();
+        }
+
+        boundaries
+            .sort_unstable_by(|a, b| a.pos.cmp(&b.pos).then_with(|| a.is_start.cmp(&b.is_start)));
+
+        let mut processed_ranges: Vec<(Range<DisplayPoint>, Hsla)> = Vec::new();
+        let mut active_ranges: SmallVec<[(usize, Hsla); 8]> = SmallVec::new();
+
+        let mut i = 0;
+        let mut start_pos = boundaries[0].pos;
+
+        let boundaries_len = boundaries.len();
+        while i < boundaries_len {
+            let current_boundary_pos = boundaries[i].pos;
+            if start_pos < current_boundary_pos {
+                if !active_ranges.is_empty() {
+                    let mut color = base_background;
+                    for &(_, c) in &active_ranges {
+                        color = Hsla::blend(color, c);
+                    }
+                    if let Some((last_range, last_color)) = processed_ranges.last_mut() {
+                        if *last_color == color && last_range.end == start_pos {
+                            last_range.end = current_boundary_pos;
+                        } else {
+                            processed_ranges.push((start_pos..current_boundary_pos, color));
+                        }
+                    } else {
+                        processed_ranges.push((start_pos..current_boundary_pos, color));
+                    }
+                }
+            }
+            while i < boundaries_len && boundaries[i].pos == current_boundary_pos {
+                let active_range = &boundaries[i];
+                if active_range.is_start {
+                    let idx = active_range.index;
+                    let pos = active_ranges
+                        .binary_search_by_key(&idx, |(i, _)| *i)
+                        .unwrap_or_else(|p| p);
+                    active_ranges.insert(pos, (idx, active_range.color));
+                } else {
+                    let idx = active_range.index;
+                    if let Ok(pos) = active_ranges.binary_search_by_key(&idx, |(i, _)| *i) {
+                        active_ranges.remove(pos);
+                    }
+                }
+                i += 1;
+            }
+            start_pos = current_boundary_pos;
+        }
+
+        processed_ranges
+    }
+
     fn layout_lines(
         rows: Range<DisplayRow>,
         snapshot: &EditorSnapshot,
         style: &EditorStyle,
         editor_width: Pixels,
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
+        bg_segments_per_row: &[Vec<(Range<DisplayPoint>, Hsla)>],
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<LineWithInvisibles> {
@@ -3321,6 +3471,7 @@ impl EditorElement {
                 &snapshot.mode,
                 editor_width,
                 is_row_soft_wrapped,
+                bg_segments_per_row,
                 window,
                 cx,
             )
@@ -7340,6 +7491,7 @@ impl LineWithInvisibles {
         editor_mode: &EditorMode,
         text_width: Pixels,
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
+        bg_segments_per_row: &[Vec<(Range<DisplayPoint>, Hsla)>],
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<Self> {
@@ -7355,6 +7507,7 @@ impl LineWithInvisibles {
         let mut row = 0;
         let mut line_exceeded_max_len = false;
         let font_size = text_style.font_size.to_pixels(window.rem_size());
+        let min_contrast = EditorSettings::get_global(cx).minimum_contrast_for_highlights;
 
         let ellipsis = SharedString::from("⋯");
 
@@ -7367,10 +7520,16 @@ impl LineWithInvisibles {
         }]) {
             if let Some(replacement) = highlighted_chunk.replacement {
                 if !line.is_empty() {
+                    let segments = bg_segments_per_row.get(row).map(|v| &v[..]).unwrap_or(&[]);
+                    let text_runs: &[TextRun] = if segments.is_empty() {
+                        &styles
+                    } else {
+                        &Self::split_runs_by_bg_segments(&styles, segments, min_contrast)
+                    };
                     let shaped_line = window.text_system().shape_line(
                         line.clone().into(),
                         font_size,
-                        &styles,
+                        text_runs,
                         None,
                     );
                     width += shaped_line.width;
@@ -7448,10 +7607,16 @@ impl LineWithInvisibles {
             } else {
                 for (ix, mut line_chunk) in highlighted_chunk.text.split('\n').enumerate() {
                     if ix > 0 {
+                        let segments = bg_segments_per_row.get(row).map(|v| &v[..]).unwrap_or(&[]);
+                        let text_runs = if segments.is_empty() {
+                            &styles
+                        } else {
+                            &Self::split_runs_by_bg_segments(&styles, segments, min_contrast)
+                        };
                         let shaped_line = window.text_system().shape_line(
                             line.clone().into(),
                             font_size,
-                            &styles,
+                            text_runs,
                             None,
                         );
                         width += shaped_line.width;
@@ -7537,6 +7702,81 @@ impl LineWithInvisibles {
         }
 
         layouts
+    }
+
+    /// Takes text runs and non-overlapping left-to-right background ranges with color.
+    /// Returns new text runs with adjusted contrast as per background ranges.
+    fn split_runs_by_bg_segments(
+        text_runs: &[TextRun],
+        bg_segments: &[(Range<DisplayPoint>, Hsla)],
+        min_contrast: f32,
+    ) -> Vec<TextRun> {
+        let mut output_runs: Vec<TextRun> = Vec::with_capacity(text_runs.len());
+        let mut line_col = 0usize;
+        let mut segment_ix = 0usize;
+
+        for text_run in text_runs.iter() {
+            let run_start_col = line_col;
+            let run_end_col = run_start_col + text_run.len;
+            while segment_ix < bg_segments.len()
+                && (bg_segments[segment_ix].0.end.column() as usize) <= run_start_col
+            {
+                segment_ix += 1;
+            }
+            let mut cursor_col = run_start_col;
+            let mut local_segment_ix = segment_ix;
+            while local_segment_ix < bg_segments.len() {
+                let (range, segment_color) = &bg_segments[local_segment_ix];
+                let segment_start_col = range.start.column() as usize;
+                let segment_end_col = range.end.column() as usize;
+                if segment_start_col >= run_end_col {
+                    break;
+                }
+                if segment_start_col > cursor_col {
+                    let span_len = segment_start_col - cursor_col;
+                    output_runs.push(TextRun {
+                        len: span_len,
+                        font: text_run.font.clone(),
+                        color: text_run.color,
+                        background_color: text_run.background_color,
+                        underline: text_run.underline,
+                        strikethrough: text_run.strikethrough,
+                    });
+                    cursor_col = segment_start_col;
+                }
+                let segment_slice_end_col = segment_end_col.min(run_end_col);
+                if segment_slice_end_col > cursor_col {
+                    let new_text_color =
+                        ensure_minimum_contrast(text_run.color, *segment_color, min_contrast);
+                    output_runs.push(TextRun {
+                        len: segment_slice_end_col - cursor_col,
+                        font: text_run.font.clone(),
+                        color: new_text_color,
+                        background_color: text_run.background_color,
+                        underline: text_run.underline,
+                        strikethrough: text_run.strikethrough,
+                    });
+                    cursor_col = segment_slice_end_col;
+                }
+                if segment_end_col >= run_end_col {
+                    break;
+                }
+                local_segment_ix += 1;
+            }
+            if cursor_col < run_end_col {
+                output_runs.push(TextRun {
+                    len: run_end_col - cursor_col,
+                    font: text_run.font.clone(),
+                    color: text_run.color,
+                    background_color: text_run.background_color,
+                    underline: text_run.underline,
+                    strikethrough: text_run.strikethrough,
+                });
+            }
+            line_col = run_end_col;
+            segment_ix = local_segment_ix;
+        }
+        output_runs
     }
 
     fn prepaint(
@@ -8452,12 +8692,20 @@ impl Element for EditorElement {
                         cx,
                     );
 
+                    let bg_segments_per_row = Self::bg_segments_per_row(
+                        start_row..end_row,
+                        &selections,
+                        &highlighted_ranges,
+                        self.style.background,
+                    );
+
                     let mut line_layouts = Self::layout_lines(
                         start_row..end_row,
                         &snapshot,
                         &self.style,
                         editor_width,
                         is_row_soft_wrapped,
+                        &bg_segments_per_row,
                         window,
                         cx,
                     );
@@ -9817,6 +10065,7 @@ pub fn layout_line(
         &snapshot.mode,
         text_width,
         is_row_soft_wrapped,
+        &[],
         window,
         cx,
     )
@@ -10716,5 +10965,290 @@ mod tests {
             .flat_map(|line_with_invisibles| &line_with_invisibles.invisibles)
             .cloned()
             .collect()
+    }
+
+    #[gpui::test]
+    fn test_merge_overlapping_ranges() {
+        let base_bg = Hsla::default();
+        let color1 = Hsla {
+            h: 0.0,
+            s: 0.5,
+            l: 0.5,
+            a: 0.5,
+        };
+        let color2 = Hsla {
+            h: 120.0,
+            s: 0.5,
+            l: 0.5,
+            a: 0.5,
+        };
+
+        let display_point = |col| DisplayPoint::new(DisplayRow(0), col);
+        let cols = |v: &Vec<(Range<DisplayPoint>, Hsla)>| -> Vec<(u32, u32)> {
+            v.iter()
+                .map(|(r, _)| (r.start.column(), r.end.column()))
+                .collect()
+        };
+
+        // Test overlapping ranges blend colors
+        let overlapping = vec![
+            (display_point(5)..display_point(15), color1),
+            (display_point(10)..display_point(20), color2),
+        ];
+        let result = EditorElement::merge_overlapping_ranges(overlapping, base_bg);
+        assert_eq!(cols(&result), vec![(5, 10), (10, 15), (15, 20)]);
+
+        // Test middle segment should have blended color
+        let blended = Hsla::blend(Hsla::blend(base_bg, color1), color2);
+        assert_eq!(result[1].1, blended);
+
+        // Test adjacent same-color ranges merge
+        let adjacent_same = vec![
+            (display_point(5)..display_point(10), color1),
+            (display_point(10)..display_point(15), color1),
+        ];
+        let result = EditorElement::merge_overlapping_ranges(adjacent_same, base_bg);
+        assert_eq!(cols(&result), vec![(5, 15)]);
+
+        // Test contained range splits
+        let contained = vec![
+            (display_point(5)..display_point(20), color1),
+            (display_point(10)..display_point(15), color2),
+        ];
+        let result = EditorElement::merge_overlapping_ranges(contained, base_bg);
+        assert_eq!(cols(&result), vec![(5, 10), (10, 15), (15, 20)]);
+
+        // Test multiple overlaps split at every boundary
+        let color3 = Hsla {
+            h: 240.0,
+            s: 0.5,
+            l: 0.5,
+            a: 0.5,
+        };
+        let complex = vec![
+            (display_point(5)..display_point(12), color1),
+            (display_point(8)..display_point(16), color2),
+            (display_point(10)..display_point(14), color3),
+        ];
+        let result = EditorElement::merge_overlapping_ranges(complex, base_bg);
+        assert_eq!(
+            cols(&result),
+            vec![(5, 8), (8, 10), (10, 12), (12, 14), (14, 16)]
+        );
+    }
+
+    #[gpui::test]
+    fn test_bg_segments_per_row() {
+        let base_bg = Hsla::default();
+
+        // Case A: selection spans three display rows: row 1 [5, end), full row 2, row 3 [0, 7)
+        {
+            let selection_color = Hsla {
+                h: 200.0,
+                s: 0.5,
+                l: 0.5,
+                a: 0.5,
+            };
+            let player_color = PlayerColor {
+                cursor: selection_color,
+                background: selection_color,
+                selection: selection_color,
+            };
+
+            let spanning_selection = SelectionLayout {
+                head: DisplayPoint::new(DisplayRow(3), 7),
+                cursor_shape: CursorShape::Bar,
+                is_newest: true,
+                is_local: true,
+                range: DisplayPoint::new(DisplayRow(1), 5)..DisplayPoint::new(DisplayRow(3), 7),
+                active_rows: DisplayRow(1)..DisplayRow(4),
+                user_name: None,
+            };
+
+            let selections = vec![(player_color, vec![spanning_selection])];
+            let result = EditorElement::bg_segments_per_row(
+                DisplayRow(0)..DisplayRow(5),
+                &selections,
+                &[],
+                base_bg,
+            );
+
+            assert_eq!(result.len(), 5);
+            assert!(result[0].is_empty());
+            assert_eq!(result[1].len(), 1);
+            assert_eq!(result[2].len(), 1);
+            assert_eq!(result[3].len(), 1);
+            assert!(result[4].is_empty());
+
+            assert_eq!(result[1][0].0.start, DisplayPoint::new(DisplayRow(1), 5));
+            assert_eq!(result[1][0].0.end.row(), DisplayRow(1));
+            assert_eq!(result[1][0].0.end.column(), u32::MAX);
+            assert_eq!(result[2][0].0.start, DisplayPoint::new(DisplayRow(2), 0));
+            assert_eq!(result[2][0].0.end.row(), DisplayRow(2));
+            assert_eq!(result[2][0].0.end.column(), u32::MAX);
+            assert_eq!(result[3][0].0.start, DisplayPoint::new(DisplayRow(3), 0));
+            assert_eq!(result[3][0].0.end, DisplayPoint::new(DisplayRow(3), 7));
+        }
+
+        // Case B: selection ends exactly at the start of row 3, excluding row 3
+        {
+            let selection_color = Hsla {
+                h: 120.0,
+                s: 0.5,
+                l: 0.5,
+                a: 0.5,
+            };
+            let player_color = PlayerColor {
+                cursor: selection_color,
+                background: selection_color,
+                selection: selection_color,
+            };
+
+            let selection = SelectionLayout {
+                head: DisplayPoint::new(DisplayRow(2), 0),
+                cursor_shape: CursorShape::Bar,
+                is_newest: true,
+                is_local: true,
+                range: DisplayPoint::new(DisplayRow(1), 5)..DisplayPoint::new(DisplayRow(3), 0),
+                active_rows: DisplayRow(1)..DisplayRow(3),
+                user_name: None,
+            };
+
+            let selections = vec![(player_color, vec![selection])];
+            let result = EditorElement::bg_segments_per_row(
+                DisplayRow(0)..DisplayRow(4),
+                &selections,
+                &[],
+                base_bg,
+            );
+
+            assert_eq!(result.len(), 4);
+            assert!(result[0].is_empty());
+            assert_eq!(result[1].len(), 1);
+            assert_eq!(result[2].len(), 1);
+            assert!(result[3].is_empty());
+
+            assert_eq!(result[1][0].0.start, DisplayPoint::new(DisplayRow(1), 5));
+            assert_eq!(result[1][0].0.end.row(), DisplayRow(1));
+            assert_eq!(result[1][0].0.end.column(), u32::MAX);
+            assert_eq!(result[2][0].0.start, DisplayPoint::new(DisplayRow(2), 0));
+            assert_eq!(result[2][0].0.end.row(), DisplayRow(2));
+            assert_eq!(result[2][0].0.end.column(), u32::MAX);
+        }
+    }
+
+    #[cfg(test)]
+    fn generate_test_run(len: usize, color: Hsla) -> TextRun {
+        TextRun {
+            len,
+            font: gpui::font(".SystemUIFont"),
+            color,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        }
+    }
+
+    #[gpui::test]
+    fn test_split_runs_by_bg_segments(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let text_color = Hsla {
+            h: 210.0,
+            s: 0.1,
+            l: 0.4,
+            a: 1.0,
+        };
+        let bg1 = Hsla {
+            h: 30.0,
+            s: 0.6,
+            l: 0.8,
+            a: 1.0,
+        };
+        let bg2 = Hsla {
+            h: 200.0,
+            s: 0.6,
+            l: 0.2,
+            a: 1.0,
+        };
+        let min_contrast = 45.0;
+
+        // Case A: single run; disjoint segments inside the run
+        let runs = vec![generate_test_run(20, text_color)];
+        let segs = vec![
+            (
+                DisplayPoint::new(DisplayRow(0), 5)..DisplayPoint::new(DisplayRow(0), 10),
+                bg1,
+            ),
+            (
+                DisplayPoint::new(DisplayRow(0), 12)..DisplayPoint::new(DisplayRow(0), 16),
+                bg2,
+            ),
+        ];
+        let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, min_contrast);
+        // Expected slices: [0,5) [5,10) [10,12) [12,16) [16,20)
+        assert_eq!(
+            out.iter().map(|r| r.len).collect::<Vec<_>>(),
+            vec![5, 5, 2, 4, 4]
+        );
+        assert_eq!(out[0].color, text_color);
+        assert_eq!(
+            out[1].color,
+            ensure_minimum_contrast(text_color, bg1, min_contrast)
+        );
+        assert_eq!(out[2].color, text_color);
+        assert_eq!(
+            out[3].color,
+            ensure_minimum_contrast(text_color, bg2, min_contrast)
+        );
+        assert_eq!(out[4].color, text_color);
+
+        // Case B: multiple runs; segment extends to end of line (u32::MAX)
+        let runs = vec![
+            generate_test_run(8, text_color),
+            generate_test_run(7, text_color),
+        ];
+        let segs = vec![(
+            DisplayPoint::new(DisplayRow(0), 6)..DisplayPoint::new(DisplayRow(0), u32::MAX),
+            bg1,
+        )];
+        let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, min_contrast);
+        // Expected slices across runs: [0,6) [6,8) | [0,7)
+        assert_eq!(out.iter().map(|r| r.len).collect::<Vec<_>>(), vec![6, 2, 7]);
+        let adjusted = ensure_minimum_contrast(text_color, bg1, min_contrast);
+        assert_eq!(out[0].color, text_color);
+        assert_eq!(out[1].color, adjusted);
+        assert_eq!(out[2].color, adjusted);
+
+        // Case C: multi-byte characters
+        // for text: "Hello 🌍 世界!"
+        let runs = vec![
+            generate_test_run(5, text_color), // "Hello"
+            generate_test_run(6, text_color), // " 🌍 "
+            generate_test_run(6, text_color), // "世界"
+            generate_test_run(1, text_color), // "!"
+        ];
+        // selecting "🌍 世"
+        let segs = vec![(
+            DisplayPoint::new(DisplayRow(0), 6)..DisplayPoint::new(DisplayRow(0), 14),
+            bg1,
+        )];
+        let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, min_contrast);
+        // "Hello" | " " | "🌍 " | "世" | "界" | "!"
+        assert_eq!(
+            out.iter().map(|r| r.len).collect::<Vec<_>>(),
+            vec![5, 1, 5, 3, 3, 1]
+        );
+        assert_eq!(out[0].color, text_color); // "Hello"
+        assert_eq!(
+            out[2].color,
+            ensure_minimum_contrast(text_color, bg1, min_contrast)
+        ); // "🌍 "
+        assert_eq!(
+            out[3].color,
+            ensure_minimum_contrast(text_color, bg1, min_contrast)
+        ); // "世"
+        assert_eq!(out[4].color, text_color); // "界"
+        assert_eq!(out[5].color, text_color); // "!"
     }
 }
