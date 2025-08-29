@@ -332,5 +332,5 @@ async fn build_remote_server_from_source(
         bin_path
     };
 
-    Ok(Some(path.canonicalize()?))
+    Ok(Some(path))
 }
