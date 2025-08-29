@@ -7,13 +7,11 @@ use async_trait::async_trait;
 use collections::HashMap;
 use futures::channel::mpsc::{Sender, UnboundedReceiver, UnboundedSender};
 use gpui::{App, AppContext as _, AsyncApp, SemanticVersion, Task};
-use itertools::Itertools;
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use rpc::proto::Envelope;
 use smol::{fs, process};
 use std::{
     fmt::Write as _,
-    iter,
     path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
@@ -367,18 +365,11 @@ impl RemoteConnection for WslRemoteConnection {
             bail!("WSL shares the network interface with the host system");
         }
 
+        let working_dir = working_dir
+            .map(|working_dir| RemotePathBuf::new(working_dir.into(), PathStyle::Posix).to_string())
+            .unwrap_or("~".to_string());
+
         let mut script = String::new();
-        if let Some(working_dir) = working_dir {
-            let working_dir = RemotePathBuf::new(working_dir.into(), PathStyle::Posix).to_string();
-            if working_dir.starts_with("~/") {
-                let working_dir = working_dir.trim_start_matches("~").trim_start_matches("/");
-                write!(&mut script, "cd \"$HOME/{}\"; ", working_dir).unwrap();
-            } else {
-                write!(&mut script, "cd \"{}\"; ", working_dir).unwrap();
-            }
-        } else {
-            write!(&mut script, "cd; ").unwrap();
-        }
 
         if let Some(activation_script) = activation_script {
             write!(&mut script, " {activation_script};").unwrap();
@@ -407,7 +398,7 @@ impl RemoteConnection for WslRemoteConnection {
                 "--user".to_string(),
                 user.clone(),
                 "--cd".to_string(),
-                "~".to_string(),
+                working_dir,
                 "--".to_string(),
                 self.shell.clone(),
                 "-c".to_string(),
@@ -418,7 +409,7 @@ impl RemoteConnection for WslRemoteConnection {
                 "--distribution".to_string(),
                 self.connection_options.distro_name.clone(),
                 "--cd".to_string(),
-                "~".to_string(),
+                working_dir,
                 "--".to_string(),
                 self.shell.clone(),
                 "-c".to_string(),
@@ -469,11 +460,6 @@ fn wsl_command_impl(
     program: &str,
     args: &[&str],
 ) -> process::Command {
-    let to_run = iter::once(&program)
-        .chain(args.iter())
-        .map(|token| shlex::try_quote(token).unwrap())
-        .join(" ");
-
     let mut command = util::command::new_smol_command("wsl.exe");
 
     if let Some(user) = &options.user {
@@ -486,9 +472,10 @@ fn wsl_command_impl(
         .stderr(Stdio::piped())
         .arg("--distribution")
         .arg(&options.distro_name)
-        .arg("sh")
-        .arg("-c")
-        .arg(format!("cd; {to_run}"));
+        .arg("--cd")
+        .arg("~")
+        .arg(program)
+        .args(args);
 
     command
 }
