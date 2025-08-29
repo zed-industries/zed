@@ -519,7 +519,7 @@ libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
-lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "39f629bdd03d59abd786ed9fc27e8bca02c0c0ec" }
+lsp-types = { git = "https://github.com/WAKayser/lsp-types-bracket-fix", rev = "c921eea56cc8f139730eb9159b186fca92729383" }
 mach2 = "0.5"
 markup5ever_rcdom = "0.3.0"
 metal = "0.29"
