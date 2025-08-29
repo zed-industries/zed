@@ -26,7 +26,7 @@ use util::ResultExt as _;
 use workspace::Workspace;
 
 use crate::AgentPanel;
-use crate::acp::message_editor::MessageEditor;
+use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::context_picker::file_context_picker::{FileMatch, search_files};
 use crate::context_picker::rules_context_picker::{RulesContextEntry, search_rules};
 use crate::context_picker::symbol_context_picker::SymbolMatch;
@@ -378,13 +378,7 @@ impl ContextPickerCompletionProvider {
         })
     }
 
-    fn search_slash_commands(
-        &self,
-        query: String,
-        argument: Option<String>,
-        source_range: Range<Anchor>,
-        cx: &mut App,
-    ) -> Task<Vec<Completion>> {
+    fn search_slash_commands(&self, query: String, cx: &mut App) -> Task<Vec<acp::CommandInfo>> {
         let Some(commands) = self.command_provider.borrow().clone() else {
             return Task::ready(Vec::new());
         };
@@ -417,28 +411,7 @@ impl ContextPickerCompletionProvider {
 
             matches
                 .into_iter()
-                .map(|mat| {
-                    let command = &commands[mat.candidate_id];
-
-                    let new_text = if let Some(argument) = argument.as_ref() {
-                        format!("/{} {}", command.name, argument.to_string())
-                    } else {
-                        format!("/{}", command.name)
-                    };
-
-                    Completion {
-                        replace_range: source_range.clone(),
-                        new_text,
-                        label: CodeLabel::plain(command.name.to_string(), None),
-                        documentation: Some(CompletionDocumentation::SingleLine(
-                            command.description.to_string().into(),
-                        )),
-                        source: project::CompletionSource::Custom,
-                        icon_path: None,
-                        insert_text_mode: None,
-                        confirm: None,
-                    }
-                })
+                .map(|mat| commands[mat.candidate_id].clone())
                 .collect()
         })
     }
@@ -747,15 +720,57 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         let editor = self.message_editor.clone();
 
         match state {
-            ContextCompletion::SlashCommand(command_completion) => {
-                let search_task = self.search_slash_commands(
-                    command_completion.command.unwrap_or_default(),
-                    command_completion.argument,
-                    source_range,
-                    cx,
-                );
+            ContextCompletion::SlashCommand(SlashCommandCompletion {
+                command, argument, ..
+            }) => {
+                let search_task = self.search_slash_commands(command.unwrap_or_default(), cx);
                 cx.background_spawn(async move {
-                    let completions = search_task.await;
+                    let completions = search_task
+                        .await
+                        .into_iter()
+                        .map(|command| {
+                            let new_text = if let Some(argument) = argument.as_ref() {
+                                format!("/{} {}", command.name, argument.to_string())
+                            } else {
+                                format!("/{}", command.name)
+                            };
+
+                            let is_missing_argument =
+                                argument.is_none() && command.requires_argument;
+
+                            Completion {
+                                replace_range: source_range.clone(),
+                                new_text,
+                                label: CodeLabel::plain(command.name.to_string(), None),
+                                documentation: Some(CompletionDocumentation::SingleLine(
+                                    command.description.to_string().into(),
+                                )),
+                                source: project::CompletionSource::Custom,
+                                icon_path: None,
+                                insert_text_mode: None,
+                                confirm: Some(Arc::new({
+                                    let editor = editor.clone();
+                                    move |intent, _window, cx| {
+                                        match intent {
+                                            CompletionIntent::Complete
+                                            | CompletionIntent::CompleteWithInsert
+                                            | CompletionIntent::CompleteWithReplace => {
+                                                editor
+                                                    .update(cx, |_editor, cx| {
+                                                        cx.emit(MessageEditorEvent::Send);
+                                                    })
+                                                    .ok();
+                                            }
+                                            CompletionIntent::Compose => {}
+                                        }
+
+                                        is_missing_argument
+                                    }
+                                })),
+                            }
+                        })
+                        .collect();
+
                     Ok(vec![CompletionResponse {
                         completions,
                         // Since this does its own filtering (see `filter_completions()` returns false),
