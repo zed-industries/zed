@@ -37,7 +37,7 @@ pub struct WslArgs {
     /// If not specified, Zed will attempt to open the paths directly.
     ///
     /// Pass `-` to use the default WSL distribution.
-    #[arg(long, value_name = "DISTRO")]
+    #[arg(long, value_name = "DISTRO", required = false)]
     pub wsl: String,
 
     /// The username to use when connecting to the WSL distribution, will use

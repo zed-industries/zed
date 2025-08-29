@@ -13,7 +13,11 @@ if [ -n "$WSL_DISTRO_NAME" ]; then
 fi
 
 if [ $IN_WSL = true ]; then
-    "$ZED_PATH/zed.exe" --wsl "$WSL_DISTRO_NAME" "$@"
+    WSL_USER="$USER"
+    if [ -z "$WSL_USER" ]; then
+        WSL_USER="$USERNAME"
+    fi
+    "$ZED_PATH/zed.exe" --wsl "$WSL_DISTRO_NAME" --wsl-user "$WSL_USER" "$@"
     exit $?
 else
     echo "Only WSL is supported for now" >&2
