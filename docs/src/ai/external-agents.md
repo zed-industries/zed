@@ -1,8 +1,8 @@
 # External Agents
 
-Zed supports terminal-based agentic coding tools through the [Agent Client Protocol (ACP)](https://agentclientprotocol.com).
+Zed supports terminal-based agents through the [Agent Client Protocol (ACP)](https://agentclientprotocol.com).
 
-Currently, [Gemini CLI](https://github.com/google-gemini/gemini-cli) serves as the reference implementation, and you can [add custom ACP-compatible agents](#add-custom-agents) as well.
+Currently, [Gemini CLI](https://github.com/google-gemini/gemini-cli) serves as the reference implementation, [Claude Code](https://www.anthropic.com/claude-code) is also included by default, and you can [add custom ACP-compatible agents](#add-custom-agents) as well.
 
 ## Gemini CLI {#gemini-cli}
 
@@ -13,7 +13,7 @@ This means that you're running the real Gemini CLI, with all of the advantages o
 
 ### Getting Started
 
-As of Zed Stable v0.201.5 you should be able to use Gemini CLI directly from Zed. First open the agent panel with {#kb agent::ToggleFocus}, and then use the `+` button in the top right to start a New Gemini CLI thread.
+As of Zed Stable v0.201.5 you should be able to use Gemini CLI directly from Zed. First open the agent panel with {#kb agent::ToggleFocus}, and then use the `+` button in the top right to start a new Gemini CLI thread.
 
 If you'd like to bind this to a keyboard shortcut, you can do so by editing your keybindings file to include:
 
@@ -51,11 +51,46 @@ For more information, see the [Gemini CLI docs](https://github.com/google-gemini
 ### Usage
 
 Similar to Zed's first-party agent, you can use Gemini CLI to do anything that you need.
-
-You can @-mention files, recent threads, symbols, or fetch the web.
+And to give it context, you can @-mention files, recent threads, symbols, or fetch the web.
 
 > Note that some first-party agent features don't yet work with Gemini CLI: editing past messages, resuming threads from history, checkpointing, and using the agent in SSH projects.
 > We hope to add these features in the near future.
+
+## Claude Code
+
+Similar to Gemini CLI, you can also run [Claude Code](https://www.anthropic.com/claude-code) directly via Zed's [agent panel](./agent-panel.md).
+Under the hood, Zed runs Claude Code and communicate to it over ACP.
+
+### Getting Started
+
+Open the agent panel with {#kb agent::ToggleFocus}, and then use the `+` button in the top right to start a new Claude Code thread.
+
+If you'd like to bind this to a keyboard shortcut, you can do so by editing your keybindings file to include:
+
+```json
+[
+  {
+    "bindings": {
+      "cmd-alt-g": ["agent::NewExternalAgentThread", { "agent": "claude_code" }]
+    }
+  }
+]
+```
+
+#### Installation
+
+If you don't yet have Claude Code installed, then Zed will install a version for you.
+If you do, then we will use the version of Claude Code on your path.
+
+### Usage
+
+Similar to Zed's first-party agent, you can use Claude Code to do anything that you need.
+And to give it context, you can @-mention files, recent threads, symbols, or fetch the web.
+
+> Note that some first-party agent features don't yet work with Claude Code: editing past messages, resuming threads from history, checkpointing, and using the agent in SSH projects.
+> We hope to add these features in the near future.
+
+> Some Claude Code features, such as slash commands, are not currently supported.
 
 ## Add Custom Agents {#add-custom-agents}
 

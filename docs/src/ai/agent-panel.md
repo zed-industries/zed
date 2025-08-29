@@ -9,7 +9,7 @@ You can do that by:
 
 1. [subscribing to our Pro plan](https://zed.dev/pricing), so you have access to our hosted models
 2. [bringing your own API keys](./llm-providers.md#use-your-own-keys) for your desired provider
-3. using an external agent like [Gemini CLI](./external-agents.md#gemini-cli)
+3. using an external agent like [Gemini CLI](./external-agents.md#gemini-cli) or [Claude Code](./external-agents.md#claude-code)
 
 ## Overview {#overview}
 
