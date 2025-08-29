@@ -317,7 +317,7 @@ impl Render for AddToolchainState {
             .on_action(cx.listener(Self::confirm_toolchain))
             .bg(theme.colors().background)
             .map(|this| match &self.state {
-                AddState::Path { picker, error, .. } => this.child(picker.clone()),
+                AddState::Path { picker, .. } => this.child(picker.clone()),
                 AddState::Name { editor, .. } => this
                     .child(
                         h_flex().w_full().child(
