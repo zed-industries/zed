@@ -21,7 +21,7 @@ last_updated_by: Mikayla Maki
 
 ## Research Question
 
-We're adding support for custom slash commands to Agent Client Protocol. The client should be able to:
+We're adding support for custom slash commands to Agent Client Protocol for the **agent panel** (not assistant 1/text threads). The client should be able to:
 
 - List available commands
 - Run a command with arguments (check Claude Code behavior)
@@ -34,44 +34,55 @@ In the Claude Code ACP adapter, we want implement the _agent_ side of the protoc
 We need to update the protocol to support the new RPCs for listing and running commands.
 We need to understand how to run commands via the SDK.
 
+**Important Note**: This is for the agent panel UX, NOT the existing assistant/text thread slash commands. The existing slash command infrastructure is for assistant 1/text threads and is not relevant to this implementation.
+
 ## Summary
 
-The research reveals a comprehensive architecture for implementing custom slash commands in ACP:
+The research reveals the architecture needed for implementing custom slash commands in the **agent panel** via ACP:
 
-**Claude Code Slash Commands**: Well-established system with 15+ built-in commands, extensible architecture, and consistent execution patterns through the `SlashCommand` trait.
+**Agent Panel Architecture**: Separate UI system from assistant/text threads with dedicated components (`AgentPanel`, `AcpThreadView`) and message handling through ACP protocol integration.
 
-**ACP Protocol**: JSON-RPC based with clear patterns for adding new RPC methods through request/response enums, method dispatch, and capability negotiation.
+**ACP Protocol**: JSON-RPC based with clear patterns for adding new RPC methods through request/response enums, method dispatch, and capability negotiation. Handles session management, tool calls, and real-time message streaming.
 
 **Claude Commands Structure**: Markdown-based command definitions in `.claude/commands/` with consistent format, metadata, and programmatic parsing potential.
 
 **SDK Integration**: Claude Code ACP adapter bridges ACP protocol with Claude SDK, providing tool execution and session management through MCP servers.
 
+**Note**: The existing Claude Code slash command system (`SlashCommand` trait, `assistant_slash_command` crate) is **not relevant** - that's for assistant 1/text threads. The agent panel needs its own custom command implementation.
+
 ## Detailed Findings
 
-### Claude Code Slash Command Architecture
+### Agent Panel Architecture
 
-**Core Infrastructure** (`crates/assistant_slash_command/`):
+**Core Infrastructure** (`crates/agent_ui/`):
 
-- `assistant_slash_command.rs:1-200` - `SlashCommand` trait with `name()`, `description()`, `run()`, `complete_argument()`, `requires_argument()` methods
-- `slash_command_registry.rs:1-150` - Global registry for command registration and lookup
-- `slash_command_working_set.rs:1-100` - Working set management for active commands
-- `extension_slash_command.rs:1-250` - Extension-based command support
+- `agent_panel.rs:24` - Main `AgentPanel` struct and UI component
+- `acp/thread_view.rs:315` - `AcpThreadView` component for individual agent conversations
+- `acp/message_editor.rs` - Message input component with slash command integration for agent panel
+- `acp.rs` - ACP module entry point connecting to external ACP agents
 
-**Execution Flow**:
+**Agent Panel vs Assistant Distinction**:
 
-1. Commands registered in `agent_ui.rs:403-448` via `slash_command_registry.register_command()`
-2. User types `/command args` in editor
-3. `SlashCommandCompletionProvider` provides completions
-4. `TextThreadEditor.run_command()` calls `command.run()`
-5. Commands return stream of `SlashCommandEvent`s
-6. Events processed and inserted into context
+The agent panel is **completely separate** from the assistant/text thread system:
+- Agent panel uses ACP (Agent Client Protocol) for external agent communication
+- Assistant uses internal Zed slash commands and text thread editors
+- Different UI components, different input handling, different protocol integration
 
-**Built-in Commands** (`crates/assistant_slash_commands/`):
+**ACP Integration Flow**:
 
-- File operations: `/file`, `/tab`, `/selection`
-- Development: `/cargo-workspace`, `/diagnostics`, `/symbols`
-- Context: `/context-server`, `/fetch`, `/prompt`
-- Utility: `/now`, `/delta`
+1. External ACP agent process spawned via `agent_servers/src/acp.rs:63-76`
+2. JSON-RPC connection established over stdin/stdout at line 84
+3. Protocol initialization with capability negotiation at line 131
+4. Sessions created via `new_session()` request for isolated conversations
+5. User input converted to `PromptRequest` and sent to ACP agent
+6. Agent responses stream back as `SessionUpdate` notifications
+7. UI updates processed in `AcpThread::handle_session_update()`
+
+**Current Input Handling**:
+
+- Message composition through `MessageEditor` and specialized ACP message editor
+- Standard chat input without custom command support currently
+- Integration with model selector, context strip, and profile management
 
 ### Agent Client Protocol RPC Patterns
 
@@ -168,8 +179,11 @@ let q = query({
 
 ## Code References
 
-- `crates/assistant_slash_command/src/assistant_slash_command.rs:1-200` - Core SlashCommand trait
-- `crates/agent_ui/src/agent_ui.rs:403-448` - Command registration point
+- `crates/agent_ui/src/agent_panel.rs:24` - Main AgentPanel component
+- `crates/agent_ui/src/acp/thread_view.rs:315` - AcpThreadView UI component
+- `crates/agent_ui/src/acp/message_editor.rs` - Agent panel message input
+- `crates/agent_servers/src/acp.rs:63-162` - ACP connection establishment
+- `crates/acp_thread/src/acp_thread.rs:826` - ACP thread creation
 - `agentic-coding-protocol/rust/agent.rs:604-610` - ACP request enum pattern
 - `agentic-coding-protocol/rust/acp.rs:355-371` - Method dispatch logic
 - `claude-code-acp/src/acp-agent.ts:1-500` - ACP adapter implementation
@@ -177,19 +191,19 @@ let q = query({
 
 ## Architecture Insights
 
-**Slash Command System**: Highly modular with clear trait-based abstraction, supports both built-in and extension commands, uses streaming execution model with event-based progress reporting.
+**Agent Panel System**: Completely separate from assistant/text threads, uses ACP protocol for external agent communication with JSON-RPC over stdin/stdout, manages sessions with unique IDs, and provides real-time message streaming with UI updates.
 
-**ACP Protocol**: Designed for extensibility with capability negotiation, type safety through Rust enums, symmetric bidirectional design, and JSON-RPC foundation.
+**ACP Protocol**: Designed for extensibility with capability negotiation, type safety through Rust enums, symmetric bidirectional design, and JSON-RPC foundation. Handles tool calls, permissions, and session management.
 
-**Command Definitions**: Human-readable markdown with programmatically parseable structure, consistent metadata patterns, and workflow automation framework.
+**Command Definitions**: Human-readable markdown with programmatically parseable structure, consistent metadata patterns, and workflow automation framework stored in `.claude/commands/`.
 
-**Integration Patterns**: Claude Code ACP adapter provides proven pattern for bridging protocols, MCP servers enable tool execution proxying, session management handles concurrent interactions.
+**Integration Patterns**: Claude Code ACP adapter provides proven pattern for bridging protocols, MCP servers enable tool execution proxying, session management handles concurrent interactions. Agent panel needs new command integration separate from existing slash commands.
 
 ## Implementation Recommendations
 
 ### 1. Protocol Extension for Custom Commands
 
-Add new RPC methods to ACP schema:
+Add new RPC methods to ACP schema following existing patterns in `agentic-coding-protocol/rust/`:
 
 ```rust
 // New request types
@@ -215,9 +229,23 @@ pub struct CommandInfo {
 }
 ```
 
-### 2. Agent Implementation
+Add to request/response enums and implement in dispatch logic similar to existing ACP methods.
 
-In Claude Code ACP adapter:
+### 2. Agent Panel UI Integration
+
+**Option A**: Extend ACP Message Editor
+- Modify `crates/agent_ui/src/acp/message_editor.rs` to detect custom commands
+- Add command completion/suggestion UI similar to existing patterns
+- Trigger custom command execution through ACP protocol
+
+**Option B**: New Command Interface
+- Create dedicated command input component in agent panel
+- Separate from regular message input to provide distinct UX
+- Integrate with `AcpThreadView` for command results display
+
+### 3. ACP Agent Implementation
+
+In Claude Code ACP adapter (`claude-code-acp/src/acp-agent.ts`):
 
 ```typescript
 async listCommands(request: ListCommandsRequest): Promise<ListCommandsResponse> {
@@ -229,11 +257,11 @@ async listCommands(request: ListCommandsRequest): Promise<ListCommandsResponse> 
 async runCommand(request: RunCommandRequest): Promise<RunCommandResponse> {
   // Find command definition in .claude/commands/
   // Execute via Claude SDK query with command content
-  // Stream results back via session notifications
+  // Stream results back via session notifications using existing session update mechanism
 }
 ```
 
-### 3. Command Parsing
+### 4. Command Parsing and Execution
 
 Implement markdown parser for `.claude/commands/*.md`:
 
@@ -246,37 +274,44 @@ function parseCommandFile(content: string): CommandInfo {
 }
 ```
 
+Execute commands by sending command content as system prompt to Claude SDK, similar to existing ACP query patterns.
+
 ## Open Questions
 
-1. **Command Arguments**: How should complex command arguments be structured and validated?
+1. **Agent Panel UX**: Should custom commands be integrated into the existing message input or as a separate command interface?
 
-2. **Command Context**: Should commands have access to current session state, file context, or conversation history?
+2. **Command Arguments**: How should complex command arguments be structured and validated in the agent panel context?
 
-3. **Command Discovery**: Should commands be cached or re-read on each listing request?
+3. **Command Context**: Should commands have access to current ACP session state, file context, or conversation history?
 
-4. **Extension Commands**: How should extension-provided commands integrate with `.claude/commands/` file-based commands?
+4. **Command Discovery**: Should commands be cached or re-read on each listing request? How does this integrate with ACP session lifecycle?
 
-5. **Command Execution**: Should commands run in isolated contexts or share session state?
+5. **Command Execution**: Should commands run in isolated contexts or share ACP session state?
 
-6. **Error Handling**: What's the appropriate error handling strategy for command parsing and execution failures?
+6. **Error Handling**: What's the appropriate error handling strategy for command parsing and execution failures in the agent panel?
+
+7. **UI Integration**: How should command execution progress and results be displayed within the `AcpThreadView` component?
 
 ###### FINAL CLAUDE PROMPT:
 
 ⏺ I've completed comprehensive research on adding custom
-slash commands to the Agent Client Protocol. Here's what
+slash commands to the Agent Client Protocol for the
+**agent panel** (NOT assistant/text threads). Here's what
 I found:
 
 Key Findings
 
-Slash Command Architecture: Claude Code has a
-well-established slash command system with 15+ built-in
-commands using a SlashCommand trait. Commands are
-registered globally and execute through streaming events.
+Agent Panel Architecture: The agent panel is completely
+separate from assistant/text threads, using ACP protocol
+for external agent communication via JSON-RPC over
+stdin/stdout. It has dedicated UI components like
+AgentPanel and AcpThreadView.
 
 ACP Protocol Patterns: The protocol uses JSON-RPC with
 type-safe request/response enums. Adding new RPC methods
 follows a clear pattern: define structs, add to enums,
-update dispatch logic.
+update dispatch logic. Handles sessions, tool calls, and
+real-time streaming.
 
 .claude/commands Structure: Commands are defined as
 structured Markdown files with consistent format -
@@ -287,19 +322,27 @@ SDK Integration: The Claude Code ACP adapter already
 bridges ACP with the Claude SDK through MCP servers,
 providing a proven pattern for command execution.
 
+**IMPORTANT**: The existing Claude Code slash command
+system (SlashCommand trait, assistant_slash_command crate)
+is NOT relevant - that's for assistant 1/text threads.
+The agent panel needs its own custom command
+implementation.
+
 Implementation Approach
 
 You'll need to:
 
 1. Extend ACP Protocol: Add ListCommandsRequest/Response
    and RunCommandRequest/Response to the schema
-2. Parse Command Definitions: Read .claude/commands/\*.md
+2. Agent Panel UI: Integrate custom commands into agent
+   panel message input or create separate command interface
+3. Parse Command Definitions: Read .claude/commands/\*.md
    files and extract metadata (name, description,
    requirements)
-3. Execute Commands: Run commands via Claude SDK queries,
-   similar to how the current ACP adapter works
-4. Handle Streaming: Use ACP's session notification
-   system to stream command progress
+4. Execute Commands: Run commands via Claude SDK queries
+   through existing ACP session mechanism
+5. Handle Streaming: Use ACP's session notification
+   system to stream command progress to AcpThreadView
 
 The research document is saved at thoughts/shared/researc
 h/2025-08-28_15-34-28_custom-slash-commands-acp.md with
