@@ -11219,5 +11219,36 @@ mod tests {
         assert_eq!(out[0].color, text_color);
         assert_eq!(out[1].color, adjusted);
         assert_eq!(out[2].color, adjusted);
+
+        // Case C: multi-byte characters
+        // for text: "Hello 🌍 世界!"
+        let runs = vec![
+            generate_test_run(5, text_color), // "Hello"
+            generate_test_run(6, text_color), // " 🌍 "
+            generate_test_run(6, text_color), // "世界"
+            generate_test_run(1, text_color), // "!"
+        ];
+        // selecting "🌍 世"
+        let segs = vec![(
+            DisplayPoint::new(DisplayRow(0), 6)..DisplayPoint::new(DisplayRow(0), 14),
+            bg1,
+        )];
+        let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, min_contrast);
+        // "Hello" | " " | "🌍 " | "世" | "界" | "!"
+        assert_eq!(
+            out.iter().map(|r| r.len).collect::<Vec<_>>(),
+            vec![5, 1, 5, 3, 3, 1]
+        );
+        assert_eq!(out[0].color, text_color); // "Hello"
+        assert_eq!(
+            out[2].color,
+            ensure_minimum_contrast(text_color, bg1, min_contrast)
+        ); // "🌍 "
+        assert_eq!(
+            out[3].color,
+            ensure_minimum_contrast(text_color, bg1, min_contrast)
+        ); // "世"
+        assert_eq!(out[4].color, text_color); // "界"
+        assert_eq!(out[5].color, text_color); // "!"
     }
 }
