@@ -2506,6 +2506,30 @@ async fn test_delete_to_word_boundary(cx: &mut TestAppContext) {
         );
     });
     cx.assert_editor_state("e tˇ te ˇour");
+
+    cx.set_state("here is some text    ˇwith a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("here is some textˇwith a space");
+
+    cx.set_state("here is some textˇ    with a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_next_word_end(
+            &DeleteToNextWordEnd {
+                ignore_newlines: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("here is some textˇwith a space");
 }
 
 #[gpui::test]
