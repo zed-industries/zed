@@ -5,6 +5,8 @@ use std::{
     time::Duration,
 };
 
+mod ui_components;
+
 use anyhow::{Context as _, anyhow};
 use collections::{HashMap, HashSet};
 use editor::{CompletionProvider, Editor, EditorEvent};
@@ -34,8 +36,10 @@ use workspace::{
     register_serializable_item,
 };
 
+pub use ui_components::*;
+
 use crate::{
-    keybindings::persistence::KEYBINDING_EDITORS,
+    persistence::KEYBINDING_EDITORS,
     ui_components::{
         keystroke_input::{ClearKeystrokes, KeystrokeInput, StartRecording, StopRecording},
         table::{ColumnWidths, ResizeBehavior, Table, TableInteractionState},

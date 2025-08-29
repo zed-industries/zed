@@ -202,7 +202,7 @@ pub struct Diagnostic {
     pub source: Option<String>,
     /// A machine-readable code that identifies this diagnostic.
     pub code: Option<NumberOrString>,
-    pub code_description: Option<lsp::Url>,
+    pub code_description: Option<lsp::Uri>,
     /// Whether this diagnostic is a hint, warning, or error.
     pub severity: DiagnosticSeverity,
     /// The human-readable message associated with this diagnostic.

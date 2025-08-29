@@ -645,7 +645,7 @@ impl MessageEditor {
             self.project.read(cx).fs().clone(),
             self.history_store.clone(),
         ));
-        let delegate = AgentServerDelegate::new(self.project.clone(), watch::channel("".into()).0);
+        let delegate = AgentServerDelegate::new(self.project.clone(), None);
         let connection = server.connect(Path::new(""), delegate, cx);
         cx.spawn(async move |_, cx| {
             let agent = connection.await?;
@@ -2128,7 +2128,7 @@ mod tests {
                     lsp::SymbolInformation {
                         name: "MySymbol".into(),
                         location: lsp::Location {
-                            uri: lsp::Url::from_file_path(path!("/dir/a/one.txt")).unwrap(),
+                            uri: lsp::Uri::from_file_path(path!("/dir/a/one.txt")).unwrap(),
                             range: lsp::Range::new(
                                 lsp::Position::new(0, 0),
                                 lsp::Position::new(0, 1),

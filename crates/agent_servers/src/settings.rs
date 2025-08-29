@@ -6,16 +6,16 @@ use collections::HashMap;
 use gpui::{App, SharedString};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsSources, SettingsUi};
 
 pub fn init(cx: &mut App) {
     AllAgentServersSettings::register(cx);
 }
 
-#[derive(Default, Deserialize, Serialize, Clone, JsonSchema, Debug)]
+#[derive(Default, Deserialize, Serialize, Clone, JsonSchema, Debug, SettingsUi)]
 pub struct AllAgentServersSettings {
     pub gemini: Option<BuiltinAgentServerSettings>,
-    pub claude: Option<BuiltinAgentServerSettings>,
+    pub claude: Option<CustomAgentServerSettings>,
 
     /// Custom agent servers configured by the user
     #[serde(flatten)]

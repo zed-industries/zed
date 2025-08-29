@@ -10,8 +10,9 @@ use anyhow::Result;
 use collections::{BTreeSet, HashMap};
 use diagnostic_renderer::DiagnosticBlock;
 use editor::{
-    DEFAULT_MULTIBUFFER_CONTEXT, Editor, EditorEvent, ExcerptRange, MultiBuffer, PathKey,
+    Editor, EditorEvent, ExcerptRange, MultiBuffer, PathKey,
     display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
+    multibuffer_context_lines,
 };
 use gpui::{
     AnyElement, AnyView, App, AsyncApp, Context, Entity, EventEmitter, FocusHandle, Focusable,
@@ -493,10 +494,11 @@ impl ProjectDiagnosticsEditor {
             }
 
             let mut excerpt_ranges: Vec<ExcerptRange<Point>> = Vec::new();
+            let context_lines = cx.update(|_, cx| multibuffer_context_lines(cx))?;
             for b in blocks.iter() {
                 let excerpt_range = context_range_for_entry(
                     b.initial_range.clone(),
-                    DEFAULT_MULTIBUFFER_CONTEXT,
+                    context_lines,
                     buffer_snapshot.clone(),
                     cx,
                 )

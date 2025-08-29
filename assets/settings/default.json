@@ -226,6 +226,20 @@
   // The debounce delay before querying highlights from the language
   // server based on the current cursor location.
   "lsp_highlight_debounce": 75,
+  // The minimum APCA perceptual contrast between foreground and background colors.
+  // APCA (Accessible Perceptual Contrast Algorithm) is more accurate than WCAG 2.x,
+  // especially for dark mode. Values range from 0 to 106.
+  //
+  // Based on APCA Readability Criterion (ARC) Bronze Simple Mode:
+  // https://readtech.org/ARC/tests/bronze-simple-mode/
+  // - 0: No contrast adjustment
+  // - 45: Minimum for large fluent text (36px+)
+  // - 60: Minimum for other content text
+  // - 75: Minimum for body text
+  // - 90: Preferred for body text
+  //
+  // This only affects text drawn over highlight backgrounds in the editor.
+  "minimum_contrast_for_highlights": 45,
   // Whether to pop the completions menu while typing in an editor without
   // explicitly requesting it.
   "show_completions_on_input": true,
@@ -279,6 +293,8 @@
   "redact_private_values": false,
   // The default number of lines to expand excerpts in the multibuffer by.
   "expand_excerpt_lines": 5,
+  // The default number of context lines shown in multibuffer excerpts.
+  "excerpt_context_lines": 2,
   // Globs to match against file paths to determine if a file is private.
   "private_files": ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"],
   // Whether to use additional LSP queries to format (and amend) the code after
@@ -1585,7 +1601,7 @@
       "ensure_final_newline_on_save": false
     },
     "Elixir": {
-      "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
+      "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."]
     },
     "Elm": {
       "tab_size": 4
@@ -1610,7 +1626,7 @@
       }
     },
     "HEEX": {
-      "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
+      "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."]
     },
     "HTML": {
       "prettier": {
@@ -1906,7 +1922,10 @@
   "debugger": {
     "stepping_granularity": "line",
     "save_breakpoints": true,
+    "timeout": 2000,
     "dock": "bottom",
+    "log_dap_communications": true,
+    "format_dap_log_messages": true,
     "button": true
   },
   // Configures any number of settings profiles that are temporarily applied on

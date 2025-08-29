@@ -358,7 +358,6 @@ impl RemoteConnection for WslRemoteConnection {
         args: &[String],
         env: &HashMap<String, String>,
         working_dir: Option<String>,
-        activation_script: Option<String>,
         port_forward: Option<(u16, String, u16)>,
     ) -> Result<CommandTemplate> {
         if port_forward.is_some() {
@@ -370,10 +369,6 @@ impl RemoteConnection for WslRemoteConnection {
             .unwrap_or("~".to_string());
 
         let mut script = String::new();
-
-        if let Some(activation_script) = activation_script {
-            write!(&mut script, " {activation_script};").unwrap();
-        }
 
         for (k, v) in env.iter() {
             write!(&mut script, "{}='{}' ", k, v).unwrap();

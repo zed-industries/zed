@@ -54,6 +54,8 @@ members = [
     "crates/deepseek",
     "crates/diagnostics",
     "crates/docs_preprocessor",
+    "crates/edit_prediction",
+    "crates/edit_prediction_button",
     "crates/editor",
     "crates/eval",
     "crates/explorer_command_injector",
@@ -82,13 +84,12 @@ members = [
     "crates/http_client_tls",
     "crates/icons",
     "crates/image_viewer",
-    "crates/edit_prediction",
-    "crates/edit_prediction_button",
     "crates/inspector_ui",
     "crates/install_cli",
     "crates/jj",
     "crates/jj_ui",
     "crates/journal",
+    "crates/keymap_editor",
     "crates/language",
     "crates/language_extension",
     "crates/language_model",
@@ -146,6 +147,7 @@ members = [
     "crates/settings",
     "crates/settings_profile_selector",
     "crates/settings_ui",
+    "crates/settings_ui_macros",
     "crates/snippet",
     "crates/snippet_provider",
     "crates/snippets_ui",
@@ -156,9 +158,9 @@ members = [
     "crates/streaming_diff",
     "crates/sum_tree",
     "crates/supermaven",
-    "crates/system_specs",
     "crates/supermaven_api",
     "crates/svg_preview",
+    "crates/system_specs",
     "crates/tab_switcher",
     "crates/task",
     "crates/tasks_ui",
@@ -314,6 +316,7 @@ install_cli = { path = "crates/install_cli" }
 jj = { path = "crates/jj" }
 jj_ui = { path = "crates/jj_ui" }
 journal = { path = "crates/journal" }
+keymap_editor = { path = "crates/keymap_editor" }
 language = { path = "crates/language" }
 language_extension = { path = "crates/language_extension" }
 language_model = { path = "crates/language_model" }
@@ -373,6 +376,7 @@ semantic_version = { path = "crates/semantic_version" }
 session = { path = "crates/session" }
 settings = { path = "crates/settings" }
 settings_ui = { path = "crates/settings_ui" }
+settings_ui_macros = { path = "crates/settings_ui_macros" }
 snippet = { path = "crates/snippet" }
 snippet_provider = { path = "crates/snippet_provider" }
 snippets_ui = { path = "crates/snippets_ui" }
@@ -426,7 +430,7 @@ zlog_settings = { path = "crates/zlog_settings" }
 # External crates
 #
 
-agent-client-protocol = "0.0.31"
+agent-client-protocol =  "0.1"
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", branch = "add-hush-login-flag" }
 any_vec = "0.14"
@@ -519,7 +523,7 @@ libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
-lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "39f629bdd03d59abd786ed9fc27e8bca02c0c0ec" }
+lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "0874f8742fe55b4dc94308c1e3c0069710d8eeaf" }
 mach2 = "0.5"
 markup5ever_rcdom = "0.3.0"
 metal = "0.29"
