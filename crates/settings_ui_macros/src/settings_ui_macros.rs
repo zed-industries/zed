@@ -102,6 +102,12 @@ fn map_ui_item_to_render(path: &str, ty: TokenStream) -> TokenStream {
                     path: #path,
                     item,
                 },
+                settings::SettingsUiItem::Dynamic{title, options, determine_option} => settings::SettingsUiEntryVariant::Dynamic {
+                    path: #path,
+                    title,
+                    options,
+                    determine_option,
+                },
                 settings::SettingsUiItem::None => settings::SettingsUiEntryVariant::None,
             }
         }

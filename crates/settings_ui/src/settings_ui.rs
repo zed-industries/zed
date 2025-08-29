@@ -1,6 +1,7 @@
 mod appearance_settings_controls;
 
 use std::any::TypeId;
+use std::collections::VecDeque;
 use std::ops::{Not, Range};
 
 use anyhow::Context as _;
@@ -8,7 +9,9 @@ use command_palette_hooks::CommandPaletteFilter;
 use editor::EditorSettingsControls;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
 use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, ReadGlobal, actions};
-use settings::{SettingsStore, SettingsUiEntryVariant, SettingsUiItemSingle, SettingsValue};
+use settings::{
+    SettingsStore, SettingsUiEntry, SettingsUiEntryVariant, SettingsUiItemSingle, SettingsValue,
+};
 use smallvec::SmallVec;
 use ui::{NumericStepper, SwitchField, ToggleButtonGroup, ToggleButtonSimple, prelude::*};
 use workspace::{
@@ -131,7 +134,7 @@ impl Item for SettingsPage {
 //  - there should be an index of text -> item mappings, for using fuzzy::match
 //   - Do we want to show the parent groups when a item is matched?
 
-struct UIEntry {
+struct UiEntry {
     title: &'static str,
     path: &'static str,
     _depth: usize,
@@ -147,22 +150,46 @@ struct UIEntry {
     next_sibling: Option<usize>,
     // expanded: bool,
     render: Option<SettingsUiItemSingle>,
+    select_descendant: Option<fn(&serde_json::Value, &mut App) -> usize>,
+}
+
+impl UiEntry {
+    fn first_descendant_index(&self, tree: &[UiEntry]) -> Option<usize> {
+        return self
+            .descendant_range
+            .is_empty()
+            .not()
+            .then_some(self.descendant_range.start);
+    }
+
+    fn nth_descendant_index(&self, tree: &[UiEntry], n: usize) -> Option<usize> {
+        let first_descendant_index = self.first_descendant_index(tree)?;
+        let mut current_index = 0;
+        let mut current_descendant_index = Some(first_descendant_index);
+        while let Some(descendant_index) = current_descendant_index
+            && current_index < n
+        {
+            current_index += 1;
+            current_descendant_index = tree[descendant_index].next_sibling;
+        }
+        current_descendant_index
+    }
 }
 
 struct SettingsUiTree {
     root_entry_indices: Vec<usize>,
-    entries: Vec<UIEntry>,
+    entries: Vec<UiEntry>,
     active_entry_index: usize,
 }
 
 fn build_tree_item(
-    tree: &mut Vec<UIEntry>,
-    group: SettingsUiEntryVariant,
+    tree: &mut Vec<UiEntry>,
+    entry: SettingsUiEntryVariant,
     depth: usize,
     prev_index: Option<usize>,
 ) {
     let index = tree.len();
-    tree.push(UIEntry {
+    tree.push(UiEntry {
         title: "",
         path: "",
         _depth: depth,
@@ -170,11 +197,12 @@ fn build_tree_item(
         total_descendant_range: index + 1..index + 1,
         render: None,
         next_sibling: None,
+        select_descendant: None,
     });
     if let Some(prev_index) = prev_index {
         tree[prev_index].next_sibling = Some(index);
     }
-    match group {
+    match entry {
         SettingsUiEntryVariant::Group {
             path,
             title,
@@ -198,6 +226,26 @@ fn build_tree_item(
             // todo(settings_ui) create title from path in macro, and use here
             tree[index].title = path;
             tree[index].render = Some(item);
+        }
+        SettingsUiEntryVariant::Dynamic {
+            path,
+            title,
+            options,
+            determine_option,
+        } => {
+            tree[index].path = path;
+            tree[index].title = title;
+            tree[index].select_descendant = Some(determine_option);
+            for option in options {
+                let prev_index = tree[index]
+                    .descendant_range
+                    .is_empty()
+                    .not()
+                    .then_some(tree[index].descendant_range.end - 1);
+                tree[index].descendant_range.end = tree.len() + 1;
+                build_tree_item(tree, option.item, depth + 1, prev_index);
+                tree[index].total_descendant_range.end = tree.len();
+            }
         }
         SettingsUiEntryVariant::None => {
             return;
@@ -265,27 +313,28 @@ fn render_content(
     window: &mut Window,
     cx: &mut Context<SettingsPage>,
 ) -> impl IntoElement {
-    let Some(entry) = tree.entries.get(tree.active_entry_index) else {
+    let Some(active_entry) = tree.entries.get(tree.active_entry_index) else {
         return div()
             .size_full()
             .child(Label::new(SharedString::new_static("No settings found")).color(Color::Error));
     };
     let mut content = v_flex().size_full().gap_4();
 
-    let mut child_index = entry
-        .descendant_range
-        .is_empty()
-        .not()
-        .then_some(entry.descendant_range.start);
-    let mut path = smallvec::smallvec![entry.path];
+    let mut path = smallvec::smallvec![active_entry.path];
+    let mut entry_index_queue = VecDeque::new();
 
-    while let Some(index) = child_index {
-        let child = &tree.entries[index];
-        child_index = child.next_sibling;
-        if child.render.is_none() {
-            // todo(settings_ui): subgroups?
-            continue;
+    if let Some(child_index) = active_entry.first_descendant_index(&tree.entries) {
+        entry_index_queue.push_back(child_index);
+        let mut index = child_index;
+        while let Some(next_sibling_index) = tree.entries[index].next_sibling {
+            entry_index_queue.push_back(next_sibling_index);
+            index = next_sibling_index;
         }
+    };
+
+    while let Some(index) = entry_index_queue.pop_front() {
+        // todo(settings_ui): subgroups?
+        let child = &tree.entries[index];
         path.push(child.path);
         let settings_value = settings_value_from_settings_and_path(
             path.clone(),
@@ -294,24 +343,23 @@ fn render_content(
             SettingsStore::global(cx).raw_user_settings(),
             SettingsStore::global(cx).raw_default_settings(),
         );
+        if let Some(select_descendant) = child.select_descendant {
+            let selected_descendant = select_descendant(settings_value.read(), cx);
+            if let Some(descendant_index) =
+                child.nth_descendant_index(&tree.entries, selected_descendant)
+            {
+                entry_index_queue.push_front(descendant_index);
+            }
+        }
+        path.pop();
+        let Some(child_render) = child.render.as_ref() else {
+            continue;
+        };
         content = content.child(
             div()
-                .child(
-                    Label::new(SharedString::new_static(tree.entries[index].title))
-                        .size(LabelSize::Large)
-                        .when(tree.active_entry_index == index, |this| {
-                            this.color(Color::Selected)
-                        }),
-                )
-                .child(render_item_single(
-                    settings_value,
-                    child.render.as_ref().unwrap(),
-                    window,
-                    cx,
-                )),
+                .child(Label::new(SharedString::new_static(child.title)).size(LabelSize::Large))
+                .child(render_item_single(settings_value, child_render, window, cx)),
         );
-
-        path.pop();
     }
 
     return content;
@@ -405,6 +453,7 @@ fn read_settings_value_from_path<'a>(
     settings_contents: &'a serde_json::Value,
     path: &[&'static str],
 ) -> Option<&'a serde_json::Value> {
+    // todo(settings_ui) make non recursive, and move to `settings` alongside SettingsValue, and add method to SettingsValue to get nested
     let Some((key, remaining)) = path.split_first() else {
         return Some(settings_contents);
     };
