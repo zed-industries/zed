@@ -1063,7 +1063,12 @@ impl AgentConfiguration {
                         ExternalAgent::Gemini,
                         cx,
                     ))
-                    // TODO add CC
+                    .child(self.render_agent_server(
+                        IconName::AiClaude,
+                        "Claude Code",
+                        ExternalAgent::ClaudeCode,
+                        cx,
+                    ))
                     .children(user_defined_agents),
             )
     }
