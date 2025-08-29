@@ -120,6 +120,7 @@ impl AgentServerDelegate {
                 } else {
                     None
                 };
+                log::debug!("existing version of {package_name}: {newest_version:?}");
                 to_delete.extend(versions.into_iter().map(|(_, file_name)| file_name));
 
                 cx.background_spawn({
@@ -185,7 +186,6 @@ impl AgentServerDelegate {
                             .join(entrypoint_path)
                             .to_string_lossy()
                             .to_string(),
-                        "--".into(),
                     ],
                     env: Default::default(),
                 })
@@ -201,6 +201,8 @@ impl AgentServerDelegate {
         node_runtime: NodeRuntime,
         package_name: SharedString,
     ) -> Result<String> {
+        log::debug!("downloading latest version of {package_name}");
+
         let tmp_dir = tempfile::tempdir_in(&dir)?;
 
         node_runtime
