@@ -1,5 +1,4 @@
 use std::rc::Rc;
-use std::str::FromStr as _;
 use std::{any::Any, path::Path};
 
 use crate::acp::AcpConnection;
@@ -114,13 +113,19 @@ impl AgentServer for Gemini {
 
                     let (version_output, help_output) =
                         futures::future::join(version_fut, help_fut).await;
+                    let Some(version_output) = version_output.ok().and_then(|output| String::from_utf8(output.stdout).ok()) else {
+                        return result;
+                    };
+                    let Some((help_stdout, help_stderr)) = help_output.ok().and_then(|output| String::from_utf8(output.stdout).ok().zip(String::from_utf8(output.stderr).ok())) else  {
+                        return result;
+                    };
 
-                    let current_version = std::str::from_utf8(&version_output?.stdout)?
-                        .trim()
-                        .to_string();
-                    let supported = String::from_utf8(help_output?.stdout)?.contains(ACP_ARG) || semver::Version::from_str(&current_version).is_ok_and(|version| version >= Self::MINIMUM_VERSION.parse().unwrap());
+                    let current_version = version_output.trim().to_string();
+                    let supported = help_stdout.contains(ACP_ARG) || current_version.parse::<semver::Version>().is_ok_and(|version| version >= Self::MINIMUM_VERSION.parse::<semver::Version>().unwrap());
 
                     log::error!("failed to create ACP connection to gemini (version is {current_version}, supported: {supported}): {e}");
+                    log::debug!("gemini --help stdout: {help_stdout:?}");
+                    log::debug!("gemini --help stderr: {help_stderr:?}");
                     if !supported {
                         return Err(LoadError::Unsupported {
                             current_version: current_version.into(),
