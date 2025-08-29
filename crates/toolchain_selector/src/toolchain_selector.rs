@@ -116,6 +116,7 @@ impl AddToolchainState {
             false,
             PathStyle::current(),
         )
+        .show_hidden()
         .with_footer(Arc::new(move |_, cx| {
             let error = weak
                 .read_with(cx, |this, _| {

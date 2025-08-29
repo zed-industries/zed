@@ -36,6 +36,7 @@ pub struct OpenPathDelegate {
     replace_prompt: Task<()>,
     render_footer:
         Arc<dyn Fn(&mut Window, &mut Context<Picker<Self>>) -> Option<AnyElement> + 'static>,
+    hidden_entries: bool,
 }
 
 impl OpenPathDelegate {
@@ -62,6 +63,7 @@ impl OpenPathDelegate {
             path_style,
             replace_prompt: Task::ready(()),
             render_footer: Arc::new(|_, _| None),
+            hidden_entries: false,
         }
     }
 
@@ -72,6 +74,11 @@ impl OpenPathDelegate {
         >,
     ) -> Self {
         self.render_footer = footer;
+        self
+    }
+
+    pub fn show_hidden(mut self) -> Self {
+        self.hidden_entries = true;
         self
     }
     fn get_entry(&self, selected_match_index: usize) -> Option<CandidateInfo> {
@@ -272,7 +279,7 @@ impl PickerDelegate for OpenPathDelegate {
         self.cancel_flag.store(true, atomic::Ordering::Release);
         self.cancel_flag = Arc::new(AtomicBool::new(false));
         let cancel_flag = self.cancel_flag.clone();
-
+        let hidden_entries = self.hidden_entries;
         let parent_path_is_root = self.prompt_root == dir;
         cx.spawn_in(window, async move |this, cx| {
             if let Some(query) = query {
@@ -364,7 +371,7 @@ impl PickerDelegate for OpenPathDelegate {
                 return;
             };
 
-            if !suffix.starts_with('.') {
+            if !suffix.starts_with('.') && !hidden_entries {
                 new_entries.retain(|entry| !entry.path.string.starts_with('.'));
             }
             if suffix.is_empty() {
