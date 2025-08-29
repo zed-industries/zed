@@ -1,4 +1,4 @@
-                                 ^Apache License
+                                 Apache License
                            Version 2\.0, January 2004
                         http://www\.apache\.org/licenses/
 
@@ -171,9 +171,9 @@
       of any other Contributor, and only if You agree to indemnify,
       defend, and hold each Contributor harmless for any liability
       incurred by, or claims asserted against, such Contributor by reason
-      of your accepting any such warranty or additional liability\.(:?
+      of your accepting any such warranty or additional liability\.(?:
 
-   END OF TERMS AND CONDITIONS)?(:?
+   END OF TERMS AND CONDITIONS)?(?:
 
    APPENDIX: How to apply the Apache License to your work\.
 
@@ -184,9 +184,9 @@
       comment syntax for the file format\. We also recommend that a
       file or class name and description of purpose be included on the
       same "printed page" as the copyright notice for easier
-      identification within third\-party archives\.)?(:?
+      identification within third\-party archives\.)?(?:
 
-   Copyright .*)?(:?
+   Copyright .*)?(?:
 
    Licensed under the Apache License, Version 2\.0 \(the "License"\);
    you may not use this file except in compliance with the License\.
@@ -198,4 +198,4 @@
    distributed under the License is distributed on an "AS IS" BASIS,
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied\.
    See the License for the specific language governing permissions and
-   limitations under the License\.)?$
+   limitations under the License\.)?
