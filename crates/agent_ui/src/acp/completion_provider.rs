@@ -734,6 +734,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                             } else {
                                 format!("/{}", command.name)
                             };
+                            let new_text_len = new_text.len();
 
                             let is_missing_argument =
                                 argument.is_none() && command.requires_argument;
@@ -749,21 +750,43 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                 icon_path: None,
                                 insert_text_mode: None,
                                 confirm: Some(Arc::new({
+                                    let command_name: SharedString = command.name.clone().into();
+                                    let command_description: SharedString =
+                                        command.description.clone().into();
+                                    let source_range = source_range.clone();
                                     let editor = editor.clone();
-                                    move |intent, _window, cx| {
-                                        match intent {
-                                            CompletionIntent::Complete
-                                            | CompletionIntent::CompleteWithInsert
-                                            | CompletionIntent::CompleteWithReplace => {
+                                    move |intent, window, cx| {
+                                        window.defer(cx, {
+                                            let command_name = command_name.clone();
+                                            let command_description = command_description.clone();
+                                            let editor = editor.clone();
+                                            move |window, cx| {
                                                 editor
-                                                    .update(cx, |_editor, cx| {
-                                                        cx.emit(MessageEditorEvent::Send);
+                                                    .update(cx, |editor, cx| {
+                                                        editor
+                                                            .confirm_command_completion(
+                                                                command_name,
+                                                                Some(command_description),
+                                                                source_range.start,
+                                                                new_text_len,
+                                                                window,
+                                                                cx,
+                                                            )
+                                                            .detach();
+                                                        match intent {
+                                                        CompletionIntent::Complete
+                                                        | CompletionIntent::CompleteWithInsert
+                                                        | CompletionIntent::CompleteWithReplace => {
+                                                            if !is_missing_argument {
+                                                                cx.emit(MessageEditorEvent::Send);
+                                                            }
+                                                        }
+                                                        CompletionIntent::Compose => {}
+                                                    }
                                                     })
                                                     .ok();
                                             }
-                                            CompletionIntent::Compose => {}
-                                        }
-
+                                        });
                                         is_missing_argument
                                     }
                                 })),
@@ -964,7 +987,7 @@ fn confirm_completion_callback(
                 .clone()
                 .update(cx, |message_editor, cx| {
                     message_editor
-                        .confirm_completion(
+                        .confirm_mention_completion(
                             crease_text,
                             start,
                             content_len,

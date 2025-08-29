@@ -12,7 +12,7 @@ use collections::{HashMap, HashSet};
 use editor::{
     Addon, Anchor, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement,
     EditorEvent, EditorMode, EditorSnapshot, EditorStyle, ExcerptId, FoldPlaceholder, MultiBuffer,
-    SemanticsProvider, ToOffset,
+    SemanticsProvider, ToOffset, ToPoint as _,
     actions::Paste,
     display_map::{Crease, CreaseId, FoldId},
 };
@@ -45,10 +45,10 @@ use std::{
 use text::{OffsetRangeExt, ToOffset as _};
 use theme::ThemeSettings;
 use ui::{
-    ActiveTheme, AnyElement, App, ButtonCommon, ButtonLike, ButtonStyle, Color, Element as _,
-    FluentBuilder as _, Icon, IconName, IconSize, InteractiveElement, IntoElement, Label,
-    LabelCommon, LabelSize, ParentElement, Render, SelectableButton, SharedString, Styled,
-    TextSize, TintColor, Toggleable, Window, div, h_flex, px,
+    ActiveTheme, AnyElement, App, ButtonCommon, ButtonLike, ButtonStyle, Clickable as _, Color,
+    Element as _, ElevationIndex, FluentBuilder as _, Icon, IconName, IconSize, InteractiveElement,
+    IntoElement, Label, LabelCommon, LabelSize, ParentElement, Render, SelectableButton,
+    SharedString, Styled, TextSize, TintColor, Toggleable, Tooltip, Window, div, h_flex, px,
 };
 use util::{ResultExt, debug_panic};
 use workspace::{Workspace, notifications::NotifyResultExt as _};
@@ -186,7 +186,7 @@ impl MessageEditor {
                 .text_anchor
         });
 
-        self.confirm_completion(
+        self.confirm_mention_completion(
             thread.title.clone(),
             start,
             thread.title.len(),
@@ -226,7 +226,59 @@ impl MessageEditor {
         self.completion_provider.set_command_provider(provider);
     }
 
-    pub fn confirm_completion(
+    pub fn confirm_command_completion(
+        &mut self,
+        command_name: SharedString,
+        command_description: Option<SharedString>,
+        start: text::Anchor,
+        content_len: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
+        let snapshot = self
+            .editor
+            .update(cx, |editor, cx| editor.snapshot(window, cx));
+        let snapshot = &snapshot.buffer_snapshot;
+
+        let Some((excerpt_id, _, _)) = snapshot.as_singleton() else {
+            return Task::ready(());
+        };
+
+        let Some(start) = snapshot.anchor_in_excerpt(*excerpt_id, start) else {
+            return Task::ready(());
+        };
+
+        let start = start.bias_right(&snapshot);
+        let end = snapshot.anchor_before(start.to_offset(&snapshot) + content_len);
+
+        self.editor.update(cx, |editor, cx| {
+            let placeholder = FoldPlaceholder {
+                render: render_command_fold_button(
+                    IconName::Library.path().into(),
+                    command_name,
+                    command_description,
+                    cx.weak_entity(),
+                ),
+                merge_adjacent: false,
+                ..Default::default()
+            };
+
+            let crease = Crease::Inline {
+                range: start..end,
+                placeholder,
+                render_toggle: None,
+                render_trailer: None,
+                metadata: None,
+            };
+
+            let ids = editor.insert_creases(vec![crease.clone()], cx);
+            editor.fold_creases(vec![crease], false, window, cx);
+            ids
+        });
+        Task::ready(())
+    }
+
+    pub fn confirm_mention_completion(
         &mut self,
         crease_text: SharedString,
         start: text::Anchor,
@@ -974,7 +1026,14 @@ impl MessageEditor {
                     cx,
                 );
             });
-            tasks.push(self.confirm_completion(file_name, anchor, content_len, uri, window, cx));
+            tasks.push(self.confirm_mention_completion(
+                file_name,
+                anchor,
+                content_len,
+                uri,
+                window,
+                cx,
+            ));
         }
         cx.spawn(async move |_, _| {
             join_all(tasks).await;
@@ -1267,7 +1326,7 @@ pub(crate) fn insert_crease_for_mention(
         let end = snapshot.anchor_before(start.to_offset(&snapshot) + content_len);
 
         let placeholder = FoldPlaceholder {
-            render: render_fold_icon_button(
+            render: render_mention_fold_button(
                 crease_label,
                 crease_icon,
                 start..end,
@@ -1297,7 +1356,38 @@ pub(crate) fn insert_crease_for_mention(
     Some((crease_id, tx))
 }
 
-fn render_fold_icon_button(
+fn render_command_fold_button(
+    icon_path: SharedString,
+    label: SharedString,
+    description: Option<SharedString>,
+    editor: WeakEntity<Editor>,
+) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
+    Arc::new(move |fold_id, fold_range, _cx| {
+        let editor = editor.clone();
+        ButtonLike::new(fold_id)
+            .style(ButtonStyle::Filled)
+            .layer(ElevationIndex::ElevatedSurface)
+            .child(Icon::from_path(icon_path.clone()))
+            .child(Label::new(label.clone()).single_line())
+            .on_click(move |_, window, cx| {
+                editor
+                    .update(cx, |editor, cx| {
+                        let buffer_start = fold_range
+                            .start
+                            .to_point(&editor.buffer().read(cx).read(cx));
+                        let buffer_row = multi_buffer::MultiBufferRow(buffer_start.row);
+                        editor.unfold_at(buffer_row, window, cx);
+                    })
+                    .ok();
+            })
+            .when_some(description.clone(), |this, description| {
+                this.tooltip(Tooltip::text(description))
+            })
+            .into_any_element()
+    })
+}
+
+fn render_mention_fold_button(
     label: SharedString,
     icon: SharedString,
     range: Range<Anchor>,
