@@ -44,11 +44,11 @@ pub fn init(cx: &mut App) {
 
 pub struct AgentServerDelegate {
     project: Entity<Project>,
-    status_tx: watch::Sender<SharedString>,
+    status_tx: Option<watch::Sender<SharedString>>,
 }
 
 impl AgentServerDelegate {
-    pub fn new(project: Entity<Project>, status_tx: watch::Sender<SharedString>) -> Self {
+    pub fn new(project: Entity<Project>, status_tx: Option<watch::Sender<SharedString>>) -> Self {
         Self { project, status_tx }
     }
 
@@ -72,7 +72,7 @@ impl AgentServerDelegate {
                 "External agents are not yet available in remote projects."
             )));
         };
-        let mut status_tx = self.status_tx;
+        let status_tx = self.status_tx;
 
         cx.spawn(async move |cx| {
             if !ignore_system_version {
@@ -165,7 +165,9 @@ impl AgentServerDelegate {
                     .detach();
                     file_name
                 } else {
-                    status_tx.send("Installing…".into()).ok();
+                    if let Some(mut status_tx) = status_tx {
+                        status_tx.send("Installing…".into()).ok();
+                    }
                     let dir = dir.clone();
                     cx.background_spawn(Self::download_latest_version(
                         fs,
