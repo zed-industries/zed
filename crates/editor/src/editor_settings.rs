@@ -516,7 +516,7 @@ pub struct EditorSettingsContent {
     /// Default: 3
     pub expand_excerpt_lines: Option<u32>,
 
-    /// How many lines to expand the multibuffer excerpts by default
+    /// How many lines of context to provide in multibuffer excerpts by default
     ///
     /// Default: 2
     pub excerpt_context_lines: Option<u32>,
