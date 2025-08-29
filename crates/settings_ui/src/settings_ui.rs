@@ -222,10 +222,11 @@ impl SettingsUITree {
 
         root_entry_indices.sort_by_key(|i| tree[*i].title);
 
+        let active_entry_index = root_entry_indices[0];
         Self {
             entries: tree,
             root_entry_indices,
-            active_entry_index: root_entry_indices[0],
+            active_entry_index,
         }
     }
 }
