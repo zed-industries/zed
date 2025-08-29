@@ -5,8 +5,8 @@ on:
     # Fire every day at 7:00am UTC (Roughly before EU workday and after US workday)
     - cron: "0 7 * * *"
   push:
-    tags:
-      - "nightly"
+    branches:
+      - rustdoc-action
 
 env:
   CARGO_TERM_COLOR: always
@@ -18,274 +18,274 @@ env:
   DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
 
 jobs:
-  style:
-    timeout-minutes: 60
-    name: Check formatting and Clippy lints
-    if: github.repository_owner == 'zed-industries'
-    runs-on:
-      - self-hosted
-      - macOS
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-        with:
-          clean: false
-          fetch-depth: 0
+  # style:
+  #   timeout-minutes: 60
+  #   name: Check formatting and Clippy lints
+  #   if: github.repository_owner == 'zed-industries'
+  #   runs-on:
+  #     - self-hosted
+  #     - macOS
+  #   steps:
+  #     - name: Checkout repo
+  #       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+  #       with:
+  #         clean: false
+  #         fetch-depth: 0
 
-      - name: Run style checks
-        uses: ./.github/actions/check_style
+  #     - name: Run style checks
+  #       uses: ./.github/actions/check_style
 
-      - name: Run clippy
-        run: ./script/clippy
+  #     - name: Run clippy
+  #       run: ./script/clippy
 
-  tests:
-    timeout-minutes: 60
-    name: Run tests
-    if: github.repository_owner == 'zed-industries'
-    runs-on:
-      - self-hosted
-      - macOS
-    needs: style
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-        with:
-          clean: false
+  # tests:
+  #   timeout-minutes: 60
+  #   name: Run tests
+  #   if: github.repository_owner == 'zed-industries'
+  #   runs-on:
+  #     - self-hosted
+  #     - macOS
+  #   needs: style
+  #   steps:
+  #     - name: Checkout repo
+  #       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+  #       with:
+  #         clean: false
 
-      - name: Run tests
-        uses: ./.github/actions/run_tests
+  #     - name: Run tests
+  #       uses: ./.github/actions/run_tests
 
-  windows-tests:
-    timeout-minutes: 60
-    name: Run tests on Windows
-    if: github.repository_owner == 'zed-industries'
-    runs-on: [self-32vcpu-windows-2022]
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-        with:
-          clean: false
+  # windows-tests:
+  #   timeout-minutes: 60
+  #   name: Run tests on Windows
+  #   if: github.repository_owner == 'zed-industries'
+  #   runs-on: [self-32vcpu-windows-2022]
+  #   steps:
+  #     - name: Checkout repo
+  #       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+  #       with:
+  #         clean: false
 
-      - name: Configure CI
-        run: |
-          New-Item -ItemType Directory -Path "./../.cargo" -Force
-          Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
+  #     - name: Configure CI
+  #       run: |
+  #         New-Item -ItemType Directory -Path "./../.cargo" -Force
+  #         Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
 
-      - name: Run tests
-        uses: ./.github/actions/run_tests_windows
+  #     - name: Run tests
+  #       uses: ./.github/actions/run_tests_windows
 
-      - name: Limit target directory size
-        run: ./script/clear-target-dir-if-larger-than.ps1 1024
+  #     - name: Limit target directory size
+  #       run: ./script/clear-target-dir-if-larger-than.ps1 1024
 
-      - name: Clean CI config file
-        if: always()
-        run: Remove-Item -Recurse -Path "./../.cargo" -Force -ErrorAction SilentlyContinue
+  #     - name: Clean CI config file
+  #       if: always()
+  #       run: Remove-Item -Recurse -Path "./../.cargo" -Force -ErrorAction SilentlyContinue
 
-  bundle-mac:
-    timeout-minutes: 60
-    name: Create a macOS bundle
-    if: github.repository_owner == 'zed-industries'
-    runs-on:
-      - self-mini-macos
-    needs: tests
-    env:
-      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-      APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }}
-      APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
-      APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
-    steps:
-      - name: Install Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: "18"
+  # bundle-mac:
+  #   timeout-minutes: 60
+  #   name: Create a macOS bundle
+  #   if: github.repository_owner == 'zed-industries'
+  #   runs-on:
+  #     - self-mini-macos
+  #   needs: tests
+  #   env:
+  #     MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+  #     MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+  #     APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }}
+  #     APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
+  #     APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
+  #   steps:
+  #     - name: Install Node
+  #       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+  #       with:
+  #         node-version: "18"
 
-      - name: Checkout repo
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-        with:
-          clean: false
+  #     - name: Checkout repo
+  #       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+  #       with:
+  #         clean: false
 
-      - name: Set release channel to nightly
-        run: |
-          set -eu
-          version=$(git rev-parse --short HEAD)
-          echo "Publishing version: ${version} on release channel nightly"
-          echo "nightly" > crates/zed/RELEASE_CHANNEL
+  #     - name: Set release channel to nightly
+  #       run: |
+  #         set -eu
+  #         version=$(git rev-parse --short HEAD)
+  #         echo "Publishing version: ${version} on release channel nightly"
+  #         echo "nightly" > crates/zed/RELEASE_CHANNEL
 
-      - name: Setup Sentry CLI
-        uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b #v2
-        with:
-          token: ${{ SECRETS.SENTRY_AUTH_TOKEN }}
+  #     - name: Setup Sentry CLI
+  #       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b #v2
+  #       with:
+  #         token: ${{ SECRETS.SENTRY_AUTH_TOKEN }}
 
-      - name: Create macOS app bundle
-        run: script/bundle-mac
+  #     - name: Create macOS app bundle
+  #       run: script/bundle-mac
 
-      - name: Upload Zed Nightly
-        run: script/upload-nightly macos
+  #     - name: Upload Zed Nightly
+  #       run: script/upload-nightly macos
 
-  bundle-linux-x86:
-    timeout-minutes: 60
-    name: Create a Linux *.tar.gz bundle for x86
-    if: github.repository_owner == 'zed-industries'
-    runs-on:
-      - namespace-profile-16x32-ubuntu-2004 # ubuntu 20.04 for minimal glibc
-    needs: tests
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-        with:
-          clean: false
+  # bundle-linux-x86:
+  #   timeout-minutes: 60
+  #   name: Create a Linux *.tar.gz bundle for x86
+  #   if: github.repository_owner == 'zed-industries'
+  #   runs-on:
+  #     - namespace-profile-16x32-ubuntu-2004 # ubuntu 20.04 for minimal glibc
+  #   needs: tests
+  #   steps:
+  #     - name: Checkout repo
+  #       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+  #       with:
+  #         clean: false
 
-      - name: Add Rust to the PATH
-        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+  #     - name: Add Rust to the PATH
+  #       run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
-      - name: Install Linux dependencies
-        run: ./script/linux && ./script/install-mold 2.34.0
+  #     - name: Install Linux dependencies
+  #       run: ./script/linux && ./script/install-mold 2.34.0
 
-      - name: Setup Sentry CLI
-        uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b #v2
-        with:
-          token: ${{ SECRETS.SENTRY_AUTH_TOKEN }}
+  #     - name: Setup Sentry CLI
+  #       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b #v2
+  #       with:
+  #         token: ${{ SECRETS.SENTRY_AUTH_TOKEN }}
 
-      - name: Limit target directory size
-        run: script/clear-target-dir-if-larger-than 100
+  #     - name: Limit target directory size
+  #       run: script/clear-target-dir-if-larger-than 100
 
-      - name: Set release channel to nightly
-        run: |
-          set -euo pipefail
-          version=$(git rev-parse --short HEAD)
-          echo "Publishing version: ${version} on release channel nightly"
-          echo "nightly" > crates/zed/RELEASE_CHANNEL
+  #     - name: Set release channel to nightly
+  #       run: |
+  #         set -euo pipefail
+  #         version=$(git rev-parse --short HEAD)
+  #         echo "Publishing version: ${version} on release channel nightly"
+  #         echo "nightly" > crates/zed/RELEASE_CHANNEL
 
-      - name: Create Linux .tar.gz bundle
-        run: script/bundle-linux
+  #     - name: Create Linux .tar.gz bundle
+  #       run: script/bundle-linux
 
-      - name: Upload Zed Nightly
-        run: script/upload-nightly linux-targz
+  #     - name: Upload Zed Nightly
+  #       run: script/upload-nightly linux-targz
 
-  bundle-linux-arm:
-    timeout-minutes: 60
-    name: Create a Linux *.tar.gz bundle for ARM
-    if: github.repository_owner == 'zed-industries'
-    runs-on:
-      - namespace-profile-8x32-ubuntu-2004-arm-m4 # ubuntu 20.04 for minimal glibc
-    needs: tests
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-        with:
-          clean: false
+  # bundle-linux-arm:
+  #   timeout-minutes: 60
+  #   name: Create a Linux *.tar.gz bundle for ARM
+  #   if: github.repository_owner == 'zed-industries'
+  #   runs-on:
+  #     - namespace-profile-8x32-ubuntu-2004-arm-m4 # ubuntu 20.04 for minimal glibc
+  #   needs: tests
+  #   steps:
+  #     - name: Checkout repo
+  #       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+  #       with:
+  #         clean: false
 
-      - name: Install Linux dependencies
-        run: ./script/linux
+  #     - name: Install Linux dependencies
+  #       run: ./script/linux
 
-      - name: Setup Sentry CLI
-        uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b #v2
-        with:
-          token: ${{ SECRETS.SENTRY_AUTH_TOKEN }}
+  #     - name: Setup Sentry CLI
+  #       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b #v2
+  #       with:
+  #         token: ${{ SECRETS.SENTRY_AUTH_TOKEN }}
 
-      - name: Limit target directory size
-        run: script/clear-target-dir-if-larger-than 100
+  #     - name: Limit target directory size
+  #       run: script/clear-target-dir-if-larger-than 100
 
-      - name: Set release channel to nightly
-        run: |
-          set -euo pipefail
-          version=$(git rev-parse --short HEAD)
-          echo "Publishing version: ${version} on release channel nightly"
-          echo "nightly" > crates/zed/RELEASE_CHANNEL
+  #     - name: Set release channel to nightly
+  #       run: |
+  #         set -euo pipefail
+  #         version=$(git rev-parse --short HEAD)
+  #         echo "Publishing version: ${version} on release channel nightly"
+  #         echo "nightly" > crates/zed/RELEASE_CHANNEL
 
-      - name: Create Linux .tar.gz bundle
-        run: script/bundle-linux
+  #     - name: Create Linux .tar.gz bundle
+  #       run: script/bundle-linux
 
-      - name: Upload Zed Nightly
-        run: script/upload-nightly linux-targz
+  #     - name: Upload Zed Nightly
+  #       run: script/upload-nightly linux-targz
 
-  freebsd:
-    timeout-minutes: 60
-    if: false && github.repository_owner == 'zed-industries'
-    runs-on: github-8vcpu-ubuntu-2404
-    needs: tests
-    name: Build Zed on FreeBSD
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build FreeBSD remote-server
-        id: freebsd-build
-        uses: vmactions/freebsd-vm@c3ae29a132c8ef1924775414107a97cac042aad5 # v1.2.0
-        with:
-          # envs: "MYTOKEN MYTOKEN2"
-          usesh: true
-          release: 13.5
-          copyback: true
-          prepare: |
-            pkg install -y \
-              bash curl jq git \
-              rustup-init cmake-core llvm-devel-lite pkgconf protobuf # ibx11 alsa-lib rust-bindgen-cli
-          run: |
-            freebsd-version
-            sysctl hw.model
-            sysctl hw.ncpu
-            sysctl hw.physmem
-            sysctl hw.usermem
-            git config --global --add safe.directory /home/runner/work/zed/zed
-            rustup-init --profile minimal --default-toolchain none -y
-            . "$HOME/.cargo/env"
-            ./script/bundle-freebsd
-            mkdir -p out/
-            mv "target/zed-remote-server-freebsd-x86_64.gz" out/
-            rm -rf target/
-            cargo clean
+  # freebsd:
+  #   timeout-minutes: 60
+  #   if: false && github.repository_owner == 'zed-industries'
+  #   runs-on: github-8vcpu-ubuntu-2404
+  #   needs: tests
+  #   name: Build Zed on FreeBSD
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: Build FreeBSD remote-server
+  #       id: freebsd-build
+  #       uses: vmactions/freebsd-vm@c3ae29a132c8ef1924775414107a97cac042aad5 # v1.2.0
+  #       with:
+  #         # envs: "MYTOKEN MYTOKEN2"
+  #         usesh: true
+  #         release: 13.5
+  #         copyback: true
+  #         prepare: |
+  #           pkg install -y \
+  #             bash curl jq git \
+  #             rustup-init cmake-core llvm-devel-lite pkgconf protobuf # ibx11 alsa-lib rust-bindgen-cli
+  #         run: |
+  #           freebsd-version
+  #           sysctl hw.model
+  #           sysctl hw.ncpu
+  #           sysctl hw.physmem
+  #           sysctl hw.usermem
+  #           git config --global --add safe.directory /home/runner/work/zed/zed
+  #           rustup-init --profile minimal --default-toolchain none -y
+  #           . "$HOME/.cargo/env"
+  #           ./script/bundle-freebsd
+  #           mkdir -p out/
+  #           mv "target/zed-remote-server-freebsd-x86_64.gz" out/
+  #           rm -rf target/
+  #           cargo clean
 
-      - name: Upload Zed Nightly
-        run: script/upload-nightly freebsd
+  #     - name: Upload Zed Nightly
+  #       run: script/upload-nightly freebsd
 
-  bundle-nix:
-    name: Build and cache Nix package
-    needs: tests
-    secrets: inherit
-    uses: ./.github/workflows/nix.yml
+  # bundle-nix:
+  #   name: Build and cache Nix package
+  #   needs: tests
+  #   secrets: inherit
+  #   uses: ./.github/workflows/nix.yml
 
-  bundle-windows-x64:
-    timeout-minutes: 60
-    name: Create a Windows installer
-    if: github.repository_owner == 'zed-industries'
-    runs-on: [self-32vcpu-windows-2022]
-    needs: windows-tests
-    env:
-      AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
-      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_SIGNING_CLIENT_SECRET }}
-      ACCOUNT_NAME: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
-      CERT_PROFILE_NAME: ${{ vars.AZURE_SIGNING_CERT_PROFILE_NAME }}
-      ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
-      FILE_DIGEST: SHA256
-      TIMESTAMP_DIGEST: SHA256
-      TIMESTAMP_SERVER: "http://timestamp.acs.microsoft.com"
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-        with:
-          clean: false
+  # bundle-windows-x64:
+  #   timeout-minutes: 60
+  #   name: Create a Windows installer
+  #   if: github.repository_owner == 'zed-industries'
+  #   runs-on: [self-32vcpu-windows-2022]
+  #   needs: windows-tests
+  #   env:
+  #     AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
+  #     AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
+  #     AZURE_CLIENT_SECRET: ${{ secrets.AZURE_SIGNING_CLIENT_SECRET }}
+  #     ACCOUNT_NAME: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
+  #     CERT_PROFILE_NAME: ${{ vars.AZURE_SIGNING_CERT_PROFILE_NAME }}
+  #     ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+  #     FILE_DIGEST: SHA256
+  #     TIMESTAMP_DIGEST: SHA256
+  #     TIMESTAMP_SERVER: "http://timestamp.acs.microsoft.com"
+  #   steps:
+  #     - name: Checkout repo
+  #       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+  #       with:
+  #         clean: false
 
-      - name: Set release channel to nightly
-        working-directory: ${{ env.ZED_WORKSPACE }}
-        run: |
-          $ErrorActionPreference = "Stop"
-          $version = git rev-parse --short HEAD
-          Write-Host "Publishing version: $version on release channel nightly"
-          "nightly" | Set-Content -Path "crates/zed/RELEASE_CHANNEL"
+  #     - name: Set release channel to nightly
+  #       working-directory: ${{ env.ZED_WORKSPACE }}
+  #       run: |
+  #         $ErrorActionPreference = "Stop"
+  #         $version = git rev-parse --short HEAD
+  #         Write-Host "Publishing version: $version on release channel nightly"
+  #         "nightly" | Set-Content -Path "crates/zed/RELEASE_CHANNEL"
 
-      - name: Setup Sentry CLI
-        uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b #v2
-        with:
-          token: ${{ SECRETS.SENTRY_AUTH_TOKEN }}
+  #     - name: Setup Sentry CLI
+  #       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b #v2
+  #       with:
+  #         token: ${{ SECRETS.SENTRY_AUTH_TOKEN }}
 
-      - name: Build Zed installer
-        working-directory: ${{ env.ZED_WORKSPACE }}
-        run: script/bundle-windows.ps1
+  #     - name: Build Zed installer
+  #       working-directory: ${{ env.ZED_WORKSPACE }}
+  #       run: script/bundle-windows.ps1
 
-      - name: Upload Zed Nightly
-        working-directory: ${{ env.ZED_WORKSPACE }}
-        run: script/upload-nightly.ps1 windows
+  #     - name: Upload Zed Nightly
+  #       working-directory: ${{ env.ZED_WORKSPACE }}
+  #       run: script/upload-nightly.ps1 windows
 
   gpui-docs:
     timeout-minutes: 60
@@ -294,7 +294,7 @@ jobs:
     # TODO: build for multiple targets?
     runs-on:
       - github-16vcpu-ubuntu-2404
-    needs: tests
+    # needs: tests
     continue-on-error: true
     steps:
       - name: Checkout repo
@@ -327,37 +327,37 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy target/doc --project-name=gpui-rustdoc
 
-  update-nightly-tag:
-    name: Update nightly tag
-    if: github.repository_owner == 'zed-industries'
-    runs-on: namespace-profile-2x4-ubuntu-2404
-    needs:
-      - bundle-mac
-      - bundle-linux-x86
-      - bundle-linux-arm
-      - bundle-windows-x64
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-        with:
-          fetch-depth: 0
+  # update-nightly-tag:
+  #   name: Update nightly tag
+  #   if: github.repository_owner == 'zed-industries'
+  #   runs-on: namespace-profile-2x4-ubuntu-2404
+  #   needs:
+  #     - bundle-mac
+  #     - bundle-linux-x86
+  #     - bundle-linux-arm
+  #     - bundle-windows-x64
+  #   steps:
+  #     - name: Checkout repo
+  #       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+  #       with:
+  #         fetch-depth: 0
 
-      - name: Update nightly tag
-        run: |
-          if [ "$(git rev-parse nightly)" = "$(git rev-parse HEAD)" ]; then
-            echo "Nightly tag already points to current commit. Skipping tagging."
-            exit 0
-          fi
-          git config user.name github-actions
-          git config user.email github-actions@github.com
-          git tag -f nightly
-          git push origin nightly --force
+  #     - name: Update nightly tag
+  #       run: |
+  #         if [ "$(git rev-parse nightly)" = "$(git rev-parse HEAD)" ]; then
+  #           echo "Nightly tag already points to current commit. Skipping tagging."
+  #           exit 0
+  #         fi
+  #         git config user.name github-actions
+  #         git config user.email github-actions@github.com
+  #         git tag -f nightly
+  #         git push origin nightly --force
 
-      - name: Create Sentry release
-        uses: getsentry/action-release@526942b68292201ac6bbb99b9a0747d4abee354c # v3
-        env:
-          SENTRY_ORG: zed-dev
-          SENTRY_PROJECT: zed
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-        with:
-          environment: production
+  #     - name: Create Sentry release
+  #       uses: getsentry/action-release@526942b68292201ac6bbb99b9a0747d4abee354c # v3
+  #       env:
+  #         SENTRY_ORG: zed-dev
+  #         SENTRY_PROJECT: zed
+  #         SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+  #       with:
+  #         environment: production
