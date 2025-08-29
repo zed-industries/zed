@@ -313,7 +313,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "shlex",
  "smol",
  "tempfile",
  "thiserror 2.0.12",
