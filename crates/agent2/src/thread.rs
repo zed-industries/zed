@@ -484,11 +484,15 @@ impl AgentMessage {
         };
 
         for tool_result in self.tool_results.values() {
+            let mut tool_result = tool_result.clone();
+            // Surprisingly, the API fails if we return an empty string here.
+            // It thinks we are sending a tool use without a tool result.
+            if tool_result.content.is_empty() {
+                tool_result.content = "<Tool returned an empty string>".into();
+            }
             user_message
                 .content
-                .push(language_model::MessageContent::ToolResult(
-                    tool_result.clone(),
-                ));
+                .push(language_model::MessageContent::ToolResult(tool_result));
         }
 
         let mut messages = Vec::new();
