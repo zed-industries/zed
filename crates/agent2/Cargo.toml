@@ -48,7 +48,6 @@ log.workspace = true
 open.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
-portable-pty.workspace = true
 project.workspace = true
 prompt_store.workspace = true
 rust-embed.workspace = true
@@ -68,7 +67,6 @@ util.workspace = true
 uuid.workspace = true
 watch.workspace = true
 web_search.workspace = true
-which.workspace = true
 workspace-hack.workspace = true
 zstd.workspace = true
 
