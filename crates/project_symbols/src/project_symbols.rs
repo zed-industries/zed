@@ -270,7 +270,6 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                 .toggle_state(selected)
                 .child(
                     v_flex()
-                        .gap_px()
                         .child(LabelLike::new().child(
                             StyledText::new(label).with_default_highlights(&text_style, highlights),
                         ))
