@@ -29,12 +29,11 @@ pub enum SettingsUiEntryVariant {
         path: &'static str,
         item: SettingsUiItemSingle,
     },
-    // TODO: remove
+    // todo(settings_ui): remove
     None,
 }
 
 pub enum SettingsUiItemSingle {
-    // TODO: default/builtin variants
     SwitchField,
     NumericStepper,
     ToggleGroup(&'static [&'static str]),

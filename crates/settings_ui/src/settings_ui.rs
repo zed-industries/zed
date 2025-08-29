@@ -282,8 +282,8 @@ fn render_content(
     while let Some(index) = child_index {
         let child = &tree.entries[index];
         child_index = child.next_sibling;
-        if !child.render.is_some() {
-            // TODO: subgroups?
+        if child.render.is_none() {
+            // todo(settings_ui): subgroups?
             continue;
         }
         path.push(child.path);
@@ -339,7 +339,7 @@ impl Render for SettingsPage {
     }
 }
 
-// TODO: remove, only here as inspiration
+// todo(settings_ui): remove, only here as inspiration
 #[allow(dead_code)]
 fn render_old_appearance_settings(cx: &mut App) -> impl IntoElement {
     v_flex()
