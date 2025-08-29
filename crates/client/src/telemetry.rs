@@ -120,7 +120,7 @@ pub fn os_version() -> String {
         // "15.6.1 (Build 24G90)" -> "15.6.1"
         // "26.0.0 (Build 25A5349a)" -> unchanged (Beta or Rapid Security Response; ends with letter)
         MACOS_VERSION_REGEX
-            .replace_all(&version_string.to_string(), "")
+            .replace_all(&version_string, "")
             .to_string()
     }
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
