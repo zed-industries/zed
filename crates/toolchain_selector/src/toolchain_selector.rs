@@ -209,12 +209,7 @@ impl AddToolchainState {
         PathInputState::WaitingForPath(task)
     }
 
-    fn confirm_toolchain(
-        &mut self,
-        _: &menu::Confirm,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn confirm_toolchain(&mut self, _: &menu::Confirm, _: &mut Window, cx: &mut Context<Self>) {
         let AddState::Name { toolchain, editor } = &mut self.state else {
             return;
         };
@@ -222,55 +217,7 @@ impl AddToolchainState {
         if text.is_empty() {
             return;
         }
-
-        // match &mut self.state {
-        //     AddState::Path { confirm_task, .. } => {
-        //         todo!();
-        // Set of a confirmation task with our lister.
-        // let text = editor.read(cx).text(cx);
-
-        // if text.is_empty() {
-        //     return;
-        // }
-        // let task = self.project.read(cx).resolve_toolchain(
-        //     PathBuf::from(text),
-        //     self.language_name.clone(),
-        //     cx,
-        // );
-        // *confirm_task = Some(cx.spawn_in(window, async move |this, cx| {
-        //     let t = task.await;
-        //     this.update_in(cx, |this, window, cx| {
-        //         let AddState::Path {
-        //             error,
-        //             confirm_task,
-        //             ..
-        //         } = &mut this.state
-        //         else {
-        //             unreachable!("This closure should not complete concurrently")
-        //         };
-
-        //         match t {
-        //             Ok(toolchain) => {
-        //                 let editor = cx.new(|cx| {
-        //                     let mut editor = Editor::single_line(window, cx);
-        //                     editor.set_text(toolchain.name.clone(), window, cx);
-        //                     editor
-        //                 });
-        //                 this.state = AddState::Name { toolchain, editor };
-        //             }
-        //             Err(err) => {
-        //                 *error = Some(err.to_string().into());
-        //                 confirm_task.take();
-        //             }
-        //         }
-
-        //         cx.notify();
-        //     })
-        //     .ok();
-        // }));
-        //     }
-
-        // }
+        toolchain.name = SharedString::from(text);
     }
 }
 impl Focusable for AddToolchainState {
@@ -317,7 +264,7 @@ impl Render for AddToolchainState {
                     .when_some(error.clone(), |this, error| {
                         this.child(Label::new(error).color(Color::Error))
                     }),
-                AddState::Name { toolchain, editor } => this
+                AddState::Name { editor, .. } => this
                     .child(
                         h_flex().w_full().child(
                             h_flex()

@@ -92,15 +92,16 @@ impl ToolchainStore {
     }
     pub(crate) fn resolve_toolchain(
         &self,
-        path: PathBuf,
+        abs_path: PathBuf,
         language_name: LanguageName,
         cx: &mut Context<Self>,
     ) -> Task<Result<Toolchain>> {
+        debug_assert!(abs_path.is_absolute());
         match &self.0 {
             ToolchainStoreInner::Local(local, _) => local.update(cx, |this, cx| {
-                this.resolve_toolchain(path, language_name, cx)
+                this.resolve_toolchain(abs_path, language_name, cx)
             }),
-            ToolchainStoreInner::Remote(remote, _) => {
+            ToolchainStoreInner::Remote(_, _) => {
                 todo!()
             }
         }
