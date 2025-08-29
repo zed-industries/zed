@@ -2476,23 +2476,15 @@ async fn test_delete_to_beginning_of_line(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_delete_to_word_boundary(cx: &mut TestAppContext) {
+async fn test_delete_to_word_boundary(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
-    let editor = cx.add_window(|window, cx| {
-        let buffer = MultiBuffer::build_simple("one two three four", cx);
-        build_editor(buffer, window, cx)
-    });
+    let mut cx = EditorTestContext::new(cx).await;
 
-    _ = editor.update(cx, |editor, window, cx| {
-        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_display_ranges([
-                // an empty selection - the preceding word fragment is deleted
-                DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 2),
-                // characters selected - they are deleted
-                DisplayPoint::new(DisplayRow(0), 9)..DisplayPoint::new(DisplayRow(0), 12),
-            ])
-        });
+    // For an empty selection, the preceding word fragment is deleted.
+    // For non-empty selections, only selected characters are deleted.
+    cx.set_state("onˇe two t«hreˇ»e four");
+    cx.update_editor(|editor, window, cx| {
         editor.delete_to_previous_word_start(
             &DeleteToPreviousWordStart {
                 ignore_newlines: false,
@@ -2500,18 +2492,11 @@ fn test_delete_to_word_boundary(cx: &mut TestAppContext) {
             window,
             cx,
         );
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "e two te four");
     });
+    cx.assert_editor_state("ˇe two tˇe four");
 
-    _ = editor.update(cx, |editor, window, cx| {
-        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_display_ranges([
-                // an empty selection - the following word fragment is deleted
-                DisplayPoint::new(DisplayRow(0), 3)..DisplayPoint::new(DisplayRow(0), 3),
-                // characters selected - they are deleted
-                DisplayPoint::new(DisplayRow(0), 9)..DisplayPoint::new(DisplayRow(0), 10),
-            ])
-        });
+    cx.set_state("e tˇwo te «fˇ»our");
+    cx.update_editor(|editor, window, cx| {
         editor.delete_to_next_word_end(
             &DeleteToNextWordEnd {
                 ignore_newlines: false,
@@ -2519,8 +2504,8 @@ fn test_delete_to_word_boundary(cx: &mut TestAppContext) {
             window,
             cx,
         );
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "e t te our");
     });
+    cx.assert_editor_state("e tˇ te ˇour");
 }
 
 #[gpui::test]
