@@ -50,6 +50,8 @@ pub struct TerminalSettings {
     pub toolbar: Toolbar,
     pub scrollbar: ScrollbarSettings,
     pub minimum_contrast: f32,
+    pub path_hyperlink_regexes: Vec<String>,
+    pub path_hyperlink_timeout: u64,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -250,6 +252,18 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: 45
     pub minimum_contrast: Option<f32>,
+    /// Regexes used to identify path for hyperlink navigation
+    ///
+    /// Default: [
+    ///   "(?<path>[^:]+)((?<suffix>(:(?<line>[0-9]+))(:(?<column>[0-9]+))?)(:(?=[^0-9])(?<desc>.*)$|$))?",
+    ///   "(?<path>[^\\(]+)((?<suffix>(\\((?<line>[0-9]+))([,:](?<column>[0-9]+))?\\))(:(?=[^0-9])(?<desc>.*)$|$))?",
+    ///   "\"(?<path>[^\"]+)\"((?<suffix>(, line (?<line>[0-9]+))))?"
+    /// ],
+    pub path_hyperlink_regexes: Option<Vec<String>>,
+    /// Timeout for hover and Cmd-click path hyperlink discovery in milliseconds.
+    ///
+    /// Default: 100
+    pub path_hyperlink_timeout: Option<u64>,
 }
 
 impl settings::Settings for TerminalSettings {
