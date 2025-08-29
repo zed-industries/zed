@@ -272,11 +272,12 @@ impl LanguageModel for CopilotChatLanguageModel {
     ) -> BoxFuture<'static, Result<u64>> {
         let model = self.model.clone();
         cx.background_spawn(async move {
-            //TODO: Add a method to pass tokeniser string to count tokens instead of model
             let messages = collect_tiktoken_messages(request);
+            // Copilot uses OpenAI tiktoken tokenizer for all it's model irrespective of the underlying provider(vendor).
             let tokenizer_model = if let Some(tokenizer) = model.tokenizer() {
                 match tokenizer {
                     "o200k_base" => "gpt-4o",
+                    "cl100k_base" => "gpt-4",
                     _ => "gpt-4o",
                 }
             } else {
