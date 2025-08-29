@@ -37,6 +37,7 @@ pub struct EditorSettings {
     pub multi_cursor_modifier: MultiCursorModifier,
     pub redact_private_values: bool,
     pub expand_excerpt_lines: u32,
+    pub excerpt_context_lines: u32,
     pub middle_click_paste: bool,
     #[serde(default)]
     pub double_click_in_multibuffer: DoubleClickInMultibuffer,
@@ -514,6 +515,11 @@ pub struct EditorSettingsContent {
     ///
     /// Default: 3
     pub expand_excerpt_lines: Option<u32>,
+
+    /// How many lines to expand the multibuffer excerpts by default
+    ///
+    /// Default: 2
+    pub excerpt_context_lines: Option<u32>,
 
     /// Whether to enable middle-click paste on Linux
     ///
