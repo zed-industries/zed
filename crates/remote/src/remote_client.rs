@@ -1117,7 +1117,7 @@ impl ChannelClient {
                                     }
                                     Err(error) => {
                                         log::error!(
-                                            "{}:error handling message. type:{}, error:{}",
+                                            "{}:error handling message. type:{}, error:{:#}",
                                             this.name,
                                             type_name,
                                             format!("{error:#}").lines().fold(

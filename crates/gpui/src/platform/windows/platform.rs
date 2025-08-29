@@ -851,7 +851,7 @@ fn file_save_dialog(
     if !directory.to_string_lossy().is_empty()
         && let Some(full_path) = directory.canonicalize().log_err()
     {
-        let full_path = SanitizedPath::from(full_path);
+        let full_path = SanitizedPath::new(&full_path);
         let full_path_string = full_path.to_string();
         let path_item: IShellItem =
             unsafe { SHCreateItemFromParsingName(&HSTRING::from(full_path_string), None)? };

@@ -1,5 +1,6 @@
 use ::proto::{FromProto, ToProto};
 use anyhow::{Context as _, Result, anyhow};
+use lsp::LanguageServerId;
 
 use extension::ExtensionHostProxy;
 use extension_host::headless_host::HeadlessExtensionStore;
@@ -14,6 +15,7 @@ use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
     debugger::{breakpoint_store::BreakpointStore, dap_store::DapStore},
     git_store::GitStore,
+    lsp_store::log_store::{self, GlobalLogStore, LanguageServerKind},
     project_settings::SettingsObserver,
     search::SearchQuery,
     task_store::TaskStore,
@@ -65,6 +67,7 @@ impl HeadlessProject {
         settings::init(cx);
         language::init(cx);
         project::Project::init_settings(cx);
+        log_store::init(true, cx);
     }
 
     pub fn new(
@@ -235,6 +238,7 @@ impl HeadlessProject {
         session.add_entity_request_handler(Self::handle_open_new_buffer);
         session.add_entity_request_handler(Self::handle_find_search_candidates);
         session.add_entity_request_handler(Self::handle_open_server_settings);
+        session.add_entity_message_handler(Self::handle_toggle_lsp_logs);
 
         session.add_entity_request_handler(BufferStore::handle_update_buffer);
         session.add_entity_message_handler(BufferStore::handle_close_buffer);
@@ -298,11 +302,40 @@ impl HeadlessProject {
 
     fn on_lsp_store_event(
         &mut self,
-        _lsp_store: Entity<LspStore>,
+        lsp_store: Entity<LspStore>,
         event: &LspStoreEvent,
         cx: &mut Context<Self>,
     ) {
         match event {
+            LspStoreEvent::LanguageServerAdded(id, name, worktree_id) => {
+                let log_store = cx
+                    .try_global::<GlobalLogStore>()
+                    .map(|lsp_logs| lsp_logs.0.clone());
+                if let Some(log_store) = log_store {
+                    log_store.update(cx, |log_store, cx| {
+                        log_store.add_language_server(
+                            LanguageServerKind::LocalSsh {
+                                lsp_store: self.lsp_store.downgrade(),
+                            },
+                            *id,
+                            Some(name.clone()),
+                            *worktree_id,
+                            lsp_store.read(cx).language_server_for_id(*id),
+                            cx,
+                        );
+                    });
+                }
+            }
+            LspStoreEvent::LanguageServerRemoved(id) => {
+                let log_store = cx
+                    .try_global::<GlobalLogStore>()
+                    .map(|lsp_logs| lsp_logs.0.clone());
+                if let Some(log_store) = log_store {
+                    log_store.update(cx, |log_store, cx| {
+                        log_store.remove_language_server(*id, cx);
+                    });
+                }
+            }
             LspStoreEvent::LanguageServerUpdate {
                 language_server_id,
                 name,
@@ -323,16 +356,6 @@ impl HeadlessProject {
                         project_id: REMOTE_SERVER_PROJECT_ID,
                         notification_id: "lsp".to_string(),
                         message: message.clone(),
-                    })
-                    .log_err();
-            }
-            LspStoreEvent::LanguageServerLog(language_server_id, log_type, message) => {
-                self.session
-                    .send(proto::LanguageServerLog {
-                        project_id: REMOTE_SERVER_PROJECT_ID,
-                        language_server_id: language_server_id.to_proto(),
-                        message: message.clone(),
-                        log_type: Some(log_type.to_proto()),
                     })
                     .log_err();
             }
@@ -509,7 +532,33 @@ impl HeadlessProject {
         })
     }
 
-    pub async fn handle_open_server_settings(
+    async fn handle_toggle_lsp_logs(
+        _: Entity<Self>,
+        envelope: TypedEnvelope<proto::ToggleLspLogs>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        let server_id = LanguageServerId::from_proto(envelope.payload.server_id);
+        let lsp_logs = cx
+            .update(|cx| {
+                cx.try_global::<GlobalLogStore>()
+                    .map(|lsp_logs| lsp_logs.0.clone())
+            })?
+            .context("lsp logs store is missing")?;
+
+        lsp_logs.update(&mut cx, |lsp_logs, _| {
+            // RPC logs are very noisy and we need to toggle it on the headless server too.
+            // The rest of the logs for the ssh project are very important to have toggled always,
+            // to e.g. send language server error logs to the client before anything is toggled.
+            if envelope.payload.enabled {
+                lsp_logs.enable_rpc_trace_for_language_server(server_id);
+            } else {
+                lsp_logs.disable_rpc_trace_for_language_server(server_id);
+            }
+        })?;
+        Ok(())
+    }
+
+    async fn handle_open_server_settings(
         this: Entity<Self>,
         _: TypedEnvelope<proto::OpenServerSettings>,
         mut cx: AsyncApp,
@@ -562,7 +611,7 @@ impl HeadlessProject {
         })
     }
 
-    pub async fn handle_find_search_candidates(
+    async fn handle_find_search_candidates(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::FindSearchCandidates>,
         mut cx: AsyncApp,
@@ -594,7 +643,7 @@ impl HeadlessProject {
         Ok(response)
     }
 
-    pub async fn handle_list_remote_directory(
+    async fn handle_list_remote_directory(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::ListRemoteDirectory>,
         cx: AsyncApp,
@@ -626,7 +675,7 @@ impl HeadlessProject {
         })
     }
 
-    pub async fn handle_get_path_metadata(
+    async fn handle_get_path_metadata(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GetPathMetadata>,
         cx: AsyncApp,
@@ -644,7 +693,7 @@ impl HeadlessProject {
         })
     }
 
-    pub async fn handle_shutdown_remote_server(
+    async fn handle_shutdown_remote_server(
         _this: Entity<Self>,
         _envelope: TypedEnvelope<proto::ShutdownRemoteServer>,
         cx: AsyncApp,

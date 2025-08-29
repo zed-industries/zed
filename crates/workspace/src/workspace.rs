@@ -42,9 +42,9 @@ use gpui::{
     Action, AnyEntity, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Bounds, Context,
     CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke, ManagedView, MouseButton,
-    PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription, Task,
-    Tiling, WeakEntity, WindowBounds, WindowHandle, WindowId, WindowOptions, actions, canvas,
-    point, relative, size, transparent_black,
+    PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription,
+    SystemWindowTabController, Task, Tiling, WeakEntity, WindowBounds, WindowHandle, WindowId,
+    WindowOptions, actions, canvas, point, relative, size, transparent_black,
 };
 pub use history_manager::*;
 pub use item::{
@@ -648,23 +648,30 @@ impl ProjectItemRegistry {
                             ) as Box<_>;
                             Ok((project_entry_id, build_workspace_item))
                         }
-                        Err(e) => match entry_abs_path.as_deref().filter(|_| is_file) {
-                            Some(abs_path) => match cx.update(|window, cx| {
-                                T::for_broken_project_item(abs_path, is_local, &e, window, cx)
-                            })? {
-                                Some(broken_project_item_view) => {
-                                    let build_workspace_item = Box::new(
-                                    move |_: &mut Pane, _: &mut Window, cx: &mut Context<Pane>| {
-                                        cx.new(|_| broken_project_item_view).boxed_clone()
-                                    },
-                                )
-                                    as Box<_>;
-                                    Ok((None, build_workspace_item))
+                        Err(e) => {
+                            if e.error_code() == ErrorCode::Internal {
+                                if let Some(abs_path) =
+                                    entry_abs_path.as_deref().filter(|_| is_file)
+                                {
+                                    if let Some(broken_project_item_view) =
+                                        cx.update(|window, cx| {
+                                            T::for_broken_project_item(
+                                                abs_path, is_local, &e, window, cx,
+                                            )
+                                        })?
+                                    {
+                                        let build_workspace_item = Box::new(
+                                            move |_: &mut Pane, _: &mut Window, cx: &mut Context<Pane>| {
+                                                cx.new(|_| broken_project_item_view).boxed_clone()
+                                            },
+                                        )
+                                        as Box<_>;
+                                        return Ok((None, build_workspace_item));
+                                    }
                                 }
-                                None => Err(e)?,
-                            },
-                            None => Err(e)?,
-                        },
+                            }
+                            Err(e)
+                        }
                     }
                 }))
             });
@@ -2576,7 +2583,7 @@ impl Workspace {
                 };
 
                 let this = this.clone();
-                let abs_path: Arc<Path> = SanitizedPath::from(abs_path.clone()).into();
+                let abs_path: Arc<Path> = SanitizedPath::new(&abs_path).as_path().into();
                 let fs = fs.clone();
                 let pane = pane.clone();
                 let task = cx.spawn(async move |cx| {
@@ -4375,6 +4382,11 @@ impl Workspace {
             return;
         }
         window.set_window_title(&title);
+        SystemWindowTabController::update_tab_title(
+            cx,
+            window.window_handle().window_id(),
+            SharedString::from(&title),
+        );
         self.last_window_title = Some(title);
     }
 
@@ -5797,17 +5809,22 @@ impl Workspace {
             return;
         };
         let windows = cx.windows();
-        let Some(next_window) = windows
-            .iter()
-            .cycle()
-            .skip_while(|window| window.window_id() != current_window_id)
-            .nth(1)
-        else {
-            return;
-        };
-        next_window
-            .update(cx, |_, window, _| window.activate_window())
-            .ok();
+        let next_window =
+            SystemWindowTabController::get_next_tab_group_window(cx, current_window_id).or_else(
+                || {
+                    windows
+                        .iter()
+                        .cycle()
+                        .skip_while(|window| window.window_id() != current_window_id)
+                        .nth(1)
+                },
+            );
+
+        if let Some(window) = next_window {
+            window
+                .update(cx, |_, window, _| window.activate_window())
+                .ok();
+        }
     }
 
     pub fn activate_previous_window(&mut self, cx: &mut Context<Self>) {
@@ -5815,18 +5832,23 @@ impl Workspace {
             return;
         };
         let windows = cx.windows();
-        let Some(prev_window) = windows
-            .iter()
-            .rev()
-            .cycle()
-            .skip_while(|window| window.window_id() != current_window_id)
-            .nth(1)
-        else {
-            return;
-        };
-        prev_window
-            .update(cx, |_, window, _| window.activate_window())
-            .ok();
+        let prev_window =
+            SystemWindowTabController::get_prev_tab_group_window(cx, current_window_id).or_else(
+                || {
+                    windows
+                        .iter()
+                        .rev()
+                        .cycle()
+                        .skip_while(|window| window.window_id() != current_window_id)
+                        .nth(1)
+                },
+            );
+
+        if let Some(window) = prev_window {
+            window
+                .update(cx, |_, window, _| window.activate_window())
+                .ok();
+        }
     }
 
     pub fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
@@ -6875,7 +6897,8 @@ async fn join_channel_internal(
             | Status::Authenticating
             | Status::Authenticated
             | Status::Reconnecting
-            | Status::Reauthenticating => continue,
+            | Status::Reauthenticating
+            | Status::Reauthenticated => continue,
             Status::Connected { .. } => break 'outer,
             Status::SignedOut | Status::AuthenticationError => {
                 return Err(ErrorCode::SignedOut.into());

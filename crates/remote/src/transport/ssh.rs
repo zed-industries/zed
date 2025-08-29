@@ -125,12 +125,13 @@ impl RemoteConnection for SshRemoteConnection {
             // shlex will wrap the command in single quotes (''), disabling ~ expansion,
             // replace ith with something that works
             const TILDE_PREFIX: &'static str = "~/";
-            if working_dir.starts_with(TILDE_PREFIX) {
+            let working_dir = if working_dir.starts_with(TILDE_PREFIX) {
                 let working_dir = working_dir.trim_start_matches("~").trim_start_matches("/");
-                write!(&mut script, "cd \"$HOME/{working_dir}\"; ").unwrap();
+                format!("$HOME/{working_dir}")
             } else {
-                write!(&mut script, "cd \"{working_dir}\"; ").unwrap();
-            }
+                working_dir
+            };
+            write!(&mut script, "cd \"{working_dir}\"; ",).unwrap();
         } else {
             write!(&mut script, "cd; ").unwrap();
         };
@@ -167,7 +168,6 @@ impl RemoteConnection for SshRemoteConnection {
 
         args.push("-t".into());
         args.push(shell_invocation);
-
         Ok(CommandTemplate {
             program: "ssh".into(),
             args,
@@ -895,7 +895,7 @@ impl SshRemoteConnection {
             // On Windows, the binding needs to be set to the canonical path
             #[cfg(target_os = "windows")]
             let src =
-                SanitizedPath::from(smol::fs::canonicalize("./target").await?).to_glob_string();
+                SanitizedPath::new(&smol::fs::canonicalize("./target").await?).to_glob_string();
             #[cfg(not(target_os = "windows"))]
             let src = "./target";
             run_cmd(

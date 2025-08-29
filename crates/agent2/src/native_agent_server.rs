@@ -1,10 +1,9 @@
 use std::{any::Any, path::Path, rc::Rc, sync::Arc};
 
-use agent_servers::AgentServer;
+use agent_servers::{AgentServer, AgentServerDelegate};
 use anyhow::Result;
 use fs::Fs;
 use gpui::{App, Entity, SharedString, Task};
-use project::Project;
 use prompt_store::PromptStore;
 
 use crate::{HistoryStore, NativeAgent, NativeAgentConnection, templates::Templates};
@@ -30,33 +29,21 @@ impl AgentServer for NativeAgentServer {
         "Zed Agent".into()
     }
 
-    fn empty_state_headline(&self) -> SharedString {
-        self.name()
-    }
-
-    fn empty_state_message(&self) -> SharedString {
-        "".into()
-    }
-
     fn logo(&self) -> ui::IconName {
         ui::IconName::ZedAgent
-    }
-
-    fn install_command(&self) -> Option<&'static str> {
-        None
     }
 
     fn connect(
         &self,
         _root_dir: &Path,
-        project: &Entity<Project>,
+        delegate: AgentServerDelegate,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn acp_thread::AgentConnection>>> {
         log::debug!(
             "NativeAgentServer::connect called for path: {:?}",
             _root_dir
         );
-        let project = project.clone();
+        let project = delegate.project().clone();
         let fs = self.fs.clone();
         let history = self.history.clone();
         let prompt_store = PromptStore::global(cx);

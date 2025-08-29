@@ -10,6 +10,7 @@ pub struct Model {
     pub id: i64,
     pub name: String,
     pub capabilities: String,
+    pub worktree_id: Option<i64>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

@@ -1,20 +1,22 @@
 use std::sync::Arc;
 
-use crate::lsp_log::LogMenuItem;
+use crate::lsp_log_view::LogMenuItem;
 
 use super::*;
 use futures::StreamExt;
 use gpui::{AppContext as _, SemanticVersion, TestAppContext, VisualTestContext};
 use language::{FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
 use lsp::LanguageServerName;
-use lsp_log::LogKind;
-use project::{FakeFs, Project};
+use project::{
+    FakeFs, Project,
+    lsp_store::log_store::{LanguageServerKind, LogKind, LogStore},
+};
 use serde_json::json;
 use settings::SettingsStore;
 use util::path;
 
 #[gpui::test]
-async fn test_lsp_logs(cx: &mut TestAppContext) {
+async fn test_lsp_log_view(cx: &mut TestAppContext) {
     zlog::init_test();
 
     init_test(cx);
@@ -51,7 +53,7 @@ async fn test_lsp_logs(cx: &mut TestAppContext) {
         },
     );
 
-    let log_store = cx.new(LogStore::new);
+    let log_store = cx.new(|cx| LogStore::new(false, cx));
     log_store.update(cx, |store, cx| store.add_project(&project, cx));
 
     let _rust_buffer = project
@@ -94,7 +96,7 @@ async fn test_lsp_logs(cx: &mut TestAppContext) {
                 rpc_trace_enabled: false,
                 selected_entry: LogKind::Logs,
                 trace_level: lsp::TraceValue::Off,
-                server_kind: lsp_log::LanguageServerKind::Local {
+                server_kind: LanguageServerKind::Local {
                     project: project.downgrade()
                 }
             }]

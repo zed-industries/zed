@@ -18,14 +18,14 @@ If you need extra room to type, you can expand the message editor with {#kb agen
 
 You should start to see the responses stream in with indications of [which tools](./tools.md) the model is using to fulfill your prompt.
 
-> Note that, at the moment, not all features outlined below work for external agents, like [Gemini CLI](./external-agents.md#gemini-cli)—features like _checkpoints_, _token usage display_, and _model selection_ may be supported in the future.
+> Note that, at the moment, not all features outlined below work for external agents, like [Gemini CLI](./external-agents.md#gemini-cli)—features like _restoring threads from history_, _checkpoints_, _token usage display_, _model selection_, and others may be supported in the future.
 
 ### Creating New Threads
 
 By default, the Agent Panel uses Zed's first-party agent.
 
 To change that, go to the plus button in the top-right of the Agent Panel and choose another option.
-You choose to create a new [Text Thread](./text-threads.md) or, if you have [external agents](/.external-agents.md) connected, you can create new threads with them.
+You choose to create a new [Text Thread](./text-threads.md) or, if you have [external agents](./external-agents.md) connected, you can create new threads with them.
 
 ### Editing Messages {#editing-messages}
 

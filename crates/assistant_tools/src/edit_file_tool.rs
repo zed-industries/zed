@@ -11,7 +11,9 @@ use assistant_tool::{
     AnyToolCard, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput, ToolUseStatus,
 };
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
-use editor::{Editor, EditorMode, MinimapVisibility, MultiBuffer, PathKey};
+use editor::{
+    Editor, EditorMode, MinimapVisibility, MultiBuffer, PathKey, multibuffer_context_lines,
+};
 use futures::StreamExt;
 use gpui::{
     Animation, AnimationExt, AnyWindowHandle, App, AppContext, AsyncApp, Entity, Task,
@@ -474,7 +476,7 @@ impl Tool for EditFileTool {
                             PathKey::for_buffer(&buffer, cx),
                             buffer,
                             diff_hunk_ranges,
-                            editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                            multibuffer_context_lines(cx),
                             cx,
                         );
                         multibuffer.add_diff(buffer_diff, cx);
@@ -703,7 +705,7 @@ impl EditFileToolCard {
                 PathKey::for_buffer(buffer, cx),
                 buffer.clone(),
                 ranges,
-                editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                multibuffer_context_lines(cx),
                 cx,
             );
             let end = multibuffer.len(cx);
@@ -791,7 +793,7 @@ impl EditFileToolCard {
                         path_key,
                         buffer,
                         ranges,
-                        editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                        multibuffer_context_lines(cx),
                         cx,
                     );
                     multibuffer.add_diff(buffer_diff.clone(), cx);
