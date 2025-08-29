@@ -6,12 +6,12 @@ use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, VsCodeSettings};
+use settings::{Settings, SettingsSources, SettingsUi, VsCodeSettings};
 use util::serde::default_true;
 
 /// Imports from the VSCode settings at
 /// https://code.visualstudio.com/docs/reference/default-settings
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, SettingsUi)]
 pub struct EditorSettings {
     pub cursor_blink: bool,
     pub cursor_shape: Option<CursorShape>,

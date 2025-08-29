@@ -2,9 +2,9 @@ use anyhow::Result;
 use gpui::App;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsSources, SettingsUi};
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, SettingsUi)]
 pub struct CallSettings {
     pub mute_on_join: bool,
     pub share_on_join: bool,
