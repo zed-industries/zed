@@ -5,7 +5,7 @@ mod tool_picker;
 
 use std::{ops::Range, sync::Arc, time::Duration};
 
-use agent_servers::{AgentServerCommand, AgentServerSettings, AllAgentServersSettings, Gemini};
+use agent_servers::{AgentServerCommand, AllAgentServersSettings, CustomAgentServerSettings};
 use agent_settings::AgentSettings;
 use anyhow::Result;
 use assistant_tool::{ToolSource, ToolWorkingSet};
@@ -27,7 +27,6 @@ use language_model::{
 };
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{
-    Project,
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
     project_settings::{ContextServerSettings, ProjectSettings},
 };
@@ -52,7 +51,6 @@ pub struct AgentConfiguration {
     fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
     workspace: WeakEntity<Workspace>,
-    project: WeakEntity<Project>,
     focus_handle: FocusHandle,
     configuration_views_by_provider: HashMap<LanguageModelProviderId, AnyView>,
     context_server_store: Entity<ContextServerStore>,
@@ -62,7 +60,6 @@ pub struct AgentConfiguration {
     _registry_subscription: Subscription,
     scroll_handle: ScrollHandle,
     scrollbar_state: ScrollbarState,
-    gemini_is_installed: bool,
     _check_for_gemini: Task<()>,
 }
 
@@ -73,7 +70,6 @@ impl AgentConfiguration {
         tools: Entity<ToolWorkingSet>,
         language_registry: Arc<LanguageRegistry>,
         workspace: WeakEntity<Workspace>,
-        project: WeakEntity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -98,11 +94,6 @@ impl AgentConfiguration {
 
         cx.subscribe(&context_server_store, |_, _, _, cx| cx.notify())
             .detach();
-        cx.observe_global_in::<SettingsStore>(window, |this, _, cx| {
-            this.check_for_gemini(cx);
-            cx.notify();
-        })
-        .detach();
 
         let scroll_handle = ScrollHandle::new();
         let scrollbar_state = ScrollbarState::new(scroll_handle.clone());
@@ -111,7 +102,6 @@ impl AgentConfiguration {
             fs,
             language_registry,
             workspace,
-            project,
             focus_handle,
             configuration_views_by_provider: HashMap::default(),
             context_server_store,
@@ -121,11 +111,9 @@ impl AgentConfiguration {
             _registry_subscription: registry_subscription,
             scroll_handle,
             scrollbar_state,
-            gemini_is_installed: false,
             _check_for_gemini: Task::ready(()),
         };
         this.build_provider_configuration_views(window, cx);
-        this.check_for_gemini(cx);
         this
     }
 
@@ -154,34 +142,6 @@ impl AgentConfiguration {
         );
         self.configuration_views_by_provider
             .insert(provider.id(), configuration_view);
-    }
-
-    fn check_for_gemini(&mut self, cx: &mut Context<Self>) {
-        let project = self.project.clone();
-        let settings = AllAgentServersSettings::get_global(cx).clone();
-        self._check_for_gemini = cx.spawn({
-            async move |this, cx| {
-                let Some(project) = project.upgrade() else {
-                    return;
-                };
-                let gemini_is_installed = AgentServerCommand::resolve(
-                    Gemini::binary_name(),
-                    &[],
-                    // TODO expose fallback path from the Gemini/CC types so we don't have to hardcode it again here
-                    None,
-                    settings.gemini,
-                    &project,
-                    cx,
-                )
-                .await
-                .is_some();
-                this.update(cx, |this, cx| {
-                    this.gemini_is_installed = gemini_is_installed;
-                    cx.notify();
-                })
-                .ok();
-            }
-        });
     }
 }
 
@@ -371,6 +331,7 @@ impl AgentConfiguration {
                             .gap_0p5()
                             .child(
                                 h_flex()
+                                    .pr_1()
                                     .w_full()
                                     .gap_2()
                                     .justify_between()
@@ -1041,9 +1002,8 @@ impl AgentConfiguration {
                     name.clone(),
                     ExternalAgent::Custom {
                         name: name.clone(),
-                        settings: settings.clone(),
+                        command: settings.command.clone(),
                     },
-                    None,
                     cx,
                 )
                 .into_any_element()
@@ -1063,6 +1023,7 @@ impl AgentConfiguration {
                             .gap_0p5()
                             .child(
                                 h_flex()
+                                    .pr_1()
                                     .w_full()
                                     .gap_2()
                                     .justify_between()
@@ -1093,7 +1054,7 @@ impl AgentConfiguration {
                             )
                             .child(
                                 Label::new(
-                                    "Bring the agent of your choice to Zed via our new Agent Client Protocol.",
+                                    "All agents connected through the Agent Client Protocol.",
                                 )
                                 .color(Color::Muted),
                             ),
@@ -1102,10 +1063,14 @@ impl AgentConfiguration {
                         IconName::AiGemini,
                         "Gemini CLI",
                         ExternalAgent::Gemini,
-                        (!self.gemini_is_installed).then_some(Gemini::install_command().into()),
                         cx,
                     ))
-                    // TODO add CC
+                    .child(self.render_agent_server(
+                        IconName::AiClaude,
+                        "Claude Code",
+                        ExternalAgent::ClaudeCode,
+                        cx,
+                    ))
                     .children(user_defined_agents),
             )
     }
@@ -1115,7 +1080,6 @@ impl AgentConfiguration {
         icon: IconName,
         name: impl Into<SharedString>,
         agent: ExternalAgent,
-        install_command: Option<SharedString>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let name = name.into();
@@ -1135,88 +1099,26 @@ impl AgentConfiguration {
                     .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted))
                     .child(Label::new(name.clone())),
             )
-            .map(|this| {
-                if let Some(install_command) = install_command {
-                    this.child(
-                        Button::new(
-                            SharedString::from(format!("install_external_agent-{name}")),
-                            "Install Agent",
-                        )
-                        .label_size(LabelSize::Small)
-                        .icon(IconName::Plus)
-                        .icon_position(IconPosition::Start)
-                        .icon_size(IconSize::XSmall)
-                        .icon_color(Color::Muted)
-                        .tooltip(Tooltip::text(install_command.clone()))
-                        .on_click(cx.listener(
-                            move |this, _, window, cx| {
-                                let Some(project) = this.project.upgrade() else {
-                                    return;
-                                };
-                                let Some(workspace) = this.workspace.upgrade() else {
-                                    return;
-                                };
-                                let cwd = project.read(cx).first_project_directory(cx);
-                                let shell =
-                                    project.read(cx).terminal_settings(&cwd, cx).shell.clone();
-                                let spawn_in_terminal = task::SpawnInTerminal {
-                                    id: task::TaskId(install_command.to_string()),
-                                    full_label: install_command.to_string(),
-                                    label: install_command.to_string(),
-                                    command: Some(install_command.to_string()),
-                                    args: Vec::new(),
-                                    command_label: install_command.to_string(),
-                                    cwd,
-                                    env: Default::default(),
-                                    use_new_terminal: true,
-                                    allow_concurrent_runs: true,
-                                    reveal: Default::default(),
-                                    reveal_target: Default::default(),
-                                    hide: Default::default(),
-                                    shell,
-                                    show_summary: true,
-                                    show_command: true,
-                                    show_rerun: false,
-                                };
-                                let task = workspace.update(cx, |workspace, cx| {
-                                    workspace.spawn_in_terminal(spawn_in_terminal, window, cx)
-                                });
-                                cx.spawn(async move |this, cx| {
-                                    task.await;
-                                    this.update(cx, |this, cx| {
-                                        this.check_for_gemini(cx);
-                                    })
-                                    .ok();
-                                })
-                                .detach();
-                            },
-                        )),
-                    )
-                } else {
-                    this.child(
-                        h_flex().gap_1().child(
-                            Button::new(
-                                SharedString::from(format!("start_acp_thread-{name}")),
-                                "Start New Thread",
-                            )
-                            .label_size(LabelSize::Small)
-                            .icon(IconName::Thread)
-                            .icon_position(IconPosition::Start)
-                            .icon_size(IconSize::XSmall)
-                            .icon_color(Color::Muted)
-                            .on_click(move |_, window, cx| {
-                                window.dispatch_action(
-                                    NewExternalAgentThread {
-                                        agent: Some(agent.clone()),
-                                    }
-                                    .boxed_clone(),
-                                    cx,
-                                );
-                            }),
-                        ),
-                    )
-                }
-            })
+            .child(
+                Button::new(
+                    SharedString::from(format!("start_acp_thread-{name}")),
+                    "Start New Thread",
+                )
+                .label_size(LabelSize::Small)
+                .icon(IconName::Thread)
+                .icon_position(IconPosition::Start)
+                .icon_size(IconSize::XSmall)
+                .icon_color(Color::Muted)
+                .on_click(move |_, window, cx| {
+                    window.dispatch_action(
+                        NewExternalAgentThread {
+                            agent: Some(agent.clone()),
+                        }
+                        .boxed_clone(),
+                        cx,
+                    );
+                }),
+            )
     }
 }
 
@@ -1393,7 +1295,7 @@ async fn open_new_agent_servers_entry_in_settings_editor(
                     unique_server_name = Some(server_name.clone());
                     file.custom.insert(
                         server_name,
-                        AgentServerSettings {
+                        CustomAgentServerSettings {
                             command: AgentServerCommand {
                                 path: "path_to_executable".into(),
                                 args: vec![],

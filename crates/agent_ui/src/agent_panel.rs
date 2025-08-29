@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use acp_thread::AcpThread;
-use agent_servers::AgentServerSettings;
+use agent_servers::AgentServerCommand;
 use agent2::{DbThreadMetadata, HistoryEntry};
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use serde::{Deserialize, Serialize};
@@ -86,7 +86,7 @@ use zed_actions::{
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct SerializedAgentPanel {
     width: Option<Pixels>,
     selected_agent: Option<AgentType>,
@@ -259,7 +259,7 @@ pub enum AgentType {
     NativeAgent,
     Custom {
         name: SharedString,
-        settings: AgentServerSettings,
+        command: AgentServerCommand,
     },
 }
 
@@ -592,7 +592,7 @@ impl AgentPanel {
                 .log_err()
                 .flatten()
             {
-                Some(serde_json::from_str::<SerializedAgentPanel>(&panel)?)
+                serde_json::from_str::<SerializedAgentPanel>(&panel).log_err()
             } else {
                 None
             };
@@ -1479,7 +1479,6 @@ impl AgentPanel {
                 tools,
                 self.language_registry.clone(),
                 self.workspace.clone(),
-                self.project.downgrade(),
                 window,
                 cx,
             )
@@ -1896,8 +1895,8 @@ impl AgentPanel {
                 window,
                 cx,
             ),
-            AgentType::Custom { name, settings } => self.external_thread(
-                Some(crate::ExternalAgent::Custom { name, settings }),
+            AgentType::Custom { name, command } => self.external_thread(
+                Some(crate::ExternalAgent::Custom { name, command }),
                 None,
                 None,
                 window,
@@ -2115,7 +2114,7 @@ impl AgentPanel {
                         .child(title_editor)
                         .into_any_element()
                 } else {
-                    Label::new(thread_view.read(cx).title())
+                    Label::new(thread_view.read(cx).title(cx))
                         .color(Color::Muted)
                         .truncate()
                         .into_any_element()
@@ -2664,9 +2663,9 @@ impl AgentPanel {
                                                                         AgentType::Custom {
                                                                             name: agent_name
                                                                                 .clone(),
-                                                                            settings:
-                                                                                agent_settings
-                                                                                    .clone(),
+                                                                            command: agent_settings
+                                                                                .command
+                                                                                .clone(),
                                                                         },
                                                                         window,
                                                                         cx,
