@@ -27,7 +27,7 @@ use collections::{HashMap, HashSet, VecDeque};
 use futures::AsyncReadExt;
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EntityId, Global, SemanticVersion,
-    SharedString, Subscription, Task, actions,
+    SharedString, Subscription, Task, WeakEntity, actions,
 };
 use http_client::{AsyncBody, HttpClient, Method, Request, Response};
 use input_excerpt::excerpt_for_cursor_position;
@@ -234,10 +234,6 @@ impl std::fmt::Debug for EditPrediction {
 }
 
 pub struct Zeta {
-<<<<<<< HEAD
-    workspace: WeakEntity<Workspace>,
-=======
->>>>>>> main
     client: Arc<Client>,
     events: VecDeque<Event>,
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
@@ -276,10 +272,6 @@ impl Zeta {
     }
 
     pub fn register(
-<<<<<<< HEAD
-        workspace: Option<Entity<Workspace>>,
-=======
->>>>>>> main
         worktree: Option<Entity<Worktree>>,
         client: Arc<Client>,
         user_store: Entity<UserStore>,
@@ -311,16 +303,7 @@ impl Zeta {
         self.user_store.read(cx).edit_prediction_usage()
     }
 
-<<<<<<< HEAD
-    fn new(
-        workspace: Option<Entity<Workspace>>,
-        client: Arc<Client>,
-        user_store: Entity<UserStore>,
-        cx: &mut Context<Self>,
-    ) -> Self {
-=======
     fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
->>>>>>> main
         let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
 
         let data_collection_choice = Self::load_data_collection_choices();
@@ -363,13 +346,6 @@ impl Zeta {
         }
 
         Self {
-<<<<<<< HEAD
-            workspace: workspace.map_or_else(
-                || WeakEntity::new_invalid(),
-                |workspace| workspace.downgrade(),
-            ),
-=======
->>>>>>> main
             client,
             events: VecDeque::with_capacity(MAX_EVENT_COUNT),
             shown_completions: VecDeque::with_capacity(MAX_SHOWN_COMPLETION_COUNT),
@@ -466,12 +442,7 @@ impl Zeta {
 
     fn request_completion_impl<F, R>(
         &mut self,
-<<<<<<< HEAD
-        workspace: Option<Entity<Workspace>>,
         project: Option<Entity<Project>>,
-=======
-        project: Option<&Entity<Project>>,
->>>>>>> main
         buffer: &Entity<Buffer>,
         cursor: language::Anchor,
         can_collect_data: CanCollectData,
@@ -815,9 +786,7 @@ and then another
     ) -> Task<Result<Option<EditPrediction>>> {
         use std::future::ready;
 
-<<<<<<< HEAD
         self.request_completion_impl(
-            None,
             project,
             buffer,
             position,
@@ -825,11 +794,6 @@ and then another
             cx,
             |_params| ready(Ok((response, None))),
         )
-=======
-        self.request_completion_impl(project, buffer, position, false, cx, |_params| {
-            ready(Ok((response, None)))
-        })
->>>>>>> main
     }
 
     pub fn request_completion(
@@ -841,10 +805,6 @@ and then another
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<EditPrediction>>> {
         self.request_completion_impl(
-<<<<<<< HEAD
-            self.workspace.upgrade(),
-=======
->>>>>>> main
             project,
             buffer,
             position,

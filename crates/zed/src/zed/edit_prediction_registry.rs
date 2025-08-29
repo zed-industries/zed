@@ -203,14 +203,7 @@ fn assign_edit_prediction_provider(
                     }
                 }
 
-<<<<<<< HEAD
-                let workspace = window.root::<Workspace>().flatten();
-
-                let zeta =
-                    zeta::Zeta::register(workspace, worktree, client.clone(), user_store, cx);
-=======
                 let zeta = zeta::Zeta::register(worktree, client.clone(), user_store, cx);
->>>>>>> main
 
                 if let Some(buffer) = &singleton_buffer
                     && buffer.read(cx).file().is_some()
