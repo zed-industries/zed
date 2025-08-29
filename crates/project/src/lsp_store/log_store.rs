@@ -138,6 +138,7 @@ pub struct LanguageServerState {
     pub trace_level: TraceValue,
     pub log_level: MessageType,
     io_logs_subscription: Option<lsp::Subscription>,
+    pub toggled_log_kind: Option<LogKind>,
 }
 
 impl std::fmt::Debug for LanguageServerState {
@@ -151,6 +152,7 @@ impl std::fmt::Debug for LanguageServerState {
             .field("rpc_state", &self.rpc_state)
             .field("trace_level", &self.trace_level)
             .field("log_level", &self.log_level)
+            .field("toggled_log_kind", &self.toggled_log_kind)
             .finish_non_exhaustive()
     }
 }
@@ -351,12 +353,26 @@ impl LogStore {
                                     }
                                 }
                             }
-                            crate::Event::ToggleLspLogs { server_id, enabled } => {
-                                // we do not support any other log toggling yet
-                                if *enabled {
-                                    log_store.enable_rpc_trace_for_language_server(*server_id);
-                                } else {
-                                    log_store.disable_rpc_trace_for_language_server(*server_id);
+                            crate::Event::ToggleLspLogs {
+                                server_id,
+                                enabled,
+                                toggled_log_kind,
+                            } => {
+                                if let Some(server_state) =
+                                    log_store.get_language_server_state(*server_id)
+                                {
+                                    if *enabled {
+                                        server_state.toggled_log_kind = Some(*toggled_log_kind);
+                                    } else {
+                                        server_state.toggled_log_kind = None;
+                                    }
+                                }
+                                if LogKind::Rpc == *toggled_log_kind {
+                                    if *enabled {
+                                        log_store.enable_rpc_trace_for_language_server(*server_id);
+                                    } else {
+                                        log_store.disable_rpc_trace_for_language_server(*server_id);
+                                    }
                                 }
                             }
                             _ => {}
@@ -395,6 +411,7 @@ impl LogStore {
                 trace_level: TraceValue::Off,
                 log_level: MessageType::LOG,
                 io_logs_subscription: None,
+                toggled_log_kind: None,
             }
         });
 
@@ -686,14 +703,26 @@ impl LogStore {
                     }
                     .and_then(|lsp_store| lsp_store.read(cx).downstream_client());
                     if let Some((client, project_id)) = downstream_client {
-                        client
-                            .send(proto::LanguageServerLog {
-                                project_id,
-                                language_server_id: id.to_proto(),
-                                message: text.clone(),
-                                log_type: Some(kind.to_proto()),
-                            })
-                            .ok();
+                        let is_via_collab =
+                            if let LanguageServerKind::Remote { project } = &state.kind {
+                                project
+                                    .update(cx, |project, _| project.is_via_collab())
+                                    .unwrap_or(false)
+                            } else {
+                                false
+                            };
+                        let log_kind_matches =
+                            Some(LogKind::from_server_log_type(kind)) == state.toggled_log_kind;
+                        if !is_via_collab || log_kind_matches {
+                            client
+                                .send(proto::LanguageServerLog {
+                                    project_id,
+                                    language_server_id: id.to_proto(),
+                                    message: text.clone(),
+                                    log_type: Some(kind.to_proto()),
+                                })
+                                .ok();
+                        }
                     }
                 }
             }
