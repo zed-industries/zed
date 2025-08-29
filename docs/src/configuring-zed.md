@@ -1461,6 +1461,16 @@ This setting enables integration with macOS’s native window tabbing feature. W
 
 Positive `integer` values
 
+## Excerpt Context Lines
+
+- Description: The number of lines of context to provide when showing excerpts in the multibuffer.
+- Setting: `excerpt_context_lines`
+- Default: `2`
+
+**Options**
+
+Positive `integer` value between 1 and 32. Values outside of this range will be clamped to this range.
+
 ## Extend Comment On Newline
 
 - Description: Whether to start a new line with a comment when a previous line is a comment as well.
@@ -2813,7 +2823,6 @@ Configuration object for defining settings profiles. Example:
 - Description:
   Preview tabs allow you to open files in preview mode, where they close automatically when you switch to another file unless you explicitly pin them. This is useful for quickly viewing files without cluttering your workspace. Preview tabs display their file names in italics. \
    There are several ways to convert a preview tab into a regular tab:
-
   - Double-clicking on the file
   - Double-clicking on the tab header
   - Using the `project_panel::OpenPermanent` action
