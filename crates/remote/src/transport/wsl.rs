@@ -400,14 +400,31 @@ impl RemoteConnection for WslRemoteConnection {
             write!(&mut script, "exec {} -l", self.shell).unwrap();
         }
 
-        let wsl_args = vec![
-            "--distribution".to_string(),
-            self.connection_options.distro_name.clone(),
-            "--".to_string(),
-            self.shell.clone(),
-            "-c".to_string(),
-            shlex::try_quote(&script)?.to_string(),
-        ];
+        let wsl_args = if let Some(user) = &self.connection_options.user {
+            vec![
+                "--distribution".to_string(),
+                self.connection_options.distro_name.clone(),
+                "--user".to_string(),
+                user.clone(),
+                "--cd".to_string(),
+                "~".to_string(),
+                "--".to_string(),
+                self.shell.clone(),
+                "-c".to_string(),
+                shlex::try_quote(&script)?.to_string(),
+            ]
+        } else {
+            vec![
+                "--distribution".to_string(),
+                self.connection_options.distro_name.clone(),
+                "--cd".to_string(),
+                "~".to_string(),
+                "--".to_string(),
+                self.shell.clone(),
+                "-c".to_string(),
+                shlex::try_quote(&script)?.to_string(),
+            ]
+        };
 
         Ok(CommandTemplate {
             program: "wsl.exe".to_string(),
