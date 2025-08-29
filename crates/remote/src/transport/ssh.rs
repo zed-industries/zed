@@ -125,12 +125,13 @@ impl RemoteConnection for SshRemoteConnection {
             // shlex will wrap the command in single quotes (''), disabling ~ expansion,
             // replace ith with something that works
             const TILDE_PREFIX: &'static str = "~/";
-            if working_dir.starts_with(TILDE_PREFIX) {
+            let working_dir = if working_dir.starts_with(TILDE_PREFIX) {
                 let working_dir = working_dir.trim_start_matches("~").trim_start_matches("/");
-                write!(&mut script, "cd \"$HOME/{working_dir}\"; ").unwrap();
+                format!("$HOME/{working_dir}")
             } else {
-                write!(&mut script, "cd \"{working_dir}\"; ").unwrap();
-            }
+                working_dir
+            };
+            write!(&mut script, "cd \"{working_dir}\"; ",).unwrap();
         } else {
             write!(&mut script, "cd; ").unwrap();
         };
