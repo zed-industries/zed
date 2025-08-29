@@ -112,8 +112,8 @@ actions!(
     ]
 );
 
-pub fn init(store_logs: bool, cx: &mut App) {
-    let log_store = log_store::init(store_logs, cx);
+pub fn init(on_headless_host: bool, cx: &mut App) {
+    let log_store = log_store::init(on_headless_host, cx);
 
     log_store.update(cx, |_, cx| {
         Copilot::global(cx).map(|copilot| {

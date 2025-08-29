@@ -67,7 +67,7 @@ impl HeadlessProject {
         settings::init(cx);
         language::init(cx);
         project::Project::init_settings(cx);
-        log_store::init(false, cx);
+        log_store::init(true, cx);
     }
 
     pub fn new(
