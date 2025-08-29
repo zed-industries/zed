@@ -1,5 +1,3 @@
-use std::any::Any;
-
 use gpui::{AnyElement, App, Window};
 use smallvec::SmallVec;
 
@@ -39,7 +37,9 @@ pub enum SettingsUIItemSingle {
     // TODO: default/builtin variants
     SwitchField,
     NumericStepper,
-    ToggleGroup,
+    ToggleGroup(&'static [&'static str]),
+    /// This should be used when toggle group size > 6
+    DropDown(&'static [&'static str]),
     Custom(Box<dyn Fn(SettingsValue<serde_json::Value>, &mut Window, &mut App) -> AnyElement>),
 }
 

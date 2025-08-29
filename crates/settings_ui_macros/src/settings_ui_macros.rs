@@ -1,6 +1,6 @@
 use proc_macro2::TokenStream;
 use quote::{ToTokens, quote};
-use syn::{DeriveInput, LitStr, Token, parse_macro_input};
+use syn::{Data, DeriveInput, LitStr, Token, parse_macro_input};
 
 /// Derive macro for the `SettingsUI` marker trait.
 ///
@@ -58,47 +58,75 @@ pub fn derive_settings_ui(input: proc_macro::TokenStream) -> proc_macro::TokenSt
         }
     }
 
-    // let mut root_item = vec![];
-    // for field in struct {
-    //
-    // match field::settings_ui_render()
-    // Group(items) => {
-    // let item = items.map(|item| something);
-    // item
-    //     items.push(item::settings_ui_render());
-    // root_item.push(Group(items));
-    // },
-    // Leaf(item) => {
-    // root_item.push(item);
-    // }
-    // }
-    // }
-    //
-    // group.items = struct.fields.map((field_name, field_type) => quote! { SettingsUIItem::Item {path: #field_type::settings_ui_path().unwrap_or_else(|| #field_name), item:  if field.attrs.render { #render } else field::settings_ui_render()}})
-    // }
+    if path_name.is_none() && group_name.is_some() {
+        // todo! derive path from settings
+        panic!("path is required when group is specified");
+    }
 
-    fn map_ui_item_to_render(path: &str, ty: TokenStream) -> TokenStream {
-        quote! {
+    let ui_render_fn_body =
+        generate_ui_render_body(group_name.as_ref(), path_name.as_ref(), &input);
+
+    let settings_ui_item_fn_body = path_name
+        .as_ref()
+        .map(|path_name| map_ui_item_to_render(path_name, quote! { Self }))
+        .unwrap_or(quote! {
             settings::SettingsUIItem {
-                item: match #ty::settings_ui_render() {
-                    settings::SettingsUIRender::Group{title, items} => settings::SettingsUIItemVariant::Group {
-                        title,
-                        path: #path,
-                        group: settings::SettingsUIItemGroup { items },
-                    },
-                    settings::SettingsUIRender::Item(item) => settings::SettingsUIItemVariant::Item {
-                        path: #path,
-                        item,
-                    },
-                    settings::SettingsUIRender::None => settings::SettingsUIItemVariant::None,
-                }
+                item:  settings::SettingsUIItemVariant::None
+            }
+        });
+
+    let expanded = quote! {
+        impl #impl_generics settings::SettingsUI for #name #ty_generics #where_clause {
+            fn settings_ui_render() -> settings::SettingsUIRender {
+                #ui_render_fn_body
+            }
+
+            fn settings_ui_item() -> settings::SettingsUIItem {
+                #settings_ui_item_fn_body
+            }
+        }
+    };
+
+    proc_macro::TokenStream::from(expanded)
+}
+
+fn map_ui_item_to_render(path: &str, ty: TokenStream) -> TokenStream {
+    quote! {
+        settings::SettingsUIItem {
+            item: match #ty::settings_ui_render() {
+                settings::SettingsUIRender::Group{title, items} => settings::SettingsUIItemVariant::Group {
+                    title,
+                    path: #path,
+                    group: settings::SettingsUIItemGroup { items },
+                },
+                settings::SettingsUIRender::Item(item) => settings::SettingsUIItemVariant::Item {
+                    path: #path,
+                    item,
+                },
+                settings::SettingsUIRender::None => settings::SettingsUIItemVariant::None,
             }
         }
     }
+}
 
-    let ui_render_fn_body = if let Some(group_name) = group_name {
-        let fields = match input.data {
-            syn::Data::Struct(data_struct) => data_struct
+fn generate_ui_render_body(
+    group_name: Option<&String>,
+    path_name: Option<&String>,
+    input: &syn::DeriveInput,
+) -> TokenStream {
+    match (group_name, path_name, &input.data) {
+        (_, _, Data::Union(_)) => unimplemented!("Derive SettingsUI for Unions"),
+        (None, None, Data::Struct(_)) => quote! {
+            settings::SettingsUIRender::None
+        },
+        (Some(_), None, Data::Struct(_)) => quote! {
+            settings::SettingsUIRender::None
+        },
+        (None, Some(_), Data::Struct(_)) => quote! {
+            settings::SettingsUIRender::None
+        },
+        (Some(group_name), _, Data::Struct(data_struct)) => {
+            let fields = data_struct
                 .fields
                 .iter()
                 .filter(|field| {
@@ -122,38 +150,53 @@ pub fn derive_settings_ui(input: proc_macro::TokenStream) -> proc_macro::TokenSt
                         field.ty.to_token_stream(),
                     )
                 })
-                .collect(),
-            syn::Data::Enum(data_enum) => vec![], // todo! enums
-            syn::Data::Union(data_union) => unimplemented!("Derive SettingsUI for unions"),
-        };
-        let items = fields
-            .into_iter()
-            .map(|(name, ty)| map_ui_item_to_render(&name, ty));
-        quote! {
-            settings::SettingsUIRender::Group{ title: #group_name, items: vec![#(#items),*] }
+                .map(|(name, ty)| map_ui_item_to_render(&name, ty));
+
+            quote! {
+                settings::SettingsUIRender::Group{ title: #group_name, items: vec![#(#fields),*] }
+            }
         }
-    } else {
-        quote! {
+        (None, _, Data::Enum(data_enum)) => {
+            let mut lowercase = false;
+            for attr in &input.attrs {
+                if attr.path().is_ident("serde") {
+                    attr.parse_nested_meta(|meta| {
+                        if meta.path.is_ident("rename_all") {
+                            meta.input.parse::<Token![=]>()?;
+                            let lit = meta.input.parse::<LitStr>()?.value();
+                            // todo! snake case
+                            lowercase = lit == "lowercase" || lit == "snake_case";
+                        }
+                        Ok(())
+                    })
+                    .ok();
+                }
+            }
+            let length = data_enum.variants.len();
+
+            let variants = data_enum.variants.iter().map(|variant| {
+                let string = variant.ident.clone().to_string();
+
+                if lowercase {
+                    string.to_lowercase()
+                } else {
+                    string
+                }
+            });
+
+            if length > 6 {
+                quote! {
+                    settings::SettingsUIRender::Item(settings::SettingsUIItemSingle::DropDown(&[#(#variants),*]))
+                }
+            } else {
+                quote! {
+                    settings::SettingsUIRender::Item(settings::SettingsUIItemSingle::ToggleGroup(&[#(#variants),*]))
+                }
+            }
+        }
+        // todo! unions
+        (_, _, Data::Enum(_)) => quote! {
             settings::SettingsUIRender::None
-        }
-    };
-
-    let settings_ui_item_fn_body = map_ui_item_to_render(
-        path_name.as_deref().unwrap_or("todo! no path specified"),
-        quote! { Self },
-    );
-
-    let expanded = quote! {
-        impl #impl_generics settings::SettingsUI for #name #ty_generics #where_clause {
-            fn settings_ui_render() -> settings::SettingsUIRender {
-                #ui_render_fn_body
-            }
-
-            fn settings_ui_item() -> settings::SettingsUIItem {
-                #settings_ui_item_fn_body
-            }
-        }
-    };
-
-    proc_macro::TokenStream::from(expanded)
+        },
+    }
 }

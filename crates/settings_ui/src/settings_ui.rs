@@ -1,6 +1,6 @@
 mod appearance_settings_controls;
 
-use std::any::{Any, TypeId};
+use std::any::TypeId;
 use std::ops::{Not, Range};
 
 use anyhow::Context as _;
@@ -11,7 +11,7 @@ use fs::Fs;
 use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, ReadGlobal, actions};
 use settings::{SettingsStore, SettingsUIItemSingle, SettingsUIItemVariant, SettingsValue};
 use smallvec::SmallVec;
-use ui::{NumericStepper, SwitchField, prelude::*};
+use ui::{NumericStepper, SwitchField, ToggleButtonGroup, ToggleButtonSimple, prelude::*};
 use workspace::{
     Workspace,
     item::{Item, ItemEvent},
@@ -135,7 +135,7 @@ impl Item for SettingsPage {
 struct UIEntry {
     title: &'static str,
     path: &'static str,
-    depth: usize,
+    _depth: usize,
     // a
     //  b     < a descendant range < a total descendant range
     //    f   |                    |
@@ -167,7 +167,7 @@ fn build_tree_item(
     tree.push(UIEntry {
         title: "",
         path: "",
-        depth,
+        _depth: depth,
         descendant_range: index + 1..index + 1,
         total_descendant_range: index + 1..index + 1,
         render: None,
@@ -211,9 +211,14 @@ impl SettingsUITree {
             if matches!(item.item, SettingsUIItemVariant::None) {
                 continue;
             }
+
             assert!(
                 matches!(item.item, SettingsUIItemVariant::Group { .. }),
-                "top level items must be groups"
+                "top level items must be groups: {:?}",
+                match item.item {
+                    SettingsUIItemVariant::Item { path, .. } => path,
+                    _ => unreachable!(),
+                }
             );
             let prev_root_entry_index = root_entry_indices.last().copied();
             root_entry_indices.push(tree.len());
@@ -272,11 +277,12 @@ fn render_content(
     let mut path = smallvec::smallvec![entry.path];
 
     while let Some(index) = child_index {
-        if !tree.entries[index].render.is_some() {
+        let child = &tree.entries[index];
+        child_index = child.next_sibling;
+        if !child.render.is_some() {
             // TODO: subgroups?
             continue;
         }
-        let child = &tree.entries[index];
         path.push(child.path);
         let settings_value = settings_value_from_settings_and_path(
             path.clone(),
@@ -303,7 +309,6 @@ fn render_content(
         );
 
         path.pop();
-        child_index = child.next_sibling;
     }
 
     return content;
@@ -384,8 +389,11 @@ fn render_item_single(
         SettingsUIItemSingle::NumericStepper => {
             render_any_item(settings_value, render_numeric_stepper, window, cx)
         }
-        SettingsUIItemSingle::ToggleGroup => {
-            todo!()
+        SettingsUIItemSingle::ToggleGroup(variants) => {
+            render_toggle_button_group(settings_value, variants, window, cx)
+        }
+        SettingsUIItemSingle::DropDown(_) => {
+            unimplemented!("This")
         }
     }
 }
@@ -406,12 +414,9 @@ fn read_settings_value_from_path<'a>(
     read_settings_value_from_path(value, remaining)
 }
 
-fn render_any_item<T: serde::de::DeserializeOwned>(
+fn downcast_any_item<T: serde::de::DeserializeOwned>(
     settings_value: SettingsValue<serde_json::Value>,
-    render_fn: impl Fn(SettingsValue<T>, &mut Window, &mut App) -> AnyElement + 'static,
-    window: &mut Window,
-    cx: &mut App,
-) -> AnyElement {
+) -> SettingsValue<T> {
     let value = settings_value
         .value
         .map(|value| serde_json::from_value::<T>(value).expect("value is not a T"));
@@ -424,6 +429,16 @@ fn render_any_item<T: serde::de::DeserializeOwned>(
         value,
         default_value,
     };
+    deserialized_setting_value
+}
+
+fn render_any_item<T: serde::de::DeserializeOwned>(
+    settings_value: SettingsValue<serde_json::Value>,
+    render_fn: impl Fn(SettingsValue<T>, &mut Window, &mut App) -> AnyElement + 'static,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let deserialized_setting_value = downcast_any_item(settings_value);
     render_fn(deserialized_setting_value, window, cx)
 }
 
@@ -520,6 +535,75 @@ fn render_switch_field(
         },
     )
     .into_any_element()
+}
+
+fn render_toggle_button_group(
+    value: SettingsValue<serde_json::Value>,
+    variants: &'static [&'static str],
+    _: &mut Window,
+    _: &mut App,
+) -> AnyElement {
+    let value = downcast_any_item::<String>(value);
+
+    fn make_toggle_group<const LEN: usize>(
+        group_name: &'static str,
+        value: SettingsValue<String>,
+        variants: &'static [&'static str],
+    ) -> AnyElement {
+        let mut variants_array: [&'static str; LEN] = ["default"; LEN];
+        variants_array.copy_from_slice(variants);
+        let active_value = value.read();
+
+        let selected_idx = variants_array
+            .iter()
+            .enumerate()
+            .find_map(|(idx, variant)| {
+                if variant == &active_value {
+                    Some(idx)
+                } else {
+                    None
+                }
+            });
+
+        ToggleButtonGroup::single_row(
+            group_name,
+            variants_array.map(|variant| {
+                let path = value.path.clone();
+                ToggleButtonSimple::new(variant, move |_, _, cx| {
+                    let settings_store = SettingsStore::global(cx);
+                    let fs = <dyn Fs>::global(cx);
+
+                    let rx = settings_store.update_settings_file_at_path(
+                        fs.clone(),
+                        &path.as_slice(),
+                        serde_json::Value::String(variant.to_string()),
+                    );
+                    cx.background_spawn(
+                        async move { rx.await?.context("Failed to update settings") },
+                    )
+                    .detach_and_log_err(cx);
+                })
+            }),
+        )
+        .when_some(selected_idx, |this, ix| this.selected_index(ix))
+        .style(ui::ToggleButtonGroupStyle::Filled)
+        .into_any_element()
+    }
+
+    macro_rules! templ_toggl_with_const_param {
+        ($len:expr) => {
+            if variants.len() == $len {
+                return make_toggle_group::<$len>(value.title, value, variants);
+            }
+        };
+    }
+    templ_toggl_with_const_param!(1);
+    templ_toggl_with_const_param!(2);
+    templ_toggl_with_const_param!(3);
+    templ_toggl_with_const_param!(4);
+    templ_toggl_with_const_param!(5);
+    templ_toggl_with_const_param!(6);
+    unreachable!("Too many variants");
 }
 
 fn settings_value_from_settings_and_path(
