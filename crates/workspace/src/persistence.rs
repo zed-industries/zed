@@ -1040,7 +1040,7 @@ impl WorkspaceDb {
             RemoteConnectionOptions::Wsl(options) => {
                 kind = RemoteConnectionKind::Wsl;
                 distro = Some(options.distro_name);
-                user = Some(options.user);
+                user = options.user;
             }
         }
         Self::get_or_create_remote_connection_query(this, kind, host, port, user, distro)
@@ -1203,7 +1203,7 @@ impl WorkspaceDb {
         match RemoteConnectionKind::deserialize(&kind)? {
             RemoteConnectionKind::Wsl => Some(RemoteConnectionOptions::Wsl(WslConnectionOptions {
                 distro_name: distro?,
-                user: user?,
+                user: user,
             })),
             RemoteConnectionKind::Ssh => Some(RemoteConnectionOptions::Ssh(SshConnectionOptions {
                 host: host?,

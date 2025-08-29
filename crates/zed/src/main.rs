@@ -1185,10 +1185,10 @@ struct Args {
     /// The username and WSL distribution to use when opening paths. ,If not specified,
     /// Zed will attempt to open the paths directly.
     ///
-    /// Pass `-` as the distribution name to use the default WSL distribution.
-    /// The username is required and must be a valid WSL user.
+    /// The username is optional, and if not specified, the default user for the distribution
+    /// will be used.
     ///
-    /// Example: `me@Ubuntu` or `me@-` for default distribution.
+    /// Example: `me@Ubuntu` or `Ubuntu` for default distribution.
     #[arg(long, value_name = "USER@DISTRO")]
     wsl: Option<String>,
 

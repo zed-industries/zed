@@ -53,12 +53,18 @@ impl OpenRequest {
         let mut this = Self::default();
 
         this.diff_paths = request.diff_paths;
-        if let Some(wsl) = request.wsl
-            && let Some((user, distro)) = wsl.split_once('@')
-        {
+        if let Some(wsl) = request.wsl {
+            let (user, distro_name) = if let Some((user, distro)) = wsl.split_once('@') {
+                if user.is_empty() {
+                    anyhow::bail!("user is empty in wsl argument");
+                }
+                (Some(user.to_string()), distro.to_string())
+            } else {
+                (None, wsl)
+            };
             this.remote_connection = Some(RemoteConnectionOptions::Wsl(WslConnectionOptions {
-                distro_name: distro.to_string(),
-                user: user.to_string(),
+                distro_name,
+                user,
             }));
         }
 
@@ -315,7 +321,7 @@ pub async fn handle_cli_connection(
                 paths,
                 diff_paths,
                 wait,
-                wsl: wsl_args,
+                wsl,
                 open_new_workspace,
                 env,
                 user_data_dir: _,
@@ -326,7 +332,7 @@ pub async fn handle_cli_connection(
                             RawOpenRequest {
                                 urls,
                                 diff_paths,
-                                wsl: wsl_args,
+                                wsl,
                             },
                             cx,
                         ) {

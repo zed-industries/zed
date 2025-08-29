@@ -5,7 +5,7 @@
 
 use anyhow::{Context as _, Result};
 use clap::Parser;
-use cli::{CliRequest, CliResponse, IpcHandshake, WslArgs, ipc::IpcOneShotServer};
+use cli::{CliRequest, CliResponse, IpcHandshake, ipc::IpcOneShotServer};
 use parking_lot::Mutex;
 use std::{
     env, fs, io,
@@ -84,9 +84,15 @@ struct Args {
     /// Run zed in dev-server mode
     #[arg(long)]
     dev_server_token: Option<String>,
-    /// Used for remote WSL support.
-    #[clap(flatten)]
-    wsl_args: Option<WslArgs>,
+    /// The username and WSL distribution to use when opening paths. ,If not specified,
+    /// Zed will attempt to open the paths directly.
+    ///
+    /// The username is optional, and if not specified, the default user for the distribution
+    /// will be used.
+    ///
+    /// Example: `me@Ubuntu` or `Ubuntu` for default distribution.
+    #[arg(long, value_name = "USER@DISTRO")]
+    wsl: Option<String>,
     /// Not supported in Zed CLI, only supported on Zed binary
     /// Will attempt to give the correct command to run
     #[arg(long)]
@@ -131,23 +137,32 @@ fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
     Ok(canonicalized.to_string(|path| path.to_string_lossy().to_string()))
 }
 
-fn parse_path_in_wsl(source: &str, wsl_args: &WslArgs) -> Result<String> {
+fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
     let mut command = util::command::new_std_command("wsl.exe");
 
-    if let Some(user) = &wsl_args.wsl_user {
+    let (user, distro_name) = if let Some((user, distro)) = wsl.split_once('@') {
+        if user.is_empty() {
+            anyhow::bail!("user is empty in wsl argument");
+        }
+        (Some(user), distro)
+    } else {
+        (None, wsl)
+    };
+
+    if let Some(user) = user {
         command.arg("--user").arg(user);
     }
 
     let output = command
         .arg("--distribution")
-        .arg(&wsl_args.wsl)
+        .arg(distro_name)
         .arg("wslpath")
         .arg("-m")
         .arg(source)
         .output()?;
 
     let result = String::from_utf8_lossy(&output.stdout);
-    let prefix = format!("//wsl.localhost/{}", wsl_args.wsl);
+    let prefix = format!("//wsl.localhost/{}", distro_name);
 
     Ok(result
         .trim()
@@ -304,8 +319,8 @@ fn main() -> Result<()> {
             paths.push(tmp_file.path().to_string_lossy().to_string());
             let (tmp_file, _) = tmp_file.keep()?;
             anonymous_fd_tmp_files.push((file, tmp_file));
-        } else if let Some(wsl_args) = &args.wsl_args {
-            urls.push(format!("file://{}", parse_path_in_wsl(path, wsl_args)?));
+        } else if let Some(wsl) = &args.wsl {
+            urls.push(format!("file://{}", parse_path_in_wsl(path, wsl)?));
         } else {
             paths.push(parse_path_with_position(path)?);
         }
@@ -327,7 +342,7 @@ fn main() -> Result<()> {
                 paths,
                 urls,
                 diff_paths,
-                wsl: args.wsl_args,
+                wsl: args.wsl,
                 wait: args.wait,
                 open_new_workspace,
                 env,
