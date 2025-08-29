@@ -830,7 +830,9 @@ mod tests {
             vec![path!("/test")],
             {
                 test!("lib.rs", "/test/lib.rs", None);
+                test!("/test/lib.rs", "/test/lib.rs", None);
                 test!("test.rs", "/test/test.rs", None);
+                test!("/test/test.rs", "/test/test.rs", None);
             }
         )
     }
@@ -858,9 +860,15 @@ mod tests {
             vec![path!("/file.txt"), path!("/test")],
             {
                 test!("file.txt", "/file.txt", "/");
+                test!("/file.txt", "/file.txt", "/");
+
                 test!("lib.rs", "/test/lib.rs", "/test");
                 test!("test.rs", "/test/test.rs", "/test");
                 test!("file.txt", "/test/file.txt", "/test");
+
+                test!("/test/lib.rs", "/test/lib.rs", "/test");
+                test!("/test/test.rs", "/test/test.rs", "/test");
+                test!("/test/file.txt", "/test/file.txt", "/test");
             }
         )
     }
@@ -1255,6 +1263,7 @@ mod tests {
                 {
                     // Note: Opening a non-worktree file adds that file as a single file worktree.
                     test_remote!("file.txt", "/test/file.txt", "/");
+                    test_remote!("/test/file.txt", "/test/file.txt", "/");
                 }
             )
         }
