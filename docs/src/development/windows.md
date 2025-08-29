@@ -114,7 +114,7 @@ cargo test --workspace
 
 ## Installing from msys2
 
-Zed does not support unofficial MSYS2 Zed packages built for Mingw-w64.  Please report any issues you may have with [mingw-w64-zed](https://packages.msys2.org/base/mingw-w64-zed) to [msys2/MINGW-packages/issues](https://github.com/msys2/MINGW-packages/issues?q=is%3Aissue+is%3Aopen+zed).
+Zed does not support unofficial MSYS2 Zed packages built for Mingw-w64. Please report any issues you may have with [mingw-w64-zed](https://packages.msys2.org/base/mingw-w64-zed) to [msys2/MINGW-packages/issues](https://github.com/msys2/MINGW-packages/issues?q=is%3Aissue+is%3Aopen+zed).
 
 ## Troubleshooting
 
