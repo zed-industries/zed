@@ -11,8 +11,7 @@ use std::{ops::Index, sync::LazyLock};
 const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`']+"#;
 // Optional suffix matches MSBuild diagnostic suffixes for path parsing in PathLikeWithPosition
 // https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks
-const WORD_REGEX: &str =
-    r#"[\$\+\w.\[\]:/\\@\-~()]+(?:\((?:\d+|\d+,\d+)\))|[\$\+\w.\[\]:/\\@\-~()]+"#;
+const WORD_REGEX: &str = r#"\S+(?:\((?:\d+|\d+,\d+)\))|\S+"#;
 
 const PYTHON_FILE_LINE_REGEX: &str = r#"File "(?P<file>[^"]+)", line (?P<line>\d+)"#;
 
@@ -91,23 +90,41 @@ pub(super) fn find_from_grid_point<T: EventListener>(
         let file_path = term.bounds_to_string(*word_match.start(), *word_match.end());
 
         let (sanitized_match, sanitized_word) = 'sanitize: {
-            let mut word_match = word_match;
-            let mut file_path = file_path;
+            fn shrink_by<'a, T>(
+                left: usize,
+                right: usize,
+                term: &Term<T>,
+                word_match: Match,
+                file_path: &'a str,
+            ) -> (Match, &'a str) {
+                (
+                    Match::new(
+                        word_match.start().add(term, Boundary::Grid, left),
+                        word_match.end().sub(term, Boundary::Grid, right),
+                    ),
+                    &file_path[left..file_path.len() - right],
+                )
+            }
 
-            if is_path_surrounded_by_common_symbols(&file_path) {
-                word_match = Match::new(
-                    word_match.start().add(term, Boundary::Grid, 1),
-                    word_match.end().sub(term, Boundary::Grid, 1),
-                );
-                file_path = file_path[1..file_path.len() - 1].to_owned();
+            let mut word_match = word_match;
+            let mut file_path = file_path.as_str();
+
+            if is_path_surrounded_by_common_symbols(file_path) {
+                (word_match, file_path) = shrink_by(1, 1, term, word_match, file_path);
+                if is_path_surrounded_by_quotes(file_path) {
+                    (word_match, file_path) = shrink_by(1, 1, term, word_match, file_path);
+                }
+            }
+
+            if is_path_surrounded_by_quotes(file_path) {
+                (word_match, file_path) = shrink_by(1, 1, term, word_match, file_path);
+                if is_path_surrounded_by_common_symbols(file_path) {
+                    (word_match, file_path) = shrink_by(1, 1, term, word_match, file_path);
+                }
             }
 
             while file_path.ends_with(':') {
-                file_path.pop();
-                word_match = Match::new(
-                    *word_match.start(),
-                    word_match.end().sub(term, Boundary::Grid, 1),
-                );
+                (word_match, file_path) = shrink_by(0, 1, term, word_match, file_path);
             }
             let mut colon_count = 0;
             for c in file_path.chars() {
@@ -131,16 +148,12 @@ pub(super) fn find_from_grid_point<T: EventListener>(
                         .nth(last_index + 1)
                         .is_none_or(|c| c.is_ascii_digit());
                 if prev_is_digit && !next_is_digit {
-                    let stripped_len = file_path.len() - last_index;
-                    word_match = Match::new(
-                        *word_match.start(),
-                        word_match.end().sub(term, Boundary::Grid, stripped_len),
-                    );
-                    file_path = file_path[0..last_index].to_owned();
+                    (word_match, file_path) =
+                        shrink_by(0, file_path.len() - last_index, term, word_match, file_path);
                 }
             }
 
-            break 'sanitize (word_match, file_path);
+            break 'sanitize (word_match, file_path.to_owned());
         };
 
         Some((sanitized_word, false, sanitized_match))
@@ -164,12 +177,36 @@ pub(super) fn find_from_grid_point<T: EventListener>(
     })
 }
 
+/// Check if path is surrounded by quotes: `""` or `''` or ````
+fn is_path_surrounded_by_quotes(path: &str) -> bool {
+    let mut chars = path.chars();
+    if let Some(first_char) = chars.next()
+        && let Some(last_char) = chars.next_back()
+        && chars.next().is_some()
+    {
+        match (first_char, last_char) {
+            ('"', '"') | ('\'', '\'') | ('`', '`') => true,
+            _ => false,
+        }
+    } else {
+        false
+    }
+}
+
+/// Check if path is surrounded by brackets: `[]` or `()` or `{}` or `<>`
 fn is_path_surrounded_by_common_symbols(path: &str) -> bool {
-    // Avoid detecting `[]` or `()` strings as paths, surrounded by common symbols
-    path.len() > 2
-        // The rest of the brackets and various quotes cannot be matched by the [`WORD_REGEX`] hence not checked for.
-        && (path.starts_with('[') && path.ends_with(']')
-            || path.starts_with('(') && path.ends_with(')'))
+    let mut chars = path.chars();
+    if let Some(first_char) = chars.next()
+        && let Some(last_char) = chars.next_back()
+        && chars.next().is_some()
+    {
+        match (first_char, last_char) {
+            ('[', ']') | ('(', ')') | ('{', '}') | ('<', '>') => true,
+            _ => false,
+        }
+    } else {
+        false
+    }
 }
 
 /// Based on alacritty/src/display/hint.rs > regex_match_at
@@ -238,7 +275,7 @@ mod tests {
         re_test(
             WORD_REGEX,
             "hello, world! \"What\" is this?",
-            vec!["hello", "world", "What", "is", "this"],
+            vec!["hello,", "world!", "\"What\"", "is", "this?"],
         );
     }
 
@@ -430,6 +467,21 @@ mod tests {
         }
 
         #[test]
+        fn quotes_and_brackets() {
+            test_path!("\"‹«/test/co👉ol.rs»:«4»›\"");
+            test_path!("'‹«/test/co👉ol.rs»:«4»›'");
+            test_path!("`‹«/test/co👉ol.rs»:«4»›`");
+
+            test_path!("[‹«/test/co👉ol.rs»:«4»›]");
+            test_path!("(‹«/test/co👉ol.rs»:«4»›)");
+            test_path!("{‹«/test/co👉ol.rs»:«4»›}");
+            test_path!("<‹«/test/co👉ol.rs»:«4»›>");
+
+            test_path!("[\"‹«/test/co👉ol.rs»:«4»›\"]");
+            test_path!("'(‹«/test/co👉ol.rs»:«4»›)'");
+        }
+
+        #[test]
         fn word_wide_chars() {
             // Rust paths
             test_path!(4, 6, 12; "‹«/👉例/cool.rs»›");
@@ -482,8 +534,11 @@ mod tests {
             }
 
             #[test]
-            #[should_panic(expected = "No hyperlink found")]
             // <https://github.com/zed-industries/zed/issues/12338>
+            //
+            // TODO(davewa): For this to work, we need to pickup the fix for
+            // https://github.com/alacritty/alacritty/issues/8673 in a (soon) to be released new
+            // version of alacritty_terminal.
             fn issue_12338() {
                 // Issue #12338
                 test_path!(".rw-r--r--     0     staff 05-27 14:03 ‹«test👉、2.txt»›");
