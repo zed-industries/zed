@@ -932,7 +932,9 @@ impl ToolchainLister for PythonToolchainProvider {
                     };
                     let path = prefix.join(BINARY_DIR).join(activate_script_name);
                     if fs.is_file(&path).await {
-                        activation_script.push(format!("{activate_keyword} {}", path.display()));
+                        let path = path.to_string_lossy();
+                        let path = shlex::try_quote(&path).unwrap();
+                        activation_script.push(format!("{activate_keyword} {}", path));
                     }
                 }
             }
@@ -942,7 +944,8 @@ impl ToolchainLister for PythonToolchainProvider {
                 };
                 let version = toolchain.version.as_deref().unwrap_or("system");
                 let pyenv = manager.executable;
-                let pyenv = pyenv.display();
+                let path = pyenv.to_string_lossy();
+                let pyenv = shlex::try_quote(&path).unwrap();
                 activation_script.extend(match shell {
                     ShellKind::Fish => Some(format!("{pyenv} shell - fish {version}")),
                     ShellKind::Posix => Some(format!("{pyenv} shell - sh {version}")),
