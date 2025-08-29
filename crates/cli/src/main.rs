@@ -6,7 +6,6 @@
 use anyhow::{Context as _, Result};
 use clap::Parser;
 use cli::{CliRequest, CliResponse, IpcHandshake, ipc::IpcOneShotServer};
-use collections::HashMap;
 use parking_lot::Mutex;
 use std::{
     env, fs, io,
@@ -135,14 +134,24 @@ fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
     Ok(canonicalized.to_string(|path| path.to_string_lossy().to_string()))
 }
 
+fn parse_path_in_wsl(source: &str, dist: &str) -> Result<String> {
+    let output = util::command::new_std_command("wsl.exe")
+        .arg("wslpath")
+        .arg("-m")
+        .arg(source)
+        .output()?;
+
+    let result = String::from_utf8_lossy(&output.stdout);
+    let prefix = format!("//wsl.localhost/{}", dist);
+
+    Ok(result
+        .trim()
+        .strip_prefix(&prefix)
+        .unwrap_or(&result)
+        .to_string())
+}
+
 fn main() -> Result<()> {
-    #[cfg(all(not(debug_assertions), target_os = "windows"))]
-    unsafe {
-        use ::windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
-
-        let _ = AttachConsole(ATTACH_PARENT_PROCESS);
-    }
-
     #[cfg(unix)]
     util::prevent_root_execution();
 
@@ -229,6 +238,8 @@ fn main() -> Result<()> {
     let env = {
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         {
+            use collections::HashMap;
+
             // On Linux, the desktop entry uses `cli` to spawn `zed`.
             // We need to handle env vars correctly since std::env::vars() may not contain
             // project-specific vars (e.g. those set by direnv).
@@ -241,8 +252,19 @@ fn main() -> Result<()> {
             }
         }
 
-        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
-        Some(std::env::vars().collect::<HashMap<_, _>>())
+        #[cfg(target_os = "windows")]
+        {
+            // On Windows, by default, a child process inherits a copy of the environment block of the parent process.
+            // So we don't need to pass env vars explicitly.
+            None
+        }
+
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "windows")))]
+        {
+            use collections::HashMap;
+
+            Some(std::env::vars().collect::<HashMap<_, _>>())
+        }
     };
 
     let exit_status = Arc::new(Mutex::new(None));
@@ -277,8 +299,10 @@ fn main() -> Result<()> {
             paths.push(tmp_file.path().to_string_lossy().to_string());
             let (tmp_file, _) = tmp_file.keep()?;
             anonymous_fd_tmp_files.push((file, tmp_file));
+        } else if let Some(dist) = args.wsl.as_deref() {
+            urls.push(format!("file://{}", parse_path_in_wsl(path, dist)?));
         } else {
-            paths.push(parse_path_with_position(path)?)
+            paths.push(parse_path_with_position(path)?);
         }
     }
 
@@ -651,15 +675,15 @@ mod windows {
             Storage::FileSystem::{
                 CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_MODE, OPEN_EXISTING, WriteFile,
             },
-            System::Threading::CreateMutexW,
+            System::Threading::{CREATE_NEW_PROCESS_GROUP, CreateMutexW},
         },
         core::HSTRING,
     };
 
     use crate::{Detect, InstalledApp};
-    use std::io;
     use std::path::{Path, PathBuf};
     use std::process::ExitStatus;
+    use std::{io, os::windows::process::CommandExt};
 
     fn check_single_instance() -> bool {
         let mutex = unsafe {
@@ -698,6 +722,7 @@ mod windows {
         fn launch(&self, ipc_url: String) -> anyhow::Result<()> {
             if check_single_instance() {
                 std::process::Command::new(self.0.clone())
+                    .creation_flags(CREATE_NEW_PROCESS_GROUP.0)
                     .arg(ipc_url)
                     .spawn()?;
             } else {

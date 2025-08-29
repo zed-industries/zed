@@ -13,9 +13,8 @@ if [ -n "$WSL_DISTRO_NAME" ]; then
 fi
 
 if [ $IN_WSL = true ]; then
-    PROJECT_DIR=$(wslpath -w "$(pwd)")
-    "$ZED_PATH/zed.exe" "$PROJECT_DIR" "$@" &
-    exit 0
+    "$ZED_PATH/zed.exe" --wsl "$WSL_DISTRO_NAME" "$@"
+    exit $?
 else
     echo "Only WSL is supported for now" >&2
     exit 1
