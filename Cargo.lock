@@ -14933,7 +14933,6 @@ dependencies = [
  "command_palette_hooks",
  "editor",
  "feature_flags",
- "fs",
  "gpui",
  "serde",
  "serde_json",
@@ -14941,7 +14940,6 @@ dependencies = [
  "smallvec",
  "theme",
  "ui",
- "util",
  "workspace",
 ]
 
