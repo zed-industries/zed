@@ -411,7 +411,11 @@ impl SettingsStore {
     /// Panics if the given setting type has not been registered, or if there is no
     /// value for this setting.
     pub fn get<T: Settings>(&self, path: Option<SettingsLocation>) -> &T {
-        self.try_get(path)
+        self.setting_values
+            .get(&TypeId::of::<T>())
+            .unwrap_or_else(|| panic!("unregistered setting type {}", type_name::<T>()))
+            .value_for_path(path)
+            .downcast_ref::<T>()
             .expect("no default value for setting type")
     }
 
@@ -422,9 +426,8 @@ impl SettingsStore {
     pub fn try_get<T: Settings>(&self, path: Option<SettingsLocation>) -> Option<&T> {
         self.setting_values
             .get(&TypeId::of::<T>())
-            .unwrap_or_else(|| panic!("unregistered setting type {}", type_name::<T>()))
-            .value_for_path(path)
-            .downcast_ref::<T>()
+            .map(|value| value.value_for_path(path))
+            .and_then(|value| value.downcast_ref::<T>())
     }
 
     /// Get all values from project specific settings
