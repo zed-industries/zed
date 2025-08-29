@@ -144,6 +144,8 @@ impl AddToolchainState {
                     .child(
                         h_flex()
                             .p_1()
+                            .justify_between()
+                            .gap_2()
                             .child(Label::new("Select Toolchain Path").color(Color::Muted).map(
                                 |this| {
                                     if is_loading {
@@ -208,6 +210,7 @@ impl AddToolchainState {
                                 );
                             });
                             *input_state = Self::wait_for_path(rx, window, cx);
+                            this.focus_handle(cx).focus(window);
                         }
                     });
                     return Err(anyhow::anyhow!("Failed to resolve toolchain"));
