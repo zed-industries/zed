@@ -8639,6 +8639,14 @@ mod tests {
         // After delay expires, the file is saved.
         cx.executor().advance_clock(Duration::from_millis(250));
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 4));
+        
+        // Autosave after delay, should save earlier than delay if tab is closed
+        item.update(cx, |item, cx| {
+            item.is_dirty = true;
+            cx.emit(ItemEvent::Edit);
+        });
+        cx.executor().advance_clock(Duration::from_millis(250));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
 
         // Autosave on focus change, ensuring closing the tab counts as such.
         item.update(cx, |item, cx| {
@@ -8659,7 +8667,7 @@ mod tests {
         .await
         .unwrap();
         assert!(!cx.has_pending_prompt());
-        item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 6));
 
         // Add the item again, ensuring autosave is prevented if the underlying file has been deleted.
         workspace.update_in(cx, |workspace, window, cx| {
@@ -8673,7 +8681,7 @@ mod tests {
             window.blur();
         });
         cx.run_until_parked();
-        item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 6));
 
         // Ensure autosave is prevented for deleted files also when closing the buffer.
         let _close_items = pane.update_in(cx, |pane, window, cx| {
@@ -8681,7 +8689,7 @@ mod tests {
         });
         cx.run_until_parked();
         assert!(cx.has_pending_prompt());
-        item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 6));
     }
 
     #[gpui::test]

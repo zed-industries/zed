@@ -2061,12 +2061,8 @@ impl Pane {
         } else if is_dirty && (can_save || can_save_as) {
             if save_intent == SaveIntent::Close {
                 let will_autosave = cx.update(|_window, cx| {
-                    matches!(
-                        item.workspace_settings(cx).autosave,
-                        AutosaveSetting::OnFocusChange
-                            | AutosaveSetting::OnWindowChange
-                            | AutosaveSetting::AfterDelay { .. }
-                    ) && item.can_autosave(cx)
+                    item.can_autosave(cx)
+                        && item.workspace_settings(cx).autosave.should_save_on_close()
                 })?;
                 if !will_autosave {
                     let item_id = item.item_id();

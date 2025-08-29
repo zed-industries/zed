@@ -1066,13 +1066,7 @@ impl ProjectSearchView {
         let can_autosave = self.results_editor.can_autosave(cx);
         let autosave_setting = self.results_editor.workspace_settings(cx).autosave;
 
-        let will_autosave = can_autosave
-            && matches!(
-                autosave_setting,
-                AutosaveSetting::OnFocusChange
-                    | AutosaveSetting::OnWindowChange
-                    | AutosaveSetting::AfterDelay { .. }
-            );
+        let will_autosave = can_autosave && autosave_setting.should_save_on_close();
 
         let is_dirty = self.is_dirty(cx);
 

@@ -182,6 +182,8 @@ Define extensions which should be installed (`true`) or never installed (`false`
 }
 ```
 
+Note that a save will be triggered when an unsaved tab is closed, even if this is earlier than the configured inactivity period.
+
 ## Restore on Startup
 
 - Description: Controls session restoration on startup.
