@@ -105,7 +105,7 @@ pub trait AgentSessionSetTitle {
 }
 
 pub trait AgentSessionCommands {
-    fn list(&self) -> Task<Result<Vec<acp::CommandInfo>>>;
+    fn list(&self, cx: &mut App) -> Task<Result<Vec<acp::CommandInfo>>>;
     fn run(&self, command: String, argument: Option<String>, cx: &mut App) -> Task<Result<()>>;
 }
 

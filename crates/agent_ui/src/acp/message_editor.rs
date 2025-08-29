@@ -107,9 +107,6 @@ impl MessageEditor {
             prompt_store.clone(),
             prompt_capabilities.clone(),
         ));
-        let semantics_provider = Rc::new(SlashCommandSemanticsProvider {
-            range: Cell::new(None),
-        });
         let mention_set = MentionSet::default();
         let editor = cx.new(|cx| {
             let buffer = cx.new(|cx| Buffer::local("", cx).with_language(Arc::new(language), cx));
@@ -126,9 +123,6 @@ impl MessageEditor {
                 max_entries_visible: 12,
                 placement: Some(ContextMenuPlacement::Above),
             });
-            if prevent_slash_commands {
-                editor.set_semantics_provider(Some(semantics_provider.clone()));
-            }
             editor.register_addon(MessageEditorAddon::new());
             editor
         });
@@ -144,17 +138,16 @@ impl MessageEditor {
 
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.subscribe_in(&editor, window, {
-            let semantics_provider = semantics_provider.clone();
             move |this, editor, event, window, cx| {
                 if let EditorEvent::Edited { .. } = event {
-                    if prevent_slash_commands {
-                        this.highlight_slash_command(
-                            semantics_provider.clone(),
-                            editor.clone(),
-                            window,
-                            cx,
-                        );
-                    }
+                    // if prevent_slash_commands {
+                    //     this.highlight_slash_command(
+                    //         semantics_provider.clone(),
+                    //         editor.clone(),
+                    //         window,
+                    //         cx,
+                    //     );
+                    // }
                     let snapshot = editor.update(cx, |editor, cx| editor.snapshot(window, cx));
                     this.mention_set.remove_invalid(snapshot);
                     cx.notify();
@@ -712,14 +705,16 @@ impl MessageEditor {
 
                         let crease_range = crease.range().to_offset(&snapshot.buffer_snapshot);
                         if crease_range.start > ix {
-                            let chunk = if prevent_slash_commands
-                                && ix == 0
-                                && parse_slash_command(&text[ix..]).is_some()
-                            {
-                                format!(" {}", &text[ix..crease_range.start]).into()
-                            } else {
-                                text[ix..crease_range.start].into()
-                            };
+                            //todo(): Custom slash command ContentBlock?
+                            // let chunk = if prevent_slash_commands
+                            //     && ix == 0
+                            //     && parse_slash_command(&text[ix..]).is_some()
+                            // {
+                            //     format!(" {}", &text[ix..crease_range.start]).into()
+                            // } else {
+                            //     text[ix..crease_range.start].into()
+                            // };
+                            let chunk = text[ix..crease_range.start].into();
                             chunks.push(chunk);
                         }
                         let chunk = match mention {
@@ -775,14 +770,16 @@ impl MessageEditor {
                     }
 
                     if ix < text.len() {
-                        let last_chunk = if prevent_slash_commands
-                            && ix == 0
-                            && parse_slash_command(&text[ix..]).is_some()
-                        {
-                            format!(" {}", text[ix..].trim_end())
-                        } else {
-                            text[ix..].trim_end().to_owned()
-                        };
+                        //todo(): Custom slash command ContentBlock?
+                        // let last_chunk = if prevent_slash_commands
+                        //     && ix == 0
+                        //     && parse_slash_command(&text[ix..]).is_some()
+                        // {
+                        //     format!(" {}", text[ix..].trim_end())
+                        // } else {
+                        //     text[ix..].trim_end().to_owned()
+                        // };
+                        let last_chunk = text[ix..].trim_end().to_owned();
                         if !last_chunk.is_empty() {
                             chunks.push(last_chunk.into());
                         }

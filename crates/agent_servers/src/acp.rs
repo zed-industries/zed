@@ -329,8 +329,49 @@ impl AgentConnection for AcpConnection {
             .detach();
     }
 
+    fn commands(
+        &self,
+        session_id: &agent_client_protocol::SessionId,
+        cx: &App,
+    ) -> Option<Rc<dyn acp_thread::AgentSessionCommands>> {
+        if self.prompt_capabilities.supports_commands {
+            Some(Rc::new(AcpAgentSessionCommands {
+                session_id: session_id.clone(),
+                connection: self.connection.clone(),
+            }) as Rc<dyn acp_thread::AgentSessionCommands>)
+        } else {
+            None
+        }
+    }
+
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
         self
+    }
+}
+
+struct AcpAgentSessionCommands {
+    session_id: acp::SessionId,
+    connection: Rc<acp::ClientSideConnection>,
+}
+
+impl acp_thread::AgentSessionCommands for AcpAgentSessionCommands {
+    fn list(&self, cx: &mut App) -> Task<Result<Vec<acp::CommandInfo>>> {
+        let connection = self.connection.clone();
+        let session_id = self.session_id.clone();
+
+        cx.foreground_executor().spawn(async move {
+            match connection
+                .list_commands(acp::ListCommandsRequest { session_id })
+                .await
+            {
+                Ok(response) => Ok(response.commands),
+                Err(e) => Err(anyhow::anyhow!(e)),
+            }
+        })
+    }
+
+    fn run(&self, command: String, argument: Option<String>, cx: &mut App) -> Task<Result<()>> {
+        Task::ready(Ok(()))
     }
 }
 
