@@ -63,25 +63,24 @@ pub fn derive_settings_ui(input: proc_macro::TokenStream) -> proc_macro::TokenSt
         panic!("path is required when group is specified");
     }
 
-    let ui_render_fn_body =
-        generate_ui_render_body(group_name.as_ref(), path_name.as_ref(), &input);
+    let ui_render_fn_body = generate_ui_item_body(group_name.as_ref(), path_name.as_ref(), &input);
 
     let settings_ui_item_fn_body = path_name
         .as_ref()
         .map(|path_name| map_ui_item_to_render(path_name, quote! { Self }))
         .unwrap_or(quote! {
-            settings::SettingsUiItem {
-                item:  settings::SettingsUiItemVariant::None
+            settings::SettingsUiEntry {
+                item: settings::SettingsUiEntryVariant::None
             }
         });
 
     let expanded = quote! {
         impl #impl_generics settings::SettingsUi for #name #ty_generics #where_clause {
-            fn settings_ui_render() -> settings::SettingsUiRender {
+            fn settings_ui_item() -> settings::SettingsUiItem {
                 #ui_render_fn_body
             }
 
-            fn settings_ui_item() -> settings::SettingsUiItem {
+            fn settings_ui_entry() -> settings::SettingsUiEntry {
                 #settings_ui_item_fn_body
             }
         }
@@ -92,24 +91,24 @@ pub fn derive_settings_ui(input: proc_macro::TokenStream) -> proc_macro::TokenSt
 
 fn map_ui_item_to_render(path: &str, ty: TokenStream) -> TokenStream {
     quote! {
-        settings::SettingsUiItem {
-            item: match #ty::settings_ui_render() {
-                settings::SettingsUiRender::Group{title, items} => settings::SettingsUiItemVariant::Group {
+        settings::SettingsUiEntry {
+            item: match #ty::settings_ui_item() {
+                settings::SettingsUiItem::Group{title, items} => settings::SettingsUiEntryVariant::Group {
                     title,
                     path: #path,
-                    group: settings::SettingsUiItemGroup { items },
+                    items,
                 },
-                settings::SettingsUiRender::Item(item) => settings::SettingsUiItemVariant::Item {
+                settings::SettingsUiItem::Single(item) => settings::SettingsUiEntryVariant::Item {
                     path: #path,
                     item,
                 },
-                settings::SettingsUiRender::None => settings::SettingsUiItemVariant::None,
+                settings::SettingsUiItem::None => settings::SettingsUiEntryVariant::None,
             }
         }
     }
 }
 
-fn generate_ui_render_body(
+fn generate_ui_item_body(
     group_name: Option<&String>,
     path_name: Option<&String>,
     input: &syn::DeriveInput,
@@ -117,13 +116,13 @@ fn generate_ui_render_body(
     match (group_name, path_name, &input.data) {
         (_, _, Data::Union(_)) => unimplemented!("Derive SettingsUi for Unions"),
         (None, None, Data::Struct(_)) => quote! {
-            settings::SettingsUiRender::None
+            settings::SettingsUiItem::None
         },
         (Some(_), None, Data::Struct(_)) => quote! {
-            settings::SettingsUiRender::None
+            settings::SettingsUiItem::None
         },
         (None, Some(_), Data::Struct(_)) => quote! {
-            settings::SettingsUiRender::None
+            settings::SettingsUiItem::None
         },
         (Some(group_name), _, Data::Struct(data_struct)) => {
             let fields = data_struct
@@ -153,7 +152,7 @@ fn generate_ui_render_body(
                 .map(|(name, ty)| map_ui_item_to_render(&name, ty));
 
             quote! {
-                settings::SettingsUiRender::Group{ title: #group_name, items: vec![#(#fields),*] }
+                settings::SettingsUiItem::Group{ title: #group_name, items: vec![#(#fields),*] }
             }
         }
         (None, _, Data::Enum(data_enum)) => {
@@ -186,17 +185,17 @@ fn generate_ui_render_body(
 
             if length > 6 {
                 quote! {
-                    settings::SettingsUiRender::Item(settings::SettingsUiItemSingle::DropDown(&[#(#variants),*]))
+                    settings::SettingsUiItem::Single(settings::SettingsUiItemSingle::DropDown(&[#(#variants),*]))
                 }
             } else {
                 quote! {
-                    settings::SettingsUiRender::Item(settings::SettingsUiItemSingle::ToggleGroup(&[#(#variants),*]))
+                    settings::SettingsUiItem::Single(settings::SettingsUiItemSingle::ToggleGroup(&[#(#variants),*]))
                 }
             }
         }
         // todo! unions
         (_, _, Data::Enum(_)) => quote! {
-            settings::SettingsUiRender::None
+            settings::SettingsUiItem::None
         },
     }
 }

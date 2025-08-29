@@ -31,7 +31,7 @@ use util::{
 pub type EditorconfigProperties = ec4rs::Properties;
 
 use crate::{
-    ActiveSettingsProfileName, ParameterizedJsonSchema, SettingsJsonSchemaParams, SettingsUiItem,
+    ActiveSettingsProfileName, ParameterizedJsonSchema, SettingsJsonSchemaParams, SettingsUiEntry,
     VsCodeSettings, WorktreeId, parse_json_with_comments, replace_value_in_json_text,
     settings_ui::SettingsUi, update_value_in_json_text,
 };
@@ -205,11 +205,9 @@ pub struct SettingsLocation<'a> {
 /// A set of strongly-typed setting values defined via multiple config files.
 pub struct SettingsStore {
     setting_values: HashMap<TypeId, Box<dyn AnySettingValue>>,
-    // todo! non pub?
-    pub raw_default_settings: Value,
+    raw_default_settings: Value,
     raw_global_settings: Option<Value>,
-    // todo! non pub?
-    pub raw_user_settings: Value,
+    raw_user_settings: Value,
     raw_server_settings: Option<Value>,
     raw_extension_settings: Value,
     raw_local_settings: BTreeMap<(WorktreeId, Arc<Path>), Value>,
@@ -287,7 +285,7 @@ trait AnySettingValue: 'static + Send + Sync {
         text: &mut String,
         edits: &mut Vec<(Range<usize>, String)>,
     );
-    fn settings_ui_item(&self) -> SettingsUiItem;
+    fn settings_ui_item(&self) -> SettingsUiEntry;
 }
 
 struct DeserializedSetting(Box<dyn Any>);
@@ -484,6 +482,11 @@ impl SettingsStore {
         self.raw_global_settings.as_ref()
     }
 
+    /// Access the raw JSON value of the default settings.
+    pub fn raw_default_settings(&self) -> &Value {
+        &self.raw_default_settings
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut App) -> Self {
         let mut this = Self::new(cx);
@@ -602,7 +605,7 @@ impl SettingsStore {
             .collect::<Vec<_>>();
         let update = move |mut old_text: String, cx: AsyncApp| {
             cx.read_global(|store: &SettingsStore, _cx| {
-                // todo! use update for merge, needs old value though...
+                // todo(settings_ui) use `update_value_in_json_text` for merging new and old objects with comment preservation, needs old value though...
                 let (range, replacement) = replace_value_in_json_text(
                     &old_text,
                     key_path.as_slice(),
@@ -641,7 +644,7 @@ impl SettingsStore {
         })
     }
 
-    pub fn settings_ui_items(&self) -> impl IntoIterator<Item = SettingsUiItem> {
+    pub fn settings_ui_items(&self) -> impl IntoIterator<Item = SettingsUiEntry> {
         self.setting_values
             .values()
             .map(|item| item.settings_ui_item())
@@ -1541,8 +1544,8 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
         );
     }
 
-    fn settings_ui_item(&self) -> SettingsUiItem {
-        <T as SettingsUi>::settings_ui_item()
+    fn settings_ui_item(&self) -> SettingsUiEntry {
+        <T as SettingsUi>::settings_ui_entry()
     }
 }
 

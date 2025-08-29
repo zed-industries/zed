@@ -7,9 +7,8 @@ use anyhow::Context as _;
 use command_palette_hooks::CommandPaletteFilter;
 use editor::EditorSettingsControls;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
-use fs::Fs;
 use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, ReadGlobal, actions};
-use settings::{SettingsStore, SettingsUiItemSingle, SettingsUiItemVariant, SettingsValue};
+use settings::{SettingsStore, SettingsUiEntryVariant, SettingsUiItemSingle, SettingsValue};
 use smallvec::SmallVec;
 use ui::{NumericStepper, SwitchField, ToggleButtonGroup, ToggleButtonSimple, prelude::*};
 use workspace::{
@@ -147,7 +146,6 @@ struct UIEntry {
     total_descendant_range: Range<usize>,
     next_sibling: Option<usize>,
     // expanded: bool,
-    // todo! rename SettingsUiItemSingle
     render: Option<SettingsUiItemSingle>,
 }
 
@@ -159,7 +157,7 @@ struct SettingsUiTree {
 
 fn build_tree_item(
     tree: &mut Vec<UIEntry>,
-    group: SettingsUiItemVariant,
+    group: SettingsUiEntryVariant,
     depth: usize,
     prev_index: Option<usize>,
 ) {
@@ -177,10 +175,14 @@ fn build_tree_item(
         tree[prev_index].next_sibling = Some(index);
     }
     match group {
-        SettingsUiItemVariant::Group { path, title, group } => {
+        SettingsUiEntryVariant::Group {
+            path,
+            title,
+            items: group_items,
+        } => {
             tree[index].path = path;
             tree[index].title = title;
-            for group_item in group.items {
+            for group_item in group_items {
                 let prev_index = tree[index]
                     .descendant_range
                     .is_empty()
@@ -191,12 +193,12 @@ fn build_tree_item(
                 tree[index].total_descendant_range.end = tree.len();
             }
         }
-        SettingsUiItemVariant::Item { path, item } => {
+        SettingsUiEntryVariant::Item { path, item } => {
             tree[index].path = path;
             tree[index].title = path; // todo! title
             tree[index].render = Some(item);
         }
-        SettingsUiItemVariant::None => {
+        SettingsUiEntryVariant::None => {
             return;
         }
     }
@@ -208,15 +210,15 @@ impl SettingsUiTree {
         let mut tree = vec![];
         let mut root_entry_indices = vec![];
         for item in settings_store.settings_ui_items() {
-            if matches!(item.item, SettingsUiItemVariant::None) {
+            if matches!(item.item, SettingsUiEntryVariant::None) {
                 continue;
             }
 
             assert!(
-                matches!(item.item, SettingsUiItemVariant::Group { .. }),
+                matches!(item.item, SettingsUiEntryVariant::Group { .. }),
                 "top level items must be groups: {:?}",
                 match item.item {
-                    SettingsUiItemVariant::Item { path, .. } => path,
+                    SettingsUiEntryVariant::Item { path, .. } => path,
                     _ => unreachable!(),
                 }
             );
@@ -286,10 +288,10 @@ fn render_content(
         path.push(child.path);
         let settings_value = settings_value_from_settings_and_path(
             path.clone(),
-            // TODO: how to structure this better? There feels like theres away to avoid the clone
+            // PERF: how to structure this better? There feels like there's a way to avoid the clone
             // and every value lookup
-            &SettingsStore::global(cx).raw_user_settings,
-            &SettingsStore::global(cx).raw_default_settings,
+            SettingsStore::global(cx).raw_user_settings(),
+            SettingsStore::global(cx).raw_default_settings(),
         );
         content = content.child(
             div()
@@ -420,7 +422,7 @@ fn downcast_any_item<T: serde::de::DeserializeOwned>(
     let value = settings_value
         .value
         .map(|value| serde_json::from_value::<T>(value).expect("value is not a T"));
-    // todo! We have to make sure default.json has all default setting values now
+    // todo(settings_ui) Create test that constructs UI tree, and asserts that all elements have default values
     let default_value = serde_json::from_value::<T>(settings_value.default_value)
         .expect("default value is not an Option<T>");
     let deserialized_setting_value = SettingsValue {
@@ -462,17 +464,7 @@ fn render_numeric_stepper(
                     return;
                 };
                 let new_value = serde_json::Value::Number(number);
-
-                let settings_store = SettingsStore::global(cx);
-                let fs = <dyn Fs>::global(cx);
-
-                let rx = settings_store.update_settings_file_at_path(
-                    fs.clone(),
-                    &path.as_slice(),
-                    new_value,
-                );
-                cx.background_spawn(async move { rx.await?.context("Failed to update settings") })
-                    .detach_and_log_err(cx);
+                SettingsValue::write_value(&path, new_value, cx);
             }
         },
         move |_, _, cx| {
@@ -482,16 +474,7 @@ fn render_numeric_stepper(
 
             let new_value = serde_json::Value::Number(number);
 
-            let settings_store = SettingsStore::global(cx);
-            let fs = <dyn Fs>::global(cx);
-
-            let rx = settings_store.update_settings_file_at_path(
-                fs.clone(),
-                &path.as_slice(),
-                new_value,
-            );
-            cx.background_spawn(async move { rx.await?.context("Failed to update settings") })
-                .detach_and_log_err(cx);
+            SettingsValue::write_value(&path, new_value, cx);
         },
     )
     .style(ui::NumericStepperStyle::Outlined)
@@ -522,16 +505,7 @@ fn render_switch_field(
                 ToggleState::Unselected => false,
             });
 
-            let settings_store = SettingsStore::global(cx);
-            let fs = <dyn Fs>::global(cx);
-
-            let rx = settings_store.update_settings_file_at_path(
-                fs.clone(),
-                &path.as_slice(),
-                new_value,
-            );
-            cx.background_spawn(async move { rx.await?.context("Failed to update settings") })
-                .detach_and_log_err(cx);
+            SettingsValue::write_value(&path, new_value, cx);
         },
     )
     .into_any_element()
@@ -570,18 +544,11 @@ fn render_toggle_button_group(
             variants_array.map(|variant| {
                 let path = value.path.clone();
                 ToggleButtonSimple::new(variant, move |_, _, cx| {
-                    let settings_store = SettingsStore::global(cx);
-                    let fs = <dyn Fs>::global(cx);
-
-                    let rx = settings_store.update_settings_file_at_path(
-                        fs.clone(),
-                        &path.as_slice(),
+                    SettingsValue::write_value(
+                        &path,
                         serde_json::Value::String(variant.to_string()),
+                        cx,
                     );
-                    cx.background_spawn(
-                        async move { rx.await?.context("Failed to update settings") },
-                    )
-                    .detach_and_log_err(cx);
                 })
             }),
         )

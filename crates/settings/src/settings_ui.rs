@@ -1,25 +1,29 @@
-use gpui::{AnyElement, App, Window};
+use anyhow::Context as _;
+use fs::Fs;
+use gpui::{AnyElement, App, AppContext as _, ReadGlobal as _, Window};
 use smallvec::SmallVec;
 
+use crate::SettingsStore;
+
 pub trait SettingsUi {
-    fn settings_ui_render() -> SettingsUiRender {
-        SettingsUiRender::None
+    fn settings_ui_item() -> SettingsUiItem {
+        SettingsUiItem::None
     }
-    fn settings_ui_item() -> SettingsUiItem;
+    fn settings_ui_entry() -> SettingsUiEntry;
 }
 
-pub struct SettingsUiItem {
-    // TODO: move this back here once there isn't a None variant
+pub struct SettingsUiEntry {
+    // todo(settings_ui): move this back here once there isn't a None variant
     // pub path: &'static str,
     // pub title: &'static str,
-    pub item: SettingsUiItemVariant,
+    pub item: SettingsUiEntryVariant,
 }
 
-pub enum SettingsUiItemVariant {
+pub enum SettingsUiEntryVariant {
     Group {
         path: &'static str,
         title: &'static str,
-        group: SettingsUiItemGroup,
+        items: Vec<SettingsUiEntry>,
     },
     Item {
         path: &'static str,
@@ -27,10 +31,6 @@ pub enum SettingsUiItemVariant {
     },
     // TODO: remove
     None,
-}
-
-pub struct SettingsUiItemGroup {
-    pub items: Vec<SettingsUiItem>,
 }
 
 pub enum SettingsUiItemSingle {
@@ -57,131 +57,63 @@ impl<T> SettingsValue<T> {
             None => &self.default_value,
         }
     }
+}
 
-    pub fn write(&self, _value: T) {
-        todo!()
+impl SettingsValue<serde_json::Value> {
+    pub fn write_value(path: &SmallVec<[&'static str; 1]>, value: serde_json::Value, cx: &mut App) {
+        let settings_store = SettingsStore::global(cx);
+        let fs = <dyn Fs>::global(cx);
+
+        let rx = settings_store.update_settings_file_at_path(fs.clone(), path.as_slice(), value);
+        let path = path.clone();
+        cx.background_spawn(async move {
+            rx.await?
+                .with_context(|| format!("Failed to update setting at path `{:?}`", path.join(".")))
+        })
+        .detach_and_log_err(cx);
     }
 }
 
-pub enum SettingsUiRender {
+impl<T: serde::Serialize> SettingsValue<T> {
+    pub fn write(
+        path: &SmallVec<[&'static str; 1]>,
+        value: T,
+        cx: &mut App,
+    ) -> Result<(), serde_json::Error> {
+        SettingsValue::write_value(path, serde_json::to_value(value)?, cx);
+        Ok(())
+    }
+}
+
+pub enum SettingsUiItem {
     Group {
         title: &'static str,
-        items: Vec<SettingsUiItem>,
+        items: Vec<SettingsUiEntry>,
     },
-    Item(SettingsUiItemSingle),
+    Single(SettingsUiItemSingle),
     None,
 }
 
 impl SettingsUi for bool {
-    fn settings_ui_render() -> SettingsUiRender {
-        SettingsUiRender::Item(SettingsUiItemSingle::SwitchField)
+    fn settings_ui_item() -> SettingsUiItem {
+        SettingsUiItem::Single(SettingsUiItemSingle::SwitchField)
     }
 
-    fn settings_ui_item() -> SettingsUiItem {
-        SettingsUiItem {
-            item: SettingsUiItemVariant::None,
+    fn settings_ui_entry() -> SettingsUiEntry {
+        SettingsUiEntry {
+            item: SettingsUiEntryVariant::None,
         }
     }
 }
 
 impl SettingsUi for u64 {
-    fn settings_ui_render() -> SettingsUiRender {
-        SettingsUiRender::Item(SettingsUiItemSingle::NumericStepper)
-    }
-
     fn settings_ui_item() -> SettingsUiItem {
-        SettingsUiItem {
-            item: SettingsUiItemVariant::None,
+        SettingsUiItem::Single(SettingsUiItemSingle::NumericStepper)
+    }
+
+    fn settings_ui_entry() -> SettingsUiEntry {
+        SettingsUiEntry {
+            item: SettingsUiEntryVariant::None,
         }
     }
 }
-
-/*
-FOR DOC COMMENTS ON "Contents" TYPES:
-define trait: SettingsUiDocProvider with derive
-derive creates:
-impl SettingsUiDocProvider for Foo {
-    fn settings_ui_doc() -> Hashmap<&'static str, &'static str> {
-        Hashmap::from(Foo.fields.map(|field| (field.name, field.doc_comment)))
-    }
-}
-
-on derive settings_ui, have attr
-#[settings_ui(doc_from = "Foo")]
-
-and have derive(SettingsUi) do
-
-if doc_from {
-quote! {
-        doc_comments = doc_from.type::settings_ui_doc();
-        for fields {
-            field.doc_comment = doc_comments.get(field.name).unwrap()
-        }
-    }
-} else {
- doc_comments = <Self as Settings>FileContent::settings_ui
-}
-
-FOR PATH:
-if derive attr also contains "Settings", then we can use <T as Settings>::KEY,
-otherwise we need a #[settings_ui(path = ...)].
-
-FOR BOTH OF ABOVE, we can check if derive() attr contains Settings, otherwise assert that both doc_from and path are present
-like so: #[settings_ui(doc_from = "Foo", path = "foo")]
- */
-
-/*
-#[derive(SettingsUi)]
-#[settings_ui(group = "Foo")]
-struct Foo {
-    // #[settings_ui(render = "my_render_function")]
-    pub toggle: bool,
-    pub font_size: u32,
-
-   Group(vec![Item {path: "toggle", item: SwitchField}])
-}
-
-macro code:
-settings_ui_item() {
- group.items = struct.fields.map((field_name, field_type) => quote! { SettingsUiItem::Item {path: #field_type::settings_ui_path().unwrap_or_else(|| #field_name), item:  if field.attrs.render { #render } else field::settings_ui_render()}})
- }
- */
-
-/* NOTES:
-
-# Root Group
-some_setting: {
-    # First Item
-    # this shouldn't be a group
-    # it should just be item with path "some_bool.enabled" and title "Some Bool"
-    "some_bool": {
-        # this should
-        enabled: true | false
-    }
-    # Second Item
-    "some_other_thing": "foo" | "bar" | "baz"
-}
-
-Structure:
-Group {
-    path: "some_item",
-    items: [
-        Item(
-            path: ["some_bool", "enabled"],
-        ),
-        Item(
-            path: ["some_other_thing"],
-        )
-    ]
-}
-
-is the following better than "foo.enabled"?
-- for objects with single key "enabled", should just be a bool, with no "enabled"
-for objects with enabled and other settings, enabled should be implicit,
-so
-"vim": false, # disabled
-"vim": true, # enabled with default settings
-"vim": {
-    "default_mode": "HelixNormal"
-} # enabled with custom settings
-*/
