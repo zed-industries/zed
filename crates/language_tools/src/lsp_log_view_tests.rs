@@ -53,7 +53,7 @@ async fn test_lsp_log_view(cx: &mut TestAppContext) {
         },
     );
 
-    let log_store = cx.new(|cx| LogStore::new(true, cx));
+    let log_store = cx.new(|cx| LogStore::new(false, cx));
     log_store.update(cx, |store, cx| store.add_project(&project, cx));
 
     let _rust_buffer = project

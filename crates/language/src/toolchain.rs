@@ -14,6 +14,7 @@ use collections::HashMap;
 use fs::Fs;
 use gpui::{AsyncApp, SharedString};
 use settings::WorktreeId;
+use task::ShellKind;
 
 use crate::{LanguageName, ManifestName};
 
@@ -74,7 +75,12 @@ pub trait ToolchainLister: Send + Sync + 'static {
         project_env: Option<HashMap<String, String>>,
     ) -> anyhow::Result<Toolchain>;
 
-    async fn activation_script(&self, toolchain: &Toolchain, fs: &dyn Fs) -> Option<String>;
+    async fn activation_script(
+        &self,
+        toolchain: &Toolchain,
+        shell: ShellKind,
+        fs: &dyn Fs,
+    ) -> Vec<String>;
     /// Returns various "static" bits of information about this toolchain lister. This function should be pure.
     fn meta(&self) -> ToolchainMetadata;
 }

@@ -40,7 +40,7 @@ use serde_json::json;
 #[cfg(not(windows))]
 use std::os;
 use std::{env, mem, num::NonZeroU32, ops::Range, str::FromStr, sync::OnceLock, task::Poll};
-use task::{ResolvedTask, TaskContext};
+use task::{ResolvedTask, ShellKind, TaskContext};
 use unindent::Unindent as _;
 use util::{
     TryFutureExt as _, assert_set_eq, maybe, path,
@@ -9232,8 +9232,8 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
                 manifest_name: ManifestName::from(SharedString::new_static("pyproject.toml")),
             }
         }
-        async fn activation_script(&self, _: &Toolchain, _: &dyn Fs) -> Option<String> {
-            None
+        async fn activation_script(&self, _: &Toolchain, _: ShellKind, _: &dyn Fs) -> Vec<String> {
+            vec![]
         }
     }
     Arc::new(

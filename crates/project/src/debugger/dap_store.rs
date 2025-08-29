@@ -276,7 +276,6 @@ impl DapStore {
                             &binary.arguments,
                             &binary.envs,
                             binary.cwd.map(|path| path.display().to_string()),
-                            None,
                             port_forwarding,
                         )
                     })??;

@@ -33,7 +33,7 @@ mod yarn;
 
 use dap::inline_value::{InlineValueLocation, VariableLookupKind, VariableScope};
 
-use crate::git_store::GitStore;
+use crate::{git_store::GitStore, lsp_store::log_store::LogKind};
 pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
@@ -286,6 +286,7 @@ pub enum Event {
     ToggleLspLogs {
         server_id: LanguageServerId,
         enabled: bool,
+        toggled_log_kind: LogKind,
     },
     Toast {
         notification_id: SharedString,
@@ -4739,10 +4740,19 @@ impl Project {
         envelope: TypedEnvelope<proto::ToggleLspLogs>,
         mut cx: AsyncApp,
     ) -> Result<()> {
+        let toggled_log_kind =
+            match proto::toggle_lsp_logs::LogType::from_i32(envelope.payload.log_type)
+                .context("invalid log type")?
+            {
+                proto::toggle_lsp_logs::LogType::Log => LogKind::Logs,
+                proto::toggle_lsp_logs::LogType::Trace => LogKind::Trace,
+                proto::toggle_lsp_logs::LogType::Rpc => LogKind::Rpc,
+            };
         project.update(&mut cx, |_, cx| {
             cx.emit(Event::ToggleLspLogs {
                 server_id: LanguageServerId::from_proto(envelope.payload.server_id),
                 enabled: envelope.payload.enabled,
+                toggled_log_kind,
             })
         })?;
         Ok(())
