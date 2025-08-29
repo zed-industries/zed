@@ -104,6 +104,70 @@ Non-negative `float` values
 }
 ```
 
+## Agent Font Size
+
+- Description: The font size for text in the agent panel. Inherits the UI font size if unset.
+- Setting: `agent_font_size`
+- Default: `null`
+
+**Options**
+
+`integer` values from `6` to `100` pixels (inclusive)
+
+## Allow Rewrap
+
+- Description: Controls where the `editor::Rewrap` action is allowed in the current language scope
+- Setting: `allow_rewrap`
+- Default: `"in_comments"`
+
+**Options**
+
+1. Allow rewrap in comments only:
+
+```json
+{
+  "allow_rewrap": "in_comments"
+}
+```
+
+2. Allow rewrap everywhere:
+
+```json
+{
+  "allow_rewrap": "everywhere"
+}
+```
+
+3. Never allow rewrap:
+
+```json
+{
+  "allow_rewrap": "never"
+}
+```
+
+Note: This setting has no effect in Vim mode, as rewrap is already allowed everywhere.
+
+## Auto Indent
+
+- Description: Whether indentation should be adjusted based on the context whilst typing. This can be specified on a per-language basis.
+- Setting: `auto_indent`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+## Auto Indent On Paste
+
+- Description: Whether indentation of pasted content should be adjusted based on the context
+- Setting: `auto_indent_on_paste`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
 ## Auto Install extensions
 
 - Description: Define extensions to be autoinstalled or never be installed.
@@ -182,42 +246,30 @@ Define extensions which should be installed (`true`) or never installed (`false`
 }
 ```
 
-## Restore on Startup
-
-- Description: Controls session restoration on startup.
-- Setting: `restore_on_startup`
-- Default: `last_session`
-
-**Options**
-
-1. Restore all workspaces that were open when quitting Zed:
-
-```json
-{
-  "restore_on_startup": "last_session"
-}
-```
-
-2. Restore the workspace that was closed last:
-
-```json
-{
-  "restore_on_startup": "last_workspace"
-}
-```
-
-3. Always start with an empty editor:
-
-```json
-{
-  "restore_on_startup": "none"
-}
-```
-
 ## Autoscroll on Clicks
 
 - Description: Whether to scroll when clicking near the edge of the visible text area.
 - Setting: `autoscroll_on_clicks`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+## Auto Signature Help
+
+- Description: Show method signatures in the editor, when inside parentheses
+- Setting: `auto_signature_help`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+### Show Signature Help After Edits
+
+- Description: Whether to show the signature help after completion or a bracket pair inserted. If `auto_signature_help` is enabled, this setting will be treated as enabled also.
+- Setting: `show_signature_help_after_edits`
 - Default: `false`
 
 **Options**
@@ -378,6 +430,24 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 
 `"standard"`, `"comfortable"` or `{ "custom": float }` (`1` is compact, `2` is loose)
 
+## Centered Layout
+
+- Description: Configuration for the centered layout mode.
+- Setting: `centered_layout`
+- Default:
+
+```json
+"centered_layout": {
+  "left_padding": 0.2,
+  "right_padding": 0.2,
+}
+```
+
+**Options**
+
+The `left_padding` and `right_padding` options define the relative width of the
+left and right padding of the central pane from the workspace when the centered layout mode is activated. Valid values range is from `0` to `0.4`.
+
 ## Close on File Delete
 
 - Description: Whether to automatically close editor tabs when their corresponding files are deleted from disk.
@@ -402,23 +472,63 @@ Note: Dirty files (files with unsaved changes) will not be automatically closed 
 
 `boolean` values
 
-## Centered Layout
+## Diagnostics Max Severity
 
-- Description: Configuration for the centered layout mode.
-- Setting: `centered_layout`
-- Default:
-
-```json
-"centered_layout": {
-  "left_padding": 0.2,
-  "right_padding": 0.2,
-}
-```
+- Description: Which level to use to filter out diagnostics displayed in the editor
+- Setting: `diagnostics_max_severity`
+- Default: `null`
 
 **Options**
 
-The `left_padding` and `right_padding` options define the relative width of the
-left and right padding of the central pane from the workspace when the centered layout mode is activated. Valid values range is from `0` to `0.4`.
+1. Allow all diagnostics (default):
+
+```json
+{
+  "diagnostics_max_severity": null
+}
+```
+
+2. Show only errors:
+
+```json
+{
+  "diagnostics_max_severity": "error"
+}
+```
+
+3. Show errors and warnings:
+
+```json
+{
+  "diagnostics_max_severity": "warning"
+}
+```
+
+4. Show errors, warnings, and information:
+
+```json
+{
+  "diagnostics_max_severity": "information"
+}
+```
+
+5. Show all including hints:
+
+```json
+{
+  "diagnostics_max_severity": "hint"
+}
+```
+
+## Disable AI
+
+- Description: Whether to disable all AI features in Zed
+- Setting: `disable_ai`
+- Default: `false`
+
+**Options**
+
+`boolean` values
 
 ## Direnv Integration
 
@@ -434,6 +544,42 @@ There are two options to choose from:
 
 1. `shell_hook`: Use the shell hook to load direnv. This relies on direnv to activate upon entering the directory. Supports POSIX shells and fish.
 2. `direct`: Use `direnv export json` to load direnv. This will load direnv directly without relying on the shell hook and might cause some inconsistencies. This allows direnv to work with any shell.
+
+## Double Click In Multibuffer
+
+- Description: What to do when multibuffer is double clicked in some of its excerpts (parts of singleton buffers)
+- Setting: `double_click_in_multibuffer`
+- Default: `"select"`
+
+**Options**
+
+1. Behave as a regular buffer and select the whole word (default):
+
+```json
+{
+  "double_click_in_multibuffer": "select"
+}
+```
+
+2. Open the excerpt clicked as a new buffer in the new tab:
+
+```json
+{
+  "double_click_in_multibuffer": "open"
+}
+```
+
+For the case of "open", regular selection behavior can be achieved by holding `alt` when double clicking.
+
+## Drop Target Size
+
+- Description: Relative size of the drop target in the editor that will open dropped file as a split pane (0-0.5). For example, 0.25 means if you drop onto the top/bottom quarter of the pane a new vertical split will be used, if you drop onto the left/right quarter of the pane a new horizontal split will be used.
+- Setting: `drop_target_size`
+- Default: `0.2`
+
+**Options**
+
+`float` values between `0` and `0.5`
 
 ## Edit Predictions
 
@@ -580,6 +726,32 @@ List of `string` values
 ```json
 "cursor_shape": "hollow"
 ```
+
+## Gutter
+
+- Description: Settings for the editor gutter
+- Setting: `gutter`
+- Default:
+
+```json
+{
+  "gutter": {
+    "line_numbers": true,
+    "runnables": true,
+    "breakpoints": true,
+    "folds": true,
+    "min_line_number_digits": 4
+  }
+}
+```
+
+**Options**
+
+- `line_numbers`: Whether to show line numbers in the gutter
+- `runnables`: Whether to show runnable buttons in the gutter
+- `breakpoints`: Whether to show breakpoints in the gutter
+- `folds`: Whether to show fold buttons in the gutter
+- `min_line_number_digits`: Minimum number of characters to reserve space for in the gutter
 
 ## Hide Mouse
 
@@ -1249,6 +1421,16 @@ or
 
 Each option controls displaying of a particular toolbar element. If all elements are hidden, the editor toolbar is not displayed.
 
+## Use System Tabs
+
+- Description: Whether to allow windows to tab together based on the user’s tabbing preference (macOS only).
+- Setting: `use_system_window_tabs`
+- Default: `false`
+
+**Options**
+
+This setting enables integration with macOS’s native window tabbing feature. When set to `true`, Zed windows can be grouped together as tabs in a single macOS window, following the system-wide tabbing preferences set by the user (such as "Always", "In Full Screen", or "Never"). This setting is only available on macOS.
+
 ## Enable Language Server
 
 - Description: Whether or not to use language servers to provide code intelligence.
@@ -1263,6 +1445,26 @@ Each option controls displaying of a particular toolbar element. If all elements
 
 - Description: Removes any lines containing only whitespace at the end of the file and ensures just one newline at the end.
 - Setting: `ensure_final_newline_on_save`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+## Expand Excerpt Lines
+
+- Description: The default number of lines to expand excerpts in the multibuffer by
+- Setting: `expand_excerpt_lines`
+- Default: `5`
+
+**Options**
+
+Positive `integer` values
+
+## Extend Comment On Newline
+
+- Description: Whether to start a new line with a comment when a previous line is a comment as well.
+- Setting: `extend_comment_on_newline`
 - Default: `true`
 
 **Options**
@@ -1327,6 +1529,24 @@ While other options may be changed at a runtime and should be placed under `sett
 }
 ```
 
+## Global LSP Settings
+
+- Description: Configuration for global LSP settings that apply to all language servers
+- Setting: `global_lsp_settings`
+- Default:
+
+```json
+{
+  "global_lsp_settings": {
+    "button": true
+  }
+}
+```
+
+**Options**
+
+- `button`: Whether to show the LSP status button in the status bar
+
 ## LSP Highlight Debounce
 
 - Description: The debounce delay in milliseconds before querying highlights from the language server based on the current cursor location.
@@ -1348,6 +1568,68 @@ While other options may be changed at a runtime and should be placed under `sett
 **Options**
 
 `integer` values representing milliseconds
+
+## Features
+
+- Description: Features that can be globally enabled or disabled
+- Setting: `features`
+- Default:
+
+```json
+{
+  "features": {
+    "edit_prediction_provider": "zed"
+  }
+}
+```
+
+### Edit Prediction Provider
+
+- Description: Which edit prediction provider to use
+- Setting: `edit_prediction_provider`
+- Default: `"zed"`
+
+**Options**
+
+1. Use Zeta as the edit prediction provider:
+
+```json
+{
+  "features": {
+    "edit_prediction_provider": "zed"
+  }
+}
+```
+
+2. Use Copilot as the edit prediction provider:
+
+```json
+{
+  "features": {
+    "edit_prediction_provider": "copilot"
+  }
+}
+```
+
+3. Use Supermaven as the edit prediction provider:
+
+```json
+{
+  "features": {
+    "edit_prediction_provider": "supermaven"
+  }
+}
+```
+
+4. Turn off edit predictions across all providers
+
+```json
+{
+  "features": {
+    "edit_prediction_provider": "none"
+  }
+}
+```
 
 ## Format On Save
 
@@ -1892,6 +2174,50 @@ Example:
 }
 ```
 
+## Go to Definition Fallback
+
+- Description: What to do when the "go to definition" action fails to find a definition
+- Setting: `go_to_definition_fallback`
+- Default: `"find_all_references"`
+
+**Options**
+
+1. Do nothing:
+
+```json
+{
+  "go_to_definition_fallback": "none"
+}
+```
+
+2. Find references for the same symbol (default):
+
+```json
+{
+  "go_to_definition_fallback": "find_all_references"
+}
+```
+
+## Hard Tabs
+
+- Description: Whether to indent lines using tab characters or multiple spaces.
+- Setting: `hard_tabs`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+## Helix Mode
+
+- Description: Whether or not to enable Helix mode. Enabling `helix_mode` also enables `vim_mode`. See the [Helix documentation](./helix.md) for more details.
+- Setting: `helix_mode`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
 ## Indent Guides
 
 - Description: Configuration related to indent guides. Indent guides can be configured separately for each language.
@@ -1958,40 +2284,6 @@ Example:
     "coloring": "indent_aware",
     "background_coloring": "indent_aware"
   }
-}
-```
-
-## Hard Tabs
-
-- Description: Whether to indent lines using tab characters or multiple spaces.
-- Setting: `hard_tabs`
-- Default: `false`
-
-**Options**
-
-`boolean` values
-
-## Multi Cursor Modifier
-
-- Description: Determines the modifier to be used to add multiple cursors with the mouse. The open hover link mouse gestures will adapt such that it do not conflict with the multicursor modifier.
-- Setting: `multi_cursor_modifier`
-- Default: `alt`
-
-**Options**
-
-1. Maps to `Alt` on Linux and Windows and to `Option` on MacOS:
-
-```json
-{
-  "multi_cursor_modifier": "alt"
-}
-```
-
-2. Maps `Control` on Linux and Windows and to `Command` on MacOS:
-
-```json
-{
-  "multi_cursor_modifier": "cmd_or_ctrl" // alias: "cmd", "ctrl"
 }
 ```
 
@@ -2086,6 +2378,50 @@ Run the `icon theme selector: toggle` action in the command palette to see a cur
 **Options**
 
 Run the `icon theme selector: toggle` action in the command palette to see a current list of valid icon themes names.
+
+## Image Viewer
+
+- Description: Settings for image viewer functionality
+- Setting: `image_viewer`
+- Default:
+
+```json
+{
+  "image_viewer": {
+    "unit": "binary"
+  }
+}
+```
+
+**Options**
+
+### Unit
+
+- Description: The unit for image file sizes
+- Setting: `unit`
+- Default: `"binary"`
+
+**Options**
+
+1. Use binary units (KiB, MiB):
+
+```json
+{
+  "image_viewer": {
+    "unit": "binary"
+  }
+}
+```
+
+2. Use decimal units (KB, MB):
+
+```json
+{
+  "image_viewer": {
+    "unit": "decimal"
+  }
+}
+```
 
 ## Inlay hints
 
@@ -2187,6 +2523,24 @@ Unspecified values have a `false` value, hints won't be toggled if all the modif
 }
 ```
 
+## JSX Tag Auto Close
+
+- Description: Whether to automatically close JSX tags
+- Setting: `jsx_tag_auto_close`
+- Default:
+
+```json
+{
+  "jsx_tag_auto_close": {
+    "enabled": true
+  }
+}
+```
+
+**Options**
+
+- `enabled`: Whether to enable automatic JSX tag closing
+
 ## Languages
 
 - Description: Configuration for specific languages.
@@ -2228,6 +2582,145 @@ The following settings can be overridden for each specific language:
 
 These values take in the same options as the root-level settings with the same name.
 
+## Language Models
+
+- Description: Configuration for language model providers
+- Setting: `language_models`
+- Default:
+
+```json
+{
+  "language_models": {
+    "anthropic": {
+      "api_url": "https://api.anthropic.com"
+    },
+    "google": {
+      "api_url": "https://generativelanguage.googleapis.com"
+    },
+    "ollama": {
+      "api_url": "http://localhost:11434"
+    },
+    "openai": {
+      "api_url": "https://api.openai.com/v1"
+    }
+  }
+}
+```
+
+**Options**
+
+Configuration for various AI model providers including API URLs and authentication settings.
+
+## Line Indicator Format
+
+- Description: Format for line indicator in the status bar
+- Setting: `line_indicator_format`
+- Default: `"short"`
+
+**Options**
+
+1. Short format:
+
+```json
+{
+  "line_indicator_format": "short"
+}
+```
+
+2. Long format:
+
+```json
+{
+  "line_indicator_format": "long"
+}
+```
+
+## Linked Edits
+
+- Description: Whether to perform linked edits of associated ranges, if the language server supports it. For example, when editing opening `<html>` tag, the contents of the closing `</html>` tag will be edited as well.
+- Setting: `linked_edits`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+## LSP Document Colors
+
+- Description: Whether to show document color information from the language server
+- Setting: `lsp_document_colors`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+## Max Tabs
+
+- Description: Maximum number of tabs to show in the tab bar
+- Setting: `max_tabs`
+- Default: `null`
+
+**Options**
+
+Positive `integer` values or `null` for unlimited tabs
+
+## Middle Click Paste (Linux only)
+
+- Description: Enable middle-click paste on Linux
+- Setting: `middle_click_paste`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+## Multi Cursor Modifier
+
+- Description: Determines the modifier to be used to add multiple cursors with the mouse. The open hover link mouse gestures will adapt such that it do not conflict with the multicursor modifier.
+- Setting: `multi_cursor_modifier`
+- Default: `alt`
+
+**Options**
+
+1. Maps to `Alt` on Linux and Windows and to `Option` on MacOS:
+
+```json
+{
+  "multi_cursor_modifier": "alt"
+}
+```
+
+2. Maps `Control` on Linux and Windows and to `Command` on MacOS:
+
+```json
+{
+  "multi_cursor_modifier": "cmd_or_ctrl" // alias: "cmd", "ctrl"
+}
+```
+
+## Node
+
+- Description: Configuration for Node.js integration
+- Setting: `node`
+- Default:
+
+```json
+{
+  "node": {
+    "ignore_system_version": false,
+    "path": null,
+    "npm_path": null
+  }
+}
+```
+
+**Options**
+
+- `ignore_system_version`: Whether to ignore the system Node.js version
+- `path`: Custom path to Node.js binary
+- `npm_path`: Custom path to npm binary
+
 ## Network Proxy
 
 - Description: Configure a network proxy for Zed.
@@ -2268,6 +2761,52 @@ Or to set a `socks5` proxy:
 ```
 
 If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` environment variable. This accepts a comma-separated list of hostnames, host suffixes, IPv4/IPv6 addresses or blocks that should not use the proxy. For example if your environment included `NO_PROXY="google.com, 192.168.1.0/24"` all hosts in `192.168.1.*`, `google.com` and `*.google.com` would bypass the proxy. See [reqwest NoProxy docs](https://docs.rs/reqwest/latest/reqwest/struct.NoProxy.html#method.from_string) for more.
+
+## On Last Window Closed
+
+- Description: What to do when the last window is closed
+- Setting: `on_last_window_closed`
+- Default: `"platform_default"`
+
+**Options**
+
+1. Use platform default behavior:
+
+```json
+{
+  "on_last_window_closed": "platform_default"
+}
+```
+
+2. Always quit the application:
+
+```json
+{
+  "on_last_window_closed": "quit_app"
+}
+```
+
+## Profiles
+
+- Description: Configuration profiles that can be applied on top of existing settings
+- Setting: `profiles`
+- Default: `{}`
+
+**Options**
+
+Configuration object for defining settings profiles. Example:
+
+```json
+{
+  "profiles": {
+    "presentation": {
+      "buffer_font_size": 20,
+      "ui_font_size": 18,
+      "theme": "One Light"
+    }
+  }
+}
+```
 
 ## Preview tabs
 
@@ -2332,6 +2871,54 @@ If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` en
 - Setting: `skip_focus_for_active_in_search`
 - Default: `true`
 
+## Pane Split Direction Horizontal
+
+- Description: The direction that you want to split panes horizontally
+- Setting: `pane_split_direction_horizontal`
+- Default: `"up"`
+
+**Options**
+
+1. Split upward:
+
+```json
+{
+  "pane_split_direction_horizontal": "up"
+}
+```
+
+2. Split downward:
+
+```json
+{
+  "pane_split_direction_horizontal": "down"
+}
+```
+
+## Pane Split Direction Vertical
+
+- Description: The direction that you want to split panes vertically
+- Setting: `pane_split_direction_vertical`
+- Default: `"left"`
+
+**Options**
+
+1. Split to the left:
+
+```json
+{
+  "pane_split_direction_vertical": "left"
+}
+```
+
+2. Split to the right:
+
+```json
+{
+  "pane_split_direction_vertical": "right"
+}
+```
+
 ## Preferred Line Length
 
 - Description: The column at which to soft-wrap lines, for buffers where soft-wrap is enabled.
@@ -2342,11 +2929,51 @@ If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` en
 
 `integer` values
 
+## Private Files
+
+- Description: Globs to match against file paths to determine if a file is private
+- Setting: `private_files`
+- Default: `["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"]`
+
+**Options**
+
+List of `string` glob patterns
+
 ## Projects Online By Default
 
 - Description: Whether or not to show the online projects view by default.
 - Setting: `projects_online_by_default`
 - Default: `true`
+
+**Options**
+
+`boolean` values
+
+## Read SSH Config
+
+- Description: Whether to read SSH configuration files
+- Setting: `read_ssh_config`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+## Redact Private Values
+
+- Description: Hide the values of variables from visual display in private files
+- Setting: `redact_private_values`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+## Relative Line Numbers
+
+- Description: Whether to show relative line numbers in the gutter
+- Setting: `relative_line_numbers`
+- Default: `false`
 
 **Options**
 
@@ -2362,6 +2989,138 @@ If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` en
 
 `boolean` values
 
+## Resize All Panels In Dock
+
+- Description: Whether to resize all the panels in a dock when resizing the dock. Can be a combination of "left", "right" and "bottom".
+- Setting: `resize_all_panels_in_dock`
+- Default: `["left"]`
+
+**Options**
+
+List of strings containing any combination of:
+
+- `"left"`: Resize left dock panels together
+- `"right"`: Resize right dock panels together
+- `"bottom"`: Resize bottom dock panels together
+
+## Restore on File Reopen
+
+- Description: Whether to attempt to restore previous file's state when opening it again. The state is stored per pane.
+- Setting: `restore_on_file_reopen`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+## Restore on Startup
+
+- Description: Controls session restoration on startup.
+- Setting: `restore_on_startup`
+- Default: `last_session`
+
+**Options**
+
+1. Restore all workspaces that were open when quitting Zed:
+
+```json
+{
+  "restore_on_startup": "last_session"
+}
+```
+
+2. Restore the workspace that was closed last:
+
+```json
+{
+  "restore_on_startup": "last_workspace"
+}
+```
+
+3. Always start with an empty editor:
+
+```json
+{
+  "restore_on_startup": "none"
+}
+```
+
+## Scroll Beyond Last Line
+
+- Description: Whether the editor will scroll beyond the last line
+- Setting: `scroll_beyond_last_line`
+- Default: `"one_page"`
+
+**Options**
+
+1. Scroll one page beyond the last line by one page:
+
+```json
+{
+  "scroll_beyond_last_line": "one_page"
+}
+```
+
+2. The editor will scroll beyond the last line by the same amount of lines as `vertical_scroll_margin`:
+
+```json
+{
+  "scroll_beyond_last_line": "vertical_scroll_margin"
+}
+```
+
+3. The editor will not scroll beyond the last line:
+
+```json
+{
+  "scroll_beyond_last_line": "off"
+}
+```
+
+**Options**
+
+`boolean` values
+
+## Scroll Sensitivity
+
+- Description: Scroll sensitivity multiplier. This multiplier is applied to both the horizontal and vertical delta values while scrolling.
+- Setting: `scroll_sensitivity`
+- Default: `1.0`
+
+**Options**
+
+Positive `float` values
+
+### Fast Scroll Sensitivity
+
+- Description: Scroll sensitivity multiplier for fast scrolling. This multiplier is applied to both the horizontal and vertical delta values while scrolling. Fast scrolling happens when a user holds the alt or option key while scrolling.
+- Setting: `fast_scroll_sensitivity`
+- Default: `4.0`
+
+**Options**
+
+Positive `float` values
+
+### Horizontal Scroll Margin
+
+- Description: The number of characters to keep on either side when scrolling with the mouse
+- Setting: `horizontal_scroll_margin`
+- Default: `5`
+
+**Options**
+
+Non-negative `integer` values
+
+### Vertical Scroll Margin
+
+- Description: The number of lines to keep above/below the cursor when scrolling with the keyboard
+- Setting: `vertical_scroll_margin`
+- Default: `3`
+
+**Options**
+
+Non-negative `integer` values
+
 ## Search
 
 - Description: Search options to enable by default when opening new project and buffer searches.
@@ -2376,6 +3135,12 @@ If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` en
   "regex": false
 },
 ```
+
+## Search Wrap
+
+- Description: If `search_wrap` is disabled, search result do not wrap around the end of the file
+- Setting: `search_wrap`
+- Default: `true`
 
 ## Seed Search Query From Cursor
 
@@ -2546,6 +3311,56 @@ Positive integer values
 4. `preferred_line_length` to wrap lines that overflow `preferred_line_length` config value
 5. `bounded` to wrap lines at the minimum of `editor_width` and `preferred_line_length`
 
+## Show Wrap Guides
+
+- Description: Whether to show wrap guides (vertical rulers) in the editor. Setting this to true will show a guide at the 'preferred_line_length' value if 'soft_wrap' is set to 'preferred_line_length', and will show any additional guides as specified by the 'wrap_guides' setting.
+- Setting: `show_wrap_guides`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+## Use On Type Format
+
+- Description: Whether to use additional LSP queries to format (and amend) the code after every "trigger" symbol input, defined by LSP server capabilities
+- Setting: `use_on_type_format`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+## Use Auto Surround
+
+- Description: Whether to automatically surround selected text when typing opening parenthesis, bracket, brace, single or double quote characters. For example, when you select text and type (, Zed will surround the text with ().
+- Setting: `use_auto_surround`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+## Use System Path Prompts
+
+- Description: Whether to use the system provided dialogs for Open and Save As. When set to false, Zed will use the built-in keyboard-first pickers.
+- Setting: `use_system_path_prompts`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+## Use System Prompts
+
+- Description: Whether to use the system provided dialogs for prompts, such as confirmation prompts. When set to false, Zed will use its built-in prompts. Note that on Linux, this option is ignored and Zed will always use the built-in prompts.
+- Setting: `use_system_prompts`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
 ## Wrap Guides (Vertical Rulers)
 
 - Description: Where to display vertical rulers as wrap-guides. Disable by setting `show_wrap_guides` to `false`.
@@ -2565,6 +3380,28 @@ List of `integer` column numbers
 **Options**
 
 `integer` values
+
+## Tasks
+
+- Description: Configuration for tasks that can be run within Zed
+- Setting: `tasks`
+- Default:
+
+```json
+{
+  "tasks": {
+    "variables": {},
+    "enabled": true,
+    "prefer_lsp": false
+  }
+}
+```
+
+**Options**
+
+- `variables`: Custom variables for task configuration
+- `enabled`: Whether tasks are enabled
+- `prefer_lsp`: Whether to prefer LSP-provided tasks over Zed language extension ones
 
 ## Telemetry
 
@@ -3212,17 +4049,71 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 Run the `theme selector: toggle` action in the command palette to see a current list of valid themes names.
 
+## Title Bar
+
+- Description: Whether or not to show various elements in the title bar
+- Setting: `title_bar`
+- Default:
+
+```json
+"title_bar": {
+  "show_branch_icon": false,
+  "show_branch_name": true,
+  "show_project_items": true,
+  "show_onboarding_banner": true,
+  "show_user_picture": true,
+  "show_sign_in": true,
+  "show_menus": false
+}
+```
+
+**Options**
+
+- `show_branch_icon`: Whether to show the branch icon beside branch switcher in the titlebar
+- `show_branch_name`: Whether to show the branch name button in the titlebar
+- `show_project_items`: Whether to show the project host and name in the titlebar
+- `show_onboarding_banner`: Whether to show onboarding banners in the titlebar
+- `show_user_picture`: Whether to show user picture in the titlebar
+- `show_sign_in`: Whether to show the sign in button in the titlebar
+- `show_menus`: Whether to show the menus in the titlebar
+
 ## Vim
 
-- Description: Whether or not to enable vim mode. See the [Vim documentation](./vim.md) for more details on configuration.
+- Description: Whether or not to enable vim mode.
 - Setting: `vim_mode`
 - Default: `false`
 
-## Helix Mode
+## When Closing With No Tabs
 
-- Description: Whether or not to enable Helix mode. Enabling `helix_mode` also enables `vim_mode`. See the [Helix documentation](./helix.md) for more details.
-- Setting: `helix_mode`
-- Default: `false`
+- Description: Whether the window should be closed when using 'close active item' on a window with no tabs
+- Setting: `when_closing_with_no_tabs`
+- Default: `"platform_default"`
+
+**Options**
+
+1. Use platform default behavior:
+
+```json
+{
+  "when_closing_with_no_tabs": "platform_default"
+}
+```
+
+2. Always close the window:
+
+```json
+{
+  "when_closing_with_no_tabs": "close_window"
+}
+```
+
+3. Never close the window:
+
+```json
+{
+  "when_closing_with_no_tabs": "keep_window_open"
+}
+```
 
 ## Project Panel
 
@@ -3243,6 +4134,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
     "indent_size": 20,
     "auto_reveal_entries": true,
     "auto_fold_dirs": true,
+    "drag_and_drop": true,
     "scrollbar": {
       "show": null
     },
@@ -3464,6 +4356,103 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 ## Agent
 
 Visit [the Configuration page](./ai/configuration.md) under the AI section to learn more about all the agent-related settings.
+
+## Collaboration Panel
+
+- Description: Customizations for the collaboration panel.
+- Setting: `collaboration_panel`
+- Default:
+
+```json
+{
+  "collaboration_panel": {
+    "button": true,
+    "dock": "left",
+    "default_width": 240
+  }
+}
+```
+
+**Options**
+
+- `button`: Whether to show the collaboration panel button in the status bar
+- `dock`: Where to dock the collaboration panel. Can be `left` or `right`
+- `default_width`: Default width of the collaboration panel
+
+## Chat Panel
+
+- Description: Customizations for the chat panel.
+- Setting: `chat_panel`
+- Default:
+
+```json
+{
+  "chat_panel": {
+    "button": "when_in_call",
+    "dock": "right",
+    "default_width": 240
+  }
+}
+```
+
+**Options**
+
+- `button`: When to show the chat panel button in the status bar. Can be `never`, `always`, or `when_in_call`.
+- `dock`: Where to dock the chat panel. Can be 'left' or 'right'
+- `default_width`: Default width of the chat panel
+
+## Debugger
+
+- Description: Configuration for debugger panel and settings
+- Setting: `debugger`
+- Default:
+
+```json
+{
+  "debugger": {
+    "stepping_granularity": "line",
+    "save_breakpoints": true,
+    "dock": "bottom",
+    "button": true
+  }
+}
+```
+
+See the [debugger page](./debugger.md) for more information about debugging support within Zed.
+
+## Git Panel
+
+- Description: Setting to customize the behavior of the git panel.
+- Setting: `git_panel`
+- Default:
+
+```json
+{
+  "git_panel": {
+    "button": true,
+    "dock": "left",
+    "default_width": 360,
+    "status_style": "icon",
+    "fallback_branch_name": "main",
+    "sort_by_path": false,
+    "collapse_untracked_diff": false,
+    "scrollbar": {
+      "show": null
+    }
+  }
+}
+```
+
+**Options**
+
+- `button`: Whether to show the git panel button in the status bar
+- `dock`: Where to dock the git panel. Can be `left` or `right`
+- `default_width`: Default width of the git panel
+- `status_style`: How to display git status. Can be `label_color` or `icon`
+- `fallback_branch_name`: What branch name to use if `init.defaultBranch` is not set
+- `sort_by_path`: Whether to sort entries in the panel by path or by status (the default)
+- `collapse_untracked_diff`: Whether to collapse untracked files in the diff panel
+- `scrollbar`: When to show the scrollbar in the git panel
 
 ## Outline Panel
 

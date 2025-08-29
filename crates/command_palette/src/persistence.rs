@@ -1,7 +1,10 @@
 use anyhow::Result;
 use db::{
-    define_connection, query,
-    sqlez::{bindable::Column, statement::Statement},
+    query,
+    sqlez::{
+        bindable::Column, domain::Domain, statement::Statement,
+        thread_safe_connection::ThreadSafeConnection,
+    },
     sqlez_macros::sql,
 };
 use serde::{Deserialize, Serialize};
@@ -50,8 +53,11 @@ impl Column for SerializedCommandInvocation {
     }
 }
 
-define_connection!(pub static ref COMMAND_PALETTE_HISTORY: CommandPaletteDB<()> =
-    &[sql!(
+pub struct CommandPaletteDB(ThreadSafeConnection);
+
+impl Domain for CommandPaletteDB {
+    const NAME: &str = stringify!(CommandPaletteDB);
+    const MIGRATIONS: &[&str] = &[sql!(
         CREATE TABLE IF NOT EXISTS command_invocations(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             command_name TEXT NOT NULL,
@@ -59,7 +65,9 @@ define_connection!(pub static ref COMMAND_PALETTE_HISTORY: CommandPaletteDB<()> 
             last_invoked INTEGER DEFAULT (unixepoch())  NOT NULL
         ) STRICT;
     )];
-);
+}
+
+db::static_connection!(COMMAND_PALETTE_HISTORY, CommandPaletteDB, []);
 
 impl CommandPaletteDB {
     pub async fn write_command_invocation(

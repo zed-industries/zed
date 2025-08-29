@@ -8,7 +8,6 @@ use settings::SettingsStore;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use supermaven::{Supermaven, SupermavenCompletionProvider};
 use ui::Window;
-use workspace::Workspace;
 use zeta::{ProviderDataCollection, ZetaEditPredictionProvider};
 
 pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
@@ -204,10 +203,14 @@ fn assign_edit_prediction_provider(
                     }
                 }
 
+<<<<<<< HEAD
                 let workspace = window.root::<Workspace>().flatten();
 
                 let zeta =
                     zeta::Zeta::register(workspace, worktree, client.clone(), user_store, cx);
+=======
+                let zeta = zeta::Zeta::register(worktree, client.clone(), user_store, cx);
+>>>>>>> main
 
                 if let Some(buffer) = &singleton_buffer
                     && buffer.read(cx).file().is_some()

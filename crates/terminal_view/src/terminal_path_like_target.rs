@@ -364,7 +364,7 @@ fn possibly_open_target(
 mod tests {
     use super::*;
     use gpui::TestAppContext;
-    use project::{Project, terminals::TerminalKind};
+    use project::Project;
     use serde_json::json;
     use std::path::{Path, PathBuf};
     use terminal::{HoveredWord, alacritty_terminal::index::Point as AlacPoint};
@@ -405,8 +405,8 @@ mod tests {
             app_cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let terminal = project
-            .update(cx, |project, cx| {
-                project.create_terminal(TerminalKind::Shell(None), cx)
+            .update(cx, |project: &mut Project, cx| {
+                project.create_terminal_shell(None, cx)
             })
             .await
             .expect("Failed to create a terminal");

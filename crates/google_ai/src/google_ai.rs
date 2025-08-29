@@ -13,6 +13,7 @@ pub async fn stream_generate_content(
     api_key: &str,
     mut request: GenerateContentRequest,
 ) -> Result<BoxStream<'static, Result<GenerateContentResponse>>> {
+    let api_key = api_key.trim();
     validate_generate_content_request(&request)?;
 
     // The `model` field is emptied as it is provided as a path parameter.

@@ -191,9 +191,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.0.31"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "289eb34ee17213dadcca47eedadd386a5e7678094095414e475965d1bcca2860"
+checksum = "6b91e5ec3ce05e8effb2a7a3b7b1a587daa6699b9f98bbde6a35e44b8c6c773a"
 dependencies = [
  "anyhow",
  "async-broadcast",
@@ -292,23 +292,21 @@ dependencies = [
  "anyhow",
  "client",
  "collections",
- "context_server",
  "env_logger 0.11.8",
  "fs",
  "futures 0.3.31",
  "gpui",
  "gpui_tokio",
  "indoc",
- "itertools 0.14.0",
  "language",
  "language_model",
  "language_models",
  "libc",
  "log",
  "nix 0.29.0",
+ "node_runtime",
  "paths",
  "project",
- "rand 0.8.5",
  "reqwest_client",
  "schemars",
  "semver",
@@ -316,12 +314,10 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
- "strum 0.27.1",
  "tempfile",
  "thiserror 2.0.12",
  "ui",
  "util",
- "uuid",
  "watch",
  "which 6.0.3",
  "workspace-hack",
@@ -9213,6 +9209,7 @@ dependencies = [
  "language",
  "lsp",
  "project",
+ "proto",
  "release_channel",
  "serde_json",
  "settings",
@@ -17185,8 +17182,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-cpp"
 version = "0.23.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df2196ea9d47b4ab4a31b9297eaa5a5d19a0b121dceb9f118f6790ad0ab94743"
+source = "git+https://github.com/tree-sitter/tree-sitter-cpp?rev=5cb9b693cfd7bfacab1d9ff4acac1a4150700609#5cb9b693cfd7bfacab1d9ff4acac1a4150700609"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -20396,7 +20392,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.202.0"
+version = "0.203.0"
 dependencies = [
  "acp_tools",
  "activity_indicator",
@@ -20590,7 +20586,7 @@ dependencies = [
 
 [[package]]
 name = "zed_html"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]

@@ -203,7 +203,10 @@ impl Vim {
 
     // hook into the existing to clear out any vim search state on cmd+f or edit -> find.
     fn search_deploy(&mut self, _: &buffer_search::Deploy, _: &mut Window, cx: &mut Context<Self>) {
+        // Preserve the current mode when resetting search state
+        let current_mode = self.mode;
         self.search = Default::default();
+        self.search.prior_mode = current_mode;
         cx.propagate();
     }
 

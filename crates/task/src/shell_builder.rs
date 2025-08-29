@@ -1,3 +1,7 @@
+use std::fmt;
+
+use util::get_system_shell;
+
 use crate::Shell;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
@@ -11,9 +15,22 @@ pub enum ShellKind {
     Cmd,
 }
 
+impl fmt::Display for ShellKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ShellKind::Posix => write!(f, "sh"),
+            ShellKind::Csh => write!(f, "csh"),
+            ShellKind::Fish => write!(f, "fish"),
+            ShellKind::Powershell => write!(f, "powershell"),
+            ShellKind::Nushell => write!(f, "nu"),
+            ShellKind::Cmd => write!(f, "cmd"),
+        }
+    }
+}
+
 impl ShellKind {
     pub fn system() -> Self {
-        Self::new(&system_shell())
+        Self::new(&get_system_shell())
     }
 
     pub fn new(program: &str) -> Self {
@@ -22,12 +39,12 @@ impl ShellKind {
         #[cfg(not(windows))]
         let (_, program) = program.rsplit_once('/').unwrap_or(("", program));
         if program == "powershell"
-            || program == "powershell.exe"
+            || program.ends_with("powershell.exe")
             || program == "pwsh"
-            || program == "pwsh.exe"
+            || program.ends_with("pwsh.exe")
         {
             ShellKind::Powershell
-        } else if program == "cmd" || program == "cmd.exe" {
+        } else if program == "cmd" || program.ends_with("cmd.exe") {
             ShellKind::Cmd
         } else if program == "nu" {
             ShellKind::Nushell
@@ -36,7 +53,7 @@ impl ShellKind {
         } else if program == "csh" {
             ShellKind::Csh
         } else {
-            // Someother shell detected, the user might install and use a
+            // Some other shell detected, the user might install and use a
             // unix-like shell.
             ShellKind::Posix
         }
@@ -178,18 +195,6 @@ impl ShellKind {
     }
 }
 
-fn system_shell() -> String {
-    if cfg!(target_os = "windows") {
-        // `alacritty_terminal` uses this as default on Windows. See:
-        // https://github.com/alacritty/alacritty/blob/0d4ab7bca43213d96ddfe40048fc0f922543c6f8/alacritty_terminal/src/tty/windows/mod.rs#L130
-        // We could use `util::get_windows_system_shell()` here, but we are running tasks here, so leave it to `powershell.exe`
-        // should be okay.
-        "powershell.exe".to_string()
-    } else {
-        std::env::var("SHELL").unwrap_or("/bin/sh".to_string())
-    }
-}
-
 /// ShellBuilder is used to turn a user-requested task into a
 /// program that can be executed by the shell.
 pub struct ShellBuilder {
@@ -203,14 +208,15 @@ pub struct ShellBuilder {
 impl ShellBuilder {
     /// Create a new ShellBuilder as configured.
     pub fn new(remote_system_shell: Option<&str>, shell: &Shell) -> Self {
-        let (program, args) = match shell {
-            Shell::System => match remote_system_shell {
-                Some(remote_shell) => (remote_shell.to_string(), Vec::new()),
-                None => (system_shell(), Vec::new()),
+        let (program, args) = match remote_system_shell {
+            Some(program) => (program.to_string(), Vec::new()),
+            None => match shell {
+                Shell::System => (get_system_shell(), Vec::new()),
+                Shell::Program(shell) => (shell.clone(), Vec::new()),
+                Shell::WithArguments { program, args, .. } => (program.clone(), args.clone()),
             },
-            Shell::Program(shell) => (shell.clone(), Vec::new()),
-            Shell::WithArguments { program, args, .. } => (program.clone(), args.clone()),
         };
+
         let kind = ShellKind::new(&program);
         Self {
             program,

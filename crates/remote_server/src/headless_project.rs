@@ -1,5 +1,6 @@
 use ::proto::{FromProto, ToProto};
 use anyhow::{Context as _, Result, anyhow};
+use lsp::LanguageServerId;
 
 use extension::ExtensionHostProxy;
 use extension_host::headless_host::HeadlessExtensionStore;
@@ -14,6 +15,7 @@ use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
     debugger::{breakpoint_store::BreakpointStore, dap_store::DapStore},
     git_store::GitStore,
+    lsp_store::log_store::{self, GlobalLogStore, LanguageServerKind},
     project_settings::SettingsObserver,
     search::SearchQuery,
     task_store::TaskStore,
@@ -21,7 +23,7 @@ use project::{
 };
 use rpc::{
     AnyProtoClient, TypedEnvelope,
-    proto::{self, SSH_PEER_ID, SSH_PROJECT_ID},
+    proto::{self, REMOTE_SERVER_PEER_ID, REMOTE_SERVER_PROJECT_ID},
 };
 
 use settings::initial_server_settings_content;
@@ -65,6 +67,7 @@ impl HeadlessProject {
         settings::init(cx);
         language::init(cx);
         project::Project::init_settings(cx);
+        log_store::init(false, cx);
     }
 
     pub fn new(
@@ -83,7 +86,7 @@ impl HeadlessProject {
 
         let worktree_store = cx.new(|cx| {
             let mut store = WorktreeStore::local(true, fs.clone());
-            store.shared(SSH_PROJECT_ID, session.clone(), cx);
+            store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
             store
         });
 
@@ -101,7 +104,7 @@ impl HeadlessProject {
 
         let buffer_store = cx.new(|cx| {
             let mut buffer_store = BufferStore::local(worktree_store.clone(), cx);
-            buffer_store.shared(SSH_PROJECT_ID, session.clone(), cx);
+            buffer_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
             buffer_store
         });
 
@@ -119,7 +122,7 @@ impl HeadlessProject {
                 breakpoint_store.clone(),
                 cx,
             );
-            dap_store.shared(SSH_PROJECT_ID, session.clone(), cx);
+            dap_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
             dap_store
         });
 
@@ -131,7 +134,7 @@ impl HeadlessProject {
                 fs.clone(),
                 cx,
             );
-            store.shared(SSH_PROJECT_ID, session.clone(), cx);
+            store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
             store
         });
 
@@ -154,7 +157,7 @@ impl HeadlessProject {
                 environment.clone(),
                 cx,
             );
-            task_store.shared(SSH_PROJECT_ID, session.clone(), cx);
+            task_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
             task_store
         });
         let settings_observer = cx.new(|cx| {
@@ -164,7 +167,7 @@ impl HeadlessProject {
                 task_store.clone(),
                 cx,
             );
-            observer.shared(SSH_PROJECT_ID, session.clone(), cx);
+            observer.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
             observer
         });
 
@@ -185,7 +188,7 @@ impl HeadlessProject {
                 fs.clone(),
                 cx,
             );
-            lsp_store.shared(SSH_PROJECT_ID, session.clone(), cx);
+            lsp_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
             lsp_store
         });
 
@@ -213,15 +216,15 @@ impl HeadlessProject {
         );
 
         // local_machine -> ssh handlers
-        session.subscribe_to_entity(SSH_PROJECT_ID, &worktree_store);
-        session.subscribe_to_entity(SSH_PROJECT_ID, &buffer_store);
-        session.subscribe_to_entity(SSH_PROJECT_ID, &cx.entity());
-        session.subscribe_to_entity(SSH_PROJECT_ID, &lsp_store);
-        session.subscribe_to_entity(SSH_PROJECT_ID, &task_store);
-        session.subscribe_to_entity(SSH_PROJECT_ID, &toolchain_store);
-        session.subscribe_to_entity(SSH_PROJECT_ID, &dap_store);
-        session.subscribe_to_entity(SSH_PROJECT_ID, &settings_observer);
-        session.subscribe_to_entity(SSH_PROJECT_ID, &git_store);
+        session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &worktree_store);
+        session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &buffer_store);
+        session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &cx.entity());
+        session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &lsp_store);
+        session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &task_store);
+        session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &toolchain_store);
+        session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &dap_store);
+        session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &settings_observer);
+        session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &git_store);
 
         session.add_request_handler(cx.weak_entity(), Self::handle_list_remote_directory);
         session.add_request_handler(cx.weak_entity(), Self::handle_get_path_metadata);
@@ -235,6 +238,7 @@ impl HeadlessProject {
         session.add_entity_request_handler(Self::handle_open_new_buffer);
         session.add_entity_request_handler(Self::handle_find_search_candidates);
         session.add_entity_request_handler(Self::handle_open_server_settings);
+        session.add_entity_message_handler(Self::handle_toggle_lsp_logs);
 
         session.add_entity_request_handler(BufferStore::handle_update_buffer);
         session.add_entity_message_handler(BufferStore::handle_close_buffer);
@@ -288,7 +292,7 @@ impl HeadlessProject {
         } = event
         {
             cx.background_spawn(self.session.request(proto::UpdateBuffer {
-                project_id: SSH_PROJECT_ID,
+                project_id: REMOTE_SERVER_PROJECT_ID,
                 buffer_id: buffer.read(cx).remote_id().to_proto(),
                 operations: vec![serialize_operation(operation)],
             }))
@@ -298,11 +302,40 @@ impl HeadlessProject {
 
     fn on_lsp_store_event(
         &mut self,
-        _lsp_store: Entity<LspStore>,
+        lsp_store: Entity<LspStore>,
         event: &LspStoreEvent,
         cx: &mut Context<Self>,
     ) {
         match event {
+            LspStoreEvent::LanguageServerAdded(id, name, worktree_id) => {
+                let log_store = cx
+                    .try_global::<GlobalLogStore>()
+                    .map(|lsp_logs| lsp_logs.0.clone());
+                if let Some(log_store) = log_store {
+                    log_store.update(cx, |log_store, cx| {
+                        log_store.add_language_server(
+                            LanguageServerKind::LocalSsh {
+                                lsp_store: self.lsp_store.downgrade(),
+                            },
+                            *id,
+                            Some(name.clone()),
+                            *worktree_id,
+                            lsp_store.read(cx).language_server_for_id(*id),
+                            cx,
+                        );
+                    });
+                }
+            }
+            LspStoreEvent::LanguageServerRemoved(id) => {
+                let log_store = cx
+                    .try_global::<GlobalLogStore>()
+                    .map(|lsp_logs| lsp_logs.0.clone());
+                if let Some(log_store) = log_store {
+                    log_store.update(cx, |log_store, cx| {
+                        log_store.remove_language_server(*id, cx);
+                    });
+                }
+            }
             LspStoreEvent::LanguageServerUpdate {
                 language_server_id,
                 name,
@@ -310,7 +343,7 @@ impl HeadlessProject {
             } => {
                 self.session
                     .send(proto::UpdateLanguageServer {
-                        project_id: SSH_PROJECT_ID,
+                        project_id: REMOTE_SERVER_PROJECT_ID,
                         server_name: name.as_ref().map(|name| name.to_string()),
                         language_server_id: language_server_id.to_proto(),
                         variant: Some(message.clone()),
@@ -320,25 +353,15 @@ impl HeadlessProject {
             LspStoreEvent::Notification(message) => {
                 self.session
                     .send(proto::Toast {
-                        project_id: SSH_PROJECT_ID,
+                        project_id: REMOTE_SERVER_PROJECT_ID,
                         notification_id: "lsp".to_string(),
                         message: message.clone(),
                     })
                     .log_err();
             }
-            LspStoreEvent::LanguageServerLog(language_server_id, log_type, message) => {
-                self.session
-                    .send(proto::LanguageServerLog {
-                        project_id: SSH_PROJECT_ID,
-                        language_server_id: language_server_id.to_proto(),
-                        message: message.clone(),
-                        log_type: Some(log_type.to_proto()),
-                    })
-                    .log_err();
-            }
             LspStoreEvent::LanguageServerPrompt(prompt) => {
                 let request = self.session.request(proto::LanguageServerPromptRequest {
-                    project_id: SSH_PROJECT_ID,
+                    project_id: REMOTE_SERVER_PROJECT_ID,
                     actions: prompt
                         .actions
                         .iter()
@@ -474,7 +497,7 @@ impl HeadlessProject {
         let buffer_id = buffer.read_with(&cx, |b, _| b.remote_id())?;
         buffer_store.update(&mut cx, |buffer_store, cx| {
             buffer_store
-                .create_buffer_for_peer(&buffer, SSH_PEER_ID, cx)
+                .create_buffer_for_peer(&buffer, REMOTE_SERVER_PEER_ID, cx)
                 .detach_and_log_err(cx);
         })?;
 
@@ -500,7 +523,7 @@ impl HeadlessProject {
         let buffer_id = buffer.read_with(&cx, |b, _| b.remote_id())?;
         buffer_store.update(&mut cx, |buffer_store, cx| {
             buffer_store
-                .create_buffer_for_peer(&buffer, SSH_PEER_ID, cx)
+                .create_buffer_for_peer(&buffer, REMOTE_SERVER_PEER_ID, cx)
                 .detach_and_log_err(cx);
         })?;
 
@@ -509,7 +532,31 @@ impl HeadlessProject {
         })
     }
 
-    pub async fn handle_open_server_settings(
+    async fn handle_toggle_lsp_logs(
+        _: Entity<Self>,
+        envelope: TypedEnvelope<proto::ToggleLspLogs>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        let server_id = LanguageServerId::from_proto(envelope.payload.server_id);
+        let lsp_logs = cx
+            .update(|cx| {
+                cx.try_global::<GlobalLogStore>()
+                    .map(|lsp_logs| lsp_logs.0.clone())
+            })?
+            .context("lsp logs store is missing")?;
+
+        lsp_logs.update(&mut cx, |lsp_logs, _| {
+            // we do not support any other log toggling yet
+            if envelope.payload.enabled {
+                lsp_logs.enable_rpc_trace_for_language_server(server_id);
+            } else {
+                lsp_logs.disable_rpc_trace_for_language_server(server_id);
+            }
+        })?;
+        Ok(())
+    }
+
+    async fn handle_open_server_settings(
         this: Entity<Self>,
         _: TypedEnvelope<proto::OpenServerSettings>,
         mut cx: AsyncApp,
@@ -550,7 +597,7 @@ impl HeadlessProject {
 
             buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store
-                    .create_buffer_for_peer(&buffer, SSH_PEER_ID, cx)
+                    .create_buffer_for_peer(&buffer, REMOTE_SERVER_PEER_ID, cx)
                     .detach_and_log_err(cx);
             });
 
@@ -562,7 +609,7 @@ impl HeadlessProject {
         })
     }
 
-    pub async fn handle_find_search_candidates(
+    async fn handle_find_search_candidates(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::FindSearchCandidates>,
         mut cx: AsyncApp,
@@ -586,7 +633,7 @@ impl HeadlessProject {
             response.buffer_ids.push(buffer_id.to_proto());
             buffer_store
                 .update(&mut cx, |buffer_store, cx| {
-                    buffer_store.create_buffer_for_peer(&buffer, SSH_PEER_ID, cx)
+                    buffer_store.create_buffer_for_peer(&buffer, REMOTE_SERVER_PEER_ID, cx)
                 })?
                 .await?;
         }
@@ -594,7 +641,7 @@ impl HeadlessProject {
         Ok(response)
     }
 
-    pub async fn handle_list_remote_directory(
+    async fn handle_list_remote_directory(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::ListRemoteDirectory>,
         cx: AsyncApp,
@@ -626,7 +673,7 @@ impl HeadlessProject {
         })
     }
 
-    pub async fn handle_get_path_metadata(
+    async fn handle_get_path_metadata(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GetPathMetadata>,
         cx: AsyncApp,
@@ -644,7 +691,7 @@ impl HeadlessProject {
         })
     }
 
-    pub async fn handle_shutdown_remote_server(
+    async fn handle_shutdown_remote_server(
         _this: Entity<Self>,
         _envelope: TypedEnvelope<proto::ShutdownRemoteServer>,
         cx: AsyncApp,

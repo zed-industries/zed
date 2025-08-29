@@ -3,6 +3,7 @@ mod collab;
 mod onboarding_banner;
 pub mod platform_title_bar;
 mod platforms;
+mod system_window_tabs;
 mod title_bar_settings;
 
 #[cfg(feature = "stories")]
@@ -11,6 +12,7 @@ mod stories;
 use crate::{
     application_menu::{ApplicationMenu, show_menus},
     platform_title_bar::PlatformTitleBar,
+    system_window_tabs::SystemWindowTabs,
 };
 
 #[cfg(not(target_os = "macos"))]
@@ -65,6 +67,7 @@ actions!(
 
 pub fn init(cx: &mut App) {
     TitleBarSettings::register(cx);
+    SystemWindowTabs::init(cx);
 
     cx.observe_new(|workspace: &mut Workspace, window, cx| {
         let Some(window) = window else {
@@ -275,16 +278,16 @@ impl TitleBar {
 
         let banner = cx.new(|cx| {
             OnboardingBanner::new(
-                "Debugger Onboarding",
-                IconName::Debug,
-                "The Debugger",
-                None,
-                zed_actions::debugger::OpenOnboardingModal.boxed_clone(),
+                "ACP Onboarding",
+                IconName::Sparkle,
+                "Bring Your Own Agent",
+                Some("Introducing:".into()),
+                zed_actions::agent::OpenAcpOnboardingModal.boxed_clone(),
                 cx,
             )
         });
 
-        let platform_titlebar = cx.new(|_| PlatformTitleBar::new(id));
+        let platform_titlebar = cx.new(|cx| PlatformTitleBar::new(id, cx));
 
         Self {
             platform_titlebar,
@@ -299,8 +302,8 @@ impl TitleBar {
         }
     }
 
-    fn render_ssh_project_host(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let options = self.project.read(cx).ssh_connection_options(cx)?;
+    fn render_remote_project_connection(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let options = self.project.read(cx).remote_connection_options(cx)?;
         let host: SharedString = options.connection_string().into();
 
         let nickname = options
@@ -308,7 +311,7 @@ impl TitleBar {
             .map(|nick| nick.into())
             .unwrap_or_else(|| host.clone());
 
-        let (indicator_color, meta) = match self.project.read(cx).ssh_connection_state(cx)? {
+        let (indicator_color, meta) = match self.project.read(cx).remote_connection_state(cx)? {
             remote::ConnectionState::Connecting => (Color::Info, format!("Connecting to: {host}")),
             remote::ConnectionState::Connected => (Color::Success, format!("Connected to: {host}")),
             remote::ConnectionState::HeartbeatMissed => (
@@ -324,7 +327,7 @@ impl TitleBar {
             }
         };
 
-        let icon_color = match self.project.read(cx).ssh_connection_state(cx)? {
+        let icon_color = match self.project.read(cx).remote_connection_state(cx)? {
             remote::ConnectionState::Connecting => Color::Info,
             remote::ConnectionState::Connected => Color::Default,
             remote::ConnectionState::HeartbeatMissed => Color::Warning,
@@ -379,8 +382,8 @@ impl TitleBar {
     }
 
     pub fn render_project_host(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.project.read(cx).is_via_ssh() {
-            return self.render_ssh_project_host(cx);
+        if self.project.read(cx).is_via_remote_server() {
+            return self.render_remote_project_connection(cx);
         }
 
         if self.project.read(cx).is_disconnected(cx) {

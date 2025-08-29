@@ -4,12 +4,16 @@ use crate::{
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, LanguageModelToolChoice,
 };
+use anyhow::anyhow;
 use futures::{FutureExt, channel::mpsc, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Entity, Task, Window};
 use http_client::Result;
 use parking_lot::Mutex;
 use smol::stream::StreamExt;
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering::SeqCst},
+};
 
 #[derive(Clone)]
 pub struct FakeLanguageModelProvider {
@@ -106,6 +110,7 @@ pub struct FakeLanguageModel {
             >,
         )>,
     >,
+    forbid_requests: AtomicBool,
 }
 
 impl Default for FakeLanguageModel {
@@ -114,11 +119,20 @@ impl Default for FakeLanguageModel {
             provider_id: LanguageModelProviderId::from("fake".to_string()),
             provider_name: LanguageModelProviderName::from("Fake".to_string()),
             current_completion_txs: Mutex::new(Vec::new()),
+            forbid_requests: AtomicBool::new(false),
         }
     }
 }
 
 impl FakeLanguageModel {
+    pub fn allow_requests(&self) {
+        self.forbid_requests.store(false, SeqCst);
+    }
+
+    pub fn forbid_requests(&self) {
+        self.forbid_requests.store(true, SeqCst);
+    }
+
     pub fn pending_completions(&self) -> Vec<LanguageModelRequest> {
         self.current_completion_txs
             .lock()
@@ -251,9 +265,18 @@ impl LanguageModel for FakeLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let (tx, rx) = mpsc::unbounded();
-        self.current_completion_txs.lock().push((request, tx));
-        async move { Ok(rx.boxed()) }.boxed()
+        if self.forbid_requests.load(SeqCst) {
+            async move {
+                Err(LanguageModelCompletionError::Other(anyhow!(
+                    "requests are forbidden"
+                )))
+            }
+            .boxed()
+        } else {
+            let (tx, rx) = mpsc::unbounded();
+            self.current_completion_txs.lock().push((request, tx));
+            async move { Ok(rx.boxed()) }.boxed()
+        }
     }
 
     fn as_fake(&self) -> &Self {

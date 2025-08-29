@@ -27,7 +27,7 @@ use collections::{HashMap, HashSet, VecDeque};
 use futures::AsyncReadExt;
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EntityId, Global, SemanticVersion,
-    Subscription, Task, WeakEntity, actions,
+    SharedString, Subscription, Task, actions,
 };
 use http_client::{AsyncBody, HttpClient, Method, Request, Response};
 use input_excerpt::excerpt_for_cursor_position;
@@ -55,8 +55,7 @@ use telemetry_events::EditPredictionRating;
 use thiserror::Error;
 use util::{ResultExt, maybe};
 use uuid::Uuid;
-use workspace::Workspace;
-use workspace::notifications::{ErrorMessagePrompt, NotificationId};
+use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
 use worktree::Worktree;
 
 const CURSOR_MARKER: &str = "<|user_cursor_is_here|>";
@@ -235,7 +234,10 @@ impl std::fmt::Debug for EditPrediction {
 }
 
 pub struct Zeta {
+<<<<<<< HEAD
     workspace: WeakEntity<Workspace>,
+=======
+>>>>>>> main
     client: Arc<Client>,
     events: VecDeque<Event>,
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
@@ -274,14 +276,17 @@ impl Zeta {
     }
 
     pub fn register(
+<<<<<<< HEAD
         workspace: Option<Entity<Workspace>>,
+=======
+>>>>>>> main
         worktree: Option<Entity<Worktree>>,
         client: Arc<Client>,
         user_store: Entity<UserStore>,
         cx: &mut App,
     ) -> Entity<Self> {
         let this = Self::global(cx).unwrap_or_else(|| {
-            let entity = cx.new(|cx| Self::new(workspace, client, user_store, cx));
+            let entity = cx.new(|cx| Self::new(client, user_store, cx));
             cx.set_global(ZetaGlobal(entity.clone()));
             entity
         });
@@ -306,12 +311,16 @@ impl Zeta {
         self.user_store.read(cx).edit_prediction_usage()
     }
 
+<<<<<<< HEAD
     fn new(
         workspace: Option<Entity<Workspace>>,
         client: Arc<Client>,
         user_store: Entity<UserStore>,
         cx: &mut Context<Self>,
     ) -> Self {
+=======
+    fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
+>>>>>>> main
         let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
 
         let data_collection_choice = Self::load_data_collection_choices();
@@ -354,10 +363,13 @@ impl Zeta {
         }
 
         Self {
+<<<<<<< HEAD
             workspace: workspace.map_or_else(
                 || WeakEntity::new_invalid(),
                 |workspace| workspace.downgrade(),
             ),
+=======
+>>>>>>> main
             client,
             events: VecDeque::with_capacity(MAX_EVENT_COUNT),
             shown_completions: VecDeque::with_capacity(MAX_SHOWN_COMPLETION_COUNT),
@@ -454,8 +466,12 @@ impl Zeta {
 
     fn request_completion_impl<F, R>(
         &mut self,
+<<<<<<< HEAD
         workspace: Option<Entity<Workspace>>,
         project: Option<Entity<Project>>,
+=======
+        project: Option<&Entity<Project>>,
+>>>>>>> main
         buffer: &Entity<Buffer>,
         cursor: language::Anchor,
         can_collect_data: CanCollectData,
@@ -554,23 +570,20 @@ impl Zeta {
                                 zeta.update_required = true;
                             });
 
-                            if let Some(workspace) = workspace {
-                                workspace.update(cx, |workspace, cx| {
-                                    workspace.show_notification(
-                                        NotificationId::unique::<ZedUpdateRequiredError>(),
-                                        cx,
-                                        |cx| {
-                                            cx.new(|cx| {
-                                                ErrorMessagePrompt::new(err.to_string(), cx)
-                                                    .with_link_button(
-                                                        "Update Zed",
-                                                        "https://zed.dev/releases",
-                                                    )
-                                            })
-                                        },
-                                    );
-                                });
-                            }
+                            let error_message: SharedString = err.to_string().into();
+                            show_app_notification(
+                                NotificationId::unique::<ZedUpdateRequiredError>(),
+                                cx,
+                                move |cx| {
+                                    cx.new(|cx| {
+                                        ErrorMessagePrompt::new(error_message.clone(), cx)
+                                            .with_link_button(
+                                                "Update Zed",
+                                                "https://zed.dev/releases",
+                                            )
+                                    })
+                                },
+                            );
                         })
                         .ok();
                     }
@@ -802,6 +815,7 @@ and then another
     ) -> Task<Result<Option<EditPrediction>>> {
         use std::future::ready;
 
+<<<<<<< HEAD
         self.request_completion_impl(
             None,
             project,
@@ -811,6 +825,11 @@ and then another
             cx,
             |_params| ready(Ok((response, None))),
         )
+=======
+        self.request_completion_impl(project, buffer, position, false, cx, |_params| {
+            ready(Ok((response, None)))
+        })
+>>>>>>> main
     }
 
     pub fn request_completion(
@@ -822,7 +841,10 @@ and then another
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<EditPrediction>>> {
         self.request_completion_impl(
+<<<<<<< HEAD
             self.workspace.upgrade(),
+=======
+>>>>>>> main
             project,
             buffer,
             position,
@@ -2408,7 +2430,7 @@ mod tests {
         // Construct the fake server to authenticate.
         let _server = FakeServer::for_client(42, &client, cx).await;
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        let zeta = cx.new(|cx| Zeta::new(None, client, user_store.clone(), cx));
+        let zeta = cx.new(|cx| Zeta::new(client, user_store.clone(), cx));
 
         let buffer = cx.new(|cx| Buffer::local(buffer_content, cx));
         let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 0)));
@@ -2472,7 +2494,7 @@ mod tests {
         // Construct the fake server to authenticate.
         let _server = FakeServer::for_client(42, &client, cx).await;
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        let zeta = cx.new(|cx| Zeta::new(None, client, user_store.clone(), cx));
+        let zeta = cx.new(|cx| Zeta::new(client, user_store.clone(), cx));
 
         let buffer = cx.new(|cx| Buffer::local(buffer_content, cx));
         let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());

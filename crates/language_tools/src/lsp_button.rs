@@ -11,7 +11,10 @@ use editor::{Editor, EditorEvent};
 use gpui::{Corner, Entity, Subscription, Task, WeakEntity, actions};
 use language::{BinaryStatus, BufferId, ServerHealth};
 use lsp::{LanguageServerId, LanguageServerName, LanguageServerSelector};
-use project::{LspStore, LspStoreEvent, Worktree, project_settings::ProjectSettings};
+use project::{
+    LspStore, LspStoreEvent, Worktree, lsp_store::log_store::GlobalLogStore,
+    project_settings::ProjectSettings,
+};
 use settings::{Settings as _, SettingsStore};
 use ui::{
     Context, ContextMenu, ContextMenuEntry, ContextMenuItem, DocumentationAside, DocumentationSide,
@@ -20,7 +23,7 @@ use ui::{
 
 use workspace::{StatusItemView, Workspace};
 
-use crate::lsp_log::GlobalLogStore;
+use crate::lsp_log_view;
 
 actions!(
     lsp_tool,
@@ -30,7 +33,7 @@ actions!(
     ]
 );
 
-pub struct LspTool {
+pub struct LspButton {
     server_state: Entity<LanguageServerState>,
     popover_menu_handle: PopoverMenuHandle<ContextMenu>,
     lsp_menu: Option<Entity<ContextMenu>>,
@@ -121,9 +124,8 @@ impl LanguageServerState {
         menu = menu.align_popover_bottom();
         let lsp_logs = cx
             .try_global::<GlobalLogStore>()
-            .and_then(|lsp_logs| lsp_logs.0.upgrade());
-        let lsp_store = self.lsp_store.upgrade();
-        let Some((lsp_logs, lsp_store)) = lsp_logs.zip(lsp_store) else {
+            .map(|lsp_logs| lsp_logs.0.clone());
+        let Some(lsp_logs) = lsp_logs else {
             return menu;
         };
 
@@ -210,10 +212,11 @@ impl LanguageServerState {
             };
 
             let server_selector = server_info.server_selector();
-            // TODO currently, Zed remote does not work well with the LSP logs
-            // https://github.com/zed-industries/zed/issues/28557
-            let has_logs = lsp_store.read(cx).as_local().is_some()
-                && lsp_logs.read(cx).has_server_logs(&server_selector);
+            let is_remote = self
+                .lsp_store
+                .update(cx, |lsp_store, _| lsp_store.as_remote().is_some())
+                .unwrap_or(false);
+            let has_logs = is_remote || lsp_logs.read(cx).has_server_logs(&server_selector);
 
             let status_color = server_info
                 .binary_status
@@ -241,10 +244,10 @@ impl LanguageServerState {
                 .as_ref()
                 .or_else(|| server_info.binary_status.as_ref()?.message.as_ref())
                 .cloned();
-            let hover_label = if has_logs {
-                Some("View Logs")
-            } else if message.is_some() {
+            let hover_label = if message.is_some() {
                 Some("View Message")
+            } else if has_logs {
+                Some("View Logs")
             } else {
                 None
             };
@@ -288,16 +291,7 @@ impl LanguageServerState {
                     let server_name = server_info.name.clone();
                     let workspace = self.workspace.clone();
                     move |window, cx| {
-                        if has_logs {
-                            lsp_logs.update(cx, |lsp_logs, cx| {
-                                lsp_logs.open_server_trace(
-                                    workspace.clone(),
-                                    server_selector.clone(),
-                                    window,
-                                    cx,
-                                );
-                            });
-                        } else if let Some(message) = &message {
+                        if let Some(message) = &message {
                             let Some(create_buffer) = workspace
                                 .update(cx, |workspace, cx| {
                                     workspace
@@ -347,6 +341,14 @@ impl LanguageServerState {
                                 anyhow::Ok(())
                             })
                             .detach();
+                        } else if has_logs {
+                            lsp_log_view::open_server_trace(
+                                &lsp_logs,
+                                workspace.clone(),
+                                server_selector.clone(),
+                                window,
+                                cx,
+                            );
                         } else {
                             cx.propagate();
                         }
@@ -510,7 +512,7 @@ impl ServerData<'_> {
     }
 }
 
-impl LspTool {
+impl LspButton {
     pub fn new(
         workspace: &Workspace,
         popover_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -518,37 +520,59 @@ impl LspTool {
         cx: &mut Context<Self>,
     ) -> Self {
         let settings_subscription =
-            cx.observe_global_in::<SettingsStore>(window, move |lsp_tool, window, cx| {
+            cx.observe_global_in::<SettingsStore>(window, move |lsp_button, window, cx| {
                 if ProjectSettings::get_global(cx).global_lsp_settings.button {
-                    if lsp_tool.lsp_menu.is_none() {
-                        lsp_tool.refresh_lsp_menu(true, window, cx);
+                    if lsp_button.lsp_menu.is_none() {
+                        lsp_button.refresh_lsp_menu(true, window, cx);
                     }
-                } else if lsp_tool.lsp_menu.take().is_some() {
+                } else if lsp_button.lsp_menu.take().is_some() {
                     cx.notify();
                 }
             });
 
         let lsp_store = workspace.project().read(cx).lsp_store();
+        let mut language_servers = LanguageServers::default();
+        for (_, status) in lsp_store.read(cx).language_server_statuses() {
+            language_servers.binary_statuses.insert(
+                status.name.clone(),
+                LanguageServerBinaryStatus {
+                    status: BinaryStatus::None,
+                    message: None,
+                },
+            );
+        }
+
         let lsp_store_subscription =
-            cx.subscribe_in(&lsp_store, window, |lsp_tool, _, e, window, cx| {
-                lsp_tool.on_lsp_store_event(e, window, cx)
+            cx.subscribe_in(&lsp_store, window, |lsp_button, _, e, window, cx| {
+                lsp_button.on_lsp_store_event(e, window, cx)
             });
 
-        let state = cx.new(|_| LanguageServerState {
+        let server_state = cx.new(|_| LanguageServerState {
             workspace: workspace.weak_handle(),
             items: Vec::new(),
             lsp_store: lsp_store.downgrade(),
             active_editor: None,
-            language_servers: LanguageServers::default(),
+            language_servers,
         });
 
-        Self {
-            server_state: state,
+        let mut lsp_button = Self {
+            server_state,
             popover_menu_handle,
             lsp_menu: None,
             lsp_menu_refresh: Task::ready(()),
             _subscriptions: vec![settings_subscription, lsp_store_subscription],
+        };
+        if !lsp_button
+            .server_state
+            .read(cx)
+            .language_servers
+            .binary_statuses
+            .is_empty()
+        {
+            lsp_button.refresh_lsp_menu(true, window, cx);
         }
+
+        lsp_button
     }
 
     fn on_lsp_store_event(
@@ -708,6 +732,25 @@ impl LspTool {
                     }
                 }
             }
+            state
+                .lsp_store
+                .update(cx, |lsp_store, cx| {
+                    for (server_id, status) in lsp_store.language_server_statuses() {
+                        if let Some(worktree) = status.worktree.and_then(|worktree_id| {
+                            lsp_store
+                                .worktree_store()
+                                .read(cx)
+                                .worktree_for_id(worktree_id, cx)
+                        }) {
+                            server_ids_to_worktrees.insert(server_id, worktree.clone());
+                            server_names_to_worktrees
+                                .entry(status.name.clone())
+                                .or_default()
+                                .insert((worktree, server_id));
+                        }
+                    }
+                })
+                .ok();
 
             let mut servers_per_worktree = BTreeMap::<SharedString, Vec<ServerData>>::new();
             let mut servers_without_worktree = Vec::<ServerData>::new();
@@ -852,18 +895,18 @@ impl LspTool {
     ) {
         if create_if_empty || self.lsp_menu.is_some() {
             let state = self.server_state.clone();
-            self.lsp_menu_refresh = cx.spawn_in(window, async move |lsp_tool, cx| {
+            self.lsp_menu_refresh = cx.spawn_in(window, async move |lsp_button, cx| {
                 cx.background_executor()
                     .timer(Duration::from_millis(30))
                     .await;
-                lsp_tool
-                    .update_in(cx, |lsp_tool, window, cx| {
-                        lsp_tool.regenerate_items(cx);
+                lsp_button
+                    .update_in(cx, |lsp_button, window, cx| {
+                        lsp_button.regenerate_items(cx);
                         let menu = ContextMenu::build(window, cx, |menu, _, cx| {
                             state.update(cx, |state, cx| state.fill_menu(menu, cx))
                         });
-                        lsp_tool.lsp_menu = Some(menu.clone());
-                        lsp_tool.popover_menu_handle.refresh_menu(
+                        lsp_button.lsp_menu = Some(menu.clone());
+                        lsp_button.popover_menu_handle.refresh_menu(
                             window,
                             cx,
                             Rc::new(move |_, _| Some(menu.clone())),
@@ -876,7 +919,7 @@ impl LspTool {
     }
 }
 
-impl StatusItemView for LspTool {
+impl StatusItemView for LspButton {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn workspace::ItemHandle>,
@@ -899,9 +942,9 @@ impl StatusItemView for LspTool {
                     let _editor_subscription = cx.subscribe_in(
                         &editor,
                         window,
-                        |lsp_tool, _, e: &EditorEvent, window, cx| match e {
+                        |lsp_button, _, e: &EditorEvent, window, cx| match e {
                             EditorEvent::ExcerptsAdded { buffer, .. } => {
-                                let updated = lsp_tool.server_state.update(cx, |state, cx| {
+                                let updated = lsp_button.server_state.update(cx, |state, cx| {
                                     if let Some(active_editor) = state.active_editor.as_mut() {
                                         let buffer_id = buffer.read(cx).remote_id();
                                         active_editor.editor_buffers.insert(buffer_id)
@@ -910,13 +953,13 @@ impl StatusItemView for LspTool {
                                     }
                                 });
                                 if updated {
-                                    lsp_tool.refresh_lsp_menu(false, window, cx);
+                                    lsp_button.refresh_lsp_menu(false, window, cx);
                                 }
                             }
                             EditorEvent::ExcerptsRemoved {
                                 removed_buffer_ids, ..
                             } => {
-                                let removed = lsp_tool.server_state.update(cx, |state, _| {
+                                let removed = lsp_button.server_state.update(cx, |state, _| {
                                     let mut removed = false;
                                     if let Some(active_editor) = state.active_editor.as_mut() {
                                         for id in removed_buffer_ids {
@@ -930,7 +973,7 @@ impl StatusItemView for LspTool {
                                     removed
                                 });
                                 if removed {
-                                    lsp_tool.refresh_lsp_menu(false, window, cx);
+                                    lsp_button.refresh_lsp_menu(false, window, cx);
                                 }
                             }
                             _ => {}
@@ -960,7 +1003,7 @@ impl StatusItemView for LspTool {
     }
 }
 
-impl Render for LspTool {
+impl Render for LspButton {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         if self.server_state.read(cx).language_servers.is_empty() || self.lsp_menu.is_none() {
             return div();
@@ -1005,11 +1048,11 @@ impl Render for LspTool {
             (None, "All Servers Operational")
         };
 
-        let lsp_tool = cx.entity();
+        let lsp_button = cx.entity();
 
         div().child(
             PopoverMenu::new("lsp-tool")
-                .menu(move |_, cx| lsp_tool.read(cx).lsp_menu.clone())
+                .menu(move |_, cx| lsp_button.read(cx).lsp_menu.clone())
                 .anchor(Corner::BottomLeft)
                 .with_handle(self.popover_menu_handle.clone())
                 .trigger_with_tooltip(

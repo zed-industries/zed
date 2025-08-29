@@ -789,16 +789,12 @@ pub enum ThreadStatus {
 
 #[derive(Debug, Clone)]
 pub enum LoadError {
-    NotInstalled {
-        error_message: SharedString,
-        install_message: SharedString,
-        install_command: String,
-    },
     Unsupported {
-        error_message: SharedString,
-        upgrade_message: SharedString,
-        upgrade_command: String,
+        command: SharedString,
+        current_version: SharedString,
+        minimum_version: SharedString,
     },
+    FailedToInstall(SharedString),
     Exited {
         status: ExitStatus,
     },
@@ -808,12 +804,19 @@ pub enum LoadError {
 impl Display for LoadError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            LoadError::NotInstalled { error_message, .. }
-            | LoadError::Unsupported { error_message, .. } => {
-                write!(f, "{error_message}")
+            LoadError::Unsupported {
+                command: path,
+                current_version,
+                minimum_version,
+            } => {
+                write!(
+                    f,
+                    "version {current_version} from {path} is not supported (need at least {minimum_version})"
+                )
             }
+            LoadError::FailedToInstall(msg) => write!(f, "Failed to install: {msg}"),
             LoadError::Exited { status } => write!(f, "Server exited with status {status}"),
-            LoadError::Other(msg) => write!(f, "{}", msg),
+            LoadError::Other(msg) => write!(f, "{msg}"),
         }
     }
 }

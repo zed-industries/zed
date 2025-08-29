@@ -216,7 +216,9 @@ impl UserStore {
                         return Ok(());
                     };
                     match status {
-                        Status::Authenticated | Status::Connected { .. } => {
+                        Status::Authenticated
+                        | Status::Reauthenticated
+                        | Status::Connected { .. } => {
                             if let Some(user_id) = client.user_id() {
                                 let response = client
                                     .cloud_client()

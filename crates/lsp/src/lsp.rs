@@ -1383,7 +1383,8 @@ impl LanguageServer {
             self.notify::<DidChangeWorkspaceFolders>(&params).ok();
         }
     }
-    /// Add new workspace folder to the list.
+
+    /// Remove existing workspace folder from the list.
     pub fn remove_workspace_folder(&self, uri: Url) {
         if self
             .capabilities()

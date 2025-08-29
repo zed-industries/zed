@@ -3,6 +3,7 @@ use acp_thread::AgentConnection;
 use acp_tools::AcpConnectionRegistry;
 use action_log::ActionLog;
 use agent_client_protocol::{self as acp, Agent as _, ErrorCode};
+use agent_settings::AgentSettings;
 use anyhow::anyhow;
 use collections::HashMap;
 use futures::AsyncBufReadExt as _;
@@ -10,6 +11,7 @@ use futures::channel::oneshot;
 use futures::io::BufReader;
 use project::Project;
 use serde::Deserialize;
+use settings::Settings as _;
 use std::{any::Any, cell::RefCell};
 use std::{path::Path, rc::Rc};
 use thiserror::Error;
@@ -30,6 +32,8 @@ pub struct AcpConnection {
     auth_methods: Vec<acp::AuthMethod>,
     prompt_capabilities: acp::PromptCapabilities,
     _io_task: Task<Result<()>>,
+    _wait_task: Task<Result<()>>,
+    _stderr_task: Task<Result<()>>,
 }
 
 pub struct AcpSession {
@@ -56,7 +60,7 @@ impl AcpConnection {
         root_dir: &Path,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
-        let mut child = util::command::new_smol_command(&command.path)
+        let mut child = util::command::new_smol_command(command.path)
             .args(command.args.iter().map(|arg| arg.as_str()))
             .envs(command.env.iter().flatten())
             .current_dir(root_dir)
@@ -86,7 +90,7 @@ impl AcpConnection {
 
         let io_task = cx.background_spawn(io_task);
 
-        cx.background_spawn(async move {
+        let stderr_task = cx.background_spawn(async move {
             let mut stderr = BufReader::new(stderr);
             let mut line = String::new();
             while let Ok(n) = stderr.read_line(&mut line).await
@@ -95,10 +99,10 @@ impl AcpConnection {
                 log::warn!("agent stderr: {}", &line);
                 line.clear();
             }
-        })
-        .detach();
+            Ok(())
+        });
 
-        cx.spawn({
+        let wait_task = cx.spawn({
             let sessions = sessions.clone();
             async move |cx| {
                 let status = child.status().await?;
@@ -114,8 +118,7 @@ impl AcpConnection {
 
                 anyhow::Ok(())
             }
-        })
-        .detach();
+        });
 
         let connection = Rc::new(connection);
 
@@ -148,7 +151,13 @@ impl AcpConnection {
             sessions,
             prompt_capabilities: response.agent_capabilities.prompt_capabilities,
             _io_task: io_task,
+            _wait_task: wait_task,
+            _stderr_task: stderr_task,
         })
+    }
+
+    pub fn prompt_capabilities(&self) -> &acp::PromptCapabilities {
+        &self.prompt_capabilities
     }
 }
 
@@ -162,12 +171,34 @@ impl AgentConnection for AcpConnection {
         let conn = self.connection.clone();
         let sessions = self.sessions.clone();
         let cwd = cwd.to_path_buf();
+        let context_server_store = project.read(cx).context_server_store().read(cx);
+        let mcp_servers = context_server_store
+            .configured_server_ids()
+            .iter()
+            .filter_map(|id| {
+                let configuration = context_server_store.configuration_for_server(id)?;
+                let command = configuration.command();
+                Some(acp::McpServer {
+                    name: id.0.to_string(),
+                    command: command.path.clone(),
+                    args: command.args.clone(),
+                    env: if let Some(env) = command.env.as_ref() {
+                        env.iter()
+                            .map(|(name, value)| acp::EnvVariable {
+                                name: name.clone(),
+                                value: value.clone(),
+                            })
+                            .collect()
+                    } else {
+                        vec![]
+                    },
+                })
+            })
+            .collect();
+
         cx.spawn(async move |cx| {
             let response = conn
-                .new_session(acp::NewSessionRequest {
-                    mcp_servers: vec![],
-                    cwd,
-                })
+                .new_session(acp::NewSessionRequest { mcp_servers, cwd })
                 .await
                 .map_err(|err| {
                     if err.code == acp::ErrorCode::AUTH_REQUIRED.code {
@@ -313,6 +344,28 @@ impl acp::Client for ClientDelegate {
         arguments: acp::RequestPermissionRequest,
     ) -> Result<acp::RequestPermissionResponse, acp::Error> {
         let cx = &mut self.cx.clone();
+
+        // If always_allow_tool_actions is enabled, then auto-choose the first "Allow" button
+        if AgentSettings::try_read_global(cx, |settings| settings.always_allow_tool_actions)
+            .unwrap_or(false)
+        {
+            // Don't use AllowAlways, because then if you were to turn off always_allow_tool_actions,
+            // some tools would (incorrectly) continue to auto-accept.
+            if let Some(allow_once_option) = arguments.options.iter().find_map(|option| {
+                if matches!(option.kind, acp::PermissionOptionKind::AllowOnce) {
+                    Some(option.id.clone())
+                } else {
+                    None
+                }
+            }) {
+                return Ok(acp::RequestPermissionResponse {
+                    outcome: acp::RequestPermissionOutcome::Selected {
+                        option_id: allow_once_option,
+                    },
+                });
+            }
+        }
+
         let rx = self
             .sessions
             .borrow()
