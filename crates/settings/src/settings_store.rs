@@ -421,8 +421,7 @@ impl SettingsStore {
 
     /// Get the value of a setting.
     ///
-    /// Panics if the given setting type has not been registered, or if there is no
-    /// value for this setting.
+    /// Does not panic
     pub fn try_get<T: Settings>(&self, path: Option<SettingsLocation>) -> Option<&T> {
         self.setting_values
             .get(&TypeId::of::<T>())
