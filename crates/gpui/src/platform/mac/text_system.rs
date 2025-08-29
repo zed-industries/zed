@@ -67,6 +67,7 @@ struct MacTextSystemState {
     font_ids_by_postscript_name: HashMap<String, FontId>,
     font_ids_by_font_key: HashMap<FontKey, SmallVec<[FontId; 4]>>,
     postscript_names_by_font_id: HashMap<FontId, String>,
+    zwnjs_scratch_space: Vec<(usize, usize)>,
 }
 
 impl MacTextSystem {
@@ -79,6 +80,7 @@ impl MacTextSystem {
             font_ids_by_postscript_name: HashMap::default(),
             font_ids_by_font_key: HashMap::default(),
             postscript_names_by_font_id: HashMap::default(),
+            zwnjs_scratch_space: Vec::new(),
         }))
     }
 }
@@ -425,11 +427,12 @@ impl MacTextSystemState {
 
     fn layout_line(&mut self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
         const ZWNJ: char = '\u{200C}';
+        const ZWNJ_STR: &str = "\u{200C}";
         const ZWNJ_SIZE_16: usize = ZWNJ.len_utf16();
 
+        self.zwnjs_scratch_space.clear();
         // Construct the attributed string, converting UTF8 ranges to UTF16 ranges.
         let mut string = CFMutableAttributedString::new();
-        let mut zwnjs = vec![];
         {
             let mut ix_converter = StringIndexConverter::new(&text);
             let mut last_font_run = None;
@@ -439,7 +442,7 @@ impl MacTextSystemState {
                 last_font_run = Some(run.font_id);
 
                 let utf8_end = ix_converter.utf8_ix + run.len;
-                let n_zwnjs = zwnjs.len();
+                let n_zwnjs = self.zwnjs_scratch_space.len();
                 let utf16_start = ix_converter.utf16_ix + n_zwnjs * ZWNJ_SIZE_16;
 
                 ix_converter.advance_to_utf8_ix(utf8_end);
@@ -447,11 +450,9 @@ impl MacTextSystemState {
                 string.replace_str(&CFString::new(text), CFRange::init(utf16_start as isize, 0));
                 if needs_zwnj {
                     let utf16_end_pre = string.char_len();
-                    zwnjs.push((n_zwnjs, utf16_end_pre as usize));
-                    string.replace_str(
-                        &CFString::new(&ZWNJ.to_string()),
-                        CFRange::init(utf16_end_pre, 0),
-                    );
+                    self.zwnjs_scratch_space
+                        .push((n_zwnjs, utf16_end_pre as usize));
+                    string.replace_str(&CFString::new(ZWNJ_STR), CFRange::init(utf16_end_pre, 0));
                 }
                 let utf16_end = string.char_len() as usize;
 
@@ -471,7 +472,7 @@ impl MacTextSystemState {
         // Retrieve the glyphs from the shaped line, converting UTF16 offsets to UTF8 offsets.
         let line = CTLine::new_with_attributed_string(string.as_concrete_TypeRef());
         let glyph_runs = line.glyph_runs();
-        let mut runs = Vec::with_capacity(glyph_runs.len() as usize);
+        let mut runs = <Vec<ShapedRun>>::with_capacity(glyph_runs.len() as usize);
         let mut ix_converter = StringIndexConverter::new(text);
         for run in glyph_runs.into_iter() {
             let attributes = run.attributes().unwrap();
@@ -483,15 +484,26 @@ impl MacTextSystemState {
             };
             let font_id = self.id_for_native_font(font);
 
-            let mut glyphs = Vec::with_capacity(run.glyph_count().try_into().unwrap_or(0));
-            for ((glyph_id, position), glyph_utf16_ix) in run
+            let mut glyphs = match runs.last_mut() {
+                Some(run) if run.font_id == font_id => &mut run.glyphs,
+                _ => {
+                    runs.push(ShapedRun {
+                        font_id,
+                        glyphs: Vec::with_capacity(run.glyph_count().try_into().unwrap_or(0)),
+                    });
+                    &mut runs.last_mut().unwrap().glyphs
+                }
+            };
+            for ((&glyph_id, position), &glyph_utf16_ix) in run
                 .glyphs()
                 .iter()
                 .zip(run.positions().iter())
                 .zip(run.string_indices().iter())
             {
-                let mut glyph_utf16_ix = usize::try_from(*glyph_utf16_ix).unwrap();
-                let r = zwnjs.binary_search_by(|&(_, it)| it.cmp(&glyph_utf16_ix));
+                let mut glyph_utf16_ix = usize::try_from(glyph_utf16_ix).unwrap();
+                let r = self
+                    .zwnjs_scratch_space
+                    .binary_search_by(|&(_, it)| it.cmp(&glyph_utf16_ix));
                 match r {
                     Ok(_) => continue,
                     Err(idx) => glyph_utf16_ix -= idx * ZWNJ_SIZE_16,
@@ -502,15 +514,11 @@ impl MacTextSystemState {
                 }
                 ix_converter.advance_to_utf16_ix(glyph_utf16_ix);
                 glyphs.push(ShapedGlyph {
-                    id: GlyphId(*glyph_id as u32),
+                    id: GlyphId(glyph_id as u32),
                     position: point(position.x as f32, position.y as f32).map(px),
                     index: ix_converter.utf8_ix,
                     is_emoji: self.is_emoji(font_id),
                 });
-            }
-
-            if !glyphs.is_empty() {
-                runs.push(ShapedRun { font_id, glyphs });
             }
         }
         let typographic_bounds = line.get_typographic_bounds();
