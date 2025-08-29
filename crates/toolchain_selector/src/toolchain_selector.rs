@@ -85,33 +85,88 @@ impl AddToolchainState {
     ) -> Entity<Self> {
         let weak = cx.weak_entity();
 
-        let (lister, rx) = Self::create_path_browser_delegate(project.clone());
-        let picker = cx.new(|cx| Picker::uniform_list(lister, window, cx));
-        cx.new(|cx| Self {
-            state: AddState::Path {
-                _subscription: cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| {
-                    cx.stop_propagation();
-                }),
-                picker,
-                error: None,
-                input_state: Self::wait_for_path(rx, window, cx),
-            },
-            project,
-            language_name,
-            weak,
+        cx.new(|cx| {
+            let (lister, rx) = Self::create_path_browser_delegate(project.clone(), cx);
+            let picker = cx.new(|cx| Picker::uniform_list(lister, window, cx));
+            Self {
+                state: AddState::Path {
+                    _subscription: cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| {
+                        cx.stop_propagation();
+                    }),
+                    picker,
+                    error: None,
+                    input_state: Self::wait_for_path(rx, window, cx),
+                },
+                project,
+                language_name,
+                weak,
+            }
         })
     }
 
     fn create_path_browser_delegate(
         project: Entity<Project>,
+        cx: &mut Context<Self>,
     ) -> (OpenPathDelegate, oneshot::Receiver<Option<Vec<PathBuf>>>) {
         let (tx, rx) = oneshot::channel();
+        let weak = cx.weak_entity();
         let lister = OpenPathDelegate::new(
             tx,
             DirectoryLister::Project(project.clone()),
             false,
             PathStyle::current(),
-        );
+        )
+        .with_footer(Arc::new(move |_, cx| {
+            let error = weak
+                .read_with(cx, |this, _| {
+                    if let AddState::Path { error, .. } = &this.state {
+                        error.clone()
+                    } else {
+                        None
+                    }
+                })
+                .ok()
+                .flatten();
+            let is_loading = weak
+                .read_with(cx, |this, _| {
+                    matches!(
+                        this.state,
+                        AddState::Path {
+                            input_state: PathInputState::Resolving(_),
+                            ..
+                        }
+                    )
+                })
+                .unwrap_or_default();
+            Some(
+                v_flex()
+                    .child(Divider::horizontal())
+                    .child(
+                        h_flex()
+                            .p_1()
+                            .child(Label::new("Select Toolchain Path").color(Color::Muted).map(
+                                |this| {
+                                    if is_loading {
+                                        this.with_animation(
+                                            "select-toolchain-label",
+                                            Animation::new(Duration::from_secs(2))
+                                                .repeat()
+                                                .with_easing(pulsating_between(0.4, 0.8)),
+                                            |label, delta| label.alpha(delta),
+                                        )
+                                        .into_any()
+                                    } else {
+                                        this.into_any_element()
+                                    }
+                                },
+                            ))
+                            .when_some(error.clone(), |this, error| {
+                                this.child(Label::new(error).color(Color::Error))
+                            }),
+                    )
+                    .into_any(),
+            )
+        }));
 
         (lister, rx)
     }
@@ -143,7 +198,7 @@ impl AddToolchainState {
                             let Err(e) = toolchain else { unreachable!() };
                             *error = Some(Arc::from(e.to_string()));
                             let (delegate, rx) =
-                                Self::create_path_browser_delegate(this.project.clone());
+                                Self::create_path_browser_delegate(this.project.clone(), cx);
                             picker.update(cx, |picker, cx| {
                                 *picker = Picker::uniform_list(delegate, window, cx);
                                 picker.set_query(
@@ -189,9 +244,12 @@ impl AddToolchainState {
                     .flat_map(|paths| paths.into_iter())
                     .next()?;
                 this.update_in(cx, |this, window, cx| {
-                    if let AddState::Path { input_state, .. } = &mut this.state
+                    if let AddState::Path {
+                        input_state, error, ..
+                    } = &mut this.state
                         && matches!(input_state, PathInputState::WaitingForPath(_))
                     {
+                        error.take();
                         *input_state = Self::resolve_path(
                             path,
                             this.language_name.clone(),
@@ -259,11 +317,7 @@ impl Render for AddToolchainState {
             .on_action(cx.listener(Self::confirm_toolchain))
             .bg(theme.colors().background)
             .map(|this| match &self.state {
-                AddState::Path { picker, error, .. } => this
-                    .child(picker.clone())
-                    .when_some(error.clone(), |this, error| {
-                        this.child(Label::new(error).color(Color::Error))
-                    }),
+                AddState::Path { picker, error, .. } => this.child(picker.clone()),
                 AddState::Name { editor, .. } => this
                     .child(
                         h_flex().w_full().child(

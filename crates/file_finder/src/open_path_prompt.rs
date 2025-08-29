@@ -23,7 +23,6 @@ use workspace::Workspace;
 
 pub(crate) struct OpenPathPrompt;
 
-#[derive(Debug)]
 pub struct OpenPathDelegate {
     tx: Option<oneshot::Sender<Option<Vec<PathBuf>>>>,
     lister: DirectoryLister,
@@ -35,6 +34,8 @@ pub struct OpenPathDelegate {
     prompt_root: String,
     path_style: PathStyle,
     replace_prompt: Task<()>,
+    render_footer:
+        Arc<dyn Fn(&mut Window, &mut Context<Picker<Self>>) -> Option<AnyElement> + 'static>,
 }
 
 impl OpenPathDelegate {
@@ -60,9 +61,19 @@ impl OpenPathDelegate {
             },
             path_style,
             replace_prompt: Task::ready(()),
+            render_footer: Arc::new(|_, _| None),
         }
     }
 
+    pub fn with_footer(
+        mut self,
+        footer: Arc<
+            dyn Fn(&mut Window, &mut Context<Picker<Self>>) -> Option<AnyElement> + 'static,
+        >,
+    ) -> Self {
+        self.render_footer = footer;
+        self
+    }
     fn get_entry(&self, selected_match_index: usize) -> Option<CandidateInfo> {
         match &self.directory_state {
             DirectoryState::List { entries, .. } => {
@@ -730,6 +741,14 @@ impl PickerDelegate for OpenPathDelegate {
             }
             DirectoryState::None { .. } => None,
         }
+    }
+
+    fn render_footer(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
+        (self.render_footer)(window, cx)
     }
 
     fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
