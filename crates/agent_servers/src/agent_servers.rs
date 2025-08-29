@@ -105,22 +105,23 @@ impl AgentServerDelegate {
                         .to_str()
                         .and_then(|name| semver::Version::from_str(&name).ok())
                     {
-                        versions.push((file_name.to_owned(), version));
+                        versions.push((version, file_name.to_owned()));
                     } else {
                         to_delete.push(file_name.to_owned())
                     }
                 }
 
                 versions.sort();
-                let newest_version = if let Some((file_name, version)) = versions.last().cloned()
-                    && minimum_version.is_none_or(|minimum_version| version > minimum_version)
+                let newest_version = if let Some((version, file_name)) = versions.last().cloned()
+                    && minimum_version.is_none_or(|minimum_version| version >= minimum_version)
                 {
                     versions.pop();
                     Some(file_name)
                 } else {
                     None
                 };
-                to_delete.extend(versions.into_iter().map(|(file_name, _)| file_name));
+                log::debug!("existing version of {package_name}: {newest_version:?}");
+                to_delete.extend(versions.into_iter().map(|(_, file_name)| file_name));
 
                 cx.background_spawn({
                     let fs = fs.clone();
@@ -200,6 +201,8 @@ impl AgentServerDelegate {
         node_runtime: NodeRuntime,
         package_name: SharedString,
     ) -> Result<String> {
+        log::debug!("downloading latest version of {package_name}");
+
         let tmp_dir = tempfile::tempdir_in(&dir)?;
 
         node_runtime
