@@ -33,12 +33,6 @@ pub(crate) struct WslRemoteConnection {
     connection_options: WslConnectionOptions,
 }
 
-#[allow(dead_code)]
-enum WslPathConverterKind {
-    WslToWindows,
-    WindowsToWsl,
-}
-
 impl WslRemoteConnection {
     pub(crate) async fn new(
         connection_options: WslConnectionOptions,
@@ -90,13 +84,8 @@ impl WslRemoteConnection {
             .unwrap_or_else(|| "bash".to_string()))
     }
 
-    async fn path_converter(&self, source: &Path, kind: WslPathConverterKind) -> Result<String> {
-        let source = sanitize_path(source).await?;
-        let arg = match kind {
-            WslPathConverterKind::WslToWindows => "-w",
-            WslPathConverterKind::WindowsToWsl => "-u",
-        };
-        self.run_wsl_command("wslpath", &[arg, &source]).await
+    async fn windows_path_to_wsl_path(&self, source: &Path) -> Result<String> {
+        windows_path_to_wsl_path_impl(&self.connection_options, source).await
     }
 
     fn wsl_command(&self, program: &str, args: &[&str]) -> process::Command {
@@ -218,9 +207,7 @@ impl WslRemoteConnection {
             size / 1024
         );
 
-        let src_path_in_wsl = self
-            .path_converter(src_path, WslPathConverterKind::WindowsToWsl)
-            .await?;
+        let src_path_in_wsl = self.windows_path_to_wsl_path(src_path).await?;
         self.run_wsl_command("cp", &["-f", &src_path_in_wsl, &dst_path.to_string()])
             .await
             .map_err(|e| {
@@ -331,9 +318,7 @@ impl RemoteConnection for WslRemoteConnection {
         cx.background_spawn({
             let options = self.connection_options.clone();
             async move {
-                let wsl_src =
-                    path_converter_impl(&options, &src_path, WslPathConverterKind::WindowsToWsl)
-                        .await?;
+                let wsl_src = windows_path_to_wsl_path_impl(&options, &src_path).await?;
 
                 run_wsl_command_impl(&options, "cp", &["-r", &wsl_src, &dest_path.to_string()])
                     .await
@@ -448,17 +433,12 @@ async fn sanitize_path(path: &Path) -> Result<String> {
     Ok(sanitized.replace('\\', "/"))
 }
 
-async fn path_converter_impl(
+async fn windows_path_to_wsl_path_impl(
     options: &WslConnectionOptions,
     source: &Path,
-    kind: WslPathConverterKind,
 ) -> Result<String> {
     let source = sanitize_path(source).await?;
-    let arg = match kind {
-        WslPathConverterKind::WslToWindows => "-w",
-        WslPathConverterKind::WindowsToWsl => "-u",
-    };
-    run_wsl_command_impl(options, "wslpath", &[arg, &source]).await
+    run_wsl_command_impl(options, "wslpath", &["-u", &source]).await
 }
 
 fn wsl_command_impl(
