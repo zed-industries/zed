@@ -180,6 +180,7 @@ impl AddToolchainState {
         cx: &mut Context<Self>,
     ) -> PathInputState {
         PathInputState::Resolving(cx.spawn_in(window, async move |this, cx| {
+            dbg!(&path);
             _ = maybe!(async move {
                 let toolchain = project
                     .update(cx, |this, cx| {
@@ -270,17 +271,29 @@ impl AddToolchainState {
         PathInputState::WaitingForPath(task)
     }
 
-    fn confirm_toolchain(&mut self, _: &menu::Confirm, _: &mut Window, cx: &mut Context<Self>) {
+    fn confirm_toolchain(
+        &mut self,
+        _: &menu::Confirm,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let AddState::Name { toolchain, editor } = &mut self.state else {
             return;
         };
+
         let text = editor.read(cx).text(cx);
         if text.is_empty() {
             return;
         }
+
         toolchain.name = SharedString::from(text);
         self.project.update(cx, |this, cx| {
             this.add_toolchain(toolchain.clone(), cx);
+        });
+        _ = self.weak.update(cx, |this, cx| {
+            this.state = State::Search((this.create_search_state)(window, cx));
+            this.focus_handle(cx).focus(window);
+            cx.notify();
         });
     }
 }

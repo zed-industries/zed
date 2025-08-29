@@ -3360,7 +3360,7 @@ impl Project {
 
     pub fn add_toolchain(&self, toolchain: Toolchain, cx: &mut Context<Self>) {
         maybe!({
-            self.toolchain_store.as_ref()?.update(cx, |this, cx| {
+            self.toolchain_store.as_ref()?.update(cx, |this, _| {
                 this.add_toolchain(toolchain);
             });
             Some(())
