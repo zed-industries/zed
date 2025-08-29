@@ -9253,6 +9253,7 @@ dependencies = [
  "pet-reporter",
  "pretty_assertions",
  "project",
+ "rand 0.8.5",
  "regex",
  "rope",
  "rust-embed",
