@@ -295,6 +295,7 @@ jobs:
     runs-on:
       - github-16vcpu-ubuntu-2404
     needs: tests
+    continue-on-error: true
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
