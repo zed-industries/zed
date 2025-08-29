@@ -3307,6 +3307,9 @@ impl EditorElement {
             }
         }
         for row_segments in per_row_map.iter_mut() {
+            if row_segments.is_empty() {
+                continue;
+            }
             let segments = mem::take(row_segments);
             let merged = Self::merge_overlapping_ranges(segments, base_background);
             *row_segments = merged;
