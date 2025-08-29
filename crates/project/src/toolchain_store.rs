@@ -30,8 +30,10 @@ use crate::{
 
 pub struct ToolchainStore {
     mode: ToolchainStoreInner,
+    user_toolchains: Vec<Toolchain>,
     _sub: Subscription,
 }
+
 enum ToolchainStoreInner {
     Local(Entity<LocalToolchainStore>),
     Remote(Entity<RemoteToolchainStore>),
@@ -64,6 +66,7 @@ impl ToolchainStore {
         });
         Self {
             mode: ToolchainStoreInner::Local(entity),
+            user_toolchains: vec![],
             _sub,
         }
     }
@@ -75,6 +78,7 @@ impl ToolchainStore {
         });
         Self {
             mode: ToolchainStoreInner::Remote(entity),
+            user_toolchains: vec![],
             _sub,
         }
     }
@@ -115,15 +119,23 @@ impl ToolchainStore {
         language_name: LanguageName,
         cx: &mut Context<Self>,
     ) -> Task<Option<(ToolchainList, Arc<Path>)>> {
-        match &self.mode {
+        let mut user_toolchains = self.user_toolchains.clone();
+        let task = match &self.mode {
             ToolchainStoreInner::Local(local) => {
                 local.update(cx, |this, cx| this.list_toolchains(path, language_name, cx))
             }
             ToolchainStoreInner::Remote(remote) => {
                 remote.read(cx).list_toolchains(path, language_name, cx)
             }
-        }
+        };
+        cx.spawn(async move |_, _| {
+            let (mut toolchains, path) = task.await?;
+            user_toolchains.append(&mut toolchains.toolchains);
+            toolchains.toolchains = user_toolchains;
+            Some((toolchains, path))
+        })
     }
+
     pub(crate) fn active_toolchain(
         &self,
         path: ProjectPath,
