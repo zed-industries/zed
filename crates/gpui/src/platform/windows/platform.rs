@@ -17,9 +17,7 @@ use windows::{
     UI::ViewManagement::UISettings,
     Win32::{
         Foundation::*,
-        Graphics::{
-            Gdi::*,
-        },
+        Graphics::Gdi::*,
         Security::Credentials::*,
         System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*, Threading::*},
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
