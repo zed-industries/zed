@@ -1893,11 +1893,6 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.selected_agent != agent {
-            self.selected_agent = agent.clone();
-            self.serialize(cx);
-        }
-
         match agent {
             AgentType::Zed => {
                 window.dispatch_action(
