@@ -1888,7 +1888,7 @@ impl AcpThread {
         } else {
             format!("({}) </dev/null", command)
         };
-        let args = vec!["-c".into(), shell_command.clone()];
+        let args = vec!["-c".into(), shell_command];
 
         let env = match &cwd {
             Some(dir) => self.project.update(cx, |project, cx| {
