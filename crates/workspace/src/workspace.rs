@@ -648,23 +648,30 @@ impl ProjectItemRegistry {
                             ) as Box<_>;
                             Ok((project_entry_id, build_workspace_item))
                         }
-                        Err(e) => match entry_abs_path.as_deref().filter(|_| is_file) {
-                            Some(abs_path) => match cx.update(|window, cx| {
-                                T::for_broken_project_item(abs_path, is_local, &e, window, cx)
-                            })? {
-                                Some(broken_project_item_view) => {
-                                    let build_workspace_item = Box::new(
-                                    move |_: &mut Pane, _: &mut Window, cx: &mut Context<Pane>| {
-                                        cx.new(|_| broken_project_item_view).boxed_clone()
-                                    },
-                                )
-                                    as Box<_>;
-                                    Ok((None, build_workspace_item))
+                        Err(e) => {
+                            if e.error_code() == ErrorCode::Internal {
+                                if let Some(abs_path) =
+                                    entry_abs_path.as_deref().filter(|_| is_file)
+                                {
+                                    if let Some(broken_project_item_view) =
+                                        cx.update(|window, cx| {
+                                            T::for_broken_project_item(
+                                                abs_path, is_local, &e, window, cx,
+                                            )
+                                        })?
+                                    {
+                                        let build_workspace_item = Box::new(
+                                            move |_: &mut Pane, _: &mut Window, cx: &mut Context<Pane>| {
+                                                cx.new(|_| broken_project_item_view).boxed_clone()
+                                            },
+                                        )
+                                        as Box<_>;
+                                        return Ok((None, build_workspace_item));
+                                    }
                                 }
-                                None => Err(e)?,
-                            },
-                            None => Err(e)?,
-                        },
+                            }
+                            Err(e)
+                        }
                     }
                 }))
             });
