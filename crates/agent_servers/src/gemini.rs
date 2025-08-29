@@ -1,4 +1,5 @@
 use std::rc::Rc;
+use std::str::FromStr as _;
 use std::{any::Any, path::Path};
 
 use crate::acp::AcpConnection;
@@ -63,7 +64,9 @@ impl AgentServer for Gemini {
                 })?
                 .await?
             };
-            command.args.push("--experimental-acp".into());
+            if !command.args.contains(&ACP_ARG.into()) {
+                command.args.push(ACP_ARG.into());
+            }
 
             if let Some(api_key) = cx.update(GoogleLanguageModelProvider::api_key)?.await.ok() {
                 command
@@ -86,6 +89,8 @@ impl AgentServer for Gemini {
                             .await;
                         let current_version =
                             String::from_utf8(version_output?.stdout)?.trim().to_owned();
+
+                        log::error!("connected to gemini, but missing prompt_capabilities.image (version is {current_version})");
                         return Err(LoadError::Unsupported {
                             current_version: current_version.into(),
                             command: command.path.to_string_lossy().to_string().into(),
@@ -94,7 +99,7 @@ impl AgentServer for Gemini {
                         .into());
                     }
                 }
-                Err(_) => {
+                Err(e) => {
                     let version_fut = util::command::new_smol_command(&command.path)
                         .args(command.args.iter())
                         .arg("--version")
@@ -113,8 +118,9 @@ impl AgentServer for Gemini {
                     let current_version = std::str::from_utf8(&version_output?.stdout)?
                         .trim()
                         .to_string();
-                    let supported = String::from_utf8(help_output?.stdout)?.contains(ACP_ARG);
+                    let supported = String::from_utf8(help_output?.stdout)?.contains(ACP_ARG) || semver::Version::from_str(&current_version).is_ok_and(|version| version >= Self::MINIMUM_VERSION.parse().unwrap());
 
+                    log::error!("failed to create ACP connection to gemini (version is {current_version}, supported: {supported}): {e}");
                     if !supported {
                         return Err(LoadError::Unsupported {
                             current_version: current_version.into(),

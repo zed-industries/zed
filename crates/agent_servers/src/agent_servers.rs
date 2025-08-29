@@ -185,6 +185,7 @@ impl AgentServerDelegate {
                             .join(entrypoint_path)
                             .to_string_lossy()
                             .to_string(),
+                        "--".into(),
                     ],
                     env: Default::default(),
                 })
