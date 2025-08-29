@@ -67,7 +67,7 @@ impl HeadlessProject {
         settings::init(cx);
         language::init(cx);
         project::Project::init_settings(cx);
-        log_store::init(false, cx);
+        log_store::init(true, cx);
     }
 
     pub fn new(
@@ -546,7 +546,9 @@ impl HeadlessProject {
             .context("lsp logs store is missing")?;
 
         lsp_logs.update(&mut cx, |lsp_logs, _| {
-            // we do not support any other log toggling yet
+            // RPC logs are very noisy and we need to toggle it on the headless server too.
+            // The rest of the logs for the ssh project are very important to have toggled always,
+            // to e.g. send language server error logs to the client before anything is toggled.
             if envelope.payload.enabled {
                 lsp_logs.enable_rpc_trace_for_language_server(server_id);
             } else {
