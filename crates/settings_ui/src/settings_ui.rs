@@ -195,7 +195,8 @@ fn build_tree_item(
         }
         SettingsUiEntryVariant::Item { path, item } => {
             tree[index].path = path;
-            tree[index].title = path; // todo! title
+            // todo(settings_ui) create title from path in macro, and use here
+            tree[index].title = path;
             tree[index].render = Some(item);
         }
         SettingsUiEntryVariant::None => {
@@ -408,8 +409,6 @@ fn read_settings_value_from_path<'a>(
         return Some(settings_contents);
     };
     let Some(value) = settings_contents.get(key) else {
-        // let error = format!("Key not found: {}", key);
-        // dbg!(error);
         return None;
     };
 
@@ -588,7 +587,8 @@ fn settings_value_from_settings_and_path(
         default_value,
         value,
         path: path.clone(),
-        title: path.last().expect("todo! pass path"),
+        // todo(settings_ui) title for items
+        title: path.last().expect("path non empty"),
     };
     return settings_value;
 }

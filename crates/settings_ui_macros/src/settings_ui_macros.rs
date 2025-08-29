@@ -43,7 +43,7 @@ pub fn derive_settings_ui(input: proc_macro::TokenStream) -> proc_macro::TokenSt
                     let lit: LitStr = meta.input.parse()?;
                     group_name = Some(lit.value());
                 } else if meta.path.is_ident("path") {
-                    // todo! try get KEY from Settings if possible, and once we do,
+                    // todo(settings_ui) try get KEY from Settings if possible, and once we do,
                     // if can get key from settings, throw error if path also passed
                     if path_name.is_some() {
                         return Err(meta.error("Only one 'path' can be specified"));
@@ -59,7 +59,7 @@ pub fn derive_settings_ui(input: proc_macro::TokenStream) -> proc_macro::TokenSt
     }
 
     if path_name.is_none() && group_name.is_some() {
-        // todo! derive path from settings
+        // todo(settings_ui) derive path from settings
         panic!("path is required when group is specified");
     }
 
@@ -163,7 +163,7 @@ fn generate_ui_item_body(
                         if meta.path.is_ident("rename_all") {
                             meta.input.parse::<Token![=]>()?;
                             let lit = meta.input.parse::<LitStr>()?.value();
-                            // todo! snake case
+                            // todo(settings_ui) snake case
                             lowercase = lit == "lowercase" || lit == "snake_case";
                         }
                         Ok(())
@@ -193,7 +193,7 @@ fn generate_ui_item_body(
                 }
             }
         }
-        // todo! unions
+        // todo(settings_ui) discriminated unions
         (_, _, Data::Enum(_)) => quote! {
             settings::SettingsUiItem::None
         },
