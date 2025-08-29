@@ -258,10 +258,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
             .iter()
             .map(|pos| (*pos..pos + 1, highlight_style));
 
-        let highlights = gpui::combine_highlights(
-            custom_highlights,
-            syntax_runs.map(|(range, highlight)| (range, highlight)),
-        );
+        let highlights = gpui::combine_highlights(custom_highlights, syntax_runs);
 
         Some(
             ListItem::new(ix)
