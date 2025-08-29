@@ -34,7 +34,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{TaskTemplate, TaskTemplates, VariableName};
+use task::{ShellKind, TaskTemplate, TaskTemplates, VariableName};
 use util::ResultExt;
 
 pub(crate) struct PyprojectTomlManifestProvider;
@@ -894,20 +894,65 @@ impl ToolchainLister for PythonToolchainProvider {
     fn term(&self) -> SharedString {
         self.term.clone()
     }
-    async fn activation_script(&self, toolchain: &Toolchain, fs: &dyn Fs) -> Option<String> {
-        let toolchain = serde_json::from_value::<pet_core::python_environment::PythonEnvironment>(
+    async fn activation_script(
+        &self,
+        toolchain: &Toolchain,
+        shell: ShellKind,
+        fs: &dyn Fs,
+    ) -> Vec<String> {
+        let Ok(toolchain) = serde_json::from_value::<pet_core::python_environment::PythonEnvironment>(
             toolchain.as_json.clone(),
-        )
-        .ok()?;
-        let mut activation_script = None;
-        if let Some(prefix) = &toolchain.prefix {
-            #[cfg(not(target_os = "windows"))]
-            let path = prefix.join(BINARY_DIR).join("activate");
-            #[cfg(target_os = "windows")]
-            let path = prefix.join(BINARY_DIR).join("activate.ps1");
-            if fs.is_file(&path).await {
-                activation_script = Some(format!(". {}", path.display()));
+        ) else {
+            return vec![];
+        };
+        let mut activation_script = vec![];
+
+        match toolchain.kind {
+            Some(PythonEnvironmentKind::Pixi) => {
+                let env = toolchain.name.as_deref().unwrap_or("default");
+                activation_script.push(format!("pixi shell -e {env}"))
             }
+            Some(PythonEnvironmentKind::Venv | PythonEnvironmentKind::VirtualEnv) => {
+                if let Some(prefix) = &toolchain.prefix {
+                    let activate_keyword = match shell {
+                        ShellKind::Cmd => ".",
+                        ShellKind::Nushell => "overlay use",
+                        ShellKind::Powershell => ".",
+                        ShellKind::Fish => "source",
+                        ShellKind::Csh => "source",
+                        ShellKind::Posix => "source",
+                    };
+                    let activate_script_name = match shell {
+                        ShellKind::Posix => "activate",
+                        ShellKind::Csh => "activate.csh",
+                        ShellKind::Fish => "activate.fish",
+                        ShellKind::Nushell => "activate.nu",
+                        ShellKind::Powershell => "activate.ps1",
+                        ShellKind::Cmd => "activate.bat",
+                    };
+                    let path = prefix.join(BINARY_DIR).join(activate_script_name);
+                    if fs.is_file(&path).await {
+                        activation_script.push(format!("{activate_keyword} {}", path.display()));
+                    }
+                }
+            }
+            Some(PythonEnvironmentKind::Pyenv) => {
+                let Some(manager) = toolchain.manager else {
+                    return vec![];
+                };
+                let version = toolchain.version.as_deref().unwrap_or("system");
+                let pyenv = manager.executable;
+                let pyenv = pyenv.display();
+                activation_script.extend(match shell {
+                    ShellKind::Fish => Some(format!("{pyenv} shell - fish {version}")),
+                    ShellKind::Posix => Some(format!("{pyenv} shell - sh {version}")),
+                    ShellKind::Nushell => Some(format!("{pyenv} shell - nu {version}")),
+                    ShellKind::Powershell => None,
+                    ShellKind::Csh => None,
+                    ShellKind::Cmd => None,
+                })
+            }
+            _ => {}
         }
         activation_script
     }
