@@ -20,7 +20,7 @@ use language::{
     },
 };
 use rpc::{
-    AnyProtoClient, ErrorExt as _, TypedEnvelope,
+    AnyProtoClient, ErrorCode, ErrorExt as _, TypedEnvelope,
     proto::{self, ToProto},
 };
 use smol::channel::Receiver;
@@ -837,7 +837,15 @@ impl BufferStore {
             }
         };
 
-        cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
+        cx.background_spawn(async move {
+            task.await.map_err(|e| {
+                if e.error_code() != ErrorCode::Internal {
+                    anyhow!(e.error_code())
+                } else {
+                    anyhow!("{e}")
+                }
+            })
+        })
     }
 
     pub fn create_buffer(&mut self, cx: &mut Context<Self>) -> Task<Result<Entity<Buffer>>> {
@@ -944,7 +952,15 @@ impl BufferStore {
     ) -> impl Iterator<Item = (&ProjectPath, impl Future<Output = Result<Entity<Buffer>>>)> {
         self.loading_buffers.iter().map(|(path, task)| {
             let task = task.clone();
-            (path, async move { task.await.map_err(|e| anyhow!("{e}")) })
+            (path, async move {
+                task.await.map_err(|e| {
+                    if e.error_code() != ErrorCode::Internal {
+                        anyhow!(e.error_code())
+                    } else {
+                        anyhow!("{e}")
+                    }
+                })
+            })
         })
     }
 
