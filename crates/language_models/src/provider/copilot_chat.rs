@@ -32,10 +32,6 @@ use std::time::Duration;
 use ui::prelude::*;
 use util::debug_panic;
 
-use super::anthropic::count_anthropic_tokens;
-use super::google::count_google_tokens;
-use super::open_ai::count_open_ai_tokens;
-
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("copilot_chat");
 const PROVIDER_NAME: LanguageModelProviderName =
     LanguageModelProviderName::new("GitHub Copilot Chat");
@@ -193,6 +189,25 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
     }
 }
 
+fn collect_tiktoken_messages(
+    request: LanguageModelRequest,
+) -> Vec<tiktoken_rs::ChatCompletionRequestMessage> {
+    request
+        .messages
+        .into_iter()
+        .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
+            role: match message.role {
+                Role::User => "user".into(),
+                Role::Assistant => "assistant".into(),
+                Role::System => "system".into(),
+            },
+            content: Some(message.string_contents()),
+            name: None,
+            function_call: None,
+        })
+        .collect::<Vec<_>>()
+}
+
 pub struct CopilotChatLanguageModel {
     model: CopilotChatModel,
     request_limiter: RateLimiter,
@@ -228,7 +243,9 @@ impl LanguageModel for CopilotChatLanguageModel {
             ModelVendor::OpenAI | ModelVendor::Anthropic => {
                 LanguageModelToolSchemaFormat::JsonSchema
             }
-            ModelVendor::Google => LanguageModelToolSchemaFormat::JsonSchemaSubset,
+            ModelVendor::Google | ModelVendor::XAI | ModelVendor::Unknown => {
+                LanguageModelToolSchemaFormat::JsonSchemaSubset
+            }
         }
     }
 
@@ -253,14 +270,20 @@ impl LanguageModel for CopilotChatLanguageModel {
         request: LanguageModelRequest,
         cx: &App,
     ) -> BoxFuture<'static, Result<u64>> {
-        match self.model.vendor() {
-            ModelVendor::Anthropic => count_anthropic_tokens(request, cx),
-            ModelVendor::Google => count_google_tokens(request, cx),
-            ModelVendor::OpenAI => {
-                let model = open_ai::Model::from_id(self.model.id()).unwrap_or_default();
-                count_open_ai_tokens(request, model, cx)
-            }
-        }
+        let model = self.model.clone();
+        cx.background_spawn(async move {
+            let messages = collect_tiktoken_messages(request);
+            // Copilot uses OpenAI tiktoken tokenizer for all it's model irrespective of the underlying provider(vendor).
+            let tokenizer_model = match model.tokenizer() {
+                Some("o200k_base") => "gpt-4o",
+                Some("cl100k_base") => "gpt-4",
+                _ => "gpt-4o",
+            };
+
+            tiktoken_rs::num_tokens_from_messages(tokenizer_model, &messages)
+                .map(|tokens| tokens as u64)
+        })
+        .boxed()
     }
 
     fn stream_completion(
