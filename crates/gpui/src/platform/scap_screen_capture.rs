@@ -228,7 +228,7 @@ fn run_capture(
         display,
         size,
     }));
-    if let Err(_) = stream_send_result {
+    if stream_send_result.is_err() {
         return;
     }
     while !cancel_stream.load(std::sync::atomic::Ordering::SeqCst) {

@@ -1,5 +1,5 @@
 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-<path d="M10 6.66667L10.5 6.33333L12.5 5L14.5 6.33333L15 6.66667" stroke="black" stroke-width="1.5"/>
-<path d="M12.5 11V5" stroke="black" stroke-width="1.5"/>
-<path d="M7.5 8.9V11C5.43097 11 4.56903 11 2.5 11V10.4L7.5 5.6V5H2.5V7.1" stroke="black" stroke-width="1.5"/>
+<path d="M10 6.66667L10.5 6.33333L12.5 5L14.5 6.33333L15 6.66667" stroke="black" stroke-width="1.2"/>
+<path d="M12.5 11V5" stroke="black" stroke-width="1.2"/>
+<path d="M7.5 8.9V11C5.43097 11 4.56903 11 2.5 11V10.4L7.5 5.6V5H2.5V7.1" stroke="black" stroke-width="1.2"/>
 </svg>

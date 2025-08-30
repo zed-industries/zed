@@ -6,7 +6,7 @@ use gpui::{AbsoluteLength, App, FontFallbacks, FontFeatures, FontWeight, Pixels,
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 
-use settings::SettingsSources;
+use settings::{SettingsSources, SettingsUi};
 use std::path::PathBuf;
 use task::Shell;
 use theme::FontFamilyName;
@@ -24,7 +24,7 @@ pub struct Toolbar {
     pub breadcrumbs: bool,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, SettingsUi)]
 pub struct TerminalSettings {
     pub shell: Shell,
     pub working_directory: WorkingDirectory,
@@ -325,10 +325,10 @@ impl settings::Settings for TerminalSettings {
             .and_then(|v| v.as_object())
         {
             for (k, v) in env {
-                if v.is_null() {
-                    if let Some(zed_env) = current.env.as_mut() {
-                        zed_env.remove(k);
-                    }
+                if v.is_null()
+                    && let Some(zed_env) = current.env.as_mut()
+                {
+                    zed_env.remove(k);
                 }
                 let Some(v) = v.as_str() else { continue };
                 if let Some(zed_env) = current.env.as_mut() {

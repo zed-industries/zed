@@ -88,7 +88,7 @@ impl EmbeddingIndex {
 
         let worktree = self.worktree.read(cx).snapshot();
         let worktree_abs_path = worktree.abs_path().clone();
-        let scan = self.scan_updated_entries(worktree, updated_entries.clone(), cx);
+        let scan = self.scan_updated_entries(worktree, updated_entries, cx);
         let chunk = self.chunk_files(worktree_abs_path, scan.updated_entries, cx);
         let embed = Self::embed_files(self.embedding_provider.clone(), chunk.files, cx);
         let persist = self.persist_embeddings(scan.deleted_entry_ranges, embed.files, cx);
@@ -194,11 +194,11 @@ impl EmbeddingIndex {
                     project::PathChange::Added
                     | project::PathChange::Updated
                     | project::PathChange::AddedOrUpdated => {
-                        if let Some(entry) = worktree.entry_for_id(*entry_id) {
-                            if entry.is_file() {
-                                let handle = entries_being_indexed.insert(entry.id);
-                                updated_entries_tx.send((entry.clone(), handle)).await?;
-                            }
+                        if let Some(entry) = worktree.entry_for_id(*entry_id)
+                            && entry.is_file()
+                        {
+                            let handle = entries_being_indexed.insert(entry.id);
+                            updated_entries_tx.send((entry.clone(), handle)).await?;
                         }
                     }
                     project::PathChange::Removed => {
@@ -406,7 +406,7 @@ impl EmbeddingIndex {
                 .context("failed to create read transaction")?;
             let result = db
                 .iter(&tx)?
-                .map(|entry| Ok(entry?.1.path.clone()))
+                .map(|entry| Ok(entry?.1.path))
                 .collect::<Result<Vec<Arc<Path>>>>();
             drop(tx);
             result
@@ -423,8 +423,7 @@ impl EmbeddingIndex {
             Ok(db
                 .get(&tx, &db_key_for_path(&path))?
                 .context("no such path")?
-                .chunks
-                .clone())
+                .chunks)
         })
     }
 }

@@ -498,8 +498,9 @@ impl DirectWriteState {
                 )
                 .unwrap()
             } else {
+                let family = self.system_ui_font_name.clone();
                 self.find_font_id(
-                    target_font.family.as_ref(),
+                    font_name_with_fallbacks(target_font.family.as_ref(), family.as_ref()),
                     target_font.weight,
                     target_font.style,
                     &target_font.features,
@@ -512,7 +513,6 @@ impl DirectWriteState {
                     }
                     #[cfg(not(any(test, feature = "test-support")))]
                     {
-                        let family = self.system_ui_font_name.clone();
                         log::error!("{} not found, use {} instead.", target_font.family, family);
                         self.get_font_id_from_font_collection(
                             family.as_ref(),
@@ -850,7 +850,7 @@ impl DirectWriteState {
         }
 
         let bitmap_data = if params.is_emoji {
-            if let Ok(color) = self.rasterize_color(&params, glyph_bounds) {
+            if let Ok(color) = self.rasterize_color(params, glyph_bounds) {
                 color
             } else {
                 let monochrome = self.rasterize_monochrome(params, glyph_bounds)?;
@@ -1784,7 +1784,7 @@ fn apply_font_features(
         }
 
         unsafe {
-            direct_write_features.AddFontFeature(make_direct_write_feature(&tag, *value))?;
+            direct_write_features.AddFontFeature(make_direct_write_feature(tag, *value))?;
         }
     }
     unsafe {

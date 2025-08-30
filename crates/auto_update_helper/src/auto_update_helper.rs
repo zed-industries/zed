@@ -18,7 +18,7 @@ fn main() {}
 
 #[cfg(target_os = "windows")]
 mod windows_impl {
-    use std::path::Path;
+    use std::{borrow::Cow, path::Path};
 
     use super::dialog::create_dialog_window;
     use super::updater::perform_update;
@@ -37,6 +37,11 @@ mod windows_impl {
     pub(crate) const WM_JOB_UPDATED: u32 = WM_USER + 1;
     pub(crate) const WM_TERMINATE: u32 = WM_USER + 2;
 
+    #[derive(Debug, Default)]
+    struct Args {
+        launch: bool,
+    }
+
     pub(crate) fn run() -> Result<()> {
         let helper_dir = std::env::current_exe()?
             .parent()
@@ -51,8 +56,9 @@ mod windows_impl {
         log::info!("======= Starting Zed update =======");
         let (tx, rx) = std::sync::mpsc::channel();
         let hwnd = create_dialog_window(rx)?.0 as isize;
+        let args = parse_args(std::env::args().skip(1));
         std::thread::spawn(move || {
-            let result = perform_update(app_dir.as_path(), Some(hwnd));
+            let result = perform_update(app_dir.as_path(), Some(hwnd), args.launch);
             tx.send(result).ok();
             unsafe { PostMessageW(Some(HWND(hwnd as _)), WM_TERMINATE, WPARAM(0), LPARAM(0)) }.ok();
         });
@@ -77,6 +83,29 @@ mod windows_impl {
         Ok(())
     }
 
+    fn parse_args(input: impl IntoIterator<Item = String>) -> Args {
+        let mut args: Args = Args { launch: true };
+
+        let mut input = input.into_iter();
+        if let Some(arg) = input.next() {
+            let launch_arg;
+
+            if arg == "--launch" {
+                launch_arg = input.next().map(Cow::Owned);
+            } else if let Some(rest) = arg.strip_prefix("--launch=") {
+                launch_arg = Some(Cow::Borrowed(rest));
+            } else {
+                launch_arg = None;
+            }
+
+            if launch_arg.as_deref() == Some("false") {
+                args.launch = false;
+            }
+        }
+
+        args
+    }
+
     pub(crate) fn show_error(mut content: String) {
         if content.len() > 600 {
             content.truncate(600);
@@ -90,5 +119,29 @@ mod windows_impl {
                 MB_ICONERROR | MB_SYSTEMMODAL,
             )
         };
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use crate::windows_impl::parse_args;
+
+        #[test]
+        fn test_parse_args() {
+            // launch can be specified via two separate arguments
+            assert!(parse_args(["--launch".into(), "true".into()]).launch);
+            assert!(!parse_args(["--launch".into(), "false".into()]).launch);
+
+            // launch can be specified via one single argument
+            assert!(parse_args(["--launch=true".into()]).launch);
+            assert!(!parse_args(["--launch=false".into()]).launch);
+
+            // launch defaults to true on no arguments
+            assert!(parse_args([]).launch);
+
+            // launch defaults to true on invalid arguments
+            assert!(parse_args(["--launch".into()]).launch);
+            assert!(parse_args(["--launch=".into()]).launch);
+            assert!(parse_args(["--launch=invalid".into()]).launch);
+        }
     }
 }

@@ -786,6 +786,32 @@ impl Database {
             })
             .collect())
     }
+
+    /// Update language server capabilities for a given id.
+    pub async fn update_server_capabilities(
+        &self,
+        project_id: ProjectId,
+        server_id: u64,
+        new_capabilities: String,
+    ) -> Result<()> {
+        self.transaction(|tx| {
+            let new_capabilities = new_capabilities.clone();
+            async move {
+                Ok(
+                    language_server::Entity::update(language_server::ActiveModel {
+                        project_id: ActiveValue::unchanged(project_id),
+                        id: ActiveValue::unchanged(server_id as i64),
+                        capabilities: ActiveValue::set(new_capabilities),
+                        ..Default::default()
+                    })
+                    .exec(&*tx)
+                    .await?,
+                )
+            }
+        })
+        .await?;
+        Ok(())
+    }
 }
 
 fn operation_to_storage(

@@ -292,7 +292,7 @@ mod tests {
 
         assert_eq!(
             Chromium
-                .extract_pull_request(&remote, &message)
+                .extract_pull_request(&remote, message)
                 .unwrap()
                 .url
                 .as_str(),

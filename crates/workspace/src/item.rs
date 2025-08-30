@@ -1,6 +1,7 @@
 use crate::{
     CollaboratorId, DelayedDebouncedEditAction, FollowableViewRegistry, ItemNavHistory,
     SerializableItemRegistry, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
+    invalid_buffer_view::InvalidBufferView,
     pane::{self, Pane},
     persistence::model::ItemId,
     searchable::SearchableItemHandle,
@@ -16,12 +17,13 @@ use gpui::{
 use project::{Project, ProjectEntryId, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsLocation, SettingsSources};
+use settings::{Settings, SettingsLocation, SettingsSources, SettingsUi};
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
     ops::Range,
+    path::Path,
     rc::Rc,
     sync::Arc,
     time::Duration,
@@ -47,7 +49,7 @@ impl Default for SaveOptions {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, SettingsUi)]
 pub struct ItemSettings {
     pub git_status: bool,
     pub close_position: ClosePosition,
@@ -57,7 +59,7 @@ pub struct ItemSettings {
     pub show_close_button: ShowCloseButton,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, SettingsUi)]
 pub struct PreviewTabsSettings {
     pub enabled: bool,
     pub enable_preview_from_file_finder: bool,
@@ -270,6 +272,12 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     /// Returns the textual contents of the tab.
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString;
 
+    /// Returns the suggested filename for saving this item.
+    /// By default, returns the tab content text.
+    fn suggested_filename(&self, cx: &App) -> SharedString {
+        self.tab_content_text(0, cx)
+    }
+
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
         None
     }
@@ -293,6 +301,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
 
     fn deactivated(&mut self, _window: &mut Window, _: &mut Context<Self>) {}
     fn discarded(&self, _project: Entity<Project>, _window: &mut Window, _cx: &mut Context<Self>) {}
+    fn on_removed(&self, _cx: &App) {}
     fn workspace_deactivated(&mut self, _window: &mut Window, _: &mut Context<Self>) {}
     fn navigate(&mut self, _: Box<dyn Any>, _window: &mut Window, _: &mut Context<Self>) -> bool {
         false
@@ -482,7 +491,7 @@ where
     fn should_serialize(&self, event: &dyn Any, cx: &App) -> bool {
         event
             .downcast_ref::<T::Event>()
-            .map_or(false, |event| self.read(cx).should_serialize(event))
+            .is_some_and(|event| self.read(cx).should_serialize(event))
     }
 }
 
@@ -496,6 +505,7 @@ pub trait ItemHandle: 'static + Send {
     ) -> gpui::Subscription;
     fn tab_content(&self, params: TabContentParams, window: &Window, cx: &App) -> AnyElement;
     fn tab_content_text(&self, detail: usize, cx: &App) -> SharedString;
+    fn suggested_filename(&self, cx: &App) -> SharedString;
     fn tab_icon(&self, window: &Window, cx: &App) -> Option<Icon>;
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString>;
     fn tab_tooltip_content(&self, cx: &App) -> Option<TabTooltipContent>;
@@ -532,6 +542,7 @@ pub trait ItemHandle: 'static + Send {
     );
     fn deactivated(&self, window: &mut Window, cx: &mut App);
     fn discarded(&self, project: Entity<Project>, window: &mut Window, cx: &mut App);
+    fn on_removed(&self, cx: &App);
     fn workspace_deactivated(&self, window: &mut Window, cx: &mut App);
     fn navigate(&self, data: Box<dyn Any>, window: &mut Window, cx: &mut App) -> bool;
     fn item_id(&self) -> EntityId;
@@ -627,6 +638,10 @@ impl<T: Item> ItemHandle for Entity<T> {
     }
     fn tab_content_text(&self, detail: usize, cx: &App) -> SharedString {
         self.read(cx).tab_content_text(detail, cx)
+    }
+
+    fn suggested_filename(&self, cx: &App) -> SharedString {
+        self.read(cx).suggested_filename(cx)
     }
 
     fn tab_icon(&self, window: &Window, cx: &App) -> Option<Icon> {
@@ -819,10 +834,10 @@ impl<T: Item> ItemHandle for Entity<T> {
                     if let Some(item) = item.to_followable_item_handle(cx) {
                         let leader_id = workspace.leader_for_pane(&pane);
 
-                        if let Some(leader_id) = leader_id {
-                            if let Some(FollowEvent::Unfollow) = item.to_follow_event(event) {
-                                workspace.unfollow(leader_id, window, cx);
-                            }
+                        if let Some(leader_id) = leader_id
+                            && let Some(FollowEvent::Unfollow) = item.to_follow_event(event)
+                        {
+                            workspace.unfollow(leader_id, window, cx);
                         }
 
                         if item.item_focus_handle(cx).contains_focused(window, cx) {
@@ -850,10 +865,10 @@ impl<T: Item> ItemHandle for Entity<T> {
                         }
                     }
 
-                    if let Some(item) = item.to_serializable_item_handle(cx) {
-                        if item.should_serialize(event, cx) {
-                            workspace.enqueue_item_serialization(item).ok();
-                        }
+                    if let Some(item) = item.to_serializable_item_handle(cx)
+                        && item.should_serialize(event, cx)
+                    {
+                        workspace.enqueue_item_serialization(item).ok();
                     }
 
                     T::to_item_events(event, |event| match event {
@@ -935,11 +950,11 @@ impl<T: Item> ItemHandle for Entity<T> {
                 &self.read(cx).focus_handle(cx),
                 window,
                 move |workspace, window, cx| {
-                    if let Some(item) = weak_item.upgrade() {
-                        if item.workspace_settings(cx).autosave == AutosaveSetting::OnFocusChange {
-                            Pane::autosave_item(&item, workspace.project.clone(), window, cx)
-                                .detach_and_log_err(cx);
-                        }
+                    if let Some(item) = weak_item.upgrade()
+                        && item.workspace_settings(cx).autosave == AutosaveSetting::OnFocusChange
+                    {
+                        Pane::autosave_item(&item, workspace.project.clone(), window, cx)
+                            .detach_and_log_err(cx);
                     }
                 },
             )
@@ -966,6 +981,10 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn deactivated(&self, window: &mut Window, cx: &mut App) {
         self.update(cx, |this, cx| this.deactivated(window, cx));
+    }
+
+    fn on_removed(&self, cx: &App) {
+        self.read(cx).on_removed(cx);
     }
 
     fn workspace_deactivated(&self, window: &mut Window, cx: &mut App) {
@@ -1144,6 +1163,22 @@ pub trait ProjectItem: Item {
     ) -> Self
     where
         Self: Sized;
+
+    /// A fallback handler, which will be called after [`project::ProjectItem::try_open`] fails,
+    /// with the error from that failure as an argument.
+    /// Allows to open an item that can gracefully display and handle errors.
+    fn for_broken_project_item(
+        _abs_path: &Path,
+        _is_local: bool,
+        _e: &anyhow::Error,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Option<InvalidBufferView>
+    where
+        Self: Sized,
+    {
+        None
+    }
 }
 
 #[derive(Debug)]

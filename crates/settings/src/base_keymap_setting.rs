@@ -1,13 +1,17 @@
 use std::fmt::{Display, Formatter};
 
-use crate::{Settings, SettingsSources, VsCodeSettings};
+use crate as settings;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::{Settings, SettingsSources, VsCodeSettings};
+use settings_ui_macros::SettingsUi;
 
 /// Base key bindings scheme. Base keymaps can be overridden with user keymaps.
 ///
 /// Default: VSCode
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
+#[derive(
+    Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default, SettingsUi,
+)]
 pub enum BaseKeymap {
     #[default]
     VSCode,
@@ -44,7 +48,7 @@ impl BaseKeymap {
         ("Sublime Text", Self::SublimeText),
         ("Emacs (beta)", Self::Emacs),
         ("TextMate", Self::TextMate),
-        ("Cursor (beta)", Self::Cursor),
+        ("Cursor", Self::Cursor),
     ];
 
     #[cfg(not(target_os = "macos"))]
@@ -54,7 +58,7 @@ impl BaseKeymap {
         ("JetBrains", Self::JetBrains),
         ("Sublime Text", Self::SublimeText),
         ("Emacs (beta)", Self::Emacs),
-        ("Cursor (beta)", Self::Cursor),
+        ("Cursor", Self::Cursor),
     ];
 
     pub fn asset_path(&self) -> Option<&'static str> {

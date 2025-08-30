@@ -30,7 +30,7 @@ pub fn main() {
 
         let node_runtime = NodeRuntime::unavailable();
         let language_registry = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
-        languages::init(language_registry.clone(), node_runtime, cx);
+        languages::init(language_registry, node_runtime, cx);
         theme::init(LoadThemes::JustBase, cx);
         Assets.load_fonts(cx).unwrap();
 
