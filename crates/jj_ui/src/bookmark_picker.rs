@@ -81,7 +81,11 @@ impl BookmarkPickerDelegate {
         jj_store: Entity<JujutsuStore>,
         cx: &mut Context<BookmarkPicker>,
     ) -> Self {
-        let bookmarks = jj_store.read(cx).repository().list_bookmarks();
+        let bookmarks = jj_store
+            .read(cx)
+            .repository()
+            .map(|repo| repo.list_bookmarks())
+            .unwrap_or_default();
 
         Self {
             picker,
