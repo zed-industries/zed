@@ -1,5 +1,5 @@
+use std::any::Any;
 use std::rc::Rc;
-use std::{any::Any, path::Path};
 
 use crate::acp::AcpConnection;
 use crate::{AgentServer, AgentServerDelegate};
@@ -31,11 +31,10 @@ impl AgentServer for Gemini {
 
     fn connect(
         &self,
-        root_dir: &Path,
         delegate: AgentServerDelegate,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn AgentConnection>>> {
-        let root_dir = root_dir.to_path_buf();
+        let project = delegate.project.clone();
         let server_name = self.name();
         let settings = cx.read_global(|settings: &SettingsStore, _| {
             settings.get::<AllAgentServersSettings>(None).gemini.clone()
@@ -70,20 +69,24 @@ impl AgentServer for Gemini {
             if let Some(api_key) = cx.update(GoogleLanguageModelProvider::api_key)?.await.ok() {
                 command
                     .env
-                    .get_or_insert_default()
                     .insert("GEMINI_API_KEY".to_owned(), api_key.key);
             }
 
-            let result = crate::acp::connect(server_name, command.clone(), &root_dir, cx).await;
+            let result = crate::acp::connect(server_name, command.clone(), &project, cx).await;
             match &result {
                 Ok(connection) => {
                     if let Some(connection) = connection.clone().downcast::<AcpConnection>()
                         && !connection.prompt_capabilities().image
                     {
-                        let version_output = util::command::new_smol_command(&command.path)
-                            .args(command.args.iter())
-                            .arg("--version")
-                            .kill_on_drop(true)
+                        let version_output = project
+                            .update(cx, |project, cx| {
+                                project.new_smol_command(
+                                    &command.path,
+                                    command.args.iter().map(|x| x.as_str()).chain(["--version"]),
+                                    &command.env,
+                                    cx,
+                                )
+                            })??
                             .output()
                             .await;
                         let current_version =
@@ -99,16 +102,26 @@ impl AgentServer for Gemini {
                     }
                 }
                 Err(e) => {
-                    let version_fut = util::command::new_smol_command(&command.path)
-                        .args(command.args.iter())
-                        .arg("--version")
-                        .kill_on_drop(true)
+                    let version_fut = project
+                        .update(cx, |project, cx| {
+                            project.new_smol_command(
+                                &command.path,
+                                command.args.iter().map(|x| x.as_str()).chain(["--version"]),
+                                &command.env,
+                                cx,
+                            )
+                        })??
                         .output();
 
-                    let help_fut = util::command::new_smol_command(&command.path)
-                        .args(command.args.iter())
-                        .arg("--help")
-                        .kill_on_drop(true)
+                    let help_fut = project
+                        .update(cx, |project, cx| {
+                            project.new_smol_command(
+                                &command.path,
+                                command.args.iter().map(|x| x.as_str()).chain(["--help"]),
+                                &command.env,
+                                cx,
+                            )
+                        })??
                         .output();
 
                     let (version_output, help_output) =
@@ -170,7 +183,7 @@ pub(crate) mod tests {
         AgentServerCommand {
             path: "node".into(),
             args: vec![cli_path],
-            env: None,
+            env: Default::default(),
         }
     }
 }

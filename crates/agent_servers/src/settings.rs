@@ -52,7 +52,7 @@ impl BuiltinAgentServerSettings {
         self.path.map(|path| AgentServerCommand {
             path,
             args: self.args.unwrap_or_default(),
-            env: self.env,
+            env: self.env.unwrap_or_default(),
         })
     }
 }
@@ -62,7 +62,7 @@ impl From<AgentServerCommand> for BuiltinAgentServerSettings {
         BuiltinAgentServerSettings {
             path: Some(value.path),
             args: Some(value.args),
-            env: value.env,
+            env: Some(value.env),
             ..Default::default()
         }
     }
