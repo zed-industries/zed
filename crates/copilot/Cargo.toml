@@ -30,6 +30,7 @@ client.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
 dirs.workspace = true
+encoding.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
@@ -53,6 +54,7 @@ util.workspace = true
 workspace.workspace = true
 workspace-hack.workspace = true
 itertools.workspace = true
+
 
 [target.'cfg(windows)'.dependencies]
 async-std = { version = "1.12.0", features = ["unstable"] }

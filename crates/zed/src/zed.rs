@@ -406,6 +406,9 @@ pub fn initialize_workspace(
             }
         });
 
+        let encoding_indicator =
+            cx.new(|_cx| encodings::EncodingIndicator::new(None, workspace.weak_handle(), None));
+
         let cursor_position =
             cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
         workspace.status_bar().update(cx, |status_bar, cx| {
@@ -418,6 +421,7 @@ pub fn initialize_workspace(
             status_bar.add_right_item(active_toolchain_language, window, cx);
             status_bar.add_right_item(vim_mode_indicator, window, cx);
             status_bar.add_right_item(cursor_position, window, cx);
+            status_bar.add_right_item(encoding_indicator, window, cx);
             status_bar.add_right_item(image_info, window, cx);
         });
 
@@ -1942,6 +1946,8 @@ mod tests {
     use assets::Assets;
     use collections::HashSet;
     use editor::{DisplayPoint, Editor, SelectionEffects, display_map::DisplayRow};
+    use encoding::all::UTF_8;
+    use fs::encodings::EncodingWrapper;
     use gpui::{
         Action, AnyWindowHandle, App, AssetSource, BorrowAppContext, SemanticVersion,
         TestAppContext, UpdateGlobal, VisualTestContext, WindowHandle, actions,
@@ -4133,6 +4139,7 @@ mod tests {
                 "/settings.json".as_ref(),
                 &r#"{"base_keymap": "Atom"}"#.into(),
                 Default::default(),
+                EncodingWrapper::new(UTF_8),
             )
             .await
             .unwrap();
@@ -4143,6 +4150,7 @@ mod tests {
                 "/keymap.json".as_ref(),
                 &r#"[{"bindings": {"backspace": "test_only::ActionA"}}]"#.into(),
                 Default::default(),
+                EncodingWrapper::new(UTF_8),
             )
             .await
             .unwrap();
@@ -4191,6 +4199,7 @@ mod tests {
                 "/keymap.json".as_ref(),
                 &r#"[{"bindings": {"backspace": "test_only::ActionB"}}]"#.into(),
                 Default::default(),
+                EncodingWrapper::new(UTF_8),
             )
             .await
             .unwrap();
@@ -4211,6 +4220,7 @@ mod tests {
                 "/settings.json".as_ref(),
                 &r#"{"base_keymap": "JetBrains"}"#.into(),
                 Default::default(),
+                EncodingWrapper::new(UTF_8),
             )
             .await
             .unwrap();
@@ -4251,6 +4261,7 @@ mod tests {
                 "/settings.json".as_ref(),
                 &r#"{"base_keymap": "Atom"}"#.into(),
                 Default::default(),
+                EncodingWrapper::new(UTF_8),
             )
             .await
             .unwrap();
@@ -4260,6 +4271,7 @@ mod tests {
                 "/keymap.json".as_ref(),
                 &r#"[{"bindings": {"backspace": "test_only::ActionA"}}]"#.into(),
                 Default::default(),
+                EncodingWrapper::new(UTF_8),
             )
             .await
             .unwrap();
@@ -4303,6 +4315,7 @@ mod tests {
                 "/keymap.json".as_ref(),
                 &r#"[{"bindings": {"backspace": null}}]"#.into(),
                 Default::default(),
+                EncodingWrapper::new(UTF_8),
             )
             .await
             .unwrap();
@@ -4323,6 +4336,7 @@ mod tests {
                 "/settings.json".as_ref(),
                 &r#"{"base_keymap": "JetBrains"}"#.into(),
                 Default::default(),
+                EncodingWrapper::new(UTF_8),
             )
             .await
             .unwrap();

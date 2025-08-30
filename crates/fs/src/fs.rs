@@ -1,6 +1,7 @@
 #[cfg(target_os = "macos")]
 mod mac_watcher;
 
+pub mod encodings;
 #[cfg(not(target_os = "macos"))]
 pub mod fs_watcher;
 
@@ -53,6 +54,9 @@ use parking_lot::Mutex;
 use smol::io::AsyncReadExt;
 #[cfg(any(test, feature = "test-support"))]
 use std::ffi::OsStr;
+
+use crate::encodings::EncodingWrapper;
+use crate::encodings::from_utf8;
 
 pub trait Watcher: Send + Sync {
     fn add(&self, path: &Path) -> Result<()>;
@@ -108,9 +112,25 @@ pub trait Fs: Send + Sync {
     async fn load(&self, path: &Path) -> Result<String> {
         Ok(String::from_utf8(self.load_bytes(path).await?)?)
     }
+
+    /// Load a file with the specified encoding, returning a UTF-8 string.
+    async fn load_with_encoding(
+        &self,
+        path: PathBuf,
+        encoding: EncodingWrapper,
+    ) -> anyhow::Result<String> {
+        Ok(encodings::to_utf8(self.load_bytes(path.as_path()).await?, encoding).await?)
+    }
+
     async fn load_bytes(&self, path: &Path) -> Result<Vec<u8>>;
     async fn atomic_write(&self, path: PathBuf, text: String) -> Result<()>;
-    async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()>;
+    async fn save(
+        &self,
+        path: &Path,
+        text: &Rope,
+        line_ending: LineEnding,
+        encoding: EncodingWrapper,
+    ) -> Result<()>;
     async fn write(&self, path: &Path, content: &[u8]) -> Result<()>;
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf>;
     async fn is_file(&self, path: &Path) -> bool;
@@ -541,8 +561,12 @@ impl Fs for RealFs {
 
     async fn load(&self, path: &Path) -> Result<String> {
         let path = path.to_path_buf();
-        let text = smol::unblock(|| std::fs::read_to_string(path)).await?;
-        Ok(text)
+        let encoding = EncodingWrapper::new(encoding::all::UTF_8);
+        let text =
+            smol::unblock(async || Ok(encodings::to_utf8(std::fs::read(path)?, encoding).await?))
+                .await
+                .await;
+        text
     }
     async fn load_bytes(&self, path: &Path) -> Result<Vec<u8>> {
         let path = path.to_path_buf();
@@ -596,7 +620,13 @@ impl Fs for RealFs {
         Ok(())
     }
 
-    async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
+    async fn save(
+        &self,
+        path: &Path,
+        text: &Rope,
+        line_ending: LineEnding,
+        encoding: EncodingWrapper,
+    ) -> Result<()> {
         let buffer_size = text.summary().len.min(10 * 1024);
         if let Some(path) = path.parent() {
             self.create_dir(path).await?;
@@ -604,7 +634,9 @@ impl Fs for RealFs {
         let file = smol::fs::File::create(path).await?;
         let mut writer = smol::io::BufWriter::with_capacity(buffer_size, file);
         for chunk in chunks(text, line_ending) {
-            writer.write_all(chunk.as_bytes()).await?;
+            writer
+                .write_all(&from_utf8(chunk.to_string(), encoding.clone()).await?)
+                .await?;
         }
         writer.flush().await?;
         Ok(())
@@ -2275,14 +2307,22 @@ impl Fs for FakeFs {
         Ok(())
     }
 
-    async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
+    async fn save(
+        &self,
+        path: &Path,
+        text: &Rope,
+        line_ending: LineEnding,
+        encoding: EncodingWrapper,
+    ) -> Result<()> {
+        use crate::encodings::from_utf8;
+
         self.simulate_random_delay().await;
         let path = normalize_path(path);
         let content = chunks(text, line_ending).collect::<String>();
         if let Some(path) = path.parent() {
             self.create_dir(path).await?;
         }
-        self.write_file_internal(path, content.into_bytes(), false)?;
+        self.write_file_internal(path, from_utf8(content, encoding).await?, false)?;
         Ok(())
     }
 

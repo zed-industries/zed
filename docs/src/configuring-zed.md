@@ -1490,7 +1490,8 @@ Positive `integer` value between 1 and 32. Values outside of this range will be 
 ```json
 "status_bar": {
   "active_language_button": true,
-  "cursor_position_button": true
+  "cursor_position_button": true,
+  "encoding_indicator": true,
 },
 ```
 

@@ -32,6 +32,7 @@ cloud_llm_client.workspace = true
 collections.workspace = true
 context_server.workspace = true
 db.workspace = true
+encoding.workspace = true
 fs.workspace = true
 futures.workspace = true
 git.workspace = true
@@ -71,6 +72,7 @@ web_search.workspace = true
 which.workspace = true
 workspace-hack.workspace = true
 zstd.workspace = true
+
 
 [dev-dependencies]
 agent = { workspace = true, "features" = ["test-support"] }
