@@ -69,15 +69,15 @@ impl ActiveToolchain {
                     .read_with(cx, |this, _| Some(this.language()?.name()))
                     .ok()
                     .flatten()?;
-                let term = workspace
+                let meta = workspace
                     .update(cx, |workspace, cx| {
                         let languages = workspace.project().read(cx).languages();
-                        Project::toolchain_term(languages.clone(), language_name.clone())
+                        Project::toolchain_metadata(languages.clone(), language_name.clone())
                     })
                     .ok()?
                     .await?;
                 let _ = this.update(cx, |this, cx| {
-                    this.term = term;
+                    this.term = meta.term;
                     cx.notify();
                 });
                 let (worktree_id, path) = active_file

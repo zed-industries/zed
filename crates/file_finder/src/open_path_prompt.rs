@@ -23,7 +23,6 @@ use workspace::Workspace;
 
 pub(crate) struct OpenPathPrompt;
 
-#[derive(Debug)]
 pub struct OpenPathDelegate {
     tx: Option<oneshot::Sender<Option<Vec<PathBuf>>>>,
     lister: DirectoryLister,
@@ -35,6 +34,9 @@ pub struct OpenPathDelegate {
     prompt_root: String,
     path_style: PathStyle,
     replace_prompt: Task<()>,
+    render_footer:
+        Arc<dyn Fn(&mut Window, &mut Context<Picker<Self>>) -> Option<AnyElement> + 'static>,
+    hidden_entries: bool,
 }
 
 impl OpenPathDelegate {
@@ -60,9 +62,25 @@ impl OpenPathDelegate {
             },
             path_style,
             replace_prompt: Task::ready(()),
+            render_footer: Arc::new(|_, _| None),
+            hidden_entries: false,
         }
     }
 
+    pub fn with_footer(
+        mut self,
+        footer: Arc<
+            dyn Fn(&mut Window, &mut Context<Picker<Self>>) -> Option<AnyElement> + 'static,
+        >,
+    ) -> Self {
+        self.render_footer = footer;
+        self
+    }
+
+    pub fn show_hidden(mut self) -> Self {
+        self.hidden_entries = true;
+        self
+    }
     fn get_entry(&self, selected_match_index: usize) -> Option<CandidateInfo> {
         match &self.directory_state {
             DirectoryState::List { entries, .. } => {
@@ -261,7 +279,7 @@ impl PickerDelegate for OpenPathDelegate {
         self.cancel_flag.store(true, atomic::Ordering::Release);
         self.cancel_flag = Arc::new(AtomicBool::new(false));
         let cancel_flag = self.cancel_flag.clone();
-
+        let hidden_entries = self.hidden_entries;
         let parent_path_is_root = self.prompt_root == dir;
         cx.spawn_in(window, async move |this, cx| {
             if let Some(query) = query {
@@ -353,7 +371,7 @@ impl PickerDelegate for OpenPathDelegate {
                 return;
             };
 
-            if !suffix.starts_with('.') {
+            if !suffix.starts_with('.') && !hidden_entries {
                 new_entries.retain(|entry| !entry.path.string.starts_with('.'));
             }
             if suffix.is_empty() {
@@ -730,6 +748,14 @@ impl PickerDelegate for OpenPathDelegate {
             }
             DirectoryState::None { .. } => None,
         }
+    }
+
+    fn render_footer(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
+        (self.render_footer)(window, cx)
     }
 
     fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {

@@ -97,7 +97,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
     let python_context_provider = Arc::new(python::PythonContextProvider);
     let python_lsp_adapter = Arc::new(python::PythonLspAdapter::new(node.clone()));
     let basedpyright_lsp_adapter = Arc::new(BasedPyrightLspAdapter::new());
-    let python_toolchain_provider = Arc::new(python::PythonToolchainProvider::default());
+    let python_toolchain_provider = Arc::new(python::PythonToolchainProvider);
     let rust_context_provider = Arc::new(rust::RustContextProvider);
     let rust_lsp_adapter = Arc::new(rust::RustLspAdapter);
     let tailwind_adapter = Arc::new(tailwind::TailwindLspAdapter::new(node.clone()));

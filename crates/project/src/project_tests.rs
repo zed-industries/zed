@@ -9213,13 +9213,21 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
                 ..Default::default()
             }
         }
-        // Returns a term which we should use in UI to refer to a toolchain.
-        fn term(&self) -> SharedString {
-            SharedString::new_static("virtual environment")
+        async fn resolve(
+            &self,
+            _: PathBuf,
+            _: Option<HashMap<String, String>>,
+        ) -> anyhow::Result<Toolchain> {
+            Err(anyhow::anyhow!("Not implemented"))
         }
-        /// Returns the name of the manifest file for this toolchain.
-        fn manifest_name(&self) -> ManifestName {
-            SharedString::new_static("pyproject.toml").into()
+        fn meta(&self) -> ToolchainMetadata {
+            ToolchainMetadata {
+                term: SharedString::new_static("Virtual Environment"),
+                new_toolchain_placeholder: SharedString::new_static(
+                    "A path to the python3 executable within a virtual environment, or path to virtual environment itself",
+                ),
+                manifest_name: ManifestName::from(SharedString::new_static("pyproject.toml")),
+            }
         }
         async fn activation_script(&self, _: &Toolchain, _: ShellKind, _: &dyn Fs) -> Vec<String> {
             vec![]
