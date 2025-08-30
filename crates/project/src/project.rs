@@ -3842,6 +3842,7 @@ impl Project {
             let mut range_count = 0;
             let mut buffer_count = 0;
             let mut limit_reached = false;
+            let mut any_file_matched_pattern = false;
             let query = Arc::new(query);
             let chunks = matching_buffers_rx.ready_chunks(64);
 
@@ -3851,6 +3852,9 @@ impl Project {
             // ranges in the buffer matched by the query.
             let mut chunks = pin!(chunks);
             'outer: while let Some(matching_buffer_chunk) = chunks.next().await {
+                if !matching_buffer_chunk.is_empty() {
+                    any_file_matched_pattern = true;
+                }
                 let mut chunk_results = Vec::with_capacity(matching_buffer_chunk.len());
                 for buffer in matching_buffer_chunk {
                     let query = query.clone();
@@ -3887,9 +3891,12 @@ impl Project {
                 }
             }
 
-            if limit_reached {
-                result_tx.send(SearchResult::LimitReached).await?;
-            }
+            result_tx
+                .send(SearchResult::Finished {
+                    limit_reached,
+                    any_file_matched_pattern,
+                })
+                .await?;
 
             anyhow::Ok(())
         })
