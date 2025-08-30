@@ -149,6 +149,14 @@ pub fn init(cx: &mut App) {
                 panel.unstage_all(action, window, cx);
             });
         });
+        workspace.register_action(|workspace, _: &git::Uncommit, window, cx| {
+            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                return;
+            };
+            panel.update(cx, |panel, cx| {
+                panel.uncommit(window, cx);
+            })
+        });
         CommandPaletteFilter::update_global(cx, |filter, _cx| {
             filter.hide_action_types(&[
                 zed_actions::OpenGitIntegrationOnboarding.type_id(),
