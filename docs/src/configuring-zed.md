@@ -685,6 +685,12 @@ List of `string` values
 - Setting: `selection_highlight`
 - Default: `true`
 
+## Rounded Selection
+
+- Description: Whether the text selection should have rounded corners.
+- Setting: `rounded_selection`
+- Default: `true`
+
 ## Cursor Blink
 
 - Description: Whether or not the cursor blinks.
