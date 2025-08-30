@@ -8,6 +8,7 @@ use std::{
 use fs::Fs;
 use futures::StreamExt as _;
 use gpui::{App, AppContext as _, Entity, Subscription, Task};
+use itertools::Itertools;
 use postage::watch;
 use project::Worktree;
 use regex::Regex;
@@ -25,7 +26,8 @@ static LICENSE_FILE_NAME_REGEX: LazyLock<regex::bytes::Regex> = LazyLock::new(||
                 0? bsd (?: [\\-._] [0123])? (?: [\\-._] clause)? | \
                 isc | \
                 mit | \
-                upl))? \
+                upl | \
+                zlib))? \
         (?: [\\-._]? (?: license | licence))? \
         (?: \\.txt | \\.md)? \
         $",
@@ -36,16 +38,15 @@ static LICENSE_FILE_NAME_REGEX: LazyLock<regex::bytes::Regex> = LazyLock::new(||
     .unwrap()
 });
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, VariantArray)]
+#[derive(Debug, Clone, Copy, Eq, Ord, PartialOrd, PartialEq, VariantArray)]
 pub enum OpenSourceLicense {
     Apache2_0,
-    BSD0Clause,
-    BSD1Clause,
-    BSD2Clause,
-    BSD3Clause,
+    BSDZero,
+    BSD,
     ISC,
     MIT,
     UPL1_0,
+    Zlib,
 }
 
 impl Display for OpenSourceLicense {
@@ -55,29 +56,31 @@ impl Display for OpenSourceLicense {
 }
 
 impl OpenSourceLicense {
+    /// These are SPDX identifiers for the licenses, except for BSD, where the variants are not
+    /// distinguished.
     pub fn spdx_identifier(&self) -> &'static str {
         match self {
             OpenSourceLicense::Apache2_0 => "apache-2.0",
-            OpenSourceLicense::BSD0Clause => "0bsd",
-            OpenSourceLicense::BSD1Clause => "bsd-1-clause",
-            OpenSourceLicense::BSD2Clause => "bsd-2-clause",
-            OpenSourceLicense::BSD3Clause => "bsd-3-clause",
+            OpenSourceLicense::BSDZero => "0bsd",
+            OpenSourceLicense::BSD => "bsd",
             OpenSourceLicense::ISC => "isc",
             OpenSourceLicense::MIT => "mit",
             OpenSourceLicense::UPL1_0 => "upl-1.0",
+            OpenSourceLicense::Zlib => "zlib",
         }
     }
 
+    /// Regexes to match the license text. These regexes are expected to match the entire file. Also
+    /// note that `canonicalize_license_text` removes everything but alphanumeric ascii characters.
     pub fn regex(&self) -> &'static str {
         match self {
-            OpenSourceLicense::Apache2_0 => include_str!("license_detection/apache-2.0.regex"),
-            OpenSourceLicense::BSD0Clause => include_str!("license_detection/0bsd.regex"),
-            OpenSourceLicense::BSD1Clause => include_str!("license_detection/bsd-1-clause.regex"),
-            OpenSourceLicense::BSD2Clause => include_str!("license_detection/bsd-2-clause.regex"),
-            OpenSourceLicense::BSD3Clause => include_str!("license_detection/bsd-3-clause.regex"),
-            OpenSourceLicense::ISC => include_str!("license_detection/isc.regex"),
-            OpenSourceLicense::MIT => include_str!("license_detection/mit.regex"),
-            OpenSourceLicense::UPL1_0 => include_str!("license_detection/upl-1.0.regex"),
+            OpenSourceLicense::Apache2_0 => include_str!("../license_regexes/apache-2.0.regex"),
+            OpenSourceLicense::BSDZero => include_str!("../license_regexes/0bsd.regex"),
+            OpenSourceLicense::BSD => include_str!("../license_regexes/bsd.regex"),
+            OpenSourceLicense::ISC => include_str!("../license_regexes/isc.regex"),
+            OpenSourceLicense::MIT => include_str!("../license_regexes/mit.regex"),
+            OpenSourceLicense::UPL1_0 => include_str!("../license_regexes/upl-1.0.regex"),
+            OpenSourceLicense::Zlib => include_str!("../license_regexes/zlib.regex"),
         }
     }
 }
@@ -93,7 +96,7 @@ fn detect_license(license: &str) -> Option<OpenSourceLicense> {
             } else {
                 regex_string.push_str(")|(");
             }
-            regex_string.push_str(&canonicalize_license_text(license.regex()));
+            regex_string.push_str(&canonicalize_license_regex(license.regex()));
         }
         regex_string.push_str("))$");
         let regex = Regex::new(&regex_string).unwrap();
@@ -116,13 +119,23 @@ fn detect_license(license: &str) -> Option<OpenSourceLicense> {
         })
 }
 
-/// Canonicalizes the whitespace of license text and license regexes.
-fn canonicalize_license_text(license: &str) -> String {
+/// Canonicalizes the whitespace of license text.
+fn canonicalize_license_regex(license: &str) -> String {
     license
         .split_ascii_whitespace()
-        .collect::<Vec<_>>()
         .join(" ")
         .to_ascii_lowercase()
+}
+
+/// Canonicalizes the whitespace of license text.
+fn canonicalize_license_text(license: &str) -> String {
+    license
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || c.is_ascii_whitespace())
+        .map(|c| c.to_ascii_lowercase())
+        .collect::<String>()
+        .split_ascii_whitespace()
+        .join(" ")
 }
 
 pub enum LicenseDetectionWatcher {
@@ -254,26 +267,96 @@ mod tests {
 
     use super::*;
 
-    const APACHE_2_0_TXT: &str = include_str!("license_detection/apache-2.0.txt");
-    const ISC_TXT: &str = include_str!("license_detection/isc.txt");
-    const MIT_TXT: &str = include_str!("license_detection/mit.txt");
-    const UPL_1_0_TXT: &str = include_str!("license_detection/upl-1.0.txt");
-    const BSD_0_CLAUSE_TXT: &str = include_str!("license_detection/0bsd.txt");
-    const BSD_1_CLAUSE_TXT: &str = include_str!("license_detection/bsd-1-clause.txt");
-    const BSD_2_CLAUSE_TXT: &str = include_str!("license_detection/bsd-2-clause.txt");
-    const BSD_3_CLAUSE_TXT: &str = include_str!("license_detection/bsd-3-clause.txt");
+    const APACHE_2_0_TXT: &str = include_str!("../license_examples/apache-2.0-ex0.txt");
+    const ISC_TXT: &str = include_str!("../license_examples/isc.txt");
+    const MIT_TXT: &str = include_str!("../license_examples/mit-ex0.txt");
+    const UPL_1_0_TXT: &str = include_str!("../license_examples/upl-1.0.txt");
+    const BSD_0_TXT: &str = include_str!("../license_examples/0bsd.txt");
 
     #[track_caller]
     fn assert_matches_license(text: &str, license: OpenSourceLicense) {
-        let license_regex =
-            Regex::new(&format!("^{}$", canonicalize_license_text(license.regex()))).unwrap();
-        assert!(license_regex.is_match(&canonicalize_license_text(text)));
-        assert_eq!(detect_license(text), Some(license));
+        if detect_license(text) != Some(license) {
+            let license_regex_text = canonicalize_license_regex(license.regex());
+            let license_regex = Regex::new(&format!("^{}$", license_regex_text)).unwrap();
+            let text = canonicalize_license_text(text);
+            let matched_regex = license_regex.is_match(&text);
+            if matched_regex {
+                panic!(
+                    "The following text matches the individual regex for {}, \
+                    but not the combined one:\n```license-text\n{}\n```\n",
+                    license, text
+                );
+            } else {
+                panic!(
+                    "The following text doesn't match the regex for {}:\n\
+                    ```license-text\n{}\n```\n\n```regex\n{}\n```\n",
+                    license, text, license_regex_text
+                );
+            }
+        }
     }
 
+    /*
+    // Uncomment this and run with `cargo test -p zeta -- --no-capture &> licenses-output` to
+    // traverse your entire home directory and run license detection on every file that has a
+    // license-like name.
     #[test]
-    fn test_0bsd_positive_detection() {
-        assert_matches_license(BSD_0_CLAUSE_TXT, OpenSourceLicense::BSD0Clause);
+    fn test_check_all_licenses_in_home_dir() {
+        let mut detected = Vec::new();
+        let mut unrecognized = Vec::new();
+        let mut walked_entries = 0;
+        let homedir = std::env::home_dir().unwrap();
+        for entry in walkdir::WalkDir::new(&homedir) {
+            walked_entries += 1;
+            if walked_entries % 10000 == 0 {
+                println!(
+                    "So far visited {} files in {}",
+                    walked_entries,
+                    homedir.display()
+                );
+            }
+            let Ok(entry) = entry else {
+                continue;
+            };
+            if !LICENSE_FILE_NAME_REGEX.is_match(entry.file_name().as_encoded_bytes()) {
+                continue;
+            }
+            let Ok(contents) = std::fs::read_to_string(entry.path()) else {
+                continue;
+            };
+            let path_string = entry.path().to_string_lossy().to_string();
+            match detect_license(&contents) {
+                Some(license) => detected.push((license, path_string)),
+                None => unrecognized.push(path_string),
+            }
+        }
+        println!("\nDetected licenses:\n");
+        detected.sort();
+        for (license, path) in &detected {
+            println!("{}: {}", license.spdx_identifier(), path);
+        }
+        println!("\nUnrecognized licenses:\n");
+        for path in &unrecognized {
+            println!("{}", path);
+        }
+        panic!(
+            "{} licenses detected, {} unrecognized",
+            detected.len(),
+            unrecognized.len()
+        );
+        println!("This line has a warning to make sure this test is always commented out");
+    }
+    */
+
+    #[test]
+    fn test_no_unicode_in_regexes() {
+        for license in OpenSourceLicense::VARIANTS {
+            assert!(
+                !license.regex().contains(|c: char| !c.is_ascii()),
+                "{}.regex contains unicode",
+                license.spdx_identifier()
+            );
+        }
     }
 
     #[test]
@@ -319,6 +402,24 @@ mod tests {
         );
         assert!(license_with_copyright != license_with_appendix);
         assert_matches_license(&license_with_copyright, OpenSourceLicense::Apache2_0);
+
+        assert_matches_license(
+            include_str!("../../../LICENSE-APACHE"),
+            OpenSourceLicense::Apache2_0,
+        );
+
+        assert_matches_license(
+            include_str!("../license_examples/apache-2.0-ex1.txt"),
+            OpenSourceLicense::Apache2_0,
+        );
+        assert_matches_license(
+            include_str!("../license_examples/apache-2.0-ex2.txt"),
+            OpenSourceLicense::Apache2_0,
+        );
+        assert_matches_license(
+            include_str!("../license_examples/apache-2.0-ex3.txt"),
+            OpenSourceLicense::Apache2_0,
+        );
     }
 
     #[test]
@@ -333,17 +434,47 @@ mod tests {
 
     #[test]
     fn test_bsd_1_clause_positive_detection() {
-        assert_matches_license(BSD_1_CLAUSE_TXT, OpenSourceLicense::BSD1Clause);
+        assert_matches_license(
+            include_str!("../license_examples/bsd-1-clause.txt"),
+            OpenSourceLicense::BSD,
+        );
     }
 
     #[test]
     fn test_bsd_2_clause_positive_detection() {
-        assert_matches_license(BSD_2_CLAUSE_TXT, OpenSourceLicense::BSD2Clause);
+        assert_matches_license(
+            include_str!("../license_examples/bsd-2-clause-ex0.txt"),
+            OpenSourceLicense::BSD,
+        );
     }
 
     #[test]
     fn test_bsd_3_clause_positive_detection() {
-        assert_matches_license(BSD_3_CLAUSE_TXT, OpenSourceLicense::BSD3Clause);
+        assert_matches_license(
+            include_str!("../license_examples/bsd-3-clause-ex0.txt"),
+            OpenSourceLicense::BSD,
+        );
+        assert_matches_license(
+            include_str!("../license_examples/bsd-3-clause-ex1.txt"),
+            OpenSourceLicense::BSD,
+        );
+        assert_matches_license(
+            include_str!("../license_examples/bsd-3-clause-ex2.txt"),
+            OpenSourceLicense::BSD,
+        );
+        assert_matches_license(
+            include_str!("../license_examples/bsd-3-clause-ex3.txt"),
+            OpenSourceLicense::BSD,
+        );
+        assert_matches_license(
+            include_str!("../license_examples/bsd-3-clause-ex4.txt"),
+            OpenSourceLicense::BSD,
+        );
+    }
+
+    #[test]
+    fn test_bsd_0_positive_detection() {
+        assert_matches_license(BSD_0_TXT, OpenSourceLicense::BSDZero);
     }
 
     #[test]
@@ -365,6 +496,18 @@ mod tests {
     #[test]
     fn test_mit_positive_detection() {
         assert_matches_license(MIT_TXT, OpenSourceLicense::MIT);
+        assert_matches_license(
+            include_str!("../license_examples/mit-ex1.txt"),
+            OpenSourceLicense::MIT,
+        );
+        assert_matches_license(
+            include_str!("../license_examples/mit-ex2.txt"),
+            OpenSourceLicense::MIT,
+        );
+        assert_matches_license(
+            include_str!("../license_examples/mit-ex3.txt"),
+            OpenSourceLicense::MIT,
+        );
     }
 
     #[test]
@@ -391,6 +534,14 @@ mod tests {
         );
 
         assert!(detect_license(&license_text).is_none());
+    }
+
+    #[test]
+    fn test_zlib_positive_detection() {
+        assert_matches_license(
+            include_str!("../license_examples/zlib-ex0.txt"),
+            OpenSourceLicense::Zlib,
+        );
     }
 
     #[test]
