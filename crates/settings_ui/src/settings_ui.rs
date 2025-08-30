@@ -9,9 +9,7 @@ use command_palette_hooks::CommandPaletteFilter;
 use editor::EditorSettingsControls;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
 use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, ReadGlobal, actions};
-use settings::{
-    SettingsStore, SettingsUiEntry, SettingsUiEntryVariant, SettingsUiItemSingle, SettingsValue,
-};
+use settings::{SettingsStore, SettingsUiEntryVariant, SettingsUiItemSingle, SettingsValue};
 use smallvec::SmallVec;
 use ui::{NumericStepper, SwitchField, ToggleButtonGroup, ToggleButtonSimple, prelude::*};
 use workspace::{
@@ -154,7 +152,7 @@ struct UiEntry {
 }
 
 impl UiEntry {
-    fn first_descendant_index(&self, tree: &[UiEntry]) -> Option<usize> {
+    fn first_descendant_index(&self) -> Option<usize> {
         return self
             .descendant_range
             .is_empty()
@@ -163,7 +161,7 @@ impl UiEntry {
     }
 
     fn nth_descendant_index(&self, tree: &[UiEntry], n: usize) -> Option<usize> {
-        let first_descendant_index = self.first_descendant_index(tree)?;
+        let first_descendant_index = self.first_descendant_index()?;
         let mut current_index = 0;
         let mut current_descendant_index = Some(first_descendant_index);
         while let Some(descendant_index) = current_descendant_index
@@ -229,12 +227,10 @@ fn build_tree_item(
         }
         SettingsUiEntryVariant::Dynamic {
             path,
-            title,
             options,
             determine_option,
         } => {
             tree[index].path = path;
-            tree[index].title = title;
             tree[index].select_descendant = Some(determine_option);
             for option in options {
                 let prev_index = tree[index]
@@ -323,7 +319,7 @@ fn render_content(
     let mut path = smallvec::smallvec![active_entry.path];
     let mut entry_index_queue = VecDeque::new();
 
-    if let Some(child_index) = active_entry.first_descendant_index(&tree.entries) {
+    if let Some(child_index) = active_entry.first_descendant_index() {
         entry_index_queue.push_back(child_index);
         let mut index = child_index;
         while let Some(next_sibling_index) = tree.entries[index].next_sibling {

@@ -31,7 +31,6 @@ pub enum SettingsUiEntryVariant {
     },
     Dynamic {
         path: &'static str,
-        title: &'static str,
         options: Vec<SettingsUiEntry>,
         determine_option: fn(&serde_json::Value, &mut App) -> usize,
     },
@@ -97,7 +96,6 @@ pub enum SettingsUiItem {
     },
     Single(SettingsUiItemSingle),
     Dynamic {
-        title: &'static str,
         options: Vec<SettingsUiEntry>,
         determine_option: fn(&serde_json::Value, &mut App) -> usize,
     },
