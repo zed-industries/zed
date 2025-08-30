@@ -56,13 +56,13 @@ pub struct OpenAiLanguageModelProvider {
 pub struct State {
     api_key: Option<String>,
     api_key_from_env: bool,
+    last_api_url: String,
     _subscription: Subscription,
 }
 
 const OPENAI_API_KEY_VAR: &str = "OPENAI_API_KEY";
 
 impl State {
-    //
     fn is_authenticated(&self) -> bool {
         self.api_key.is_some()
     }
@@ -140,10 +140,26 @@ impl State {
 
 impl OpenAiLanguageModelProvider {
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
+        let initial_api_url = AllLanguageModelSettings::get_global(cx)
+            .openai
+            .api_url
+            .clone();
+
         let state = cx.new(|cx| State {
             api_key: None,
             api_key_from_env: false,
-            _subscription: cx.observe_global::<SettingsStore>(|_this: &mut State, cx| {
+            last_api_url: initial_api_url.clone(),
+            _subscription: cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
+                let current_api_url = AllLanguageModelSettings::get_global(cx)
+                    .openai
+                    .api_url
+                    .clone();
+
+                if this.last_api_url != current_api_url {
+                    this.api_key = None;
+                    this.api_key_from_env = false;
+                    this.last_api_url = current_api_url;
+                }
                 cx.notify();
             }),
         });
