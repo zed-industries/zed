@@ -7481,6 +7481,7 @@ dependencies = [
  "taffy",
  "thiserror 2.0.12",
  "unicode-segmentation",
+ "url",
  "usvg",
  "util",
  "uuid",

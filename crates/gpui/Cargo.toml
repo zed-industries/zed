@@ -50,6 +50,7 @@ wayland = [
     "filedescriptor",
     "xkbcommon",
     "open",
+    "url",
 ]
 x11 = [
     "blade-graphics",
@@ -194,6 +195,7 @@ wayland-protocols = { version = "0.31.2", features = [
 wayland-protocols-plasma = { version = "0.2.0", features = [
     "client",
 ], optional = true }
+url = { workspace = true, optional = true }
 
 # X11
 as-raw-xcb-connection = { version = "1", optional = true }
