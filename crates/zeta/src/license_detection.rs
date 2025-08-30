@@ -216,11 +216,14 @@ fn check_pattern(pattern: &[PatternPart], input: &str) -> bool {
     match_any_chars.contains(&input_ix)
 }
 
-/// Canonicalizes the whitespace of license text.
+/// Canonicalizes license text by removing all non-alphanumeric characters, lowercasing, and turning
+/// runs of whitespace into a single space. Unicode alphanumeric characters are intentionally
+/// preserved since these should cause license mismatch when not within a portion of the license
+/// where arbitrary text is allowed.
 fn canonicalize_license_text(license: &str) -> String {
     license
         .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || c.is_ascii_whitespace())
+        .filter(|c| c.is_ascii_whitespace() || c.is_alphanumeric())
         .map(|c| c.to_ascii_lowercase())
         .collect::<String>()
         .split_ascii_whitespace()
