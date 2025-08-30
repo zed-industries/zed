@@ -5602,6 +5602,7 @@ dependencies = [
  "ui",
  "util",
  "workspace",
+ "workspace-hack",
 ]
 
 [[package]]

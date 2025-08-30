@@ -86,11 +86,11 @@ impl EncodingWrapper {
 }
 
 /// Convert a byte vector from a specified encoding to a UTF-8 string.
-pub async fn to_utf8<'a>(input: Vec<u8>, encoding: EncodingWrapper) -> Result<String> {
-    Ok(encoding.decode(input).await?)
+pub async fn to_utf8(input: Vec<u8>, encoding: EncodingWrapper) -> Result<String> {
+    encoding.decode(input).await
 }
 
 /// Convert a UTF-8 string to a byte vector in a specified encoding.
-pub async fn from_utf8<'a>(input: String, target: EncodingWrapper) -> Result<Vec<u8>> {
-    Ok(target.encode(input).await?)
+pub async fn from_utf8(input: String, target: EncodingWrapper) -> Result<Vec<u8>> {
+    target.encode(input).await
 }
