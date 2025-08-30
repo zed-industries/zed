@@ -11,7 +11,7 @@ use util::serde::default_true;
 
 /// Imports from the VSCode settings at
 /// https://code.visualstudio.com/docs/reference/default-settings
-#[derive(Deserialize, Clone, SettingsUi)]
+#[derive(Deserialize, Clone)]
 pub struct EditorSettings {
     pub cursor_blink: bool,
     pub cursor_shape: Option<CursorShape>,
@@ -415,7 +415,7 @@ pub enum SnippetSortOrder {
     None,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
 pub struct EditorSettingsContent {
     /// Whether the cursor blinks in the editor.
     ///
