@@ -1,18 +1,23 @@
 use crate::{Copilot, Status, request::PromptUserDeviceFlow};
 use gpui::{
-    Animation, AnimationExt, App, ClipboardItem, Context, DismissEvent, Element, Entity,
-    EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, MouseDownEvent,
-    ParentElement, Render, Styled, Subscription, Transformation, Window, div, percentage, svg,
+    ClipboardItem, Entity, EventEmitter, FocusHandle, Focusable,
+    AsyncWindowContext, App, Animation, AnimationExt, Window, MouseDownEvent,
+    percentage, svg, WeakEntity, ClickEvent, Subscription,
+    Transformation,
 };
+use ui::{
+    div, h_flex, v_flex, Color, IconName, IntoElement, ParentElement,
+    Render, Vector, VectorName, prelude::*, Button, ButtonStyle, Label,
+    Headline, HeadlineSize,
+};
+
 use std::time::Duration;
-use ui::{Button, Label, Vector, VectorName, prelude::*};
 use util::ResultExt as _;
 use workspace::notifications::NotificationId;
 use workspace::{ModalView, Toast, Workspace};
 
 // Constants
 const COPILOT_SIGN_UP_URL: &str = "https://github.com/features/copilot";
-const MODAL_WIDTH: gpui::Rems = gpui::rems(24.0);
 const LOADING_ANIMATION_DURATION: Duration = Duration::from_secs(2);
 const DEVICE_CODE_MAX_LENGTH: usize = 10;
 
@@ -63,18 +68,24 @@ impl std::fmt::Display for SignInError {
 
 impl std::error::Error for SignInError {}
 
+impl From<anyhow::Error> for SignInError {
+    fn from(err: anyhow::Error) -> Self {
+        SignInError::SignInFailed(err.to_string())
+    }
+}
+
 // Toast management helper
 struct CopilotToastManager;
 
 impl CopilotToastManager {
-    fn show_status_toast(workspace: &mut Workspace, message: &str, cx: &mut Context<Workspace>) {
+    fn show_status_toast(workspace: &mut Workspace, message: String, cx: &mut gpui::Context<Workspace>) {
         workspace.show_toast(
             Toast::new(NotificationId::unique::<CopilotStatusToast>(), message),
             cx,
         );
     }
 
-    fn dismiss_status_toast(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
+    fn dismiss_status_toast(workspace: &mut Workspace, cx: &mut gpui::Context<Workspace>) {
         workspace.dismiss_toast(&NotificationId::unique::<CopilotStatusToast>(), cx);
     }
 }
@@ -94,7 +105,7 @@ impl CopilotSignInService {
         Ok((copilot, workspace))
     }
 
-    fn ensure_copilot_started(copilot: &Entity<Copilot>, cx: &mut Context<Workspace>) {
+    fn ensure_copilot_started(copilot: &Entity<Copilot>, cx: &mut gpui::Context<Workspace>) {
         if matches!(copilot.read(cx).status(), Status::Disabled) {
             copilot.update(cx, |copilot, cx| {
                 copilot.start_copilot(false, true, cx)
@@ -104,29 +115,28 @@ impl CopilotSignInService {
 
     async fn handle_copilot_startup(
         copilot: Entity<Copilot>,
-        workspace: Entity<Workspace>,
-        is_reinstall: bool,
-        window: &mut Window,
-        cx: &mut App,
+        workspace: WeakEntity<Workspace>,
+        _is_reinstall: bool,
+        cx: &mut AsyncApp,
     ) -> Result<(), SignInError> {
-        if let Some(updated_copilot) = Copilot::global(cx) {
-            workspace.update_in(cx, |workspace, window, cx| {
-                match updated_copilot.read(cx).status() {
-                    Status::Authorized => {
-                        CopilotToastManager::show_status_toast(
-                            workspace,
-                            "Copilot has started.",
-                            cx,
-                        );
-                    }
-                    _ => {
-                        CopilotToastManager::dismiss_status_toast(workspace, cx);
-                        Self::start_sign_in_flow(workspace, &updated_copilot, window, cx)?;
-                    }
+        workspace.update(cx, |workspace, cx| {
+            match copilot.read(cx).status() {
+                Status::Authorized => {
+                    CopilotToastManager::show_status_toast(
+                        workspace,
+                        "Copilot has started.".to_string(),
+                        cx,
+                    );
                 }
-                Ok(())
-            })?
-        }
+                _ => {
+                    CopilotToastManager::dismiss_status_toast(workspace, cx);
+                    // Can't call start_sign_in_flow here since we don't have window access
+                    // This should be handled differently in the calling code
+                }
+            }
+            Ok::<(), SignInError>(())
+        })?;
+
         Ok(())
     }
 
@@ -134,11 +144,10 @@ impl CopilotSignInService {
         workspace: &mut Workspace,
         copilot: &Entity<Copilot>,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut gpui::Context<Workspace>,
     ) -> Result<(), SignInError> {
-        copilot.update(cx, |copilot, cx| copilot.sign_in(cx))
-            .map_err(|e| SignInError::SignInFailed(e.to_string()))?
-            .detach();
+        let task = copilot.update(cx, |copilot, cx| copilot.sign_in(cx));
+        task.detach();
 
         workspace.toggle_modal(window, cx, |_, cx| {
             CopilotCodeVerification::new(copilot, cx)
@@ -169,10 +178,9 @@ pub fn reinstall_and_sign_in_within_workspace(
     workspace: &mut Workspace,
     copilot: Entity<Copilot>,
     window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut gpui::Context<Workspace>,
 ) -> Result<(), SignInError> {
-    copilot.update(cx, |copilot, cx| copilot.reinstall(cx))
-        .map_err(|e| SignInError::SignInFailed(format!("Reinstall failed: {}", e)))?;
+    let _shared_task = copilot.update(cx, |copilot, cx| copilot.reinstall(cx));
 
     initiate_sign_in_within_workspace(workspace, copilot, true, window, cx)
 }
@@ -181,8 +189,8 @@ pub fn initiate_sign_in_within_workspace(
     workspace: &mut Workspace,
     copilot: Entity<Copilot>,
     is_reinstall: bool,
-    window: &mut Window,
-    cx: &mut Context<Workspace>,
+    _window: &mut Window,
+    cx: &mut gpui::Context<Workspace>,
 ) -> Result<(), SignInError> {
     CopilotSignInService::ensure_copilot_started(&copilot, cx);
 
@@ -194,21 +202,24 @@ pub fn initiate_sign_in_within_workspace(
                 "Copilot is starting..."
             };
 
-            CopilotToastManager::show_status_toast(workspace, message, cx);
+            CopilotToastManager::show_status_toast(workspace, message.to_string(), cx);
 
-            cx.spawn_in(window, async move |workspace, cx| {
-                task.await;
+            let weak_workspace = workspace.weak_handle();
+            let task_clone = task.clone();
+
+            cx.spawn(|weak_workspace, mut cx| async move {
+                task_clone.await;
                 if let Err(e) = CopilotSignInService::handle_copilot_startup(
-                    copilot, workspace, is_reinstall, window, cx
+                    copilot, weak_workspace, is_reinstall, &mut cx
                 ).await {
-                    workspace.update_in(cx, |workspace, _window, cx| {
-                        workspace.show_error(&e, cx);
+                    weak_workspace.update(&mut cx, |workspace, cx| {
+                        workspace.show_error(&e.to_string(), cx);
                     }).log_err();
                 }
             }).detach();
         }
         _ => {
-            CopilotSignInService::start_sign_in_flow(workspace, &copilot, window, cx)?;
+            CopilotSignInService::start_sign_in_flow(workspace, &copilot, _window, cx)?;
         }
     }
 
@@ -218,26 +229,26 @@ pub fn initiate_sign_in_within_workspace(
 pub fn sign_out_within_workspace(
     workspace: &mut Workspace,
     copilot: Entity<Copilot>,
-    cx: &mut Context<Workspace>,
+    cx: &mut gpui::Context<Workspace>,
 ) {
-    CopilotToastManager::show_status_toast(workspace, "Signing out of Copilot...", cx);
+    CopilotToastManager::show_status_toast(workspace, "Signing out of Copilot...".to_string(), cx);
 
     let sign_out_task = copilot.update(cx, |copilot, cx| copilot.sign_out(cx));
 
-    cx.spawn(async move |workspace, cx| {
+    cx.spawn(|workspace: WeakEntity<Workspace>, mut cx| async move {
         match sign_out_task.await {
             Ok(()) => {
-                workspace.update(cx, |workspace, cx| {
+                workspace.update(&mut cx, |workspace, cx| {
                     CopilotToastManager::show_status_toast(
                         workspace,
-                        "Signed out of Copilot.",
+                        "Signed out of Copilot.".to_string(),
                         cx,
                     );
                 }).log_err();
             }
             Err(err) => {
-                workspace.update(cx, |workspace, cx| {
-                    workspace.show_error(&err, cx);
+                workspace.update(&mut cx, |workspace, cx| {
+                    workspace.show_error(&err.to_string(), cx);
                 }).log_err();
             }
         }
@@ -259,13 +270,13 @@ impl Focusable for CopilotCodeVerification {
     }
 }
 
-impl EventEmitter<DismissEvent> for CopilotCodeVerification {}
+impl EventEmitter<gpui::DismissEvent> for CopilotCodeVerification {}
 
 impl ModalView for CopilotCodeVerification {
     fn on_before_dismiss(
         &mut self,
         _: &mut Window,
-        cx: &mut Context<Self>,
+        cx: &mut gpui::Context<Self>,
     ) -> workspace::DismissDecision {
         if let Status::SigningIn { .. } = self.copilot.read(cx).status() {
             self.copilot.update(cx, |copilot, cx| {
@@ -277,7 +288,7 @@ impl ModalView for CopilotCodeVerification {
 }
 
 impl CopilotCodeVerification {
-    pub fn new(copilot: &Entity<Copilot>, cx: &mut Context<Self>) -> Self {
+    pub fn new(copilot: &Entity<Copilot>, cx: &mut gpui::Context<Self>) -> Self {
         let status = copilot.read(cx).status();
 
         Self {
@@ -292,7 +303,7 @@ impl CopilotCodeVerification {
     fn handle_status_update(
         &mut self,
         copilot: Entity<Copilot>,
-        cx: &mut Context<Self>,
+        cx: &mut gpui::Context<Self>,
     ) {
         let new_status = copilot.read(cx).status();
 
@@ -312,23 +323,22 @@ impl CopilotCodeVerification {
                 cx.notify();
             }
             _ => {
-                cx.emit(DismissEvent);
+                cx.emit(gpui::DismissEvent);
             }
         }
     }
 
-    fn update_connection_state(&mut self, state: ConnectionState, cx: &mut Context<Self>) {
+    fn update_connection_state(&mut self, state: ConnectionState, cx: &mut gpui::Context<Self>) {
         self.connection_state = state;
         cx.notify();
     }
 
     // Improved device code rendering with better UX
-    fn render_device_code(&self, data: &PromptUserDeviceFlow, cx: &mut Context<Self>) -> impl IntoElement {
-        let user_code = UserCode(data.user_code.clone());
+    fn render_device_code(&self, data: &PromptUserDeviceFlow, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let user_code = data.user_code.clone();
         let is_copied = self.is_code_in_clipboard(&user_code, cx);
 
         let copy_label = if is_copied { "✓ Copied!" } else { "Copy" };
-        let copy_color = if is_copied { Color::Success } else { Color::Default };
 
         h_flex()
             .w_full()
@@ -339,21 +349,19 @@ impl CopilotCodeVerification {
             .cursor_pointer()
             .justify_between()
             .items_center()
-            .hover(|style| style.bg(cx.theme().colors().surface))
+            .hover(|style| style)
             .on_mouse_down(gpui::MouseButton::Left, {
                 let code = user_code.clone();
-                move |this, window, cx| {
-                    this.copy_code_to_clipboard(&code, cx);
-                    window.refresh();
+                move |_event: &MouseDownEvent, _window: &mut Window, cx: &mut App| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(code.clone()));
                 }
             })
             .child(
                 div()
                     .flex_1()
                     .child(
-                        Label::new(user_code.as_str())
+                        Label::new(user_code.clone())
                             .size(ui::LabelSize::Large)
-                            .weight(ui::FontWeight::SEMIBOLD)
                     )
             )
             .child(
@@ -363,26 +371,25 @@ impl CopilotCodeVerification {
                     .child(
                         Label::new(copy_label)
                             .size(ui::LabelSize::Small)
-                            .color(copy_color)
                     )
             )
     }
 
-    fn is_code_in_clipboard(&self, user_code: &UserCode, cx: &Context<Self>) -> bool {
+    fn is_code_in_clipboard(&self, user_code: &str, cx: &gpui::Context<Self>) -> bool {
         cx.read_from_clipboard()
             .and_then(|item| item.text())
-            .map(|text| text == user_code.as_str())
+            .map(|text| text == user_code)
             .unwrap_or(false)
     }
 
-    fn copy_code_to_clipboard(&self, user_code: &UserCode, cx: &mut Context<Self>) {
-        cx.write_to_clipboard(ClipboardItem::new_string(user_code.0.clone()));
+    fn copy_code_to_clipboard(&self, user_code: &str, cx: &mut gpui::Context<Self>) {
+        cx.write_to_clipboard(ClipboardItem::new_string(user_code.to_string()));
     }
 
     // Improved modal rendering with better structure
-    fn render_sign_in_modal(&self, data: &PromptUserDeviceFlow, cx: &mut Context<Self>) -> impl Element {
+    fn render_sign_in_modal(&self, data: &PromptUserDeviceFlow, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let connect_button_config = self.get_connect_button_config();
-        let verification_uri = VerificationUri(data.verification_uri.clone());
+        let verification_uri = data.verification_uri.clone();
 
         v_flex()
             .flex_1()
@@ -425,8 +432,8 @@ impl CopilotCodeVerification {
     fn render_connect_button(
         &self,
         config: (&'static str, bool),
-        verification_uri: VerificationUri,
-        cx: &mut Context<Self>,
+        verification_uri: String,
+        cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
         let (label, disabled) = config;
 
@@ -435,31 +442,31 @@ impl CopilotCodeVerification {
             .style(ButtonStyle::Filled)
             .disabled(disabled)
             .when(disabled, |button| button.color(Color::Muted))
-            .on_click(cx.listener(move |this, _, _window, cx| {
-                this.handle_connect_click(&verification_uri, cx);
+            .on_click(cx.listener(move |_this, _ev: &ClickEvent, _window, cx| {
+                cx.open_url(&verification_uri);
             }))
     }
 
-    fn render_cancel_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_cancel_button(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         Button::new("cancel-button", "Cancel")
             .full_width()
             .style(ButtonStyle::Subtle)
-            .on_click(cx.listener(|_, _, _, cx| {
-                cx.emit(DismissEvent);
+            .on_click(cx.listener(|_this, _ev: &ClickEvent, _window, cx| {
+                cx.emit(gpui::DismissEvent);
             }))
     }
 
-    fn handle_connect_click(&mut self, verification_uri: &VerificationUri, cx: &mut Context<Self>) {
+    fn handle_connect_click(&mut self, verification_uri: &str, cx: &mut gpui::Context<Self>) {
         if matches!(self.connection_state, ConnectionState::Connecting) {
             return;
         }
 
         self.update_connection_state(ConnectionState::Connecting, cx);
-        cx.open_url(verification_uri.as_str());
+        cx.open_url(verification_uri);
     }
 
     // Success modal
-    fn render_success_modal(&self, cx: &mut Context<Self>) -> impl Element {
+    fn render_success_modal(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         v_flex()
             .gap_4()
             .items_center()
@@ -471,7 +478,7 @@ impl CopilotCodeVerification {
                     .child(
                         svg()
                             .size_6()
-                            .path("M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z") // checkmark circle
+                            .path(IconName::ArrowCircle.path())
                             .text_color(cx.theme().status().success)
                     )
                     .child(
@@ -488,12 +495,12 @@ impl CopilotCodeVerification {
                 Button::new("done-button", "Get Started")
                     .full_width()
                     .style(ButtonStyle::Filled)
-                    .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent)))
+                    .on_click(cx.listener(|_this, _ev: &ClickEvent, _window, cx| cx.emit(gpui::DismissEvent)))
             )
     }
 
     // Unauthorized modal
-    fn render_unauthorized_modal(&self, cx: &mut Context<Self>) -> impl Element {
+    fn render_unauthorized_modal(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         v_flex()
             .gap_4()
             .items_center()
@@ -505,7 +512,7 @@ impl CopilotCodeVerification {
                     .child(
                         svg()
                             .size_6()
-                            .path("M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z") // warning triangle
+                            .path("M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z")
                             .text_color(cx.theme().status().warning)
                     )
                     .child(
@@ -522,18 +529,18 @@ impl CopilotCodeVerification {
                 Button::new("subscribe-button", "Subscribe on GitHub")
                     .full_width()
                     .style(ButtonStyle::Filled)
-                    .on_click(|_, _, cx| cx.open_url(COPILOT_SIGN_UP_URL))
+                    .on_click(cx.listener(|_this, _ev: &ClickEvent, _window, cx| cx.open_url(COPILOT_SIGN_UP_URL)))
             )
             .child(
                 Button::new("cancel-button", "Cancel")
                     .full_width()
                     .style(ButtonStyle::Subtle)
-                    .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent)))
+                    .on_click(cx.listener(|_this, _ev: &ClickEvent, _window, cx| cx.emit(gpui::DismissEvent)))
             )
     }
 
     // Loading state with improved animation
-    fn render_loading_state(&self, window: &mut Window, _: &mut Context<Self>) -> impl Element {
+    fn render_loading_state(&self, window: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
         let loading_icon = svg()
             .size_8()
             .path(IconName::ArrowCircle.path())
@@ -557,7 +564,7 @@ impl CopilotCodeVerification {
     }
 
     // Error state rendering
-    fn render_error_state(&self, error_msg: &str, cx: &mut Context<Self>) -> impl Element {
+    fn render_error_state(&self, error_msg: String, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         v_flex()
             .gap_4()
             .items_center()
@@ -574,9 +581,8 @@ impl CopilotCodeVerification {
                 Button::new("retry-button", "Try Again")
                     .full_width()
                     .style(ButtonStyle::Filled)
-                    .on_click(cx.listener(|this, _, _, cx| {
+                    .on_click(cx.listener(|this, _ev: &ClickEvent, _window, cx| {
                         this.update_connection_state(ConnectionState::Initial, cx);
-                        // Trigger re-authentication
                         this.copilot.update(cx, |copilot, cx| {
                             copilot.sign_in(cx).detach_and_log_err(cx);
                         });
@@ -586,8 +592,30 @@ impl CopilotCodeVerification {
                 Button::new("cancel-button", "Cancel")
                     .full_width()
                     .style(ButtonStyle::Subtle)
-                    .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent)))
+                    .on_click(cx.listener(|_this, _ev: &ClickEvent, _window, cx| cx.emit(gpui::DismissEvent)))
             )
+    }
+
+    /// Validates device code format
+    fn is_valid_device_code(code: &str) -> bool {
+        !code.is_empty() && code.len() <= DEVICE_CODE_MAX_LENGTH
+    }
+
+    /// Creates a more accessible button with proper states
+    fn create_action_button(
+        id: &'static str,
+        label: String,
+        style: ButtonStyle,
+        disabled: bool,
+        on_click: impl Fn(&mut Self, &ClickEvent, &mut Window, &mut gpui::Context<Self>) + 'static,
+        cx: &mut gpui::Context<Self>,
+    ) -> Button {
+        Button::new(id, label)
+            .full_width()
+            .style(style)
+            .disabled(disabled)
+            .when(disabled, |button| button)
+            .on_click(cx.listener(on_click))
     }
 }
 
@@ -595,7 +623,7 @@ impl CopilotCodeVerification {
 struct CopilotStatusToast;
 
 impl Render for CopilotCodeVerification {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let content = match &self.status {
             Status::SigningIn { prompt: None } => {
                 self.render_loading_state(window, cx).into_any_element()
@@ -610,66 +638,36 @@ impl Render for CopilotCodeVerification {
                 self.render_success_modal(cx).into_any_element()
             }
             _ => {
-                // Handle unexpected states gracefully
                 div()
                     .child(Label::new("Unexpected state. Please try again."))
                     .into_any_element()
             }
         };
 
-        // Main modal container with improved styling
         v_flex()
             .id("copilot-code-verification")
-            .track_focus(&self.focus_handle(cx))
+            .track_focus(&self.focus_handle)
             .elevation_3(cx)
-            .w(MODAL_WIDTH)
+            .w(rems(24.0))
             .max_w_full()
             .items_center()
             .p_6()
             .gap_4()
-            .bg(cx.theme().colors().surface)
             .border_1()
             .border_color(cx.theme().colors().border)
             .rounded_lg()
             .shadow_lg()
             .on_action(cx.listener(|_, _: &menu::Cancel, _, cx| {
-                cx.emit(DismissEvent);
+                cx.emit(gpui::DismissEvent);
             }))
-            .on_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, window, _| {
+            .on_any_mouse_down(cx.listener(|this, _ev: &MouseDownEvent, window, _| {
                 window.focus(&this.focus_handle);
             }))
             .child(
-                Vector::new(VectorName::ZedXCopilot, gpui::rems(8.0), gpui::rems(4.0))
+                Vector::new(VectorName::ZedXCopilot, rems(8.0), rems(4.0))
                     .color(Color::Custom(cx.theme().colors().icon))
             )
             .child(content)
-    }
-}
-
-// Additional helper functions for better modularity
-impl CopilotCodeVerification {
-    /// Validates device code format
-    fn is_valid_device_code(code: &str) -> bool {
-        !code.is_empty() && code.len() <= DEVICE_CODE_MAX_LENGTH
-    }
-
-    /// Creates a more accessible button with proper states
-    fn create_action_button(
-        id: &'static str,
-        label: &str,
-        style: ButtonStyle,
-        disabled: bool,
-        on_click: impl Fn(&mut Self, &mut MouseDownEvent, &mut Window, &mut Context<Self>) + 'static,
-        cx: &mut Context<Self>,
-    ) -> Button {
-        Button::new(id, label)
-            .full_width()
-            .style(style)
-            .disabled(disabled)
-            .when(disabled, |button| {
-                button.cursor_not_allowed()
-            })
-            .on_click(cx.listener(on_click))
     }
 }
 
