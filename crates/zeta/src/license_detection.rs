@@ -344,16 +344,11 @@ mod tests {
     */
 
     #[test]
-    fn test_no_unicode_or_double_quotes_in_regexes() {
+    fn test_no_unicode_in_regexes() {
         for license in OpenSourceLicense::VARIANTS {
             assert!(
                 !license.regex().contains(|c: char| !c.is_ascii()),
                 "{}.regex contains unicode",
-                license.spdx_identifier()
-            );
-            assert!(
-                !license.regex().contains(|c: char| !c.is_ascii()),
-                "{}.regex contains a double quote",
                 license.spdx_identifier()
             );
         }
