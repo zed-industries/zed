@@ -347,7 +347,11 @@ impl OllamaLanguageModel {
                 .model
                 .supports_thinking
                 .map(|supports_thinking| supports_thinking && request.thinking_allowed),
-            tools: request.tools.into_iter().map(tool_into_ollama).collect(),
+            tools: if self.model.supports_tools.unwrap_or(false) {
+                request.tools.into_iter().map(tool_into_ollama).collect()
+            } else {
+                vec![]
+            },
         }
     }
 }
