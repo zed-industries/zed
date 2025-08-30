@@ -84,6 +84,10 @@ static DOTNET_PROJECT_FILES_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(global\.json|Directory\.Build\.props|.*\.(csproj|fsproj|vbproj|sln))$").unwrap()
 });
 
+#[cfg(target_os = "macos")]
+static MACOS_VERSION_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(\s*\(Build [^)]*[0-9]\))").unwrap());
+
 pub fn os_name() -> String {
     #[cfg(target_os = "macos")]
     {
@@ -108,19 +112,16 @@ pub fn os_name() -> String {
 pub fn os_version() -> String {
     #[cfg(target_os = "macos")]
     {
-        use cocoa::base::nil;
-        use cocoa::foundation::NSProcessInfo;
-
-        unsafe {
-            let process_info = cocoa::foundation::NSProcessInfo::processInfo(nil);
-            let version = process_info.operatingSystemVersion();
-            gpui::SemanticVersion::new(
-                version.majorVersion as usize,
-                version.minorVersion as usize,
-                version.patchVersion as usize,
-            )
+        use objc2_foundation::NSProcessInfo;
+        let process_info = NSProcessInfo::processInfo();
+        let version_nsstring = unsafe { process_info.operatingSystemVersionString() };
+        // "Version 15.6.1 (Build 24G90)" -> "15.6.1 (Build 24G90)"
+        let version_string = version_nsstring.to_string().replace("Version ", "");
+        // "15.6.1 (Build 24G90)" -> "15.6.1"
+        // "26.0.0 (Build 25A5349a)" -> unchanged (Beta or Rapid Security Response; ends with letter)
+        MACOS_VERSION_REGEX
+            .replace_all(&version_string, "")
             .to_string()
-        }
     }
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
