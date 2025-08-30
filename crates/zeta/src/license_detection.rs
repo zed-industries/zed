@@ -26,7 +26,8 @@ static LICENSE_FILE_NAME_REGEX: LazyLock<regex::bytes::Regex> = LazyLock::new(||
                 0? bsd (?: [\\-._] [0123])? (?: [\\-._] clause)? | \
                 isc | \
                 mit | \
-                upl))? \
+                upl | \
+                zlib))? \
         (?: [\\-._]? (?: license | licence))? \
         (?: \\.txt | \\.md)? \
         $",
@@ -45,6 +46,7 @@ pub enum OpenSourceLicense {
     ISC,
     MIT,
     UPL1_0,
+    Zlib,
 }
 
 impl Display for OpenSourceLicense {
@@ -64,6 +66,7 @@ impl OpenSourceLicense {
             OpenSourceLicense::ISC => "isc",
             OpenSourceLicense::MIT => "mit",
             OpenSourceLicense::UPL1_0 => "upl-1.0",
+            OpenSourceLicense::Zlib => "zlib",
         }
     }
 
@@ -77,6 +80,7 @@ impl OpenSourceLicense {
             OpenSourceLicense::ISC => include_str!("../license_regexes/isc.regex"),
             OpenSourceLicense::MIT => include_str!("../license_regexes/mit.regex"),
             OpenSourceLicense::UPL1_0 => include_str!("../license_regexes/upl-1.0.regex"),
+            OpenSourceLicense::Zlib => include_str!("../license_regexes/zlib.regex"),
         }
     }
 }
@@ -287,6 +291,7 @@ mod tests {
         assert_eq!(detect_license(text), Some(license));
     }
 
+    /*
     // Uncomment this and run with `cargo test -p zeta -- --no-capture &> licenses-output` to
     // traverse your entire home directory and run license detection on every file that has a
     // license-like name.
@@ -329,14 +334,14 @@ mod tests {
         for path in &unrecognized {
             println!("{}", path);
         }
-        // Use of unimplemented intentionally causes a clippy warning to prevent this from being
-        // committed uncommented.
-        unimplemented!(
+        panic!(
             "{} licenses detected, {} unrecognized",
             detected.len(),
             unrecognized.len()
         );
+        println!("This line has a warning to make sure this test is always commented out");
     }
+    */
 
     #[test]
     fn test_no_unicode_or_double_quotes_in_regexes() {
@@ -407,6 +412,14 @@ mod tests {
             include_str!("../license_examples/apache-2.0-ex1.txt"),
             OpenSourceLicense::Apache2_0,
         );
+        assert_matches_license(
+            include_str!("../license_examples/apache-2.0-ex2.txt"),
+            OpenSourceLicense::Apache2_0,
+        );
+        assert_matches_license(
+            include_str!("../license_examples/apache-2.0-ex3.txt"),
+            OpenSourceLicense::Apache2_0,
+        );
     }
 
     #[test]
@@ -430,7 +443,7 @@ mod tests {
     #[test]
     fn test_bsd_2_clause_positive_detection() {
         assert_matches_license(
-            include_str!("../license_examples/bsd-2-clause.txt"),
+            include_str!("../license_examples/bsd-2-clause-ex0.txt"),
             OpenSourceLicense::BSD,
         );
     }
@@ -447,6 +460,14 @@ mod tests {
         );
         assert_matches_license(
             include_str!("../license_examples/bsd-3-clause-ex2.txt"),
+            OpenSourceLicense::BSD,
+        );
+        assert_matches_license(
+            include_str!("../license_examples/bsd-3-clause-ex3.txt"),
+            OpenSourceLicense::BSD,
+        );
+        assert_matches_license(
+            include_str!("../license_examples/bsd-3-clause-ex4.txt"),
             OpenSourceLicense::BSD,
         );
     }
@@ -513,6 +534,14 @@ mod tests {
         );
 
         assert!(detect_license(&license_text).is_none());
+    }
+
+    #[test]
+    fn test_zlib_positive_detection() {
+        assert_matches_license(
+            include_str!("../license_examples/zlib-ex0.txt"),
+            OpenSourceLicense::Zlib,
+        );
     }
 
     #[test]
