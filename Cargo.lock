@@ -20841,6 +20841,7 @@ dependencies = [
  "unindent",
  "util",
  "uuid",
+ "walkdir",
  "workspace",
  "workspace-hack",
  "worktree",

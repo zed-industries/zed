@@ -58,6 +58,7 @@ workspace-hack.workspace = true
 workspace.workspace = true
 worktree.workspace = true
 zed_actions.workspace = true
+walkdir.workspace = true
 
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }
