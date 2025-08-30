@@ -397,11 +397,11 @@ impl Vim {
         let count = Self::take_count(cx);
 
         match self.mode {
-            Mode::Normal => self.normal_object(object, count, window, cx),
+            Mode::Normal | Mode::HelixNormal => self.normal_object(object, count, window, cx),
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
                 self.visual_object(object, count, window, cx)
             }
-            Mode::Insert | Mode::Replace | Mode::HelixNormal => {
+            Mode::Insert | Mode::Replace => {
                 // Shouldn't execute a text object in insert mode. Ignoring
             }
         }
@@ -1364,7 +1364,7 @@ fn is_sentence_end(map: &DisplaySnapshot, offset: usize) -> bool {
 
 /// Expands the passed range to include whitespace on one side or the other in a line. Attempts to add the
 /// whitespace to the end first and falls back to the start if there was none.
-fn expand_to_include_whitespace(
+pub fn expand_to_include_whitespace(
     map: &DisplaySnapshot,
     range: Range<DisplayPoint>,
     stop_at_newline: bool,
