@@ -1,0 +1,151 @@
+name: Cherry Pick
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    types: [closed]
+
+jobs:
+  cherry-pick:
+    # This job will run when a PR is merged with a specific comment,
+    # or when a comment is added to an already merged PR.
+    runs-on: ubuntu-latest
+    # Use pull_request_target so that we can add comments back to the PR
+    # if the cherry-pick fails.
+    permissions:
+      pull-requests: write
+      contents: write
+      issues: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Required to get all history for cherry-picking
+
+      - name: Extract info and determine trigger
+        id: info
+        run: |
+          # Default to failure unless a valid trigger is found
+          echo "valid=false" >> $GITHUB_OUTPUT
+
+          if [[ "${{ github.event_name }}" == "pull_request_target" && "${{ github.event.pull_request.merged }}" == "true" ]]; then
+            echo "Triggered by PR merge"
+            PR_NUMBER="${{ github.event.pull_request.number }}"
+
+            # Check PR body first, then fall back to comments
+            TEXT_TO_SEARCH="${{ github.event.pull_request.body }}"
+            if [[ ! "$TEXT_TO_SEARCH" =~ /cherry-pick[[:space:]]+(stable|preview) ]]; then
+              echo "Command not found in PR body. Checking comments..."
+              TEXT_TO_SEARCH=$(gh pr view $PR_NUMBER --json comments -q '.comments[].body' | tail -n 100)
+            fi
+
+            if [[ "$TEXT_TO_SEARCH" =~ /cherry-pick[[:space:]]+(stable|preview) ]]; then
+              echo "Found cherry-pick command."
+              MERGE_SHA="${{ github.event.pull_request.merge_commit_sha }}"
+              # Get the last matching command in the text
+              CHANNEL=$(echo "$TEXT_TO_SEARCH" | grep -oP '/cherry-pick[[:space:]]+\K(stable|preview)' | tail -n1)
+
+              echo "valid=true" >> $GITHUB_OUTPUT
+              echo "merge_sha=$MERGE_SHA" >> $GITHUB_OUTPUT
+              echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+              echo "channel=$CHANNEL" >> $GITHUB_OUTPUT
+            else
+              echo "No cherry-pick command found in PR body or recent comments. Exiting."
+              exit 0
+            fi
+
+          elif [[ "${{ github.event_name }}" == "issue_comment" && "${{ github.event.issue.pull_request }}" != "" ]]; then
+            echo "Triggered by issue comment"
+            COMMENT_BODY="${{ github.event.comment.body }}"
+            if [[ ! "$COMMENT_BODY" =~ /cherry-pick[[:space:]]+(stable|preview) ]]; then
+              echo "Comment does not contain cherry-pick command. Exiting."
+              exit 0
+            fi
+
+            PR_NUMBER="${{ github.event.issue.number }}"
+
+            # Check if the PR is merged
+            MERGE_SHA=$(gh pr view $PR_NUMBER --json mergeCommit -q .mergeCommit.oid)
+            if [[ -z "$MERGE_SHA" ]]; then
+              echo "PR #$PR_NUMBER is not merged. Exiting."
+              exit 0
+            fi
+
+            CHANNEL=$(echo "$COMMENT_BODY" | grep -oP '/cherry-pick[[:space:]]+\K(stable|preview)' | head -n1)
+
+            echo "valid=true" >> $GITHUB_OUTPUT
+            echo "merge_sha=$MERGE_SHA" >> $GITHUB_OUTPUT
+            echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+            echo "channel=$CHANNEL" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cherry-pick
+        if: steps.info.outputs.valid == 'true'
+        run: |
+          set -e
+
+          CHANNEL="${{ steps.info.outputs.channel }}"
+          MERGE_SHA="${{ steps.info.outputs.merge_sha }}"
+          PR_NUMBER="${{ steps.info.outputs.pr_number }}"
+
+          # Get the latest version for the channel
+          echo "Fetching latest version for '$CHANNEL' channel..."
+          query=""
+          case $CHANNEL in
+            stable)
+              ;;
+            preview)
+              query="&preview=1"
+              ;;
+            *)
+              echo "Invalid channel: $CHANNEL" >&2
+              exit 1
+              ;;
+          esac
+          LATEST_VERSION=$(curl -s "https://zed.dev/api/releases/latest?asset=zed&os=macos&arch=aarch64$query" | jq -r .version)
+
+          if [[ -z "$LATEST_VERSION" ]]; then
+            echo "Could not fetch latest version for channel '$CHANNEL'"
+            gh pr comment $PR_NUMBER --body "Could not fetch latest version for channel '$CHANNEL' from zed.dev API."
+            exit 1
+          fi
+          echo "Latest version is $LATEST_VERSION"
+
+          # Construct target branch name (e.g., v0.85.4 -> v0.85.x)
+          TARGET_BRANCH=$(echo "$LATEST_VERSION" | sed -E 's/v([0-9]+\.[0-9]+)\..*/v\1.x/')
+          echo "Target branch is $TARGET_BRANCH"
+
+          # Configure git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Create and push the cherry-pick branch
+          NEW_BRANCH="cherry-pick/pr-${PR_NUMBER}-to-${TARGET_BRANCH}"
+
+          git fetch origin $TARGET_BRANCH
+          git checkout -b $NEW_BRANCH "origin/$TARGET_BRANCH"
+
+          echo "Attempting to cherry-pick $MERGE_SHA..."
+          if ! git cherry-pick $MERGE_SHA; then
+            echo "Cherry-pick failed. Please resolve conflicts manually."
+            gh pr comment $PR_NUMBER --body "Automated cherry-pick to \`$TARGET_BRANCH\` failed due to conflicts. Please resolve them manually."
+            exit 1
+          fi
+
+          echo "Pushing new branch $NEW_BRANCH..."
+          git push -u origin $NEW_BRANCH
+
+          # Create the pull request
+          echo "Creating pull request..."
+          gh pr create \
+            --title "Cherry-pick PR #${PR_NUMBER} to ${TARGET_BRANCH}" \
+            --body "This PR cherry-picks the changes from #${PR_NUMBER} to the \`$TARGET_BRANCH\` branch." \
+            --base $TARGET_BRANCH \
+            --head $NEW_BRANCH \
+            --reviewer "${{ github.actor }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
