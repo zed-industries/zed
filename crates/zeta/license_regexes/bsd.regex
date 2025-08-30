@@ -1,4 +1,4 @@
-.*Redistribution and use in source and binary forms with or without
+.{0,512}Redistribution and use in source and binary forms with or without
 modification are permitted provided that the following conditions are met
 
 (?:1 )?Redistributions of source code must retain the above copyright
@@ -8,13 +8,13 @@ notice this list of conditions and the following disclaimer(?:
 notice this list of conditions and the following disclaimer in the
 documentation andor other materials provided with the distribution(?:
 
-(?:3 )?Neither .*nor the names of(?: its| other| project)? contributors may be used to endorse or
+(?:3 )?.{0,128} may be used to endorse or
 promote products derived from this software without specific prior written
 permission)?)?
 
-THIS SOFTWARE IS PROVIDED BY .*AS IS AND ANY EXPRESS OR IMPLIED WARRANTIES
+THIS SOFTWARE IS PROVIDED BY .{0,128}AS IS AND ANY EXPRESS OR IMPLIED WARRANTIES
 INCLUDING BUT NOT LIMITED TO THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
-FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED IN NO EVENT SHALL .*BE LIABLE
+FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED IN NO EVENT SHALL .{0,128}BE LIABLE
 FOR ANY DIRECT INDIRECT INCIDENTAL SPECIAL EXEMPLARY OR CONSEQUENTIAL
 DAMAGES INCLUDING BUT NOT LIMITED TO PROCUREMENT OF SUBSTITUTE GOODS OR
 SERVICES LOSS OF USE DATA OR PROFITS OR BUSINESS INTERRUPTION HOWEVER
