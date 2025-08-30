@@ -363,7 +363,8 @@ impl JsonSchema for LanguageModelProviderSetting {
                 "deepseek",
                 "openrouter",
                 "mistral",
-                "vercel"
+                "vercel",
+                "x_ai"
             ]
         })
     }
