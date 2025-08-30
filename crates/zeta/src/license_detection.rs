@@ -8,6 +8,7 @@ use std::{
 use fs::Fs;
 use futures::StreamExt as _;
 use gpui::{App, AppContext as _, Entity, Subscription, Task};
+use itertools::Itertools;
 use postage::watch;
 use project::Worktree;
 use regex::Regex;
@@ -67,11 +68,7 @@ impl OpenSourceLicense {
     }
 
     /// Regexes to match the license text. These regexes are expected to match the entire file. Also
-    /// note that `canonicalize_license_text` does the following:
-    ///
-    /// * Removes any words in the match input which are entirely symbols.
-    ///
-    /// * Replaces double quotes with single quotes.
+    /// note that `canonicalize_license_text` removes everything but alphanumeric ascii characters.
     pub fn regex(&self) -> &'static str {
         match self {
             OpenSourceLicense::Apache2_0 => include_str!("../license_regexes/apache-2.0.regex"),
@@ -122,35 +119,19 @@ fn detect_license(license: &str) -> Option<OpenSourceLicense> {
 fn canonicalize_license_regex(license: &str) -> String {
     license
         .split_ascii_whitespace()
-        .collect::<Vec<_>>()
         .join(" ")
         .to_ascii_lowercase()
 }
 
 /// Canonicalizes the whitespace of license text.
 fn canonicalize_license_text(license: &str) -> String {
-    let mut result = String::new();
-    let mut is_first = true;
-    for word in license.split_ascii_whitespace() {
-        // omitting words that are all symbols handles cases like being wrapped in markdown code or
-        // commented out
-        if word.chars().all(|c| c.is_ascii_punctuation()) {
-            continue;
-        }
-        if is_first {
-            is_first = false;
-        } else {
-            result.push(' ');
-        }
-        result.extend(word.chars().map(|c| {
-            if c == '"' || c == '“' || c == '”' {
-                '\''
-            } else {
-                c.to_ascii_lowercase()
-            }
-        }));
-    }
-    result
+    license
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || c.is_ascii_whitespace())
+        .map(|c| c.to_ascii_lowercase())
+        .collect::<String>()
+        .split_ascii_whitespace()
+        .join(" ")
 }
 
 pub enum LicenseDetectionWatcher {
@@ -282,7 +263,7 @@ mod tests {
 
     use super::*;
 
-    const APACHE_2_0_TXT: &str = include_str!("../license_examples/apache-2.0.txt");
+    const APACHE_2_0_TXT: &str = include_str!("../license_examples/apache-2.0-ex0.txt");
     const ISC_TXT: &str = include_str!("../license_examples/isc.txt");
     const MIT_TXT: &str = include_str!("../license_examples/mit-ex0.txt");
     const UPL_1_0_TXT: &str = include_str!("../license_examples/upl-1.0.txt");
@@ -419,6 +400,11 @@ mod tests {
 
         assert_matches_license(
             include_str!("../../../LICENSE-APACHE"),
+            OpenSourceLicense::Apache2_0,
+        );
+
+        assert_matches_license(
+            include_str!("../license_examples/apache-2.0-ex1.txt"),
             OpenSourceLicense::Apache2_0,
         );
     }
