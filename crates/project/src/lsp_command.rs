@@ -4,8 +4,8 @@ use crate::{
     CodeAction, CompletionSource, CoreCompletion, CoreCompletionResponse, DocumentColor,
     DocumentHighlight, DocumentSymbol, Hover, HoverBlock, HoverBlockKind, InlayHint,
     InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
-    LocationLink, LspAction, LspPullDiagnostics, MarkupContent, PrepareRenameResponse,
-    ProjectTransaction, PulledDiagnostics, ResolveState,
+    LocationLink, LspAction, LspFoldingRange, LspPullDiagnostics, MarkupContent,
+    PrepareRenameResponse, ProjectTransaction, PulledDiagnostics, ResolveState,
     lsp_store::{LocalLspStore, LspStore},
 };
 use anyhow::{Context as _, Result};
@@ -264,6 +264,9 @@ pub(crate) struct LinkedEditingRange {
 pub(crate) struct GetDocumentDiagnostics {
     pub previous_result_id: Option<String>,
 }
+
+#[derive(Debug, Copy, Clone)]
+pub(crate) struct GetFoldingRanges;
 
 #[async_trait(?Send)]
 impl LspCommand for PrepareRename {
@@ -4590,5 +4593,138 @@ mod tests {
 
         let result = GetDocumentDiagnostics::deserialize_lsp_diagnostic(proto_diagnostic);
         assert!(result.is_err());
+    }
+}
+
+#[async_trait(?Send)]
+impl LspCommand for GetFoldingRanges {
+    type Response = Vec<LspFoldingRange>;
+    type LspRequest = lsp::request::FoldingRangeRequest;
+    type ProtoRequest = proto::GetFoldingRanges;
+
+    fn display_name(&self) -> &str {
+        "Folding ranges"
+    }
+
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        capabilities
+            .server_capabilities
+            .folding_range_provider
+            .is_some()
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        _: &Buffer,
+        _: &Arc<LanguageServer>,
+        _: &App,
+    ) -> Result<lsp::FoldingRangeParams> {
+        Ok(lsp::FoldingRangeParams {
+            text_document: make_text_document_identifier(path)?,
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        })
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: Option<Vec<lsp::FoldingRange>>,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: LanguageServerId,
+        _: AsyncApp,
+    ) -> Result<Vec<LspFoldingRange>> {
+        Ok(message
+            .unwrap_or_default()
+            .into_iter()
+            .map(|range| {
+                let range = LspFoldingRange {
+                    start_line: range.start_line,
+                    start_character: range.start_character,
+                    end_line: range.end_line,
+                    end_character: range.end_character,
+                    kind: range.kind,
+                    collapsed_text: range.collapsed_text,
+                };
+
+                range
+            })
+            .collect())
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetFoldingRanges {
+        proto::GetFoldingRanges {
+            project_id,
+            buffer_id: buffer.remote_id().into(),
+            version: serialize_version(&buffer.version()),
+        }
+    }
+
+    async fn from_proto(
+        _message: proto::GetFoldingRanges,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: AsyncApp,
+    ) -> Result<Self> {
+        Ok(Self)
+    }
+
+    fn response_to_proto(
+        response: Vec<LspFoldingRange>,
+        _: &mut LspStore,
+        _: PeerId,
+        buffer_version: &clock::Global,
+        _: &mut App,
+    ) -> proto::GetFoldingRangesResponse {
+        proto::GetFoldingRangesResponse {
+            folding_ranges: response
+                .into_iter()
+                .map(|range| proto::FoldingRange {
+                    start_line: range.start_line,
+                    start_character: range.start_character,
+                    end_line: range.end_line,
+                    end_character: range.end_character,
+                    kind: match range.kind {
+                        Some(lsp::FoldingRangeKind::Comment) => Some("comment".to_string()),
+                        Some(lsp::FoldingRangeKind::Imports) => Some("imports".to_string()),
+                        Some(lsp::FoldingRangeKind::Region) => Some("region".to_string()),
+                        None => None,
+                    },
+                    collapsed_text: range.collapsed_text,
+                })
+                .collect(),
+            version: serialize_version(buffer_version),
+        }
+    }
+
+    async fn response_from_proto(
+        self,
+        message: proto::GetFoldingRangesResponse,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: AsyncApp,
+    ) -> Result<Vec<LspFoldingRange>> {
+        Ok(message
+            .folding_ranges
+            .into_iter()
+            .map(|range| LspFoldingRange {
+                start_line: range.start_line,
+                start_character: range.start_character,
+                end_line: range.end_line,
+                end_character: range.end_character,
+                kind: match range.kind.as_deref() {
+                    Some("comment") => Some(lsp::FoldingRangeKind::Comment),
+                    Some("imports") => Some(lsp::FoldingRangeKind::Imports),
+                    Some("region") => Some(lsp::FoldingRangeKind::Region),
+                    _ => None,
+                },
+                collapsed_text: range.collapsed_text,
+            })
+            .collect())
+    }
+
+    fn buffer_id_from_proto(message: &proto::GetFoldingRanges) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
     }
 }

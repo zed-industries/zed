@@ -854,6 +854,21 @@ impl LanguageServer {
                     color_provider: Some(DocumentColorClientCapabilities {
                         dynamic_registration: Some(true),
                     }),
+                    folding_range: Some(FoldingRangeClientCapabilities {
+                        dynamic_registration: Some(false),
+                        range_limit: None,
+                        line_folding_only: Some(false),
+                        folding_range_kind: Some(FoldingRangeKindCapability {
+                            value_set: Some(vec![
+                                FoldingRangeKind::Comment,
+                                FoldingRangeKind::Imports,
+                                FoldingRangeKind::Region,
+                            ]),
+                        }),
+                        folding_range: Some(FoldingRangeCapability {
+                            collapsed_text: Some(true),
+                        }),
+                    }),
                     ..TextDocumentClientCapabilities::default()
                 }),
                 experimental: Some(json!({

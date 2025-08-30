@@ -793,6 +793,7 @@ message LspQuery {
         GetDeclaration get_declaration = 11;
         GetTypeDefinition get_type_definition = 12;
         GetImplementation get_implementation = 13;
+        GetFoldingRanges get_folding_ranges = 14;
     }
 }
 
@@ -815,6 +816,7 @@ message LspResponse {
         GetTypeDefinitionResponse get_type_definition_response = 10;
         GetImplementationResponse get_implementation_response = 11;
         GetReferencesResponse get_references_response = 12;
+        GetFoldingRangesResponse get_folding_ranges_response = 13;
     }
     uint64 server_id = 7;
 }
@@ -929,6 +931,26 @@ message PulledDiagnostics {
 message PullWorkspaceDiagnostics {
     uint64 project_id = 1;
     uint64 server_id = 2;
+}
+
+message GetFoldingRanges {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    repeated VectorClockEntry version = 3;
+}
+
+message GetFoldingRangesResponse {
+    repeated FoldingRange folding_ranges = 1;
+    repeated VectorClockEntry version = 2;
+}
+
+message FoldingRange {
+    uint32 start_line = 1;
+    optional uint32 start_character = 2;
+    uint32 end_line = 3;
+    optional uint32 end_character = 4;
+    optional string kind = 5;
+    optional string collapsed_text = 6;
 }
 
 message ToggleLspLogs {

@@ -3609,6 +3609,7 @@ impl LspStore {
         client.add_entity_request_handler(Self::handle_lsp_command::<PrepareRename>);
         client.add_entity_request_handler(Self::handle_lsp_command::<PerformRename>);
         client.add_entity_request_handler(Self::handle_lsp_command::<LinkedEditingRange>);
+        client.add_entity_request_handler(Self::handle_lsp_command::<GetFoldingRanges>);
 
         client.add_entity_request_handler(Self::handle_lsp_ext_cancel_flycheck);
         client.add_entity_request_handler(Self::handle_lsp_ext_run_flycheck);
@@ -8178,6 +8179,17 @@ impl LspStore {
                     lsp_request_id,
                     get_implementation,
                     position,
+                    cx.clone(),
+                )
+                .await?;
+            }
+            Request::GetFoldingRanges(get_folding_ranges) => {
+                Self::query_lsp_locally::<GetFoldingRanges>(
+                    lsp_store,
+                    sender_id,
+                    lsp_request_id,
+                    get_folding_ranges,
+                    None,
                     cx.clone(),
                 )
                 .await?;
