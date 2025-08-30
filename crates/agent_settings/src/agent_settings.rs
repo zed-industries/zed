@@ -352,18 +352,19 @@ impl JsonSchema for LanguageModelProviderSetting {
     fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
         json_schema!({
             "enum": [
-                "anthropic",
                 "amazon-bedrock",
-                "google",
-                "lmstudio",
-                "ollama",
-                "openai",
-                "zed.dev",
+                "anthropic",
                 "copilot_chat",
                 "deepseek",
-                "openrouter",
+                "google",
+                "lmstudio",
                 "mistral",
-                "vercel"
+                "ollama",
+                "openai",
+                "openrouter",
+                "vercel",
+                "x_ai",
+                "zed.dev"
             ]
         })
     }
