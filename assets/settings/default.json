@@ -378,7 +378,9 @@
     // Whether to show the sign in button in the titlebar.
     "show_sign_in": true,
     // Whether to show the menus in the titlebar.
-    "show_menus": false
+    "show_menus": false,
+    // Whether to hide the titlebar when the window is fullscreen.
+    "hide_in_fullscreen": false
   },
   // Scrollbar related settings
   "scrollbar": {

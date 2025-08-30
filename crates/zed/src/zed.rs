@@ -66,6 +66,7 @@ use std::{
 };
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use theme::{ActiveTheme, ThemeSettings};
+use title_bar::title_bar_settings::TitleBarSettings;
 use ui::{PopoverMenuHandle, prelude::*};
 use util::markdown::MarkdownString;
 use util::{ResultExt, asset_str};
@@ -637,9 +638,10 @@ fn register_actions(
         .register_action(|_, _: &Zoom, window, _| {
             window.zoom_window();
         })
-        .register_action(|workspace, _: &ToggleFullScreen, window, _| {
+        .register_action(|workspace, _: &ToggleFullScreen, window, cx| {
             window.toggle_fullscreen();
-            workspace.toggle_titlebar_visibility();
+            let force_visible = !TitleBarSettings::get_global(cx).hide_in_fullscreen;
+            workspace.toggle_titlebar_visibility(force_visible);
         })
         .register_action(|_, action: &OpenZedUrl, _, cx| {
             OpenListener::global(cx).open(RawOpenRequest {

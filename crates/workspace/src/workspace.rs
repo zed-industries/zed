@@ -2027,8 +2027,8 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn toggle_titlebar_visibility(&mut self) {
-        self.titlebar_hidden = !self.titlebar_hidden;
+    pub fn toggle_titlebar_visibility(&mut self, force_visible: bool) {
+        self.titlebar_hidden = if force_visible { false } else { !self.titlebar_hidden };
     }
 
     pub fn set_prompt_for_new_path(&mut self, prompt: PromptForNewPath) {
@@ -6340,7 +6340,7 @@ impl Render for Workspace {
                 .items_start()
                 .text_color(colors.text)
                 .overflow_hidden()
-                .children(if self.titlebar_hidden { None } self { self.titlebar_item.clone() })
+                .children(if self.titlebar_hidden { None } else { self.titlebar_item.clone() })
                 .on_modifiers_changed(move |_, _, cx| {
                     for &id in &notification_entities {
                         cx.notify(id);

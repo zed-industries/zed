@@ -4053,7 +4053,8 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   "show_onboarding_banner": true,
   "show_user_picture": true,
   "show_sign_in": true,
-  "show_menus": false
+  "show_menus": false,
+  "hide_in_fullscreen": false,
 }
 ```
 
