@@ -394,142 +394,134 @@ pub fn into_mistral(
 
     let mut messages = Vec::new();
     for message in &request.messages {
-        match message.role {
-            Role::User => {
-                let mut message_content = mistral::MessageContent::empty();
-                for content in &message.content {
-                    match content {
-                        MessageContent::Text(text) => {
-                            message_content
-                                .push_part(mistral::MessagePart::Text { text: text.clone() });
-                        }
-                        MessageContent::Image(image_content) => {
-                            if model.supports_images() {
-                                message_content.push_part(mistral::MessagePart::ImageUrl {
-                                    image_url: image_content.to_base64_url(),
-                                });
+        for content in &message.content {
+            match content {
+                MessageContent::Text(text) | MessageContent::Thinking { text, .. } => match message
+                    .role
+                {
+                    Role::User => {
+                        let part = if matches!(content, MessageContent::Thinking { .. })
+                            && model.supports_thinking()
+                        {
+                            mistral::MessagePart::Thinking {
+                                thinking: vec![mistral::ThinkingPart::Text { text: text.clone() }],
                             }
+                        } else {
+                            mistral::MessagePart::Text { text: text.clone() }
+                        };
+
+                        if let Some(mistral::RequestMessage::User {
+                            content: user_content,
+                        }) = messages.last_mut()
+                        {
+                            user_content.push_part(part);
+                        } else {
+                            let mut new_content = mistral::MessageContent::empty();
+                            new_content.push_part(part);
+                            messages.push(mistral::RequestMessage::User {
+                                content: new_content,
+                            });
                         }
-                        MessageContent::Thinking { text, .. } => {
-                            if model.supports_thinking() {
-                                message_content.push_part(mistral::MessagePart::Thinking {
+                    }
+                    Role::Assistant => {
+                        let content_part = if matches!(content, MessageContent::Thinking { .. })
+                            && model.supports_thinking()
+                        {
+                            mistral::MessageContent::Multipart {
+                                content: vec![mistral::MessagePart::Thinking {
                                     thinking: vec![mistral::ThinkingPart::Text {
                                         text: text.clone(),
                                     }],
-                                });
+                                }],
                             }
-                        }
-                        MessageContent::RedactedThinking(_) => {}
-                        MessageContent::ToolUse(_) => {
-                            // Tool use is not supported in User messages for Mistral
-                        }
-                        MessageContent::ToolResult(tool_result) => {
-                            let tool_content = match &tool_result.content {
-                                LanguageModelToolResultContent::Text(text) => text.to_string(),
-                                LanguageModelToolResultContent::Image(_) => {
-                                    "[Tool responded with an image, but Zed doesn't support these in Mistral models yet]".to_string()
-                                }
-                            };
-                            messages.push(mistral::RequestMessage::Tool {
-                                content: tool_content,
-                                tool_call_id: tool_result.tool_use_id.to_string(),
-                            });
-                        }
-                    }
-                }
-                if !matches!(message_content, mistral::MessageContent::Plain { ref content } if content.is_empty())
-                {
-                    messages.push(mistral::RequestMessage::User {
-                        content: message_content,
-                    });
-                }
-            }
-            Role::Assistant => {
-                for content in &message.content {
-                    match content {
-                        MessageContent::Text(text) => {
-                            messages.push(mistral::RequestMessage::Assistant {
-                                content: Some(mistral::MessageContent::Plain {
-                                    content: text.clone(),
-                                }),
-                                tool_calls: Vec::new(),
-                            });
-                        }
-                        MessageContent::Thinking { text, .. } => {
-                            if model.supports_thinking() {
-                                messages.push(mistral::RequestMessage::Assistant {
-                                    content: Some(mistral::MessageContent::Multipart {
-                                        content: vec![mistral::MessagePart::Thinking {
-                                            thinking: vec![mistral::ThinkingPart::Text {
-                                                text: text.clone(),
-                                            }],
-                                        }],
-                                    }),
-                                    tool_calls: Vec::new(),
-                                });
+                        } else {
+                            mistral::MessageContent::Plain {
+                                content: text.clone(),
                             }
-                        }
-                        MessageContent::RedactedThinking(_) => {}
-                        MessageContent::Image(_) => {}
-                        MessageContent::ToolUse(tool_use) => {
-                            let tool_call = mistral::ToolCall {
-                                id: tool_use.id.to_string(),
-                                content: mistral::ToolCallContent::Function {
-                                    function: mistral::FunctionContent {
-                                        name: tool_use.name.to_string(),
-                                        arguments: serde_json::to_string(&tool_use.input)
-                                            .unwrap_or_default(),
-                                    },
-                                },
-                            };
+                        };
 
-                            if let Some(mistral::RequestMessage::Assistant { tool_calls, .. }) =
-                                messages.last_mut()
-                            {
-                                tool_calls.push(tool_call);
-                            } else {
-                                messages.push(mistral::RequestMessage::Assistant {
-                                    content: None,
-                                    tool_calls: vec![tool_call],
-                                });
+                        messages.push(mistral::RequestMessage::Assistant {
+                            content: Some(content_part),
+                            tool_calls: Vec::new(),
+                        });
+                    }
+                    Role::System => {
+                        let content_part = if matches!(content, MessageContent::Thinking { .. })
+                            && model.supports_thinking()
+                        {
+                            mistral::MessageContent::Multipart {
+                                content: vec![mistral::MessagePart::Thinking {
+                                    thinking: vec![mistral::ThinkingPart::Text {
+                                        text: text.clone(),
+                                    }],
+                                }],
                             }
-                        }
-                        MessageContent::ToolResult(_) => {
-                            // Tool results are not supported in Assistant messages
+                        } else {
+                            mistral::MessageContent::Plain {
+                                content: text.clone(),
+                            }
+                        };
+
+                        messages.push(mistral::RequestMessage::System {
+                            content: content_part,
+                        });
+                    }
+                },
+                MessageContent::RedactedThinking(_) => {}
+                MessageContent::Image(image_content) => {
+                    if model.supports_images() && message.role == Role::User {
+                        let part = mistral::MessagePart::ImageUrl {
+                            image_url: image_content.to_base64_url(),
+                        };
+
+                        if let Some(mistral::RequestMessage::User {
+                            content: user_content,
+                        }) = messages.last_mut()
+                        {
+                            user_content.push_part(part);
+                        } else {
+                            let mut new_content = mistral::MessageContent::empty();
+                            new_content.push_part(part);
+                            messages.push(mistral::RequestMessage::User {
+                                content: new_content,
+                            });
                         }
                     }
                 }
-            }
-            Role::System => {
-                for content in &message.content {
-                    match content {
-                        MessageContent::Text(text) => {
-                            messages.push(mistral::RequestMessage::System {
-                                content: mistral::MessageContent::Plain {
-                                    content: text.clone(),
-                                },
-                            });
-                        }
-                        MessageContent::Thinking { text, .. } => {
-                            if model.supports_thinking() {
-                                messages.push(mistral::RequestMessage::System {
-                                    content: mistral::MessageContent::Multipart {
-                                        content: vec![mistral::MessagePart::Thinking {
-                                            thinking: vec![mistral::ThinkingPart::Text {
-                                                text: text.clone(),
-                                            }],
-                                        }],
-                                    },
-                                });
-                            }
-                        }
-                        MessageContent::RedactedThinking(_) => {}
-                        MessageContent::Image(_)
-                        | MessageContent::ToolUse(_)
-                        | MessageContent::ToolResult(_) => {
-                            // Images and tools are not supported in System messages
-                        }
+                MessageContent::ToolUse(tool_use) => {
+                    let tool_call = mistral::ToolCall {
+                        id: tool_use.id.to_string(),
+                        content: mistral::ToolCallContent::Function {
+                            function: mistral::FunctionContent {
+                                name: tool_use.name.to_string(),
+                                arguments: serde_json::to_string(&tool_use.input)
+                                    .unwrap_or_default(),
+                            },
+                        },
+                    };
+
+                    if let Some(mistral::RequestMessage::Assistant { tool_calls, .. }) =
+                        messages.last_mut()
+                    {
+                        tool_calls.push(tool_call);
+                    } else {
+                        messages.push(mistral::RequestMessage::Assistant {
+                            content: None,
+                            tool_calls: vec![tool_call],
+                        });
                     }
+                }
+                MessageContent::ToolResult(tool_result) => {
+                    let tool_content = match &tool_result.content {
+                        LanguageModelToolResultContent::Text(text) => text.to_string(),
+                        LanguageModelToolResultContent::Image(_) => {
+                            "[Tool responded with an image, but Zed doesn't support these in Mistral models yet]".to_string()
+                        }
+                    };
+                    messages.push(mistral::RequestMessage::Tool {
+                        content: tool_content,
+                        tool_call_id: tool_result.tool_use_id.to_string(),
+                    });
                 }
             }
         }
