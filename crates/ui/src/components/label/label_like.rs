@@ -56,8 +56,13 @@ pub trait LabelCommon {
     /// Sets the alpha property of the label, overwriting the alpha value of the color.
     fn alpha(self, alpha: f32) -> Self;
 
-    /// Truncates overflowing text with an ellipsis (`…`) if needed.
+    /// Truncates overflowing text with an ellipsis (`…`) if needed. The ellipsis is
+    /// positioned at the end of the text.
     fn truncate(self) -> Self;
+
+    /// Truncates overflowing text with an ellipsis (`…`) if needed. The ellipsis is
+    /// positioned at the start of the text.
+    fn truncate_start(self) -> Self;
 
     /// Sets the label to render as a single line.
     fn single_line(self) -> Self;
@@ -87,7 +92,13 @@ pub struct LabelLike {
     alpha: Option<f32>,
     underline: bool,
     single_line: bool,
-    truncate: bool,
+    truncate: TruncateKind,
+}
+
+pub enum TruncateKind {
+    Start,
+    End,
+    None,
 }
 
 impl Default for LabelLike {
@@ -112,7 +123,7 @@ impl LabelLike {
             alpha: None,
             underline: false,
             single_line: false,
-            truncate: false,
+            truncate: TruncateKind::None,
         }
     }
 }
@@ -171,7 +182,12 @@ impl LabelCommon for LabelLike {
 
     /// Truncates overflowing text with an ellipsis (`…`) if needed.
     fn truncate(mut self) -> Self {
-        self.truncate = true;
+        self.truncate = TruncateKind::End;
+        self
+    }
+
+    fn truncate_start(mut self) -> Self {
+        self.truncate = TruncateKind::Start;
         self
     }
 
@@ -234,8 +250,10 @@ impl RenderOnce for LabelLike {
             })
             .when(self.strikethrough, |this| this.line_through())
             .when(self.single_line, |this| this.whitespace_nowrap())
-            .when(self.truncate, |this| {
-                this.overflow_x_hidden().text_ellipsis()
+            .map(|this| match self.truncate {
+                TruncateKind::None => this.overflow_x_hidden(),
+                TruncateKind::End => this.overflow_x_hidden().text_ellipsis(),
+                TruncateKind::Start => this.overflow_x_hidden().text_ellipsis_start(),
             })
             .text_color(color)
             .font_weight(
