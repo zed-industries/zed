@@ -1,8 +1,10 @@
 use std::{
     collections::BTreeSet,
     fmt::{Display, Formatter},
+    ops::Range,
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
+    time::Instant,
 };
 
 use fs::Fs;
@@ -15,6 +17,10 @@ use regex::Regex;
 use strum::VariantArray;
 use util::ResultExt as _;
 use worktree::ChildEntriesOptions;
+
+/// Licenses necessarily have some freeform text before them to list copyrights etc. If there is too
+/// much text then the file may be listing licenses for different portions and so should be ignored.
+const MAX_LICENSE_PREFIX_LENGTH: usize = 512;
 
 /// Matches the most common license locations, with US and UK English spelling.
 static LICENSE_FILE_NAME_REGEX: LazyLock<regex::bytes::Regex> = LazyLock::new(|| {
@@ -83,9 +89,21 @@ impl OpenSourceLicense {
             OpenSourceLicense::Zlib => include_str!("../license_regexes/zlib.regex"),
         }
     }
+
+    pub fn pattern(&self) -> &'static str {
+        match self {
+            OpenSourceLicense::Apache2_0 => include_str!("../license_patterns/apache-2.0-pattern"),
+            OpenSourceLicense::BSDZero => include_str!("../license_patterns/0bsd-pattern"),
+            OpenSourceLicense::BSD => include_str!("../license_patterns/bsd-pattern"),
+            OpenSourceLicense::ISC => include_str!("../license_patterns/isc-pattern"),
+            OpenSourceLicense::MIT => include_str!("../license_patterns/mit-pattern"),
+            OpenSourceLicense::UPL1_0 => include_str!("../license_patterns/upl-1.0-pattern"),
+            OpenSourceLicense::Zlib => include_str!("../license_patterns/zlib-pattern"),
+        }
+    }
 }
 
-fn detect_license(license: &str) -> Option<OpenSourceLicense> {
+fn detect_license_old(license: &str) -> Option<OpenSourceLicense> {
     static LICENSE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
         let mut regex_string = String::new();
         let mut is_first = true;
@@ -117,6 +135,262 @@ fn detect_license(license: &str) -> Option<OpenSourceLicense> {
             }
             license
         })
+}
+
+fn detect_license(text: &str) -> Option<OpenSourceLicense> {
+    static LICENSE_PATTERNS: LazyLock<Vec<(OpenSourceLicense, Vec<PatternPart>)>> =
+        LazyLock::new(|| {
+            OpenSourceLicense::VARIANTS
+                .iter()
+                .map(|license| (*license, parse_pattern(license.pattern())))
+                .collect()
+        });
+
+    let text = canonicalize_license_text(text);
+
+    for (license, pattern) in LICENSE_PATTERNS.iter() {
+        if check_pattern(&pattern, &text) {
+            return Some(*license);
+        }
+    }
+
+    None
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum PatternPart {
+    Text {
+        text: String,
+    },
+    Elision {
+        elided_chars: Range<usize>,
+    },
+    OptionalElision {
+        elided_chars: Range<usize>,
+        text: String,
+    },
+}
+
+/// Lines that start with "-- " are pattern directives, all other lines participate in `Text`. The
+/// text portions are canonicalized by lowercasing, replacing all runs of whitespace with a single
+/// space, and otherwise only keeping ascii alphanumeric characters.
+///
+/// * `-- 1..10` is an `Elision { elided_chars: 1..10 }`.
+///
+/// * `-- 1..10 optional:` is an `OptionalElision { elided_chars: 1..10 }` where the text is all the
+/// text until the next directive (or end of pattern).
+fn parse_pattern(pattern: &str) -> Vec<PatternPart> {
+    let mut result = Vec::new();
+    let mut current_text = String::new();
+    let lines: Vec<&str> = pattern.lines().collect();
+    let mut i = 0;
+
+    while i < lines.len() {
+        let line = lines[i];
+
+        if let Some(directive) = line.strip_prefix("-- ") {
+            // First, flush any accumulated text
+            if !current_text.is_empty() {
+                let canonicalized = current_text
+                    .chars()
+                    .filter(|c| c.is_ascii_alphanumeric() || c.is_ascii_whitespace())
+                    .map(|c| c.to_ascii_lowercase())
+                    .collect::<String>()
+                    .split_ascii_whitespace()
+                    .join(" ");
+
+                if !canonicalized.is_empty() {
+                    result.push(PatternPart::Text {
+                        text: canonicalized,
+                    });
+                }
+                current_text.clear();
+            }
+
+            // Parse the directive
+            if let Some(optional_part) = directive.strip_suffix(" optional:") {
+                // OptionalElision case
+                if let Some((start_str, end_str)) = optional_part.split_once("..") {
+                    if let (Ok(start), Ok(end)) =
+                        (start_str.parse::<usize>(), end_str.parse::<usize>())
+                    {
+                        // Collect text until next directive or end
+                        let mut optional_text = String::new();
+                        i += 1;
+                        while i < lines.len() && !lines[i].starts_with("-- ") {
+                            if !optional_text.is_empty() {
+                                optional_text.push('\n');
+                            }
+                            optional_text.push_str(lines[i]);
+                            i += 1;
+                        }
+
+                        let canonicalized = optional_text
+                            .chars()
+                            .filter(|c| c.is_ascii_alphanumeric() || c.is_ascii_whitespace())
+                            .map(|c| c.to_ascii_lowercase())
+                            .collect::<String>()
+                            .split_ascii_whitespace()
+                            .join(" ");
+
+                        result.push(PatternPart::OptionalElision {
+                            elided_chars: start..end,
+                            text: canonicalized,
+                        });
+                        continue; // Skip the increment at the end since we already advanced i
+                    }
+                }
+            } else if let Some((start_str, end_str)) = directive.split_once("..") {
+                // Elision case
+                if let (Ok(start), Ok(end)) = (start_str.parse::<usize>(), end_str.parse::<usize>())
+                {
+                    result.push(PatternPart::Elision {
+                        elided_chars: start..end,
+                    });
+                }
+            }
+        } else {
+            // Regular text line
+            if !current_text.is_empty() {
+                current_text.push('\n');
+            }
+            current_text.push_str(line);
+        }
+
+        i += 1;
+    }
+
+    // Flush any remaining text
+    if !current_text.is_empty() {
+        let canonicalized = current_text
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || c.is_ascii_whitespace())
+            .map(|c| c.to_ascii_lowercase())
+            .collect::<String>()
+            .split_ascii_whitespace()
+            .join(" ");
+
+        if !canonicalized.is_empty() {
+            result.push(PatternPart::Text {
+                text: canonicalized,
+            });
+        }
+    }
+
+    result
+}
+
+/// Checks a pattern against text by consuming the pattern in reverse.
+fn check_pattern(pattern: &[PatternPart], text: &str) -> bool {
+    let canonicalized_text = canonicalize_license_text(text);
+    let text_chars: Vec<char> = canonicalized_text.chars().collect();
+    let mut text_pos = text_chars.len();
+
+    // Process pattern parts in reverse order
+    for part in pattern.iter().rev() {
+        match part {
+            PatternPart::Text { text: pattern_text } => {
+                let pattern_chars: Vec<char> = pattern_text.chars().collect();
+                if text_pos < pattern_chars.len() {
+                    return false;
+                }
+
+                // Check if the pattern text matches at the current position (matching backwards)
+                let start_pos = text_pos - pattern_chars.len();
+                let text_slice: String = text_chars[start_pos..text_pos].iter().collect();
+
+                // Compare the text slice with pattern text directly (both are canonicalized)
+                if text_slice != *pattern_text {
+                    return false;
+                }
+                text_pos = start_pos;
+            }
+            PatternPart::Elision { elided_chars } => {
+                // For elision, we need to find the next pattern part within the elision range
+                // Since we're processing in reverse, we look ahead to the next pattern part
+                let next_part_idx = pattern
+                    .iter()
+                    .rev()
+                    .position(|p| std::ptr::eq(p, part))
+                    .unwrap();
+                if next_part_idx + 1 < pattern.len() {
+                    // There's a next pattern part, search for it within the elision range
+                    let next_part = &pattern[pattern.len() - 1 - (next_part_idx + 1)];
+                    match next_part {
+                        PatternPart::Text {
+                            text: next_pattern_text,
+                        } => {
+                            let next_pattern_chars: Vec<char> = next_pattern_text.chars().collect();
+                            let max_skip = elided_chars.end.min(text_pos);
+                            let min_skip = elided_chars.start.min(text_pos);
+
+                            // Search within the elision range for the next pattern
+                            let mut found = false;
+                            for skip in min_skip..=max_skip {
+                                let search_pos = text_pos.saturating_sub(skip);
+                                if search_pos >= next_pattern_chars.len() {
+                                    let start_pos = search_pos - next_pattern_chars.len();
+                                    let text_slice: String =
+                                        text_chars[start_pos..search_pos].iter().collect();
+                                    if text_slice == *next_pattern_text {
+                                        text_pos = search_pos;
+                                        found = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            if !found {
+                                // If we can't find the next pattern within the elision range, fail
+                                return false;
+                            }
+                        }
+                        _ => {
+                            // For non-text patterns, just skip the minimum elision
+                            let skip_amount = elided_chars.start.min(text_pos);
+                            text_pos = text_pos.saturating_sub(skip_amount);
+                        }
+                    }
+                } else {
+                    // No next pattern, this is the final elision - consume all remaining characters
+                    // if they fall within the elision range
+                    let remaining_chars = text_pos;
+                    if remaining_chars <= elided_chars.end && remaining_chars >= elided_chars.start
+                    {
+                        text_pos = 0; // Consume all remaining characters
+                    } else {
+                        // Remaining characters don't fit in elision range
+                        return false;
+                    }
+                }
+            }
+            PatternPart::OptionalElision {
+                elided_chars,
+                text: optional_text,
+            } => {
+                let optional_chars: Vec<char> = optional_text.chars().collect();
+
+                // First, try to match the optional text
+                if text_pos >= optional_chars.len() {
+                    let start_pos = text_pos - optional_chars.len();
+                    let text_slice: String = text_chars[start_pos..text_pos].iter().collect();
+
+                    // Compare the text slice with optional text directly (both are canonicalized)
+                    if text_slice == *optional_text {
+                        // Optional text matched, consume it
+                        text_pos = start_pos;
+                        continue;
+                    }
+                }
+
+                // Optional text didn't match, so just skip the minimum elision amount
+                let skip_amount = elided_chars.start.min(text_pos);
+                text_pos = text_pos.saturating_sub(skip_amount);
+            }
+        }
+    }
+
+    // Pattern matches if we've consumed all the text
+    text_pos == 0
 }
 
 /// Canonicalizes the whitespace of license text.
@@ -231,7 +505,7 @@ impl LicenseDetectionWatcher {
             return None;
         }
         let text = fs.load(&abs_path).await.log_err()?;
-        let is_eligible = detect_license(&text).is_some();
+        let is_eligible = dbg!(detect_license(dbg!(&text))).is_some();
         if is_eligible {
             log::debug!(
                 "`{abs_path:?}` matches a license that is eligible for data collection (if enabled)"
