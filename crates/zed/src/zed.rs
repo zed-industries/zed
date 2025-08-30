@@ -48,7 +48,7 @@ use project::{DirectoryLister, ProjectItem};
 use project_panel::ProjectPanel;
 use prompt_store::PromptBuilder;
 use quick_action_bar::QuickActionBar;
-use recent_projects::open_ssh_project;
+use recent_projects::open_remote_project;
 use release_channel::{AppCommitSha, ReleaseChannel};
 use rope::Rope;
 use search::project_search::ProjectSearchBar;
@@ -1557,7 +1557,7 @@ pub fn open_new_ssh_project_from_project(
     };
     let connection_options = ssh_client.read(cx).connection_options();
     cx.spawn_in(window, async move |_, cx| {
-        open_ssh_project(
+        open_remote_project(
             connection_options,
             paths,
             app_state,
