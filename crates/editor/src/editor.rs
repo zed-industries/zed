@@ -9156,6 +9156,7 @@ impl Editor {
     ) -> IconName {
         match provider {
             Some(provider) => match provider.provider.name() {
+                "ollama" => IconName::AiOllama,
                 "copilot" => IconName::Copilot,
                 "supermaven" => IconName::Supermaven,
                 _ => IconName::ZedPredict,
@@ -9205,6 +9206,7 @@ impl Editor {
                                     use text::ToPoint as _;
                                     if target.text_anchor.to_point(snapshot).row > cursor_point.row
                                     {
+                                        // For move predictions, still use directional icons
                                         Icon::new(IconName::ZedPredictDown)
                                     } else {
                                         Icon::new(IconName::ZedPredictUp)
