@@ -153,6 +153,7 @@ fn detect_license(text: &str) -> Option<OpenSourceLicense> {
     let text = canonicalize_license_text(text);
 
     for (license, pattern) in LICENSE_PATTERNS.iter() {
+        log::trace!("Checking if license is {}", license);
         if check_pattern(&pattern, &text) {
             return Some(*license);
         }
@@ -255,6 +256,11 @@ fn check_pattern(pattern: &[PatternPart], input: &str) -> bool {
             }
         }
         if !matched && !part.optional {
+            log::trace!(
+                "Failed to match pattern `...{}` against input `...{}`",
+                &part.text[part.text.len().saturating_sub(128)..],
+                &input[input_ix.saturating_sub(128)..]
+            );
             return false;
         }
     }
@@ -438,6 +444,7 @@ mod tests {
         }
     }
 
+    /*
     // Uncomment this and run with `cargo test -p zeta -- --no-capture &> licenses-output` to
     // traverse your entire home directory and run license detection on every file that has a
     // license-like name.
@@ -502,6 +509,7 @@ mod tests {
         );
         println!("This line has a warning to make sure this test is always commented out");
     }
+    */
 
     #[test]
     fn test_no_unicode_in_regexes() {
@@ -573,6 +581,10 @@ mod tests {
         );
         assert_matches_license(
             include_str!("../license_examples/apache-2.0-ex3.txt"),
+            OpenSourceLicense::Apache2_0,
+        );
+        assert_matches_license(
+            include_str!("../license_examples/apache-2.0-ex4.txt"),
             OpenSourceLicense::Apache2_0,
         );
     }
