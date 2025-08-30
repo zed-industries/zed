@@ -14,6 +14,9 @@ const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|http
 const WORD_REGEX: &str =
     r#"[\$\+\w.\[\]:/\\@\-~()]+(?:\((?:\d+|\d+,\d+)\))|[\$\+\w.\[\]:/\\@\-~()]+"#;
 
+#[allow(dead_code)]
+const LLVM_FILE_LINE_COLUMN_REGEX: &str =
+    r#"(?<path>[^ :]+)(:(?<line>[0-9]+))?(:(?<column>[0-9]+))?(:[^ ]+)?"#;
 const PYTHON_FILE_LINE_REGEX: &str = r#"File "(?P<file>[^"]+)", line (?P<line>\d+)"#;
 
 static PYTHON_FILE_LINE_MATCHER: LazyLock<Regex> =
