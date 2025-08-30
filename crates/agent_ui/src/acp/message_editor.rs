@@ -1914,6 +1914,7 @@ mod tests {
             image: true,
             audio: true,
             embedded_context: true,
+            supports_custom_commands: false,
         });
 
         cx.simulate_input("Lorem ");

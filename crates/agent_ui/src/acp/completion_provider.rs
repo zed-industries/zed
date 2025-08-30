@@ -1,10 +1,10 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use acp_thread::MentionUri;
+use acp_thread::{AcpThread, MentionUri};
 use agent_client_protocol as acp;
 use agent2::{HistoryEntry, HistoryStore};
 use anyhow::Result;
@@ -15,6 +15,7 @@ use language::{Buffer, CodeLabel, HighlightId};
 use lsp::CompletionContext;
 use project::{
     Completion, CompletionIntent, CompletionResponse, Project, ProjectPath, Symbol, WorktreeId,
+    lsp_store::CompletionDocumentation,
 };
 use prompt_store::PromptStore;
 use rope::Point;
@@ -32,6 +33,12 @@ use crate::context_picker::{
     ContextPickerAction, ContextPickerEntry, ContextPickerMode, selection_ranges,
 };
 
+#[derive(Debug)]
+enum CompletionType {
+    Mention(MentionCompletion),
+    SlashCommand(SlashCommandCompletion),
+}
+
 pub(crate) enum Match {
     File(FileMatch),
     Symbol(SymbolMatch),
@@ -45,6 +52,69 @@ pub(crate) enum Match {
 pub struct EntryMatch {
     mat: Option<StringMatch>,
     entry: ContextPickerEntry,
+}
+
+#[derive(Debug, Clone)]
+pub struct SlashCommandCompletion {
+    pub source_range: Range<usize>,
+    pub command_name: String,
+    pub argument: Option<String>,
+}
+
+impl SlashCommandCompletion {
+    fn try_parse(line: &str, offset_to_line: usize) -> Option<Self> {
+        let last_slash_start = line.rfind('/')?;
+        if last_slash_start >= line.len() {
+            return Some(Self {
+                source_range: last_slash_start + offset_to_line..last_slash_start + 1 + offset_to_line,
+                command_name: String::new(),
+                argument: None,
+            });
+        }
+        
+        // Check if slash is at word boundary (not preceded by alphanumeric)
+        if last_slash_start > 0
+            && line
+                .chars()
+                .nth(last_slash_start - 1)
+                .is_some_and(|c| c.is_alphanumeric())
+        {
+            return None;
+        }
+
+        let rest_of_line = &line[last_slash_start + 1..];
+        
+        let mut command_name = String::new();
+        let mut argument = None;
+        
+        let mut parts = rest_of_line.split_whitespace();
+        let mut end = last_slash_start + 1;
+        
+        if let Some(cmd_text) = parts.next() {
+            end += cmd_text.len();
+            command_name = cmd_text.to_string();
+            
+            // Check for arguments after command name
+            match rest_of_line[cmd_text.len()..].find(|c: char| !c.is_whitespace()) {
+                Some(whitespace_count) => {
+                    if let Some(arg_text) = parts.next() {
+                        argument = Some(arg_text.to_string());
+                        end += whitespace_count + arg_text.len();
+                    }
+                }
+                None => {
+                    // Rest of line is entirely whitespace
+                    end += rest_of_line.len() - cmd_text.len();
+                }
+            }
+        }
+        
+        Some(Self {
+            source_range: last_slash_start + offset_to_line..end + offset_to_line,
+            command_name,
+            argument,
+        })
+    }
 }
 
 impl Match {
@@ -67,6 +137,7 @@ pub struct ContextPickerCompletionProvider {
     history_store: Entity<HistoryStore>,
     prompt_store: Option<Entity<PromptStore>>,
     prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
+    thread: Rc<RefCell<Option<WeakEntity<AcpThread>>>>,
 }
 
 impl ContextPickerCompletionProvider {
@@ -83,7 +154,13 @@ impl ContextPickerCompletionProvider {
             history_store,
             prompt_store,
             prompt_capabilities,
+            thread: Rc::new(RefCell::new(None)),
         }
+    }
+
+    /// Set the ACP thread for slash command support
+    pub fn set_thread(&self, thread: WeakEntity<AcpThread>) {
+        *self.thread.borrow_mut() = Some(thread);
     }
 
     fn completion_for_entry(
@@ -645,22 +722,123 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         _window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Task<Result<Vec<CompletionResponse>>> {
-        let state = buffer.update(cx, |buffer, _cx| {
+        // Get the buffer state first
+        let (line, offset_to_line) = buffer.update(cx, |buffer, _cx| {
             let position = buffer_position.to_point(buffer);
             let line_start = Point::new(position.row, 0);
             let offset_to_line = buffer.point_to_offset(line_start);
             let mut lines = buffer.text_for_range(line_start..position).lines();
-            let line = lines.next()?;
-            MentionCompletion::try_parse(
+            let line = lines.next().unwrap_or("");
+            (line.to_string(), offset_to_line)
+        });
+        
+        // Then check for completions outside of the buffer update
+        let completion_state = {
+            // First try mention completion
+            if let Some(mention) = MentionCompletion::try_parse(
+                self.prompt_capabilities.get().embedded_context,
+                &line,
+                offset_to_line,
+            ) {
+                Some(CompletionType::Mention(mention))
+            } else if let Some(thread) = self.thread.borrow().as_ref().cloned() {
+                // Then try slash command completion (only if thread supports commands)
+                if let Ok(supports_commands) = thread.read_with(cx, |thread, _| {
+                    thread.supports_custom_commands()
+                }) {
+                    if supports_commands {
+                        if let Some(slash) = SlashCommandCompletion::try_parse(&line, offset_to_line) {
+                            Some(CompletionType::SlashCommand(slash))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+        
+        let Some(completion_type) = completion_state else {
+            return Task::ready(Ok(Vec::new()));
+        };
+        
+        match completion_type {
+            CompletionType::Mention(state) => self.complete_mentions(state, buffer.clone(), buffer_position, cx),
+            CompletionType::SlashCommand(state) => self.complete_slash_commands(state, buffer.clone(), buffer_position, cx),
+        }
+    }
+
+    fn is_completion_trigger(
+        &self,
+        buffer: &Entity<language::Buffer>,
+        position: language::Anchor,
+        _text: &str,
+        _trigger_in_words: bool,
+        _menu_is_open: bool,
+        cx: &mut Context<Editor>,
+    ) -> bool {
+        let buffer = buffer.read(cx);
+        let position = position.to_point(buffer);
+        let line_start = Point::new(position.row, 0);
+        let offset_to_line = buffer.point_to_offset(line_start);
+        let mut lines = buffer.text_for_range(line_start..position).lines();
+        if let Some(line) = lines.next() {
+            // Check for @ mention completions
+            if let Some(completion) = MentionCompletion::try_parse(
                 self.prompt_capabilities.get().embedded_context,
                 line,
                 offset_to_line,
-            )
-        });
-        let Some(state) = state else {
-            return Task::ready(Ok(Vec::new()));
-        };
+            ) {
+                let in_range = completion.source_range.start <= offset_to_line + position.column as usize
+                    && completion.source_range.end >= offset_to_line + position.column as usize;
+                if in_range {
+                    return true;
+                }
+            }
+            
+            // Check for slash command completions (only if thread supports commands)
+            if let Some(thread) = self.thread.borrow().as_ref().cloned() {
+                if let Ok(supports_commands) = thread.read_with(cx, |thread, _| {
+                    thread.supports_custom_commands()
+                }) {
+                    if supports_commands {
+                        if let Some(completion) = SlashCommandCompletion::try_parse(line, offset_to_line) {
+                            let in_range = completion.source_range.start <= offset_to_line + position.column as usize
+                                && completion.source_range.end >= offset_to_line + position.column as usize;
+                            return in_range;
+                        }
+                    }
+                }
+            }
+            
+            false
+        } else {
+            false
+        }
+    }
 
+    fn sort_completions(&self) -> bool {
+        false
+    }
+
+    fn filter_completions(&self) -> bool {
+        false
+    }
+}
+
+impl ContextPickerCompletionProvider {
+    fn complete_mentions(
+        &self,
+        state: MentionCompletion,
+        buffer: Entity<Buffer>,
+        _buffer_position: Anchor,
+        cx: &mut Context<Editor>,
+    ) -> Task<Result<Vec<CompletionResponse>>> {
         let Some(workspace) = self.workspace.upgrade() else {
             return Task::ready(Ok(Vec::new()));
         };
@@ -753,49 +931,85 @@ impl CompletionProvider for ContextPickerCompletionProvider {
 
             Ok(vec![CompletionResponse {
                 completions,
-                // Since this does its own filtering (see `filter_completions()` returns false),
-                // there is no benefit to computing whether this set of completions is incomplete.
                 is_incomplete: true,
             }])
         })
     }
 
-    fn is_completion_trigger(
+    fn complete_slash_commands(
         &self,
-        buffer: &Entity<language::Buffer>,
-        position: language::Anchor,
-        _text: &str,
-        _trigger_in_words: bool,
-        _menu_is_open: bool,
+        state: SlashCommandCompletion,
+        buffer: Entity<Buffer>,
+        _buffer_position: Anchor,
         cx: &mut Context<Editor>,
-    ) -> bool {
-        let buffer = buffer.read(cx);
-        let position = position.to_point(buffer);
-        let line_start = Point::new(position.row, 0);
-        let offset_to_line = buffer.point_to_offset(line_start);
-        let mut lines = buffer.text_for_range(line_start..position).lines();
-        if let Some(line) = lines.next() {
-            MentionCompletion::try_parse(
-                self.prompt_capabilities.get().embedded_context,
-                line,
-                offset_to_line,
-            )
-            .map(|completion| {
-                completion.source_range.start <= offset_to_line + position.column as usize
-                    && completion.source_range.end >= offset_to_line + position.column as usize
-            })
-            .unwrap_or(false)
-        } else {
-            false
-        }
-    }
+    ) -> Task<Result<Vec<CompletionResponse>>> {
+        let Some(thread) = self.thread.borrow().as_ref().cloned() else {
+            return Task::ready(Ok(Vec::new()));
+        };
 
-    fn sort_completions(&self) -> bool {
-        false
-    }
+        let snapshot = buffer.read(cx).snapshot();
+        let source_range = snapshot.anchor_before(state.source_range.start)
+            ..snapshot.anchor_after(state.source_range.end);
 
-    fn filter_completions(&self) -> bool {
-        false
+        let command_prefix = state.command_name.clone();
+
+        cx.spawn(async move |_, cx| {
+            // Get session ID and connection from the thread
+            let (session_id, connection) = thread.read_with(cx, |thread, _| {
+                (thread.session_id().clone(), thread.connection().clone())
+            })?;
+
+            // Fetch commands from the agent
+            let commands_task = cx.update(|cx| {
+                connection.list_commands(&session_id, cx)
+            })?;
+            let response = commands_task.await?;
+
+            // Filter commands matching the typed prefix
+            let matching_commands: Vec<_> = response.commands
+                .into_iter()
+                .filter(|cmd| {
+                    // Support both prefix matching and fuzzy matching
+                    cmd.name.starts_with(&command_prefix) ||
+                    cmd.name.to_lowercase().contains(&command_prefix.to_lowercase())
+                })
+                .collect();
+
+            // Convert to project::Completion following existing patterns
+            let completions: Vec<_> = matching_commands
+                .into_iter()
+                .map(|command| {
+                    let new_text = if command.requires_argument {
+                        format!("/{} ", command.name) // Add space for argument
+                    } else {
+                        format!("/{}", command.name)
+                    };
+
+                    Completion {
+                        replace_range: source_range.clone(),
+                        new_text: new_text.clone(),
+                        label: CodeLabel::plain(command.name.clone(), None),
+                        icon_path: Some(IconName::ZedAssistant.path().into()),
+                        documentation: if !command.description.is_empty() {
+                            Some(CompletionDocumentation::SingleLine(command.description.clone().into()))
+                        } else {
+                            None
+                        },
+                        source: project::CompletionSource::Custom,
+                        insert_text_mode: None,
+                        confirm: Some(Arc::new(move |_, _, _| {
+                            // For now, just insert the text - command execution will be handled later
+                            false
+                        })),
+                    }
+                })
+                .collect();
+
+            Ok(vec![CompletionResponse {
+                completions,
+                is_incomplete: false,
+            }])
+        })
     }
 }
 

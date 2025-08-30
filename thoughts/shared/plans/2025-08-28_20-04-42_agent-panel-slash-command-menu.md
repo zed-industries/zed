@@ -638,13 +638,13 @@ pub fn run_command(
 - [x] No linting errors: `cargo clippy --package agent_ui --package acp_thread`
 - [x] Type checking passes: `cargo check --package agent_ui --package acp_thread`
 - [x] Completion provider compiles: `cargo check --package agent_ui --lib`
-- [x] Slash command parsing works: Test `SlashCommandCompletion::try_parse()` with various inputs
+- [ ] Slash command parsing works: Test `SlashCommandCompletion::try_parse()` with various inputs
 
 #### Manual Verification (REVISED - Simpler Approach):
-- [ ] **Refactored to Simpler Architecture**: 
-  - [ ] Remove complex `CompositeCompletionProvider` and `AgentSlashCommandCompletionProvider`
-  - [ ] Extend existing `ContextPickerCompletionProvider` with optional thread field
-  - [ ] Add `set_thread()` method for lifecycle management
+- [x] **Refactored to Simpler Architecture**: 
+  - [x] Remove complex `CompositeCompletionProvider` and `AgentSlashCommandCompletionProvider`
+  - [x] Extend existing `ContextPickerCompletionProvider` with optional thread field
+  - [x] Add `set_thread()` method for lifecycle management
   - [ ] Add slash command detection to `is_completion_trigger()`
   - [ ] Add slash command completion to `completions()` method
 - [ ] **Slash Command Integration**: 
@@ -652,8 +652,8 @@ pub fn run_command(
   - [ ] Fetch commands via ACP `list_commands()` RPC when thread supports it
   - [ ] Execute commands via ACP `run_command()` RPC with proper confirmation
   - [ ] Only show slash completions when `supports_custom_commands = true`
-- [ ] **MessageEditor Integration**:
-  - [ ] Add `set_thread()` method to update completion provider when thread is ready
+- [x] **MessageEditor Integration**:
+  - [x] Add `set_thread()` method to update completion provider when thread is ready
   - [ ] Call `set_thread()` in ThreadView when thread transitions to Ready state
 - [ ] Integration Testing:
   - [ ] Typing "/" in agent panel triggers completion when `supports_custom_commands = true`
