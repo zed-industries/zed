@@ -11,7 +11,7 @@ use ui::{
     LabelSize, Tab, h_flex, prelude::*, right_click_menu,
 };
 use workspace::{
-    CloseWindow, ItemSettings, Workspace,
+    CloseWindow, ItemSettings, Workspace, WorkspaceSettings,
     item::{ClosePosition, ShowCloseButton},
 };
 
@@ -336,6 +336,7 @@ impl SystemWindowTabs {
 
 impl Render for SystemWindowTabs {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let use_system_window_tabs = WorkspaceSettings::get_global(cx).use_system_window_tabs;
         let active_background_color = cx.theme().colors().title_bar_background;
         let inactive_background_color = cx.theme().colors().tab_bar_background;
         let entity = cx.entity();
@@ -368,7 +369,9 @@ impl Render for SystemWindowTabs {
             .collect::<Vec<_>>();
 
         let number_of_tabs = tab_items.len().max(1);
-        if !window.tab_bar_visible() && !visible {
+        if (!window.tab_bar_visible() && !visible)
+            || (!use_system_window_tabs && number_of_tabs == 1)
+        {
             return h_flex().into_any_element();
         }
 
