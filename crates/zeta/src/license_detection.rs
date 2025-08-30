@@ -275,20 +275,25 @@ mod tests {
 
     #[track_caller]
     fn assert_matches_license(text: &str, license: OpenSourceLicense) {
-        let license_regex = Regex::new(&format!(
-            "^{}$",
-            canonicalize_license_regex(license.regex())
-        ))
-        .unwrap();
-        // todo!
-        if !license_regex.is_match(&canonicalize_license_text(text)) {
-            println!(
-                "\n```\n{}\n```",
-                canonicalize_license_regex(license.regex())
-            );
-            println!("\n```\n{}\n```", canonicalize_license_text(text));
+        if detect_license(text) != Some(license) {
+            let license_regex_text = canonicalize_license_regex(license.regex());
+            let license_regex = Regex::new(&format!("^{}$", license_regex_text)).unwrap();
+            let text = canonicalize_license_text(text);
+            let matched_regex = license_regex.is_match(&text);
+            if matched_regex {
+                panic!(
+                    "The following text matches the individual regex for {}, \
+                    but not the combined one:\n```license-text\n{}\n```\n",
+                    license, text
+                );
+            } else {
+                panic!(
+                    "The following text doesn't match the regex for {}:\n\
+                    ```license-text\n{}\n```\n\n```regex\n{}\n```\n",
+                    license, text, license_regex_text
+                );
+            }
         }
-        assert_eq!(detect_license(text), Some(license));
     }
 
     /*
