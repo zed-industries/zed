@@ -69,18 +69,24 @@ impl SystemWindowTabs {
                 None
             };
 
+            if use_system_window_tabs {
+                SystemWindowTabController::init(cx);
+            }
+
             cx.windows().iter().for_each(|handle| {
                 let _ = handle.update(cx, |_, window, cx| {
                     window.set_tabbing_identifier(tabbing_identifier.clone());
                     if use_system_window_tabs {
-                        SystemWindowTabController::add_tab(
-                            cx,
-                            window.window_handle().window_id(),
+                        let tabs = if let Some(tabs) = window.tabbed_windows() {
+                            tabs
+                        } else {
                             vec![SystemWindowTab::new(
                                 SharedString::from(window.window_title()),
                                 window.window_handle(),
-                            )],
-                        );
+                            )]
+                        };
+
+                        SystemWindowTabController::add_tab(cx, handle.window_id(), tabs);
                     }
                 });
             });
