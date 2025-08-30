@@ -359,6 +359,7 @@ impl JsonSchema for LanguageModelProviderSetting {
                 "deepseek",
                 "google",
                 "groq",
+                "huggingface",
                 "lmstudio",
                 "mistral",
                 "ollama",
