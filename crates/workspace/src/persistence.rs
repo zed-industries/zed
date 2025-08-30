@@ -1112,11 +1112,11 @@ impl WorkspaceDb {
 
     query! {
         fn recent_workspaces_query() -> Result<Vec<(WorkspaceId, String, String, Option<u64>)>> {
-            SELECT workspace_id, paths, paths_order, ssh_connection_id
+            SELECT workspace_id, paths, paths_order, remote_connection_id
             FROM workspaces
             WHERE
                 paths IS NOT NULL OR
-                ssh_connection_id IS NOT NULL
+                remote_connection_id IS NOT NULL
             ORDER BY timestamp DESC
         }
     }
@@ -1128,11 +1128,11 @@ impl WorkspaceDb {
         Ok(self
             .session_workspaces_query(session_id)?
             .into_iter()
-            .map(|(paths, order, window_id, ssh_connection_id)| {
+            .map(|(paths, order, window_id, remote_connection_id)| {
                 (
                     PathList::deserialize(&SerializedPathList { paths, order }),
                     window_id,
-                    ssh_connection_id.map(RemoteConnectionId),
+                    remote_connection_id.map(RemoteConnectionId),
                 )
             })
             .collect())
