@@ -33,6 +33,7 @@ serde_derive.workspace = true
 serde_json.workspace = true
 settings_ui_macros.workspace = true
 serde_json_lenient.workspace = true
+serde_path_to_error.workspace = true
 smallvec.workspace = true
 tree-sitter-json.workspace = true
 tree-sitter.workspace = true
