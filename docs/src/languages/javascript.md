@@ -181,9 +181,13 @@ Zed supports debugging JavaScript code out of the box.
 The following can be debugged without writing additional configuration:
 
 - Tasks from `package.json`
-- Tests written using several popular frameworks (Jest, Mocha, Vitest, Jasmine)
+- Tests written using several popular frameworks (Jest, Mocha, Vitest, Jasmine, Bun, Node)
 
 Run {#action debugger::Start} ({#kb debugger::Start}) to see a contextual list of these predefined debug tasks.
+
+> **Note:** Bun test is automatically detected when `@types/bun` is present in `package.json`.
+>
+> **Note:** Node test is automatically detected when `@types/node` is present in `package.json` (requires Node.js 20+).
 
 As for all languages, configurations from `.vscode/launch.json` are also available for debugging in Zed.
 
