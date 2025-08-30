@@ -1464,9 +1464,20 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
                 return (T::KEY, Ok(DeserializedSetting(Box::new(value))));
             }
         }
-        let value = T::FileContent::deserialize(json)
+        let value = serde_path_to_error::deserialize::<_, T::FileContent>(json)
             .map(|value| DeserializedSetting(Box::new(value)))
-            .map_err(anyhow::Error::from);
+            .map_err(|err| {
+                let mut path = String::new();
+                if let Some(key) = key {
+                    path.push_str(key);
+                }
+                let err_path = err.path().to_string();
+                if !err_path.is_empty() && !err_path.starts_with(".") {
+                    path.push('.');
+                    path.push_str(&err_path);
+                }
+                anyhow::anyhow!("{} at '{}'", err.into_inner(), path)
+            });
         (key, value)
     }
 

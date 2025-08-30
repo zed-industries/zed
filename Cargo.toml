@@ -592,6 +592,7 @@ serde_json_lenient = { version = "0.2", features = [
     "preserve_order",
     "raw_value",
 ] }
+serde_path_to_error = "0.1.17"
 serde_repr = "0.1"
 serde_urlencoded = "0.7"
 sha2 = "0.10"
