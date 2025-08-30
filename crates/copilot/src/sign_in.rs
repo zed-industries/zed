@@ -55,7 +55,7 @@ enum ConnectionState {
 }
 
 #[derive(Debug)]
-enum SignInError {
+pub enum SignInError {
     CopilotNotAvailable,
     WorkspaceNotFound,
     SignInFailed(String),
@@ -216,21 +216,24 @@ pub fn initiate_sign_in_within_workspace(
             let weak_workspace = workspace.weak_handle();
             let task_clone = task.clone();
 
-            cx.spawn(async move |weak_workspace, mut cx| {
-                task_clone.await;
-                if let Err(e) = CopilotSignInService::handle_copilot_startup(
-                    copilot,
-                    weak_workspace,
-                    is_reinstall,
-                    &mut cx,
-                )
-                .await
-                {
-                    weak_workspace
-                        .update(&mut cx, |workspace, cx| {
-                            workspace.show_error(&e.to_string(), cx);
-                        })
-                        .log_err();
+            cx.spawn({
+                let weak_workspace = weak_workspace.clone();
+                async move |_handle, mut cx| {
+                    task_clone.await;
+                    if let Err(e) = CopilotSignInService::handle_copilot_startup(
+                        copilot,
+                        weak_workspace.clone(),
+                        is_reinstall,
+                        &mut cx,
+                    )
+                    .await
+                    {
+                        weak_workspace
+                            .update(cx, |workspace, cx| {
+                                workspace.show_error(&e.to_string(), cx);
+                            })
+                            .log_err();
+                    }
                 }
             })
             .detach();
@@ -253,10 +256,10 @@ pub fn sign_out_within_workspace(
     let sign_out_task = copilot.update(cx, |copilot, cx| copilot.sign_out(cx));
 
     cx.spawn(
-        async move |workspace: WeakEntity<Workspace>, mut cx| match sign_out_task.await {
+        async move |workspace: WeakEntity<Workspace>, cx| match sign_out_task.await {
             Ok(()) => {
                 workspace
-                    .update(&mut cx, |workspace, cx| {
+                    .update(cx, |workspace, cx| {
                         CopilotToastManager::show_status_toast(
                             workspace,
                             "Signed out of Copilot.".to_string(),
@@ -267,7 +270,7 @@ pub fn sign_out_within_workspace(
             }
             Err(err) => {
                 workspace
-                    .update(&mut cx, |workspace, cx| {
+                    .update(cx, |workspace, cx| {
                         workspace.show_error(&err.to_string(), cx);
                     })
                     .log_err();
@@ -374,8 +377,8 @@ impl CopilotCodeVerification {
             .hover(|style| style)
             .on_mouse_down(gpui::MouseButton::Left, {
                 let code = user_code.clone();
-                move |_event: &MouseDownEvent, window: &mut Window, _cx: &mut App| {
-                    window.write_to_clipboard(ClipboardItem::new_string(code.clone()));
+                move |_event: &MouseDownEvent, _window: &mut Window, cx: &mut App| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(code.clone()));
                 }
             })
             .child(
@@ -398,8 +401,8 @@ impl CopilotCodeVerification {
             .unwrap_or(false)
     }
 
-    fn copy_code_to_clipboard(&self, user_code: &str, window: &mut Window) {
-        window.write_to_clipboard(ClipboardItem::new_string(user_code.to_string()));
+    fn copy_code_to_clipboard(&self, user_code: &str, cx: &mut gpui::Context<Self>) {
+        cx.write_to_clipboard(ClipboardItem::new_string(user_code.to_string()));
     }
 
     // Improved modal rendering with better structure
@@ -461,8 +464,8 @@ impl CopilotCodeVerification {
             .style(ButtonStyle::Filled)
             .disabled(disabled)
             .when(disabled, |button| button.color(Color::Muted))
-            .on_click(cx.listener(move |_this, _ev: &ClickEvent, window, cx| {
-                window.open_url(&verification_uri);
+            .on_click(cx.listener(move |_this, _ev: &ClickEvent, _window, cx| {
+                cx.open_url(&verification_uri);
             }))
     }
 
@@ -475,7 +478,7 @@ impl CopilotCodeVerification {
             }))
     }
 
-    fn handle_connect_click(&mut self, verification_uri: &str, cx: &mut gpui::Context<Self>) {
+    fn handle_connect_click(&mut self, _verification_uri: &str, cx: &mut gpui::Context<Self>) {
         if matches!(self.connection_state, ConnectionState::Connecting) {
             return;
         }
@@ -550,7 +553,7 @@ impl CopilotCodeVerification {
                 Button::new("subscribe-button", "Subscribe on GitHub")
                     .full_width()
                     .style(ButtonStyle::Filled)
-                    .on_click(cx.listener(|_this, _ev: &ClickEvent, window, cx| window.open_url(COPILOT_SIGN_UP_URL)))
+                    .on_click(cx.listener(|_this, _ev: &ClickEvent, _window, cx| cx.open_url(COPILOT_SIGN_UP_URL)))
             )
             .child(
                 Button::new("cancel-button", "Cancel")
