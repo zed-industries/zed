@@ -226,6 +226,7 @@
   "continue"
   "debugger"
   "declare"
+  "defer"
   "default"
   "delete"
   "do"
