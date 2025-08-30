@@ -522,6 +522,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn merge_all_windows(&self) {}
     fn move_tab_to_new_window(&self) {}
     fn toggle_window_tab_overview(&self) {}
+    fn set_tabbing_identifier(&self, _identifier: Option<String>) {}
 
     #[cfg(target_os = "windows")]
     fn get_raw_handle(&self) -> windows::HWND;
