@@ -28,6 +28,7 @@ use crate::{
     inlay_hint_settings,
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition},
+    rainbow_brackets,
     scroll::{ActiveScrollbarState, ScrollbarThumbState, scroll_amount::ScrollAmount},
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
@@ -9294,8 +9295,11 @@ impl Element for EditorElement {
                         diff_hunk_control_bounds,
                     });
 
-                    self.editor.update(cx, |editor, _| {
-                        editor.last_position_map = Some(position_map.clone())
+                    self.editor.update(cx, |editor, cx| {
+                        editor.last_position_map = Some(position_map.clone());
+
+                        // Refresh rainbow brackets for the visible range
+                        rainbow_brackets::refresh_rainbow_bracket_highlights(editor, window, cx);
                     });
 
                     EditorLayout {

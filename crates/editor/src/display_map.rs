@@ -979,7 +979,18 @@ impl DisplaySnapshot {
                     }
                 }
 
-                if let Some(highlight_style) = highlight_style.as_mut() {
+                // If the highlight has a color with full opacity (alpha = 1.0),
+                // it should completely replace the syntax highlight color
+                if let Some(color) = processed_highlight.color {
+                    if color.a >= 1.0 {
+                        // Replace syntax highlighting entirely with our highlight
+                        highlight_style = Some(processed_highlight);
+                    } else if let Some(highlight_style) = highlight_style.as_mut() {
+                        highlight_style.highlight(processed_highlight);
+                    } else {
+                        highlight_style = Some(processed_highlight);
+                    }
+                } else if let Some(highlight_style) = highlight_style.as_mut() {
                     highlight_style.highlight(processed_highlight);
                 } else {
                     highlight_style = Some(processed_highlight);
