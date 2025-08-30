@@ -4,9 +4,7 @@ use std::{
 };
 
 use gpui::{
-    AbsoluteLength, App, Application, Context, DefiniteLength, ElementId, Global, Hsla, Menu,
-    SharedString, TextStyle, TitlebarOptions, Window, WindowBounds, WindowOptions, bounds,
-    colors::DefaultColors, div, point, prelude::*, px, relative, rgb, size,
+    bounds, colors::DefaultColors, div, point, prelude::*, px, relative, rgb, rgba, size, AbsoluteLength, App, Application, Context, DefiniteLength, ElementId, Global, Hsla, Menu, SharedString, TextStyle, TitlebarOptions, Window, WindowBounds, WindowOptions
 };
 use std::iter;
 
@@ -150,8 +148,9 @@ impl RenderOnce for Specimen {
 
         div()
             .id(self.id)
-            .bg(theme.bg)
-            .text_color(theme.fg)
+            .bg(rgb(0x11111b))
+            .font_family("Zed Plex Mono")
+            .text_color(rgb(0xcdd6f4))
             .text_size(px(font_size * scale))
             .line_height(relative(line_height))
             .p(px(10.0))

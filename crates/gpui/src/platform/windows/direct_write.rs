@@ -15,7 +15,6 @@ use windows::{
             DirectWrite::*,
             Dxgi::Common::*,
             Gdi::{IsRectEmpty, LOGFONTW},
-            Imaging::*,
         },
         System::SystemServices::LOCALE_NAME_MAX_LENGTH,
         UI::WindowsAndMessaging::*,
@@ -40,12 +39,10 @@ pub(crate) struct DirectWriteTextSystem(RwLock<DirectWriteState>);
 struct DirectWriteComponent {
     locale: String,
     factory: IDWriteFactory5,
-    bitmap_factory: AgileReference<IWICImagingFactory>,
     in_memory_loader: IDWriteInMemoryFontFileLoader,
     builder: IDWriteFontSetBuilder1,
     text_renderer: Arc<TextRendererWrapper>,
 
-    render_params: IDWriteRenderingParams3,
     gpu_state: GPUState,
 }
 
@@ -76,11 +73,10 @@ struct FontIdentifier {
 }
 
 impl DirectWriteComponent {
-    pub fn new(bitmap_factory: &IWICImagingFactory, gpu_context: &DirectXDevices) -> Result<Self> {
+    pub fn new(gpu_context: &DirectXDevices) -> Result<Self> {
         // todo: ideally this would not be a large unsafe block but smaller isolated ones for easier auditing
         unsafe {
             let factory: IDWriteFactory5 = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
-            let bitmap_factory = AgileReference::new(bitmap_factory)?;
             // The `IDWriteInMemoryFontFileLoader` here is supported starting from
             // Windows 10 Creators Update, which consequently requires the entire
             // `DirectWriteTextSystem` to run on `win10 1703`+.
@@ -92,36 +88,14 @@ impl DirectWriteComponent {
             let locale = String::from_utf16_lossy(&locale_vec);
             let text_renderer = Arc::new(TextRendererWrapper::new(&locale));
 
-            let render_params = {
-                let default_params: IDWriteRenderingParams3 =
-                    factory.CreateRenderingParams()?.cast()?;
-                let gamma = default_params.GetGamma();
-                let enhanced_contrast = default_params.GetEnhancedContrast();
-                let gray_contrast = default_params.GetGrayscaleEnhancedContrast();
-                let cleartype_level = default_params.GetClearTypeLevel();
-                let grid_fit_mode = default_params.GetGridFitMode();
-
-                factory.CreateCustomRenderingParams(
-                    gamma,
-                    enhanced_contrast,
-                    gray_contrast,
-                    cleartype_level,
-                    DWRITE_PIXEL_GEOMETRY_RGB,
-                    DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC,
-                    grid_fit_mode,
-                )?
-            };
-
             let gpu_state = GPUState::new(gpu_context)?;
 
             Ok(DirectWriteComponent {
                 locale,
                 factory,
-                bitmap_factory,
                 in_memory_loader,
                 builder,
                 text_renderer,
-                render_params,
                 gpu_state,
             })
         }
@@ -214,9 +188,8 @@ impl GPUState {
 impl DirectWriteTextSystem {
     pub(crate) fn new(
         gpu_context: &DirectXDevices,
-        bitmap_factory: &IWICImagingFactory,
     ) -> Result<Self> {
-        let components = DirectWriteComponent::new(bitmap_factory, gpu_context)?;
+        let components = DirectWriteComponent::new(gpu_context)?;
         let system_font_collection = unsafe {
             let mut result = std::mem::zeroed();
             components
@@ -728,6 +701,7 @@ impl DirectWriteState {
     fn create_glyph_run_analysis(
         &self,
         params: &RenderGlyphParams,
+        monochrome: bool,
     ) -> Result<IDWriteGlyphRunAnalysis> {
         let font = &self.fonts[params.font_id.0];
         let glyph_id = [params.glyph_id.0 as u16];
@@ -769,7 +743,7 @@ impl DirectWriteState {
                 false,
                 DWRITE_OUTLINE_THRESHOLD_ANTIALIASED,
                 DWRITE_MEASURING_MODE_NATURAL,
-                &self.components.render_params,
+                None,
                 &mut rendering_mode,
                 &mut grid_fit_mode,
             )?;
@@ -782,8 +756,7 @@ impl DirectWriteState {
                 rendering_mode,
                 DWRITE_MEASURING_MODE_NATURAL,
                 grid_fit_mode,
-                // We're using cleartype not grayscale for monochrome is because it provides better quality
-                DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE,
+                if monochrome { DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE } else { DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE },
                 baseline_origin_x,
                 baseline_origin_y,
             )
@@ -792,9 +765,9 @@ impl DirectWriteState {
     }
 
     fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
-        let glyph_analysis = self.create_glyph_run_analysis(params)?;
+        let glyph_analysis = self.create_glyph_run_analysis(params, !params.is_emoji)?;
 
-        let bounds = unsafe { glyph_analysis.GetAlphaTextureBounds(DWRITE_TEXTURE_CLEARTYPE_3x1)? };
+        let bounds = unsafe { glyph_analysis.GetAlphaTextureBounds(if params.is_emoji { DWRITE_TEXTURE_CLEARTYPE_3x1 } else { DWRITE_TEXTURE_ALIASED_1x1 })? };
         // Some glyphs cannot be drawn with ClearType, such as bitmap fonts. In that case
         // GetAlphaTextureBounds() supposedly returns an empty RECT, but I haven't tested that yet.
         if !unsafe { IsRectEmpty(&bounds) }.as_bool() {
@@ -872,13 +845,12 @@ impl DirectWriteState {
         glyph_bounds: Bounds<DevicePixels>,
     ) -> Result<Vec<u8>> {
         let mut bitmap_data =
-            vec![0u8; glyph_bounds.size.width.0 as usize * glyph_bounds.size.height.0 as usize * 3];
+            vec![0u8; glyph_bounds.size.width.0 as usize * glyph_bounds.size.height.0 as usize];
 
-        let glyph_analysis = self.create_glyph_run_analysis(params)?;
+        let glyph_analysis = self.create_glyph_run_analysis(params, true)?;
         unsafe {
             glyph_analysis.CreateAlphaTexture(
-                // We're using cleartype not grayscale for monochrome is because it provides better quality
-                DWRITE_TEXTURE_CLEARTYPE_3x1,
+                DWRITE_TEXTURE_ALIASED_1x1,
                 &RECT {
                     left: glyph_bounds.origin.x.0,
                     top: glyph_bounds.origin.y.0,
@@ -888,30 +860,6 @@ impl DirectWriteState {
                 &mut bitmap_data,
             )?;
         }
-
-        let bitmap_factory = self.components.bitmap_factory.resolve()?;
-        let bitmap = unsafe {
-            bitmap_factory.CreateBitmapFromMemory(
-                glyph_bounds.size.width.0 as u32,
-                glyph_bounds.size.height.0 as u32,
-                &GUID_WICPixelFormat24bppRGB,
-                glyph_bounds.size.width.0 as u32 * 3,
-                &bitmap_data,
-            )
-        }?;
-
-        let grayscale_bitmap =
-            unsafe { WICConvertBitmapSource(&GUID_WICPixelFormat8bppGray, &bitmap) }?;
-
-        let mut bitmap_data =
-            vec![0u8; glyph_bounds.size.width.0 as usize * glyph_bounds.size.height.0 as usize];
-        unsafe {
-            grayscale_bitmap.CopyPixels(
-                std::ptr::null() as _,
-                glyph_bounds.size.width.0 as u32,
-                &mut bitmap_data,
-            )
-        }?;
 
         Ok(bitmap_data)
     }
