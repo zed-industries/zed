@@ -11,7 +11,7 @@ use gpui::{App, AsyncApp, BorrowAppContext, Global, SharedString, Task, UpdateGl
 
 use paths::{EDITORCONFIG_NAME, local_settings_file_relative_path, task_file_name};
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use smallvec::SmallVec;
 use std::{
@@ -1464,9 +1464,29 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
                 return (T::KEY, Ok(DeserializedSetting(Box::new(value))));
             }
         }
-        let value = T::FileContent::deserialize(json)
+        let value = serde_path_to_error::deserialize::<_, T::FileContent>(json)
             .map(|value| DeserializedSetting(Box::new(value)))
-            .map_err(anyhow::Error::from);
+            .map_err(|err| {
+                // construct a path using the key and reported error path if possible.
+                // Unfortunately, serde_path_to_error does not expose the necessary
+                // methods and data to simply add the key to the path
+                let mut path = String::new();
+                if let Some(key) = key {
+                    path.push_str(key);
+                }
+                let err_path = err.path().to_string();
+                // when the path is empty, serde_path_to_error stringifies the path as ".",
+                // when the path is unknown, serde_path_to_error stringifies the path as an empty string
+                if !err_path.is_empty() && !err_path.starts_with(".") {
+                    path.push('.');
+                    path.push_str(&err_path);
+                }
+                if path.is_empty() {
+                    anyhow::Error::from(err.into_inner())
+                } else {
+                    anyhow::anyhow!("'{}': {}", err.into_inner(), path)
+                }
+            });
         (key, value)
     }
 
