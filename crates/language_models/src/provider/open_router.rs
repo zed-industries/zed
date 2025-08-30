@@ -152,6 +152,7 @@ impl State {
             .open_router
             .api_url
             .clone();
+
         cx.spawn(async move |this, cx| {
             let (api_key, from_env) = if let Ok(api_key) = std::env::var(OPENROUTER_API_KEY_VAR) {
                 (api_key, true)
@@ -161,11 +162,11 @@ impl State {
                     .await?
                     .ok_or(AuthenticateError::CredentialsNotFound)?;
                 (
-                    String::from_utf8(api_key)
-                        .context(format!("invalid {} API key", PROVIDER_NAME))?,
+                    String::from_utf8(api_key).context("invalid {PROVIDER_NAME} API key")?,
                     false,
                 )
             };
+
             this.update(cx, |this, cx| {
                 this.api_key = Some(api_key);
                 this.api_key_from_env = from_env;
@@ -183,7 +184,9 @@ impl State {
         let api_url = settings.api_url.clone();
 
         cx.spawn(async move |this, cx| {
-            let models = list_models(http_client.as_ref(), &api_url).await?;
+            let models = list_models(http_client.as_ref(), &api_url)
+                .await
+                .map_err(|e| anyhow::anyhow!("OpenRouter error: {:?}", e))?;
 
             this.update(cx, |this, cx| {
                 this.available_models = models;
@@ -334,27 +337,37 @@ impl OpenRouterLanguageModel {
         &self,
         request: open_router::Request,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>>>
-    {
+    ) -> BoxFuture<
+        'static,
+        Result<
+            futures::stream::BoxStream<
+                'static,
+                Result<ResponseStreamEvent, open_router::OpenRouterError>,
+            >,
+            LanguageModelCompletionError,
+        >,
+    > {
         let http_client = self.http_client.clone();
         let Ok((api_key, api_url)) = cx.read_entity(&self.state, |state, cx| {
             let settings = &AllLanguageModelSettings::get_global(cx).open_router;
             (state.api_key.clone(), settings.api_url.clone())
         }) else {
-            return futures::future::ready(Err(anyhow!(
-                "App state dropped: Unable to read API key or API URL from the application state"
-            )))
+            return futures::future::ready(Err(LanguageModelCompletionError::Other(anyhow!(
+                "App state dropped"
+            ))))
             .boxed();
         };
 
-        let future = self.request_limiter.stream(async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("Missing OpenRouter API Key"))?;
+        async move {
+            let Some(api_key) = api_key else {
+                return Err(LanguageModelCompletionError::NoApiKey {
+                    provider: PROVIDER_NAME,
+                });
+            };
             let request = stream_completion(http_client.as_ref(), &api_url, &api_key, request);
-            let response = request.await?;
-            Ok(response)
-        });
-
-        async move { Ok(future.await?.boxed()) }.boxed()
+            request.await.map_err(Into::into)
+        }
+        .boxed()
     }
 }
 
@@ -435,12 +448,12 @@ impl LanguageModel for OpenRouterLanguageModel {
         >,
     > {
         let request = into_open_router(request, &self.model, self.max_output_tokens());
-        let completions = self.stream_completion(request, cx);
-        async move {
-            let mapper = OpenRouterEventMapper::new();
-            Ok(mapper.map_stream(completions.await?).boxed())
-        }
-        .boxed()
+        let request = self.stream_completion(request, cx);
+        let future = self.request_limiter.stream(async move {
+            let response = request.await?;
+            Ok(OpenRouterEventMapper::new().map_stream(response))
+        });
+        async move { Ok(future.await?.boxed()) }.boxed()
     }
 }
 
@@ -608,13 +621,17 @@ impl OpenRouterEventMapper {
 
     pub fn map_stream(
         mut self,
-        events: Pin<Box<dyn Send + Stream<Item = Result<ResponseStreamEvent>>>>,
+        events: Pin<
+            Box<
+                dyn Send + Stream<Item = Result<ResponseStreamEvent, open_router::OpenRouterError>>,
+            >,
+        >,
     ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
     {
         events.flat_map(move |event| {
             futures::stream::iter(match event {
                 Ok(event) => self.map_event(event),
-                Err(error) => vec![Err(LanguageModelCompletionError::from(anyhow!(error)))],
+                Err(error) => vec![Err(error.into())],
             })
         })
     }
