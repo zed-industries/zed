@@ -274,14 +274,10 @@ impl LanguageModel for CopilotChatLanguageModel {
         cx.background_spawn(async move {
             let messages = collect_tiktoken_messages(request);
             // Copilot uses OpenAI tiktoken tokenizer for all it's model irrespective of the underlying provider(vendor).
-            let tokenizer_model = if let Some(tokenizer) = model.tokenizer() {
-                match tokenizer {
-                    "o200k_base" => "gpt-4o",
-                    "cl100k_base" => "gpt-4",
-                    _ => "gpt-4o",
-                }
-            } else {
-                "gpt-4o"
+            let tokenizer_model = match model.tokenizer() {
+                Some("o200k_base") => "gpt-4o",
+                Some("cl100k_base") => "gpt-4",
+                _ => "gpt-4o",
             };
 
             tiktoken_rs::num_tokens_from_messages(tokenizer_model, &messages)
