@@ -2942,10 +2942,6 @@ impl Workspace {
             }
         });
 
-        if reveal_dock {
-            self.dismiss_zoomed_items_to_reveal(Some(dock_side), window, cx);
-        }
-
         if focus_center {
             self.active_pane
                 .update(cx, |pane, cx| window.focus(&pane.focus_handle(cx)))
@@ -3847,14 +3843,19 @@ impl Workspace {
             self.last_active_center_pane = Some(pane.downgrade());
         }
 
-        self.dismiss_zoomed_items_to_reveal(None, window, cx);
+        // Handle zoom state changes
         if pane.read(cx).is_zoomed() {
+            // This pane is zoomed, dismiss other zoomed items
+            self.dismiss_zoomed_items_to_reveal(None, window, cx);
             self.zoomed = Some(pane.downgrade().into());
-        } else {
+            self.zoomed_position = None;
+            cx.emit(Event::ZoomChanged);
+        }  else {
+            // No zoomed items
             self.zoomed = None;
+            self.zoomed_position = None;
         }
-        self.zoomed_position = None;
-        cx.emit(Event::ZoomChanged);
+
         self.update_active_view_for_followers(window, cx);
         pane.update(cx, |pane, _| {
             pane.track_alternate_file_items();
