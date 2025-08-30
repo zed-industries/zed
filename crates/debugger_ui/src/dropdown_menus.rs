@@ -1,8 +1,7 @@
-use std::{rc::Rc, time::Duration};
-
 use collections::HashMap;
 use gpui::{Animation, AnimationExt as _, Entity, Transformation, WeakEntity, percentage};
 use project::debugger::session::{ThreadId, ThreadStatus};
+use std::{rc::Rc, time::Duration};
 use ui::{ContextMenu, DropdownMenu, DropdownStyle, Indicator, prelude::*};
 use util::{maybe, truncate_and_trailoff};
 
@@ -113,23 +112,6 @@ impl DebugPanel {
                 }
             };
             session_entries.push(root_entry);
-
-            session_entries.extend(
-                sessions_with_children
-                    .by_ref()
-                    .take_while(|(session, _)| {
-                        session
-                            .read(cx)
-                            .session(cx)
-                            .read(cx)
-                            .parent_id(cx)
-                            .is_some()
-                    })
-                    .map(|(session, _)| SessionListEntry {
-                        leaf: session.clone(),
-                        ancestors: vec![],
-                    }),
-            );
         }
 
         let weak = cx.weak_entity();
