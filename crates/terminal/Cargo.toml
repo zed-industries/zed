@@ -49,3 +49,8 @@ windows.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 url.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "hyperlink_benchmark"
+harness = false

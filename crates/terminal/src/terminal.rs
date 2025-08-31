@@ -3,7 +3,7 @@ pub mod mappings;
 pub use alacritty_terminal;
 
 mod pty_info;
-mod terminal_hyperlinks;
+pub mod terminal_hyperlinks;
 pub mod terminal_settings;
 
 use alacritty_terminal::{

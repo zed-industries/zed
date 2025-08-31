@@ -29,7 +29,7 @@ fn python_extract_path_and_line(input: &str) -> Option<(&str, u32)> {
     None
 }
 
-pub(super) struct RegexSearches {
+pub struct RegexSearches {
     url_regex: RegexSearch,
     word_regex: RegexSearch,
     python_file_line_regex: RegexSearch,
@@ -45,7 +45,7 @@ impl RegexSearches {
     }
 }
 
-pub(super) fn find_from_grid_point<T: EventListener>(
+pub fn find_from_grid_point<T: EventListener>(
     term: &Term<T>,
     point: AlacPoint,
     regex_searches: &mut RegexSearches,
