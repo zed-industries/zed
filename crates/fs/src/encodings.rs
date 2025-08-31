@@ -1,7 +1,7 @@
 //! Encoding and decoding utilities using the `encoding_rs` crate.
 use std::fmt::Debug;
 
-use anyhow::{Error, Result};
+use anyhow::Result;
 use encoding_rs::Encoding;
 use serde::{Deserialize, de::Visitor};
 
@@ -80,7 +80,7 @@ impl EncodingWrapper {
 
     pub async fn encode(&self, input: String) -> Result<Vec<u8>> {
         let (cow, _encoding_used, _had_errors) = self.0.encode(&input);
-        // encoding_rs handles unencodable characters by replacing them with 
+        // encoding_rs handles unencodable characters by replacing them with
         // appropriate substitutes in the output, so we return the result even if there were errors.
         // This maintains consistency with the decode behavior.
         Ok(cow.into_owned())
@@ -101,46 +101,55 @@ pub async fn from_utf8(input: String, target: EncodingWrapper) -> Result<Vec<u8>
 mod tests {
     use super::*;
     use gpui::BackgroundExecutor;
-    
+
     #[gpui::test]
     async fn test_decode_with_invalid_bytes(_: BackgroundExecutor) {
         // Test that files with invalid bytes can still be decoded
         // This is a regression test for the issue where files couldn't be opened
         // when they contained invalid bytes for the specified encoding
-        
+
         // Create some invalid UTF-8 bytes
         let invalid_bytes = vec![0xFF, 0xFE, 0x00, 0x48]; // Invalid UTF-8 sequence
-        
+
         let encoding = EncodingWrapper::new(encoding_rs::UTF_8);
         let result = encoding.decode(invalid_bytes).await;
-        
+
         // The decode should succeed, not fail
-        assert!(result.is_ok(), "Decode should succeed even with invalid bytes");
-        
+        assert!(
+            result.is_ok(),
+            "Decode should succeed even with invalid bytes"
+        );
+
         let decoded = result.unwrap();
         // The result should contain replacement characters for invalid sequences
         assert!(!decoded.is_empty(), "Decoded string should not be empty");
-        
+
         // Test with Windows-1252 and some bytes that might be invalid
         let maybe_invalid_bytes = vec![0x81, 0x8D, 0x8F, 0x90, 0x9D]; // Some potentially problematic bytes
         let encoding = EncodingWrapper::new(encoding_rs::WINDOWS_1252);
         let result = encoding.decode(maybe_invalid_bytes).await;
-        
+
         // Should still succeed
-        assert!(result.is_ok(), "Decode should succeed with Windows-1252 even with potentially invalid bytes");
+        assert!(
+            result.is_ok(),
+            "Decode should succeed with Windows-1252 even with potentially invalid bytes"
+        );
     }
-    
+
     #[gpui::test]
     async fn test_encode_with_unencodable_chars(_: BackgroundExecutor) {
         // Test that strings with unencodable characters can still be encoded
         let input = "Hello 世界 🌍".to_string(); // Contains Unicode that may not encode to all formats
-        
+
         let encoding = EncodingWrapper::new(encoding_rs::WINDOWS_1252);
         let result = encoding.encode(input).await;
-        
+
         // The encode should succeed, not fail
-        assert!(result.is_ok(), "Encode should succeed even with unencodable characters");
-        
+        assert!(
+            result.is_ok(),
+            "Encode should succeed even with unencodable characters"
+        );
+
         let encoded = result.unwrap();
         assert!(!encoded.is_empty(), "Encoded bytes should not be empty");
     }
