@@ -153,6 +153,8 @@ pub enum ModelVendor {
     OpenAI,
     Google,
     Anthropic,
+    #[serde(rename = "xAI")]
+    XAI,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
