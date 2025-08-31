@@ -3695,32 +3695,39 @@ impl Window {
         if !match_result.pending.is_empty() {
             currently_pending.keystrokes = match_result.pending;
             currently_pending.focus = self.focus;
-            currently_pending.timer = Some(self.spawn(cx, async move |cx| {
-                // TODO: This resets the current pending inputs after 1s. This doesn't really work with a which-key system.
-                //
-                // cx.background_executor.timer(Duration::from_secs(1)).await;
-                // cx.update(move |window, cx| {
-                //     let Some(currently_pending) = window
-                //         .pending_input
-                //         .take()
-                //         .filter(|pending| pending.focus == window.focus)
-                //     else {
-                //         return;
-                //     };
 
-                //     let node_id = window.focus_node_id_in_rendered_frame(window.focus);
-                //     let dispatch_path = window.rendered_frame.dispatch_tree.dispatch_path(node_id);
+            // This is currently a no-op to removing the timer entirely, as pending keys always means there's something following it
+            if self
+                .possible_bindings_for_input(&currently_pending.keystrokes)
+                .is_empty()
+            {
+                currently_pending.timer = Some(self.spawn(cx, async move |cx| {
+                    cx.background_executor.timer(Duration::from_secs(1)).await;
+                    cx.update(move |window, cx| {
+                        let Some(currently_pending) = window
+                            .pending_input
+                            .take()
+                            .filter(|pending| pending.focus == window.focus)
+                        else {
+                            return;
+                        };
 
-                //     let to_replay = window
-                //         .rendered_frame
-                //         .dispatch_tree
-                //         .flush_dispatch(currently_pending.keystrokes, &dispatch_path);
+                        let node_id = window.focus_node_id_in_rendered_frame(window.focus);
+                        let dispatch_path =
+                            window.rendered_frame.dispatch_tree.dispatch_path(node_id);
 
-                //     window.pending_input_changed(cx);
-                //     window.replay_pending_input(to_replay, cx)
-                // })
-                // .log_err();
-            }));
+                        let to_replay = window
+                            .rendered_frame
+                            .dispatch_tree
+                            .flush_dispatch(currently_pending.keystrokes, &dispatch_path);
+
+                        window.pending_input_changed(cx);
+                        window.replay_pending_input(to_replay, cx)
+                    })
+                    .log_err();
+                }));
+            }
+
             self.pending_input = Some(currently_pending);
             self.pending_input_changed(cx);
             cx.propagate_event = false;

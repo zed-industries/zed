@@ -168,20 +168,6 @@ impl Render for WhichKeyLayer {
         let show_in_left_panel = which_key_settings.location == WhichKeyLocation::LeftPanel
             && left_margin >= ui_font_size * 20.0;
 
-        if show_in_left_panel {
-            return self
-                .render_in_left_panel(
-                    pending_keys,
-                    bindings,
-                    left_margin,
-                    bottom_margin,
-                    status_bar_height,
-                    window,
-                    cx,
-                )
-                .into_any_element();
-        }
-
         let margin = DynamicSpacing::Base12.px(cx);
         let padding = DynamicSpacing::Base16.px(cx);
 
@@ -242,6 +228,20 @@ impl Render for WhichKeyLayer {
         });
         // Remove duplicates
         binding_data.dedup();
+
+        if show_in_left_panel {
+            return self
+                .render_in_left_panel(
+                    pending_keys,
+                    &binding_data,
+                    left_margin,
+                    bottom_margin,
+                    status_bar_height,
+                    window,
+                    cx,
+                )
+                .into_any_element();
+        }
 
         // Calculate column width based on UI font size (as maximum)
         let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
@@ -408,14 +408,13 @@ impl WhichKeyLayer {
     fn render_in_left_panel(
         &self,
         pending_keys: &[Keystroke],
-        bindings: &[KeyBinding],
+        binding_data: &[(Vec<Keystroke>, String)],
         left_margin: Pixels,
         bottom_margin: Pixels,
         status_bar_height: Pixels,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let which_key_settings = WhichKeySettings::get_global(cx);
         let workspace_settings = WorkspaceSettings::get_global(cx);
         let margin = DynamicSpacing::Base12.px(&cx);
         let padding = DynamicSpacing::Base16.px(&cx);
@@ -425,63 +424,6 @@ impl WhichKeyLayer {
         } else {
             margin + status_bar_height + bottom_margin
         };
-
-        let filtered_keystrokes = get_filtered_keystrokes();
-
-        let mut binding_data: Vec<_> = bindings
-            .iter()
-            .filter(|binding| {
-                let full_keystrokes = binding.keystrokes();
-
-                // Check if this binding matches any filtered keystroke pattern
-                let should_filter = filtered_keystrokes.iter().any(|filtered| {
-                    full_keystrokes.len() >= filtered.len()
-                        && full_keystrokes[..filtered.len()] == filtered[..]
-                });
-
-                !should_filter
-            })
-            .map(|binding| {
-                let remaining_keystrokes = binding.keystrokes()[pending_keys.len()..].to_vec();
-                let action_name = humanize_action_name(binding.action().name());
-                (remaining_keystrokes, action_name)
-            })
-            .collect();
-
-        // Group bindings if enabled
-        if which_key_settings.group {
-            binding_data = group_bindings(binding_data);
-        }
-
-        // Sort bindings from shortest to longest, with groups last
-        binding_data.sort_by(|(keystrokes_a, action_a), (keystrokes_b, action_b)| {
-            // Groups (actions starting with "+") should go last
-            let is_group_a = action_a.starts_with('+');
-            let is_group_b = action_b.starts_with('+');
-
-            // First, separate groups from non-groups
-            let group_cmp = is_group_a.cmp(&is_group_b);
-            if group_cmp != std::cmp::Ordering::Equal {
-                return group_cmp;
-            }
-
-            // Then sort by keystroke count
-            let keystroke_cmp = keystrokes_a.len().cmp(&keystrokes_b.len());
-            if keystroke_cmp != std::cmp::Ordering::Equal {
-                return keystroke_cmp;
-            }
-
-            // Finally sort by text length, then lexicographically for full stability
-            let text_a = text_for_keystrokes(keystrokes_a, cx);
-            let text_b = text_for_keystrokes(keystrokes_b, cx);
-            let text_len_cmp = text_a.len().cmp(&text_b.len());
-            if text_len_cmp != std::cmp::Ordering::Equal {
-                return text_len_cmp;
-            }
-            text_a.cmp(&text_b)
-        });
-        // Remove duplicates
-        binding_data.dedup();
 
         // For left panel, we use a single column layout
         let available_width = left_margin - (padding * 2.0);
@@ -523,7 +465,7 @@ impl WhichKeyLayer {
             .child(
                 v_flex()
                     .max_h_full()
-                    .gap_3()
+                    .gap_2p5()
                     .child(
                         Label::new(text_for_keystrokes(pending_keys, cx)).weight(FontWeight::BOLD),
                     )
