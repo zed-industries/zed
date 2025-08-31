@@ -858,11 +858,10 @@ impl<'a> MarkdownParser<'a> {
             text: SharedString,
             highlights: Vec<MarkdownHighlight>,
         ) -> Vec<(Range<usize>, MarkdownHighlight)> {
-            let mut new_highlights = Vec::with_capacity(highlights.len());
-            for style in highlights.iter() {
-                new_highlights.push((0..text.len(), style.clone()));
-            }
-            new_highlights
+            highlights
+                .into_iter()
+                .map(|style| (0..text.len(), style))
+                .collect()
         }
 
         match &node.data {
