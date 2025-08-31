@@ -4,7 +4,7 @@ use crate::{
 };
 use acp_thread::{MentionUri, selection_name};
 use agent_client_protocol as acp;
-use agent_servers::AgentServer;
+use agent_servers::{AgentServer, AgentServerDelegate};
 use agent2::HistoryStore;
 use anyhow::{Result, anyhow};
 use assistant_slash_commands::codeblock_fence_for_path;
@@ -74,6 +74,7 @@ pub enum MessageEditorEvent {
     Send,
     Cancel,
     Focus,
+    LostFocus,
 }
 
 impl EventEmitter<MessageEditorEvent> for MessageEditor {}
@@ -131,8 +132,12 @@ impl MessageEditor {
             editor
         });
 
-        cx.on_focus(&editor.focus_handle(cx), window, |_, _, cx| {
+        cx.on_focus_in(&editor.focus_handle(cx), window, |_, _, cx| {
             cx.emit(MessageEditorEvent::Focus)
+        })
+        .detach();
+        cx.on_focus_out(&editor.focus_handle(cx), window, |_, _, _, cx| {
+            cx.emit(MessageEditorEvent::LostFocus)
         })
         .detach();
 
@@ -368,7 +373,7 @@ impl MessageEditor {
 
         if Img::extensions().contains(&extension) && !extension.contains("svg") {
             if !self.prompt_capabilities.get().image {
-                return Task::ready(Err(anyhow!("This agent does not support images yet")));
+                return Task::ready(Err(anyhow!("This model does not support images yet")));
             }
             let task = self
                 .project
@@ -640,7 +645,8 @@ impl MessageEditor {
             self.project.read(cx).fs().clone(),
             self.history_store.clone(),
         ));
-        let connection = server.connect(Path::new(""), &self.project, cx);
+        let delegate = AgentServerDelegate::new(self.project.clone(), None);
+        let connection = server.connect(Path::new(""), delegate, cx);
         cx.spawn(async move |_, cx| {
             let agent = connection.await?;
             let agent = agent.downcast::<agent2::NativeAgentConnection>().unwrap();
@@ -1169,16 +1175,15 @@ impl MessageEditor {
         })
     }
 
+    pub fn text(&self, cx: &App) -> String {
+        self.editor.read(cx).text(cx)
+    }
+
     #[cfg(test)]
     pub fn set_text(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.editor.update(cx, |editor, cx| {
             editor.set_text(text, window, cx);
         });
-    }
-
-    #[cfg(test)]
-    pub fn text(&self, cx: &App) -> String {
-        self.editor.read(cx).text(cx)
     }
 }
 
@@ -2123,7 +2128,7 @@ mod tests {
                     lsp::SymbolInformation {
                         name: "MySymbol".into(),
                         location: lsp::Location {
-                            uri: lsp::Url::from_file_path(path!("/dir/a/one.txt")).unwrap(),
+                            uri: lsp::Uri::from_file_path(path!("/dir/a/one.txt")).unwrap(),
                             range: lsp::Range::new(
                                 lsp::Position::new(0, 0),
                                 lsp::Position::new(0, 1),

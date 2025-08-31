@@ -13,7 +13,7 @@ use gpui::{
 use refineable::Refineable;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
-use settings::{ParameterizedJsonSchema, Settings, SettingsSources};
+use settings::{ParameterizedJsonSchema, Settings, SettingsSources, SettingsUi};
 use std::sync::Arc;
 use util::ResultExt as _;
 use util::schemars::replace_subschema;
@@ -87,7 +87,7 @@ impl From<UiDensity> for String {
 }
 
 /// Customizable settings for the UI and theme system.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, SettingsUi)]
 pub struct ThemeSettings {
     /// The UI font size. Determines the size of text in the UI,
     /// as well as the size of a [gpui::Rems] unit.

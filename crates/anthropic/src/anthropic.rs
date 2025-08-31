@@ -373,7 +373,7 @@ pub async fn complete(
         .uri(uri)
         .header("Anthropic-Version", "2023-06-01")
         .header("Anthropic-Beta", beta_headers)
-        .header("X-Api-Key", api_key)
+        .header("X-Api-Key", api_key.trim())
         .header("Content-Type", "application/json");
 
     let serialized_request =
@@ -526,7 +526,7 @@ pub async fn stream_completion_with_rate_limit_info(
         .uri(uri)
         .header("Anthropic-Version", "2023-06-01")
         .header("Anthropic-Beta", beta_headers)
-        .header("X-Api-Key", api_key)
+        .header("X-Api-Key", api_key.trim())
         .header("Content-Type", "application/json");
     let serialized_request =
         serde_json::to_string(&request).map_err(AnthropicError::SerializeRequest)?;

@@ -424,7 +424,7 @@ pub async fn complete(
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Authorization", format!("Bearer {}", api_key.trim()))
         .header("HTTP-Referer", "https://zed.dev")
         .header("X-Title", "Zed Editor");
 

@@ -334,7 +334,7 @@ impl<T: 'static> PromptEditor<T> {
             EditorEvent::Edited { .. } => {
                 if let Some(workspace) = window.root::<Workspace>().flatten() {
                     workspace.update(cx, |workspace, cx| {
-                        let is_via_ssh = workspace.project().read(cx).is_via_ssh();
+                        let is_via_ssh = workspace.project().read(cx).is_via_remote_server();
 
                         workspace
                             .client()

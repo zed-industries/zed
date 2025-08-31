@@ -6,9 +6,6 @@
 (self) @variable.special
 (field_identifier) @property
 
-(shorthand_field_initializer
-  (identifier) @property)
-
 (trait_item name: (type_identifier) @type.interface)
 (impl_item trait: (type_identifier) @type.interface)
 (abstract_type trait: (type_identifier) @type.interface)
@@ -41,19 +38,10 @@
     (identifier) @function.special
     (scoped_identifier
       name: (identifier) @function.special)
-  ]
-  "!" @function.special)
+  ])
 
 (macro_definition
   name: (identifier) @function.special.definition)
-
-(mod_item
-  name: (identifier) @module)
-
-(visibility_modifier [
-  (crate) @keyword
-  (super) @keyword
-])
 
 ; Identifier conventions
 
@@ -127,7 +115,9 @@
   "where"
   "while"
   "yield"
+  (crate)
   (mutable_specifier)
+  (super)
 ] @keyword
 
 [
@@ -199,19 +189,19 @@
 operator: "/" @operator
 
 (lifetime) @lifetime
-(lifetime (identifier) @lifetime)
 
 (parameter (identifier) @variable.parameter)
 
 (attribute_item (attribute [
   (identifier) @attribute
   (scoped_identifier name: (identifier) @attribute)
+  (token_tree (identifier) @attribute (#match? @attribute "^[a-z\\d_]*$"))
+  (token_tree (identifier) @variable "::" (identifier) @type (#match? @type "^[A-Z]"))
 ]))
+
 (inner_attribute_item (attribute [
   (identifier) @attribute
   (scoped_identifier name: (identifier) @attribute)
+  (token_tree (identifier) @attribute (#match? @attribute "^[a-z\\d_]*$"))
+  (token_tree (identifier) @variable "::" (identifier) @type (#match? @type "^[A-Z]"))
 ]))
-; Match nested snake case identifiers in attribute items.
-(token_tree (identifier) @attribute (#match? @attribute "^[a-z\\d_]*$"))
-; Override the attribute match for paths in scoped type/enum identifiers.
-(token_tree (identifier) @variable "::" (identifier) @type (#match? @type "^[A-Z]"))
