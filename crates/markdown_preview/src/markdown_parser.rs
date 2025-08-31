@@ -870,7 +870,7 @@ impl<'a> MarkdownParser<'a> {
                     }
                 }
             }
-            _ => unreachable!("Should already be handled inside the parse_html_node method"),
+            _ => {}
         }
     }
 
