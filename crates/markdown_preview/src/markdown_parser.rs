@@ -1390,7 +1390,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_inline_style_elements() {
+    async fn test_html_inline_style_elements() {
         let parsed =
             parse("<p>Some text <strong>strong text</strong> more text <b>bold text</b> more text <i>italic text</i> more text <em>emphasized text</em> more text <del>deleted text</del> more text <ins>inserted text</ins></p>").await;
 
