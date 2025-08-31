@@ -184,6 +184,10 @@ impl MarkdownHighlight {
                     highlight.font_style = Some(FontStyle::Italic);
                 }
 
+                if style.emphasized {
+                    highlight.font_style = Some(FontStyle::Oblique)
+                }
+
                 if style.underline {
                     highlight.underline = Some(UnderlineStyle {
                         thickness: px(1.),
@@ -221,6 +225,8 @@ pub struct MarkdownHighlightStyle {
     pub strikethrough: bool,
     /// The weight of the text.
     pub weight: FontWeight,
+    /// Whether the text should be emphasized.
+    pub emphasized: bool,
 }
 
 /// A parsed region in a Markdown document.

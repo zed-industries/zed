@@ -830,6 +830,7 @@ impl<'a> MarkdownParser<'a> {
                         source_range,
                         node,
                         &mut MarkdownParagraph::new(),
+                        &mut Vec::new(),
                         elements,
                     );
                 } else {
@@ -845,6 +846,7 @@ impl<'a> MarkdownParser<'a> {
         source_range: Range<usize>,
         node: &Rc<markup5ever_rcdom::Node>,
         paragraph: &mut MarkdownParagraph,
+        highlights: &mut Vec<(Range<usize>, MarkdownHighlight)>,
         elements: &mut Vec<ParsedMarkdownElement>,
     ) {
         match &node.data {
@@ -853,7 +855,7 @@ impl<'a> MarkdownParser<'a> {
                     source_range,
                     regions: Vec::default(),
                     region_ranges: Vec::default(),
-                    highlights: Vec::default(),
+                    highlights: std::mem::take(highlights),
                     contents: contents.borrow().to_string().into(),
                 }));
             }
@@ -862,12 +864,73 @@ impl<'a> MarkdownParser<'a> {
                     if let Some(image) = self.extract_image(source_range, attrs) {
                         paragraph.push(MarkdownParagraphChunk::Image(image));
                     }
-                } else {
-                    self.consume_paragraph(source_range, node, paragraph, elements);
+                } else if local_name!("b") == name.local || local_name!("strong") == name.local {
+                    highlights.push((
+                        source_range.clone(),
+                        MarkdownHighlight::Style(MarkdownHighlightStyle {
+                            italic: false,
+                            underline: false,
+                            emphasized: false,
+                            strikethrough: false,
+                            weight: FontWeight::BOLD,
+                        }),
+                    ));
 
-                    if !paragraph.is_empty() {
-                        elements.push(ParsedMarkdownElement::Paragraph(std::mem::take(paragraph)));
-                    }
+                    self.consume_paragraph(source_range, node, paragraph, highlights, elements);
+                } else if local_name!("i") == name.local {
+                    highlights.push((
+                        source_range.clone(),
+                        MarkdownHighlight::Style(MarkdownHighlightStyle {
+                            italic: true,
+                            emphasized: false,
+                            underline: false,
+                            strikethrough: false,
+                            weight: FontWeight::NORMAL,
+                        }),
+                    ));
+
+                    self.consume_paragraph(source_range, node, paragraph, highlights, elements);
+                } else if local_name!("em") == name.local {
+                    highlights.push((
+                        source_range.clone(),
+                        MarkdownHighlight::Style(MarkdownHighlightStyle {
+                            italic: false,
+                            underline: false,
+                            emphasized: true,
+                            strikethrough: false,
+                            weight: FontWeight::NORMAL,
+                        }),
+                    ));
+
+                    self.consume_paragraph(source_range, node, paragraph, highlights, elements);
+                } else if local_name!("del") == name.local {
+                    highlights.push((
+                        source_range.clone(),
+                        MarkdownHighlight::Style(MarkdownHighlightStyle {
+                            italic: false,
+                            underline: false,
+                            emphasized: false,
+                            strikethrough: true,
+                            weight: FontWeight::NORMAL,
+                        }),
+                    ));
+
+                    self.consume_paragraph(source_range, node, paragraph, highlights, elements);
+                } else if local_name!("ins") == name.local {
+                    highlights.push((
+                        source_range.clone(),
+                        MarkdownHighlight::Style(MarkdownHighlightStyle {
+                            italic: false,
+                            underline: true,
+                            emphasized: false,
+                            strikethrough: false,
+                            weight: FontWeight::NORMAL,
+                        }),
+                    ));
+
+                    self.consume_paragraph(source_range, node, paragraph, highlights, elements);
+                } else {
+                    self.consume_paragraph(source_range, node, paragraph, highlights, elements);
                 }
             }
             _ => {}
@@ -879,10 +942,15 @@ impl<'a> MarkdownParser<'a> {
         source_range: Range<usize>,
         node: &Rc<markup5ever_rcdom::Node>,
         paragraph: &mut MarkdownParagraph,
+        highlights: &mut Vec<(Range<usize>, MarkdownHighlight)>,
         elements: &mut Vec<ParsedMarkdownElement>,
     ) {
         for node in node.children.borrow().iter() {
-            self.parse_paragraph(source_range.clone(), node, paragraph, elements);
+            self.parse_paragraph(source_range.clone(), node, paragraph, highlights, elements);
+        }
+
+        if !paragraph.is_empty() {
+            elements.push(ParsedMarkdownElement::Paragraph(std::mem::take(paragraph)));
         }
     }
 
