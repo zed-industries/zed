@@ -6,10 +6,10 @@ use agent_client_protocol::{self as acp, Agent as _, ErrorCode};
 use anyhow::anyhow;
 use collections::HashMap;
 use futures::AsyncBufReadExt as _;
-use futures::channel::oneshot;
 use futures::io::BufReader;
 use project::Project;
 use serde::Deserialize;
+
 use std::{any::Any, cell::RefCell};
 use std::{path::Path, rc::Rc};
 use thiserror::Error;
@@ -342,7 +342,8 @@ impl acp::Client for ClientDelegate {
         arguments: acp::RequestPermissionRequest,
     ) -> Result<acp::RequestPermissionResponse, acp::Error> {
         let cx = &mut self.cx.clone();
-        let rx = self
+
+        let task = self
             .sessions
             .borrow()
             .get(&arguments.session_id)
@@ -350,14 +351,9 @@ impl acp::Client for ClientDelegate {
             .thread
             .update(cx, |thread, cx| {
                 thread.request_tool_call_authorization(arguments.tool_call, arguments.options, cx)
-            })?;
+            })??;
 
-        let result = rx?.await;
-
-        let outcome = match result {
-            Ok(option) => acp::RequestPermissionOutcome::Selected { option_id: option },
-            Err(oneshot::Canceled) => acp::RequestPermissionOutcome::Cancelled,
-        };
+        let outcome = task.await;
 
         Ok(acp::RequestPermissionResponse { outcome })
     }

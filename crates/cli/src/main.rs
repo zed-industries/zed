@@ -6,7 +6,6 @@
 use anyhow::{Context as _, Result};
 use clap::Parser;
 use cli::{CliRequest, CliResponse, IpcHandshake, ipc::IpcOneShotServer};
-use collections::HashMap;
 use parking_lot::Mutex;
 use std::{
     env, fs, io,
@@ -85,6 +84,15 @@ struct Args {
     /// Run zed in dev-server mode
     #[arg(long)]
     dev_server_token: Option<String>,
+    /// The username and WSL distribution to use when opening paths. ,If not specified,
+    /// Zed will attempt to open the paths directly.
+    ///
+    /// The username is optional, and if not specified, the default user for the distribution
+    /// will be used.
+    ///
+    /// Example: `me@Ubuntu` or `Ubuntu` for default distribution.
+    #[arg(long, value_name = "USER@DISTRO")]
+    wsl: Option<String>,
     /// Not supported in Zed CLI, only supported on Zed binary
     /// Will attempt to give the correct command to run
     #[arg(long)]
@@ -129,14 +137,41 @@ fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
     Ok(canonicalized.to_string(|path| path.to_string_lossy().to_string()))
 }
 
-fn main() -> Result<()> {
-    #[cfg(all(not(debug_assertions), target_os = "windows"))]
-    unsafe {
-        use ::windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
+    let mut command = util::command::new_std_command("wsl.exe");
 
-        let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+    let (user, distro_name) = if let Some((user, distro)) = wsl.split_once('@') {
+        if user.is_empty() {
+            anyhow::bail!("user is empty in wsl argument");
+        }
+        (Some(user), distro)
+    } else {
+        (None, wsl)
+    };
+
+    if let Some(user) = user {
+        command.arg("--user").arg(user);
     }
 
+    let output = command
+        .arg("--distribution")
+        .arg(distro_name)
+        .arg("wslpath")
+        .arg("-m")
+        .arg(source)
+        .output()?;
+
+    let result = String::from_utf8_lossy(&output.stdout);
+    let prefix = format!("//wsl.localhost/{}", distro_name);
+
+    Ok(result
+        .trim()
+        .strip_prefix(&prefix)
+        .unwrap_or(&result)
+        .to_string())
+}
+
+fn main() -> Result<()> {
     #[cfg(unix)]
     util::prevent_root_execution();
 
@@ -223,6 +258,8 @@ fn main() -> Result<()> {
     let env = {
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         {
+            use collections::HashMap;
+
             // On Linux, the desktop entry uses `cli` to spawn `zed`.
             // We need to handle env vars correctly since std::env::vars() may not contain
             // project-specific vars (e.g. those set by direnv).
@@ -235,8 +272,19 @@ fn main() -> Result<()> {
             }
         }
 
-        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
-        Some(std::env::vars().collect::<HashMap<_, _>>())
+        #[cfg(target_os = "windows")]
+        {
+            // On Windows, by default, a child process inherits a copy of the environment block of the parent process.
+            // So we don't need to pass env vars explicitly.
+            None
+        }
+
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "windows")))]
+        {
+            use collections::HashMap;
+
+            Some(std::env::vars().collect::<HashMap<_, _>>())
+        }
     };
 
     let exit_status = Arc::new(Mutex::new(None));
@@ -271,8 +319,10 @@ fn main() -> Result<()> {
             paths.push(tmp_file.path().to_string_lossy().to_string());
             let (tmp_file, _) = tmp_file.keep()?;
             anonymous_fd_tmp_files.push((file, tmp_file));
+        } else if let Some(wsl) = &args.wsl {
+            urls.push(format!("file://{}", parse_path_in_wsl(path, wsl)?));
         } else {
-            paths.push(parse_path_with_position(path)?)
+            paths.push(parse_path_with_position(path)?);
         }
     }
 
@@ -292,6 +342,7 @@ fn main() -> Result<()> {
                 paths,
                 urls,
                 diff_paths,
+                wsl: args.wsl,
                 wait: args.wait,
                 open_new_workspace,
                 env,
@@ -644,15 +695,15 @@ mod windows {
             Storage::FileSystem::{
                 CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_MODE, OPEN_EXISTING, WriteFile,
             },
-            System::Threading::CreateMutexW,
+            System::Threading::{CREATE_NEW_PROCESS_GROUP, CreateMutexW},
         },
         core::HSTRING,
     };
 
     use crate::{Detect, InstalledApp};
-    use std::io;
     use std::path::{Path, PathBuf};
     use std::process::ExitStatus;
+    use std::{io, os::windows::process::CommandExt};
 
     fn check_single_instance() -> bool {
         let mutex = unsafe {
@@ -691,6 +742,7 @@ mod windows {
         fn launch(&self, ipc_url: String) -> anyhow::Result<()> {
             if check_single_instance() {
                 std::process::Command::new(self.0.clone())
+                    .creation_flags(CREATE_NEW_PROCESS_GROUP.0)
                     .arg(ipc_url)
                     .spawn()?;
             } else {

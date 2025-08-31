@@ -4,10 +4,10 @@ use anyhow::Context as _;
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsSources, SettingsUi};
 use util::paths::PathMatcher;
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, SettingsUi)]
 pub struct WorktreeSettings {
     pub file_scan_inclusions: PathMatcher,
     pub file_scan_exclusions: PathMatcher,

@@ -5,6 +5,8 @@ use std::{
     time::Duration,
 };
 
+mod ui_components;
+
 use anyhow::{Context as _, anyhow};
 use collections::{HashMap, HashSet};
 use editor::{CompletionProvider, Editor, EditorEvent};
@@ -14,9 +16,9 @@ use gpui::{
     Action, AppContext as _, AsyncApp, Axis, ClickEvent, Context, DismissEvent, Entity,
     EventEmitter, FocusHandle, Focusable, Global, IsZero,
     KeyBindingContextPredicate::{And, Descendant, Equal, Identifier, Not, NotEqual, Or},
-    KeyContext, KeybindingKeystroke, Keystroke, MouseButton, PlatformKeyboardMapper, Point,
-    ScrollStrategy, ScrollWheelEvent, Stateful, StyledText, Subscription, Task,
-    TextStyleRefinement, WeakEntity, actions, anchored, deferred, div,
+    KeyContext, KeybindingKeystroke, MouseButton, PlatformKeyboardMapper, Point, ScrollStrategy,
+    ScrollWheelEvent, Stateful, StyledText, Subscription, Task, TextStyleRefinement, WeakEntity,
+    actions, anchored, deferred, div,
 };
 use language::{Language, LanguageConfig, ToOffset as _};
 use notifications::status_toast::{StatusToast, ToastIcon};
@@ -34,8 +36,10 @@ use workspace::{
     register_serializable_item,
 };
 
+pub use ui_components::*;
+
 use crate::{
-    keybindings::persistence::KEYBINDING_EDITORS,
+    persistence::KEYBINDING_EDITORS,
     ui_components::{
         keystroke_input::{ClearKeystrokes, KeystrokeInput, StartRecording, StopRecording},
         table::{ColumnWidths, ResizeBehavior, Table, TableInteractionState},
@@ -420,7 +424,7 @@ fn keystrokes_match_exactly(
 ) -> bool {
     keystrokes1.len() == keystrokes2.len()
         && keystrokes1.iter().zip(keystrokes2).all(|(k1, k2)| {
-            k1.inner.key == k2.inner.key && k1.inner.modifiers == k2.inner.modifiers
+            k1.inner().key == k2.inner().key && k1.inner().modifiers == k2.inner().modifiers
         })
 }
 
@@ -532,7 +536,7 @@ impl KeymapEditor {
 
                 let keystroke_query = keystroke_query
                     .into_iter()
-                    .map(|keystroke| keystroke.inner.unparse())
+                    .map(|keystroke| keystroke.inner().unparse())
                     .collect::<Vec<String>>()
                     .join(" ");
 
@@ -606,13 +610,13 @@ impl KeymapEditor {
                                             let query = &keystroke_query[query_cursor];
                                             let keystroke = &keystrokes[keystroke_cursor];
                                             let matches = query
-                                                .inner
+                                                .inner()
                                                 .modifiers
-                                                .is_subset_of(&keystroke.inner.modifiers)
-                                                && ((query.inner.key.is_empty()
-                                                    || query.inner.key == keystroke.inner.key)
-                                                    && query.inner.key_char.as_ref().is_none_or(
-                                                        |q_kc| q_kc == &keystroke.inner.key,
+                                                .is_subset_of(&keystroke.inner().modifiers)
+                                                && ((query.inner().key.is_empty()
+                                                    || query.inner().key == keystroke.inner().key)
+                                                    && query.inner().key_char.as_ref().is_none_or(
+                                                        |q_kc| q_kc == &keystroke.inner().key,
                                                     ));
                                             if matches {
                                                 found_count += 1;
@@ -2256,12 +2260,10 @@ impl KeybindingEditorModal {
         let fs = self.fs.clone();
         let tab_size = cx.global::<settings::SettingsStore>().json_tab_size();
 
-        let new_keystrokes = self
-            .validate_keystrokes(cx)
-            .map_err(InputError::error)?
-            .into_iter()
-            .map(remove_key_char)
-            .collect::<Vec<_>>();
+        let mut new_keystrokes = self.validate_keystrokes(cx).map_err(InputError::error)?;
+        new_keystrokes
+            .iter_mut()
+            .for_each(|ks| ks.remove_key_char());
 
         let new_context = self.validate_context(cx).map_err(InputError::error)?;
         let new_action_args = self
@@ -2451,24 +2453,6 @@ impl KeybindingEditorModal {
                 keystroke_editor.set_keystrokes(keystrokes, cx);
             });
         });
-    }
-}
-
-fn remove_key_char(
-    KeybindingKeystroke {
-        inner,
-        display_modifiers,
-        display_key,
-    }: KeybindingKeystroke,
-) -> KeybindingKeystroke {
-    KeybindingKeystroke {
-        inner: Keystroke {
-            modifiers: inner.modifiers,
-            key: inner.key,
-            key_char: None,
-        },
-        display_modifiers,
-        display_key,
     }
 }
 

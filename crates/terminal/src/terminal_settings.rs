@@ -6,7 +6,7 @@ use gpui::{AbsoluteLength, App, FontFallbacks, FontFeatures, FontWeight, Pixels,
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 
-use settings::SettingsSources;
+use settings::{SettingsSources, SettingsUi};
 use std::path::PathBuf;
 use task::Shell;
 use theme::FontFamilyName;
@@ -24,7 +24,7 @@ pub struct Toolbar {
     pub breadcrumbs: bool,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, SettingsUi)]
 pub struct TerminalSettings {
     pub shell: Shell,
     pub working_directory: WorkingDirectory,

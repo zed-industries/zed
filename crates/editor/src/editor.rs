@@ -219,7 +219,6 @@ use crate::{
 
 pub const FILE_HEADER_HEIGHT: u32 = 2;
 pub const MULTI_BUFFER_EXCERPT_HEADER_HEIGHT: u32 = 1;
-pub const DEFAULT_MULTIBUFFER_CONTEXT: u32 = 2;
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
@@ -2588,7 +2587,7 @@ impl Editor {
                 || binding
                     .keystrokes()
                     .first()
-                    .is_some_and(|keystroke| keystroke.display_modifiers.modified())
+                    .is_some_and(|keystroke| keystroke.modifiers().modified())
         }))
     }
 
@@ -6402,7 +6401,7 @@ impl Editor {
                     PathKey::for_buffer(buffer_handle, cx),
                     buffer_handle.clone(),
                     edited_ranges,
-                    DEFAULT_MULTIBUFFER_CONTEXT,
+                    multibuffer_context_lines(cx),
                     cx,
                 );
 
@@ -7686,16 +7685,16 @@ impl Editor {
             .keystroke()
         {
             modifiers_held = modifiers_held
-                || (&accept_keystroke.display_modifiers == modifiers
-                    && accept_keystroke.display_modifiers.modified());
+                || (accept_keystroke.modifiers() == modifiers
+                    && accept_keystroke.modifiers().modified());
         };
         if let Some(accept_partial_keystroke) = self
             .accept_edit_prediction_keybind(true, window, cx)
             .keystroke()
         {
             modifiers_held = modifiers_held
-                || (&accept_partial_keystroke.display_modifiers == modifiers
-                    && accept_partial_keystroke.display_modifiers.modified());
+                || (accept_partial_keystroke.modifiers() == modifiers
+                    && accept_partial_keystroke.modifiers().modified());
         }
 
         if modifiers_held {
@@ -9044,7 +9043,7 @@ impl Editor {
 
         let is_platform_style_mac = PlatformStyle::platform() == PlatformStyle::Mac;
 
-        let modifiers_color = if accept_keystroke.display_modifiers == window.modifiers() {
+        let modifiers_color = if *accept_keystroke.modifiers() == window.modifiers() {
             Color::Accent
         } else {
             Color::Muted
@@ -9056,19 +9055,19 @@ impl Editor {
             .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
             .text_size(TextSize::XSmall.rems(cx))
             .child(h_flex().children(ui::render_modifiers(
-                &accept_keystroke.display_modifiers,
+                accept_keystroke.modifiers(),
                 PlatformStyle::platform(),
                 Some(modifiers_color),
                 Some(IconSize::XSmall.rems().into()),
                 true,
             )))
             .when(is_platform_style_mac, |parent| {
-                parent.child(accept_keystroke.display_key.clone())
+                parent.child(accept_keystroke.key().to_string())
             })
             .when(!is_platform_style_mac, |parent| {
                 parent.child(
                     Key::new(
-                        util::capitalize(&accept_keystroke.display_key),
+                        util::capitalize(accept_keystroke.key()),
                         Some(Color::Default),
                     )
                     .size(Some(IconSize::XSmall.rems().into())),
@@ -9249,7 +9248,7 @@ impl Editor {
                                         accept_keystroke.as_ref(),
                                         |el, accept_keystroke| {
                                             el.child(h_flex().children(ui::render_modifiers(
-                                                &accept_keystroke.display_modifiers,
+                                                accept_keystroke.modifiers(),
                                                 PlatformStyle::platform(),
                                                 Some(Color::Default),
                                                 Some(IconSize::XSmall.rems().into()),
@@ -9319,7 +9318,7 @@ impl Editor {
                         .child(completion),
                 )
                 .when_some(accept_keystroke, |el, accept_keystroke| {
-                    if !accept_keystroke.display_modifiers.modified() {
+                    if !accept_keystroke.modifiers().modified() {
                         return el;
                     }
 
@@ -9338,7 +9337,7 @@ impl Editor {
                                     .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
                                     .when(is_platform_style_mac, |parent| parent.gap_1())
                                     .child(h_flex().children(ui::render_modifiers(
-                                        &accept_keystroke.display_modifiers,
+                                        accept_keystroke.modifiers(),
                                         PlatformStyle::platform(),
                                         Some(if !has_completion {
                                             Color::Muted
@@ -16237,7 +16236,7 @@ impl Editor {
                     PathKey::for_buffer(&location.buffer, cx),
                     location.buffer.clone(),
                     ranges_for_buffer,
-                    DEFAULT_MULTIBUFFER_CONTEXT,
+                    multibuffer_context_lines(cx),
                     cx,
                 );
                 ranges.extend(new_ranges)
@@ -24077,4 +24076,11 @@ fn render_diff_hunk_controls(
             },
         )
         .into_any_element()
+}
+
+pub fn multibuffer_context_lines(cx: &App) -> u32 {
+    EditorSettings::try_get(cx)
+        .map(|settings| settings.excerpt_context_lines)
+        .unwrap_or(2)
+        .clamp(1, 32)
 }

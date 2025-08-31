@@ -197,7 +197,7 @@ impl Status {
 }
 
 struct RegisteredBuffer {
-    uri: lsp::Url,
+    uri: lsp::Uri,
     language_id: String,
     snapshot: BufferSnapshot,
     snapshot_version: i32,
@@ -1108,9 +1108,9 @@ fn id_for_language(language: Option<&Arc<Language>>) -> String {
         .unwrap_or_else(|| "plaintext".to_string())
 }
 
-fn uri_for_buffer(buffer: &Entity<Buffer>, cx: &App) -> Result<lsp::Url, ()> {
+fn uri_for_buffer(buffer: &Entity<Buffer>, cx: &App) -> Result<lsp::Uri, ()> {
     if let Some(file) = buffer.read(cx).file().and_then(|file| file.as_local()) {
-        lsp::Url::from_file_path(file.abs_path(cx))
+        lsp::Uri::from_file_path(file.abs_path(cx))
     } else {
         format!("buffer://{}", buffer.entity_id())
             .parse()
@@ -1201,7 +1201,7 @@ mod tests {
         let (copilot, mut lsp) = Copilot::fake(cx);
 
         let buffer_1 = cx.new(|cx| Buffer::local("Hello", cx));
-        let buffer_1_uri: lsp::Url = format!("buffer://{}", buffer_1.entity_id().as_u64())
+        let buffer_1_uri: lsp::Uri = format!("buffer://{}", buffer_1.entity_id().as_u64())
             .parse()
             .unwrap();
         copilot.update(cx, |copilot, cx| copilot.register_buffer(&buffer_1, cx));
@@ -1219,7 +1219,7 @@ mod tests {
         );
 
         let buffer_2 = cx.new(|cx| Buffer::local("Goodbye", cx));
-        let buffer_2_uri: lsp::Url = format!("buffer://{}", buffer_2.entity_id().as_u64())
+        let buffer_2_uri: lsp::Uri = format!("buffer://{}", buffer_2.entity_id().as_u64())
             .parse()
             .unwrap();
         copilot.update(cx, |copilot, cx| copilot.register_buffer(&buffer_2, cx));
@@ -1270,7 +1270,7 @@ mod tests {
                 text_document: lsp::TextDocumentIdentifier::new(buffer_1_uri),
             }
         );
-        let buffer_1_uri = lsp::Url::from_file_path(path!("/root/child/buffer-1")).unwrap();
+        let buffer_1_uri = lsp::Uri::from_file_path(path!("/root/child/buffer-1")).unwrap();
         assert_eq!(
             lsp.receive_notification::<lsp::notification::DidOpenTextDocument>()
                 .await,

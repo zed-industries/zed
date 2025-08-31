@@ -6,9 +6,9 @@ use collections::HashMap;
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsSources, SettingsUi};
 
-#[derive(Deserialize)]
+#[derive(Deserialize, SettingsUi)]
 pub struct WorkspaceSettings {
     pub active_pane_modifiers: ActivePanelModifiers,
     pub bottom_dock_layout: BottomDockLayout,
@@ -29,6 +29,7 @@ pub struct WorkspaceSettings {
     pub on_last_window_closed: OnLastWindowClosed,
     pub resize_all_panels_in_dock: Vec<DockPosition>,
     pub close_on_file_delete: bool,
+    pub use_system_window_tabs: bool,
     pub zoomed_padding: bool,
 }
 
@@ -203,6 +204,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: false
     pub close_on_file_delete: Option<bool>,
+    /// Whether to allow windows to tab together based on the user’s tabbing preference (macOS only).
+    ///
+    /// Default: false
+    pub use_system_window_tabs: Option<bool>,
     /// Whether to show padding for zoomed panels.
     /// When enabled, zoomed bottom panels will have some top padding,
     /// while zoomed left/right panels will have padding to the right/left (respectively).
@@ -211,7 +216,7 @@ pub struct WorkspaceSettingsContent {
     pub zoomed_padding: Option<bool>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, SettingsUi)]
 pub struct TabBarSettings {
     pub show: bool,
     pub show_nav_history_buttons: bool,
@@ -356,6 +361,8 @@ impl Settings for WorkspaceSettings {
         {
             current.max_tabs = Some(n)
         }
+
+        vscode.bool_setting("window.nativeTabs", &mut current.use_system_window_tabs);
 
         // some combination of "window.restoreWindows" and "workbench.startupEditor" might
         // map to our "restore_on_startup"

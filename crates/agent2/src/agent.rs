@@ -93,7 +93,7 @@ impl LanguageModels {
         let mut recommended = Vec::new();
         for provider in &providers {
             for model in provider.recommended_models(cx) {
-                recommended_models.insert(model.id());
+                recommended_models.insert((model.provider_id(), model.id()));
                 recommended.push(Self::map_language_model_to_info(&model, provider));
             }
         }
@@ -110,7 +110,7 @@ impl LanguageModels {
             for model in provider.provided_models(cx) {
                 let model_info = Self::map_language_model_to_info(&model, &provider);
                 let model_id = model_info.id.clone();
-                if !recommended_models.contains(&model.id()) {
+                if !recommended_models.contains(&(model.provider_id(), model.id())) {
                     provider_models.push(model_info);
                 }
                 models.insert(model_id, model);
@@ -762,18 +762,15 @@ impl NativeAgentConnection {
                                 options,
                                 response,
                             }) => {
-                                let recv = acp_thread.update(cx, |thread, cx| {
+                                let outcome_task = acp_thread.update(cx, |thread, cx| {
                                     thread.request_tool_call_authorization(tool_call, options, cx)
-                                })?;
+                                })??;
                                 cx.background_spawn(async move {
-                                    if let Some(recv) = recv.log_err()
-                                        && let Some(option) = recv
-                                            .await
-                                            .context("authorization sender was dropped")
-                                            .log_err()
+                                    if let acp::RequestPermissionOutcome::Selected { option_id } =
+                                        outcome_task.await
                                     {
                                         response
-                                            .send(option)
+                                            .send(option_id)
                                             .map(|_| anyhow!("authorization receiver was dropped"))
                                             .log_err();
                                     }

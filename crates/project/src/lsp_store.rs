@@ -11,18 +11,22 @@
 //! Most of the interesting work happens at the local layer, as bulk of the complexity is with managing the lifecycle of language servers. The actual implementation of the LSP protocol is handled by [`lsp`] crate.
 pub mod clangd_ext;
 pub mod json_language_server_ext;
+pub mod log_store;
 pub mod lsp_ext_command;
 pub mod rust_analyzer_ext;
 
 use crate::{
     CodeAction, ColorPresentation, Completion, CompletionResponse, CompletionSource,
     CoreCompletion, DocumentColor, Hover, InlayHint, LocationLink, LspAction, LspPullDiagnostics,
-    ManifestProvidersStore, ProjectItem, ProjectPath, ProjectTransaction, PulledDiagnostics,
-    ResolveState, Symbol,
+    ManifestProvidersStore, Project, ProjectItem, ProjectPath, ProjectTransaction,
+    PulledDiagnostics, ResolveState, Symbol,
     buffer_store::{BufferStore, BufferStoreEvent},
     environment::ProjectEnvironment,
     lsp_command::{self, *},
-    lsp_store,
+    lsp_store::{
+        self,
+        log_store::{GlobalLogStore, LanguageServerKind},
+    },
     manifest_tree::{
         LanguageServerTree, LanguageServerTreeNode, LaunchDisposition, ManifestQueryDelegate,
         ManifestTree,
@@ -75,7 +79,7 @@ use lsp::{
     LSP_REQUEST_TIMEOUT, LanguageServer, LanguageServerBinary, LanguageServerBinaryOptions,
     LanguageServerId, LanguageServerName, LanguageServerSelector, LspRequestFuture,
     MessageActionItem, MessageType, OneOf, RenameFilesParams, SymbolKind,
-    TextDocumentSyncSaveOptions, TextEdit, WillRenameFiles, WorkDoneProgressCancelParams,
+    TextDocumentSyncSaveOptions, TextEdit, Uri, WillRenameFiles, WorkDoneProgressCancelParams,
     WorkspaceFolder, notification::DidRenameFiles,
 };
 use node_runtime::read_package_installed_version;
@@ -110,7 +114,7 @@ use std::{
 };
 use sum_tree::Dimensions;
 use text::{Anchor, BufferId, LineEnding, OffsetRangeExt};
-use url::Url;
+
 use util::{
     ConnectionResult, ResultExt as _, debug_panic, defer, maybe, merge_json_value_into,
     paths::{PathExt, SanitizedPath},
@@ -310,7 +314,7 @@ impl LocalLspStore {
             true,
             cx,
         );
-        let pending_workspace_folders: Arc<Mutex<BTreeSet<Url>>> = Default::default();
+        let pending_workspace_folders: Arc<Mutex<BTreeSet<Uri>>> = Default::default();
 
         let pending_server = cx.spawn({
             let adapter = adapter.clone();
@@ -977,7 +981,9 @@ impl LocalLspStore {
                         this.update(&mut cx, |_, cx| {
                             cx.emit(LspStoreEvent::LanguageServerLog(
                                 server_id,
-                                LanguageServerLogType::Trace(params.verbose),
+                                LanguageServerLogType::Trace {
+                                    verbose_info: params.verbose,
+                                },
                                 params.message,
                             ));
                         })
@@ -2399,7 +2405,7 @@ impl LocalLspStore {
 
                     {
                         let uri =
-                            Url::from_file_path(worktree.read(cx).abs_path().join(&path.path));
+                            Uri::from_file_path(worktree.read(cx).abs_path().join(&path.path));
 
                         let server_id = self.get_or_insert_language_server(
                             &worktree,
@@ -2559,7 +2565,7 @@ impl LocalLspStore {
             None => return,
         };
 
-        let Ok(file_url) = lsp::Url::from_file_path(old_path.as_path()) else {
+        let Ok(file_url) = lsp::Uri::from_file_path(old_path.as_path()) else {
             debug_panic!(
                 "`{}` is not parseable as an URI",
                 old_path.to_string_lossy()
@@ -2572,7 +2578,7 @@ impl LocalLspStore {
     pub(crate) fn unregister_buffer_from_language_servers(
         &mut self,
         buffer: &Entity<Buffer>,
-        file_url: &lsp::Url,
+        file_url: &lsp::Uri,
         cx: &mut App,
     ) {
         buffer.update(cx, |buffer, cx| {
@@ -3180,7 +3186,7 @@ impl LocalLspStore {
             } else {
                 let (path, pattern) = match &watcher.glob_pattern {
                     lsp::GlobPattern::String(s) => {
-                        let watcher_path = SanitizedPath::from(s);
+                        let watcher_path = SanitizedPath::new(s);
                         let path = glob_literal_prefix(watcher_path.as_path());
                         let pattern = watcher_path
                             .as_path()
@@ -3272,7 +3278,7 @@ impl LocalLspStore {
             let worktree_root_path = tree.abs_path();
             match &watcher.glob_pattern {
                 lsp::GlobPattern::String(s) => {
-                    let watcher_path = SanitizedPath::from(s);
+                    let watcher_path = SanitizedPath::new(s);
                     let relative = watcher_path
                         .as_path()
                         .strip_prefix(&worktree_root_path)
@@ -3482,13 +3488,13 @@ pub struct LspStore {
     buffer_store: Entity<BufferStore>,
     worktree_store: Entity<WorktreeStore>,
     pub languages: Arc<LanguageRegistry>,
-    language_server_statuses: BTreeMap<LanguageServerId, LanguageServerStatus>,
+    pub language_server_statuses: BTreeMap<LanguageServerId, LanguageServerStatus>,
     active_entry: Option<ProjectEntryId>,
     _maintain_workspace_config: (Task<Result<()>>, watch::Sender<()>),
     _maintain_buffer_languages: Task<()>,
     diagnostic_summaries:
         HashMap<WorktreeId, HashMap<Arc<Path>, HashMap<LanguageServerId, DiagnosticSummary>>>,
-    pub(super) lsp_server_capabilities: HashMap<LanguageServerId, lsp::ServerCapabilities>,
+    pub lsp_server_capabilities: HashMap<LanguageServerId, lsp::ServerCapabilities>,
     lsp_document_colors: HashMap<BufferId, DocumentColorData>,
     lsp_code_lens: HashMap<BufferId, CodeLensData>,
     running_lsp_requests: HashMap<TypeId, (Global, HashMap<LspRequestId, Task<()>>)>,
@@ -3565,6 +3571,7 @@ pub struct LanguageServerStatus {
     pub pending_work: BTreeMap<String, LanguageServerProgress>,
     pub has_pending_diagnostic_updates: bool,
     progress_tokens: HashSet<String>,
+    pub worktree: Option<WorktreeId>,
 }
 
 #[derive(Clone, Debug)]
@@ -4687,7 +4694,7 @@ impl LspStore {
                     for node in nodes {
                         let server_id = node.server_id_or_init(|disposition| {
                             let path = &disposition.path;
-                            let uri = Url::from_file_path(worktree_root.join(&path.path));
+                            let uri = Uri::from_file_path(worktree_root.join(&path.path));
                             let key = LanguageServerSeed {
                                 worktree_id,
                                 name: disposition.server_name.clone(),
@@ -6571,7 +6578,7 @@ impl LspStore {
                                 File::from_dyn(buffer.file())
                                     .and_then(|file| {
                                         let abs_path = file.as_local()?.abs_path(cx);
-                                        lsp::Url::from_file_path(abs_path).ok()
+                                        lsp::Uri::from_file_path(abs_path).ok()
                                     })
                                     .is_none_or(|buffer_uri| {
                                         unchanged_buffers.contains(&buffer_uri)
@@ -7172,7 +7179,7 @@ impl LspStore {
         let buffer = buffer.read(cx);
         let file = File::from_dyn(buffer.file())?;
         let abs_path = file.as_local()?.abs_path(cx);
-        let uri = lsp::Url::from_file_path(abs_path).unwrap();
+        let uri = lsp::Uri::from_file_path(abs_path).unwrap();
         let next_snapshot = buffer.text_snapshot();
         for language_server in language_servers {
             let language_server = language_server.clone();
@@ -7483,7 +7490,7 @@ impl LspStore {
                         server: Some(proto::LanguageServer {
                             id: server_id.to_proto(),
                             name: status.name.to_string(),
-                            worktree_id: None,
+                            worktree_id: status.worktree.map(|id| id.to_proto()),
                         }),
                         capabilities: serde_json::to_string(&server.capabilities())
                             .expect("serializing server LSP capabilities"),
@@ -7508,9 +7515,15 @@ impl LspStore {
 
     pub(crate) fn set_language_server_statuses_from_proto(
         &mut self,
+        project: WeakEntity<Project>,
         language_servers: Vec<proto::LanguageServer>,
         server_capabilities: Vec<String>,
+        cx: &mut Context<Self>,
     ) {
+        let lsp_logs = cx
+            .try_global::<GlobalLogStore>()
+            .map(|lsp_store| lsp_store.0.clone());
+
         self.language_server_statuses = language_servers
             .into_iter()
             .zip(server_capabilities)
@@ -7520,13 +7533,34 @@ impl LspStore {
                     self.lsp_server_capabilities
                         .insert(server_id, server_capabilities);
                 }
+
+                let name = LanguageServerName::from_proto(server.name);
+                let worktree = server.worktree_id.map(WorktreeId::from_proto);
+
+                if let Some(lsp_logs) = &lsp_logs {
+                    lsp_logs.update(cx, |lsp_logs, cx| {
+                        lsp_logs.add_language_server(
+                            // Only remote clients get their language servers set from proto
+                            LanguageServerKind::Remote {
+                                project: project.clone(),
+                            },
+                            server_id,
+                            Some(name.clone()),
+                            worktree,
+                            None,
+                            cx,
+                        );
+                    });
+                }
+
                 (
                     server_id,
                     LanguageServerStatus {
-                        name: LanguageServerName::from_proto(server.name),
+                        name,
                         pending_work: Default::default(),
                         has_pending_diagnostic_updates: false,
                         progress_tokens: Default::default(),
+                        worktree,
                     },
                 )
             })
@@ -7782,7 +7816,7 @@ impl LspStore {
             };
 
             let symbol_abs_path = resolve_path(&worktree_abs_path, &symbol.path.path);
-            let symbol_uri = if let Ok(uri) = lsp::Url::from_file_path(symbol_abs_path) {
+            let symbol_uri = if let Ok(uri) = lsp::Uri::from_file_path(symbol_abs_path) {
                 uri
             } else {
                 return Task::ready(Err(anyhow!("invalid symbol path")));
@@ -7796,14 +7830,14 @@ impl LspStore {
 
     pub(crate) fn open_local_buffer_via_lsp(
         &mut self,
-        mut abs_path: lsp::Url,
+        abs_path: lsp::Uri,
         language_server_id: LanguageServerId,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
         cx.spawn(async move |lsp_store, cx| {
             // Escape percent-encoded string.
             let current_scheme = abs_path.scheme().to_owned();
-            let _ = abs_path.set_scheme("file");
+            // Uri is immutable, so we can't modify the scheme
 
             let abs_path = abs_path
                 .to_file_path()
@@ -8892,6 +8926,7 @@ impl LspStore {
                     pending_work: Default::default(),
                     has_pending_diagnostic_updates: false,
                     progress_tokens: Default::default(),
+                    worktree: server.worktree_id.map(WorktreeId::from_proto),
                 },
             );
             cx.emit(LspStoreEvent::LanguageServerAdded(
@@ -9195,8 +9230,12 @@ impl LspStore {
         maybe!({
             let local_store = self.as_local()?;
 
-            let old_uri = lsp::Url::from_file_path(old_path).ok().map(String::from)?;
-            let new_uri = lsp::Url::from_file_path(new_path).ok().map(String::from)?;
+            let old_uri = lsp::Uri::from_file_path(old_path)
+                .ok()
+                .map(|uri| uri.to_string())?;
+            let new_uri = lsp::Uri::from_file_path(new_path)
+                .ok()
+                .map(|uri| uri.to_string())?;
 
             for language_server in local_store.language_servers_for_worktree(worktree_id) {
                 let Some(filter) = local_store
@@ -9229,8 +9268,12 @@ impl LspStore {
         is_dir: bool,
         cx: AsyncApp,
     ) -> Task<ProjectTransaction> {
-        let old_uri = lsp::Url::from_file_path(old_path).ok().map(String::from);
-        let new_uri = lsp::Url::from_file_path(new_path).ok().map(String::from);
+        let old_uri = lsp::Uri::from_file_path(old_path)
+            .ok()
+            .map(|uri| uri.to_string());
+        let new_uri = lsp::Uri::from_file_path(new_path)
+            .ok()
+            .map(|uri| uri.to_string());
         cx.spawn(async move |cx| {
             let mut tasks = vec![];
             this.update(cx, |this, cx| {
@@ -10843,7 +10886,7 @@ impl LspStore {
         language_server: Arc<LanguageServer>,
         server_id: LanguageServerId,
         key: LanguageServerSeed,
-        workspace_folders: Arc<Mutex<BTreeSet<Url>>>,
+        workspace_folders: Arc<Mutex<BTreeSet<Uri>>>,
         cx: &mut Context<Self>,
     ) {
         let Some(local) = self.as_local_mut() else {
@@ -10905,6 +10948,7 @@ impl LspStore {
                 pending_work: Default::default(),
                 has_pending_diagnostic_updates: false,
                 progress_tokens: Default::default(),
+                worktree: Some(key.worktree_id),
             },
         );
 
@@ -11002,7 +11046,7 @@ impl LspStore {
                     let snapshot = versions.last().unwrap();
                     let version = snapshot.version;
                     let initial_snapshot = &snapshot.snapshot;
-                    let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
+                    let uri = lsp::Uri::from_file_path(file.abs_path(cx)).unwrap();
                     language_server.register_buffer(
                         uri,
                         adapter.language_id(&language.name()),
@@ -11241,7 +11285,7 @@ impl LspStore {
                                 PathChange::AddedOrUpdated => lsp::FileChangeType::CHANGED,
                             };
                             Some(lsp::FileEvent {
-                                uri: lsp::Url::from_file_path(abs_path.join(path)).unwrap(),
+                                uri: lsp::Uri::from_file_path(abs_path.join(path)).unwrap(),
                                 typ,
                             })
                         })
@@ -11653,7 +11697,7 @@ impl LspStore {
                     File::from_dyn(buffer.file())
                         .and_then(|file| {
                             let abs_path = file.as_local()?.abs_path(cx);
-                            lsp::Url::from_file_path(abs_path).ok()
+                            lsp::Uri::from_file_path(abs_path).ok()
                         })
                         .is_none_or(|buffer_uri| {
                             unchanged_buffers.contains(&buffer_uri)
@@ -12190,6 +12234,14 @@ impl LspStore {
         let data = self.lsp_code_lens.get_mut(&buffer_id)?;
         Some(data.update.take()?.1)
     }
+
+    pub fn downstream_client(&self) -> Option<(AnyProtoClient, u64)> {
+        self.downstream_client.clone()
+    }
+
+    pub fn worktree_store(&self) -> Entity<WorktreeStore> {
+        self.worktree_store.clone()
+    }
 }
 
 // Registration with registerOptions as null, should fallback to true.
@@ -12699,45 +12751,69 @@ impl PartialEq for LanguageServerPromptRequest {
 #[derive(Clone, Debug, PartialEq)]
 pub enum LanguageServerLogType {
     Log(MessageType),
-    Trace(Option<String>),
+    Trace { verbose_info: Option<String> },
+    Rpc { received: bool },
 }
 
 impl LanguageServerLogType {
     pub fn to_proto(&self) -> proto::language_server_log::LogType {
         match self {
             Self::Log(log_type) => {
-                let message_type = match *log_type {
-                    MessageType::ERROR => 1,
-                    MessageType::WARNING => 2,
-                    MessageType::INFO => 3,
-                    MessageType::LOG => 4,
+                use proto::log_message::LogLevel;
+                let level = match *log_type {
+                    MessageType::ERROR => LogLevel::Error,
+                    MessageType::WARNING => LogLevel::Warning,
+                    MessageType::INFO => LogLevel::Info,
+                    MessageType::LOG => LogLevel::Log,
                     other => {
-                        log::warn!("Unknown lsp log message type: {:?}", other);
-                        4
+                        log::warn!("Unknown lsp log message type: {other:?}");
+                        LogLevel::Log
                     }
                 };
-                proto::language_server_log::LogType::LogMessageType(message_type)
-            }
-            Self::Trace(message) => {
-                proto::language_server_log::LogType::LogTrace(proto::LspLogTrace {
-                    message: message.clone(),
+                proto::language_server_log::LogType::Log(proto::LogMessage {
+                    level: level as i32,
                 })
+            }
+            Self::Trace { verbose_info } => {
+                proto::language_server_log::LogType::Trace(proto::TraceMessage {
+                    verbose_info: verbose_info.to_owned(),
+                })
+            }
+            Self::Rpc { received } => {
+                let kind = if *received {
+                    proto::rpc_message::Kind::Received
+                } else {
+                    proto::rpc_message::Kind::Sent
+                };
+                let kind = kind as i32;
+                proto::language_server_log::LogType::Rpc(proto::RpcMessage { kind })
             }
         }
     }
 
     pub fn from_proto(log_type: proto::language_server_log::LogType) -> Self {
+        use proto::log_message::LogLevel;
+        use proto::rpc_message;
         match log_type {
-            proto::language_server_log::LogType::LogMessageType(message_type) => {
-                Self::Log(match message_type {
-                    1 => MessageType::ERROR,
-                    2 => MessageType::WARNING,
-                    3 => MessageType::INFO,
-                    4 => MessageType::LOG,
-                    _ => MessageType::LOG,
-                })
-            }
-            proto::language_server_log::LogType::LogTrace(trace) => Self::Trace(trace.message),
+            proto::language_server_log::LogType::Log(message_type) => Self::Log(
+                match LogLevel::from_i32(message_type.level).unwrap_or(LogLevel::Log) {
+                    LogLevel::Error => MessageType::ERROR,
+                    LogLevel::Warning => MessageType::WARNING,
+                    LogLevel::Info => MessageType::INFO,
+                    LogLevel::Log => MessageType::LOG,
+                },
+            ),
+            proto::language_server_log::LogType::Trace(trace_message) => Self::Trace {
+                verbose_info: trace_message.verbose_info,
+            },
+            proto::language_server_log::LogType::Rpc(message) => Self::Rpc {
+                received: match rpc_message::Kind::from_i32(message.kind)
+                    .unwrap_or(rpc_message::Kind::Received)
+                {
+                    rpc_message::Kind::Received => true,
+                    rpc_message::Kind::Sent => false,
+                },
+            },
         }
     }
 }
@@ -12753,7 +12829,7 @@ pub enum LanguageServerState {
     Starting {
         startup: Task<Option<Arc<LanguageServer>>>,
         /// List of language servers that will be added to the workspace once it's initialization completes.
-        pending_workspace_folders: Arc<Mutex<BTreeSet<Url>>>,
+        pending_workspace_folders: Arc<Mutex<BTreeSet<Uri>>>,
     },
 
     Running {
@@ -12765,7 +12841,7 @@ pub enum LanguageServerState {
 }
 
 impl LanguageServerState {
-    fn add_workspace_folder(&self, uri: Url) {
+    fn add_workspace_folder(&self, uri: Uri) {
         match self {
             LanguageServerState::Starting {
                 pending_workspace_folders,
@@ -12778,7 +12854,7 @@ impl LanguageServerState {
             }
         }
     }
-    fn _remove_workspace_folder(&self, uri: Url) {
+    fn _remove_workspace_folder(&self, uri: Uri) {
         match self {
             LanguageServerState::Starting {
                 pending_workspace_folders,

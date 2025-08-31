@@ -33,7 +33,7 @@ mod yarn;
 
 use dap::inline_value::{InlineValueLocation, VariableLookupKind, VariableScope};
 
-use crate::git_store::GitStore;
+use crate::{git_store::GitStore, lsp_store::log_store::LogKind};
 pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
@@ -87,7 +87,7 @@ use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 pub use prettier_store::PrettierStore;
 use project_settings::{ProjectSettings, SettingsObserver, SettingsObserverEvent};
-use remote::{RemoteClient, SshConnectionOptions};
+use remote::{RemoteClient, RemoteConnectionOptions};
 use rpc::{
     AnyProtoClient, ErrorCode,
     proto::{FromProto, LanguageServerPromptResponse, REMOTE_SERVER_PROJECT_ID, ToProto},
@@ -280,6 +280,12 @@ pub enum Event {
         server_id: LanguageServerId,
         buffer_id: BufferId,
         buffer_abs_path: PathBuf,
+        name: Option<LanguageServerName>,
+    },
+    ToggleLspLogs {
+        server_id: LanguageServerId,
+        enabled: bool,
+        toggled_log_kind: LogKind,
     },
     Toast {
         notification_id: SharedString,
@@ -924,7 +930,7 @@ pub enum LspPullDiagnostics {
         /// The id of the language server that produced diagnostics.
         server_id: LanguageServerId,
         /// URI of the resource,
-        uri: lsp::Url,
+        uri: lsp::Uri,
         /// The diagnostics produced by this language server.
         diagnostics: PulledDiagnostics,
     },
@@ -946,7 +952,7 @@ pub enum PulledDiagnostics {
 /// Whether to disable all AI features in Zed.
 ///
 /// Default: false
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, settings::SettingsUi)]
 pub struct DisableAiSettings {
     pub disable_ai: bool,
 }
@@ -1001,6 +1007,7 @@ impl Project {
         client.add_entity_request_handler(Self::handle_open_buffer_by_path);
         client.add_entity_request_handler(Self::handle_open_new_buffer);
         client.add_entity_message_handler(Self::handle_create_buffer_for_peer);
+        client.add_entity_message_handler(Self::handle_toggle_lsp_logs);
 
         WorktreeStore::init(&client);
         BufferStore::init(&client);
@@ -1475,7 +1482,7 @@ impl Project {
         })?;
 
         let lsp_store = cx.new(|cx| {
-            let mut lsp_store = LspStore::new_remote(
+            LspStore::new_remote(
                 buffer_store.clone(),
                 worktree_store.clone(),
                 languages.clone(),
@@ -1483,12 +1490,7 @@ impl Project {
                 remote_id,
                 fs.clone(),
                 cx,
-            );
-            lsp_store.set_language_server_statuses_from_proto(
-                response.payload.language_servers,
-                response.payload.language_server_capabilities,
-            );
-            lsp_store
+            )
         })?;
 
         let task_store = cx.new(|cx| {
@@ -1522,7 +1524,7 @@ impl Project {
             )
         })?;
 
-        let this = cx.new(|cx| {
+        let project = cx.new(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
 
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
@@ -1553,7 +1555,7 @@ impl Project {
 
             cx.subscribe(&dap_store, Self::on_dap_store_event).detach();
 
-            let mut this = Self {
+            let mut project = Self {
                 buffer_ordered_messages_tx: tx,
                 buffer_store: buffer_store.clone(),
                 image_store,
@@ -1596,12 +1598,24 @@ impl Project {
                 toolchain_store: None,
                 agent_location: None,
             };
-            this.set_role(role, cx);
+            project.set_role(role, cx);
             for worktree in worktrees {
-                this.add_worktree(&worktree, cx);
+                project.add_worktree(&worktree, cx);
             }
-            this
+            project
         })?;
+
+        let weak_project = project.downgrade();
+        lsp_store
+            .update(&mut cx, |lsp_store, cx| {
+                lsp_store.set_language_server_statuses_from_proto(
+                    weak_project,
+                    response.payload.language_servers,
+                    response.payload.language_server_capabilities,
+                    cx,
+                );
+            })
+            .ok();
 
         let subscriptions = subscriptions
             .into_iter()
@@ -1618,7 +1632,7 @@ impl Project {
                 EntitySubscription::SettingsObserver(subscription) => {
                     subscription.set_entity(&settings_observer, &cx)
                 }
-                EntitySubscription::Project(subscription) => subscription.set_entity(&this, &cx),
+                EntitySubscription::Project(subscription) => subscription.set_entity(&project, &cx),
                 EntitySubscription::LspStore(subscription) => {
                     subscription.set_entity(&lsp_store, &cx)
                 }
@@ -1638,13 +1652,13 @@ impl Project {
             .update(&mut cx, |user_store, cx| user_store.get_users(user_ids, cx))?
             .await?;
 
-        this.update(&mut cx, |this, cx| {
+        project.update(&mut cx, |this, cx| {
             this.set_collaborators_from_proto(response.payload.collaborators, cx)?;
             this.client_subscriptions.extend(subscriptions);
             anyhow::Ok(())
         })??;
 
-        Ok(this)
+        Ok(project)
     }
 
     fn new_search_history() -> SearchHistory {
@@ -1902,7 +1916,7 @@ impl Project {
             .map(|remote| remote.read(cx).connection_state())
     }
 
-    pub fn remote_connection_options(&self, cx: &App) -> Option<SshConnectionOptions> {
+    pub fn remote_connection_options(&self, cx: &App) -> Option<RemoteConnectionOptions> {
         self.remote_client
             .as_ref()
             .map(|remote| remote.read(cx).connection_options())
@@ -2048,13 +2062,12 @@ impl Project {
         exclude_sub_dirs: bool,
         cx: &App,
     ) -> Option<bool> {
-        let sanitized_path = SanitizedPath::from(path);
-        let path = sanitized_path.as_path();
+        let path = SanitizedPath::new(path).as_path();
         self.worktrees(cx)
             .filter_map(|worktree| {
                 let worktree = worktree.read(cx);
                 let abs_path = worktree.as_local()?.abs_path();
-                let contains = path == abs_path
+                let contains = path == abs_path.as_ref()
                     || (path.starts_with(abs_path) && (!exclude_sub_dirs || !metadata.is_dir));
                 contains.then(|| worktree.is_visible())
             })
@@ -2315,10 +2328,14 @@ impl Project {
         self.join_project_response_message_id = message_id;
         self.set_worktrees_from_proto(message.worktrees, cx)?;
         self.set_collaborators_from_proto(message.collaborators, cx)?;
-        self.lsp_store.update(cx, |lsp_store, _| {
+
+        let project = cx.weak_entity();
+        self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.set_language_server_statuses_from_proto(
+                project,
                 message.language_servers,
                 message.language_server_capabilities,
+                cx,
             )
         });
         self.enqueue_buffer_ordered_message(BufferOrderedMessage::Resync)
@@ -2971,6 +2988,7 @@ impl Project {
                                 buffer_id,
                                 server_id: *language_server_id,
                                 buffer_abs_path: PathBuf::from(&update.buffer_abs_path),
+                                name: name.clone(),
                             });
                         }
                     }
@@ -3581,7 +3599,7 @@ impl Project {
 
     pub fn open_local_buffer_via_lsp(
         &mut self,
-        abs_path: lsp::Url,
+        abs_path: lsp::Uri,
         language_server_id: LanguageServerId,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
@@ -4695,6 +4713,29 @@ impl Project {
                 )
             })
         })?
+    }
+
+    async fn handle_toggle_lsp_logs(
+        project: Entity<Self>,
+        envelope: TypedEnvelope<proto::ToggleLspLogs>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        let toggled_log_kind =
+            match proto::toggle_lsp_logs::LogType::from_i32(envelope.payload.log_type)
+                .context("invalid log type")?
+            {
+                proto::toggle_lsp_logs::LogType::Log => LogKind::Logs,
+                proto::toggle_lsp_logs::LogType::Trace => LogKind::Trace,
+                proto::toggle_lsp_logs::LogType::Rpc => LogKind::Rpc,
+            };
+        project.update(&mut cx, |_, cx| {
+            cx.emit(Event::ToggleLspLogs {
+                server_id: LanguageServerId::from_proto(envelope.payload.server_id),
+                enabled: envelope.payload.enabled,
+                toggled_log_kind,
+            })
+        })?;
+        Ok(())
     }
 
     async fn handle_synchronize_buffers(

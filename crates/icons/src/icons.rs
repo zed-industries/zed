@@ -146,6 +146,7 @@ pub enum IconName {
     Library,
     LineHeight,
     ListCollapse,
+    ListFilter,
     ListTodo,
     ListTree,
     ListX,

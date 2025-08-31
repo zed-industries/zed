@@ -6,7 +6,7 @@ publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [features]
-test-support = ["acp_thread/test-support", "gpui/test-support", "project/test-support", "dep:env_logger", "fs", "client/test-support", "dep:gpui_tokio", "reqwest_client/test-support"]
+test-support = ["acp_thread/test-support", "gpui/test-support", "project/test-support", "dep:env_logger", "client/test-support", "dep:gpui_tokio", "reqwest_client/test-support"]
 e2e = []
 
 [lints]
@@ -25,21 +25,19 @@ agent_settings.workspace = true
 anyhow.workspace = true
 client = { workspace = true, optional = true }
 collections.workspace = true
-context_server.workspace = true
 env_logger = { workspace = true, optional = true }
-fs = { workspace = true, optional = true }
+fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 gpui_tokio = { workspace = true, optional = true }
 indoc.workspace = true
-itertools.workspace = true
 language.workspace = true
 language_model.workspace = true
 language_models.workspace = true
 log.workspace = true
+node_runtime.workspace = true
 paths.workspace = true
 project.workspace = true
-rand.workspace = true
 reqwest_client = { workspace = true, optional = true }
 schemars.workspace = true
 semver.workspace = true
@@ -47,12 +45,10 @@ serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 smol.workspace = true
-strum.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 ui.workspace = true
 util.workspace = true
-uuid.workspace = true
 watch.workspace = true
 which.workspace = true
 workspace-hack.workspace = true
