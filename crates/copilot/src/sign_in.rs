@@ -9,7 +9,6 @@ use ui::{
     ParentElement, Render, Vector, VectorName, div, h_flex, prelude::*, v_flex,
 };
 
-use std::ops::Deref;
 use std::time::Duration;
 use util::ResultExt as _;
 use workspace::notifications::NotificationId;
@@ -17,39 +16,12 @@ use workspace::{ModalView, Toast, Workspace};
 
 actions!(copilot, [Cancel]);
 
-// Constants
 const COPILOT_SIGN_UP_URL: &str = "https://github.com/features/copilot";
 const LOADING_ANIMATION_DURATION: Duration = Duration::from_secs(2);
-const DEVICE_CODE_MAX_LENGTH: usize = 10;
 
-// Type-safe wrappers
-#[derive(Debug, Clone)]
-struct UserCode(String);
-
-impl Deref for UserCode {
-    type Target = str;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-#[derive(Debug, Clone)]
-struct VerificationUri(String);
-
-impl Deref for VerificationUri {
-    type Target = str;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-// Improved state management
 #[derive(Debug, Clone, PartialEq)]
 enum ConnectionState {
     Initial,
-    Connecting,
     Connected,
     Failed(String),
 }
@@ -79,7 +51,6 @@ impl From<anyhow::Error> for SignInError {
     }
 }
 
-// Toast management helper
 struct CopilotToastManager;
 
 impl CopilotToastManager {
@@ -99,7 +70,6 @@ impl CopilotToastManager {
     }
 }
 
-// Business logic separation
 struct CopilotSignInService;
 
 impl CopilotSignInService {
@@ -140,8 +110,6 @@ impl CopilotSignInService {
                 }
                 _ => {
                     CopilotToastManager::dismiss_status_toast(workspace, cx);
-                    // Can't call start_sign_in_flow here since we don't have window access
-                    // This should be handled differently in the calling code
                 }
             }
         })?;
@@ -166,7 +134,6 @@ impl CopilotSignInService {
     }
 }
 
-// Improved main functions
 pub fn initiate_sign_in(window: &mut Window, cx: &mut App) -> Result<(), SignInError> {
     let (copilot, workspace) = CopilotSignInService::validate_preconditions(window, cx)?;
 
@@ -198,7 +165,7 @@ pub fn initiate_sign_in_within_workspace(
     workspace: &mut Workspace,
     copilot: Entity<Copilot>,
     is_reinstall: bool,
-    _window: &mut Window,
+    window: &mut Window,
     cx: &mut gpui::Context<Workspace>,
 ) -> Result<(), SignInError> {
     CopilotSignInService::ensure_copilot_started(&copilot, cx);
@@ -239,7 +206,7 @@ pub fn initiate_sign_in_within_workspace(
             .detach();
         }
         _ => {
-            CopilotSignInService::start_sign_in_flow(workspace, &copilot, _window, cx)?;
+            CopilotSignInService::start_sign_in_flow(workspace, &copilot, window, cx)?;
         }
     }
 
@@ -280,7 +247,6 @@ pub fn sign_out_within_workspace(
     .detach();
 }
 
-// Improved modal struct
 pub struct CopilotCodeVerification {
     status: Status,
     connection_state: ConnectionState,
@@ -349,12 +315,6 @@ impl CopilotCodeVerification {
         }
     }
 
-    fn update_connection_state(&mut self, state: ConnectionState, cx: &mut gpui::Context<Self>) {
-        self.connection_state = state;
-        cx.notify();
-    }
-
-    // Improved device code rendering with better UX
     fn render_device_code(
         &self,
         data: &PromptUserDeviceFlow,
@@ -401,11 +361,6 @@ impl CopilotCodeVerification {
             .unwrap_or(false)
     }
 
-    fn copy_code_to_clipboard(&self, user_code: &str, cx: &mut gpui::Context<Self>) {
-        cx.write_to_clipboard(ClipboardItem::new_string(user_code.to_string()));
-    }
-
-    // Improved modal rendering with better structure
     fn render_sign_in_modal(
         &self,
         data: &PromptUserDeviceFlow,
@@ -445,7 +400,6 @@ impl CopilotCodeVerification {
     fn get_connect_button_config(&self) -> (&'static str, bool) {
         match self.connection_state {
             ConnectionState::Initial => ("Connect to GitHub", false),
-            ConnectionState::Connecting => ("Connecting...", true),
             ConnectionState::Connected => ("Connected!", true),
             ConnectionState::Failed(_) => ("Retry Connection", false),
         }
@@ -478,16 +432,6 @@ impl CopilotCodeVerification {
             }))
     }
 
-    fn handle_connect_click(&mut self, _verification_uri: &str, cx: &mut gpui::Context<Self>) {
-        if matches!(self.connection_state, ConnectionState::Connecting) {
-            return;
-        }
-
-        self.update_connection_state(ConnectionState::Connecting, cx);
-        // Note: URL opening should be handled by the button click handler
-    }
-
-    // Success modal
     fn render_success_modal(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         v_flex()
             .gap_4()
@@ -523,7 +467,6 @@ impl CopilotCodeVerification {
             )
     }
 
-    // Unauthorized modal
     fn render_unauthorized_modal(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         v_flex()
             .gap_4()
@@ -563,7 +506,6 @@ impl CopilotCodeVerification {
             )
     }
 
-    // Loading state with improved animation
     fn render_loading_state(
         &self,
         _window: &mut Window,
@@ -585,67 +527,8 @@ impl CopilotCodeVerification {
             .child(loading_icon)
             .child(Label::new("Initializing Copilot...").color(Color::Muted))
     }
-
-    // Error state rendering
-    fn render_error_state(
-        &self,
-        error_msg: String,
-        cx: &mut gpui::Context<Self>,
-    ) -> impl IntoElement {
-        v_flex()
-            .gap_4()
-            .items_center()
-            .child(
-                Headline::new("Connection Failed")
-                    .size(HeadlineSize::Large)
-                    .color(Color::Error),
-            )
-            .child(Label::new(error_msg).color(Color::Error))
-            .child(
-                Button::new("retry-button", "Try Again")
-                    .full_width()
-                    .style(ButtonStyle::Filled)
-                    .on_click(cx.listener(|this, _ev: &ClickEvent, _window, cx| {
-                        this.update_connection_state(ConnectionState::Initial, cx);
-                        this.copilot.update(cx, |copilot, cx| {
-                            copilot.sign_in(cx).detach_and_log_err(cx);
-                        });
-                    })),
-            )
-            .child(
-                Button::new("cancel-button", "Cancel")
-                    .full_width()
-                    .style(ButtonStyle::Subtle)
-                    .on_click(cx.listener(|_this, _ev: &ClickEvent, _window, cx| {
-                        cx.emit(gpui::DismissEvent)
-                    })),
-            )
-    }
-
-    /// Validates device code format
-    fn is_valid_device_code(code: &str) -> bool {
-        !code.is_empty() && code.len() <= DEVICE_CODE_MAX_LENGTH
-    }
-
-    /// Creates a more accessible button with proper states
-    fn _create_action_button(
-        id: &'static str,
-        label: String,
-        style: ButtonStyle,
-        disabled: bool,
-        on_click: impl Fn(&mut Self, &ClickEvent, &mut Window, &mut gpui::Context<Self>) + 'static,
-        cx: &mut gpui::Context<Self>,
-    ) -> Button {
-        Button::new(id, label)
-            .full_width()
-            .style(style)
-            .disabled(disabled)
-            .when(disabled, |button| button)
-            .on_click(cx.listener(on_click))
-    }
 }
 
-// Toast marker struct
 struct CopilotStatusToast;
 
 impl Render for CopilotCodeVerification {
@@ -688,28 +571,5 @@ impl Render for CopilotCodeVerification {
                     .color(Color::Custom(cx.theme().colors().icon)),
             )
             .child(content)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_user_code_validation() {
-        assert!(CopilotCodeVerification::is_valid_device_code("ABC123"));
-        assert!(!CopilotCodeVerification::is_valid_device_code(""));
-        assert!(!CopilotCodeVerification::is_valid_device_code(
-            "VERYLONGCODE123"
-        ));
-    }
-
-    #[test]
-    fn test_connection_state_transitions() {
-        let initial = ConnectionState::Initial;
-        let connecting = ConnectionState::Connecting;
-
-        assert_ne!(initial, connecting);
-        assert_eq!(initial, ConnectionState::Initial);
     }
 }

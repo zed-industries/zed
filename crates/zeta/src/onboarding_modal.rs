@@ -1,17 +1,17 @@
 use std::sync::Arc;
 
-use crate::{ZedPredictUpsell, onboarding_event};
+use crate::{onboarding_event, ZedPredictUpsell};
 use ai_onboarding::EditPredictionOnboarding;
 use client::{Client, UserStore};
 use db::kvp::Dismissable;
 use fs::Fs;
 use gpui::{
-    ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, MouseDownEvent, Render,
-    linear_color_stop, linear_gradient,
+    linear_color_stop, linear_gradient, ClickEvent, DismissEvent, Entity, EventEmitter,
+    FocusHandle, Focusable, MouseDownEvent, Render,
 };
 use language::language_settings::{AllLanguageSettings, EditPredictionProvider};
 use settings::update_settings_file;
-use ui::{Vector, VectorName, prelude::*};
+use ui::{prelude::*, Vector, VectorName};
 use workspace::{ModalView, Workspace};
 
 /// Introduces user to Zed's Edit Prediction feature and terms of service
@@ -61,7 +61,7 @@ impl ZedPredictModal {
                                 ZedPredictUpsell::set_dismissed(true, cx);
                                 set_edit_prediction_provider(EditPredictionProvider::Copilot, cx);
                                 this.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
-                                copilot::initiate_sign_in(window, cx);
+                                copilot::initiate_sign_in(window, cx).log_err();
                             }
                         }),
                         cx,

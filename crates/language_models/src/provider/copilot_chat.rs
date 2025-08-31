@@ -720,7 +720,9 @@ impl Render for ConfigurationView {
                                 .icon_position(IconPosition::Start)
                                 .icon_size(IconSize::Medium)
                                 .full_width()
-                                .on_click(|_, window, cx| copilot::initiate_sign_in(window, cx)),
+                                .on_click(|_, window, cx| {
+                                    copilot::initiate_sign_in(window, cx).log_err();
+                                }),
                         )
                     }
                 },

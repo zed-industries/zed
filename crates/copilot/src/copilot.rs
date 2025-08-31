@@ -98,12 +98,14 @@ pub fn init(
         workspace.register_action(|workspace, _: &SignIn, window, cx| {
             if let Some(copilot) = Copilot::global(cx) {
                 let is_reinstall = false;
-                initiate_sign_in_within_workspace(workspace, copilot, is_reinstall, window, cx);
+                initiate_sign_in_within_workspace(workspace, copilot, is_reinstall, window, cx)
+                    .log_err();
             }
         });
         workspace.register_action(|workspace, _: &Reinstall, window, cx| {
             if let Some(copilot) = Copilot::global(cx) {
-                reinstall_and_sign_in_within_workspace(workspace, copilot, window, cx);
+                reinstall_and_sign_in_within_workspace(workspace, copilot, window, cx)
+                    .log_err();
             }
         });
         workspace.register_action(|workspace, _: &SignOut, _window, cx| {
