@@ -829,7 +829,6 @@ impl<'a> MarkdownParser<'a> {
                     self.parse_paragraph(
                         source_range,
                         node,
-                        &mut Vec::new(),
                         &mut MarkdownParagraph::new(),
                         elements,
                     );
@@ -845,7 +844,6 @@ impl<'a> MarkdownParser<'a> {
         &self,
         source_range: Range<usize>,
         node: &Rc<markup5ever_rcdom::Node>,
-        highlights: &mut Vec<(Range<usize>, MarkdownHighlight)>,
         paragraph: &mut MarkdownParagraph,
         elements: &mut Vec<ParsedMarkdownElement>,
     ) {
@@ -855,7 +853,7 @@ impl<'a> MarkdownParser<'a> {
                     source_range,
                     regions: Vec::default(),
                     region_ranges: Vec::default(),
-                    highlights: highlights.clone(),
+                    highlights: Vec::default(),
                     contents: contents.borrow().to_string().into(),
                 }));
             }
@@ -865,7 +863,7 @@ impl<'a> MarkdownParser<'a> {
                         paragraph.push(MarkdownParagraphChunk::Image(image));
                     }
                 } else {
-                    self.consume_paragraph(source_range, node, highlights, paragraph, elements);
+                    self.consume_paragraph(source_range, node, paragraph, elements);
 
                     if !paragraph.is_empty() {
                         elements.push(ParsedMarkdownElement::Paragraph(std::mem::take(paragraph)));
@@ -880,12 +878,11 @@ impl<'a> MarkdownParser<'a> {
         &self,
         source_range: Range<usize>,
         node: &Rc<markup5ever_rcdom::Node>,
-        highlights: &mut Vec<(Range<usize>, MarkdownHighlight)>,
         paragraph: &mut MarkdownParagraph,
         elements: &mut Vec<ParsedMarkdownElement>,
     ) {
         for node in node.children.borrow().iter() {
-            self.parse_paragraph(source_range.clone(), node, highlights, paragraph, elements);
+            self.parse_paragraph(source_range.clone(), node, paragraph, elements);
         }
     }
 
