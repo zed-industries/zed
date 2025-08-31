@@ -138,9 +138,19 @@ impl Render for WhichKeyLayer {
         let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
         let status_bar_height = DynamicSpacing::Base08.px(cx) * 2.0 + ui_font_size;
 
+        let is_zoomed = self
+            .workspace
+            .read_with(cx, |workspace, _cx| workspace.zoomed.is_some())
+            .unwrap_or(false);
+
         // Get dock widths and bottom dock height for dynamic padding
+        // If workspace is zoomed, ignore panel padding and render at bottom of buffer
         let (left_margin, right_margin, bottom_margin) = if let Ok(margins) =
             self.workspace.read_with(cx, |workspace, cx| {
+                if is_zoomed {
+                    return (Pixels::ZERO, Pixels::ZERO, Pixels::ZERO);
+                }
+
                 let left_width = workspace
                     .left_dock()
                     .read(cx)
@@ -166,7 +176,8 @@ impl Render for WhichKeyLayer {
 
         // Check if we should show in left panel
         let show_in_left_panel = which_key_settings.location == WhichKeyLocation::LeftPanel
-            && left_margin >= ui_font_size * 20.0;
+            && left_margin >= ui_font_size * 20.0
+            && !is_zoomed;
 
         let margin = DynamicSpacing::Base12.px(cx);
         let padding = DynamicSpacing::Base16.px(cx);
