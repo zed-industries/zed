@@ -810,13 +810,17 @@ impl<'a> MarkdownParser<'a> {
                 self.consume_children(source_range, node, elements);
             }
             markup5ever_rcdom::NodeData::Text { contents } => {
+                let contents = contents.borrow().to_string();
+                if contents.trim().is_empty() {
+                    return;
+                }
                 elements.push(ParsedMarkdownElement::Paragraph(vec![
                     MarkdownParagraphChunk::Text(ParsedMarkdownText {
                         source_range,
                         regions: Vec::default(),
                         region_ranges: Vec::default(),
                         highlights: Vec::default(),
-                        contents: contents.borrow().to_string().into(),
+                        contents: contents.into(),
                     }),
                 ]));
             }
@@ -1386,6 +1390,41 @@ mod tests {
         assert_eq!(
             MarkdownParser::parse_html_element_dimension("42.0"),
             Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(42.0))))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_multiple_upfollowing_paragraphs() {
+        let parsed = parse(
+            "<p>1. Some text more text and many more</p>
+            <p>2. Some text more text and many more</p>",
+        )
+        .await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![
+                    ParsedMarkdownElement::Paragraph(vec![MarkdownParagraphChunk::Text(
+                        ParsedMarkdownText {
+                            source_range: 0..44,
+                            contents: "1. Some text more text and many more".into(),
+                            highlights: Default::default(),
+                            region_ranges: Default::default(),
+                            regions: Default::default()
+                        }
+                    )]),
+                    ParsedMarkdownElement::Paragraph(vec![MarkdownParagraphChunk::Text(
+                        ParsedMarkdownText {
+                            source_range: 44..99,
+                            contents: "2. Some text more text and many more".into(),
+                            highlights: Default::default(),
+                            region_ranges: Default::default(),
+                            regions: Default::default()
+                        }
+                    )])
+                ]
+            },
+            parsed
         );
     }
 
