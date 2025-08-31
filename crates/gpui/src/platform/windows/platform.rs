@@ -124,13 +124,13 @@ impl WindowsPlatform {
             main_thread_message_window: Default::default(),
         });
 
-        let hwnd = create_message_window(&inner)?;
+        let hwnd = create_message_window(&mut inner)?;
         inner.main_thread_message_window = hwnd;
 
         let dispatcher = Arc::new(WindowsDispatcher::new(main_sender, hwnd));
 
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
-        let foreground_executor = ForegroundExecutor::new(dispatcher.clone());
+        let foreground_executor = ForegroundExecutor::new(dispatcher);
 
         Ok(Self(inner, background_executor, foreground_executor))
     }
@@ -701,7 +701,7 @@ pub(crate) struct WindowCreationInfo {
     pub(crate) disable_direct_composition: bool,
 }
 
-fn create_message_window(inner: &Box<WindowsPlatformInner>) -> Result<HWND> {
+fn create_message_window(inner: &mut WindowsPlatformInner) -> Result<HWND> {
     let class_name = w!("Zed::MessageOnlyWindow");
     let hinstance = get_module_handle();
 
@@ -727,7 +727,7 @@ fn create_message_window(inner: &Box<WindowsPlatformInner>) -> Result<HWND> {
             Some(HWND_MESSAGE),
             None,
             Some(hinstance.into()),
-            Some(&*(*inner) as *const _ as _),
+            Some(&*inner as *const _ as _),
         )?)
     }
 }
