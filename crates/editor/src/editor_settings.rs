@@ -6,12 +6,12 @@ use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, VsCodeSettings};
+use settings::{Settings, SettingsSources, SettingsUi, VsCodeSettings};
 use util::serde::default_true;
 
 /// Imports from the VSCode settings at
 /// https://code.visualstudio.com/docs/reference/default-settings
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, SettingsUi)]
 pub struct EditorSettings {
     pub cursor_blink: bool,
     pub cursor_shape: Option<CursorShape>,
@@ -56,6 +56,7 @@ pub struct EditorSettings {
     pub inline_code_actions: bool,
     pub drag_and_drop_selection: DragAndDropSelection,
     pub lsp_document_colors: DocumentColorsRenderMode,
+    pub minimum_contrast_for_highlights: f32,
 }
 
 /// How to render LSP `textDocument/documentColor` colors in the editor.
@@ -550,6 +551,12 @@ pub struct EditorSettingsContent {
     ///
     /// Default: false
     pub show_signature_help_after_edits: Option<bool>,
+    /// The minimum APCA perceptual contrast to maintain when
+    /// rendering text over highlight backgrounds in the editor.
+    ///
+    /// Values range from 0 to 106. Set to 0 to disable adjustments.
+    /// Default: 45
+    pub minimum_contrast_for_highlights: Option<f32>,
 
     /// Whether to follow-up empty go to definition responses from the language server or not.
     /// `FindAllReferences` allows to look up references of the same symbol instead.

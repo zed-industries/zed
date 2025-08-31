@@ -23,13 +23,14 @@ use http_client::{Url, read_proxy_from_env};
 use language::LanguageRegistry;
 use onboarding::{FIRST_OPEN, show_onboarding_view};
 use prompt_store::PromptBuilder;
+use remote::RemoteConnectionOptions;
 use reqwest_client::ReqwestClient;
 
 use assets::Assets;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use parking_lot::Mutex;
 use project::project_settings::ProjectSettings;
-use recent_projects::{SshSettings, open_ssh_project};
+use recent_projects::{SshSettings, open_remote_project};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
 use settings::{BaseKeymap, Settings, SettingsStore, watch_config_file};
@@ -360,6 +361,7 @@ pub fn main() {
             open_listener.open(RawOpenRequest {
                 urls,
                 diff_paths: Vec::new(),
+                ..Default::default()
             })
         }
     });
@@ -632,6 +634,7 @@ pub fn main() {
         svg_preview::init(cx);
         onboarding::init(cx);
         settings_ui::init(cx);
+        keymap_editor::init(cx);
         extensions_ui::init(cx);
         zeta::init(cx);
         inspector_ui::init(app_state.clone(), cx);
@@ -695,7 +698,7 @@ pub fn main() {
         let urls: Vec<_> = args
             .paths_or_urls
             .iter()
-            .filter_map(|arg| parse_url_arg(arg, cx).log_err())
+            .map(|arg| parse_url_arg(arg, cx))
             .collect();
 
         let diff_paths: Vec<[String; 2]> = args
@@ -705,7 +708,11 @@ pub fn main() {
             .collect();
 
         if !urls.is_empty() || !diff_paths.is_empty() {
-            open_listener.open(RawOpenRequest { urls, diff_paths })
+            open_listener.open(RawOpenRequest {
+                urls,
+                diff_paths,
+                wsl: args.wsl,
+            })
         }
 
         match open_rx
@@ -791,10 +798,10 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
         return;
     }
 
-    if let Some(connection_options) = request.ssh_connection {
+    if let Some(connection_options) = request.remote_connection {
         cx.spawn(async move |cx| {
             let paths: Vec<PathBuf> = request.open_paths.into_iter().map(PathBuf::from).collect();
-            open_ssh_project(
+            open_remote_project(
                 connection_options,
                 paths,
                 app_state,
@@ -977,31 +984,24 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                         tasks.push(task);
                     }
                 }
-                SerializedWorkspaceLocation::Ssh(ssh) => {
+                SerializedWorkspaceLocation::Remote(mut connection_options) => {
                     let app_state = app_state.clone();
-                    let ssh_host = ssh.host.clone();
-                    let task = cx.spawn(async move |cx| {
-                        let connection_options = cx.update(|cx| {
+                    if let RemoteConnectionOptions::Ssh(options) = &mut connection_options {
+                        cx.update(|cx| {
                             SshSettings::get_global(cx)
-                                .connection_options_for(ssh.host, ssh.port, ssh.user)
-                        });
-
-                        match connection_options {
-                            Ok(connection_options) => recent_projects::open_ssh_project(
-                                connection_options,
-                                paths.paths().into_iter().map(PathBuf::from).collect(),
-                                app_state,
-                                workspace::OpenOptions::default(),
-                                cx,
-                            )
-                            .await
-                            .map_err(|e| anyhow::anyhow!(e)),
-                            Err(e) => Err(anyhow::anyhow!(
-                                "Failed to get SSH connection options for {}: {}",
-                                ssh_host,
-                                e
-                            )),
-                        }
+                                .fill_connection_options_from_settings(options)
+                        })?;
+                    }
+                    let task = cx.spawn(async move |cx| {
+                        recent_projects::open_remote_project(
+                            connection_options,
+                            paths.paths().into_iter().map(PathBuf::from).collect(),
+                            app_state,
+                            workspace::OpenOptions::default(),
+                            cx,
+                        )
+                        .await
+                        .map_err(|e| anyhow::anyhow!(e))
                     });
                     tasks.push(task);
                 }
@@ -1183,6 +1183,16 @@ struct Args {
     #[arg(long, value_name = "DIR")]
     user_data_dir: Option<String>,
 
+    /// The username and WSL distribution to use when opening paths. ,If not specified,
+    /// Zed will attempt to open the paths directly.
+    ///
+    /// The username is optional, and if not specified, the default user for the distribution
+    /// will be used.
+    ///
+    /// Example: `me@Ubuntu` or `Ubuntu` for default distribution.
+    #[arg(long, value_name = "USER@DISTRO")]
+    wsl: Option<String>,
+
     /// Instructs zed to run as a dev server on this machine. (not implemented)
     #[arg(long)]
     dev_server_token: Option<String>,
@@ -1241,18 +1251,18 @@ impl ToString for IdType {
     }
 }
 
-fn parse_url_arg(arg: &str, cx: &App) -> Result<String> {
+fn parse_url_arg(arg: &str, cx: &App) -> String {
     match std::fs::canonicalize(Path::new(&arg)) {
-        Ok(path) => Ok(format!("file://{}", path.display())),
-        Err(error) => {
+        Ok(path) => format!("file://{}", path.display()),
+        Err(_) => {
             if arg.starts_with("file://")
                 || arg.starts_with("zed-cli://")
                 || arg.starts_with("ssh://")
                 || parse_zed_link(arg, cx).is_some()
             {
-                Ok(arg.into())
+                arg.into()
             } else {
-                anyhow::bail!("error parsing path argument: {error}")
+                format!("file://{arg}")
             }
         }
     }
