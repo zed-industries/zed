@@ -50,7 +50,11 @@ pub mod scrollbars {
         }
 
         pub(super) fn should_auto_hide(&self, cx: &mut App) -> bool {
-            matches!(self, Self::System | Self::Auto if cx.default_global::<ScrollbarAutoHide>().should_hide())
+            match self {
+                Self::Auto => true,
+                Self::System => cx.default_global::<ScrollbarAutoHide>().should_hide(),
+                _ => false,
+            }
         }
     }
 
