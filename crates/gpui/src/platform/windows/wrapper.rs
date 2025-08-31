@@ -2,7 +2,7 @@ use std::ops::Deref;
 
 use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::HCURSOR};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct SafeCursor {
     raw: HCURSOR,
 }
@@ -24,7 +24,7 @@ impl Deref for SafeCursor {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct SafeHwnd {
     raw: HWND,
 }

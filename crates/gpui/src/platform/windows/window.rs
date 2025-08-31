@@ -71,9 +71,8 @@ pub(crate) struct WindowsWindowInner {
     pub(crate) is_movable: bool,
     pub(crate) executor: ForegroundExecutor,
     pub(crate) windows_version: WindowsVersion,
-    pub(crate) validation_number: usize,
     pub(crate) main_receiver: flume::Receiver<Runnable>,
-    pub(crate) main_thread_id_win32: u32,
+    pub(crate) main_thread_message_window: HWND,
 }
 
 impl WindowsWindowState {
@@ -226,9 +225,8 @@ impl WindowsWindowInner {
             is_movable: context.is_movable,
             executor: context.executor.clone(),
             windows_version: context.windows_version,
-            validation_number: context.validation_number,
             main_receiver: context.main_receiver.clone(),
-            main_thread_id_win32: context.main_thread_id_win32,
+            main_thread_message_window: context.main_thread_message_window,
         }))
     }
 
@@ -340,9 +338,8 @@ struct WindowCreateContext {
     current_cursor: Option<HCURSOR>,
     windows_version: WindowsVersion,
     drop_target_helper: IDropTargetHelper,
-    validation_number: usize,
     main_receiver: flume::Receiver<Runnable>,
-    main_thread_id_win32: u32,
+    main_thread_message_window: HWND,
     appearance: WindowAppearance,
     disable_direct_composition: bool,
 }
@@ -359,9 +356,8 @@ impl WindowsWindow {
             current_cursor,
             windows_version,
             drop_target_helper,
-            validation_number,
             main_receiver,
-            main_thread_id_win32,
+            main_thread_message_window,
             disable_direct_composition,
         } = creation_info;
         register_window_class(icon);
@@ -417,9 +413,8 @@ impl WindowsWindow {
             current_cursor,
             windows_version,
             drop_target_helper,
-            validation_number,
             main_receiver,
-            main_thread_id_win32,
+            main_thread_message_window,
             appearance,
             disable_direct_composition,
         };
@@ -1197,7 +1192,7 @@ pub(crate) fn window_from_hwnd(hwnd: HWND) -> Option<Rc<WindowsWindowInner>> {
     }
 }
 
-fn get_module_handle() -> HMODULE {
+pub(crate) fn get_module_handle() -> HMODULE {
     unsafe {
         let mut h_module = std::mem::zeroed();
         GetModuleHandleExW(

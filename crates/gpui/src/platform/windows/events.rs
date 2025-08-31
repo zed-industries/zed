@@ -264,13 +264,12 @@ impl WindowsWindowInner {
             callback();
         }
         unsafe {
-            PostThreadMessageW(
-                self.main_thread_id_win32,
+            SendMessageW(
+                self.main_thread_message_window,
                 WM_GPUI_CLOSE_ONE_WINDOW,
-                WPARAM(self.validation_number),
-                LPARAM(handle.0 as isize),
-            )
-            .log_err();
+                None,
+                Some(LPARAM(handle.0 as isize)),
+            );
         }
         Some(0)
     }
@@ -1147,10 +1146,13 @@ impl WindowsWindowInner {
     }
 
     fn handle_input_language_changed(&self, lparam: LPARAM) -> Option<isize> {
-        let thread = self.main_thread_id_win32;
-        let validation = self.validation_number;
         unsafe {
-            PostThreadMessageW(thread, WM_INPUTLANGCHANGE, WPARAM(validation), lparam).log_err();
+            SendMessageW(
+                self.main_thread_message_window,
+                WM_INPUTLANGCHANGE,
+                None,
+                Some(lparam),
+            );
         }
         Some(0)
     }
