@@ -11,11 +11,12 @@ use editor::{CompletionProvider, Editor, EditorEvent};
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    Action, Animation, AnimationExt, AppContext as _, AsyncApp, Axis, ClickEvent, Context,
-    DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Global, IsZero,
-    KeyContext, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Point, ScrollStrategy,
-    ScrollWheelEvent, StyledText, Subscription, Task, TextStyleRefinement, WeakEntity, actions,
-    anchored, deferred, div, humanize_action_name,
+    Action, AppContext as _, AsyncApp, Axis, ClickEvent, Context, DismissEvent, Entity,
+    EventEmitter, FocusHandle, Focusable, Global, IsZero,
+    KeyBindingContextPredicate::{And, Descendant, Equal, Identifier, Not, NotEqual, Or},
+    KeyContext, Keystroke, MouseButton, Point, ScrollStrategy, ScrollWheelEvent, Stateful,
+    StyledText, Subscription, Task, TextStyleRefinement, WeakEntity, actions, anchored, deferred,
+    div, humanize_action_name,
 };
 use language::{Language, LanguageConfig, ToOffset as _};
 use notifications::status_toast::{StatusToast, ToastIcon};

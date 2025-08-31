@@ -336,12 +336,8 @@ fn create_aligned_binding_element(
         )
         .text_align(gpui::TextAlign::Right);
 
-    h_flex().items_center().gap_1().children([
+    h_flex().items_center().gap_1p5().children([
         keystroke.into_any_element(),
-        div()
-            .child(Label::new("🡒").color(Color::Muted))
-            .pt_1() // Align with lowercase text. Makes it look more "right"
-            .into_any_element(),
         Label::new(action_name.to_string())
             .truncate()
             .into_any_element(),
