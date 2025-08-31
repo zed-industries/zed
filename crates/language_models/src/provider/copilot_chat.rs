@@ -32,6 +32,8 @@ use std::time::Duration;
 use ui::prelude::*;
 use util::debug_panic;
 
+use crate::provider::x_ai::count_xai_tokens;
+
 use super::anthropic::count_anthropic_tokens;
 use super::google::count_google_tokens;
 use super::open_ai::count_open_ai_tokens;
@@ -228,7 +230,9 @@ impl LanguageModel for CopilotChatLanguageModel {
             ModelVendor::OpenAI | ModelVendor::Anthropic => {
                 LanguageModelToolSchemaFormat::JsonSchema
             }
-            ModelVendor::Google => LanguageModelToolSchemaFormat::JsonSchemaSubset,
+            ModelVendor::Google | ModelVendor::XAI => {
+                LanguageModelToolSchemaFormat::JsonSchemaSubset
+            }
         }
     }
 
@@ -256,6 +260,10 @@ impl LanguageModel for CopilotChatLanguageModel {
         match self.model.vendor() {
             ModelVendor::Anthropic => count_anthropic_tokens(request, cx),
             ModelVendor::Google => count_google_tokens(request, cx),
+            ModelVendor::XAI => {
+                let model = x_ai::Model::from_id(self.model.id()).unwrap_or_default();
+                count_xai_tokens(request, model, cx)
+            }
             ModelVendor::OpenAI => {
                 let model = open_ai::Model::from_id(self.model.id()).unwrap_or_default();
                 count_open_ai_tokens(request, model, cx)
