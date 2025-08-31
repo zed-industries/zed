@@ -108,7 +108,7 @@ impl DebugAdapter for GdbDebugAdapter {
                                 },
                                 "gdb_path": {
                                     "type": "string",
-                                    "description": "Alternertive path to the GDB executable, if the one in standart path is not disireable"
+                                    "description": "Alternertive path to the GDB executable, if the one in standard path is not disirable"
                                 },
                                 "gdb_args": {
                                     "type": "array",
