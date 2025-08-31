@@ -1,3 +1,4 @@
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use crate::{BottomDockLayout, WorkspaceSettings};
@@ -11,6 +12,52 @@ use util::ResultExt;
 use which_key::{WhichKeyLocation, WhichKeySettings};
 
 use crate::Workspace;
+
+// Hard-coded list of keystrokes to filter out from which-key display
+static FILTERED_KEYSTROKES: &[&str] = &[
+    // Modifiers on normal vim commands
+    "g h",
+    "g j",
+    "g k",
+    "g l",
+    "g $",
+    "g ^",
+    // Duplicate keys with "ctrl" held, e.g. "ctrl-w ctrl-a" is duplicate of "ctrl-w a"
+    "ctrl-w ctrl-a",
+    "ctrl-w ctrl-c",
+    "ctrl-w ctrl-h",
+    "ctrl-w ctrl-j",
+    "ctrl-w ctrl-k",
+    "ctrl-w ctrl-l",
+    "ctrl-w ctrl-n",
+    "ctrl-w ctrl-o",
+    "ctrl-w ctrl-p",
+    "ctrl-w ctrl-q",
+    "ctrl-w ctrl-s",
+    "ctrl-w ctrl-v",
+    "ctrl-w ctrl-w",
+    "ctrl-w ctrl-]",
+    "ctrl-w ctrl-shift-w",
+    "ctrl-w ctrl-g t",
+    "ctrl-w ctrl-g shift-t",
+];
+
+static PARSED_FILTERED_KEYSTROKES: OnceLock<Vec<Vec<Keystroke>>> = OnceLock::new();
+
+fn get_filtered_keystrokes() -> &'static Vec<Vec<Keystroke>> {
+    PARSED_FILTERED_KEYSTROKES.get_or_init(|| {
+        FILTERED_KEYSTROKES
+            .iter()
+            .filter_map(|s| {
+                let keystrokes: Result<Vec<_>, _> = s
+                    .split(' ')
+                    .map(|keystroke_str| Keystroke::parse(keystroke_str))
+                    .collect();
+                keystrokes.ok()
+            })
+            .collect()
+    })
+}
 
 pub struct WhichKeyLayer {
     timer: Option<Task<()>>,
@@ -138,8 +185,21 @@ impl Render for WhichKeyLayer {
         let margin = DynamicSpacing::Base12.px(cx);
         let padding = DynamicSpacing::Base16.px(cx);
 
+        let filtered_keystrokes = get_filtered_keystrokes();
+
         let mut binding_data: Vec<_> = bindings
             .iter()
+            .filter(|binding| {
+                let full_keystrokes = binding.keystrokes();
+
+                // Check if this binding matches any filtered keystroke pattern
+                let should_filter = filtered_keystrokes.iter().any(|filtered| {
+                    full_keystrokes.len() >= filtered.len()
+                        && full_keystrokes[..filtered.len()] == filtered[..]
+                });
+
+                !should_filter
+            })
             .map(|binding| {
                 let remaining_keystrokes = binding.keystrokes()[pending_keys.len()..].to_vec();
                 let action_name = humanize_action_name(binding.action().name());
@@ -268,7 +328,7 @@ impl Render for WhichKeyLayer {
             .max_h_128()
             .child(
                 v_flex()
-                    .gap_3()
+                    .gap_2p5()
                     .child(
                         Label::new(text_for_keystrokes(pending_keys, cx)).weight(FontWeight::BOLD),
                     )
@@ -366,8 +426,21 @@ impl WhichKeyLayer {
             margin + status_bar_height + bottom_margin
         };
 
+        let filtered_keystrokes = get_filtered_keystrokes();
+
         let mut binding_data: Vec<_> = bindings
             .iter()
+            .filter(|binding| {
+                let full_keystrokes = binding.keystrokes();
+
+                // Check if this binding matches any filtered keystroke pattern
+                let should_filter = filtered_keystrokes.iter().any(|filtered| {
+                    full_keystrokes.len() >= filtered.len()
+                        && full_keystrokes[..filtered.len()] == filtered[..]
+                });
+
+                !should_filter
+            })
             .map(|binding| {
                 let remaining_keystrokes = binding.keystrokes()[pending_keys.len()..].to_vec();
                 let action_name = humanize_action_name(binding.action().name());
