@@ -1,190 +1,338 @@
-date: 2025-08-31T15:47:17.200692-06:00
-researcher: claude-code
-git_commit: 8a2c37a3c10a5d2869a8d829bdb9688c74e9d403
-branch: delta
-repository: zed-industries/cloud
-topic: "Unified Scheduler Architecture Design"
-tags: [research, scheduler, executor, gpui, cloud, architecture, async-task]
-status: research
-last_updated: 2025-08-31
-last_updated_by: claude-code
+# Unified Scheduler Architecture - Layered Design
 
-# Unified Scheduler Architecture Research
+## Overview
 
-**Date**: 2025-08-31T15:47:17.200692-06:00
-**Researcher**: Claude Code
-**Git Commit**: 8a2c37a3c10a5d2869a8d829bdb9688c74e9d403
-**Branch**: delta
-**Repository**: zed-industries/cloud
+A clean layered architecture where:
+- **Core**: Basic scheduling interface (`Scheduler` trait) + test-enhanced concrete impl (`TestScheduler`)
+- **GPUI**: Uses trait objects for production safety, test features via `TestScheduler`
+- **Cloud**: Session wrapper uses `TestScheduler` for session coordination
 
-This research explores designing a unified scheduler system to replace GPUI's `PlatformDispatcher` + `Executor` architecture and Cloud's `SimulatorRuntime` architecture. The goal is to create a common scheduling foundation that supports both production performance and testing determinism while maintaining backward compatibility and proper Send/non-Send distinctions.
-
-## Overview and Goals
-
-The current GPUI and Cloud architectures have separate scheduling systems:
-- GPUI uses `PlatformDispatcher` (low-level) + `BackgroundExecutor`/`ForegroundExecutor` (high-level)
-- Cloud uses `SimulatorRuntime` for deterministic testing
-
-We need a unified abstraction that:
-- **Unifies platforms**: Single trait for macOS, Linux, Windows, and testing
-- **Handles Send vs non-Send**: Background for Send futures, foreground for main-thread-only futures
-- **Provides delayed scheduling**: Native timers without runtime dependencies
-- **Supports determinism**: Fake time and controlled execution for testing
-- **Maintains compatibility**: Zero breaking changes for GPUI APIs
-
-### Scope Clarification
-
-- **Scheduler Crate**: Platform abstraction exposing single `Scheduler` trait with low-level scheduling primitives, extension methods for high-level APIs, plus `Task<T>` type and backend implementations
-- **GPUI Integration**: Re-export scheduler crate's `Task<T>` and adapt existing `BackgroundExecutor`/`ForegroundExecutor` APIs using extension methods
-- **Cloud Features**: Cloud-specific features like wait-until and session tracking remain in `SimulatedExecutionContext`, leveraging shared `Task<T>` IDs
+Key design principles:
+- Main `Scheduler` trait has only essential methods (no test pollution)
+- Test-specific features (deprioritization, task tracking) are `TestScheduler`-specific
+- Production schedulers implement minimal interface
+- Cloud requires `TestScheduler` for session features
 
 ## Core Architecture
 
-### Core Types (in Scheduler Crate)
-
-```rust
-// Scheduler crate: shared types for GPUI and Cloud
-#[derive(Debug)]
-pub struct Task<T> {
-    pub inner: async_task::Task<T>,  // Underlying async-task handle
-    pub id: TaskId,                   // Universal task ID for tracking
-    pub spawn_location: Option<&'static std::panic::Location<'static>>,  // For debugging
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct TaskId(pub usize);  // Lightweight numeric ID
+```
+┌─────────────────────────────────────────┐
+│            Shared Crate                 │
+├─────────────────────────────────────────┤
+│ Scheduler trait:                        │
+│ - spawn() - core Send futures           │
+│ - spawn_foreground() - non-Send         │
+│ - Platform integration (park, now)      │
+│                                         │
+│ TestScheduler:                          │
+│ - Implements Scheduler + test features  │
+│ - deprioritize() - test-only method     │
+│ - spawn_labeled() - labels for testing  │
+│                                         │
+│ GcdScheduler/ThreadPoolScheduler:       │
+│ - Minimal Scheduler implementations     │
+└─────────────────────────────────────────┘
+                    ▲
+          ┌─────────┼─────────┐
+          │         │         │
+┌─────────┴────┐  ┌─┴─────────┴────┐
+│   GPUI       │  │     Cloud       │
+│ Uses trait   │  │ CloudSimulated  │
+│ objects      │  │ uses Test-     │
+│ + TestScheduler│  │ Scheduler     │
+└──────────────┘  └─────────────────┘
 ```
 
-### Scheduler Trait (Low-Level Primitives)
-
-The trait provides platform-agnostic scheduling primitives. It's `Send + Sync` to enable background scheduling.
+## Scheduler Trait Definition
 
 ```rust
 pub trait Scheduler: Send + Sync {
-    // Immediate scheduling
-    fn schedule(&self, runnable: Runnable, label: Option<TaskLabel>);
-    fn schedule_foreground(&self, runnable: Runnable);
-    
-    // Delayed scheduling
-    fn schedule_at(&self, runnable: Runnable, time: Instant);
-    
-    // Platform integration (essential for blocking/parking threads)
-    fn park(&self, timeout: Option<Duration>) -> bool;
-    fn unparker(&self) -> Unparker;
+    /// Spawn Send future (core functionality)
+    fn spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R>;
+
+    /// Spawn Send future with label (defaults to ignoring label)
+    fn spawn_labeled<R>(
+        &self,
+        _label: TaskLabel,
+        future: impl Future<Output = R> + Send + 'static
+    ) -> Task<R>
+    where R: Send + 'static {
+        // Default: ignore label and just spawn normally
+        self.spawn(future)
+    }
+
+    /// Spawn non-Send future on main thread (optional, defaults to panic)
+    fn spawn_foreground<R>(&self, future: impl Future<Output = R> + 'static) -> Task<R>
+    where R: 'static {
+        panic!("spawn_foreground not supported by this scheduler");
+    }
+
+    /// Platform integration methods
+    fn park(&self, timeout: Option<Duration>) -> bool { false }
+    fn unparker(&self) -> Unparker { Arc::new(|_| {}).into() }
     fn is_main_thread(&self) -> bool;
-    
-    // Time abstraction (needed for schedule_at and test determinism)
     fn now(&self) -> Instant;
 }
 ```
 
-- **schedule**: Background immediate execution (Send futures)
-- **schedule_foreground**: Main-thread immediate execution (non-Send futures, panics if not on main thread)
-- **schedule_at**: Background execution at specific time (for timers)
-- **park/unparker**: Efficient thread blocking/waking
-- **is_main_thread**: Safety check for foreground scheduling
-- **now**: Current time (deterministic in tests)
+**Explanation:**
+- Core trait has only essential methods
+- No test-specific methods (deprioritize stays off main trait)
+- Production schedulers implement minimal interface
+- Test features are concrete `TestScheduler` methods
 
-### Extension Methods (High-Level Convenience APIs)
-
-Convenience methods on `dyn Scheduler` for user-friendly task spawning.
+## Task<T> Definition
 
 ```rust
-impl dyn Scheduler {
-    /// Spawn Send future on background thread pool
-    pub fn spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R>
-    where R: Send + 'static {
-        let task_id = TaskId(0); // Actual ID generated in backend
-        let scheduler = self;
+#[derive(Debug)]
+pub struct Task<T> {
+    inner: TaskState<T>,
+    id: TaskId,  // Mandatory for coordination
+    metadata: TaskMetadata,
+}
 
-        let (runnable, async_task) = async_task::spawn(future, move |runnable| {
-            scheduler.schedule(runnable, None);
-        });
+#[derive(Debug)]
+pub struct TaskMetadata {
+    label: Option<TaskLabel>,        // GPUI test identification
+    session: Option<SessionId>,      // Cloud session association
+    spawn_location: Option<&'static std::panic::Location>,
+}
 
-        let task = Task {
-            inner: async_task,
-            id: task_id,
-            spawn_location: Some(std::panic::Location::caller()),
-        };
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TaskId(pub usize);
 
-        runnable.schedule();
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TaskLabel(NonZeroUsize);
+```
+
+**Explanation:**
+- Mandatory TaskId for session coordination
+- Optional metadata for GPUI labels and Cloud sessions
+- Task implements Future directly
+
+## TestScheduler (Concrete Implementation)
+
+```rust
+pub struct TestScheduler {
+    inner: RefCell<TestSchedulerInner>,
+}
+
+struct TestSchedulerInner {
+    tasks: HashMap<TaskId, TaskState>,
+    deprioritized_labels: HashSet<TaskLabel>,  // Test-specific state
+    delayed: Vec<(Instant, Runnable)>,
+    parker: Parker,
+    is_main_thread: bool,
+    now: Instant,
+    next_task_id: AtomicUsize,
+}
+
+impl Scheduler for TestScheduler {
+    fn spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R> {
+        let task_id = TaskId(self.next_task_id.fetch_add(1, Ordering::SeqCst));
+        let task = self.create_task(future, task_id);
+        self.inner.borrow_mut().tasks.insert(task_id, TaskState::Running);
         task
     }
 
-    /// Spawn non-Send future on main thread
-    pub fn spawn_foreground<R>(&self, future: impl Future<Output = R> + 'static) -> Task<R>
-    where R: 'static {
+    fn spawn_foreground<R>(&self, future: impl Future<Output = R> + 'static) -> Task<R> {
         assert!(self.is_main_thread(), "spawn_foreground called off main thread");
-
-        let task_id = TaskId(0); // Actual ID generated in backend
-        let scheduler = self;
-
-        let (runnable, async_task) = async_task::spawn_local(future, move |runnable| {
-            scheduler.schedule_foreground(runnable);
-        });
-
-        let task = Task {
-            inner: async_task,
-            id: task_id,
-            spawn_location: Some(std::panic::Location::caller()),
-        };
-
-        runnable.schedule();
+        let task_id = TaskId(self.next_task_id.fetch_add(1, Ordering::SeqCst));
+        let task = self.create_local_task(future, task_id);
+        self.inner.borrow_mut().tasks.insert(task_id, TaskState::Running);
         task
     }
 
-    /// Timer convenience method (equivalent to GPUI's BackgroundExecutor::timer)
-    pub fn timer(&self, duration: Duration) -> Task<()> {
-        if duration.is_zero() {
-            return Task::ready(());
+    fn is_main_thread(&self) -> bool { self.inner.borrow().is_main_thread }
+    fn now(&self) -> Instant { self.inner.borrow().now }
+    fn park(&self, timeout: Option<Duration>) -> bool {
+        self.inner.borrow().parker.park_timeout(timeout.unwrap_or(Duration::MAX))
+    }
+    fn spawn_labeled<R>(
+        &self,
+        label: TaskLabel,
+        future: impl Future<Output = R> + Send + 'static
+    ) -> Task<R>
+    where R: Send + 'static {
+        let task_id = TaskId(self.next_task_id.fetch_add(1, Ordering::SeqCst));
+        let task = self.create_task_with_label(future, task_id, label);
+
+        // Apply deprioritization if label is registered
+        if self.inner.borrow().deprioritized_labels.contains(&label) {
+            self.move_to_deprioritized_queue(task_id);
         }
 
-        let task_id = TaskId(0); // Actual ID generated in backend
-        let scheduler = self;
-        let target_time = self.now() + duration;
-
-        let (runnable, async_task) = async_task::spawn(async move {}, move |runnable| {
-            scheduler.schedule_at(runnable, target_time);
-        });
-
-        let task = Task {
-            inner: async_task,
-            id: task_id,
-            spawn_location: Some(std::panic::Location::caller()),
-        };
-
-        runnable.schedule();
+        self.inner.borrow_mut().tasks.insert(task_id, TaskState::Running);
         task
+    }
+
+    fn unparker(&self) -> Unparker {
+        self.inner.borrow().parker.unparker()
+    }
+}
+
+// Test-specific methods (NOT on main trait)
+impl TestScheduler {
+    pub fn deprioritize(&self, label: TaskLabel) {
+        self.inner.borrow_mut().deprioritized_labels.insert(label);
+    }
+
+    pub fn spawn_labeled<R>(
+        &self,
+        label: TaskLabel,
+        future: impl Future<Output = R> + Send + 'static
+    ) -> Task<R> {
+        let task_id = TaskId(self.next_task_id.fetch_add(1, Ordering::SeqCst));
+        let mut task = self.create_task(future, task_id);
+        task.metadata.label = Some(label);  // Set label in metadata
+
+        // Apply deprioritization if label is registered
+        if self.inner.borrow().deprioritized_labels.contains(&label) {
+            self.move_to_deprioritized_queue(task_id);
+        }
+
+        self.inner.borrow_mut().tasks.insert(task_id, TaskState::Running);
+        task
+    }
+
+    pub fn is_task_running(&self, task_id: TaskId) -> bool {
+        self.inner.borrow().tasks.contains_key(&task_id)
+    }
+
+    fn create_task<R>(&self, future: impl Future<Output = R> + Send + 'static, task_id: TaskId) -> Task<R> {
+        let (runnable, inner_task) = async_task::spawn(future, move |runnable| {
+            // Schedule to appropriate queue based on label
+            self.schedule_runnable(runnable, task_id);
+        });
+        runnable.schedule();
+
+        Task {
+            inner: TaskState::Spawned(inner_task),
+            id: task_id,
+            metadata: TaskMetadata {
+                label: None,
+                session: None,
+                spawn_location: Some(std::panic::Location::caller()),
+            },
+        }
+    }
+
+    fn create_task_with_label<R>(&self, future: impl Future<Output = R> + Send + 'static, task_id: TaskId, label: TaskLabel) -> Task<R>
+    where R: Send + 'static {
+        let (runnable, inner_task) = async_task::spawn(future, move |runnable| {
+            self.schedule_runnable_with_label(runnable, task_id, label);
+        });
+        runnable.schedule();
+
+        Task {
+            inner: TaskState::Spawned(inner_task),
+            id: task_id,
+            metadata: TaskMetadata {
+                label: Some(label),
+                session: None,
+                spawn_location: Some(std::panic::Location::caller()),
+            },
+        }
+    }
+
+    fn schedule_runnable_with_label(&self, runnable: Runnable, task_id: TaskId, label: TaskLabel) {
+        // TestScheduler-specific scheduling logic for labeled tasks
+        if self.inner.borrow().deprioritized_labels.contains(&label) {
+            // Put in deprioritized queue for test determinism
+            self.inner.borrow_mut().deprioritized_queue.push(runnable);
+        } else {
+            // Schedule normally
+            runnable.schedule();
+        }
     }
 }
 ```
 
+**Explanation:**
+- `deprioritize()` is a TestScheduler-specific method (not on main trait)
+- `spawn_labeled()` is TestScheduler-specific (not on main trait)
+- `is_task_running()` provides task status for Cloud session validation
+- Test-specific state stays in TestScheduler
+
+## Production Schedulers
+
+```rust
+pub struct GcdScheduler {
+    main_queue: dispatch_queue_t,
+    background_queue: dispatch_queue_t,
+    task_counter: AtomicUsize,
+}
+
+impl Scheduler for GcdScheduler {
+    fn spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R> {
+        let task_id = TaskId(self.task_counter.fetch_add(1, Ordering::SeqCst));
+        let (runnable, task) = async_task::spawn(future, move |runnable| {
+            unsafe { dispatch_async_f(self.background_queue, runnable.into_raw().as_ptr() as *mut c_void, Some(trampoline)); }
+        });
+        runnable.schedule();
+
+        Task {
+            inner: TaskState::Spawned(task),
+            id: task_id,
+            metadata: TaskMetadata::default(),
+        }
+    }
+
+    fn is_main_thread(&self) -> bool {
+        // macOS-specific main thread detection
+        unsafe { msg_send![class!(NSThread), isMainThread] }
+    }
+
+    fn now(&self) -> Instant { Instant::now() }
+}
+```
+
+**Explanation:**
+- Production schedulers implement only core `Scheduler` trait
+- No test-specific methods (deprioritize stays off main trait)
+- Minimal implementation, no task tracking overhead
+
 ## GPUI Integration
 
-GPUI re-exports scheduler types and adapts its executors. No API changes needed.
-
-### BackgroundExecutor (Send + Sync)
 ```rust
+// BackgroundExecutor uses trait objects (production-safe)
 pub struct BackgroundExecutor {
-    scheduler: Arc<dyn Scheduler>,  // Send + Sync for background use
+    scheduler: Arc<dyn Scheduler>,  // Any Scheduler implementation
 }
 
 impl BackgroundExecutor {
+    pub fn new(scheduler: Arc<dyn Scheduler>) -> Self {
+        Self { scheduler }
+    }
+
     pub fn spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R>
     where R: Send + 'static {
         self.scheduler.spawn(future)
     }
 
-    pub fn timer(&self, duration: Duration) -> Task<()> {
-        self.scheduler.timer(duration)
+    pub fn spawn_labeled<R>(
+        &self,
+        label: TaskLabel,
+        future: impl Future<Output = R> + Send + 'static
+    ) -> Task<R>
+    where R: Send + 'static {
+        self.scheduler.spawn_labeled(label, future)
+    }
+
+    // When GPUI needs test features, it downcasts to TestScheduler
+    pub fn deprioritize(&self, label: TaskLabel) {
+        // Downcast to access TestScheduler-specific features
+        if let Some(test_scheduler) = self.scheduler.downcast_ref::<TestScheduler>() {
+            test_scheduler.deprioritize(label);
+        } else {
+            // Production: do nothing
+        }
     }
 }
-```
 
-### ForegroundExecutor (Non-Send, Main Thread Only)
-```rust
+// ForegroundExecutor also uses trait objects
 pub struct ForegroundExecutor {
-    scheduler: Rc<dyn Scheduler>,  // Rc prevents Send across threads
+    scheduler: Rc<dyn Scheduler>,
 }
 
 impl ForegroundExecutor {
@@ -195,71 +343,58 @@ impl ForegroundExecutor {
 }
 ```
 
-## Backend Implementations
+**Explanation:**
+- GPUI executors use trait objects for production safety
+- Test features accessed via downcasting to TestScheduler
+- Production deployments can use minimal schedulers
+- Test deployments get full test features
 
-### Production Backends
+## Cloud Integration
 
-#### GCD Backend (macOS)
 ```rust
-pub struct GcdScheduler {
-    main_queue: dispatch_queue_t,
-    background_queue: dispatch_queue_t,
-    parker: Mutex<Parker>,
-    unparker: Unparker,
-    task_counter: AtomicUsize,  // For TaskId generation
+// Cloud wrapper requires TestScheduler for session features
+pub struct CloudSimulatedScheduler {
+    test_scheduler: Arc<TestScheduler>,  // Concrete type for test features
+    inner: RefCell<CloudSimulatedSchedulerInner>,
 }
 
-impl Scheduler for GcdScheduler {
-    fn schedule(&self, runnable: Runnable, _label: Option<TaskLabel>) {
-        unsafe { dispatch_async_f(self.background_queue, runnable.into_raw().as_ptr() as *mut c_void, Some(trampoline)); }
-    }
+struct CloudSimulatedSchedulerInner {
+    current_session: Option<SessionId>,
+    sessions: HashMap<SessionId, SessionData>,
+    task_to_session: HashMap<TaskId, SessionId>,
+}
 
-    fn schedule_foreground(&self, runnable: Runnable) {
-        unsafe { dispatch_async_f(self.main_queue, runnable.into_raw().as_ptr() as *mut c_void, Some(trampoline)); }
-    }
+impl CloudSimulatedScheduler {
+    pub fn spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R> {
+        let task = self.test_scheduler.spawn(future);
 
-    fn schedule_at(&self, runnable: Runnable, time: Instant) {
-        unsafe {
-            let queue = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH.try_into().unwrap(), 0);
-            let duration = time.saturating_duration_since(self.now());
-            let when = dispatch_time(DISPATCH_TIME_NOW as u64, duration.as_nanos() as i64);
-            dispatch_after_f(when, queue, runnable.into_raw().as_ptr() as *mut c_void, Some(trampoline));
+        // Auto-associate with current session
+        if let Some(session_id) = self.inner.borrow().current_session {
+            self.inner.borrow_mut().task_to_session.insert(task.id(), session_id);
+            // Track in session...
         }
+
+        task
     }
 
-    fn park(&self, timeout: Option<Duration>) -> bool { /* GCD parking implementation */ }
-    fn unparker(&self) -> Unparker { self.unparker.clone() }
-    fn is_main_thread(&self) -> bool { unsafe { msg_send![class!(NSThread), isMainThread] } }
-    fn now(&self) -> Instant { Instant::now() }
-}
-```
+    pub fn validate_session_cleanup(&self, session_id: SessionId) -> Result<()> {
+        // Use TestScheduler's task tracking for validation
+        let inner = self.inner.borrow();
 
-#### ThreadPool Backend (Linux/Windows)
-Similar structure using thread pools with std::thread::sleep for schedule_at.
+        if let Some(session) = inner.sessions.get(&session_id) {
+            let running_tasks: Vec<TaskId> = session
+                .spawned_tasks
+                .iter()
+                .filter(|&&task_id| self.test_scheduler.is_task_running(task_id))
+                .copied()
+                .collect();
 
-### Testing Backends
+            // Check against explicit wait_until permissions
+            let unauthorized = running_tasks.difference(&session.wait_until_task_ids);
 
-#### Test Scheduler (GPUI-style)
-Uses fake time and queues for deterministic execution.
-
-#### Simulator Backend (Cloud-style)
-Single-threaded with fake time and delay queues for Cloud testing.
-
-## Cloud Migration
-
-Cloud leverages the shared `Task<T>` IDs for session tracking:
-
-```rust
-#[async_trait(?Send)]
-impl ExecutionContext for SimulatedExecutionContext {
-    fn wait_until(&self, future: LocalBoxFuture<'static, Result<()>>) -> Result<()> {
-        let task = self.scheduler.spawn(future);
-
-        if let Some(session_id) = self.get_current_session() {
-            self.wait_until_tasks.lock().unwrap()
-                .entry(session_id)
-                .or_insert_with(HashSet::new)
-                .insert(task.id);
+            if unauthorized.next().is_some() {
+                return Err(anyhow!("Session cleanup failed: unauthorized tasks still running"));
+            }
         }
 
         Ok(())
@@ -267,69 +402,43 @@ impl ExecutionContext for SimulatedExecutionContext {
 }
 ```
 
-## Benefits
-
-### Performance
-- **Native Integration**: GCD, thread pools, OS timers maintained
-- **Zero-Copy**: Direct `Runnable` scheduling
-- **Efficient Parking**: Platform-specific blocking
-
-### Compatibility  
-- **Zero Breaking Changes**: GPUI APIs unchanged
-- **Incremental Migration**: Adopt piece-by-piece
-- **Shared Types**: Task<T> owned by scheduler crate
-
-### Testing & Determinism
-- **Fake Time**: now() provides controllable time
-- **Controlled Execution**: Test backends with predictable scheduling
-- **Session Tracking**: Cloud uses Task IDs for cleanup
+**Explanation:**
+- Cloud requires `TestScheduler` because session features need task tracking
+- Auto-associates tasks with current session
+- Uses TestScheduler's `is_task_running()` for validation
+- Session coordination is test-focused infrastructure
 
 ## Migration Strategy
 
-### Phase 1: Create Scheduler Crate
-1. Define `Task<T>`, `TaskId`, `Scheduler` trait
-2. Implement extension methods
-3. Add placeholder backends
+### Phase 1: Core Infrastructure
+1. Define `Scheduler` trait (core methods only)
+2. Implement `TestScheduler` (with test features like `deprioritize()`)
+3. Implement production schedulers (GCD, ThreadPool)
+4. Define `Task<T>` with mandatory TaskId
 
-### Phase 2: Implement Backends
-1. GCD (macOS) scheduler
-2. ThreadPool (Linux/Windows) scheduler  
-3. Test and Simulator schedulers
+### Phase 2: GPUI Migration
+1. Update GPUI executors to use trait objects
+2. Add downcasting for test features
+3. Preserve all existing GPUI functionality
+4. Test deployments use TestScheduler, production uses minimal schedulers
 
-### Phase 3: GPUI Migration
-1. Re-export scheduler types
-2. Adapt `BackgroundExecutor`/`ForegroundExecutor`
-3. Update AppContext to use new schedulers
+### Phase 3: Cloud Integration
+1. Cloud wrapper uses TestScheduler for session coordination
+2. Maintain automatic session association
+3. Preserve `wait_until` and validation behavior
+4. Application code unchanged
 
-### Phase 4: Cloud Integration
-1. Migrate to scheduler crate Task<T>
-2. Update SimulatedExecutionContext to use extension methods
-3. Leverage TaskIds for session cleanup
+### Phase 4: Validation
+1. GPUI tests work with new architecture
+2. Cloud session behavior preserved
+3. Production efficiency maintained
 
-### Phase 5: Testing & Validation
-1. Verify determinism in tests
-2. Performance benchmarks vs. current implementation
-3. API compatibility checks
+## Benefits
 
-## Implementation Challenges
+✅ **Clean Separation**: Test methods only on TestScheduler
+✅ **Production Safety**: GPUI executors use trait objects
+✅ **Session Intelligence**: Cloud gets full coordination features
+✅ **Flexible Architecture**: Production vs test deployments
+✅ **Backward Compatibility**: All existing functionality preserved
 
-### Platform Differences
-- macOS: Grand Central Dispatch integration
-- Linux/Windows: Native thread pool management
-- Testing: Deterministic time and execution order
-
-### Safety for Non-Send Futures
-- ForegroundExecutor uses Rc to prevent accidental Send
-- Main thread assertions in spawn_foreground
-- Proper TaskId generation across backends
-
-## Conclusion
-
-This unified scheduler architecture provides a clean, efficient foundation for GPUI and Cloud. By centralizing scheduling in a single trait with clear separation of primitives and convenience methods, we eliminate duplication while maintaining platform performance and testing determinism.
-
-The key insight is building timer functionality directly on the `schedule_at` primitive, avoiding runtime dependencies while ensuring main-thread safety for non-Send futures. The design supports the existing Zed codebase's heavy timer usage while providing the foundation for future observability features through universal TaskIds.
-
-```
-<file_path>
-zed/thoughts/2025-08-31_15-47-17_unified-scheduler-architecture.md
-</file_path>
+This design keeps test concerns in TestScheduler while maintaining production safety and session coordination capabilities.
