@@ -15,7 +15,7 @@ pub struct TitleBarSettings {
 }
 
 #[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi)]
-// #[settings_ui(group = "Title Bar", path = "title_bar")]
+#[settings_ui(group = "Title Bar", path = "title_bar")]
 pub struct TitleBarSettingsContent {
     /// Whether to show the branch icon beside branch switcher in the title bar.
     ///
