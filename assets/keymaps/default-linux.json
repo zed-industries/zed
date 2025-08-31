@@ -170,7 +170,7 @@
     "context": "Markdown",
     "bindings": {
       "copy": "markdown::Copy",
-      "ctrl-insert": "markdown::CopyAs",
+      "ctrl-insert": "markdown::Copy",
       "ctrl-c": "markdown::Copy"
     }
   },
