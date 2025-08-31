@@ -20,17 +20,19 @@ Key design principles:
 │            Shared Crate                 │
 ├─────────────────────────────────────────┤
 │ Scheduler trait:                        │
-│ - spawn() - core Send futures           │
-│ - spawn_foreground() - non-Send         │
+│ - Core object-safe interface             │
 │ - Platform integration (park, now)      │
 │                                         │
 │ TestScheduler:                          │
-│ - Implements Scheduler + test features  │
+│ - Should implement Scheduler + test features  │
 │ - deprioritize() - test-only method     │
 │ - spawn_labeled() - labels for testing  │
+│ - Task lifecycle tracking               │
 │                                         │
-│ GcdScheduler/ThreadPoolScheduler:       │
-│ - Minimal Scheduler implementations     │
+│ Generic spawn helpers:                  │
+│ - spawn() / spawn_foreground()          │
+│ - timer(), block(), block_with_timeout()│
+│ - Future-based API for trait objects    │
 └─────────────────────────────────────────┘
                     ▲
           ┌─────────┼─────────┐
@@ -42,6 +44,21 @@ Key design principles:
 │ + TestScheduler│  │ Scheduler     │
 └──────────────┘  └─────────────────┘
 ```
+
+## Platform Scheduler Implementations
+
+Platform-specific scheduler implementations **should remain in GPUI's platform modules**:
+
+- **MacScheduler**: Should implement `Scheduler` trait, uses GCD APIs
+- **LinuxScheduler**: Should implement `Scheduler` trait, uses thread pools + calloop
+- **WindowsScheduler**: Should implement `Scheduler` trait, uses Windows ThreadPool APIs
+
+**Rationale**: Platform implementations are substantial and deeply integrated with:
+- Platform-specific threading APIs (GCD, Windows ThreadPool, etc.)
+- GPUI's event loop integration (main thread messaging)
+- Platform-specific performance optimizations
+
+The shared crate provides only the trait definition and generic helpers, while platform-specific dispatchers implement the `Scheduler` trait directly in GPUI.
 
 ## Scheduler Trait Definition
 
@@ -525,48 +542,93 @@ impl TestScheduler {
 - `is_task_running()` provides task status for Cloud session validation
 - Test-specific state stays in TestScheduler
 
-## Production Schedulers
+## Platform Scheduler Implementations in GPUI
+
+The following example shows how existing GPUI platform dispatchers would implement the `Scheduler` trait. These implementations **remain in GPUI's platform modules**, not in the shared scheduler crate.
 
 ```rust
-pub struct GcdScheduler {
-    main_queue: dispatch_queue_t,
-    background_queue: dispatch_queue_t,
-}
+// crates/gpui/src/platform/mac/scheduler.rs (renamed from dispatcher.rs)
+// This should implement Scheduler directly on existing platform-specific code
 
-impl Scheduler for GcdScheduler {
+// Example implementation (to be added in Phase 1):
+impl Scheduler for MacDispatcher {
     fn schedule(&self, runnable: Runnable) {
+        // Direct mapping to existing GCD implementation
         unsafe {
-            dispatch_async_f(self.background_queue, runnable.into_raw().as_ptr() as *mut c_void, Some(trampoline));
+            dispatch_async_f(
+                dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH.try_into().unwrap(), 0),
+                runnable.into_raw().as_ptr() as *mut c_void,
+                Some(trampoline),
+            );
         }
     }
 
     fn schedule_labeled(&self, runnable: Runnable, _label: TaskLabel) {
-        // Production scheduler ignores labels
+        // Production scheduler ignores labels (existing behavior)
         unsafe {
-            dispatch_async_f(self.background_queue, runnable.into_raw().as_ptr() as *mut c_void, Some(trampoline));
+            dispatch_async_f(
+                dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH.try_into().unwrap(), 0),
+                runnable.into_raw().as_ptr() as *mut c_void,
+                Some(trampoline),
+            );
         }
     }
 
     fn schedule_foreground(&self, runnable: Runnable) {
+        // Existing dispatch_on_main_thread implementation
         unsafe {
-            dispatch_async_f(self.main_queue, runnable.into_raw().as_ptr() as *mut c_void, Some(trampoline));
+            dispatch_async_f(
+                dispatch_get_main_queue(),
+                runnable.into_raw().as_ptr() as *mut c_void,
+                Some(trampoline),
+            );
+        }
+    }
+
+    fn schedule_after(&self, duration: Duration, runnable: Runnable) {
+        // Existing dispatch_after implementation
+        unsafe {
+            let queue = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH.try_into().unwrap(), 0);
+            let when = dispatch_time(DISPATCH_TIME_NOW as u64, duration.as_nanos() as i64);
+            dispatch_after_f(when, queue, runnable.into_raw().as_ptr() as *mut c_void, Some(trampoline));
         }
     }
 
     fn is_main_thread(&self) -> bool {
-        // macOS-specific main thread detection
-        unsafe { msg_send![class!(NSThread), isMainThread] }
+        // Existing macOS-specific main thread detection
+        unsafe {
+            let is_main_thread: BOOL = msg_send![class!(NSThread), isMainThread];
+            is_main_thread == YES
+        }
     }
 
-    fn now(&self) -> Instant { Instant::now() }
+    fn now(&self) -> Instant {
+        Instant::now()  // Existing implementation
+    }
+
+    fn park(&self, timeout: Option<Duration>) -> bool {
+        // Existing parking implementation
+        if let Some(timeout) = timeout {
+            self.parker.lock().park_timeout(timeout)
+        } else {
+            self.parker.lock().park();
+            true
+        }
+    }
+
+    fn unparker(&self) -> Unparker {
+        // Existing unparker implementation
+        self.parker.lock().unparker()
+    }
 }
 ```
 
-**Explanation:**
-- Production schedulers implement object-safe `Scheduler` trait
-- No test-specific features or task state tracking
-- Minimal implementation with direct dispatch to GCD queues
-- Test features only available via `TestScheduler` wrapper in GPUI
+**Key Points:**
+- Platform scheduler implementations **remain in GPUI platform modules** (e.g., `platform/mac/`, `platform/linux/`, `platform/windows/`)
+- Existing platform dispatchers implement `Scheduler` trait directly - no code needs to be moved
+- Substantial platform-specific code stays where it belongs, integrated with event loops
+- GPUI executors use trait objects: `Arc<dyn Scheduler>` pointing to platform implementations
+- Shared crate provides only trait definition + TestScheduler + generic helpers
 
 ## GPUI Integration
 
@@ -857,7 +919,10 @@ impl CloudSimulatedScheduler {
 ### Phase 1: Core Infrastructure
 1. Define `Scheduler` trait (core methods only)
 2. Implement `TestScheduler` (with test features like `deprioritize()`)
-3. Implement production schedulers (GCD, ThreadPool)
+3. Make existing GPUI platform dispatchers implement `Scheduler` trait
+   - MacDispatcher should implement `Scheduler` for GCD integration
+   - LinuxDispatcher should implement `Scheduler` for thread pools
+   - WindowsDispatcher should implement `Scheduler` for Windows ThreadPool
 4. Define `Task<T>` with mandatory TaskId
 
 ### Phase 2: GPUI Migration
@@ -971,16 +1036,16 @@ This design keeps test concerns in TestScheduler while maintaining production sa
 ### Platform Backend Files
 
 **macOS:**
-- `crates/gpui/src/platform/mac/dispatcher.rs` - `MacDispatcher` → `GcdScheduler`
+- `crates/gpui/src/platform/mac/dispatcher.rs` - `MacDispatcher` should implement `Scheduler` trait
 
 **Linux:**
-- `crates/gpui/src/platform/linux/dispatcher.rs` - `LinuxDispatcher` → `ThreadPoolScheduler`
+- `crates/gpui/src/platform/linux/dispatcher.rs` - `LinuxDispatcher` should implement `Scheduler` trait
 
 **Windows:**
-- `crates/gpui/src/platform/windows/dispatcher.rs` - `WindowsDispatcher` → `ThreadPoolScheduler`
+- `crates/gpui/src/platform/windows/dispatcher.rs` - `WindowsDispatcher` should implement `Scheduler` trait
 
 **Test:**
-- `crates/gpui/src/platform/test/dispatcher.rs` - `TestDispatcher` → `TestScheduler`
+- `crates/gpui/src/platform/test/dispatcher.rs` - `TestDispatcher` → `TestScheduler` (moved to shared crate)
 
 ## Compatibility Checklist
 
@@ -1058,6 +1123,6 @@ GPUI BackgroundExecutor/ForegroundExecutor can **directly swap** `PlatformDispat
 2. **Implement TestScheduler** with task tracking and test features
 3. **Update GPUI executors** to use trait objects
 4. **Create Cloud wrapper** with session coordination
-5. **Migrate platform backends** to new scheduler implementations
+5. **Make platform dispatchers implement** `Scheduler` trait (add trait impl to existing dispatchers)
 6. **Update tests** to use new architecture
 7. **Validate performance** and backward compatibility
