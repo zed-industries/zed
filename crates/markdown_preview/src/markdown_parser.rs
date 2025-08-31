@@ -895,14 +895,14 @@ impl<'a> MarkdownParser<'a> {
 
         if let Some(width) = Self::attr_value(attrs, local_name!("width"))
             .or_else(|| styles.get("width").cloned())
-            .and_then(|width| Self::parse_length(&width))
+            .and_then(|width| Self::parse_html_element_dimension(&width))
         {
             image.set_width(width);
         }
 
         if let Some(height) = Self::attr_value(attrs, local_name!("height"))
             .or_else(|| styles.get("height").cloned())
-            .and_then(|height| Self::parse_length(&height))
+            .and_then(|height| Self::parse_html_element_dimension(&height))
         {
             image.set_height(height);
         }
@@ -910,8 +910,7 @@ impl<'a> MarkdownParser<'a> {
         Some(image)
     }
 
-    /// Parses the width/height attribute value of an html element (e.g. img element)
-    fn parse_length(value: &str) -> Option<DefiniteLength> {
+    fn parse_html_element_dimension(value: &str) -> Option<DefiniteLength> {
         if value.ends_with("%") {
             value
                 .trim_end_matches("%")
@@ -1203,68 +1202,71 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_length() {
+    fn test_parse_html_element_dimension() {
         // Test percentage values
         assert_eq!(
-            MarkdownParser::parse_length("50%"),
+            MarkdownParser::parse_html_element_dimension("50%"),
             Some(DefiniteLength::Fraction(0.5))
         );
         assert_eq!(
-            MarkdownParser::parse_length("100%"),
+            MarkdownParser::parse_html_element_dimension("100%"),
             Some(DefiniteLength::Fraction(1.0))
         );
         assert_eq!(
-            MarkdownParser::parse_length("25%"),
+            MarkdownParser::parse_html_element_dimension("25%"),
             Some(DefiniteLength::Fraction(0.25))
         );
         assert_eq!(
-            MarkdownParser::parse_length("0%"),
+            MarkdownParser::parse_html_element_dimension("0%"),
             Some(DefiniteLength::Fraction(0.0))
         );
 
         // Test pixel values
         assert_eq!(
-            MarkdownParser::parse_length("100px"),
+            MarkdownParser::parse_html_element_dimension("100px"),
             Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(100.0))))
         );
         assert_eq!(
-            MarkdownParser::parse_length("50px"),
+            MarkdownParser::parse_html_element_dimension("50px"),
             Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(50.0))))
         );
         assert_eq!(
-            MarkdownParser::parse_length("0px"),
+            MarkdownParser::parse_html_element_dimension("0px"),
             Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(0.0))))
         );
 
         // Test values without units (should be treated as pixels)
         assert_eq!(
-            MarkdownParser::parse_length("100"),
+            MarkdownParser::parse_html_element_dimension("100"),
             Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(100.0))))
         );
         assert_eq!(
-            MarkdownParser::parse_length("42"),
+            MarkdownParser::parse_html_element_dimension("42"),
             Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(42.0))))
         );
 
         // Test invalid values
-        assert_eq!(MarkdownParser::parse_length("invalid"), None);
-        assert_eq!(MarkdownParser::parse_length("px"), None);
-        assert_eq!(MarkdownParser::parse_length("%"), None);
-        assert_eq!(MarkdownParser::parse_length(""), None);
-        assert_eq!(MarkdownParser::parse_length("abc%"), None);
-        assert_eq!(MarkdownParser::parse_length("abcpx"), None);
+        assert_eq!(
+            MarkdownParser::parse_html_element_dimension("invalid"),
+            None
+        );
+        assert_eq!(MarkdownParser::parse_html_element_dimension("px"), None);
+        assert_eq!(MarkdownParser::parse_html_element_dimension("%"), None);
+        assert_eq!(MarkdownParser::parse_html_element_dimension(""), None);
+        assert_eq!(MarkdownParser::parse_html_element_dimension("abc%"), None);
+        assert_eq!(MarkdownParser::parse_html_element_dimension("abcpx"), None);
 
         // Test decimal values
         assert_eq!(
-            MarkdownParser::parse_length("50.5%"),
+            MarkdownParser::parse_html_element_dimension("50.5%"),
             Some(DefiniteLength::Fraction(0.505))
         );
         assert_eq!(
-            MarkdownParser::parse_length("100.25px"),
+            MarkdownParser::parse_html_element_dimension("100.25px"),
             Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(100.25))))
         );
         assert_eq!(
-            MarkdownParser::parse_length("42.0"),
+            MarkdownParser::parse_html_element_dimension("42.0"),
             Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(42.0))))
         );
     }
