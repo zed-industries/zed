@@ -87,23 +87,26 @@ impl OpenSourceLicense {
     }
 }
 
-fn detect_license(text: &str) -> Option<OpenSourceLicense> {
-    // TODO: Consider using databake or similar to not parse at runtime.
-    static LICENSE_PATTERNS: LazyLock<Vec<(OpenSourceLicense, Vec<PatternPart>)>> =
-        LazyLock::new(|| {
-            OpenSourceLicense::VARIANTS
-                .iter()
-                .flat_map(|license| {
-                    license
-                        .patterns()
-                        .iter()
-                        .map(|pattern| (*license, parse_pattern(pattern).unwrap()))
-                })
-                .collect()
-        });
+// TODO: Consider using databake or similar to not parse at runtime.
+static LICENSE_PATTERNS: LazyLock<LicensePatterns> = LazyLock::new(|| {
+    let mut approximate_max_length = 0;
+    let mut patterns = Vec::new();
+    for license in OpenSourceLicense::VARIANTS {
+        for pattern in license.patterns() {
+            let (pattern, length) = parse_pattern(pattern).unwrap();
+            patterns.push((*license, pattern));
+            approximate_max_length = approximate_max_length.max(length);
+        }
+    }
+    LicensePatterns {
+        patterns,
+        approximate_max_length,
+    }
+});
 
+fn detect_license(text: &str) -> Option<OpenSourceLicense> {
     let text = canonicalize_license_text(text);
-    for (license, pattern) in LICENSE_PATTERNS.iter() {
+    for (license, pattern) in LICENSE_PATTERNS.patterns.iter() {
         log::trace!("Checking if license is {}", license);
         if check_pattern(&pattern, &text) {
             return Some(*license);
@@ -111,6 +114,11 @@ fn detect_license(text: &str) -> Option<OpenSourceLicense> {
     }
 
     None
+}
+
+struct LicensePatterns {
+    patterns: Vec<(OpenSourceLicense, Vec<PatternPart>)>,
+    approximate_max_length: usize,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -131,9 +139,10 @@ struct PatternPart {
 /// Text that does not have `--` prefixes participate in the `text` field and are canonicalized by
 /// lowercasing, replacing all runs of whitespace with a single space, and otherwise only keeping
 /// ascii alphanumeric characters.
-fn parse_pattern(pattern_source: &str) -> Result<Vec<PatternPart>> {
+fn parse_pattern(pattern_source: &str) -> Result<(Vec<PatternPart>, usize)> {
     let mut pattern = Vec::new();
     let mut part = PatternPart::default();
+    let mut approximate_max_length = 0;
     for line in pattern_source.lines() {
         if let Some(directive) = line.trim().strip_prefix("--") {
             if part != PatternPart::default() {
@@ -157,6 +166,7 @@ fn parse_pattern(pattern_source: &str) -> Result<Vec<PatternPart>> {
                 if part.match_any_chars.start > part.match_any_chars.end {
                     return None;
                 }
+                approximate_max_length += part.match_any_chars.end;
                 Some(())
             });
             if valid.is_none() {
@@ -164,6 +174,7 @@ fn parse_pattern(pattern_source: &str) -> Result<Vec<PatternPart>> {
             }
             continue;
         }
+        approximate_max_length += line.len() + 1;
         let line = canonicalize_license_text(line);
         if line.is_empty() {
             continue;
@@ -176,7 +187,7 @@ fn parse_pattern(pattern_source: &str) -> Result<Vec<PatternPart>> {
     if part != PatternPart::default() {
         pattern.push(part);
     }
-    Ok(pattern)
+    Ok((pattern, approximate_max_length))
 }
 
 /// Checks a pattern against text by iterating over the pattern parts in reverse order, and checking
@@ -310,7 +321,7 @@ impl LicenseDetectionWatcher {
 
     async fn is_path_eligible(fs: &Arc<dyn Fs>, abs_path: PathBuf) -> Option<bool> {
         log::debug!("checking if `{abs_path:?}` is an open source license");
-        // Resolve symlinks so that the file size from metadata is correct.
+        // resolve symlinks so that the file size from metadata is correct
         let Some(abs_path) = fs.canonicalize(&abs_path).await.ok() else {
             log::debug!(
                 "`{abs_path:?}` license file probably deleted (error canonicalizing the path)"
@@ -318,8 +329,13 @@ impl LicenseDetectionWatcher {
             return None;
         };
         let metadata = fs.metadata(&abs_path).await.log_err()??;
-        // If the license file is >32kb it's unlikely to legitimately match any eligible license.
-        if metadata.len > 32768 {
+        if metadata.len > LICENSE_PATTERNS.approximate_max_length as u64 {
+            log::debug!(
+                "`{abs_path:?}` license file was skipped \
+                because its size of {} bytes was larger than the max size of {} bytes",
+                metadata.len,
+                LICENSE_PATTERNS.approximate_max_length
+            );
             return None;
         }
         let text = fs.load(&abs_path).await.log_err()?;
@@ -363,6 +379,12 @@ mod tests {
     const MIT_TXT: &str = include_str!("../license_examples/mit-ex0.txt");
     const UPL_1_0_TXT: &str = include_str!("../license_examples/upl-1.0.txt");
     const BSD_0_TXT: &str = include_str!("../license_examples/0bsd.txt");
+
+    #[track_caller]
+    fn assert_matches_license(text: &str, license: OpenSourceLicense) {
+        assert_eq!(detect_license(text), Some(license));
+        assert!(text.len() < LICENSE_PATTERNS.approximate_max_length);
+    }
 
     /*
     // Uncomment this and run with `cargo test -p zeta -- --no-capture &> licenses-output` to
@@ -419,90 +441,87 @@ mod tests {
 
     #[test]
     fn test_apache_positive_detection() {
-        assert_eq!(
-            detect_license(APACHE_2_0_TXT),
-            Some(OpenSourceLicense::Apache2_0)
+        assert_matches_license(APACHE_2_0_TXT, OpenSourceLicense::Apache2_0);
+        assert_matches_license(
+            include_str!("../license_examples/apache-2.0-ex1.txt"),
+            OpenSourceLicense::Apache2_0,
         );
-        assert_eq!(
-            detect_license(include_str!("../license_examples/apache-2.0-ex1.txt")),
-            Some(OpenSourceLicense::Apache2_0)
+        assert_matches_license(
+            include_str!("../license_examples/apache-2.0-ex2.txt"),
+            OpenSourceLicense::Apache2_0,
         );
-        assert_eq!(
-            detect_license(include_str!("../license_examples/apache-2.0-ex2.txt")),
-            Some(OpenSourceLicense::Apache2_0)
+        assert_matches_license(
+            include_str!("../license_examples/apache-2.0-ex3.txt"),
+            OpenSourceLicense::Apache2_0,
         );
-        assert_eq!(
-            detect_license(include_str!("../license_examples/apache-2.0-ex3.txt")),
-            Some(OpenSourceLicense::Apache2_0)
+        assert_matches_license(
+            include_str!("../license_examples/apache-2.0-ex4.txt"),
+            OpenSourceLicense::Apache2_0,
         );
-        assert_eq!(
-            detect_license(include_str!("../license_examples/apache-2.0-ex4.txt")),
-            Some(OpenSourceLicense::Apache2_0)
-        );
-        assert_eq!(
-            detect_license(include_str!("../../../LICENSE-APACHE")),
-            Some(OpenSourceLicense::Apache2_0)
+        assert_matches_license(
+            include_str!("../../../LICENSE-APACHE"),
+            OpenSourceLicense::Apache2_0,
         );
     }
 
     #[test]
     fn test_apache_negative_detection() {
-        assert!(
+        assert_eq!(
             detect_license(&format!(
                 "{APACHE_2_0_TXT}\n\nThe terms in this license are void if P=NP."
-            ))
-            .is_none()
+            )),
+            None
         );
     }
 
     #[test]
     fn test_bsd_1_clause_positive_detection() {
-        assert_eq!(
-            detect_license(include_str!("../license_examples/bsd-1-clause.txt")),
-            Some(OpenSourceLicense::BSD)
+        assert_matches_license(
+            include_str!("../license_examples/bsd-1-clause.txt"),
+            OpenSourceLicense::BSD,
         );
     }
 
     #[test]
     fn test_bsd_2_clause_positive_detection() {
-        assert_eq!(
-            detect_license(include_str!("../license_examples/bsd-2-clause-ex0.txt")),
-            Some(OpenSourceLicense::BSD)
+        assert_matches_license(
+            include_str!("../license_examples/bsd-2-clause-ex0.txt"),
+            OpenSourceLicense::BSD,
         );
     }
 
     #[test]
     fn test_bsd_3_clause_positive_detection() {
-        assert_eq!(
-            detect_license(include_str!("../license_examples/bsd-3-clause-ex0.txt")),
-            Some(OpenSourceLicense::BSD)
+        assert_matches_license(
+            include_str!("../license_examples/bsd-3-clause-ex0.txt"),
+            OpenSourceLicense::BSD,
         );
-        assert_eq!(
-            detect_license(include_str!("../license_examples/bsd-3-clause-ex1.txt")),
-            Some(OpenSourceLicense::BSD)
+        assert_matches_license(
+            include_str!("../license_examples/bsd-3-clause-ex1.txt"),
+            OpenSourceLicense::BSD,
         );
-        assert_eq!(
-            detect_license(include_str!("../license_examples/bsd-3-clause-ex2.txt")),
-            Some(OpenSourceLicense::BSD)
+        assert_matches_license(
+            include_str!("../license_examples/bsd-3-clause-ex2.txt"),
+            OpenSourceLicense::BSD,
         );
-        assert_eq!(
-            detect_license(include_str!("../license_examples/bsd-3-clause-ex3.txt")),
-            Some(OpenSourceLicense::BSD)
+        assert_matches_license(
+            include_str!("../license_examples/bsd-3-clause-ex3.txt"),
+            OpenSourceLicense::BSD,
         );
-        assert_eq!(
-            detect_license(include_str!("../license_examples/bsd-3-clause-ex4.txt")),
-            Some(OpenSourceLicense::BSD)
+        assert_matches_license(
+            include_str!("../license_examples/bsd-3-clause-ex4.txt"),
+            OpenSourceLicense::BSD,
         );
     }
 
     #[test]
     fn test_bsd_0_positive_detection() {
-        assert_eq!(detect_license(BSD_0_TXT), Some(OpenSourceLicense::BSDZero));
+        assert_matches_license(BSD_0_TXT, OpenSourceLicense::BSDZero);
     }
 
     #[test]
     fn test_isc_positive_detection() {
-        assert_eq!(detect_license(ISC_TXT), Some(OpenSourceLicense::ISC));
+        assert_matches_license(ISC_TXT, OpenSourceLicense::ISC);
     }
 
     #[test]
@@ -513,23 +532,23 @@ mod tests {
             This project is dual licensed under the ISC License and the MIT License."#
         );
 
-        assert!(detect_license(&license_text).is_none());
+        assert_eq!(detect_license(&license_text), None);
     }
 
     #[test]
     fn test_mit_positive_detection() {
-        assert_eq!(detect_license(MIT_TXT), Some(OpenSourceLicense::MIT));
-        assert_eq!(
-            detect_license(include_str!("../license_examples/mit-ex1.txt")),
-            Some(OpenSourceLicense::MIT)
+        assert_matches_license(MIT_TXT, OpenSourceLicense::MIT);
+        assert_matches_license(
+            include_str!("../license_examples/mit-ex1.txt"),
+            OpenSourceLicense::MIT,
         );
-        assert_eq!(
-            detect_license(include_str!("../license_examples/mit-ex2.txt")),
-            Some(OpenSourceLicense::MIT)
+        assert_matches_license(
+            include_str!("../license_examples/mit-ex2.txt"),
+            OpenSourceLicense::MIT,
         );
-        assert_eq!(
-            detect_license(include_str!("../license_examples/mit-ex3.txt")),
-            Some(OpenSourceLicense::MIT)
+        assert_matches_license(
+            include_str!("../license_examples/mit-ex3.txt"),
+            OpenSourceLicense::MIT,
         );
     }
 
@@ -540,12 +559,12 @@ mod tests {
 
             This project is dual licensed under the MIT License and the Apache License, Version 2.0."#
         );
-        assert!(detect_license(&license_text).is_none());
+        assert_eq!(detect_license(&license_text), None);
     }
 
     #[test]
     fn test_upl_positive_detection() {
-        assert_eq!(detect_license(UPL_1_0_TXT), Some(OpenSourceLicense::UPL1_0));
+        assert_matches_license(UPL_1_0_TXT, OpenSourceLicense::UPL1_0);
     }
 
     #[test]
@@ -556,14 +575,14 @@ mod tests {
             This project is dual licensed under the UPL License and the MIT License."#
         );
 
-        assert!(detect_license(&license_text).is_none());
+        assert_eq!(detect_license(&license_text), None);
     }
 
     #[test]
     fn test_zlib_positive_detection() {
-        assert_eq!(
-            detect_license(include_str!("../license_examples/zlib-ex0.txt")),
-            Some(OpenSourceLicense::Zlib),
+        assert_matches_license(
+            include_str!("../license_examples/zlib-ex0.txt"),
+            OpenSourceLicense::Zlib,
         );
     }
 
