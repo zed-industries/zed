@@ -1,4 +1,4 @@
-///! A crate for handling file encodings in the text editor.
+//! A crate for handling file encodings in the text editor.
 use editor::{Editor, EditorSettings};
 use encoding_rs::Encoding;
 use gpui::{ClickEvent, Entity, Subscription, WeakEntity};
@@ -23,24 +23,25 @@ impl Render for EncodingIndicator {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         let status_element = div();
 
-        if (EditorSettings::get_global(cx).status_bar.encoding_indicator == false)
-            || (self.show == false)
-        {
+        if (!EditorSettings::get_global(cx).status_bar.encoding_indicator) || !self.show {
             return status_element;
         }
 
         status_element.child(
-            Button::new("encoding", encoding_name(self.encoding.unwrap_or(encoding_rs::UTF_8)))
-                .label_size(LabelSize::Small)
-                .tooltip(Tooltip::text("Select Encoding"))
-                .on_click(cx.listener(|indicator, _: &ClickEvent, window, cx| {
-                    if let Some(workspace) = indicator.workspace.upgrade() {
-                        workspace.update(cx, |workspace, cx| {
-                            EncodingSaveOrReopenSelector::toggle(workspace, window, cx)
-                        })
-                    } else {
-                    }
-                })),
+            Button::new(
+                "encoding",
+                encoding_name(self.encoding.unwrap_or(encoding_rs::UTF_8)),
+            )
+            .label_size(LabelSize::Small)
+            .tooltip(Tooltip::text("Select Encoding"))
+            .on_click(cx.listener(|indicator, _: &ClickEvent, window, cx| {
+                if let Some(workspace) = indicator.workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        EncodingSaveOrReopenSelector::toggle(workspace, window, cx)
+                    })
+                } else {
+                }
+            })),
         )
     }
 }
@@ -209,6 +210,6 @@ pub fn encoding_from_name(name: &str) -> &'static Encoding {
         "GB18030" => encoding_rs::GB18030,
         "Big5" => encoding_rs::BIG5,
         "HZ-GB-2312" => encoding_rs::UTF_8, // encoding_rs doesn't support HZ, fallback to UTF-8
-        _ => encoding_rs::UTF_8, // Default to UTF-8 for unknown names
+        _ => encoding_rs::UTF_8,            // Default to UTF-8 for unknown names
     }
 }
