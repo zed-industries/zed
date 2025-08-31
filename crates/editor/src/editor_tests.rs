@@ -25331,7 +25331,7 @@ async fn test_select_next_prev_syntax_node(cx: &mut TestAppContext) {
         );
 
         // Test select previous sibling navigation
-        editor.select_prev_syntax_node(&SelectPrevSyntaxNode, window, cx);
+        editor.select_prev_syntax_node(&SelectPreviousSyntaxNode, window, cx);
         let prev_selection = editor.selections.display_ranges(cx);
 
         // Should have a selection and it should be different

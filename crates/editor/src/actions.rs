@@ -643,7 +643,7 @@ actions!(
         /// Selects the next syntax node sibling.
         SelectNextSyntaxNode,
         /// Selects the previous syntax node sibling.
-        SelectPrevSyntaxNode,
+        SelectPreviousSyntaxNode,
         /// Extends selection left.
         SelectLeft,
         /// Selects the current line.

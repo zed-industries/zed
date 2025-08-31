@@ -15133,7 +15133,7 @@ impl Editor {
             .map(|selection| {
                 let old_range = selection.start..selection.end;
 
-                if let Some(node) = buffer.syntax_next_sibling(old_range.clone()) {
+                if let Some(node) = buffer.syntax_next_sibling(old_range) {
                     let new_range = node.byte_range();
                     selected_sibling = true;
                     Selection {
@@ -15163,7 +15163,7 @@ impl Editor {
 
     pub fn select_prev_syntax_node(
         &mut self,
-        _: &SelectPrevSyntaxNode,
+        _: &SelectPreviousSyntaxNode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -15182,7 +15182,7 @@ impl Editor {
             .map(|selection| {
                 let old_range = selection.start..selection.end;
 
-                if let Some(node) = buffer.syntax_prev_sibling(old_range.clone()) {
+                if let Some(node) = buffer.syntax_prev_sibling(old_range) {
                     let new_range = node.byte_range();
                     selected_sibling = true;
                     Selection {

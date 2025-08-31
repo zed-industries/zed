@@ -56,7 +56,7 @@ actions!(
         /// Selects the next syntax node sibling.
         SelectNextSyntaxNode,
         /// Selects the previous syntax node sibling.
-        SelectPrevSyntaxNode,
+        SelectPreviousSyntaxNode,
         /// Restores the previous visual selection.
         RestoreVisualSelection,
         /// Inserts at the end of each line in visual selection.
@@ -124,7 +124,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         }
     });
 
-    Vim::action(editor, cx, |vim, _: &SelectPrevSyntaxNode, window, cx| {
+    Vim::action(editor, cx, |vim, _: &SelectPreviousSyntaxNode, window, cx| {
         let count = Vim::take_count(cx).unwrap_or(1);
         Vim::take_forced_motion(cx);
         for _ in 0..count {
