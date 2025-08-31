@@ -20840,7 +20840,6 @@ dependencies = [
  "tree-sitter-go",
  "tree-sitter-rust",
  "ui",
- "unindent",
  "util",
  "uuid",
  "workspace",
