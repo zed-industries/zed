@@ -248,10 +248,7 @@ pub fn line_end(
     stop_at_soft_boundaries: bool,
 ) -> DisplayPoint {
     if stop_at_soft_boundaries {
-        map.clip_point(
-            DisplayPoint::new(display_point.row(), map.line_len(display_point.row())),
-            Bias::Left,
-        )
+        DisplayPoint::new(display_point.row(), map.line_len(display_point.row()))
     } else {
         map.next_line_boundary(display_point.to_point(map)).1
     }
