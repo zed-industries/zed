@@ -78,7 +78,6 @@ settings = { workspace = true, features = ["test-support"] }
 theme = { workspace = true, features = ["test-support"] }
 tree-sitter-go.workspace = true
 tree-sitter-rust.workspace = true
-unindent.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
