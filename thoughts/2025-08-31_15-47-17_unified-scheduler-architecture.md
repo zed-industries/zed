@@ -442,3 +442,110 @@ impl CloudSimulatedScheduler {
 ✅ **Backward Compatibility**: All existing functionality preserved
 
 This design keeps test concerns in TestScheduler while maintaining production safety and session coordination capabilities.
+
+## Implementation Reference
+
+### GPUI File Paths & Types
+
+**Core Executor Files:**
+- `crates/gpui/src/executor.rs` - `BackgroundExecutor`, `ForegroundExecutor`, `Task<T>`
+- `crates/gpui/src/app/app.rs` - App-level executor access
+- `crates/gpui/src/platform.rs` - `PlatformDispatcher` trait (current system)
+
+**Types to Update:**
+- `BackgroundExecutor` - Switch from `PlatformDispatcher` to `Arc<dyn Scheduler>`
+- `ForegroundExecutor` - Switch from `PlatformDispatcher` to `Rc<dyn Scheduler>`
+- `Task<T>` - Ensure compatibility with new `Task<T>` design
+
+**Test Infrastructure:**
+- `crates/gpui/src/platform/test/dispatcher.rs` - `TestDispatcher` (current)
+- Will need new `TestScheduler` implementation
+- `TaskLabel` usage in tests
+
+### Cloud File Paths & Types
+
+**Core Runtime Files:**
+- `crates/platform_simulator/src/runtime.rs` - `SimulatorRuntime`, session management
+- `crates/platform_simulator/src/platform.rs` - `SimulatedExecutionContext`
+- `crates/platform_simulator/src/lib.rs` - Cloud worker setup
+
+**Key Types:**
+- `SessionId` - Session identification
+- `WorkerSession` - Session state tracking
+- `ExecutionContext::wait_until()` - Session coordination API
+- `SimulatorRuntime::validate_session_cleanup()` - Cleanup validation
+
+**Worker Files:**
+- `crates/client_api/src/client_api.rs` - API endpoints using sessions
+- `crates/cloud_worker/src/worker.rs` - Worker execution with sessions
+- `crates/cloudflare_platform/src/execution_context.rs` - Platform-specific execution context
+
+### Migration Points
+
+**GPUI Areas:**
+- Replace `cx.background_executor()` calls with new executors
+- Update any direct `PlatformDispatcher` usage
+- Preserve `spawn_labeled()` and `deprioritize()` APIs
+
+**Cloud Areas:**
+- Replace `SimulatorRuntime` usage in tests
+- Update session management to use new scheduler wrapper
+- Preserve `wait_until()` and session validation behavior
+
+### Test Files Impacted
+
+**GPUI Tests:**
+- `crates/gpui/src/app/test_context.rs` - Test setup
+- `crates/gpui_macros/src/test.rs` - Test macro generation
+- Project-specific test files using `deprioritize()`
+
+**Cloud Tests:**
+- `crates/platform_simulator/src/lib.rs` - Test setup
+- Worker test files using session features
+- Session validation test cases
+
+### Platform Backend Files
+
+**macOS:**
+- `crates/gpui/src/platform/mac/dispatcher.rs` - `MacDispatcher` → `GcdScheduler`
+
+**Linux:**
+- `crates/gpui/src/platform/linux/dispatcher.rs` - `LinuxDispatcher` → `ThreadPoolScheduler`
+
+**Windows:**
+- `crates/gpui/src/platform/windows/dispatcher.rs` - `WindowsDispatcher` → `ThreadPoolScheduler`
+
+**Test:**
+- `crates/gpui/src/platform/test/dispatcher.rs` - `TestDispatcher` → `TestScheduler`
+
+## Compatibility Checklist
+
+### GPUI Compatibility
+- ✅ `spawn()` → `scheduler.spawn()`
+- ✅ `spawn_labeled(label)` → `scheduler.spawn_labeled(label)`
+- ✅ `deprioritize()` → Downcast to TestScheduler
+- ✅ `timer()` → `scheduler.timer()`
+- ✅ `BackgroundExecutor` → Trait object wrapper
+
+### Cloud Compatibility
+- ✅ `ExecutionContext::wait_until()` → Scheduler wrapper
+- ✅ Session validation → `validate_session_cleanup()`
+- ✅ Automatic session association → Wrapper intelligence
+- ✅ Task cleanup checking → TestScheduler task tracking
+- ✅ `spawn()` in sessions → Auto-association
+
+### Test Compatibility
+- ✅ Test determinism → TestScheduler deprioritization
+- ✅ Task labeling → TestScheduler spawn_labeled override
+- ✅ Session coordination → Cloud wrapper
+- ✅ Production efficiency → Minimal scheduler implementations
+
+## Next Steps
+
+1. **Create shared scheduler crate** with core types
+2. **Implement TestScheduler** with task tracking and test features
+3. **Update GPUI executors** to use trait objects
+4. **Create Cloud wrapper** with session coordination
+5. **Migrate platform backends** to new scheduler implementations
+6. **Update tests** to use new architecture
+7. **Validate performance** and backward compatibility
