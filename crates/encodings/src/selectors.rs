@@ -31,8 +31,7 @@ pub mod save_or_reopen {
             cx: &mut Context<EncodingSaveOrReopenSelector>,
             workspace: WeakEntity<Workspace>,
         ) -> Self {
-            let delegate =
-                EncodingSaveOrReopenDelegate::new(cx.entity().downgrade(), workspace.clone());
+            let delegate = EncodingSaveOrReopenDelegate::new(cx.entity().downgrade(), workspace);
 
             let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
 
@@ -498,8 +497,7 @@ pub mod encoding {
             buffer: WeakEntity<Buffer>,
             workspace: WeakEntity<Workspace>,
         ) -> EncodingSelector {
-            let delegate =
-                EncodingSelectorDelegate::new(cx.entity().downgrade(), buffer, action.clone());
+            let delegate = EncodingSelectorDelegate::new(cx.entity().downgrade(), buffer, action);
             let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
 
             EncodingSelector { picker, workspace }
