@@ -12,6 +12,21 @@ use std::thread;
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TaskLabel(usize);
 
+#[derive(Clone)]
+pub struct SchedulerConfig {
+    pub seed: u64,
+    pub randomize_order: bool,
+}
+
+impl Default for SchedulerConfig {
+    fn default() -> Self {
+        Self {
+            seed: 0,
+            randomize_order: true,
+        }
+    }
+}
+
 impl TaskLabel {
     pub fn new() -> Self {
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -26,6 +41,7 @@ struct SchedulerState {
     deprioritized: VecDeque<Runnable<()>>,
     rng: ChaCha8Rng,
     deprioritized_labels: HashSet<TaskLabel>,
+    randomize_order: bool,
 }
 
 pub trait Scheduler {
@@ -36,19 +52,22 @@ pub trait Scheduler {
 pub struct TestScheduler {
     state: Mutex<SchedulerState>,
     pub thread_id: thread::ThreadId,
+    pub config: SchedulerConfig,
 }
 
 impl TestScheduler {
-    pub fn new() -> Self {
+    pub fn new(config: SchedulerConfig) -> Self {
         Self {
             state: Mutex::new(SchedulerState {
                 foreground: VecDeque::new(),
                 background: VecDeque::new(),
                 deprioritized: VecDeque::new(),
-                rng: ChaCha8Rng::seed_from_u64(0),
+                rng: ChaCha8Rng::seed_from_u64(config.seed),
                 deprioritized_labels: HashSet::new(),
+                randomize_order: config.randomize_order,
             }),
             thread_id: thread::current().id(),
+            config,
         }
     }
 
@@ -91,25 +110,39 @@ impl TestScheduler {
         let background_count = state.background.len();
 
         if foreground_count > 0 || background_count > 0 {
-            // Weighted random selection between foreground and background, like GPUI
-            let total_count = foreground_count + background_count;
-            let should_pick_foreground = state
-                .rng
-                .gen_ratio(foreground_count as u32, total_count as u32);
-
-            if should_pick_foreground && foreground_count > 0 {
-                let runnable = state.foreground.pop_front().unwrap();
-                drop(state);
-                runnable.run();
-                true
-            } else if background_count > 0 {
-                let runnable = state.background.pop_front().unwrap();
-                drop(state);
-                runnable.run();
-                true
+            if !state.randomize_order {
+                // Deterministic: prefer foreground if available, else background
+                if foreground_count > 0 {
+                    let runnable = state.foreground.pop_front().unwrap();
+                    drop(state);
+                    runnable.run();
+                    return true;
+                } else if background_count > 0 {
+                    let runnable = state.background.pop_front().unwrap();
+                    drop(state);
+                    runnable.run();
+                    return true;
+                }
             } else {
-                false
+                // Weighted random selection between foreground and background, like GPUI
+                let total_count = foreground_count + background_count;
+                let should_pick_foreground = state
+                    .rng
+                    .gen_ratio(foreground_count as u32, total_count as u32);
+
+                if should_pick_foreground && foreground_count > 0 {
+                    let runnable = state.foreground.pop_front().unwrap();
+                    drop(state);
+                    runnable.run();
+                    return true;
+                } else if background_count > 0 {
+                    let runnable = state.background.pop_front().unwrap();
+                    drop(state);
+                    runnable.run();
+                    return true;
+                }
             }
+            false
         } else if !state.deprioritized.is_empty() {
             // Only when foreground/background empty, run deprioritized
             let runnable = state.deprioritized.pop_front().unwrap();
@@ -189,7 +222,7 @@ mod tests {
 
     #[test]
     fn test_foreground_executor_spawn() {
-        let scheduler = Arc::new(TestScheduler::new());
+        let scheduler = Arc::new(TestScheduler::new(SchedulerConfig::default()));
         let executor = ForegroundExecutor::new(scheduler.clone());
         let task = executor.spawn(async move { 42 });
         scheduler.run();
@@ -201,7 +234,7 @@ mod tests {
 
     #[test]
     fn test_background_executor_spawn() {
-        let scheduler = Arc::new(TestScheduler::new());
+        let scheduler = Arc::new(TestScheduler::new(SchedulerConfig::default()));
         let executor = BackgroundExecutor::new(scheduler.clone());
         let task = executor.spawn(async move { 42 });
         scheduler.run();
@@ -213,7 +246,7 @@ mod tests {
 
     #[test]
     fn test_send_from_bg_to_fg() {
-        let scheduler = Arc::new(TestScheduler::new());
+        let scheduler = Arc::new(TestScheduler::new(SchedulerConfig::default()));
         let foreground = ForegroundExecutor::new(scheduler.clone());
         let background = BackgroundExecutor::new(scheduler.clone());
 
