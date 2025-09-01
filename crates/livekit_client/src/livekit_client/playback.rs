@@ -1,9 +1,7 @@
 use anyhow::{Context as _, Result};
 
 use audio::{AudioSettings, CHANNEL_COUNT, SAMPLE_RATE};
-use cpal::Sample;
 use cpal::traits::{DeviceTrait, StreamTrait as _};
-use dasp_sample::ToSample;
 use futures::channel::mpsc::UnboundedSender;
 use futures::{Stream, StreamExt as _};
 use gpui::{
@@ -24,16 +22,13 @@ use livekit::webrtc::{
 use log::info;
 use parking_lot::Mutex;
 use rodio::Source;
-use rodio::source::{LimitSettings, UniformSourceIterator};
 use settings::Settings;
 use std::cell::RefCell;
-use std::num::NonZero;
 use std::sync::Weak;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
-use std::sync::mpsc::{TryRecvError, channel};
 use std::time::Duration;
 use std::{borrow::Cow, collections::VecDeque, sync::Arc, thread};
-use util::{ResultExt as _, debug_panic, maybe};
+use util::{ResultExt as _, maybe};
 
 mod source;
 
@@ -51,14 +46,16 @@ pub(crate) fn play_remote_audio_track(
 ) -> Result<AudioStream> {
     let stop_handle = Arc::new(AtomicBool::new(false));
     let stop_handle_clone = stop_handle.clone();
-    let stream = source::LiveKitStream::new(cx.background_executor(), track)
+    let stream = source::LiveKitStream::new(cx.background_executor(), track);
+
+    let stream = stream
         .stoppable()
         .periodic_access(Duration::from_millis(50), move |s| {
             if stop_handle.load(Ordering::Relaxed) {
                 s.stop();
             }
         });
-    audio::Audio::play_source(stream, cx).context("Could not play audio")?;
+    audio::Audio::play_voip_stream(stream, track.name(), cx).context("Could not play audio")?;
 
     let on_drop = util::defer(move || {
         stop_handle_clone.store(true, Ordering::Relaxed);
@@ -144,6 +141,7 @@ impl AudioStack {
 
     pub(crate) fn capture_local_microphone_track(
         &self,
+        user_name: &str,
         cx: &AsyncApp,
     ) -> Result<(crate::LocalAudioTrack, AudioStream)> {
         let source = NativeAudioSource::new(
@@ -155,7 +153,7 @@ impl AudioStack {
         );
 
         let track = track::LocalAudioTrack::create_audio_track(
-            "microphone",
+            user_name,
             RtcAudioSource::Native(source.clone()),
         );
 
@@ -172,13 +170,10 @@ impl AudioStack {
         let rodio_pipeline =
             AudioSettings::try_read_global(cx, |setting| setting.rodio_audio).unwrap_or_default();
         let capture_task = if rodio_pipeline {
-            let apm = cx
-                .try_read_global::<audio::Audio, _>(|audio, _| Arc::clone(&audio.echo_canceller))
-                .unwrap(); // TODO fixme
-            self.executor.spawn(async move {
-                info!("Using experimental.rodio_audio audio pipeline");
-                Self::capture_input_rodio(apm, frame_tx).await
-            })
+            // TODO global might not yet have been initialized
+            info!("Using experimental.rodio_audio audio pipeline");
+            audio::Audio::open_microphone(cx.clone(), frame_tx)?;
+            Task::ready(Ok(()))
         } else {
             self.executor.spawn(async move {
                 Self::capture_input(apm, frame_tx, SAMPLE_RATE.get(), CHANNEL_COUNT.get().into())
@@ -268,84 +263,6 @@ impl AudioStack {
             device_change_listener.next().await;
             drop(end_on_drop_tx)
         }
-    }
-
-    async fn capture_input_rodio(
-        apm: Arc<Mutex<apm::AudioProcessingModule>>,
-        frame_tx: UnboundedSender<AudioFrame<'static>>,
-    ) -> Result<()> {
-        use audio::RodioExt;
-        const LIVEKIT_BUFFER_SIZE: usize =
-            (audio::SAMPLE_RATE.get() as usize / 100) * audio::CHANNEL_COUNT.get() as usize;
-
-        let (stream_error_tx, stream_error_rx) = channel();
-
-        thread::spawn(move || {
-            let stream = rodio::microphone::MicrophoneBuilder::new()
-                .default_device()?
-                .default_config()?
-                .prefer_sample_rates([
-                    SAMPLE_RATE,
-                    SAMPLE_RATE.saturating_mul(NonZero::new(2).expect("not zero")),
-                ])
-                .prefer_channel_counts([
-                    NonZero::new(1).expect("not zero"),
-                    NonZero::new(2).expect("not zero"),
-                ])
-                .prefer_buffer_sizes(512..)
-                .open_stream()?;
-            info!("Opened microphone: {:?}", stream.config());
-            let mut stream =
-                UniformSourceIterator::new(stream, audio::CHANNEL_COUNT, audio::SAMPLE_RATE)
-                    .limit(LimitSettings::live_performance())
-                    .process_buffer::<LIVEKIT_BUFFER_SIZE, _>(|buffer| {
-                        let mut int_buffer: [i16; _] = buffer.map(|s| s.to_sample());
-                        if let Err(e) = apm
-                            .lock()
-                            .process_stream(
-                                &mut int_buffer,
-                                audio::SAMPLE_RATE.get() as i32,
-                                audio::CHANNEL_COUNT.get() as i32,
-                            )
-                            .context("livekit audio processor error")
-                        {
-                            let _ = stream_error_tx.send(e);
-                        } else {
-                            for (sample, processed) in buffer.iter_mut().zip(&int_buffer) {
-                                *sample = (*processed).to_sample_();
-                            }
-                        }
-                    })
-                    .automatic_gain_control(1.0, 4.0, 0.0, 5.0);
-
-            loop {
-                let sampled: Vec<_> = stream
-                    .by_ref()
-                    .take(LIVEKIT_BUFFER_SIZE)
-                    .map(|s| s.to_sample())
-                    .collect();
-
-                match stream_error_rx.try_recv() {
-                    Ok(apm_error) => return Err::<(), _>(apm_error),
-                    Err(TryRecvError::Disconnected) => {
-                        debug_panic!("Stream should end on its own without sending an error")
-                    }
-                    Err(TryRecvError::Empty) => (),
-                }
-
-                frame_tx
-                    .unbounded_send(AudioFrame {
-                        sample_rate: SAMPLE_RATE.get(),
-                        num_channels: audio::CHANNEL_COUNT.get() as u32,
-                        samples_per_channel: sampled.len() as u32
-                            / audio::CHANNEL_COUNT.get() as u32,
-                        data: Cow::Owned(sampled),
-                    })
-                    .context("Failed to send audio frame")?
-            }
-        });
-
-        Ok(())
     }
 
     async fn capture_input(

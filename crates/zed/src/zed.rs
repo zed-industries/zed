@@ -13,6 +13,7 @@ use agent_ui::{AgentDiffToolbar, AgentPanelDelegate};
 use anyhow::Context as _;
 pub use app_menus::*;
 use assets::Assets;
+use audio::{AudioSettings, REPLAY_DURATION};
 use breadcrumbs::Breadcrumbs;
 use client::zed_urls;
 use collections::VecDeque;
@@ -128,7 +129,10 @@ actions!(
     dev,
     [
         /// Record 10s of audio from your current microphone
-        CaptureAudio
+        CaptureAudio,
+        /// Stores last 30s of audio from everyone on the current call
+        /// in a tar file in the current working directory.
+        CaptureRecentAudio,
     ]
 );
 
@@ -925,6 +929,9 @@ fn register_actions(
         })
         .register_action(|workspace, _: &CaptureAudio, window, cx| {
             capture_audio(workspace, window, cx);
+        })
+        .register_action(|workspace, _: &CaptureRecentAudio, window, cx| {
+            capture_recent_audio(workspace, window, cx);
         });
 
     if workspace.project().read(cx).is_via_remote_server() {
@@ -1935,6 +1942,85 @@ fn capture_audio(workspace: &mut Workspace, _: &mut Window, cx: &mut Context<Wor
     workspace.show_notification(NotificationId::unique::<CaptureAudio>(), cx, |cx| {
         cx.new(CaptureAudioNotification::new)
     });
+}
+
+// TODO dvdsk Move this and capture audio somewhere else?
+fn capture_recent_audio(workspace: &mut Workspace, _: &mut Window, cx: &mut Context<Workspace>) {
+    struct CaptureRecentAudioNotification {
+        focus_handle: gpui::FocusHandle,
+        save_result: Option<Result<(PathBuf, Duration), anyhow::Error>>,
+        _save_task: Task<anyhow::Result<()>>,
+    }
+
+    impl gpui::EventEmitter<DismissEvent> for CaptureRecentAudioNotification {}
+    impl gpui::EventEmitter<SuppressEvent> for CaptureRecentAudioNotification {}
+    impl gpui::Focusable for CaptureRecentAudioNotification {
+        fn focus_handle(&self, _cx: &App) -> gpui::FocusHandle {
+            self.focus_handle.clone()
+        }
+    }
+    impl workspace::notifications::Notification for CaptureRecentAudioNotification {}
+
+    impl Render for CaptureRecentAudioNotification {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let message = match &self.save_result {
+                None => format!(
+                    "Saving up to {} seconds of recent audio",
+                    REPLAY_DURATION.as_secs(),
+                ),
+                Some(Ok((path, duration))) => format!(
+                    "Saved {} seconds of all audio to {}",
+                    duration.as_secs(),
+                    path.display(),
+                ),
+                Some(Err(e)) => format!("Error saving audio replays: {e:?}"),
+            };
+
+            NotificationFrame::new()
+                .with_title(Some("Saved Audio"))
+                .show_suppress_button(false)
+                .on_close(cx.listener(|_, _, _, cx| {
+                    cx.emit(DismissEvent);
+                }))
+                .with_content(message)
+        }
+    }
+
+    impl CaptureRecentAudioNotification {
+        fn new(cx: &mut Context<Self>) -> Self {
+            if AudioSettings::get_global(cx).rodio_audio {
+                let executor = cx.background_executor().clone();
+                let save_task = cx.default_global::<audio::Audio>().save_replays(executor);
+                let _save_task = cx.spawn(async move |this, cx| {
+                    let res = save_task.await;
+                    this.update(cx, |this, cx| {
+                        this.save_result = Some(res);
+                        cx.notify();
+                    })
+                });
+
+                Self {
+                    focus_handle: cx.focus_handle(),
+                    _save_task,
+                    save_result: None,
+                }
+            } else {
+                Self {
+                    focus_handle: cx.focus_handle(),
+                    _save_task: Task::ready(Ok(())),
+                    save_result: Some(Err(anyhow::anyhow!(
+                        "Capturing recent audio is only supported on the experimental rodio audio pipeline"
+                    ))),
+                }
+            }
+        }
+    }
+
+    workspace.show_notification(
+        NotificationId::unique::<CaptureRecentAudioNotification>(),
+        cx,
+        |cx| cx.new(CaptureRecentAudioNotification::new),
+    );
 }
 
 #[cfg(test)]

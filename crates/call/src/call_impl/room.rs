@@ -1322,8 +1322,16 @@ impl Room {
             return Task::ready(Err(anyhow!("live-kit was not initialized")));
         };
 
+        let user_name = self
+            .user_store
+            .read(cx)
+            .current_user()
+            .map(|user| user.name.clone())
+            .flatten()
+            .unwrap_or_else(|| "unknown".to_string());
+
         cx.spawn(async move |this, cx| {
-            let publication = room.publish_local_microphone_track(cx).await;
+            let publication = room.publish_local_microphone_track(&user_name, cx).await;
             this.update(cx, |this, cx| {
                 let live_kit = this
                     .live_kit

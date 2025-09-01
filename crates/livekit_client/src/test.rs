@@ -728,6 +728,7 @@ impl Room {
 
     pub async fn publish_local_microphone_track(
         &self,
+        _track_name: &str,
         cx: &mut AsyncApp,
     ) -> Result<(LocalTrackPublication, AudioStream)> {
         self.local_participant().publish_microphone_track(cx).await

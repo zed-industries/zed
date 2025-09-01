@@ -89,7 +89,7 @@ fn write_out(
         NonZero::new(config.sample_rate().0).expect("config sample_rate is never zero"),
         samples,
     );
-    match rodio::output_to_wav(&mut samples, path) {
+    match rodio::wav_to_file(&mut samples, path) {
         Ok(_) => Ok(()),
         Err(e) => Err(anyhow::anyhow!("Failed to write wav file: {}", e)),
     }
