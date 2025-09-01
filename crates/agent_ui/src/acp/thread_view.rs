@@ -827,6 +827,9 @@ impl AcpThreadView {
                     self.expanded_tool_calls.insert(tool_call_id.clone());
                 }
             }
+            ViewEvent::TerminalMovedToBackground(tool_call_id) => {
+                self.expanded_tool_calls.remove(tool_call_id);
+            }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Focus) => {
                 if let Some(thread) = self.thread()
                     && let Some(AgentThreadEntry::UserMessage(user_message)) =

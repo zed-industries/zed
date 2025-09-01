@@ -125,22 +125,35 @@ impl EntryViewState {
                     views
                 };
 
+                let is_tool_call_completed =
+                    matches!(tool_call.status, acp_thread::ToolCallStatus::Completed);
+
                 for terminal in terminals {
-                    views.entry(terminal.entity_id()).or_insert_with(|| {
-                        let element = create_terminal(
-                            self.workspace.clone(),
-                            self.project.clone(),
-                            terminal.clone(),
-                            window,
-                            cx,
-                        )
-                        .into_any();
-                        cx.emit(EntryViewEvent {
-                            entry_index: index,
-                            view_event: ViewEvent::NewTerminal(id.clone()),
-                        });
-                        element
-                    });
+                    match views.entry(terminal.entity_id()) {
+                        collections::hash_map::Entry::Vacant(entry) => {
+                            let element = create_terminal(
+                                self.workspace.clone(),
+                                self.project.clone(),
+                                terminal.clone(),
+                                window,
+                                cx,
+                            )
+                            .into_any();
+                            cx.emit(EntryViewEvent {
+                                entry_index: index,
+                                view_event: ViewEvent::NewTerminal(id.clone()),
+                            });
+                            entry.insert(element);
+                        }
+                        collections::hash_map::Entry::Occupied(_entry) => {
+                            if is_tool_call_completed && terminal.read(cx).output().is_none() {
+                                cx.emit(EntryViewEvent {
+                                    entry_index: index,
+                                    view_event: ViewEvent::TerminalMovedToBackground(id.clone()),
+                                });
+                            }
+                        }
+                    }
                 }
 
                 for diff in diffs {
@@ -217,6 +230,7 @@ pub struct EntryViewEvent {
 pub enum ViewEvent {
     NewDiff(ToolCallId),
     NewTerminal(ToolCallId),
+    TerminalMovedToBackground(ToolCallId),
     MessageEditorEvent(Entity<MessageEditor>, MessageEditorEvent),
 }
 
