@@ -101,12 +101,12 @@ impl WindowsPlatform {
             inner: None,
             raw_window_handles: raw_window_handles.clone(),
             validation_number,
-            main_receiver,
+            main_receiver: Some(main_receiver),
         };
         let result = unsafe {
             CreateWindowExW(
                 WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_TOOLWINDOW,
-                WINDOW_CLASS_NAME,
+                PLATFORM_WINDOW_CLASS_NAME,
                 None,
                 WS_OVERLAPPED,
                 0,
@@ -656,13 +656,13 @@ impl Platform for WindowsPlatform {
 }
 
 impl WindowsPlatformInner {
-    fn new(context: &PlatformWindowCreateContext) -> Result<Rc<Self>> {
+    fn new(context: &mut PlatformWindowCreateContext) -> Result<Rc<Self>> {
         let state = RefCell::new(WindowsPlatformState::new());
         Ok(Rc::new(Self {
             state,
             raw_window_handles: context.raw_window_handles.clone(),
             validation_number: context.validation_number,
-            main_receiver: context.main_receiver.clone(),
+            main_receiver: context.main_receiver.take().unwrap(),
         }))
     }
 
@@ -687,10 +687,8 @@ impl WindowsPlatformInner {
         }
     }
 
-    // Returns true if the app should quit.
     fn handle_gpui_events(&self, message: u32, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
         if wparam.0 != self.validation_number {
-            // unsafe { DispatchMessageW(msg) };
             log::error!("Wrong validation number while processing message: {message}");
             return None;
         }
@@ -762,6 +760,9 @@ impl Drop for WindowsPlatform {
     fn drop(&mut self) {
         unsafe {
             ManuallyDrop::drop(&mut self.bitmap_factory);
+            DestroyWindow(self.handle)
+                .context("Destroying platform window")
+                .log_err();
             OleUninitialize();
         }
     }
@@ -783,7 +784,7 @@ struct PlatformWindowCreateContext {
     inner: Option<Result<Rc<WindowsPlatformInner>>>,
     raw_window_handles: Arc<RwLock<SmallVec<[SafeHwnd; 4]>>>,
     validation_number: usize,
-    main_receiver: flume::Receiver<Runnable>,
+    main_receiver: Option<flume::Receiver<Runnable>>,
 }
 
 fn open_target(target: impl AsRef<OsStr>) -> Result<()> {
@@ -956,13 +957,12 @@ fn should_auto_hide_scrollbars() -> Result<bool> {
     Ok(ui_settings.AutoHideScrollBars()?)
 }
 
-const WINDOW_CLASS_NAME: PCWSTR = w!("Zed::PlatformWindow");
+const PLATFORM_WINDOW_CLASS_NAME: PCWSTR = w!("Zed::PlatformWindow");
 
 fn register_platform_window_class() {
     let wc = WNDCLASSW {
         lpfnWndProc: Some(window_procedure),
-        lpszClassName: PCWSTR(WINDOW_CLASS_NAME.as_ptr()),
-        style: CS_HREDRAW | CS_VREDRAW,
+        lpszClassName: PCWSTR(PLATFORM_WINDOW_CLASS_NAME.as_ptr()),
         ..Default::default()
     };
     unsafe { RegisterClassW(&wc) };
@@ -980,10 +980,10 @@ unsafe extern "system" fn window_procedure(
         let creation_context = params.lpCreateParams as *mut PlatformWindowCreateContext;
         let creation_context = unsafe { &mut *creation_context };
         return match WindowsPlatformInner::new(creation_context) {
-            Ok(window_state) => {
-                let weak = Box::new(Rc::downgrade(&window_state));
+            Ok(inner) => {
+                let weak = Box::new(Rc::downgrade(&inner));
                 unsafe { set_window_long(hwnd, GWLP_USERDATA, Box::into_raw(weak) as isize) };
-                creation_context.inner = Some(Ok(window_state));
+                creation_context.inner = Some(Ok(inner));
                 unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
             }
             Err(error) => {
