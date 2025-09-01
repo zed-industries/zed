@@ -113,9 +113,9 @@ impl ToolchainStore {
             ToolchainStoreInner::Local(local) => local.update(cx, |this, cx| {
                 this.resolve_toolchain(abs_path, language_name, cx)
             }),
-            ToolchainStoreInner::Remote(_) => {
-                todo!()
-            }
+            ToolchainStoreInner::Remote(remote) => remote.update(cx, |this, cx| {
+                this.resolve_toolchain(abs_path, language_name, cx)
+            }),
         }
     }
     pub(crate) fn list_toolchains(
@@ -617,6 +617,49 @@ impl RemoteToolchainStore {
                     as_json: serde_json::Value::from_str(&toolchain.raw_json).ok()?,
                 })
             })
+        })
+    }
+
+    fn resolve_toolchain(
+        &self,
+        abs_path: PathBuf,
+        language_name: LanguageName,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Toolchain>> {
+        let project_id = self.project_id;
+        let client = self.client.clone();
+        cx.background_spawn(async move {
+            let response: proto::ResolveToolchainResponse = client
+                .request(proto::ResolveToolchain {
+                    project_id,
+                    language_name: language_name.clone().into(),
+                    abs_path: abs_path.to_string_lossy().into_owned(),
+                })
+                .await?;
+
+            let response = response
+                .response
+                .context("Failed to resolve toolchain via RPC")?;
+            use proto::resolve_toolchain_response::Response;
+            match response {
+                Response::Toolchain(toolchain) => {
+                    Ok(Toolchain {
+                        language_name: language_name.clone(),
+                        name: toolchain.name.into(),
+                        // todo(windows)
+                        // Do we need to convert path to native string?
+                        path: PathBuf::from_proto(toolchain.path)
+                            .to_string_lossy()
+                            .to_string()
+                            .into(),
+                        as_json: serde_json::Value::from_str(&toolchain.raw_json)
+                            .context("Deserializing ResolveToolchain LSP response")?,
+                    })
+                }
+                Response::Error(error) => {
+                    anyhow::bail!("{error}");
+                }
+            }
         })
     }
 }

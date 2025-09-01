@@ -397,7 +397,10 @@ message Envelope {
 
         LspQuery lsp_query = 365;
         LspQueryResponse lsp_query_response = 366;
-        ToggleLspLogs toggle_lsp_logs = 367; // current max
+        ToggleLspLogs toggle_lsp_logs = 367;
+
+        ResolveToolchain resolve_toolchain = 368;
+        ResolveToolchainResponse resolve_toolchain_response = 369; // current max
     }
 
     reserved 87 to 88;
