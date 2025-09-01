@@ -7,6 +7,7 @@ pub use clock::*;
 pub use executor::*;
 
 use async_task::Runnable;
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use futures::{FutureExt as _, channel::oneshot};
 use parking::{Parker, Unparker};
 use parking_lot::Mutex;
@@ -20,7 +21,7 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
     thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -64,7 +65,7 @@ impl ScheduledRunnable {
 }
 
 struct ScheduledTimer {
-    expiration: Instant,
+    expiration: DateTime<Utc>,
     _notify: oneshot::Sender<()>,
 }
 
@@ -137,7 +138,7 @@ impl TestScheduler {
     /// Run a test once with a specific seed
     pub fn with_seed<R>(seed: u64, f: impl AsyncFnOnce(Arc<TestScheduler>) -> R) -> R {
         let scheduler = Arc::new(TestScheduler::new(
-            Arc::new(TestClock::new(Instant::now())),
+            Arc::new(TestClock::new(Utc::now())),
             SchedulerConfig::with_seed(seed),
         ));
         let background = BackgroundExecutor::new(scheduler.clone());
@@ -276,7 +277,7 @@ impl Scheduler for TestScheduler {
 
     fn timer(&self, duration: Duration) -> Timer {
         let (tx, rx) = oneshot::channel();
-        let expiration = self.clock.now() + duration;
+        let expiration = self.clock.now() + ChronoDuration::from_std(duration).unwrap();
         {
             let state = &mut *self.state.lock();
             state.timers.push(ScheduledTimer {

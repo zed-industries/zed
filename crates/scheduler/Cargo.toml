@@ -22,4 +22,5 @@ parking_lot = "0.12"
 futures = "0.3"
 rand = "0.8"
 rand_chacha = "0.3"
+chrono.workspace = true
 workspace-hack.workspace = true
