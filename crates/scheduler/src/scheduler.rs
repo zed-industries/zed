@@ -217,8 +217,10 @@ impl BackgroundExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::channel::oneshot;
+    use futures::channel::{mpsc, oneshot};
     use futures::executor::block_on;
+    use futures::sink::SinkExt;
+    use futures::stream::StreamExt;
 
     #[test]
     fn test_foreground_executor_spawn() {
@@ -281,31 +283,32 @@ mod tests {
             let foreground = ForegroundExecutor::new(scheduler.clone());
             let background = BackgroundExecutor::new(scheduler.clone());
 
-            let execution_order = Arc::new(Mutex::new(Vec::new()));
+            let (sender, receiver) = mpsc::unbounded::<String>();
 
             // Spawn foreground tasks
             for i in 0..3 {
-                let order = execution_order.clone();
+                let mut sender = sender.clone();
                 foreground
                     .spawn(async move {
-                        order.lock().push(format!("fg-{}", i));
+                        sender.send(format!("fg-{}", i)).await.ok();
                     })
                     .detach();
             }
 
             // Spawn background tasks
             for i in 0..3 {
-                let order = execution_order.clone();
+                let mut sender = sender.clone();
                 background
                     .spawn(async move {
-                        order.lock().push(format!("bg-{}", i));
+                        sender.send(format!("bg-{}", i)).await.ok();
                     })
                     .detach();
             }
 
             scheduler.run();
 
-            let order = execution_order.lock().clone();
+            drop(sender); // Close sender to signal no more messages
+            let order = block_on(async { receiver.take(6).collect::<Vec<_>>().await });
             deterministic_results.insert(order);
         }
 
@@ -327,31 +330,32 @@ mod tests {
             let foreground = ForegroundExecutor::new(scheduler.clone());
             let background = BackgroundExecutor::new(scheduler.clone());
 
-            let execution_order = Arc::new(Mutex::new(Vec::new()));
+            let (sender, receiver) = mpsc::unbounded::<String>();
 
             // Spawn foreground tasks
             for i in 0..3 {
-                let order = execution_order.clone();
+                let mut sender = sender.clone();
                 foreground
                     .spawn(async move {
-                        order.lock().push(format!("fg-{}", i));
+                        sender.send(format!("fg-{}", i)).await.ok();
                     })
                     .detach();
             }
 
             // Spawn background tasks
             for i in 0..3 {
-                let order = execution_order.clone();
+                let mut sender = sender.clone();
                 background
                     .spawn(async move {
-                        order.lock().push(format!("bg-{}", i));
+                        sender.send(format!("bg-{}", i)).await.ok();
                     })
                     .detach();
             }
 
             scheduler.run();
 
-            let order = execution_order.lock().clone();
+            drop(sender); // Close sender to signal no more messages
+            let order = block_on(async { receiver.take(6).collect::<Vec<_>>().await });
             randomized_results.insert(order);
         }
 
