@@ -409,8 +409,9 @@ pub async fn stream_completion(
     api_url: &str,
     api_key: &str,
     request: Request,
+    beta_headers: String,
 ) -> Result<BoxStream<'static, Result<Event, AnthropicError>>, AnthropicError> {
-    stream_completion_with_rate_limit_info(client, api_url, api_key, request)
+    stream_completion_with_rate_limit_info(client, api_url, api_key, request, beta_headers)
         .await
         .map(|output| output.0)
 }
@@ -506,6 +507,7 @@ pub async fn stream_completion_with_rate_limit_info(
     api_url: &str,
     api_key: &str,
     request: Request,
+    beta_headers: String,
 ) -> Result<
     (
         BoxStream<'static, Result<Event, AnthropicError>>,
@@ -518,9 +520,7 @@ pub async fn stream_completion_with_rate_limit_info(
         stream: true,
     };
     let uri = format!("{api_url}/v1/messages");
-    let beta_headers = Model::from_id(&request.base.model)
-        .map(|model| model.beta_headers())
-        .unwrap_or_else(|_| Model::DEFAULT_BETA_HEADERS.join(","));
+
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
