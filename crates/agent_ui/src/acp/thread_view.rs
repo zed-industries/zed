@@ -2646,7 +2646,18 @@ impl AcpThreadView {
                         .bg(cx.theme().colors().editor_background)
                         .rounded_b_md()
                         .text_ui_sm(cx)
-                        .children(terminal_view.clone()),
+                        .h_full()
+                        .children(terminal_view.map(|terminal_view| {
+                            if terminal_view
+                                .read(cx)
+                                .content_mode(window, cx)
+                                .is_scrollable()
+                            {
+                                div().h_72().child(terminal_view).into_any_element()
+                            } else {
+                                terminal_view.into_any_element()
+                            }
+                        })),
                 )
             })
             .into_any()
