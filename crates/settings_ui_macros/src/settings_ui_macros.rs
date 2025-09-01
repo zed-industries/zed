@@ -12,7 +12,6 @@ use syn::{Data, DeriveInput, LitStr, Token, parse_macro_input};
 ///
 /// ```
 /// use settings::SettingsUi;
-/// use settings_ui_macros::SettingsUi;
 ///
 /// #[derive(SettingsUi)]
 /// #[settings_ui(group = "Standard")]
@@ -101,6 +100,11 @@ fn map_ui_item_to_render(path: &str, ty: TokenStream) -> TokenStream {
                 settings::SettingsUiItem::Single(item) => settings::SettingsUiEntryVariant::Item {
                     path: #path,
                     item,
+                },
+                settings::SettingsUiItem::Dynamic{ options, determine_option } => settings::SettingsUiEntryVariant::Dynamic {
+                    path: #path,
+                    options,
+                    determine_option,
                 },
                 settings::SettingsUiItem::None => settings::SettingsUiEntryVariant::None,
             }

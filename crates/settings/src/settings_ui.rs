@@ -29,6 +29,11 @@ pub enum SettingsUiEntryVariant {
         path: &'static str,
         item: SettingsUiItemSingle,
     },
+    Dynamic {
+        path: &'static str,
+        options: Vec<SettingsUiEntry>,
+        determine_option: fn(&serde_json::Value, &mut App) -> usize,
+    },
     // todo(settings_ui): remove
     None,
 }
@@ -90,6 +95,10 @@ pub enum SettingsUiItem {
         items: Vec<SettingsUiEntry>,
     },
     Single(SettingsUiItemSingle),
+    Dynamic {
+        options: Vec<SettingsUiEntry>,
+        determine_option: fn(&serde_json::Value, &mut App) -> usize,
+    },
     None,
 }
 
