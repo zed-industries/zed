@@ -6,6 +6,7 @@ mod transport;
 
 pub use remote_client::{
     ConnectionIdentifier, ConnectionState, RemoteClient, RemoteClientDelegate, RemoteClientEvent,
-    RemotePlatform,
+    RemoteConnectionOptions, RemotePlatform,
 };
 pub use transport::ssh::{SshConnectionOptions, SshPortForwardOption};
+pub use transport::wsl::WslConnectionOptions;

@@ -9,7 +9,7 @@ use agent_client_protocol::{self as acp, PromptCapabilities};
 use agent_servers::{AgentServer, AgentServerDelegate, ClaudeCode};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode, NotifyWhenAgentWaiting};
 use agent2::{DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore};
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context as _, Result, anyhow, bail};
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
 use client::zed_urls;
@@ -423,7 +423,7 @@ impl AcpThreadView {
             .map(|worktree| worktree.read(cx).abs_path())
             .unwrap_or_else(|| paths::home_dir().as_path().into());
         let (tx, mut rx) = watch::channel("Loading…".into());
-        let delegate = AgentServerDelegate::new(project.clone(), tx);
+        let delegate = AgentServerDelegate::new(project.clone(), Some(tx));
 
         let connect_task = agent.connect(&root_dir, delegate, cx);
         let load_task = cx.spawn_in(window, async move |this, cx| {
@@ -1389,31 +1389,52 @@ impl AcpThreadView {
         let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
             return Task::ready(Ok(()));
         };
-        let project = workspace.read(cx).project().read(cx);
+        let project_entity = workspace.read(cx).project();
+        let project = project_entity.read(cx);
         let cwd = project.first_project_directory(cx);
         let shell = project.terminal_settings(&cwd, cx).shell.clone();
 
-        let terminal = terminal_panel.update(cx, |terminal_panel, cx| {
-            terminal_panel.spawn_task(
-                &SpawnInTerminal {
-                    id: task::TaskId("claude-login".into()),
-                    full_label: "claude /login".to_owned(),
-                    label: "claude /login".to_owned(),
-                    command: Some("claude".to_owned()),
-                    args: vec!["/login".to_owned()],
-                    command_label: "claude /login".to_owned(),
-                    cwd,
-                    use_new_terminal: true,
-                    allow_concurrent_runs: true,
-                    hide: task::HideStrategy::Always,
-                    shell,
-                    ..Default::default()
-                },
-                window,
-                cx,
-            )
-        });
-        cx.spawn(async move |cx| {
+        let delegate = AgentServerDelegate::new(project_entity.clone(), None);
+        let command = ClaudeCode::login_command(delegate, cx);
+
+        window.spawn(cx, async move |cx| {
+            let login_command = command.await?;
+            let command = login_command
+                .path
+                .to_str()
+                .with_context(|| format!("invalid login command: {:?}", login_command.path))?;
+            let command = shlex::try_quote(command)?;
+            let args = login_command
+                .arguments
+                .iter()
+                .map(|arg| {
+                    Ok(shlex::try_quote(arg)
+                        .context("Failed to quote argument")?
+                        .to_string())
+                })
+                .collect::<Result<Vec<_>>>()?;
+
+            let terminal = terminal_panel.update_in(cx, |terminal_panel, window, cx| {
+                terminal_panel.spawn_task(
+                    &SpawnInTerminal {
+                        id: task::TaskId("claude-login".into()),
+                        full_label: "claude /login".to_owned(),
+                        label: "claude /login".to_owned(),
+                        command: Some(command.into()),
+                        args,
+                        command_label: "claude /login".to_owned(),
+                        cwd,
+                        use_new_terminal: true,
+                        allow_concurrent_runs: true,
+                        hide: task::HideStrategy::Always,
+                        shell,
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                )
+            })?;
+
             let terminal = terminal.await?;
             let mut exit_status = terminal
                 .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
