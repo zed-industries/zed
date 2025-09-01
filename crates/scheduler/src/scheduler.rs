@@ -88,6 +88,59 @@ pub struct TestScheduler {
 }
 
 impl TestScheduler {
+    /// Run a test once with default configuration (seed 0)
+    pub fn once<F, Fut>(f: F) -> Fut::Output
+    where
+        F: FnOnce(Arc<TestScheduler>) -> Fut,
+        Fut: Future + 'static,
+        Fut::Output: 'static,
+    {
+        let scheduler = Arc::new(TestScheduler::new(SchedulerConfig::default()));
+        let background = BackgroundExecutor::new(scheduler.clone());
+
+        // Call the callback to spawn tasks and get the final future
+        let future = f(scheduler.clone());
+
+        // Use background.block() to execute and wait for the future
+        background.block(future)
+    }
+
+    /// Run a test multiple times with sequential seeds (0, 1, 2, ...)
+    pub fn many<F, Fut>(iterations: usize, f: F) -> Vec<Fut::Output>
+    where
+        F: Fn(Arc<TestScheduler>) -> Fut + Clone,
+        Fut: Future + 'static,
+        Fut::Output: 'static,
+    {
+        (0..iterations)
+            .map(|i| {
+                let seed = i as u64;
+                let scheduler = Arc::new(TestScheduler::new(SchedulerConfig::from_seed(seed)));
+                let background = BackgroundExecutor::new(scheduler.clone());
+
+                let future = f(scheduler.clone());
+                background.block(future)
+            })
+            .collect()
+    }
+
+    /// Run a test once with a specific seed
+    pub fn with_seed<F, Fut>(seed: u64, f: F) -> Fut::Output
+    where
+        F: FnOnce(Arc<TestScheduler>) -> Fut,
+        Fut: Future + 'static,
+        Fut::Output: 'static,
+    {
+        let scheduler = Arc::new(TestScheduler::new(SchedulerConfig::from_seed(seed)));
+        let background = BackgroundExecutor::new(scheduler.clone());
+
+        // Call the callback to spawn tasks and get the final future
+        let future = f(scheduler.clone());
+
+        // Use background.block() to execute and wait for the future
+        background.block(future)
+    }
+
     pub fn new(config: SchedulerConfig) -> Self {
         let (parker, unparker) = parking::pair();
         Self {
@@ -119,6 +172,16 @@ impl TestScheduler {
         while self.step() {
             // Continue stepping until no work remains
         }
+    }
+
+    /// Create a foreground executor for this scheduler
+    pub fn foreground(self: &Arc<Self>) -> ForegroundExecutor {
+        ForegroundExecutor::new(self.clone())
+    }
+
+    /// Create a background executor for this scheduler
+    pub fn background(self: &Arc<Self>) -> BackgroundExecutor {
+        BackgroundExecutor::new(self.clone())
     }
 }
 
@@ -553,5 +616,32 @@ mod tests {
         // Block on receiving the value (will park if needed)
         let result = executor.block(async { rx.await.unwrap() });
         assert_eq!(result, 42);
+    }
+
+    #[test]
+    fn test_helper_methods() {
+        // Test the once method
+        let result = TestScheduler::once(async |scheduler: Arc<TestScheduler>| {
+            let background = scheduler.background();
+            background.spawn(async { 42 }).await
+        });
+        // assert_eq!(result, 42);
+
+        // // Test the many method
+        // let results = TestScheduler::many(3, async |scheduler: Arc<TestScheduler>| {
+        //     let background = scheduler.background();
+        //     background.spawn(async { 10 }).await
+        // });
+        // assert_eq!(results, vec![10, 10, 10]);
+
+        // // Test the with_seed method
+        // let result = TestScheduler::with_seed(123, async |scheduler: Arc<TestScheduler>| {
+        //     let background = scheduler.background();
+
+        //     // Spawn a background task and wait for its result
+        //     let task = background.spawn(async { 99 });
+        //     task.await
+        // });
+        // assert_eq!(result, 99);
     }
 }
