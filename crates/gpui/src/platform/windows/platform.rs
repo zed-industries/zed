@@ -36,20 +36,22 @@ pub(crate) struct WindowsPlatform {
     raw_window_handles: Arc<RwLock<SmallVec<[SafeHwnd; 4]>>>,
     // The below members will never change throughout the entire lifecycle of the app.
     icon: HICON,
-    main_receiver: flume::Receiver<Runnable>,
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
     text_system: Arc<DirectWriteTextSystem>,
     windows_version: WindowsVersion,
     bitmap_factory: ManuallyDrop<IWICImagingFactory>,
     drop_target_helper: IDropTargetHelper,
-    validation_number: usize,
     handle: HWND,
     disable_direct_composition: bool,
 }
 
 struct WindowsPlatformInner {
     state: RefCell<WindowsPlatformState>,
+    raw_window_handles: Arc<RwLock<SmallVec<[SafeHwnd; 4]>>>,
+    // The below members will never change throughout the entire lifecycle of the app.
+    validation_number: usize,
+    main_receiver: flume::Receiver<Runnable>,
 }
 
 pub(crate) struct WindowsPlatformState {
@@ -93,8 +95,14 @@ impl WindowsPlatform {
         }
         let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
         let validation_number = rand::random::<usize>();
+        let raw_window_handles = Arc::new(RwLock::new(SmallVec::new()));
         register_platform_window_class();
-        let mut context = PlatformWindowCreateContext { inner: None };
+        let mut context = PlatformWindowCreateContext {
+            inner: None,
+            raw_window_handles,
+            validation_number,
+            main_receiver,
+        };
         let result = unsafe {
             CreateWindowExW(
                 WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_TOOLWINDOW,
@@ -137,7 +145,6 @@ impl WindowsPlatform {
                 .context("Error creating drop target helper.")?
         };
         let icon = load_icon().unwrap_or_default();
-        let raw_window_handles = Arc::new(RwLock::new(SmallVec::new()));
         let windows_version = WindowsVersion::new().context("Error retrieve windows version")?;
 
         Ok(Self {
@@ -145,7 +152,6 @@ impl WindowsPlatform {
             handle,
             raw_window_handles,
             icon,
-            main_receiver,
             background_executor,
             foreground_executor,
             text_system,
@@ -153,7 +159,6 @@ impl WindowsPlatform {
             windows_version,
             bitmap_factory,
             drop_target_helper,
-            validation_number,
         })
     }
 
@@ -175,24 +180,6 @@ impl WindowsPlatform {
             });
     }
 
-    fn close_one_window(&self, target_window: HWND) -> bool {
-        let mut lock = self.raw_window_handles.write();
-        let index = lock
-            .iter()
-            .position(|handle| handle.as_raw() == target_window)
-            .unwrap();
-        lock.remove(index);
-
-        lock.is_empty()
-    }
-
-    #[inline]
-    fn run_foreground_task(&self) {
-        for runnable in self.main_receiver.drain() {
-            runnable.run();
-        }
-    }
-
     fn generate_creation_info(&self) -> WindowCreationInfo {
         WindowCreationInfo {
             icon: self.icon,
@@ -200,93 +187,11 @@ impl WindowsPlatform {
             current_cursor: self.inner.state.borrow().current_cursor,
             windows_version: self.windows_version,
             drop_target_helper: self.drop_target_helper.clone(),
-            validation_number: self.validation_number,
-            main_receiver: self.main_receiver.clone(),
+            validation_number: self.inner.validation_number,
+            main_receiver: self.inner.main_receiver.clone(),
             platform_window_handle: self.handle,
             disable_direct_composition: self.disable_direct_composition,
         }
-    }
-
-    fn handle_dock_action_event(&self, action_idx: usize) {
-        let mut lock = self.inner.state.borrow_mut();
-        if let Some(mut callback) = lock.callbacks.app_menu_action.take() {
-            let Some(action) = lock
-                .jump_list
-                .dock_menus
-                .get(action_idx)
-                .map(|dock_menu| dock_menu.action.boxed_clone())
-            else {
-                lock.callbacks.app_menu_action = Some(callback);
-                log::error!("Dock menu for index {action_idx} not found");
-                return;
-            };
-            drop(lock);
-            callback(&*action);
-            self.inner.state.borrow_mut().callbacks.app_menu_action = Some(callback);
-        }
-    }
-
-    fn handle_input_lang_change(&self) {
-        let mut lock = self.inner.state.borrow_mut();
-        if let Some(mut callback) = lock.callbacks.keyboard_layout_change.take() {
-            drop(lock);
-            callback();
-            self.inner
-                .state
-                .borrow_mut()
-                .callbacks
-                .keyboard_layout_change
-                .get_or_insert(callback);
-        }
-    }
-
-    // Returns if the app should quit.
-    fn handle_events(&self) {
-        let mut msg = MSG::default();
-        unsafe {
-            while GetMessageW(&mut msg, None, 0, 0).as_bool() {
-                match msg.message {
-                    WM_QUIT => return,
-                    WM_INPUTLANGCHANGE
-                    | WM_GPUI_CLOSE_ONE_WINDOW
-                    | WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD
-                    | WM_GPUI_DOCK_MENU_ACTION => {
-                        if self.handle_gpui_events(msg.message, msg.wParam, msg.lParam, &msg) {
-                            return;
-                        }
-                    }
-                    _ => {
-                        DispatchMessageW(&msg);
-                    }
-                }
-            }
-        }
-    }
-
-    // Returns true if the app should quit.
-    fn handle_gpui_events(
-        &self,
-        message: u32,
-        wparam: WPARAM,
-        lparam: LPARAM,
-        msg: *const MSG,
-    ) -> bool {
-        if wparam.0 != self.validation_number {
-            unsafe { DispatchMessageW(msg) };
-            return false;
-        }
-        match message {
-            WM_GPUI_CLOSE_ONE_WINDOW => {
-                if self.close_one_window(HWND(lparam.0 as _)) {
-                    return true;
-                }
-            }
-            WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD => self.run_foreground_task(),
-            WM_GPUI_DOCK_MENU_ACTION => self.handle_dock_action_event(lparam.0 as _),
-            WM_INPUTLANGCHANGE => self.handle_input_lang_change(),
-            _ => unreachable!(),
-        }
-        false
     }
 
     fn set_dock_menus(&self, menus: Vec<MenuItem>) {
@@ -389,7 +294,13 @@ impl Platform for WindowsPlatform {
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         on_finish_launching();
         self.begin_vsync_thread();
-        self.handle_events();
+
+        let mut msg = MSG::default();
+        unsafe {
+            while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+                DispatchMessageW(&msg);
+            }
+        }
 
         if let Some(ref mut callback) = self.inner.state.borrow_mut().callbacks.quit {
             callback();
@@ -728,7 +639,7 @@ impl Platform for WindowsPlatform {
             PostMessageW(
                 Some(self.handle),
                 WM_GPUI_DOCK_MENU_ACTION,
-                WPARAM(self.validation_number),
+                WPARAM(self.inner.validation_number),
                 LPARAM(action as isize),
             )
             .log_err();
@@ -745,15 +656,16 @@ impl Platform for WindowsPlatform {
 }
 
 impl WindowsPlatformInner {
-    fn new(
-        context: &PlatformWindowCreateContext,
-        hwnd: HWND,
-        cs: &CREATESTRUCTW,
-    ) -> Result<Rc<Self>> {
+    fn new(context: &PlatformWindowCreateContext) -> Result<Rc<Self>> {
         let state = RefCell::new(WindowsPlatformState::new());
-        Ok(Rc::new(Self { state }))
+        Ok(Rc::new(Self {
+            state,
+            raw_window_handles: context.raw_window_handles.clone(),
+            validation_number: context.validation_number,
+            main_receiver: context.main_receiver.clone(),
+        }))
     }
-    
+
     fn handle_msg(
         self: &Rc<Self>,
         handle: HWND,
@@ -761,7 +673,89 @@ impl WindowsPlatformInner {
         wparam: WPARAM,
         lparam: LPARAM,
     ) -> LRESULT {
-        
+        let handled = match msg {
+            WM_INPUTLANGCHANGE
+            | WM_GPUI_CLOSE_ONE_WINDOW
+            | WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD
+            | WM_GPUI_DOCK_MENU_ACTION => self.handle_gpui_events(msg, wparam, lparam),
+            _ => None,
+        };
+        if let Some(result) = handled {
+            LRESULT(result)
+        } else {
+            unsafe { DefWindowProcW(handle, msg, wparam, lparam) }
+        }
+    }
+
+    // Returns true if the app should quit.
+    fn handle_gpui_events(&self, message: u32, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
+        if wparam.0 != self.validation_number {
+            // unsafe { DispatchMessageW(msg) };
+            log::error!("Wrong validation number while processing message: {message}");
+            return None;
+        }
+        match message {
+            WM_GPUI_CLOSE_ONE_WINDOW => {
+                if self.close_one_window(HWND(lparam.0 as _)) {
+                    unsafe { PostQuitMessage(0) };
+                }
+                Some(0)
+            }
+            WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD => self.run_foreground_task(),
+            WM_GPUI_DOCK_MENU_ACTION => self.handle_dock_action_event(lparam.0 as _),
+            WM_INPUTLANGCHANGE => self.handle_input_lang_change(),
+            _ => unreachable!(),
+        }
+    }
+
+    fn close_one_window(&self, target_window: HWND) -> bool {
+        let mut lock = self.raw_window_handles.write();
+        let index = lock
+            .iter()
+            .position(|handle| handle.as_raw() == target_window)
+            .unwrap();
+        lock.remove(index);
+
+        lock.is_empty()
+    }
+
+    #[inline]
+    fn run_foreground_task(&self) -> Option<isize> {
+        for runnable in self.main_receiver.drain() {
+            runnable.run();
+        }
+        Some(0)
+    }
+
+    fn handle_dock_action_event(&self, action_idx: usize) -> Option<isize> {
+        let mut lock = self.state.borrow_mut();
+        let mut callback = lock.callbacks.app_menu_action.take()?;
+        let Some(action) = lock
+            .jump_list
+            .dock_menus
+            .get(action_idx)
+            .map(|dock_menu| dock_menu.action.boxed_clone())
+        else {
+            lock.callbacks.app_menu_action = Some(callback);
+            log::error!("Dock menu for index {action_idx} not found");
+            return Some(1);
+        };
+        drop(lock);
+        callback(&*action);
+        self.state.borrow_mut().callbacks.app_menu_action = Some(callback);
+        Some(0)
+    }
+
+    fn handle_input_lang_change(&self) -> Option<isize> {
+        let mut callback = self
+            .state
+            .borrow_mut()
+            .callbacks
+            .keyboard_layout_change
+            .take()?;
+        callback();
+        self.state.borrow_mut().callbacks.keyboard_layout_change = Some(callback);
+        Some(0)
     }
 }
 
@@ -788,6 +782,9 @@ pub(crate) struct WindowCreationInfo {
 
 struct PlatformWindowCreateContext {
     inner: Option<Result<Rc<WindowsPlatformInner>>>,
+    raw_window_handles: Arc<RwLock<SmallVec<[SafeHwnd; 4]>>>,
+    validation_number: usize,
+    main_receiver: flume::Receiver<Runnable>,
 }
 
 fn open_target(target: impl AsRef<OsStr>) -> Result<()> {
@@ -983,7 +980,7 @@ unsafe extern "system" fn window_procedure(
         let params = unsafe { &*params };
         let creation_context = params.lpCreateParams as *mut PlatformWindowCreateContext;
         let creation_context = unsafe { &mut *creation_context };
-        return match WindowsPlatformInner::new(creation_context, hwnd, params) {
+        return match WindowsPlatformInner::new(creation_context) {
             Ok(window_state) => {
                 let weak = Box::new(Rc::downgrade(&window_state));
                 unsafe { set_window_long(hwnd, GWLP_USERDATA, Box::into_raw(weak) as isize) };
