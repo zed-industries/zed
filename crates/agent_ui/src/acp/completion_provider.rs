@@ -723,12 +723,9 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                         .map(|command| {
                             let new_text = if let Some(argument) = argument.as_ref() {
                                 format!("/{} {}", command.name, argument.to_string())
-                            } else if command.input.is_some() {
-                                format!("/{} ", command.name)
                             } else {
-                                format!("/{}", command.name)
+                                format!("/{} ", command.name)
                             };
-                            let new_text_len = new_text.len();
 
                             let is_missing_argument = argument.is_none() && command.input.is_some();
                             Completion {
@@ -742,41 +739,24 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                 icon_path: None,
                                 insert_text_mode: None,
                                 confirm: Some(Arc::new({
-                                    let command_name: SharedString = command.name.clone().into();
-                                    let command_description: SharedString =
-                                        command.description.clone().into();
-                                    let source_range = source_range.clone();
                                     let editor = editor.clone();
-                                    move |intent, window, cx| {
+                                    move |intent, _window, cx| {
                                         if !is_missing_argument {
-                                            window.defer(cx, {
-                                                let command_name = command_name.clone();
-                                                let command_description =
-                                                    command_description.clone();
+                                            cx.defer({
                                                 let editor = editor.clone();
-                                                move |window, cx| {
+                                                move |cx| {
                                                     editor
-                                                        .update(cx, |editor, cx| {
-                                                            editor
-                                                                .confirm_command_completion(
-                                                                    command_name,
-                                                                    Some(command_description),
-                                                                    source_range.start,
-                                                                    new_text_len,
-                                                                    window,
-                                                                    cx,
-                                                                )
-                                                                .detach();
+                                                        .update(cx, |_editor, cx| {
                                                             match intent {
-                                                        CompletionIntent::Complete
-                                                        | CompletionIntent::CompleteWithInsert
-                                                        | CompletionIntent::CompleteWithReplace => {
-                                                            if !is_missing_argument {
-                                                                cx.emit(MessageEditorEvent::Send);
+                                                                CompletionIntent::Complete
+                                                                | CompletionIntent::CompleteWithInsert
+                                                                | CompletionIntent::CompleteWithReplace => {
+                                                                    if !is_missing_argument {
+                                                                        cx.emit(MessageEditorEvent::Send);
+                                                                    }
+                                                                }
+                                                                CompletionIntent::Compose => {}
                                                             }
-                                                        }
-                                                        CompletionIntent::Compose => {}
-                                                    }
                                                         })
                                                         .ok();
                                                 }
