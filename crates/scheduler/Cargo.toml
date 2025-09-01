@@ -17,6 +17,7 @@ test-support = []
 
 [dependencies]
 async-task = "4.7.1"
+parking = "2.2"
 parking_lot = "0.12"
 futures = "0.3"
 rand = "0.8"

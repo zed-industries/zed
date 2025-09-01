@@ -1,4 +1,5 @@
 use async_task::{Runnable, Task};
+use parking::{Parker, Unparker};
 use parking_lot::Mutex;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
@@ -7,7 +8,9 @@ use std::future::Future;
 use std::marker::PhantomData;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::task::{Poll, Waker};
 use std::thread;
+use std::time::Duration;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TaskLabel(usize);
@@ -16,6 +19,16 @@ pub struct TaskLabel(usize);
 pub struct SchedulerConfig {
     pub seed: u64,
     pub randomize_order: bool,
+    pub allow_parking: bool,
+}
+
+impl SchedulerConfig {
+    pub fn from_seed(seed: u64) -> Self {
+        Self {
+            seed,
+            ..Default::default()
+        }
+    }
 }
 
 impl Default for SchedulerConfig {
@@ -23,6 +36,7 @@ impl Default for SchedulerConfig {
         Self {
             seed: 0,
             randomize_order: true,
+            allow_parking: false,
         }
     }
 }
@@ -35,6 +49,19 @@ impl TaskLabel {
     }
 }
 
+struct CustomWaker {
+    unparker: Unparker,
+}
+
+impl std::task::Wake for CustomWaker {
+    fn wake(self: Arc<Self>) {
+        self.unparker.unpark();
+    }
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.unparker.unpark();
+    }
+}
+
 struct SchedulerState {
     foreground: VecDeque<Runnable<()>>,
     background: VecDeque<Runnable<()>>,
@@ -42,21 +69,27 @@ struct SchedulerState {
     rng: ChaCha8Rng,
     deprioritized_labels: HashSet<TaskLabel>,
     randomize_order: bool,
+    allow_parking: bool,
 }
 
 pub trait Scheduler {
     fn schedule_foreground(&self, runnable: Runnable<()>, label: Option<TaskLabel>);
     fn schedule_background(&self, runnable: Runnable<()>, label: Option<TaskLabel>);
+    fn park(&self, timeout: Option<Duration>) -> bool;
+    fn unparker(&self) -> Unparker;
 }
 
 pub struct TestScheduler {
     state: Mutex<SchedulerState>,
     pub thread_id: thread::ThreadId,
     pub config: SchedulerConfig,
+    parker: Arc<Mutex<Parker>>,
+    unparker: Unparker,
 }
 
 impl TestScheduler {
     pub fn new(config: SchedulerConfig) -> Self {
+        let (parker, unparker) = parking::pair();
         Self {
             state: Mutex::new(SchedulerState {
                 foreground: VecDeque::new(),
@@ -65,9 +98,12 @@ impl TestScheduler {
                 rng: ChaCha8Rng::seed_from_u64(config.seed),
                 deprioritized_labels: HashSet::new(),
                 randomize_order: config.randomize_order,
+                allow_parking: config.allow_parking,
             }),
             thread_id: thread::current().id(),
             config,
+            parker: Arc::new(Mutex::new(parker)),
+            unparker,
         }
     }
 
@@ -89,6 +125,7 @@ impl TestScheduler {
 impl Scheduler for TestScheduler {
     fn schedule_foreground(&self, runnable: Runnable<()>, _label: Option<TaskLabel>) {
         self.state.lock().foreground.push_back(runnable);
+        self.unparker.unpark();
     }
 
     fn schedule_background(&self, runnable: Runnable<()>, label: Option<TaskLabel>) {
@@ -100,6 +137,28 @@ impl Scheduler for TestScheduler {
             }
         }
         state.background.push_back(runnable);
+        drop(state);
+        self.unparker.unpark();
+    }
+
+    fn park(&self, timeout: Option<Duration>) -> bool {
+        let state = self.state.lock();
+        if !state.allow_parking {
+            drop(state);
+            panic!("Parking forbidden");
+        }
+        drop(state);
+
+        if let Some(duration) = timeout {
+            self.parker.lock().park_timeout(duration);
+        } else {
+            self.parker.lock().park();
+        }
+        true
+    }
+
+    fn unparker(&self) -> Unparker {
+        self.unparker.clone()
     }
 }
 
@@ -225,6 +284,27 @@ impl BackgroundExecutor {
         runnable.schedule();
         task
     }
+
+    pub fn block<Fut: Future>(&self, future: Fut) -> Fut::Output {
+        let mut future = Box::pin(future);
+
+        loop {
+            let waker = Waker::from(Arc::new(CustomWaker {
+                unparker: self.scheduler.unparker(),
+            }));
+            let mut cx = std::task::Context::from_waker(&waker);
+
+            match future.as_mut().poll(&mut cx) {
+                Poll::Ready(result) => return result,
+                Poll::Pending => {
+                    if self.scheduler.step() {
+                        continue;
+                    }
+                    self.scheduler.park(None);
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -285,8 +365,8 @@ mod tests {
     #[test]
     fn test_deprioritize_task() {
         let scheduler = Arc::new(TestScheduler::new(SchedulerConfig {
-            seed: 0,
             randomize_order: false,
+            ..Default::default()
         }));
         let background = BackgroundExecutor::new(scheduler.clone());
 
@@ -351,6 +431,7 @@ mod tests {
             let config = SchedulerConfig {
                 seed,
                 randomize_order: false,
+                ..Default::default()
             };
             let order = block_on(capture_execution_order(config));
             assert_eq!(order.len(), 6);
@@ -367,10 +448,7 @@ mod tests {
         // Test randomized mode: different seeds can produce different execution orders
         let mut randomized_results = HashSet::new();
         for seed in 0..20 {
-            let config = SchedulerConfig {
-                seed,
-                randomize_order: true,
-            };
+            let config = SchedulerConfig::from_seed(seed);
             let order = block_on(capture_execution_order(config));
             assert_eq!(order.len(), 6);
             randomized_results.insert(order);
@@ -414,5 +492,17 @@ mod tests {
         scheduler.run();
 
         receiver.collect().await
+    }
+
+    #[test]
+    fn test_block_method() {
+        let config = SchedulerConfig {
+            allow_parking: true,
+            ..Default::default()
+        };
+        let scheduler = Arc::new(TestScheduler::new(config));
+        let executor = BackgroundExecutor::new(scheduler);
+        let result = executor.block(async { 42 });
+        assert_eq!(result, 42);
     }
 }
