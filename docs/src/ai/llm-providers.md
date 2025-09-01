@@ -40,7 +40,6 @@ Ensure your credentials have the following permissions set up:
 
 - `bedrock:InvokeModelWithResponseStream`
 - `bedrock:InvokeModel`
-- `bedrock:ConverseStream`
 
 Your IAM policy should look similar to:
 
@@ -52,8 +51,7 @@ Your IAM policy should look similar to:
       "Effect": "Allow",
       "Action": [
         "bedrock:InvokeModel",
-        "bedrock:InvokeModelWithResponseStream",
-        "bedrock:ConverseStream"
+        "bedrock:InvokeModelWithResponseStream"
       ],
       "Resource": "*"
     }
