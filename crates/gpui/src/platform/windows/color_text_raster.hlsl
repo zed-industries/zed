@@ -1,3 +1,5 @@
+#include "alpha_correction.hlsl"
+
 struct RasterVertexOutput {
     float4 position : SV_Position;
     float2 texcoord : TEXCOORD0;
@@ -23,17 +25,19 @@ struct Bounds {
     int2 size;
 };
 
-Texture2D<float4> t_layer : register(t0);
+Texture2D<float> t_layer : register(t0);
 SamplerState s_layer : register(s0);
 
 cbuffer GlyphLayerTextureParams : register(b0) {
     Bounds bounds;
     float4 run_color;
+    float4 gamma_ratios;
+    float grayscale_enhanced_contrast;
+    float3 _pad;
 };
 
 float4 emoji_rasterization_fragment(PixelInput input): SV_Target {
-    float3 sampled = t_layer.Sample(s_layer, input.texcoord.xy).rgb;
-    float alpha = (sampled.r + sampled.g + sampled.b) / 3;
-
-    return float4(run_color.rgb, alpha);
+    float sample = t_layer.Sample(s_layer, input.texcoord.xy).r;
+    float alpha_corrected = apply_contrast_and_gamma_correction(sample, run_color.rgb, grayscale_enhanced_contrast, gamma_ratios);
+    return float4(run_color.rgb, alpha_corrected * run_color.a);
 }

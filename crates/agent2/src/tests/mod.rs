@@ -950,6 +950,7 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
         paths::settings_file(),
         json!({
             "agent": {
+                "always_allow_tool_actions": true,
                 "profiles": {
                     "test": {
                         "name": "Test Profile",
