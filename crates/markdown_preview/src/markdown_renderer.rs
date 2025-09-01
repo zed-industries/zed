@@ -624,7 +624,7 @@ fn render_markdown_code_block(
 }
 
 fn render_markdown_paragraph(parsed: &MarkdownParagraph, cx: &mut RenderContext) -> AnyElement {
-    cx.with_common_p(h_flex())
+    cx.with_common_p(h_flex().flex_wrap())
         .children(render_markdown_text(parsed, cx))
         .into_any_element()
 }
