@@ -8,7 +8,7 @@ use std::convert::TryFrom;
 pub const OPEN_ROUTER_API_URL: &str = "https://openrouter.ai/api/v1";
 
 fn is_none_or_empty<T: AsRef<[U]>, U>(opt: &Option<T>) -> bool {
-    opt.as_ref().map_or(true, |v| v.as_ref().is_empty())
+    opt.as_ref().is_none_or(|v| v.as_ref().is_empty())
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -153,11 +153,12 @@ pub struct RequestUsage {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(untagged)]
+#[serde(rename_all = "lowercase")]
 pub enum ToolChoice {
     Auto,
     Required,
     None,
+    #[serde(untagged)]
     Other(ToolDefinition),
 }
 
@@ -239,10 +240,10 @@ impl MessageContent {
 
 impl From<Vec<MessagePart>> for MessageContent {
     fn from(parts: Vec<MessagePart>) -> Self {
-        if parts.len() == 1 {
-            if let MessagePart::Text { text } = &parts[0] {
-                return Self::Plain(text.clone());
-            }
+        if parts.len() == 1
+            && let MessagePart::Text { text } = &parts[0]
+        {
+            return Self::Plain(text.clone());
         }
         Self::Multipart(parts)
     }
@@ -423,7 +424,7 @@ pub async fn complete(
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Authorization", format!("Bearer {}", api_key.trim()))
         .header("HTTP-Referer", "https://zed.dev")
         .header("X-Title", "Zed Editor");
 

@@ -95,6 +95,7 @@ mod style;
 mod styled;
 mod subscription;
 mod svg_renderer;
+mod tab_stop;
 mod taffy;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
@@ -151,11 +152,12 @@ pub use style::*;
 pub use styled::*;
 pub use subscription::*;
 use svg_renderer::*;
+pub(crate) use tab_stop::*;
 pub use taffy::{AvailableSpace, LayoutId};
 #[cfg(any(test, feature = "test-support"))]
 pub use test::*;
 pub use text_system::*;
-pub use util::arc_cow::ArcCow;
+pub use util::{FutureExt, Timeout, arc_cow::ArcCow};
 pub use view::*;
 pub use window::*;
 
@@ -170,6 +172,10 @@ pub trait AppContext {
     type Result<T>;
 
     /// Create a new entity in the app context.
+    #[expect(
+        clippy::wrong_self_convention,
+        reason = "`App::new` is an ubiquitous function for creating entities"
+    )]
     fn new<T: 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Context<T>) -> T,
@@ -194,6 +200,11 @@ pub trait AppContext {
         handle: &Entity<T>,
         update: impl FnOnce(&mut T, &mut Context<T>) -> R,
     ) -> Self::Result<R>
+    where
+        T: 'static;
+
+    /// Update a entity in the app context.
+    fn as_mut<'a, T>(&'a mut self, handle: &Entity<T>) -> Self::Result<GpuiBorrow<'a, T>>
     where
         T: 'static;
 
@@ -341,7 +352,7 @@ impl<T> Flatten<T> for Result<T> {
 }
 
 /// Information about the GPU GPUI is running on.
-#[derive(Default, Debug)]
+#[derive(Default, Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct GpuSpecs {
     /// Whether the GPU is really a fake (like `llvmpipe`) running on the CPU.
     pub is_software_emulated: bool,

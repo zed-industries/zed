@@ -1,13 +1,14 @@
 pub mod client;
+pub mod listener;
 pub mod protocol;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 pub mod transport;
 pub mod types;
 
-use std::fmt::Display;
 use std::path::Path;
 use std::sync::Arc;
+use std::{fmt::Display, path::PathBuf};
 
 use anyhow::Result;
 use client::Client;
@@ -30,7 +31,7 @@ impl Display for ContextServerId {
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
 pub struct ContextServerCommand {
     #[serde(rename = "command")]
-    pub path: String,
+    pub path: PathBuf,
     pub args: Vec<String>,
     pub env: Option<HashMap<String, String>>,
 }
@@ -52,7 +53,7 @@ impl std::fmt::Debug for ContextServerCommand {
 }
 
 enum ContextServerTransport {
-    Stdio(ContextServerCommand),
+    Stdio(ContextServerCommand, Option<PathBuf>),
     Custom(Arc<dyn crate::transport::Transport>),
 }
 
@@ -63,11 +64,18 @@ pub struct ContextServer {
 }
 
 impl ContextServer {
-    pub fn stdio(id: ContextServerId, command: ContextServerCommand) -> Self {
+    pub fn stdio(
+        id: ContextServerId,
+        command: ContextServerCommand,
+        working_directory: Option<Arc<Path>>,
+    ) -> Self {
         Self {
             id,
             client: RwLock::new(None),
-            configuration: ContextServerTransport::Stdio(command),
+            configuration: ContextServerTransport::Stdio(
+                command,
+                working_directory.map(|directory| directory.to_path_buf()),
+            ),
         }
     }
 
@@ -87,15 +95,36 @@ impl ContextServer {
         self.client.read().clone()
     }
 
-    pub async fn start(self: Arc<Self>, cx: &AsyncApp) -> Result<()> {
-        let client = match &self.configuration {
-            ContextServerTransport::Stdio(command) => Client::stdio(
+    pub async fn start(&self, cx: &AsyncApp) -> Result<()> {
+        self.initialize(self.new_client(cx)?).await
+    }
+
+    /// Starts the context server, making sure handlers are registered before initialization happens
+    pub async fn start_with_handlers(
+        &self,
+        notification_handlers: Vec<(
+            &'static str,
+            Box<dyn 'static + Send + FnMut(serde_json::Value, AsyncApp)>,
+        )>,
+        cx: &AsyncApp,
+    ) -> Result<()> {
+        let client = self.new_client(cx)?;
+        for (method, handler) in notification_handlers {
+            client.on_notification(method, handler);
+        }
+        self.initialize(client).await
+    }
+
+    fn new_client(&self, cx: &AsyncApp) -> Result<Client> {
+        Ok(match &self.configuration {
+            ContextServerTransport::Stdio(command, working_directory) => Client::stdio(
                 client::ContextServerId(self.id.0.clone()),
                 client::ModelContextServerBinary {
                     executable: Path::new(&command.path).to_path_buf(),
                     args: command.args.clone(),
                     env: command.env.clone(),
                 },
+                working_directory,
                 cx.clone(),
             )?,
             ContextServerTransport::Custom(transport) => Client::new(
@@ -104,12 +133,11 @@ impl ContextServer {
                 transport.clone(),
                 cx.clone(),
             )?,
-        };
-        self.initialize(client).await
+        })
     }
 
     async fn initialize(&self, client: Client) -> Result<()> {
-        log::info!("starting context server {}", self.id);
+        log::debug!("starting context server {}", self.id);
         let protocol = crate::protocol::ModelContextProtocol::new(client);
         let client_info = types::Implementation {
             name: "Zed".to_string(),

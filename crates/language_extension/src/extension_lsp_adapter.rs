@@ -6,21 +6,24 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use extension::{Extension, ExtensionLanguageServerProxy, WorktreeDelegate};
 use fs::Fs;
-use futures::{Future, FutureExt};
-use gpui::AsyncApp;
+use futures::{Future, FutureExt, future::join_all};
+use gpui::{App, AppContext, AsyncApp, Task};
 use language::{
-    BinaryStatus, CodeLabel, HighlightId, Language, LanguageName, LanguageToolchainStore,
-    LspAdapter, LspAdapterDelegate,
+    BinaryStatus, CodeLabel, HighlightId, Language, LanguageName, LspAdapter, LspAdapterDelegate,
+    Toolchain,
 };
-use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerName};
+use lsp::{
+    CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerName,
+    LanguageServerSelector,
+};
 use serde::Serialize;
 use serde_json::Value;
 use util::{ResultExt, fs::make_file_executable, maybe};
 
-use crate::LanguageServerRegistryProxy;
+use crate::{LanguageServerRegistryProxy, LspAccess};
 
 /// An adapter that allows an [`LspAdapterDelegate`] to be used as a [`WorktreeDelegate`].
 struct WorktreeDelegateAdapter(pub Arc<dyn LspAdapterDelegate>);
@@ -71,10 +74,50 @@ impl ExtensionLanguageServerProxy for LanguageServerRegistryProxy {
     fn remove_language_server(
         &self,
         language: &LanguageName,
-        language_server_id: &LanguageServerName,
-    ) {
+        language_server_name: &LanguageServerName,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
         self.language_registry
-            .remove_lsp_adapter(language, language_server_id);
+            .remove_lsp_adapter(language, language_server_name);
+
+        let mut tasks = Vec::new();
+        match &self.lsp_access {
+            LspAccess::ViaLspStore(lsp_store) => lsp_store.update(cx, |lsp_store, cx| {
+                let stop_task = lsp_store.stop_language_servers_for_buffers(
+                    Vec::new(),
+                    HashSet::from_iter([LanguageServerSelector::Name(
+                        language_server_name.clone(),
+                    )]),
+                    cx,
+                );
+                tasks.push(stop_task);
+            }),
+            LspAccess::ViaWorkspaces(lsp_store_provider) => {
+                if let Ok(lsp_stores) = lsp_store_provider(cx) {
+                    for lsp_store in lsp_stores {
+                        lsp_store.update(cx, |lsp_store, cx| {
+                            let stop_task = lsp_store.stop_language_servers_for_buffers(
+                                Vec::new(),
+                                HashSet::from_iter([LanguageServerSelector::Name(
+                                    language_server_name.clone(),
+                                )]),
+                                cx,
+                            );
+                            tasks.push(stop_task);
+                        });
+                    }
+                }
+            }
+            LspAccess::Noop => {}
+        }
+
+        cx.background_spawn(async move {
+            let results = join_all(tasks).await;
+            for result in results {
+                result?;
+            }
+            Ok(())
+        })
     }
 
     fn update_language_server_status(
@@ -116,7 +159,7 @@ impl LspAdapter for ExtensionLspAdapter {
     fn get_language_server_command<'a>(
         self: Arc<Self>,
         delegate: Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         _: LanguageServerBinaryOptions,
         _: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
         _: &'a mut AsyncApp,
@@ -199,7 +242,7 @@ impl LspAdapter for ExtensionLspAdapter {
         ]))
     }
 
-    fn language_ids(&self) -> HashMap<String, String> {
+    fn language_ids(&self) -> HashMap<LanguageName, String> {
         // TODO: The language IDs can be provided via the language server options
         // in `extension.toml now but we're leaving these existing usages in place temporarily
         // to avoid any compatibility issues between Zed and the extension versions.
@@ -207,7 +250,7 @@ impl LspAdapter for ExtensionLspAdapter {
         // We can remove once the following extension versions no longer see any use:
         // - php@0.0.1
         if self.extension.manifest().id.as_ref() == "php" {
-            return HashMap::from_iter([("PHP".into(), "php".into())]);
+            return HashMap::from_iter([(LanguageName::new("PHP"), "php".into())]);
         }
 
         self.extension
@@ -245,7 +288,7 @@ impl LspAdapter for ExtensionLspAdapter {
         self: Arc<Self>,
         _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         _cx: &mut AsyncApp,
     ) -> Result<Value> {
         let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
@@ -293,7 +336,7 @@ impl LspAdapter for ExtensionLspAdapter {
         target_language_server_id: LanguageServerName,
         _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn LanguageToolchainStore>,
+
         _cx: &mut AsyncApp,
     ) -> Result<Option<serde_json::Value>> {
         let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;

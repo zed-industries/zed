@@ -221,11 +221,11 @@ Most of the servers would rely on this way of configuring only.
 
 Apart of the LSP-related server configuration options, certain servers in Zed allow configuring the way binary is launched by Zed.
 
-Languages mention in the documentation, whether they support it or not and their defaults for the configuration values:
+Language servers are automatically downloaded or launched if found in your path, if you wish to specify an explicit alternate binary you can specify that in settings:
 
 ```json
-  "languages": {
-    "Markdown": {
+  "lsp": {
+    "rust-analyzer": {
       "binary": {
         // Whether to fetch the binary from the internet, or attempt to find locally.
         "ignore_system_version": false,

@@ -4,7 +4,6 @@ use gpui::{
 };
 use itertools::Itertools;
 use serde_json::json;
-use settings::get_key_equivalents;
 use ui::{Button, ButtonStyle};
 use ui::{
     ButtonCommon, Clickable, Context, FluentBuilder, InteractiveElement, Label, LabelCommon,
@@ -71,12 +70,10 @@ impl KeyContextView {
                         } else {
                             None
                         }
+                    } else if this.action_matches(&e.action, binding.action()) {
+                        Some(true)
                     } else {
-                        if this.action_matches(&e.action, binding.action()) {
-                            Some(true)
-                        } else {
-                            Some(false)
-                        }
+                        Some(false)
                     };
                     let predicate = if let Some(predicate) = binding.predicate() {
                         format!("{}", predicate)
@@ -98,9 +95,7 @@ impl KeyContextView {
             cx.notify();
         });
         let sub2 = cx.observe_pending_input(window, |this, window, cx| {
-            this.pending_keystrokes = window
-                .pending_input_keystrokes()
-                .map(|k| k.iter().cloned().collect());
+            this.pending_keystrokes = window.pending_input_keystrokes().map(|k| k.to_vec());
             if this.pending_keystrokes.is_some() {
                 this.last_keystrokes.take();
             }
@@ -132,14 +127,7 @@ impl KeyContextView {
     }
 
     fn matches(&self, predicate: &KeyBindingContextPredicate) -> bool {
-        let mut stack = self.context_stack.clone();
-        while !stack.is_empty() {
-            if predicate.eval(&stack) {
-                return true;
-            }
-            stack.pop();
-        }
-        false
+        predicate.depth_of(&self.context_stack).is_some()
     }
 
     fn action_matches(&self, a: &Option<Box<dyn Action>>, b: &dyn Action) -> bool {
@@ -180,7 +168,8 @@ impl Item for KeyContextView {
 impl Render for KeyContextView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         use itertools::Itertools;
-        let key_equivalents = get_key_equivalents(cx.keyboard_layout().id());
+
+        let key_equivalents = cx.keyboard_mapper().get_key_equivalents();
         v_flex()
             .id("key-context-view")
             .overflow_scroll()

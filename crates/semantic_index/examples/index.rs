@@ -35,7 +35,7 @@ fn main() {
             None,
         ));
         let client = client::Client::new(clock, http.clone(), cx);
-        Client::set_global(client.clone(), cx);
+        Client::set_global(client, cx);
 
         let args: Vec<String> = std::env::args().collect();
         if args.len() < 2 {
@@ -49,7 +49,7 @@ fn main() {
         let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY not set");
 
         let embedding_provider = Arc::new(OpenAiEmbeddingProvider::new(
-            http.clone(),
+            http,
             OpenAiEmbeddingModel::TextEmbedding3Small,
             open_ai::OPEN_AI_API_URL.to_string(),
             api_key,

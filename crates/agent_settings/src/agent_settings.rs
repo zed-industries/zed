@@ -8,10 +8,15 @@ use gpui::{App, Pixels, SharedString};
 use language_model::LanguageModel;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsSources, SettingsUi};
 use std::borrow::Cow;
 
 pub use crate::agent_profile::*;
+
+pub const SUMMARIZE_THREAD_PROMPT: &str =
+    include_str!("../../agent/src/prompts/summarize_thread_prompt.txt");
+pub const SUMMARIZE_THREAD_DETAILED_PROMPT: &str =
+    include_str!("../../agent/src/prompts/summarize_thread_detailed_prompt.txt");
 
 pub fn init(cx: &mut App) {
     AgentSettings::register(cx);
@@ -43,7 +48,7 @@ pub enum NotifyWhenAgentWaiting {
     Never,
 }
 
-#[derive(Default, Clone, Debug)]
+#[derive(Default, Clone, Debug, SettingsUi)]
 pub struct AgentSettings {
     pub enabled: bool,
     pub button: bool,
@@ -67,6 +72,9 @@ pub struct AgentSettings {
     pub model_parameters: Vec<LanguageModelParameters>,
     pub preferred_completion_mode: CompletionMode,
     pub enable_feedback: bool,
+    pub expand_edit_card: bool,
+    pub expand_terminal_card: bool,
+    pub use_modifier_to_send: bool,
 }
 
 impl AgentSettings {
@@ -110,15 +118,15 @@ pub struct LanguageModelParameters {
 
 impl LanguageModelParameters {
     pub fn matches(&self, model: &Arc<dyn LanguageModel>) -> bool {
-        if let Some(provider) = &self.provider {
-            if provider.0 != model.provider_id().0 {
-                return false;
-            }
+        if let Some(provider) = &self.provider
+            && provider.0 != model.provider_id().0
+        {
+            return false;
         }
-        if let Some(setting_model) = &self.model {
-            if *setting_model != model.id().0 {
-                return false;
-            }
+        if let Some(setting_model) = &self.model
+            && *setting_model != model.id().0
+        {
+            return false;
         }
         true
     }
@@ -170,6 +178,10 @@ impl AgentSettingsContent {
 
     pub fn set_single_file_review(&mut self, allow: bool) {
         self.single_file_review = Some(allow);
+    }
+
+    pub fn set_use_modifier_to_send(&mut self, always_use: bool) {
+        self.use_modifier_to_send = Some(always_use);
     }
 
     pub fn set_profile(&mut self, profile_id: AgentProfileId) {
@@ -291,6 +303,18 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     enable_feedback: Option<bool>,
+    /// Whether to have edit cards in the agent panel expanded, showing a preview of the full diff.
+    ///
+    /// Default: true
+    expand_edit_card: Option<bool>,
+    /// Whether to have terminal cards in the agent panel expanded, showing the whole command output.
+    ///
+    /// Default: true
+    expand_terminal_card: Option<bool>,
+    /// Whether to always use cmd-enter (or ctrl-enter on Linux or Windows) to send messages in the agent panel.
+    ///
+    /// Default: false
+    use_modifier_to_send: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Default)]
@@ -302,11 +326,11 @@ pub enum CompletionMode {
     Burn,
 }
 
-impl From<CompletionMode> for zed_llm_client::CompletionMode {
+impl From<CompletionMode> for cloud_llm_client::CompletionMode {
     fn from(value: CompletionMode) -> Self {
         match value {
-            CompletionMode::Normal => zed_llm_client::CompletionMode::Normal,
-            CompletionMode::Burn => zed_llm_client::CompletionMode::Max,
+            CompletionMode::Normal => cloud_llm_client::CompletionMode::Normal,
+            CompletionMode::Burn => cloud_llm_client::CompletionMode::Max,
         }
     }
 }
@@ -328,18 +352,19 @@ impl JsonSchema for LanguageModelProviderSetting {
     fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
         json_schema!({
             "enum": [
-                "anthropic",
                 "amazon-bedrock",
-                "google",
-                "lmstudio",
-                "ollama",
-                "openai",
-                "zed.dev",
+                "anthropic",
                 "copilot_chat",
                 "deepseek",
-                "openrouter",
+                "google",
+                "lmstudio",
                 "mistral",
-                "vercel"
+                "ollama",
+                "openai",
+                "openrouter",
+                "vercel",
+                "x_ai",
+                "zed.dev"
             ]
         })
     }
@@ -421,10 +446,6 @@ impl Settings for AgentSettings {
                 value.inline_alternatives.clone(),
             );
             merge(
-                &mut settings.always_allow_tool_actions,
-                value.always_allow_tool_actions,
-            );
-            merge(
                 &mut settings.notify_when_agent_waiting,
                 value.notify_when_agent_waiting,
             );
@@ -441,6 +462,15 @@ impl Settings for AgentSettings {
                 value.preferred_completion_mode,
             );
             merge(&mut settings.enable_feedback, value.enable_feedback);
+            merge(&mut settings.expand_edit_card, value.expand_edit_card);
+            merge(
+                &mut settings.expand_terminal_card,
+                value.expand_terminal_card,
+            );
+            merge(
+                &mut settings.use_modifier_to_send,
+                value.use_modifier_to_send,
+            );
 
             settings
                 .model_parameters
@@ -475,6 +505,19 @@ impl Settings for AgentSettings {
                     }));
             }
         }
+
+        debug_assert!(
+            !sources.default.always_allow_tool_actions.unwrap_or(false),
+            "For security, agent.always_allow_tool_actions should always be false in default.json. If it's true, that is a bug that should be fixed!"
+        );
+
+        // For security reasons, only trust the user's global settings for whether to always allow tool actions.
+        // If this could be overridden locally, an attacker could (e.g. by committing to source control and
+        // convincing you to switch branches) modify your project-local settings to disable the agent's safety checks.
+        settings.always_allow_tool_actions = sources
+            .user
+            .and_then(|setting| setting.always_allow_tool_actions)
+            .unwrap_or(false);
 
         Ok(settings)
     }

@@ -1,7 +1,15 @@
+use ai_onboarding::YoungAccountBanner;
 use anthropic::AnthropicModelMode;
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
 use client::{Client, ModelRequestUsage, UserStore, zed_urls};
+use cloud_llm_client::{
+    CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CURRENT_PLAN_HEADER_NAME, CompletionBody,
+    CompletionEvent, CompletionRequestStatus, CountTokensBody, CountTokensResponse,
+    EXPIRED_LLM_TOKEN_HEADER_NAME, ListModelsResponse, MODEL_REQUESTS_RESOURCE_HEADER_VALUE, Plan,
+    SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME,
+    TOOL_USE_LIMIT_REACHED_HEADER_NAME, ZED_VERSION_HEADER_NAME,
+};
 use futures::{
     AsyncBufReadExt, FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream,
 };
@@ -15,11 +23,10 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCacheConfiguration,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelProviderTosView, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolSchemaFormat, LlmApiToken,
-    ModelRequestLimitReachedError, PaymentRequiredError, RateLimiter, RefreshLlmTokenListener,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
+    LanguageModelToolSchemaFormat, LlmApiToken, ModelRequestLimitReachedError,
+    PaymentRequiredError, RateLimiter, RefreshLlmTokenListener,
 };
-use proto::Plan;
 use release_channel::AppVersion;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -32,13 +39,6 @@ use std::time::Duration;
 use thiserror::Error;
 use ui::{TintColor, prelude::*};
 use util::{ResultExt as _, maybe};
-use zed_llm_client::{
-    CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CURRENT_PLAN_HEADER_NAME, CompletionBody,
-    CompletionRequestStatus, CountTokensBody, CountTokensResponse, EXPIRED_LLM_TOKEN_HEADER_NAME,
-    ListModelsResponse, MODEL_REQUESTS_RESOURCE_HEADER_VALUE,
-    SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME,
-    TOOL_USE_LIMIT_REACHED_HEADER_NAME, ZED_VERSION_HEADER_NAME,
-};
 
 use crate::provider::anthropic::{AnthropicEventMapper, count_anthropic_tokens, into_anthropic};
 use crate::provider::google::{GoogleEventMapper, into_google};
@@ -118,11 +118,10 @@ pub struct State {
     llm_api_token: LlmApiToken,
     user_store: Entity<UserStore>,
     status: client::Status,
-    accept_terms_of_service_task: Option<Task<Result<()>>>,
-    models: Vec<Arc<zed_llm_client::LanguageModel>>,
-    default_model: Option<Arc<zed_llm_client::LanguageModel>>,
-    default_fast_model: Option<Arc<zed_llm_client::LanguageModel>>,
-    recommended_models: Vec<Arc<zed_llm_client::LanguageModel>>,
+    models: Vec<Arc<cloud_llm_client::LanguageModel>>,
+    default_model: Option<Arc<cloud_llm_client::LanguageModel>>,
+    default_fast_model: Option<Arc<cloud_llm_client::LanguageModel>>,
+    recommended_models: Vec<Arc<cloud_llm_client::LanguageModel>>,
     _fetch_models_task: Task<()>,
     _settings_subscription: Subscription,
     _llm_token_subscription: Subscription,
@@ -136,13 +135,12 @@ impl State {
         cx: &mut Context<Self>,
     ) -> Self {
         let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
-
+        let mut current_user = user_store.read(cx).watch_current_user();
         Self {
             client: client.clone(),
             llm_api_token: LlmApiToken::default(),
             user_store,
             status,
-            accept_terms_of_service_task: None,
             models: Vec::new(),
             default_model: None,
             default_fast_model: None,
@@ -152,57 +150,13 @@ impl State {
                     let (client, llm_api_token) = this
                         .read_with(cx, |this, _cx| (client.clone(), this.llm_api_token.clone()))?;
 
-                    loop {
-                        let status = this.read_with(cx, |this, _cx| this.status)?;
-                        if matches!(status, client::Status::Connected { .. }) {
-                            break;
-                        }
-
-                        cx.background_executor()
-                            .timer(Duration::from_millis(100))
-                            .await;
+                    while current_user.borrow().is_none() {
+                        current_user.next().await;
                     }
 
-                    let response = Self::fetch_models(client, llm_api_token).await?;
-                    cx.update(|cx| {
-                        this.update(cx, |this, cx| {
-                            let mut models = Vec::new();
-
-                            for model in response.models {
-                                models.push(Arc::new(model.clone()));
-
-                                // Right now we represent thinking variants of models as separate models on the client,
-                                // so we need to insert variants for any model that supports thinking.
-                                if model.supports_thinking {
-                                    models.push(Arc::new(zed_llm_client::LanguageModel {
-                                        id: zed_llm_client::LanguageModelId(
-                                            format!("{}-thinking", model.id).into(),
-                                        ),
-                                        display_name: format!("{} Thinking", model.display_name),
-                                        ..model
-                                    }));
-                                }
-                            }
-
-                            this.default_model = models
-                                .iter()
-                                .find(|model| model.id == response.default_model)
-                                .cloned();
-                            this.default_fast_model = models
-                                .iter()
-                                .find(|model| model.id == response.default_fast_model)
-                                .cloned();
-                            this.recommended_models = response
-                                .recommended_models
-                                .iter()
-                                .filter_map(|id| models.iter().find(|model| &model.id == id))
-                                .cloned()
-                                .collect();
-                            this.models = models;
-                            cx.notify();
-                        })
-                    })??;
-
+                    let response =
+                        Self::fetch_models(client.clone(), llm_api_token.clone()).await?;
+                    this.update(cx, |this, cx| this.update_models(response, cx))?;
                     anyhow::Ok(())
                 })
                 .await
@@ -214,12 +168,15 @@ impl State {
             }),
             _llm_token_subscription: cx.subscribe(
                 &refresh_llm_token_listener,
-                |this, _listener, _event, cx| {
+                move |this, _listener, _event, cx| {
                     let client = this.client.clone();
                     let llm_api_token = this.llm_api_token.clone();
-                    cx.spawn(async move |_this, _cx| {
+                    cx.spawn(async move |this, cx| {
                         llm_api_token.refresh(&client).await?;
-                        anyhow::Ok(())
+                        let response = Self::fetch_models(client, llm_api_token).await?;
+                        this.update(cx, |this, cx| {
+                            this.update_models(response, cx);
+                        })
                     })
                     .detach_and_log_err(cx);
                 },
@@ -227,39 +184,50 @@ impl State {
         }
     }
 
-    fn is_signed_out(&self) -> bool {
-        self.status.is_signed_out()
+    fn is_signed_out(&self, cx: &App) -> bool {
+        self.user_store.read(cx).current_user().is_none()
     }
 
     fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let client = self.client.clone();
         cx.spawn(async move |state, cx| {
-            client
-                .authenticate_and_connect(true, &cx)
-                .await
-                .into_response()?;
+            client.sign_in_with_optional_connect(true, cx).await?;
             state.update(cx, |_, cx| cx.notify())
         })
     }
+    fn update_models(&mut self, response: ListModelsResponse, cx: &mut Context<Self>) {
+        let mut models = Vec::new();
 
-    fn has_accepted_terms_of_service(&self, cx: &App) -> bool {
-        self.user_store
-            .read(cx)
-            .current_user_has_accepted_terms()
-            .unwrap_or(false)
-    }
+        for model in response.models {
+            models.push(Arc::new(model.clone()));
 
-    fn accept_terms_of_service(&mut self, cx: &mut Context<Self>) {
-        let user_store = self.user_store.clone();
-        self.accept_terms_of_service_task = Some(cx.spawn(async move |this, cx| {
-            let _ = user_store
-                .update(cx, |store, cx| store.accept_terms_of_service(cx))?
-                .await;
-            this.update(cx, |this, cx| {
-                this.accept_terms_of_service_task = None;
-                cx.notify()
-            })
-        }));
+            // Right now we represent thinking variants of models as separate models on the client,
+            // so we need to insert variants for any model that supports thinking.
+            if model.supports_thinking {
+                models.push(Arc::new(cloud_llm_client::LanguageModel {
+                    id: cloud_llm_client::LanguageModelId(format!("{}-thinking", model.id).into()),
+                    display_name: format!("{} Thinking", model.display_name),
+                    ..model
+                }));
+            }
+        }
+
+        self.default_model = models
+            .iter()
+            .find(|model| model.id == response.default_model)
+            .cloned();
+        self.default_fast_model = models
+            .iter()
+            .find(|model| model.id == response.default_fast_model)
+            .cloned();
+        self.recommended_models = response
+            .recommended_models
+            .iter()
+            .filter_map(|id| models.iter().find(|model| &model.id == id))
+            .cloned()
+            .collect();
+        self.models = models;
+        cx.notify();
     }
 
     async fn fetch_models(
@@ -282,7 +250,7 @@ impl State {
         if response.status().is_success() {
             let mut body = String::new();
             response.body_mut().read_to_string(&mut body).await?;
-            return Ok(serde_json::from_str(&body)?);
+            Ok(serde_json::from_str(&body)?)
         } else {
             let mut body = String::new();
             response.body_mut().read_to_string(&mut body).await?;
@@ -319,20 +287,20 @@ impl CloudLanguageModelProvider {
 
         Self {
             client,
-            state: state.clone(),
+            state,
             _maintain_client_status: maintain_client_status,
         }
     }
 
     fn create_language_model(
         &self,
-        model: Arc<zed_llm_client::LanguageModel>,
+        model: Arc<cloud_llm_client::LanguageModel>,
         llm_api_token: LlmApiToken,
     ) -> Arc<dyn LanguageModel> {
         Arc::new(CloudLanguageModel {
             id: LanguageModelId(SharedString::from(model.id.0.clone())),
             model,
-            llm_api_token: llm_api_token.clone(),
+            llm_api_token,
             client: self.client.clone(),
             request_limiter: RateLimiter::new(4),
         })
@@ -396,40 +364,21 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
 
     fn is_authenticated(&self, cx: &App) -> bool {
         let state = self.state.read(cx);
-        !state.is_signed_out() && state.has_accepted_terms_of_service(cx)
+        !state.is_signed_out(cx)
     }
 
     fn authenticate(&self, _cx: &mut App) -> Task<Result<(), AuthenticateError>> {
         Task::ready(Ok(()))
     }
 
-    fn configuration_view(&self, _: &mut Window, cx: &mut App) -> AnyView {
+    fn configuration_view(
+        &self,
+        _target_agent: language_model::ConfigurationViewTargetAgent,
+        _: &mut Window,
+        cx: &mut App,
+    ) -> AnyView {
         cx.new(|_| ConfigurationView::new(self.state.clone()))
             .into()
-    }
-
-    fn must_accept_terms(&self, cx: &App) -> bool {
-        !self.state.read(cx).has_accepted_terms_of_service(cx)
-    }
-
-    fn render_accept_terms(
-        &self,
-        view: LanguageModelProviderTosView,
-        cx: &mut App,
-    ) -> Option<AnyElement> {
-        let state = self.state.read(cx);
-        if state.has_accepted_terms_of_service(cx) {
-            return None;
-        }
-        Some(
-            render_accept_terms(view, state.accept_terms_of_service_task.is_some(), {
-                let state = self.state.clone();
-                move |_window, cx| {
-                    state.update(cx, |state, cx| state.accept_terms_of_service(cx));
-                }
-            })
-            .into_any_element(),
-        )
     }
 
     fn reset_credentials(&self, _cx: &mut App) -> Task<Result<()>> {
@@ -437,86 +386,9 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     }
 }
 
-fn render_accept_terms(
-    view_kind: LanguageModelProviderTosView,
-    accept_terms_of_service_in_progress: bool,
-    accept_terms_callback: impl Fn(&mut Window, &mut App) + 'static,
-) -> impl IntoElement {
-    let thread_fresh_start = matches!(view_kind, LanguageModelProviderTosView::ThreadFreshStart);
-    let thread_empty_state = matches!(view_kind, LanguageModelProviderTosView::ThreadEmptyState);
-
-    let terms_button = Button::new("terms_of_service", "Terms of Service")
-        .style(ButtonStyle::Subtle)
-        .icon(IconName::ArrowUpRight)
-        .icon_color(Color::Muted)
-        .icon_size(IconSize::XSmall)
-        .when(thread_empty_state, |this| this.label_size(LabelSize::Small))
-        .on_click(move |_, _window, cx| cx.open_url("https://zed.dev/terms-of-service"));
-
-    let button_container = h_flex().child(
-        Button::new("accept_terms", "I accept the Terms of Service")
-            .when(!thread_empty_state, |this| {
-                this.full_width()
-                    .style(ButtonStyle::Tinted(TintColor::Accent))
-                    .icon(IconName::Check)
-                    .icon_position(IconPosition::Start)
-                    .icon_size(IconSize::Small)
-            })
-            .when(thread_empty_state, |this| {
-                this.style(ButtonStyle::Tinted(TintColor::Warning))
-                    .label_size(LabelSize::Small)
-            })
-            .disabled(accept_terms_of_service_in_progress)
-            .on_click(move |_, window, cx| (accept_terms_callback)(window, cx)),
-    );
-
-    if thread_empty_state {
-        h_flex()
-            .w_full()
-            .flex_wrap()
-            .justify_between()
-            .child(
-                h_flex()
-                    .child(
-                        Label::new("To start using Zed AI, please read and accept the")
-                            .size(LabelSize::Small),
-                    )
-                    .child(terms_button),
-            )
-            .child(button_container)
-    } else {
-        v_flex()
-            .w_full()
-            .gap_2()
-            .child(
-                h_flex()
-                    .flex_wrap()
-                    .when(thread_fresh_start, |this| this.justify_center())
-                    .child(Label::new(
-                        "To start using Zed AI, please read and accept the",
-                    ))
-                    .child(terms_button),
-            )
-            .child({
-                match view_kind {
-                    LanguageModelProviderTosView::PromptEditorPopup => {
-                        button_container.w_full().justify_end()
-                    }
-                    LanguageModelProviderTosView::Configuration => {
-                        button_container.w_full().justify_start()
-                    }
-                    LanguageModelProviderTosView::ThreadFreshStart => {
-                        button_container.w_full().justify_center()
-                    }
-                    LanguageModelProviderTosView::ThreadEmptyState => div().w_0(),
-                }
-            })
-    }
-}
-
 pub struct CloudLanguageModel {
     id: LanguageModelId,
-    model: Arc<zed_llm_client::LanguageModel>,
+    model: Arc<cloud_llm_client::LanguageModel>,
     llm_api_token: LlmApiToken,
     client: Arc<Client>,
     request_limiter: RateLimiter,
@@ -604,20 +476,13 @@ impl CloudLanguageModel {
                     .headers()
                     .get(SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME)
                     .and_then(|resource| resource.to_str().ok())
-                {
-                    if let Some(plan) = response
+                    && let Some(plan) = response
                         .headers()
                         .get(CURRENT_PLAN_HEADER_NAME)
                         .and_then(|plan| plan.to_str().ok())
-                        .and_then(|plan| zed_llm_client::Plan::from_str(plan).ok())
-                    {
-                        let plan = match plan {
-                            zed_llm_client::Plan::ZedFree => Plan::Free,
-                            zed_llm_client::Plan::ZedPro => Plan::ZedPro,
-                            zed_llm_client::Plan::ZedProTrial => Plan::ZedProTrial,
-                        };
-                        return Err(anyhow!(ModelRequestLimitReachedError { plan }));
-                    }
+                        .and_then(|plan| cloud_llm_client::Plan::from_str(plan).ok())
+                {
+                    return Err(anyhow!(ModelRequestLimitReachedError { plan }));
                 }
             } else if status == StatusCode::PAYMENT_REQUIRED {
                 return Err(anyhow!(PaymentRequiredError));
@@ -643,8 +508,62 @@ struct ApiError {
     headers: HeaderMap<HeaderValue>,
 }
 
+/// Represents error responses from Zed's cloud API.
+///
+/// Example JSON for an upstream HTTP error:
+/// ```json
+/// {
+///   "code": "upstream_http_error",
+///   "message": "Received an error from the Anthropic API: upstream connect error or disconnect/reset before headers, reset reason: connection timeout",
+///   "upstream_status": 503
+/// }
+/// ```
+#[derive(Debug, serde::Deserialize)]
+struct CloudApiError {
+    code: String,
+    message: String,
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_optional_status_code")]
+    upstream_status: Option<StatusCode>,
+    #[serde(default)]
+    retry_after: Option<f64>,
+}
+
+fn deserialize_optional_status_code<'de, D>(deserializer: D) -> Result<Option<StatusCode>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt: Option<u16> = Option::deserialize(deserializer)?;
+    Ok(opt.and_then(|code| StatusCode::from_u16(code).ok()))
+}
+
 impl From<ApiError> for LanguageModelCompletionError {
     fn from(error: ApiError) -> Self {
+        if let Ok(cloud_error) = serde_json::from_str::<CloudApiError>(&error.body)
+            && cloud_error.code.starts_with("upstream_http_")
+        {
+            let status = if let Some(status) = cloud_error.upstream_status {
+                status
+            } else if cloud_error.code.ends_with("_error") {
+                error.status
+            } else {
+                // If there's a status code in the code string (e.g. "upstream_http_429")
+                // then use that; otherwise, see if the JSON contains a status code.
+                cloud_error
+                    .code
+                    .strip_prefix("upstream_http_")
+                    .and_then(|code_str| code_str.parse::<u16>().ok())
+                    .and_then(|code| StatusCode::from_u16(code).ok())
+                    .unwrap_or(error.status)
+            };
+
+            return LanguageModelCompletionError::UpstreamProviderError {
+                message: cloud_error.message,
+                status,
+                retry_after: cloud_error.retry_after.map(Duration::from_secs_f64),
+            };
+        }
+
         let retry_after = None;
         LanguageModelCompletionError::from_http_status(
             PROVIDER_NAME,
@@ -673,7 +592,7 @@ impl LanguageModel for CloudLanguageModel {
     }
 
     fn upstream_provider_id(&self) -> LanguageModelProviderId {
-        use zed_llm_client::LanguageModelProvider::*;
+        use cloud_llm_client::LanguageModelProvider::*;
         match self.model.provider {
             Anthropic => language_model::ANTHROPIC_PROVIDER_ID,
             OpenAi => language_model::OPEN_AI_PROVIDER_ID,
@@ -682,7 +601,7 @@ impl LanguageModel for CloudLanguageModel {
     }
 
     fn upstream_provider_name(&self) -> LanguageModelProviderName {
-        use zed_llm_client::LanguageModelProvider::*;
+        use cloud_llm_client::LanguageModelProvider::*;
         match self.model.provider {
             Anthropic => language_model::ANTHROPIC_PROVIDER_NAME,
             OpenAi => language_model::OPEN_AI_PROVIDER_NAME,
@@ -716,11 +635,11 @@ impl LanguageModel for CloudLanguageModel {
 
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
         match self.model.provider {
-            zed_llm_client::LanguageModelProvider::Anthropic
-            | zed_llm_client::LanguageModelProvider::OpenAi => {
+            cloud_llm_client::LanguageModelProvider::Anthropic
+            | cloud_llm_client::LanguageModelProvider::OpenAi => {
                 LanguageModelToolSchemaFormat::JsonSchema
             }
-            zed_llm_client::LanguageModelProvider::Google => {
+            cloud_llm_client::LanguageModelProvider::Google => {
                 LanguageModelToolSchemaFormat::JsonSchemaSubset
             }
         }
@@ -739,15 +658,15 @@ impl LanguageModel for CloudLanguageModel {
 
     fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
         match &self.model.provider {
-            zed_llm_client::LanguageModelProvider::Anthropic => {
+            cloud_llm_client::LanguageModelProvider::Anthropic => {
                 Some(LanguageModelCacheConfiguration {
                     min_total_token: 2_048,
                     should_speculate: true,
                     max_cache_anchors: 4,
                 })
             }
-            zed_llm_client::LanguageModelProvider::OpenAi
-            | zed_llm_client::LanguageModelProvider::Google => None,
+            cloud_llm_client::LanguageModelProvider::OpenAi
+            | cloud_llm_client::LanguageModelProvider::Google => None,
         }
     }
 
@@ -757,15 +676,17 @@ impl LanguageModel for CloudLanguageModel {
         cx: &App,
     ) -> BoxFuture<'static, Result<u64>> {
         match self.model.provider {
-            zed_llm_client::LanguageModelProvider::Anthropic => count_anthropic_tokens(request, cx),
-            zed_llm_client::LanguageModelProvider::OpenAi => {
+            cloud_llm_client::LanguageModelProvider::Anthropic => {
+                count_anthropic_tokens(request, cx)
+            }
+            cloud_llm_client::LanguageModelProvider::OpenAi => {
                 let model = match open_ai::Model::from_id(&self.model.id.0) {
                     Ok(model) => model,
                     Err(err) => return async move { Err(anyhow!(err)) }.boxed(),
                 };
                 count_open_ai_tokens(request, model, cx)
             }
-            zed_llm_client::LanguageModelProvider::Google => {
+            cloud_llm_client::LanguageModelProvider::Google => {
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
                 let model_id = self.model.id.to_string();
@@ -776,7 +697,7 @@ impl LanguageModel for CloudLanguageModel {
                     let token = llm_api_token.acquire(&client).await?;
 
                     let request_body = CountTokensBody {
-                        provider: zed_llm_client::LanguageModelProvider::Google,
+                        provider: cloud_llm_client::LanguageModelProvider::Google,
                         model: model_id,
                         provider_request: serde_json::to_value(&google_ai::CountTokensRequest {
                             generate_content_request,
@@ -835,14 +756,15 @@ impl LanguageModel for CloudLanguageModel {
         let intent = request.intent;
         let mode = request.mode;
         let app_version = cx.update(|cx| AppVersion::global(cx)).ok();
+        let thinking_allowed = request.thinking_allowed;
         match self.model.provider {
-            zed_llm_client::LanguageModelProvider::Anthropic => {
+            cloud_llm_client::LanguageModelProvider::Anthropic => {
                 let request = into_anthropic(
                     request,
                     self.model.id.to_string(),
                     1.0,
                     self.model.max_output_tokens as u64,
-                    if self.model.id.0.ends_with("-thinking") {
+                    if thinking_allowed && self.model.id.0.ends_with("-thinking") {
                         AnthropicModelMode::Thinking {
                             budget_tokens: Some(4_096),
                         }
@@ -867,7 +789,7 @@ impl LanguageModel for CloudLanguageModel {
                             prompt_id,
                             intent,
                             mode,
-                            provider: zed_llm_client::LanguageModelProvider::Anthropic,
+                            provider: cloud_llm_client::LanguageModelProvider::Anthropic,
                             model: request.model.clone(),
                             provider_request: serde_json::to_value(&request)
                                 .map_err(|e| anyhow!(e))?,
@@ -891,7 +813,7 @@ impl LanguageModel for CloudLanguageModel {
                 });
                 async move { Ok(future.await?.boxed()) }.boxed()
             }
-            zed_llm_client::LanguageModelProvider::OpenAi => {
+            cloud_llm_client::LanguageModelProvider::OpenAi => {
                 let client = self.client.clone();
                 let model = match open_ai::Model::from_id(&self.model.id.0) {
                     Ok(model) => model,
@@ -901,6 +823,8 @@ impl LanguageModel for CloudLanguageModel {
                     request,
                     model.id(),
                     model.supports_parallel_tool_calls(),
+                    model.supports_prompt_cache_key(),
+                    None,
                     None,
                 );
                 let llm_api_token = self.llm_api_token.clone();
@@ -919,7 +843,7 @@ impl LanguageModel for CloudLanguageModel {
                             prompt_id,
                             intent,
                             mode,
-                            provider: zed_llm_client::LanguageModelProvider::OpenAi,
+                            provider: cloud_llm_client::LanguageModelProvider::OpenAi,
                             model: request.model.clone(),
                             provider_request: serde_json::to_value(&request)
                                 .map_err(|e| anyhow!(e))?,
@@ -939,7 +863,7 @@ impl LanguageModel for CloudLanguageModel {
                 });
                 async move { Ok(future.await?.boxed()) }.boxed()
             }
-            zed_llm_client::LanguageModelProvider::Google => {
+            cloud_llm_client::LanguageModelProvider::Google => {
                 let client = self.client.clone();
                 let request =
                     into_google(request, self.model.id.to_string(), GoogleModelMode::Default);
@@ -959,7 +883,7 @@ impl LanguageModel for CloudLanguageModel {
                             prompt_id,
                             intent,
                             mode,
-                            provider: zed_llm_client::LanguageModelProvider::Google,
+                            provider: cloud_llm_client::LanguageModelProvider::Google,
                             model: request.model.model_id.clone(),
                             provider_request: serde_json::to_value(&request)
                                 .map_err(|e| anyhow!(e))?,
@@ -983,15 +907,8 @@ impl LanguageModel for CloudLanguageModel {
     }
 }
 
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CloudCompletionEvent<T> {
-    Status(CompletionRequestStatus),
-    Event(T),
-}
-
 fn map_cloud_completion_events<T, F>(
-    stream: Pin<Box<dyn Stream<Item = Result<CloudCompletionEvent<T>>> + Send>>,
+    stream: Pin<Box<dyn Stream<Item = Result<CompletionEvent<T>>> + Send>>,
     mut map_callback: F,
 ) -> BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
 where
@@ -1006,10 +923,10 @@ where
                 Err(error) => {
                     vec![Err(LanguageModelCompletionError::from(error))]
                 }
-                Ok(CloudCompletionEvent::Status(event)) => {
+                Ok(CompletionEvent::Status(event)) => {
                     vec![Ok(LanguageModelCompletionEvent::StatusUpdate(event))]
                 }
-                Ok(CloudCompletionEvent::Event(event)) => map_callback(event),
+                Ok(CompletionEvent::Event(event)) => map_callback(event),
             })
         })
         .boxed()
@@ -1017,9 +934,9 @@ where
 
 fn usage_updated_event<T>(
     usage: Option<ModelRequestUsage>,
-) -> impl Stream<Item = Result<CloudCompletionEvent<T>>> {
+) -> impl Stream<Item = Result<CompletionEvent<T>>> {
     futures::stream::iter(usage.map(|usage| {
-        Ok(CloudCompletionEvent::Status(
+        Ok(CompletionEvent::Status(
             CompletionRequestStatus::UsageUpdated {
                 amount: usage.amount as usize,
                 limit: usage.limit,
@@ -1030,9 +947,9 @@ fn usage_updated_event<T>(
 
 fn tool_use_limit_reached_event<T>(
     tool_use_limit_reached: bool,
-) -> impl Stream<Item = Result<CloudCompletionEvent<T>>> {
+) -> impl Stream<Item = Result<CompletionEvent<T>>> {
     futures::stream::iter(tool_use_limit_reached.then(|| {
-        Ok(CloudCompletionEvent::Status(
+        Ok(CompletionEvent::Status(
             CompletionRequestStatus::ToolUseLimitReached,
         ))
     }))
@@ -1041,7 +958,7 @@ fn tool_use_limit_reached_event<T>(
 fn response_lines<T: DeserializeOwned>(
     response: Response<AsyncBody>,
     includes_status_messages: bool,
-) -> impl Stream<Item = Result<CloudCompletionEvent<T>>> {
+) -> impl Stream<Item = Result<CompletionEvent<T>>> {
     futures::stream::try_unfold(
         (String::new(), BufReader::new(response.into_body())),
         move |(mut line, mut body)| async move {
@@ -1049,9 +966,9 @@ fn response_lines<T: DeserializeOwned>(
                 Ok(0) => Ok(None),
                 Ok(_) => {
                     let event = if includes_status_messages {
-                        serde_json::from_str::<CloudCompletionEvent<T>>(&line)?
+                        serde_json::from_str::<CompletionEvent<T>>(&line)?
                     } else {
-                        CloudCompletionEvent::Event(serde_json::from_str::<T>(&line)?)
+                        CompletionEvent::Event(serde_json::from_str::<T>(&line)?)
                     };
 
                     line.clear();
@@ -1066,120 +983,99 @@ fn response_lines<T: DeserializeOwned>(
 #[derive(IntoElement, RegisterComponent)]
 struct ZedAiConfiguration {
     is_connected: bool,
-    plan: Option<proto::Plan>,
+    plan: Option<Plan>,
     subscription_period: Option<(DateTime<Utc>, DateTime<Utc>)>,
     eligible_for_trial: bool,
-    has_accepted_terms_of_service: bool,
-    accept_terms_of_service_in_progress: bool,
-    accept_terms_of_service_callback: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>,
+    account_too_young: bool,
     sign_in_callback: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>,
 }
 
 impl RenderOnce for ZedAiConfiguration {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        const ZED_PRICING_URL: &str = "https://zed.dev/pricing";
+        let young_account_banner = YoungAccountBanner;
 
-        let is_pro = self.plan == Some(proto::Plan::ZedPro);
+        let is_pro = self.plan == Some(Plan::ZedPro);
         let subscription_text = match (self.plan, self.subscription_period) {
-            (Some(proto::Plan::ZedPro), Some(_)) => {
-                "You have access to Zed's hosted LLMs through your Zed Pro subscription."
+            (Some(Plan::ZedPro), Some(_)) => {
+                "You have access to Zed's hosted models through your Pro subscription."
             }
-            (Some(proto::Plan::ZedProTrial), Some(_)) => {
-                "You have access to Zed's hosted LLMs through your Zed Pro trial."
+            (Some(Plan::ZedProTrial), Some(_)) => {
+                "You have access to Zed's hosted models through your Pro trial."
             }
-            (Some(proto::Plan::Free), Some(_)) => {
-                "You have basic access to Zed's hosted LLMs through your Zed Free subscription."
+            (Some(Plan::ZedFree), Some(_)) => {
+                "You have basic access to Zed's hosted models through the Free plan."
             }
             _ => {
                 if self.eligible_for_trial {
-                    "Subscribe for access to Zed's hosted LLMs. Start with a 14 day free trial."
+                    "Subscribe for access to Zed's hosted models. Start with a 14 day free trial."
                 } else {
-                    "Subscribe for access to Zed's hosted LLMs."
+                    "Subscribe for access to Zed's hosted models."
                 }
             }
         };
+
         let manage_subscription_buttons = if is_pro {
-            h_flex().child(
-                Button::new("manage_settings", "Manage Subscription")
-                    .style(ButtonStyle::Tinted(TintColor::Accent))
-                    .on_click(|_, _, cx| cx.open_url(&zed_urls::account_url(cx))),
-            )
+            Button::new("manage_settings", "Manage Subscription")
+                .full_width()
+                .style(ButtonStyle::Tinted(TintColor::Accent))
+                .on_click(|_, _, cx| cx.open_url(&zed_urls::account_url(cx)))
+                .into_any_element()
+        } else if self.plan.is_none() || self.eligible_for_trial {
+            Button::new("start_trial", "Start 14-day Free Pro Trial")
+                .full_width()
+                .style(ui::ButtonStyle::Tinted(ui::TintColor::Accent))
+                .on_click(|_, _, cx| cx.open_url(&zed_urls::start_trial_url(cx)))
+                .into_any_element()
         } else {
-            h_flex()
-                .gap_2()
-                .child(
-                    Button::new("learn_more", "Learn more")
-                        .style(ButtonStyle::Subtle)
-                        .on_click(|_, _, cx| cx.open_url(ZED_PRICING_URL)),
-                )
-                .child(
-                    Button::new(
-                        "upgrade",
-                        if self.plan.is_none() && self.eligible_for_trial {
-                            "Start Trial"
-                        } else {
-                            "Upgrade"
-                        },
-                    )
-                    .style(ButtonStyle::Subtle)
-                    .color(Color::Accent)
-                    .on_click(|_, _, cx| cx.open_url(&zed_urls::account_url(cx))),
-                )
+            Button::new("upgrade", "Upgrade to Pro")
+                .full_width()
+                .style(ui::ButtonStyle::Tinted(ui::TintColor::Accent))
+                .on_click(|_, _, cx| cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx)))
+                .into_any_element()
         };
 
-        if self.is_connected {
-            v_flex()
-                .gap_3()
-                .w_full()
-                .when(!self.has_accepted_terms_of_service, |this| {
-                    this.child(render_accept_terms(
-                        LanguageModelProviderTosView::Configuration,
-                        self.accept_terms_of_service_in_progress,
-                        {
-                            let callback = self.accept_terms_of_service_callback.clone();
-                            move |window, cx| (callback)(window, cx)
-                        },
-                    ))
-                })
-                .when(self.has_accepted_terms_of_service, |this| {
-                    this.child(subscription_text)
-                        .child(manage_subscription_buttons)
-                })
-        } else {
-            v_flex()
+        if !self.is_connected {
+            return v_flex()
                 .gap_2()
-                .child(Label::new("Use Zed AI to access hosted language models."))
+                .child(Label::new("Sign in to have access to Zed's complete agentic experience with hosted models."))
                 .child(
-                    Button::new("sign_in", "Sign In")
+                    Button::new("sign_in", "Sign In to use Zed AI")
                         .icon_color(Color::Muted)
                         .icon(IconName::Github)
+                        .icon_size(IconSize::Small)
                         .icon_position(IconPosition::Start)
+                        .full_width()
                         .on_click({
                             let callback = self.sign_in_callback.clone();
                             move |_, window, cx| (callback)(window, cx)
                         }),
-                )
+                );
         }
+
+        v_flex().gap_2().w_full().map(|this| {
+            if self.account_too_young {
+                this.child(young_account_banner).child(
+                    Button::new("upgrade", "Upgrade to Pro")
+                        .style(ui::ButtonStyle::Tinted(ui::TintColor::Accent))
+                        .full_width()
+                        .on_click(|_, _, cx| cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx))),
+                )
+            } else {
+                this.text_sm()
+                    .child(subscription_text)
+                    .child(manage_subscription_buttons)
+            }
+        })
     }
 }
 
 struct ConfigurationView {
     state: Entity<State>,
-    accept_terms_of_service_callback: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>,
     sign_in_callback: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>,
 }
 
 impl ConfigurationView {
     fn new(state: Entity<State>) -> Self {
-        let accept_terms_of_service_callback = Arc::new({
-            let state = state.clone();
-            move |_window: &mut Window, cx: &mut App| {
-                state.update(cx, |state, cx| {
-                    state.accept_terms_of_service(cx);
-                });
-            }
-        });
-
         let sign_in_callback = Arc::new({
             let state = state.clone();
             move |_window: &mut Window, cx: &mut App| {
@@ -1191,7 +1087,6 @@ impl ConfigurationView {
 
         Self {
             state,
-            accept_terms_of_service_callback,
             sign_in_callback,
         }
     }
@@ -1203,29 +1098,35 @@ impl Render for ConfigurationView {
         let user_store = state.user_store.read(cx);
 
         ZedAiConfiguration {
-            is_connected: !state.is_signed_out(),
-            plan: user_store.current_plan(),
+            is_connected: !state.is_signed_out(cx),
+            plan: user_store.plan(),
             subscription_period: user_store.subscription_period(),
             eligible_for_trial: user_store.trial_started_at().is_none(),
-            has_accepted_terms_of_service: state.has_accepted_terms_of_service(cx),
-            accept_terms_of_service_in_progress: state.accept_terms_of_service_task.is_some(),
-            accept_terms_of_service_callback: self.accept_terms_of_service_callback.clone(),
+            account_too_young: user_store.account_too_young(),
             sign_in_callback: self.sign_in_callback.clone(),
         }
     }
 }
 
 impl Component for ZedAiConfiguration {
+    fn name() -> &'static str {
+        "AI Configuration Content"
+    }
+
+    fn sort_name() -> &'static str {
+        "AI Configuration Content"
+    }
+
     fn scope() -> ComponentScope {
-        ComponentScope::Agent
+        ComponentScope::Onboarding
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         fn configuration(
             is_connected: bool,
-            plan: Option<proto::Plan>,
+            plan: Option<Plan>,
             eligible_for_trial: bool,
-            has_accepted_terms_of_service: bool,
+            account_too_young: bool,
         ) -> AnyElement {
             ZedAiConfiguration {
                 is_connected,
@@ -1234,9 +1135,7 @@ impl Component for ZedAiConfiguration {
                     .is_some()
                     .then(|| (Utc::now(), Utc::now() + chrono::Duration::days(7))),
                 eligible_for_trial,
-                has_accepted_terms_of_service,
-                accept_terms_of_service_in_progress: false,
-                accept_terms_of_service_callback: Arc::new(|_, _| {}),
+                account_too_young,
                 sign_in_callback: Arc::new(|_, _| {}),
             }
             .into_any_element()
@@ -1247,33 +1146,185 @@ impl Component for ZedAiConfiguration {
                 .p_4()
                 .gap_4()
                 .children(vec![
-                    single_example("Not connected", configuration(false, None, false, true)),
+                    single_example("Not connected", configuration(false, None, false, false)),
                     single_example(
                         "Accept Terms of Service",
                         configuration(true, None, true, false),
                     ),
                     single_example(
                         "No Plan - Not eligible for trial",
-                        configuration(true, None, false, true),
+                        configuration(true, None, false, false),
                     ),
                     single_example(
                         "No Plan - Eligible for trial",
-                        configuration(true, None, true, true),
+                        configuration(true, None, true, false),
                     ),
                     single_example(
                         "Free Plan",
-                        configuration(true, Some(proto::Plan::Free), true, true),
+                        configuration(true, Some(Plan::ZedFree), true, false),
                     ),
                     single_example(
                         "Zed Pro Trial Plan",
-                        configuration(true, Some(proto::Plan::ZedProTrial), true, true),
+                        configuration(true, Some(Plan::ZedProTrial), true, false),
                     ),
                     single_example(
                         "Zed Pro Plan",
-                        configuration(true, Some(proto::Plan::ZedPro), true, true),
+                        configuration(true, Some(Plan::ZedPro), true, false),
                     ),
                 ])
                 .into_any_element(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http_client::http::{HeaderMap, StatusCode};
+    use language_model::LanguageModelCompletionError;
+
+    #[test]
+    fn test_api_error_conversion_with_upstream_http_error() {
+        // upstream_http_error with 503 status should become ServerOverloaded
+        let error_body = r#"{"code":"upstream_http_error","message":"Received an error from the Anthropic API: upstream connect error or disconnect/reset before headers, reset reason: connection timeout","upstream_status":503}"#;
+
+        let api_error = ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            body: error_body.to_string(),
+            headers: HeaderMap::new(),
+        };
+
+        let completion_error: LanguageModelCompletionError = api_error.into();
+
+        match completion_error {
+            LanguageModelCompletionError::UpstreamProviderError { message, .. } => {
+                assert_eq!(
+                    message,
+                    "Received an error from the Anthropic API: upstream connect error or disconnect/reset before headers, reset reason: connection timeout"
+                );
+            }
+            _ => panic!(
+                "Expected UpstreamProviderError for upstream 503, got: {:?}",
+                completion_error
+            ),
+        }
+
+        // upstream_http_error with 500 status should become ApiInternalServerError
+        let error_body = r#"{"code":"upstream_http_error","message":"Received an error from the OpenAI API: internal server error","upstream_status":500}"#;
+
+        let api_error = ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            body: error_body.to_string(),
+            headers: HeaderMap::new(),
+        };
+
+        let completion_error: LanguageModelCompletionError = api_error.into();
+
+        match completion_error {
+            LanguageModelCompletionError::UpstreamProviderError { message, .. } => {
+                assert_eq!(
+                    message,
+                    "Received an error from the OpenAI API: internal server error"
+                );
+            }
+            _ => panic!(
+                "Expected UpstreamProviderError for upstream 500, got: {:?}",
+                completion_error
+            ),
+        }
+
+        // upstream_http_error with 429 status should become RateLimitExceeded
+        let error_body = r#"{"code":"upstream_http_error","message":"Received an error from the Google API: rate limit exceeded","upstream_status":429}"#;
+
+        let api_error = ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            body: error_body.to_string(),
+            headers: HeaderMap::new(),
+        };
+
+        let completion_error: LanguageModelCompletionError = api_error.into();
+
+        match completion_error {
+            LanguageModelCompletionError::UpstreamProviderError { message, .. } => {
+                assert_eq!(
+                    message,
+                    "Received an error from the Google API: rate limit exceeded"
+                );
+            }
+            _ => panic!(
+                "Expected UpstreamProviderError for upstream 429, got: {:?}",
+                completion_error
+            ),
+        }
+
+        // Regular 500 error without upstream_http_error should remain ApiInternalServerError for Zed
+        let error_body = "Regular internal server error";
+
+        let api_error = ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            body: error_body.to_string(),
+            headers: HeaderMap::new(),
+        };
+
+        let completion_error: LanguageModelCompletionError = api_error.into();
+
+        match completion_error {
+            LanguageModelCompletionError::ApiInternalServerError { provider, message } => {
+                assert_eq!(provider, PROVIDER_NAME);
+                assert_eq!(message, "Regular internal server error");
+            }
+            _ => panic!(
+                "Expected ApiInternalServerError for regular 500, got: {:?}",
+                completion_error
+            ),
+        }
+
+        // upstream_http_429 format should be converted to UpstreamProviderError
+        let error_body = r#"{"code":"upstream_http_429","message":"Upstream Anthropic rate limit exceeded.","retry_after":30.5}"#;
+
+        let api_error = ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            body: error_body.to_string(),
+            headers: HeaderMap::new(),
+        };
+
+        let completion_error: LanguageModelCompletionError = api_error.into();
+
+        match completion_error {
+            LanguageModelCompletionError::UpstreamProviderError {
+                message,
+                status,
+                retry_after,
+            } => {
+                assert_eq!(message, "Upstream Anthropic rate limit exceeded.");
+                assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+                assert_eq!(retry_after, Some(Duration::from_secs_f64(30.5)));
+            }
+            _ => panic!(
+                "Expected UpstreamProviderError for upstream_http_429, got: {:?}",
+                completion_error
+            ),
+        }
+
+        // Invalid JSON in error body should fall back to regular error handling
+        let error_body = "Not JSON at all";
+
+        let api_error = ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            body: error_body.to_string(),
+            headers: HeaderMap::new(),
+        };
+
+        let completion_error: LanguageModelCompletionError = api_error.into();
+
+        match completion_error {
+            LanguageModelCompletionError::ApiInternalServerError { provider, .. } => {
+                assert_eq!(provider, PROVIDER_NAME);
+            }
+            _ => panic!(
+                "Expected ApiInternalServerError for invalid JSON, got: {:?}",
+                completion_error
+            ),
+        }
     }
 }

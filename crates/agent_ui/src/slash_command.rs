@@ -88,8 +88,6 @@ impl SlashCommandCompletionProvider {
                                 .map(|(editor, workspace)| {
                                     let command_name = mat.string.clone();
                                     let command_range = command_range.clone();
-                                    let editor = editor.clone();
-                                    let workspace = workspace.clone();
                                     Arc::new(
                                             move |intent: CompletionIntent,
                                             window: &mut Window,
@@ -158,7 +156,7 @@ impl SlashCommandCompletionProvider {
         if let Some(command) = self.slash_commands.command(command_name, cx) {
             let completions = command.complete_argument(
                 arguments,
-                new_cancel_flag.clone(),
+                new_cancel_flag,
                 self.workspace.clone(),
                 window,
                 cx,

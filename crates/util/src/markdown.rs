@@ -23,7 +23,7 @@ impl Display for MarkdownString {
 /// the other characters involved are escaped:
 ///
 /// * `!`, `]`, `(`, and `)` are used in link syntax, but `[` is escaped so these are parsed as
-/// plaintext.
+///   plaintext.
 ///
 /// * `;` is used in HTML entity syntax, but `&` is escaped, so they are parsed as plaintext.
 ///

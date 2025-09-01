@@ -4,9 +4,9 @@ use editor::EditorSettings;
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsSources, SettingsUi};
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, SettingsUi)]
 pub struct JupyterSettings {
     pub kernel_selections: HashMap<String, String>,
 }

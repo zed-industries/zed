@@ -127,7 +127,7 @@ Solargraph reads its configuration from a file called `.solargraph.yml` in the r
 
 ## Setting up `ruby-lsp`
 
-Ruby LSP uses pull-based diagnostics which Zed doesn't support yet. We can tell Zed to disable it by adding the following to your `settings.json`:
+You can pass Ruby LSP configuration to `initialization_options`, e.g.
 
 ```json
 {
@@ -140,8 +140,7 @@ Ruby LSP uses pull-based diagnostics which Zed doesn't support yet. We can tell 
     "ruby-lsp": {
       "initialization_options": {
         "enabledFeatures": {
-          // This disables diagnostics
-          "diagnostics": false
+          // "someFeature": false
         }
       }
     }
@@ -300,6 +299,7 @@ To run tests in your Ruby project, you can set up custom tasks in your local `.z
       "-n",
       "\"$ZED_CUSTOM_RUBY_TEST_NAME\""
     ],
+    "cwd": "$ZED_WORKTREE_ROOT",
     "tags": ["ruby-test"]
   }
 ]
@@ -322,6 +322,7 @@ Plain minitest does not support running tests by line number, only by name, so w
       "-n",
       "\"$ZED_CUSTOM_RUBY_TEST_NAME\""
     ],
+    "cwd": "$ZED_WORKTREE_ROOT",
     "tags": ["ruby-test"]
   }
 ]
@@ -335,6 +336,7 @@ Plain minitest does not support running tests by line number, only by name, so w
     "label": "test $ZED_RELATIVE_FILE:$ZED_ROW",
     "command": "bundle",
     "args": ["exec", "rspec", "\"$ZED_RELATIVE_FILE:$ZED_ROW\""],
+    "cwd": "$ZED_WORKTREE_ROOT",
     "tags": ["ruby-test"]
   }
 ]
@@ -370,7 +372,7 @@ The Ruby extension provides a debug adapter for debugging Ruby code. Zed's name 
     "label": "Debug Rails server",
     "adapter": "rdbg",
     "request": "launch",
-    "command": "$ZED_WORKTREE_ROOT/bin/rails",
+    "command": "./bin/rails",
     "args": ["server"],
     "cwd": "$ZED_WORKTREE_ROOT",
     "env": {

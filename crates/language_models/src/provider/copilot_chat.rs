@@ -3,6 +3,7 @@ use std::str::FromStr as _;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
+use cloud_llm_client::CompletionIntent;
 use collections::HashMap;
 use copilot::copilot_chat::{
     ChatMessage, ChatMessageContent, ChatMessagePart, CopilotChat, ImageUrl,
@@ -30,7 +31,8 @@ use settings::SettingsStore;
 use std::time::Duration;
 use ui::prelude::*;
 use util::debug_panic;
-use zed_llm_client::CompletionIntent;
+
+use crate::provider::x_ai::count_xai_tokens;
 
 use super::anthropic::count_anthropic_tokens;
 use super::google::count_google_tokens;
@@ -176,7 +178,12 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         Task::ready(Err(err.into()))
     }
 
-    fn configuration_view(&self, _: &mut Window, cx: &mut App) -> AnyView {
+    fn configuration_view(
+        &self,
+        _target_agent: language_model::ConfigurationViewTargetAgent,
+        _: &mut Window,
+        cx: &mut App,
+    ) -> AnyView {
         let state = self.state.clone();
         cx.new(|cx| ConfigurationView::new(state, cx)).into()
     }
@@ -223,7 +230,9 @@ impl LanguageModel for CopilotChatLanguageModel {
             ModelVendor::OpenAI | ModelVendor::Anthropic => {
                 LanguageModelToolSchemaFormat::JsonSchema
             }
-            ModelVendor::Google => LanguageModelToolSchemaFormat::JsonSchemaSubset,
+            ModelVendor::Google | ModelVendor::XAI => {
+                LanguageModelToolSchemaFormat::JsonSchemaSubset
+            }
         }
     }
 
@@ -251,6 +260,10 @@ impl LanguageModel for CopilotChatLanguageModel {
         match self.model.vendor() {
             ModelVendor::Anthropic => count_anthropic_tokens(request, cx),
             ModelVendor::Google => count_google_tokens(request, cx),
+            ModelVendor::XAI => {
+                let model = x_ai::Model::from_id(self.model.id()).unwrap_or_default();
+                count_xai_tokens(request, model, cx)
+            }
             ModelVendor::OpenAI => {
                 let model = open_ai::Model::from_id(self.model.id()).unwrap_or_default();
                 count_open_ai_tokens(request, model, cx)
@@ -470,7 +483,6 @@ fn into_copilot_chat(
         }
     }
 
-    let mut tool_called = false;
     let mut messages: Vec<ChatMessage> = Vec::new();
     for message in request_messages {
         match message.role {
@@ -540,7 +552,6 @@ fn into_copilot_chat(
                 let mut tool_calls = Vec::new();
                 for content in &message.content {
                     if let MessageContent::ToolUse(tool_use) = content {
-                        tool_called = true;
                         tool_calls.push(ToolCall {
                             id: tool_use.id.to_string(),
                             content: copilot::copilot_chat::ToolCallContent::Function {
@@ -585,7 +596,7 @@ fn into_copilot_chat(
         }
     }
 
-    let mut tools = request
+    let tools = request
         .tools
         .iter()
         .map(|tool| Tool::Function {
@@ -596,22 +607,6 @@ fn into_copilot_chat(
             },
         })
         .collect::<Vec<_>>();
-
-    // The API will return a Bad Request (with no error message) when tools
-    // were used previously in the conversation but no tools are provided as
-    // part of this request. Inserting a dummy tool seems to circumvent this
-    // error.
-    if tool_called && tools.is_empty() {
-        tools.push(Tool::Function {
-            function: copilot::copilot_chat::Function {
-                name: "noop".to_string(),
-                description: "No operation".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object"
-                }),
-            },
-        });
-    }
 
     Ok(CopilotChatRequest {
         intent: true,
@@ -706,7 +701,8 @@ impl Render for ConfigurationView {
                             .child(svg().size_8().path(IconName::CopilotError.path()))
                     }
                     _ => {
-                        const LABEL: &str = "To use Zed's assistant with GitHub Copilot, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot Chat subscription.";
+                        const LABEL: &str = "To use Zed's agent with GitHub Copilot, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot Chat subscription.";
+
                         v_flex().gap_2().child(Label::new(LABEL)).child(
                             Button::new("sign_in", "Sign in to use GitHub Copilot")
                                 .icon_color(Color::Muted)

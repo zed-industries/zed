@@ -1,15 +1,14 @@
 # AI
 
-Zed smoothly integrates LLMs in multiple ways across the editor.
-Learn how to get started with AI on Zed and all its capabilities.
+Learn how to get started using AI with Zed and all its capabilities.
 
 ## Setting up AI in Zed
 
 - [Configuration](./configuration.md): Learn how to set up different language model providers like Anthropic, OpenAI, Ollama, Google AI, and more.
 
-- [Models](./models.md): Learn about the various language models available in Zed.
+- [External Agents](./external-agents.md): Learn how to plug in your favorite agent into Zed.
 
-- [Subscription](./subscription.md): Learn about Zed's subscriptions and other billing-related information.
+- [Subscription](./subscription.md): Learn about Zed's hosted model service and other billing-related information.
 
 - [Privacy and Security](./privacy-and-security.md): Understand how Zed handles privacy and security with AI features.
 

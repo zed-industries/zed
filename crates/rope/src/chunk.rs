@@ -49,7 +49,7 @@ impl Chunk {
         self.chars_utf16 |= slice.chars_utf16 << base_ix;
         self.newlines |= slice.newlines << base_ix;
         self.tabs |= slice.tabs << base_ix;
-        self.text.push_str(&slice.text);
+        self.text.push_str(slice.text);
     }
 
     #[inline(always)]
@@ -92,7 +92,7 @@ impl Into<Chunk> for ChunkSlice<'_> {
 
 impl<'a> ChunkSlice<'a> {
     #[inline(always)]
-    pub fn is_empty(self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.text.is_empty()
     }
 
@@ -408,7 +408,7 @@ impl<'a> ChunkSlice<'a> {
         }
 
         let row_offset_range = self.offset_range_for_row(point.0.row);
-        let line = self.slice(row_offset_range.clone());
+        let line = self.slice(row_offset_range);
         if point.0.column == 0 {
             Point::new(point.0.row, 0)
         } else if point.0.column >= line.len_utf16().0 as u32 {
@@ -543,7 +543,7 @@ impl Iterator for Tabs {
         // Since tabs are 1 byte the tab offset is the same as the byte offset
         let position = TabPosition {
             byte_offset: tab_offset,
-            char_offset: char_offset,
+            char_offset,
         };
         // Remove the tab we've just seen
         self.tabs ^= 1 << tab_offset;
@@ -623,7 +623,7 @@ mod tests {
         let text = &text[..ix];
 
         log::info!("Chunk: {:?}", text);
-        let chunk = Chunk::new(&text);
+        let chunk = Chunk::new(text);
         verify_chunk(chunk.as_slice(), text);
 
         for _ in 0..10 {

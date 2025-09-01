@@ -3,8 +3,9 @@ use std::sync::Arc;
 use std::{borrow::Cow, cell::RefCell};
 
 use crate::schema::json_schema_for;
+use action_log::ActionLog;
 use anyhow::{Context as _, Result, anyhow, bail};
-use assistant_tool::{ActionLog, Tool, ToolResult};
+use assistant_tool::{Tool, ToolResult};
 use futures::AsyncReadExt as _;
 use gpui::{AnyWindowHandle, App, AppContext as _, Entity, Task};
 use html_to_markdown::{TagHandler, convert_html_to_markdown, markdown};
@@ -69,10 +70,9 @@ impl FetchTool {
             .to_str()
             .context("invalid Content-Type header")?;
         let content_type = match content_type {
-            "text/html" => ContentType::Html,
-            "text/plain" => ContentType::Plaintext,
+            "text/html" | "application/xhtml+xml" => ContentType::Html,
             "application/json" => ContentType::Json,
-            _ => ContentType::Html,
+            _ => ContentType::Plaintext,
         };
 
         match content_type {
@@ -117,8 +117,8 @@ impl Tool for FetchTool {
         "fetch".to_string()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
-        false
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &Entity<Project>, _: &App) -> bool {
+        true
     }
 
     fn may_perform_edits(&self) -> bool {
@@ -130,7 +130,7 @@ impl Tool for FetchTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::Globe
+        IconName::ToolWeb
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {

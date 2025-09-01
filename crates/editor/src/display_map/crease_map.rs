@@ -52,15 +52,15 @@ impl CreaseSnapshot {
     ) -> Option<&'a Crease<Anchor>> {
         let start = snapshot.anchor_before(Point::new(row.0, 0));
         let mut cursor = self.creases.cursor::<ItemSummary>(snapshot);
-        cursor.seek(&start, Bias::Left, snapshot);
+        cursor.seek(&start, Bias::Left);
         while let Some(item) = cursor.item() {
             match Ord::cmp(&item.crease.range().start.to_point(snapshot).row, &row.0) {
-                Ordering::Less => cursor.next(snapshot),
+                Ordering::Less => cursor.next(),
                 Ordering::Equal => {
                     if item.crease.range().start.is_valid(snapshot) {
                         return Some(&item.crease);
                     } else {
-                        cursor.next(snapshot);
+                        cursor.next();
                     }
                 }
                 Ordering::Greater => break,
@@ -76,11 +76,11 @@ impl CreaseSnapshot {
     ) -> impl 'a + Iterator<Item = &'a Crease<Anchor>> {
         let start = snapshot.anchor_before(Point::new(range.start.0, 0));
         let mut cursor = self.creases.cursor::<ItemSummary>(snapshot);
-        cursor.seek(&start, Bias::Left, snapshot);
+        cursor.seek(&start, Bias::Left);
 
         std::iter::from_fn(move || {
             while let Some(item) = cursor.item() {
-                cursor.next(snapshot);
+                cursor.next();
                 let crease_range = item.crease.range();
                 let crease_start = crease_range.start.to_point(snapshot);
                 let crease_end = crease_range.end.to_point(snapshot);
@@ -102,13 +102,13 @@ impl CreaseSnapshot {
         let mut cursor = self.creases.cursor::<ItemSummary>(snapshot);
         let mut results = Vec::new();
 
-        cursor.next(snapshot);
+        cursor.next();
         while let Some(item) = cursor.item() {
             let crease_range = item.crease.range();
             let start_point = crease_range.start.to_point(snapshot);
             let end_point = crease_range.end.to_point(snapshot);
             results.push((item.id, start_point..end_point));
-            cursor.next(snapshot);
+            cursor.next();
         }
 
         results
@@ -298,7 +298,7 @@ impl CreaseMap {
             let mut cursor = self.snapshot.creases.cursor::<ItemSummary>(snapshot);
             for crease in creases {
                 let crease_range = crease.range().clone();
-                new_creases.append(cursor.slice(&crease_range, Bias::Left, snapshot), snapshot);
+                new_creases.append(cursor.slice(&crease_range, Bias::Left), snapshot);
 
                 let id = self.next_id;
                 self.next_id.0 += 1;
@@ -306,7 +306,7 @@ impl CreaseMap {
                 new_creases.push(CreaseItem { crease, id }, snapshot);
                 new_ids.push(id);
             }
-            new_creases.append(cursor.suffix(snapshot), snapshot);
+            new_creases.append(cursor.suffix(), snapshot);
             new_creases
         };
         new_ids
@@ -332,9 +332,9 @@ impl CreaseMap {
             let mut cursor = self.snapshot.creases.cursor::<ItemSummary>(snapshot);
 
             for (id, range) in &removals {
-                new_creases.append(cursor.slice(range, Bias::Left, snapshot), snapshot);
+                new_creases.append(cursor.slice(range, Bias::Left), snapshot);
                 while let Some(item) = cursor.item() {
-                    cursor.next(snapshot);
+                    cursor.next();
                     if item.id == *id {
                         break;
                     } else {
@@ -343,7 +343,7 @@ impl CreaseMap {
                 }
             }
 
-            new_creases.append(cursor.suffix(snapshot), snapshot);
+            new_creases.append(cursor.suffix(), snapshot);
             new_creases
         };
 

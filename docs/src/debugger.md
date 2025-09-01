@@ -8,9 +8,6 @@ Zed implements the client side of the protocol, and various _debug adapters_ imp
 This protocol enables features like setting breakpoints, stepping through code, inspecting variables,
 and more, in a consistent manner across different programming languages and runtime environments.
 
-> We currently offer onboarding support for users. We are eager to hear from you if you encounter any issues or have suggestions for improvement for our debugging experience.
-> You can schedule a call via [Cal.com](https://cal.com/team/zed-research/debugger)
-
 ## Supported Languages
 
 To debug code written in a specific language, Zed needs to find a debug adapter for that language. Some debug adapters are provided by Zed without additional setup, and some are provided by [language extensions](./extensions/debugger-extensions.md). The following languages currently have debug adapters available:
@@ -81,11 +78,10 @@ While configuration fields are debug adapter-dependent, most adapters support th
     // The debug adapter that Zed should use to debug the program
     "adapter": "Example adapter name",
     // Request:
-    //  - launch: Zed will launch the program if specified or shows a debug terminal with the right configuration
-    //  - attach: Zed will attach to a running program to debug it or when the process_id is not specified we will show a process picker (only supported for node currently)
+    //  - launch: Zed will launch the program if specified, or show a debug terminal with the right configuration
+    //  - attach: Zed will attach to a running program to debug it, or when the process_id is not specified, will show a process picker (only supported for node currently)
     "request": "launch",
-    // program: The program that you want to debug
-    // This field supports path resolution with ~ or . symbols
+    // The program to debug. This field supports path resolution with ~ or . symbols.
     "program": "path_to_program",
     // cwd: defaults to the current working directory of your project ($ZED_WORKTREE_ROOT)
     "cwd": "$ZED_WORKTREE_ROOT"
@@ -151,6 +147,8 @@ The debug adapter will then stop whenever an exception of a given kind occurs. W
 
 ## Settings
 
+The settings for the debugger are grouped under the `debugger` key in `settings.json`:
+
 - `dock`: Determines the position of the debug panel in the UI.
 - `stepping_granularity`: Determines the stepping granularity.
 - `save_breakpoints`: Whether the breakpoints should be reused across Zed sessions.
@@ -180,8 +178,8 @@ The debug adapter will then stop whenever an exception of a given kind occurs. W
 ### Stepping granularity
 
 - Description: The Step granularity that the debugger will use
-- Default: line
-- Setting: debugger.stepping_granularity
+- Default: `line`
+- Setting: `debugger.stepping_granularity`
 
 **Options**
 
@@ -220,8 +218,8 @@ The debug adapter will then stop whenever an exception of a given kind occurs. W
 ### Save Breakpoints
 
 - Description: Whether the breakpoints should be saved across Zed sessions.
-- Default: true
-- Setting: debugger.save_breakpoints
+- Default: `true`
+- Setting: `debugger.save_breakpoints`
 
 **Options**
 
@@ -238,8 +236,8 @@ The debug adapter will then stop whenever an exception of a given kind occurs. W
 ### Button
 
 - Description: Whether the button should be displayed in the debugger toolbar.
-- Default: true
-- Setting: debugger.show_button
+- Default: `true`
+- Setting: `debugger.show_button`
 
 **Options**
 
@@ -256,8 +254,8 @@ The debug adapter will then stop whenever an exception of a given kind occurs. W
 ### Timeout
 
 - Description: Time in milliseconds until timeout error when connecting to a TCP debug adapter.
-- Default: 2000
-- Setting: debugger.timeout
+- Default: `2000`
+- Setting: `debugger.timeout`
 
 **Options**
 
@@ -270,6 +268,24 @@ The debug adapter will then stop whenever an exception of a given kind occurs. W
   }
 }
 ```
+
+### Inline Values
+
+- Description: Whether to enable editor inlay hints showing the values of variables in your code during debugging sessions.
+- Default: `true`
+- Setting: `inlay_hints.show_value_hints`
+
+**Options**
+
+```json
+{
+  "inlay_hints": {
+    "show_value_hints": false
+  }
+}
+```
+
+Inline value hints can also be toggled from the Editor Controls menu in the editor toolbar.
 
 ### Log Dap Communications
 

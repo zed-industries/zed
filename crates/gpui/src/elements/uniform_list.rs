@@ -42,7 +42,6 @@ where
         item_count,
         item_to_measure_index: 0,
         render_items: Box::new(render_range),
-        top_slot: None,
         decorations: Vec::new(),
         interactivity: Interactivity {
             element_id: Some(id),
@@ -62,7 +61,6 @@ pub struct UniformList {
     render_items: Box<
         dyn for<'a> Fn(Range<usize>, &'a mut Window, &'a mut App) -> SmallVec<[AnyElement; 64]>,
     >,
-    top_slot: Option<Box<dyn UniformListTopSlot>>,
     decorations: Vec<Box<dyn UniformListDecoration>>,
     interactivity: Interactivity,
     scroll_handle: Option<UniformListScrollHandle>,
@@ -73,7 +71,6 @@ pub struct UniformList {
 /// Frame state used by the [UniformList].
 pub struct UniformListFrameState {
     items: SmallVec<[AnyElement; 32]>,
-    top_slot_items: SmallVec<[AnyElement; 8]>,
     decorations: SmallVec<[AnyElement; 1]>,
 }
 
@@ -91,15 +88,24 @@ pub enum ScrollStrategy {
     /// May not be possible if there's not enough list items above the item scrolled to:
     /// in this case, the element will be placed at the closest possible position.
     Center,
-    /// Scrolls the element to be at the given item index from the top of the viewport.
-    ToPosition(usize),
+}
+
+#[derive(Clone, Copy, Debug)]
+#[allow(missing_docs)]
+pub struct DeferredScrollToItem {
+    /// The item index to scroll to
+    pub item_index: usize,
+    /// The scroll strategy to use
+    pub strategy: ScrollStrategy,
+    /// The offset in number of items
+    pub offset: usize,
 }
 
 #[derive(Clone, Debug, Default)]
 #[allow(missing_docs)]
 pub struct UniformListScrollState {
     pub base_handle: ScrollHandle,
-    pub deferred_scroll_to_item: Option<(usize, ScrollStrategy)>,
+    pub deferred_scroll_to_item: Option<DeferredScrollToItem>,
     /// Size of the item, captured during last layout.
     pub last_item_size: Option<ItemSize>,
     /// Whether the list was vertically flipped during last layout.
@@ -129,7 +135,24 @@ impl UniformListScrollHandle {
 
     /// Scroll the list to the given item index.
     pub fn scroll_to_item(&self, ix: usize, strategy: ScrollStrategy) {
-        self.0.borrow_mut().deferred_scroll_to_item = Some((ix, strategy));
+        self.0.borrow_mut().deferred_scroll_to_item = Some(DeferredScrollToItem {
+            item_index: ix,
+            strategy,
+            offset: 0,
+        });
+    }
+
+    /// Scroll the list to the given item index with an offset.
+    ///
+    /// For ScrollStrategy::Top, the item will be placed at the offset position from the top.
+    ///
+    /// For ScrollStrategy::Center, the item will be centered between offset and the last visible item.
+    pub fn scroll_to_item_with_offset(&self, ix: usize, strategy: ScrollStrategy, offset: usize) {
+        self.0.borrow_mut().deferred_scroll_to_item = Some(DeferredScrollToItem {
+            item_index: ix,
+            strategy,
+            offset,
+        });
     }
 
     /// Check if the list is flipped vertically.
@@ -142,8 +165,18 @@ impl UniformListScrollHandle {
     pub fn logical_scroll_top_index(&self) -> usize {
         let this = self.0.borrow();
         this.deferred_scroll_to_item
-            .map(|(ix, _)| ix)
+            .as_ref()
+            .map(|deferred| deferred.item_index)
             .unwrap_or_else(|| this.base_handle.logical_scroll_top().0)
+    }
+
+    /// Checks if the list can be scrolled vertically.
+    pub fn is_scrollable(&self) -> bool {
+        if let Some(size) = self.0.borrow().last_item_size {
+            size.contents.height > size.item.height
+        } else {
+            false
+        }
     }
 }
 
@@ -217,7 +250,6 @@ impl Element for UniformList {
             UniformListFrameState {
                 items: SmallVec::new(),
                 decorations: SmallVec::new(),
-                top_slot_items: SmallVec::new(),
             },
         )
     }
@@ -290,9 +322,8 @@ impl Element for UniformList {
                     bounds.bottom_right() - point(border.right + padding.right, border.bottom),
                 );
 
-                let y_flipped = if let Some(scroll_handle) = self.scroll_handle.as_mut() {
-                    let mut scroll_state = scroll_handle.0.borrow_mut();
-                    scroll_state.base_handle.set_bounds(bounds);
+                let y_flipped = if let Some(scroll_handle) = &self.scroll_handle {
+                    let scroll_state = scroll_handle.0.borrow();
                     scroll_state.y_flipped
                 } else {
                     false
@@ -316,7 +347,8 @@ impl Element for UniformList {
                         scroll_offset.x = Pixels::ZERO;
                     }
 
-                    if let Some((mut ix, scroll_strategy)) = shared_scroll_to_item {
+                    if let Some(deferred_scroll) = shared_scroll_to_item {
+                        let mut ix = deferred_scroll.item_index;
                         if y_flipped {
                             ix = self.item_count.saturating_sub(ix + 1);
                         }
@@ -325,23 +357,28 @@ impl Element for UniformList {
                         let item_top = item_height * ix + padding.top;
                         let item_bottom = item_top + item_height;
                         let scroll_top = -updated_scroll_offset.y;
+                        let offset_pixels = item_height * deferred_scroll.offset;
                         let mut scrolled_to_top = false;
-                        if item_top < scroll_top + padding.top {
+
+                        if item_top < scroll_top + padding.top + offset_pixels {
                             scrolled_to_top = true;
-                            updated_scroll_offset.y = -(item_top) + padding.top;
+                            updated_scroll_offset.y = -(item_top) + padding.top + offset_pixels;
                         } else if item_bottom > scroll_top + list_height - padding.bottom {
                             scrolled_to_top = true;
                             updated_scroll_offset.y = -(item_bottom - list_height) - padding.bottom;
                         }
 
-                        match scroll_strategy {
+                        match deferred_scroll.strategy {
                             ScrollStrategy::Top => {}
                             ScrollStrategy::Center => {
                                 if scrolled_to_top {
                                     let item_center = item_top + item_height / 2.0;
-                                    let target_scroll_top = item_center - list_height / 2.0;
 
-                                    if item_top < scroll_top
+                                    let viewport_height = list_height - offset_pixels;
+                                    let viewport_center = offset_pixels + viewport_height / 2.0;
+                                    let target_scroll_top = item_center - viewport_center;
+
+                                    if item_top < scroll_top + offset_pixels
                                         || item_bottom > scroll_top + list_height
                                     {
                                         updated_scroll_offset.y = -target_scroll_top
@@ -350,15 +387,6 @@ impl Element for UniformList {
                                             .max(Pixels::ZERO);
                                     }
                                 }
-                            }
-                            ScrollStrategy::ToPosition(sticky_index) => {
-                                let target_y_in_viewport = item_height * sticky_index;
-                                let target_scroll_top = item_top - target_y_in_viewport;
-                                let max_scroll_top =
-                                    (content_height - list_height).max(Pixels::ZERO);
-                                let new_scroll_top =
-                                    target_scroll_top.clamp(Pixels::ZERO, max_scroll_top);
-                                updated_scroll_offset.y = -new_scroll_top;
                             }
                         }
                         scroll_offset = *updated_scroll_offset
@@ -369,17 +397,8 @@ impl Element for UniformList {
                     let last_visible_element_ix = ((-scroll_offset.y + padded_bounds.size.height)
                         / item_height)
                         .ceil() as usize;
-                    let initial_range = first_visible_element_ix
-                        ..cmp::min(last_visible_element_ix, self.item_count);
 
-                    let mut top_slot_elements = if let Some(ref mut top_slot) = self.top_slot {
-                        top_slot.compute(initial_range, window, cx)
-                    } else {
-                        SmallVec::new()
-                    };
-                    let top_slot_offset = top_slot_elements.len();
-
-                    let visible_range = (top_slot_offset + first_visible_element_ix)
+                    let visible_range = first_visible_element_ix
                         ..cmp::min(last_visible_element_ix, self.item_count);
 
                     let items = if y_flipped {
@@ -418,20 +437,6 @@ impl Element for UniformList {
                             frame_state.items.push(item);
                         }
 
-                        if let Some(ref top_slot) = self.top_slot {
-                            top_slot.prepaint(
-                                &mut top_slot_elements,
-                                padded_bounds,
-                                item_height,
-                                scroll_offset,
-                                padding,
-                                can_scroll_horizontally,
-                                window,
-                                cx,
-                            );
-                        }
-                        frame_state.top_slot_items = top_slot_elements;
-
                         let bounds = Bounds::new(
                             padded_bounds.origin
                                 + point(
@@ -448,6 +453,7 @@ impl Element for UniformList {
                             let mut decoration = decoration.as_ref().compute(
                                 visible_range.clone(),
                                 bounds,
+                                scroll_offset,
                                 item_height,
                                 self.item_count,
                                 window,
@@ -493,9 +499,6 @@ impl Element for UniformList {
                 for decoration in &mut request_layout.decorations {
                     decoration.paint(window, cx);
                 }
-                if let Some(ref top_slot) = self.top_slot {
-                    top_slot.paint(&mut request_layout.top_slot_items, window, cx);
-                }
             },
         )
     }
@@ -518,40 +521,12 @@ pub trait UniformListDecoration {
         &self,
         visible_range: Range<usize>,
         bounds: Bounds<Pixels>,
+        scroll_offset: Point<Pixels>,
         item_height: Pixels,
         item_count: usize,
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement;
-}
-
-/// A trait for implementing top slots in a [`UniformList`].
-/// Top slots are elements that appear at the top of the list and can adjust
-/// the visible range of list items.
-pub trait UniformListTopSlot {
-    /// Returns elements to render at the top slot for the given visible range.
-    fn compute(
-        &mut self,
-        visible_range: Range<usize>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> SmallVec<[AnyElement; 8]>;
-
-    /// Layout and prepaint the top slot elements.
-    fn prepaint(
-        &self,
-        elements: &mut SmallVec<[AnyElement; 8]>,
-        bounds: Bounds<Pixels>,
-        item_height: Pixels,
-        scroll_offset: Point<Pixels>,
-        padding: crate::Edges<Pixels>,
-        can_scroll_horizontally: bool,
-        window: &mut Window,
-        cx: &mut App,
-    );
-
-    /// Paint the top slot elements.
-    fn paint(&self, elements: &mut SmallVec<[AnyElement; 8]>, window: &mut Window, cx: &mut App);
 }
 
 impl UniformList {
@@ -589,12 +564,6 @@ impl UniformList {
     /// Adds a decoration element to the list.
     pub fn with_decoration(mut self, decoration: impl UniformListDecoration + 'static) -> Self {
         self.decorations.push(Box::new(decoration));
-        self
-    }
-
-    /// Sets a top slot for the list.
-    pub fn with_top_slot(mut self, top_slot: impl UniformListTopSlot + 'static) -> Self {
-        self.top_slot = Some(Box::new(top_slot));
         self
     }
 

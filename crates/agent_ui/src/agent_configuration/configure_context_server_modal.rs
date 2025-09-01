@@ -1,4 +1,5 @@
 use std::{
+    path::PathBuf,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -162,10 +163,10 @@ impl ConfigurationSource {
                     .read(cx)
                     .text(cx);
                 let settings = serde_json_lenient::from_str::<serde_json::Value>(&text)?;
-                if let Some(settings_validator) = settings_validator {
-                    if let Err(error) = settings_validator.validate(&settings) {
-                        return Err(anyhow::anyhow!(error.to_string()));
-                    }
+                if let Some(settings_validator) = settings_validator
+                    && let Err(error) = settings_validator.validate(&settings)
+                {
+                    return Err(anyhow::anyhow!(error.to_string()));
                 }
                 Ok((
                     id.clone(),
@@ -188,7 +189,7 @@ fn context_server_input(existing: Option<(ContextServerId, ContextServerCommand)
         }
         None => (
             "some-mcp-server".to_string(),
-            "".to_string(),
+            PathBuf::new(),
             "[]".to_string(),
             "{}".to_string(),
         ),
@@ -199,13 +200,14 @@ fn context_server_input(existing: Option<(ContextServerId, ContextServerCommand)
   /// The name of your MCP server
   "{name}": {{
     /// The command which runs the MCP server
-    "command": "{command}",
+    "command": "{}",
     /// The arguments to pass to the MCP server
     "args": {args},
     /// The environment variables to set
     "env": {env}
   }}
-}}"#
+}}"#,
+        command.display()
     )
 }
 
@@ -259,7 +261,6 @@ impl ConfigureContextServerModal {
         _cx: &mut Context<Workspace>,
     ) {
         workspace.register_action({
-            let language_registry = language_registry.clone();
             move |_workspace, _: &AddContextServer, window, cx| {
                 let workspace_handle = cx.weak_entity();
                 let language_registry = language_registry.clone();
@@ -436,7 +437,7 @@ impl ConfigureContextServerModal {
                         format!("{} configured successfully.", id.0),
                         cx,
                         |this, _cx| {
-                            this.icon(ToastIcon::new(IconName::Hammer).color(Color::Muted))
+                            this.icon(ToastIcon::new(IconName::ToolHammer).color(Color::Muted))
                                 .action("Dismiss", |_, _| {})
                         },
                     );
@@ -485,7 +486,7 @@ impl ConfigureContextServerModal {
     }
 
     fn render_modal_description(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        const MODAL_DESCRIPTION: &'static str = "Visit the MCP server configuration docs to find all necessary arguments and environment variables.";
+        const MODAL_DESCRIPTION: &str = "Visit the MCP server configuration docs to find all necessary arguments and environment variables.";
 
         if let ConfigurationSource::Extension {
             installation_instructions: Some(installation_instructions),
@@ -565,7 +566,7 @@ impl ConfigureContextServerModal {
                         Button::new("open-repository", "Open Repository")
                             .icon(IconName::ArrowUpRight)
                             .icon_color(Color::Muted)
-                            .icon_size(IconSize::XSmall)
+                            .icon_size(IconSize::Small)
                             .tooltip({
                                 let repository_url = repository_url.clone();
                                 move |window, cx| {
@@ -714,24 +715,24 @@ fn wait_for_context_server(
         project::context_server_store::Event::ServerStatusChanged { server_id, status } => {
             match status {
                 ContextServerStatus::Running => {
-                    if server_id == &context_server_id {
-                        if let Some(tx) = tx.lock().unwrap().take() {
-                            let _ = tx.send(Ok(()));
-                        }
+                    if server_id == &context_server_id
+                        && let Some(tx) = tx.lock().unwrap().take()
+                    {
+                        let _ = tx.send(Ok(()));
                     }
                 }
                 ContextServerStatus::Stopped => {
-                    if server_id == &context_server_id {
-                        if let Some(tx) = tx.lock().unwrap().take() {
-                            let _ = tx.send(Err("Context server stopped running".into()));
-                        }
+                    if server_id == &context_server_id
+                        && let Some(tx) = tx.lock().unwrap().take()
+                    {
+                        let _ = tx.send(Err("Context server stopped running".into()));
                     }
                 }
                 ContextServerStatus::Error(error) => {
-                    if server_id == &context_server_id {
-                        if let Some(tx) = tx.lock().unwrap().take() {
-                            let _ = tx.send(Err(error.clone()));
-                        }
+                    if server_id == &context_server_id
+                        && let Some(tx) = tx.lock().unwrap().take()
+                    {
+                        let _ = tx.send(Err(error.clone()));
                     }
                 }
                 _ => {}
@@ -740,7 +741,9 @@ fn wait_for_context_server(
     });
 
     cx.spawn(async move |_cx| {
-        let result = rx.await.unwrap();
+        let result = rx
+            .await
+            .map_err(|_| Arc::from("Context server store was dropped"))?;
         drop(subscription);
         result
     })

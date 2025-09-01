@@ -8,19 +8,24 @@ use crate::{
     },
     tool_use::{PendingToolUse, ToolUse, ToolUseMetadata, ToolUseState},
 };
-use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
+use action_log::ActionLog;
+use agent_settings::{
+    AgentProfileId, AgentSettings, CompletionMode, SUMMARIZE_THREAD_DETAILED_PROMPT,
+    SUMMARIZE_THREAD_PROMPT,
+};
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
+use assistant_tool::{AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use client::{ModelRequestUsage, RequestUsage};
+use cloud_llm_client::{CompletionIntent, CompletionRequestStatus, Plan, UsageLimit};
 use collections::HashMap;
-use feature_flags::{self, FeatureFlagAppExt};
 use futures::{FutureExt, StreamExt as _, future::Shared};
 use git::repository::DiffType;
 use gpui::{
     AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task,
     WeakEntity, Window,
 };
+use http_client::StatusCode;
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelExt as _, LanguageModelId, LanguageModelRegistry, LanguageModelRequest,
@@ -35,7 +40,6 @@ use project::{
     git_store::{GitStore, GitStoreCheckpoint, RepositoryState},
 };
 use prompt_store::{ModelContext, PromptBuilder};
-use proto::Plan;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -46,12 +50,23 @@ use std::{
     time::{Duration, Instant},
 };
 use thiserror::Error;
-use util::{ResultExt as _, debug_panic, post_inc};
+use util::{ResultExt as _, post_inc};
 use uuid::Uuid;
-use zed_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
 
-const MAX_RETRY_ATTEMPTS: u8 = 3;
-const BASE_RETRY_DELAY_SECS: u64 = 5;
+const MAX_RETRY_ATTEMPTS: u8 = 4;
+const BASE_RETRY_DELAY: Duration = Duration::from_secs(5);
+
+#[derive(Debug, Clone)]
+enum RetryStrategy {
+    ExponentialBackoff {
+        initial_delay: Duration,
+        max_attempts: u8,
+    },
+    Fixed {
+        delay: Duration,
+        max_attempts: u8,
+    },
+}
 
 #[derive(
     Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize, JsonSchema,
@@ -95,7 +110,7 @@ impl std::fmt::Display for PromptId {
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
-pub struct MessageId(pub(crate) usize);
+pub struct MessageId(pub usize);
 
 impl MessageId {
     fn post_inc(&mut self) -> Self {
@@ -166,7 +181,7 @@ impl Message {
         }
     }
 
-    pub fn to_string(&self) -> String {
+    pub fn to_message_content(&self) -> String {
         let mut result = String::new();
 
         if !self.loaded_context.text.is_empty() {
@@ -372,10 +387,8 @@ pub struct Thread {
     cumulative_token_usage: TokenUsage,
     exceeded_window_error: Option<ExceededWindowError>,
     tool_use_limit_reached: bool,
-    feedback: Option<ThreadFeedback>,
     retry_state: Option<RetryState>,
     message_feedback: HashMap<MessageId, ThreadFeedback>,
-    last_auto_capture_at: Option<Instant>,
     last_received_chunk_at: Option<Instant>,
     request_callback: Option<
         Box<dyn FnMut(&LanguageModelRequest, &[Result<LanguageModelCompletionEvent, String>])>,
@@ -383,6 +396,7 @@ pub struct Thread {
     remaining_turns: u32,
     configured_model: Option<ConfiguredModel>,
     profile: AgentProfile,
+    last_error_context: Option<(Arc<dyn LanguageModel>, CompletionIntent)>,
 }
 
 #[derive(Clone, Debug)]
@@ -472,10 +486,9 @@ impl Thread {
             cumulative_token_usage: TokenUsage::default(),
             exceeded_window_error: None,
             tool_use_limit_reached: false,
-            feedback: None,
             retry_state: None,
             message_feedback: HashMap::default(),
-            last_auto_capture_at: None,
+            last_error_context: None,
             last_received_chunk_at: None,
             request_callback: None,
             remaining_turns: u32::MAX,
@@ -517,7 +530,7 @@ impl Thread {
                 .and_then(|model| {
                     let model = SelectedModel {
                         provider: model.provider.clone().into(),
-                        model: model.model.clone().into(),
+                        model: model.model.into(),
                     };
                     registry.select_model(&model, cx)
                 })
@@ -597,9 +610,8 @@ impl Thread {
             cumulative_token_usage: serialized.cumulative_token_usage,
             exceeded_window_error: None,
             tool_use_limit_reached: serialized.tool_use_limit_reached,
-            feedback: None,
             message_feedback: HashMap::default(),
-            last_auto_capture_at: None,
+            last_error_context: None,
             last_received_chunk_at: None,
             request_callback: None,
             remaining_turns: u32::MAX,
@@ -828,11 +840,17 @@ impl Thread {
                     .await
                     .unwrap_or(false);
 
-                if !equal {
-                    this.update(cx, |this, cx| {
-                        this.insert_checkpoint(pending_checkpoint, cx)
-                    })?;
-                }
+                this.update(cx, |this, cx| {
+                    this.pending_checkpoint = if equal {
+                        Some(pending_checkpoint)
+                    } else {
+                        this.insert_checkpoint(pending_checkpoint, cx);
+                        Some(ThreadCheckpoint {
+                            message_id: this.next_message_id,
+                            git_checkpoint: final_checkpoint,
+                        })
+                    }
+                })?;
 
                 Ok(())
             }
@@ -926,7 +944,7 @@ impl Thread {
     }
 
     pub fn tool_uses_for_message(&self, id: MessageId, cx: &App) -> Vec<ToolUse> {
-        self.tool_use.tool_uses_for_message(id, cx)
+        self.tool_use.tool_uses_for_message(id, &self.project, cx)
     }
 
     pub fn tool_results_for_message(
@@ -1010,8 +1028,6 @@ impl Thread {
                 git_checkpoint,
             });
         }
-
-        self.auto_capture_telemetry(cx);
 
         message_id
     }
@@ -1251,9 +1267,58 @@ impl Thread {
 
         self.flush_notifications(model.clone(), intent, cx);
 
-        let request = self.to_completion_request(model.clone(), intent, cx);
+        let _checkpoint = self.finalize_pending_checkpoint(cx);
+        self.stream_completion(
+            self.to_completion_request(model.clone(), intent, cx),
+            model,
+            intent,
+            window,
+            cx,
+        );
+    }
 
-        self.stream_completion(request, model, intent, window, cx);
+    pub fn retry_last_completion(
+        &mut self,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) {
+        // Clear any existing error state
+        self.retry_state = None;
+
+        // Use the last error context if available, otherwise fall back to configured model
+        let (model, intent) = if let Some((model, intent)) = self.last_error_context.take() {
+            (model, intent)
+        } else if let Some(configured_model) = self.configured_model.as_ref() {
+            let model = configured_model.model.clone();
+            let intent = if self.has_pending_tool_uses() {
+                CompletionIntent::ToolResults
+            } else {
+                CompletionIntent::UserPrompt
+            };
+            (model, intent)
+        } else if let Some(configured_model) = self.get_or_init_configured_model(cx) {
+            let model = configured_model.model.clone();
+            let intent = if self.has_pending_tool_uses() {
+                CompletionIntent::ToolResults
+            } else {
+                CompletionIntent::UserPrompt
+            };
+            (model, intent)
+        } else {
+            return;
+        };
+
+        self.send_to_model(model, intent, window, cx);
+    }
+
+    pub fn enable_burn_mode_and_retry(
+        &mut self,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) {
+        self.completion_mode = CompletionMode::Burn;
+        cx.emit(ThreadEvent::ProfileChanged);
+        self.retry_last_completion(window, cx);
     }
 
     pub fn used_tools_since_last_user_message(&self) -> bool {
@@ -1284,6 +1349,7 @@ impl Thread {
             tool_choice: None,
             stop: Vec::new(),
             temperature: AgentSettings::temperature_for_model(&model, cx),
+            thinking_allowed: true,
         };
 
         let available_tools = self.available_tools(cx, model.clone());
@@ -1449,6 +1515,7 @@ impl Thread {
             tool_choice: None,
             stop: Vec::new(),
             temperature: AgentSettings::temperature_for_model(model, cx),
+            thinking_allowed: false,
         };
 
         for message in &self.messages {
@@ -1515,18 +1582,18 @@ impl Thread {
         model: Arc<dyn LanguageModel>,
         cx: &mut App,
     ) -> Option<PendingToolUse> {
-        let action_log = self.action_log.read(cx);
-
-        action_log.unnotified_stale_buffers(cx).next()?;
-
         // Represent notification as a simulated `project_notifications` tool call
         let tool_name = Arc::from("project_notifications");
-        let Some(tool) = self.tools.read(cx).tool(&tool_name, cx) else {
-            debug_panic!("`project_notifications` tool not found");
-            return None;
-        };
+        let tool = self.tools.read(cx).tool(&tool_name, cx)?;
 
         if !self.profile.is_tool_enabled(tool.source(), tool.name(), cx) {
+            return None;
+        }
+
+        if self
+            .action_log
+            .update(cx, |log, cx| log.unnotified_user_edits(cx).is_none())
+        {
             return None;
         }
 
@@ -1576,17 +1643,15 @@ impl Thread {
         };
 
         self.tool_use
-            .request_tool_use(tool_message_id, tool_use, tool_use_metadata.clone(), cx);
+            .request_tool_use(tool_message_id, tool_use, tool_use_metadata, cx);
 
-        let pending_tool_use = self.tool_use.insert_tool_output(
-            tool_use_id.clone(),
+        self.tool_use.insert_tool_output(
+            tool_use_id,
             tool_name,
             tool_output,
             self.configured_model.as_ref(),
             self.completion_mode,
-        );
-
-        pending_tool_use
+        )
     }
 
     pub fn stream_completion(
@@ -1614,12 +1679,12 @@ impl Thread {
 
         let completion_mode = request
             .mode
-            .unwrap_or(zed_llm_client::CompletionMode::Normal);
+            .unwrap_or(cloud_llm_client::CompletionMode::Normal);
 
         self.last_received_chunk_at = Some(Instant::now());
 
         let task = cx.spawn(async move |thread, cx| {
-            let stream_completion_future = model.stream_completion(request, &cx);
+            let stream_completion_future = model.stream_completion(request, cx);
             let initial_token_usage =
                 thread.read_with(cx, |thread, _cx| thread.cumulative_token_usage);
             let stream_completion = async {
@@ -1751,7 +1816,7 @@ impl Thread {
                                 let streamed_input = if tool_use.is_input_complete {
                                     None
                                 } else {
-                                    Some((&tool_use.input).clone())
+                                    Some(tool_use.input.clone())
                                 };
 
                                 let ui_text = thread.tool_use.request_tool_use(
@@ -1833,7 +1898,6 @@ impl Thread {
                         cx.emit(ThreadEvent::StreamedCompletion);
                         cx.notify();
 
-                        thread.auto_capture_telemetry(cx);
                         Ok(())
                     })??;
 
@@ -1901,11 +1965,9 @@ impl Thread {
 
                                                 if let Some(prev_message) =
                                                     thread.messages.get(ix - 1)
-                                                {
-                                                    if prev_message.role == Role::Assistant {
+                                                    && prev_message.role == Role::Assistant {
                                                         break;
                                                     }
-                                                }
                                             }
                                         }
 
@@ -1931,18 +1993,6 @@ impl Thread {
                                 project.set_agent_location(None, cx);
                             });
 
-                            fn emit_generic_error(error: &anyhow::Error, cx: &mut Context<Thread>) {
-                                let error_message = error
-                                    .chain()
-                                    .map(|err| err.to_string())
-                                    .collect::<Vec<_>>()
-                                    .join("\n");
-                                cx.emit(ThreadEvent::ShowError(ThreadError::Message {
-                                    header: "Error interacting with language model".into(),
-                                    message: SharedString::from(error_message.clone()),
-                                }));
-                            }
-
                             if error.is::<PaymentRequiredError>() {
                                 cx.emit(ThreadEvent::ShowError(ThreadError::PaymentRequired));
                             } else if let Some(error) =
@@ -1954,9 +2004,10 @@ impl Thread {
                             } else if let Some(completion_error) =
                                 error.downcast_ref::<LanguageModelCompletionError>()
                             {
-                                use LanguageModelCompletionError::*;
                                 match &completion_error {
-                                    PromptTooLarge { tokens, .. } => {
+                                    LanguageModelCompletionError::PromptTooLarge {
+                                        tokens, ..
+                                    } => {
                                         let tokens = tokens.unwrap_or_else(|| {
                                             // We didn't get an exact token count from the API, so fall back on our estimate.
                                             thread
@@ -1977,63 +2028,28 @@ impl Thread {
                                         });
                                         cx.notify();
                                     }
-                                    RateLimitExceeded {
-                                        retry_after: Some(retry_after),
-                                        ..
-                                    }
-                                    | ServerOverloaded {
-                                        retry_after: Some(retry_after),
-                                        ..
-                                    } => {
-                                        thread.handle_rate_limit_error(
-                                            &completion_error,
-                                            *retry_after,
-                                            model.clone(),
-                                            intent,
-                                            window,
-                                            cx,
-                                        );
-                                        retry_scheduled = true;
-                                    }
-                                    RateLimitExceeded { .. } | ServerOverloaded { .. } => {
-                                        retry_scheduled = thread.handle_retryable_error(
-                                            &completion_error,
-                                            model.clone(),
-                                            intent,
-                                            window,
-                                            cx,
-                                        );
-                                        if !retry_scheduled {
-                                            emit_generic_error(error, cx);
+                                    _ => {
+                                        if let Some(retry_strategy) =
+                                            Thread::get_retry_strategy(completion_error)
+                                        {
+                                            log::info!(
+                                                "Retrying with {:?} for language model completion error {:?}",
+                                                retry_strategy,
+                                                completion_error
+                                            );
+
+                                            retry_scheduled = thread
+                                                .handle_retryable_error_with_delay(
+                                                    completion_error,
+                                                    Some(retry_strategy),
+                                                    model.clone(),
+                                                    intent,
+                                                    window,
+                                                    cx,
+                                                );
                                         }
                                     }
-                                    ApiInternalServerError { .. }
-                                    | ApiReadResponseError { .. }
-                                    | HttpSend { .. } => {
-                                        retry_scheduled = thread.handle_retryable_error(
-                                            &completion_error,
-                                            model.clone(),
-                                            intent,
-                                            window,
-                                            cx,
-                                        );
-                                        if !retry_scheduled {
-                                            emit_generic_error(error, cx);
-                                        }
-                                    }
-                                    NoApiKey { .. }
-                                    | HttpResponseError { .. }
-                                    | BadRequestFormat { .. }
-                                    | AuthenticationError { .. }
-                                    | PermissionError { .. }
-                                    | ApiEndpointNotFound { .. }
-                                    | SerializeRequest { .. }
-                                    | BuildRequestBody { .. }
-                                    | DeserializeResponse { .. }
-                                    | Other { .. } => emit_generic_error(error, cx),
                                 }
-                            } else {
-                                emit_generic_error(error, cx);
                             }
 
                             if !retry_scheduled {
@@ -2053,8 +2069,6 @@ impl Thread {
                     {
                         request_callback(request, response_events);
                     }
-
-                    thread.auto_capture_telemetry(cx);
 
                     if let Ok(initial_usage) = initial_token_usage {
                         let usage = thread.cumulative_token_usage - initial_usage;
@@ -2092,12 +2106,10 @@ impl Thread {
             return;
         }
 
-        let added_user_message = include_str!("./prompts/summarize_thread_prompt.txt");
-
         let request = self.to_summarize_request(
             &model.model,
             CompletionIntent::ThreadSummarization,
-            added_user_message.into(),
+            SUMMARIZE_THREAD_PROMPT.into(),
             cx,
         );
 
@@ -2105,7 +2117,7 @@ impl Thread {
 
         self.pending_summary = cx.spawn(async move |this, cx| {
             let result = async {
-                let mut messages = model.model.stream_completion(request, &cx).await?;
+                let mut messages = model.model.stream_completion(request, cx).await?;
 
                 let mut new_summary = String::new();
                 while let Some(event) = messages.next().await {
@@ -2160,73 +2172,150 @@ impl Thread {
         });
     }
 
-    fn handle_rate_limit_error(
-        &mut self,
-        error: &LanguageModelCompletionError,
-        retry_after: Duration,
-        model: Arc<dyn LanguageModel>,
-        intent: CompletionIntent,
-        window: Option<AnyWindowHandle>,
-        cx: &mut Context<Self>,
-    ) {
-        // For rate limit errors, we only retry once with the specified duration
-        let retry_message = format!("{error}. Retrying in {} seconds…", retry_after.as_secs());
-        log::warn!(
-            "Retrying completion request in {} seconds: {error:?}",
-            retry_after.as_secs(),
-        );
+    fn get_retry_strategy(error: &LanguageModelCompletionError) -> Option<RetryStrategy> {
+        use LanguageModelCompletionError::*;
 
-        // Add a UI-only message instead of a regular message
-        let id = self.next_message_id.post_inc();
-        self.messages.push(Message {
-            id,
-            role: Role::System,
-            segments: vec![MessageSegment::Text(retry_message)],
-            loaded_context: LoadedContext::default(),
-            creases: Vec::new(),
-            is_hidden: false,
-            ui_only: true,
-        });
-        cx.emit(ThreadEvent::MessageAdded(id));
-        // Schedule the retry
-        let thread_handle = cx.entity().downgrade();
-
-        cx.spawn(async move |_thread, cx| {
-            cx.background_executor().timer(retry_after).await;
-
-            thread_handle
-                .update(cx, |thread, cx| {
-                    // Retry the completion
-                    thread.send_to_model(model, intent, window, cx);
+        // General strategy here:
+        // - If retrying won't help (e.g. invalid API key or payload too large), return None so we don't retry at all.
+        // - If it's a time-based issue (e.g. server overloaded, rate limit exceeded), retry up to 4 times with exponential backoff.
+        // - If it's an issue that *might* be fixed by retrying (e.g. internal server error), retry up to 3 times.
+        match error {
+            HttpResponseError {
+                status_code: StatusCode::TOO_MANY_REQUESTS,
+                ..
+            } => Some(RetryStrategy::ExponentialBackoff {
+                initial_delay: BASE_RETRY_DELAY,
+                max_attempts: MAX_RETRY_ATTEMPTS,
+            }),
+            ServerOverloaded { retry_after, .. } | RateLimitExceeded { retry_after, .. } => {
+                Some(RetryStrategy::Fixed {
+                    delay: retry_after.unwrap_or(BASE_RETRY_DELAY),
+                    max_attempts: MAX_RETRY_ATTEMPTS,
                 })
-                .log_err();
-        })
-        .detach();
-    }
-
-    fn handle_retryable_error(
-        &mut self,
-        error: &LanguageModelCompletionError,
-        model: Arc<dyn LanguageModel>,
-        intent: CompletionIntent,
-        window: Option<AnyWindowHandle>,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        self.handle_retryable_error_with_delay(error, None, model, intent, window, cx)
+            }
+            UpstreamProviderError {
+                status,
+                retry_after,
+                ..
+            } => match *status {
+                StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE => {
+                    Some(RetryStrategy::Fixed {
+                        delay: retry_after.unwrap_or(BASE_RETRY_DELAY),
+                        max_attempts: MAX_RETRY_ATTEMPTS,
+                    })
+                }
+                StatusCode::INTERNAL_SERVER_ERROR => Some(RetryStrategy::Fixed {
+                    delay: retry_after.unwrap_or(BASE_RETRY_DELAY),
+                    // Internal Server Error could be anything, retry up to 3 times.
+                    max_attempts: 3,
+                }),
+                status => {
+                    // There is no StatusCode variant for the unofficial HTTP 529 ("The service is overloaded"),
+                    // but we frequently get them in practice. See https://http.dev/529
+                    if status.as_u16() == 529 {
+                        Some(RetryStrategy::Fixed {
+                            delay: retry_after.unwrap_or(BASE_RETRY_DELAY),
+                            max_attempts: MAX_RETRY_ATTEMPTS,
+                        })
+                    } else {
+                        Some(RetryStrategy::Fixed {
+                            delay: retry_after.unwrap_or(BASE_RETRY_DELAY),
+                            max_attempts: 2,
+                        })
+                    }
+                }
+            },
+            ApiInternalServerError { .. } => Some(RetryStrategy::Fixed {
+                delay: BASE_RETRY_DELAY,
+                max_attempts: 3,
+            }),
+            ApiReadResponseError { .. }
+            | HttpSend { .. }
+            | DeserializeResponse { .. }
+            | BadRequestFormat { .. } => Some(RetryStrategy::Fixed {
+                delay: BASE_RETRY_DELAY,
+                max_attempts: 3,
+            }),
+            // Retrying these errors definitely shouldn't help.
+            HttpResponseError {
+                status_code:
+                    StatusCode::PAYLOAD_TOO_LARGE | StatusCode::FORBIDDEN | StatusCode::UNAUTHORIZED,
+                ..
+            }
+            | AuthenticationError { .. }
+            | PermissionError { .. }
+            | NoApiKey { .. }
+            | ApiEndpointNotFound { .. }
+            | PromptTooLarge { .. } => None,
+            // These errors might be transient, so retry them
+            SerializeRequest { .. } | BuildRequestBody { .. } => Some(RetryStrategy::Fixed {
+                delay: BASE_RETRY_DELAY,
+                max_attempts: 1,
+            }),
+            // Retry all other 4xx and 5xx errors once.
+            HttpResponseError { status_code, .. }
+                if status_code.is_client_error() || status_code.is_server_error() =>
+            {
+                Some(RetryStrategy::Fixed {
+                    delay: BASE_RETRY_DELAY,
+                    max_attempts: 3,
+                })
+            }
+            Other(err)
+                if err.is::<PaymentRequiredError>()
+                    || err.is::<ModelRequestLimitReachedError>() =>
+            {
+                // Retrying won't help for Payment Required or Model Request Limit errors (where
+                // the user must upgrade to usage-based billing to get more requests, or else wait
+                // for a significant amount of time for the request limit to reset).
+                None
+            }
+            // Conservatively assume that any other errors are non-retryable
+            HttpResponseError { .. } | Other(..) => Some(RetryStrategy::Fixed {
+                delay: BASE_RETRY_DELAY,
+                max_attempts: 2,
+            }),
+        }
     }
 
     fn handle_retryable_error_with_delay(
         &mut self,
         error: &LanguageModelCompletionError,
-        custom_delay: Option<Duration>,
+        strategy: Option<RetryStrategy>,
         model: Arc<dyn LanguageModel>,
         intent: CompletionIntent,
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) -> bool {
+        // Store context for the Retry button
+        self.last_error_context = Some((model.clone(), intent));
+
+        // Only auto-retry if Burn Mode is enabled
+        if self.completion_mode != CompletionMode::Burn {
+            // Show error with retry options
+            cx.emit(ThreadEvent::ShowError(ThreadError::RetryableError {
+                message: format!(
+                    "{}\n\nTo automatically retry when similar errors happen, enable Burn Mode.",
+                    error
+                )
+                .into(),
+                can_enable_burn_mode: true,
+            }));
+            return false;
+        }
+
+        let Some(strategy) = strategy.or_else(|| Self::get_retry_strategy(error)) else {
+            return false;
+        };
+
+        let max_attempts = match &strategy {
+            RetryStrategy::ExponentialBackoff { max_attempts, .. } => *max_attempts,
+            RetryStrategy::Fixed { max_attempts, .. } => *max_attempts,
+        };
+
         let retry_state = self.retry_state.get_or_insert(RetryState {
             attempt: 0,
-            max_attempts: MAX_RETRY_ATTEMPTS,
+            max_attempts,
             intent,
         });
 
@@ -2236,20 +2325,24 @@ impl Thread {
         let intent = retry_state.intent;
 
         if attempt <= max_attempts {
-            // Use custom delay if provided (e.g., from rate limit), otherwise exponential backoff
-            let delay = if let Some(custom_delay) = custom_delay {
-                custom_delay
-            } else {
-                let delay_secs = BASE_RETRY_DELAY_SECS * 2u64.pow((attempt - 1) as u32);
-                Duration::from_secs(delay_secs)
+            let delay = match &strategy {
+                RetryStrategy::ExponentialBackoff { initial_delay, .. } => {
+                    let delay_secs = initial_delay.as_secs() * 2u64.pow((attempt - 1) as u32);
+                    Duration::from_secs(delay_secs)
+                }
+                RetryStrategy::Fixed { delay, .. } => *delay,
             };
 
             // Add a transient message to inform the user
             let delay_secs = delay.as_secs();
-            let retry_message = format!(
-                "{error}. Retrying (attempt {attempt} of {max_attempts}) \
-                in {delay_secs} seconds..."
-            );
+            let retry_message = if max_attempts == 1 {
+                format!("{error}. Retrying in {delay_secs} seconds...")
+            } else {
+                format!(
+                    "{error}. Retrying (attempt {attempt} of {max_attempts}) \
+                    in {delay_secs} seconds..."
+                )
+            };
             log::warn!(
                 "Retrying completion request (attempt {attempt} of {max_attempts}) \
                 in {delay_secs} seconds: {error:?}",
@@ -2288,18 +2381,15 @@ impl Thread {
             // Max retries exceeded
             self.retry_state = None;
 
-            let notification_text = if max_attempts == 1 {
-                "Failed after retrying.".into()
-            } else {
-                format!("Failed after retrying {} times.", max_attempts).into()
-            };
-
             // Stop generating since we're giving up on retrying.
             self.pending_completions.clear();
 
-            cx.emit(ThreadEvent::RetriesFailed {
-                message: notification_text,
-            });
+            // Show error alongside a Retry button, but no
+            // Enable Burn Mode button (since it's already enabled)
+            cx.emit(ThreadEvent::ShowError(ThreadError::RetryableError {
+                message: format!("Failed after retrying: {}", error).into(),
+                can_enable_burn_mode: false,
+            }));
 
             false
         }
@@ -2335,12 +2425,10 @@ impl Thread {
             return;
         }
 
-        let added_user_message = include_str!("./prompts/summarize_thread_detailed_prompt.txt");
-
         let request = self.to_summarize_request(
             &model,
             CompletionIntent::ThreadContextSummarization,
-            added_user_message.into(),
+            SUMMARIZE_THREAD_DETAILED_PROMPT.into(),
             cx,
         );
 
@@ -2353,7 +2441,7 @@ impl Thread {
         // which result to prefer (the old task could complete after the new one, resulting in a
         // stale summary).
         self.detailed_summary_task = cx.spawn(async move |thread, cx| {
-            let stream = model.stream_completion_text(request, &cx);
+            let stream = model.stream_completion_text(request, cx);
             let Some(mut messages) = stream.await.log_err() else {
                 thread
                     .update(cx, |thread, _cx| {
@@ -2382,13 +2470,13 @@ impl Thread {
                 .ok()?;
 
             // Save thread so its summary can be reused later
-            if let Some(thread) = thread.upgrade() {
-                if let Ok(Ok(save_task)) = cx.update(|cx| {
+            if let Some(thread) = thread.upgrade()
+                && let Ok(Ok(save_task)) = cx.update(|cx| {
                     thread_store
                         .update(cx, |thread_store, cx| thread_store.save_thread(&thread, cx))
-                }) {
-                    save_task.await.log_err();
-                }
+                })
+            {
+                save_task.await.log_err();
             }
 
             Some(())
@@ -2433,7 +2521,6 @@ impl Thread {
         model: Arc<dyn LanguageModel>,
         cx: &mut Context<Self>,
     ) -> Vec<PendingToolUse> {
-        self.auto_capture_telemetry(cx);
         let request =
             Arc::new(self.to_completion_request(model.clone(), CompletionIntent::ToolResults, cx));
         let pending_tool_uses = self
@@ -2467,7 +2554,7 @@ impl Thread {
             return self.handle_hallucinated_tool_use(tool_use.id, tool_use.name, window, cx);
         }
 
-        if tool.needs_confirmation(&tool_use.input, cx)
+        if tool.needs_confirmation(&tool_use.input, &self.project, cx)
             && !AgentSettings::get_global(cx).always_allow_tool_actions
         {
             self.tool_use.confirm_tool_use(
@@ -2637,13 +2724,11 @@ impl Thread {
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) {
-        if self.all_tools_finished() {
-            if let Some(ConfiguredModel { model, .. }) = self.configured_model.as_ref() {
-                if !canceled {
-                    self.send_to_model(model.clone(), CompletionIntent::ToolResults, window, cx);
-                }
-                self.auto_capture_telemetry(cx);
-            }
+        if self.all_tools_finished()
+            && let Some(ConfiguredModel { model, .. }) = self.configured_model.as_ref()
+            && !canceled
+        {
+            self.send_to_model(model.clone(), CompletionIntent::ToolResults, window, cx);
         }
 
         cx.emit(ThreadEvent::ToolFinished {
@@ -2699,10 +2784,6 @@ impl Thread {
         cx.emit(ThreadEvent::CancelEditing);
     }
 
-    pub fn feedback(&self) -> Option<ThreadFeedback> {
-        self.feedback
-    }
-
     pub fn message_feedback(&self, message_id: MessageId) -> Option<ThreadFeedback> {
         self.message_feedback.get(&message_id).copied()
     }
@@ -2735,7 +2816,7 @@ impl Thread {
 
         let message_content = self
             .message(message_id)
-            .map(|msg| msg.to_string())
+            .map(|msg| msg.to_message_content())
             .unwrap_or_default();
 
         cx.background_spawn(async move {
@@ -2764,52 +2845,6 @@ impl Thread {
         })
     }
 
-    pub fn report_feedback(
-        &mut self,
-        feedback: ThreadFeedback,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        let last_assistant_message_id = self
-            .messages
-            .iter()
-            .rev()
-            .find(|msg| msg.role == Role::Assistant)
-            .map(|msg| msg.id);
-
-        if let Some(message_id) = last_assistant_message_id {
-            self.report_message_feedback(message_id, feedback, cx)
-        } else {
-            let final_project_snapshot = Self::project_snapshot(self.project.clone(), cx);
-            let serialized_thread = self.serialize(cx);
-            let thread_id = self.id().clone();
-            let client = self.project.read(cx).client();
-            self.feedback = Some(feedback);
-            cx.notify();
-
-            cx.background_spawn(async move {
-                let final_project_snapshot = final_project_snapshot.await;
-                let serialized_thread = serialized_thread.await?;
-                let thread_data = serde_json::to_value(serialized_thread)
-                    .unwrap_or_else(|_| serde_json::Value::Null);
-
-                let rating = match feedback {
-                    ThreadFeedback::Positive => "positive",
-                    ThreadFeedback::Negative => "negative",
-                };
-                telemetry::event!(
-                    "Assistant Thread Rated",
-                    rating,
-                    thread_id,
-                    thread_data,
-                    final_project_snapshot
-                );
-                client.telemetry().flush_events().await;
-
-                Ok(())
-            })
-        }
-    }
-
     /// Create a snapshot of the current project state including git information and unsaved buffers.
     fn project_snapshot(
         project: Entity<Project>,
@@ -2830,11 +2865,11 @@ impl Thread {
                 let buffer_store = project.read(app_cx).buffer_store();
                 for buffer_handle in buffer_store.read(app_cx).buffers() {
                     let buffer = buffer_handle.read(app_cx);
-                    if buffer.is_dirty() {
-                        if let Some(file) = buffer.file() {
-                            let path = file.path().to_string_lossy().to_string();
-                            unsaved_buffers.push(path);
-                        }
+                    if buffer.is_dirty()
+                        && let Some(file) = buffer.file()
+                    {
+                        let path = file.path().to_string_lossy().to_string();
+                        unsaved_buffers.push(path);
                     }
                 }
             })
@@ -3044,50 +3079,6 @@ impl Thread {
         &self.project
     }
 
-    pub fn auto_capture_telemetry(&mut self, cx: &mut Context<Self>) {
-        if !cx.has_flag::<feature_flags::ThreadAutoCaptureFeatureFlag>() {
-            return;
-        }
-
-        let now = Instant::now();
-        if let Some(last) = self.last_auto_capture_at {
-            if now.duration_since(last).as_secs() < 10 {
-                return;
-            }
-        }
-
-        self.last_auto_capture_at = Some(now);
-
-        let thread_id = self.id().clone();
-        let github_login = self
-            .project
-            .read(cx)
-            .user_store()
-            .read(cx)
-            .current_user()
-            .map(|user| user.github_login.clone());
-        let client = self.project.read(cx).client();
-        let serialize_task = self.serialize(cx);
-
-        cx.background_executor()
-            .spawn(async move {
-                if let Ok(serialized_thread) = serialize_task.await {
-                    if let Ok(thread_data) = serde_json::to_value(serialized_thread) {
-                        telemetry::event!(
-                            "Agent Thread Auto-Captured",
-                            thread_id = thread_id.to_string(),
-                            thread_data = thread_data,
-                            auto_capture_reason = "tracked_user",
-                            github_login = github_login
-                        );
-
-                        client.telemetry().flush_events().await;
-                    }
-                }
-            })
-            .detach();
-    }
-
     pub fn cumulative_token_usage(&self) -> TokenUsage {
         self.cumulative_token_usage
     }
@@ -3130,13 +3121,13 @@ impl Thread {
             .model
             .max_token_count_for_mode(self.completion_mode().into());
 
-        if let Some(exceeded_error) = &self.exceeded_window_error {
-            if model.model.id() == exceeded_error.model_id {
-                return Some(TotalTokenUsage {
-                    total: exceeded_error.token_count,
-                    max,
-                });
-            }
+        if let Some(exceeded_error) = &self.exceeded_window_error
+            && model.model.id() == exceeded_error.model_id
+        {
+            return Some(TotalTokenUsage {
+                total: exceeded_error.token_count,
+                max,
+            });
         }
 
         let total = self
@@ -3165,8 +3156,10 @@ impl Thread {
     }
 
     fn update_model_request_usage(&self, amount: u32, limit: UsageLimit, cx: &mut Context<Self>) {
-        self.project.update(cx, |project, cx| {
-            project.user_store().update(cx, |user_store, cx| {
+        self.project
+            .read(cx)
+            .user_store()
+            .update(cx, |user_store, cx| {
                 user_store.update_model_request_usage(
                     ModelRequestUsage(RequestUsage {
                         amount: amount as i32,
@@ -3174,8 +3167,7 @@ impl Thread {
                     }),
                     cx,
                 )
-            })
-        });
+            });
     }
 
     pub fn deny_tool_use(
@@ -3196,7 +3188,7 @@ impl Thread {
             self.configured_model.as_ref(),
             self.completion_mode,
         );
-        self.tool_finished(tool_use_id.clone(), None, true, window, cx);
+        self.tool_finished(tool_use_id, None, true, window, cx);
     }
 }
 
@@ -3210,6 +3202,11 @@ pub enum ThreadError {
     Message {
         header: SharedString,
         message: SharedString,
+    },
+    #[error("Retryable error: {message}")]
+    RetryableError {
+        message: SharedString,
+        can_enable_burn_mode: bool,
     },
 }
 
@@ -3256,9 +3253,6 @@ pub enum ThreadEvent {
     CancelEditing,
     CompletionCanceled,
     ProfileChanged,
-    RetriesFailed {
-        message: SharedString,
-    },
 }
 
 impl EventEmitter<ThreadEvent> for Thread {}
@@ -3286,7 +3280,6 @@ mod tests {
     use futures::stream::BoxStream;
     use gpui::TestAppContext;
     use http_client;
-    use indoc::indoc;
     use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
     use language_model::{
         LanguageModelCompletionError, LanguageModelName, LanguageModelProviderId,
@@ -3615,6 +3608,7 @@ fn main() {{
     }
 
     #[gpui::test]
+    #[ignore] // turn this test on when project_notifications tool is re-enabled
     async fn test_stale_buffer_notification(cx: &mut TestAppContext) {
         init_test_settings(cx);
 
@@ -3647,6 +3641,7 @@ fn main() {{
                 cx,
             );
         });
+        cx.run_until_parked();
 
         // We shouldn't have a stale buffer notification yet
         let notifications = thread.read_with(cx, |thread, _| {
@@ -3676,11 +3671,13 @@ fn main() {{
                 cx,
             )
         });
+        cx.run_until_parked();
 
         // Check for the stale buffer warning
         thread.update(cx, |thread, cx| {
             thread.flush_notifications(model.clone(), CompletionIntent::UserPrompt, cx)
         });
+        cx.run_until_parked();
 
         let notifications = thread.read_with(cx, |thread, _cx| {
             find_tool_uses(thread, "project_notifications")
@@ -3694,12 +3691,8 @@ fn main() {{
             panic!("`project_notifications` should return text");
         };
 
-        let expected_content = indoc! {"[The following is an auto-generated notification; do not reply]
-
-        These files have changed since the last read:
-        - code.rs
-        "};
-        assert_eq!(notification_content, expected_content);
+        assert!(notification_content.contains("These files have changed since the last read:"));
+        assert!(notification_content.contains("code.rs"));
 
         // Insert another user message and flush notifications again
         thread.update(cx, |thread, cx| {
@@ -3715,6 +3708,7 @@ fn main() {{
         thread.update(cx, |thread, cx| {
             thread.flush_notifications(model.clone(), CompletionIntent::UserPrompt, cx)
         });
+        cx.run_until_parked();
 
         // There should be no new notifications (we already flushed one)
         let notifications = thread.read_with(cx, |thread, _cx| {
@@ -3826,7 +3820,7 @@ fn main() {{
                 AgentSettings {
                     model_parameters: vec![LanguageModelParameters {
                         provider: Some(model.provider_id().0.to_string().into()),
-                        model: Some(model.id().0.clone()),
+                        model: Some(model.id().0),
                         temperature: Some(0.66),
                     }],
                     ..AgentSettings::get_global(cx).clone()
@@ -3846,7 +3840,7 @@ fn main() {{
                 AgentSettings {
                     model_parameters: vec![LanguageModelParameters {
                         provider: None,
-                        model: Some(model.id().0.clone()),
+                        model: Some(model.id().0),
                         temperature: Some(0.66),
                     }],
                     ..AgentSettings::get_global(cx).clone()
@@ -3886,7 +3880,7 @@ fn main() {{
                 AgentSettings {
                     model_parameters: vec![LanguageModelParameters {
                         provider: Some("anthropic".into()),
-                        model: Some(model.id().0.clone()),
+                        model: Some(model.id().0),
                         temperature: Some(0.66),
                     }],
                     ..AgentSettings::get_global(cx).clone()
@@ -3937,7 +3931,7 @@ fn main() {{
         });
 
         let fake_model = model.as_fake();
-        simulate_successful_response(&fake_model, cx);
+        simulate_successful_response(fake_model, cx);
 
         // Should start generating summary when there are >= 2 messages
         thread.read_with(cx, |thread, _| {
@@ -3955,8 +3949,8 @@ fn main() {{
         });
 
         cx.run_until_parked();
-        fake_model.stream_last_completion_response("Brief");
-        fake_model.stream_last_completion_response(" Introduction");
+        fake_model.send_last_completion_stream_text_chunk("Brief");
+        fake_model.send_last_completion_stream_text_chunk(" Introduction");
         fake_model.end_last_completion_stream();
         cx.run_until_parked();
 
@@ -4032,7 +4026,7 @@ fn main() {{
         });
 
         let fake_model = model.as_fake();
-        simulate_successful_response(&fake_model, cx);
+        simulate_successful_response(fake_model, cx);
 
         thread.read_with(cx, |thread, _| {
             // State is still Error, not Generating
@@ -4049,7 +4043,7 @@ fn main() {{
         });
 
         cx.run_until_parked();
-        fake_model.stream_last_completion_response("A successful summary");
+        fake_model.send_last_completion_stream_text_chunk("A successful summary");
         fake_model.end_last_completion_stream();
         cx.run_until_parked();
 
@@ -4169,6 +4163,11 @@ fn main() {{
         let project = create_test_project(cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
 
+        // Enable Burn Mode to allow retries
+        thread.update(cx, |thread, _| {
+            thread.set_completion_mode(CompletionMode::Burn);
+        });
+
         // Create model that returns overloaded error
         let model = Arc::new(ErrorInjector::new(TestError::Overloaded));
 
@@ -4190,7 +4189,7 @@ fn main() {{
             assert_eq!(retry_state.attempt, 1, "Should be first retry attempt");
             assert_eq!(
                 retry_state.max_attempts, MAX_RETRY_ATTEMPTS,
-                "Should have default max attempts"
+                "Should retry MAX_RETRY_ATTEMPTS times for overloaded errors"
             );
         });
 
@@ -4242,6 +4241,11 @@ fn main() {{
         let project = create_test_project(cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
 
+        // Enable Burn Mode to allow retries
+        thread.update(cx, |thread, _| {
+            thread.set_completion_mode(CompletionMode::Burn);
+        });
+
         // Create model that returns internal server error
         let model = Arc::new(ErrorInjector::new(TestError::InternalServerError));
 
@@ -4263,7 +4267,7 @@ fn main() {{
             let retry_state = thread.retry_state.as_ref().unwrap();
             assert_eq!(retry_state.attempt, 1, "Should be first retry attempt");
             assert_eq!(
-                retry_state.max_attempts, MAX_RETRY_ATTEMPTS,
+                retry_state.max_attempts, 3,
                 "Should have correct max attempts"
             );
         });
@@ -4279,8 +4283,9 @@ fn main() {{
                             if let MessageSegment::Text(text) = seg {
                                 text.contains("internal")
                                     && text.contains("Fake")
-                                    && text
-                                        .contains(&format!("attempt 1 of {}", MAX_RETRY_ATTEMPTS))
+                                    && text.contains("Retrying")
+                                    && text.contains("attempt 1 of 3")
+                                    && text.contains("seconds")
                             } else {
                                 false
                             }
@@ -4318,8 +4323,13 @@ fn main() {{
         let project = create_test_project(cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
 
-        // Create model that returns overloaded error
-        let model = Arc::new(ErrorInjector::new(TestError::Overloaded));
+        // Enable Burn Mode to allow retries
+        thread.update(cx, |thread, _| {
+            thread.set_completion_mode(CompletionMode::Burn);
+        });
+
+        // Create model that returns internal server error
+        let model = Arc::new(ErrorInjector::new(TestError::InternalServerError));
 
         // Insert a user message
         thread.update(cx, |thread, cx| {
@@ -4369,50 +4379,25 @@ fn main() {{
             assert!(thread.retry_state.is_some(), "Should have retry state");
             let retry_state = thread.retry_state.as_ref().unwrap();
             assert_eq!(retry_state.attempt, 1, "Should be first retry attempt");
+            assert_eq!(
+                retry_state.max_attempts, 3,
+                "Internal server errors should retry up to 3 times"
+            );
         });
 
         // Advance clock for first retry
-        cx.executor()
-            .advance_clock(Duration::from_secs(BASE_RETRY_DELAY_SECS));
+        cx.executor().advance_clock(BASE_RETRY_DELAY);
         cx.run_until_parked();
 
-        // Should have scheduled second retry - count retry messages
-        let retry_count = thread.update(cx, |thread, _| {
-            thread
-                .messages
-                .iter()
-                .filter(|m| {
-                    m.ui_only
-                        && m.segments.iter().any(|s| {
-                            if let MessageSegment::Text(text) = s {
-                                text.contains("Retrying") && text.contains("seconds")
-                            } else {
-                                false
-                            }
-                        })
-                })
-                .count()
-        });
-        assert_eq!(retry_count, 2, "Should have scheduled second retry");
-
-        // Check retry state updated
-        thread.read_with(cx, |thread, _| {
-            assert!(thread.retry_state.is_some(), "Should have retry state");
-            let retry_state = thread.retry_state.as_ref().unwrap();
-            assert_eq!(retry_state.attempt, 2, "Should be second retry attempt");
-            assert_eq!(
-                retry_state.max_attempts, MAX_RETRY_ATTEMPTS,
-                "Should have correct max attempts"
-            );
-        });
-
-        // Advance clock for second retry (exponential backoff)
-        cx.executor()
-            .advance_clock(Duration::from_secs(BASE_RETRY_DELAY_SECS * 2));
+        // Advance clock for second retry
+        cx.executor().advance_clock(BASE_RETRY_DELAY);
         cx.run_until_parked();
 
-        // Should have scheduled third retry
-        // Count all retry messages now
+        // Advance clock for third retry
+        cx.executor().advance_clock(BASE_RETRY_DELAY);
+        cx.run_until_parked();
+
+        // Should have completed all retries - count retry messages
         let retry_count = thread.update(cx, |thread, _| {
             thread
                 .messages
@@ -4430,56 +4415,24 @@ fn main() {{
                 .count()
         });
         assert_eq!(
-            retry_count, MAX_RETRY_ATTEMPTS as usize,
-            "Should have scheduled third retry"
+            retry_count, 3,
+            "Should have 3 retries for internal server errors"
         );
 
-        // Check retry state updated
+        // For internal server errors, we retry 3 times and then give up
+        // Check that retry_state is cleared after all retries
         thread.read_with(cx, |thread, _| {
-            assert!(thread.retry_state.is_some(), "Should have retry state");
-            let retry_state = thread.retry_state.as_ref().unwrap();
-            assert_eq!(
-                retry_state.attempt, MAX_RETRY_ATTEMPTS,
-                "Should be at max retry attempt"
-            );
-            assert_eq!(
-                retry_state.max_attempts, MAX_RETRY_ATTEMPTS,
-                "Should have correct max attempts"
+            assert!(
+                thread.retry_state.is_none(),
+                "Retry state should be cleared after all retries"
             );
         });
 
-        // Advance clock for third retry (exponential backoff)
-        cx.executor()
-            .advance_clock(Duration::from_secs(BASE_RETRY_DELAY_SECS * 4));
-        cx.run_until_parked();
-
-        // No more retries should be scheduled after clock was advanced.
-        let retry_count = thread.update(cx, |thread, _| {
-            thread
-                .messages
-                .iter()
-                .filter(|m| {
-                    m.ui_only
-                        && m.segments.iter().any(|s| {
-                            if let MessageSegment::Text(text) = s {
-                                text.contains("Retrying") && text.contains("seconds")
-                            } else {
-                                false
-                            }
-                        })
-                })
-                .count()
-        });
-        assert_eq!(
-            retry_count, MAX_RETRY_ATTEMPTS as usize,
-            "Should not exceed max retries"
-        );
-
-        // Final completion count should be initial + max retries
+        // Verify total attempts (1 initial + 3 retries)
         assert_eq!(
             *completion_count.lock(),
-            (MAX_RETRY_ATTEMPTS + 1) as usize,
-            "Should have made initial + max retry attempts"
+            4,
+            "Should have attempted once plus 3 retries"
         );
     }
 
@@ -4490,6 +4443,11 @@ fn main() {{
         let project = create_test_project(cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
 
+        // Enable Burn Mode to allow retries
+        thread.update(cx, |thread, _| {
+            thread.set_completion_mode(CompletionMode::Burn);
+        });
+
         // Create model that returns overloaded error
         let model = Arc::new(ErrorInjector::new(TestError::Overloaded));
 
@@ -4499,13 +4457,13 @@ fn main() {{
         });
 
         // Track events
-        let retries_failed = Arc::new(Mutex::new(false));
-        let retries_failed_clone = retries_failed.clone();
+        let stopped_with_error = Arc::new(Mutex::new(false));
+        let stopped_with_error_clone = stopped_with_error.clone();
 
         let _subscription = thread.update(cx, |_, cx| {
             cx.subscribe(&thread, move |_, _, event: &ThreadEvent, _| {
-                if let ThreadEvent::RetriesFailed { .. } = event {
-                    *retries_failed_clone.lock() = true;
+                if let ThreadEvent::Stopped(Err(_)) = event {
+                    *stopped_with_error_clone.lock() = true;
                 }
             })
         });
@@ -4517,22 +4475,10 @@ fn main() {{
         cx.run_until_parked();
 
         // Advance through all retries
-        for i in 0..MAX_RETRY_ATTEMPTS {
-            let delay = if i == 0 {
-                BASE_RETRY_DELAY_SECS
-            } else {
-                BASE_RETRY_DELAY_SECS * 2u64.pow(i as u32 - 1)
-            };
-            cx.executor().advance_clock(Duration::from_secs(delay));
+        for _ in 0..MAX_RETRY_ATTEMPTS {
+            cx.executor().advance_clock(BASE_RETRY_DELAY);
             cx.run_until_parked();
         }
-
-        // After the 3rd retry is scheduled, we need to wait for it to execute and fail
-        // The 3rd retry has a delay of BASE_RETRY_DELAY_SECS * 4 (20 seconds)
-        let final_delay = BASE_RETRY_DELAY_SECS * 2u64.pow((MAX_RETRY_ATTEMPTS - 1) as u32);
-        cx.executor()
-            .advance_clock(Duration::from_secs(final_delay));
-        cx.run_until_parked();
 
         let retry_count = thread.update(cx, |thread, _| {
             thread
@@ -4551,14 +4497,14 @@ fn main() {{
                 .count()
         });
 
-        // After max retries, should emit RetriesFailed event
+        // After max retries, should emit Stopped(Err(...)) event
         assert_eq!(
             retry_count, MAX_RETRY_ATTEMPTS as usize,
-            "Should have attempted max retries"
+            "Should have attempted MAX_RETRY_ATTEMPTS retries for overloaded errors"
         );
         assert!(
-            *retries_failed.lock(),
-            "Should emit RetriesFailed event after max retries exceeded"
+            *stopped_with_error.lock(),
+            "Should emit Stopped(Err(...)) event after max retries exceeded"
         );
 
         // Retry state should be cleared
@@ -4576,7 +4522,7 @@ fn main() {{
                 .count();
             assert_eq!(
                 retry_messages, MAX_RETRY_ATTEMPTS as usize,
-                "Should have one retry message per attempt"
+                "Should have MAX_RETRY_ATTEMPTS retry messages for overloaded errors"
             );
         });
     }
@@ -4587,6 +4533,11 @@ fn main() {{
 
         let project = create_test_project(cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+
+        // Enable Burn Mode to allow retries
+        thread.update(cx, |thread, _| {
+            thread.set_completion_mode(CompletionMode::Burn);
+        });
 
         // We'll use a wrapper to switch behavior after first failure
         struct RetryTestModel {
@@ -4714,8 +4665,7 @@ fn main() {{
         });
 
         // Wait for retry
-        cx.executor()
-            .advance_clock(Duration::from_secs(BASE_RETRY_DELAY_SECS));
+        cx.executor().advance_clock(BASE_RETRY_DELAY);
         cx.run_until_parked();
 
         // Stream some successful content
@@ -4726,7 +4676,7 @@ fn main() {{
             !pending.is_empty(),
             "Should have a pending completion after retry"
         );
-        fake_model.stream_completion_response(&pending[0], "Success!");
+        fake_model.send_completion_stream_text_chunk(&pending[0], "Success!");
         fake_model.end_completion_stream(&pending[0]);
         cx.run_until_parked();
 
@@ -4756,6 +4706,11 @@ fn main() {{
 
         let project = create_test_project(cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+
+        // Enable Burn Mode to allow retries
+        thread.update(cx, |thread, _| {
+            thread.set_completion_mode(CompletionMode::Burn);
+        });
 
         // Create a model that fails once then succeeds
         struct FailOnceModel {
@@ -4877,8 +4832,7 @@ fn main() {{
         });
 
         // Wait for retry delay
-        cx.executor()
-            .advance_clock(Duration::from_secs(BASE_RETRY_DELAY_SECS));
+        cx.executor().advance_clock(BASE_RETRY_DELAY);
         cx.run_until_parked();
 
         // The retry should now use our FailOnceModel which should succeed
@@ -4890,7 +4844,7 @@ fn main() {{
 
         // Check for pending completions and complete them
         if let Some(pending) = inner_fake.pending_completions().first() {
-            inner_fake.stream_completion_response(pending, "Success!");
+            inner_fake.send_completion_stream_text_chunk(pending, "Success!");
             inner_fake.end_completion_stream(pending);
         }
         cx.run_until_parked();
@@ -4918,6 +4872,11 @@ fn main() {{
 
         let project = create_test_project(cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+
+        // Enable Burn Mode to allow retries
+        thread.update(cx, |thread, _| {
+            thread.set_completion_mode(CompletionMode::Burn);
+        });
 
         // Create a model that returns rate limit error with retry_after
         struct RateLimitModel {
@@ -5037,9 +4996,15 @@ fn main() {{
 
         thread.read_with(cx, |thread, _| {
             assert!(
-                thread.retry_state.is_none(),
-                "Rate limit errors should not set retry_state"
+                thread.retry_state.is_some(),
+                "Rate limit errors should set retry_state"
             );
+            if let Some(retry_state) = &thread.retry_state {
+                assert_eq!(
+                    retry_state.max_attempts, MAX_RETRY_ATTEMPTS,
+                    "Rate limit errors should use MAX_RETRY_ATTEMPTS"
+                );
+            }
         });
 
         // Verify we have one retry message
@@ -5072,18 +5037,15 @@ fn main() {{
                 .find(|msg| msg.role == Role::System && msg.ui_only)
                 .expect("Should have a retry message");
 
-            // Check that the message doesn't contain attempt count
+            // Check that the message contains attempt count since we use retry_state
             if let Some(MessageSegment::Text(text)) = retry_message.segments.first() {
                 assert!(
-                    !text.contains("attempt"),
-                    "Rate limit retry message should not contain attempt count"
+                    text.contains(&format!("attempt 1 of {}", MAX_RETRY_ATTEMPTS)),
+                    "Rate limit retry message should contain attempt count with MAX_RETRY_ATTEMPTS"
                 );
                 assert!(
-                    text.contains(&format!(
-                        "Retrying in {} seconds",
-                        TEST_RATE_LIMIT_RETRY_SECS
-                    )),
-                    "Rate limit retry message should contain retry delay"
+                    text.contains("Retrying"),
+                    "Rate limit retry message should contain retry text"
                 );
             }
         });
@@ -5190,11 +5152,89 @@ fn main() {{
     }
 
     #[gpui::test]
-    async fn test_retry_cancelled_on_stop(cx: &mut TestAppContext) {
+    async fn test_no_retry_without_burn_mode(cx: &mut TestAppContext) {
         init_test_settings(cx);
 
         let project = create_test_project(cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+
+        // Ensure we're in Normal mode (not Burn mode)
+        thread.update(cx, |thread, _| {
+            thread.set_completion_mode(CompletionMode::Normal);
+        });
+
+        // Track error events
+        let error_events = Arc::new(Mutex::new(Vec::new()));
+        let error_events_clone = error_events.clone();
+
+        let _subscription = thread.update(cx, |_, cx| {
+            cx.subscribe(&thread, move |_, _, event: &ThreadEvent, _| {
+                if let ThreadEvent::ShowError(error) = event {
+                    error_events_clone.lock().push(error.clone());
+                }
+            })
+        });
+
+        // Create model that returns overloaded error
+        let model = Arc::new(ErrorInjector::new(TestError::Overloaded));
+
+        // Insert a user message
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
+        });
+
+        // Start completion
+        thread.update(cx, |thread, cx| {
+            thread.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Verify no retry state was created
+        thread.read_with(cx, |thread, _| {
+            assert!(
+                thread.retry_state.is_none(),
+                "Should not have retry state in Normal mode"
+            );
+        });
+
+        // Check that a retryable error was reported
+        let errors = error_events.lock();
+        assert!(!errors.is_empty(), "Should have received an error event");
+
+        if let ThreadError::RetryableError {
+            message: _,
+            can_enable_burn_mode,
+        } = &errors[0]
+        {
+            assert!(
+                *can_enable_burn_mode,
+                "Error should indicate burn mode can be enabled"
+            );
+        } else {
+            panic!("Expected RetryableError, got {:?}", errors[0]);
+        }
+
+        // Verify the thread is no longer generating
+        thread.read_with(cx, |thread, _| {
+            assert!(
+                !thread.is_generating(),
+                "Should not be generating after error without retry"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_retry_canceled_on_stop(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(cx, json!({})).await;
+        let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+
+        // Enable Burn Mode to allow retries
+        thread.update(cx, |thread, _| {
+            thread.set_completion_mode(CompletionMode::Burn);
+        });
 
         // Create model that returns overloaded error
         let model = Arc::new(ErrorInjector::new(TestError::Overloaded));
@@ -5241,7 +5281,7 @@ fn main() {{
             "Should have no pending completions after cancellation"
         );
 
-        // Verify the retry was cancelled by checking retry state
+        // Verify the retry was canceled by checking retry state
         thread.read_with(cx, |thread, _| {
             if let Some(retry_state) = &thread.retry_state {
                 panic!(
@@ -5268,7 +5308,7 @@ fn main() {{
         });
 
         let fake_model = model.as_fake();
-        simulate_successful_response(&fake_model, cx);
+        simulate_successful_response(fake_model, cx);
 
         thread.read_with(cx, |thread, _| {
             assert!(matches!(thread.summary(), ThreadSummary::Generating));
@@ -5289,7 +5329,7 @@ fn main() {{
 
     fn simulate_successful_response(fake_model: &FakeLanguageModel, cx: &mut TestAppContext) {
         cx.run_until_parked();
-        fake_model.stream_last_completion_response("Assistant response");
+        fake_model.send_last_completion_stream_text_chunk("Assistant response");
         fake_model.end_last_completion_stream();
         cx.run_until_parked();
     }
@@ -5357,7 +5397,7 @@ fn main() {{
         let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
         let context_store = cx.new(|_cx| ContextStore::new(project.downgrade(), None));
 
-        let provider = Arc::new(FakeLanguageModelProvider);
+        let provider = Arc::new(FakeLanguageModelProvider::default());
         let model = provider.test_model();
         let model: Arc<dyn LanguageModel> = Arc::new(model);
 

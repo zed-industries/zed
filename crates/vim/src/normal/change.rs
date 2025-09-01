@@ -34,7 +34,7 @@ impl Vim {
         } else {
             None
         };
-        self.update_editor(window, cx, |vim, editor, window, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             let text_layout_details = editor.text_layout_details(window);
             editor.transact(window, cx, |editor, window, cx| {
                 // We are swapping to insert mode anyway. Just set the line end clipping behavior now
@@ -51,6 +51,7 @@ impl Vim {
                                     ignore_punctuation,
                                     &text_layout_details,
                                     motion == Motion::NextSubwordStart { ignore_punctuation },
+                                    !matches!(motion, Motion::NextWordStart { .. }),
                                 )
                             }
                             _ => {
@@ -89,7 +90,7 @@ impl Vim {
                 if let Some(kind) = motion_kind {
                     vim.copy_selections_content(editor, kind, window, cx);
                     editor.insert("", window, cx);
-                    editor.refresh_inline_completion(true, false, window, cx);
+                    editor.refresh_edit_prediction(true, false, window, cx);
                 }
             });
         });
@@ -110,7 +111,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         let mut objects_found = false;
-        self.update_editor(window, cx, |vim, editor, window, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             // We are swapping to insert mode anyway. Just set the line end clipping behavior now
             editor.set_clip_at_line_ends(false, cx);
             editor.transact(window, cx, |editor, window, cx| {
@@ -122,7 +123,7 @@ impl Vim {
                 if objects_found {
                     vim.copy_selections_content(editor, MotionKind::Exclusive, window, cx);
                     editor.insert("", window, cx);
-                    editor.refresh_inline_completion(true, false, window, cx);
+                    editor.refresh_edit_prediction(true, false, window, cx);
                 }
             });
         });
@@ -148,17 +149,17 @@ fn expand_changed_word_selection(
     ignore_punctuation: bool,
     text_layout_details: &TextLayoutDetails,
     use_subword: bool,
+    always_advance: bool,
 ) -> Option<MotionKind> {
     let is_in_word = || {
         let classifier = map
             .buffer_snapshot
             .char_classifier_at(selection.start.to_point(map));
-        let in_word = map
-            .buffer_chars_at(selection.head().to_offset(map, Bias::Left))
+
+        map.buffer_chars_at(selection.head().to_offset(map, Bias::Left))
             .next()
             .map(|(c, _)| !classifier.is_whitespace(c))
-            .unwrap_or_default();
-        in_word
+            .unwrap_or_default()
     };
     if (times.is_none() || times.unwrap() == 1) && is_in_word() {
         let next_char = map
@@ -173,8 +174,14 @@ fn expand_changed_word_selection(
                     selection.end =
                         motion::next_subword_end(map, selection.end, ignore_punctuation, 1, false);
                 } else {
-                    selection.end =
-                        motion::next_word_end(map, selection.end, ignore_punctuation, 1, false);
+                    selection.end = motion::next_word_end(
+                        map,
+                        selection.end,
+                        ignore_punctuation,
+                        1,
+                        false,
+                        always_advance,
+                    );
                 }
                 selection.end = motion::next_char(map, selection.end, false);
             }
@@ -271,6 +278,10 @@ mod test {
         cx.simulate("c shift-w", "Test teˇst-test test")
             .await
             .assert_matches();
+
+        // on last character of word, `cw` doesn't eat subsequent punctuation
+        // see https://github.com/zed-industries/zed/issues/35269
+        cx.simulate("c w", "tesˇt-test").await.assert_matches();
     }
 
     #[gpui::test]

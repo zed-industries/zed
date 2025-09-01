@@ -73,18 +73,18 @@ macro_rules! actions {
 /// - `name = "ActionName"` overrides the action's name. This must not contain `::`.
 ///
 /// - `no_json` causes the `build` method to always error and `action_json_schema` to return `None`,
-/// and allows actions not implement `serde::Serialize` and `schemars::JsonSchema`.
+///   and allows actions not implement `serde::Serialize` and `schemars::JsonSchema`.
 ///
 /// - `no_register` skips registering the action. This is useful for implementing the `Action` trait
-/// while not supporting invocation by name or JSON deserialization.
+///   while not supporting invocation by name or JSON deserialization.
 ///
 /// - `deprecated_aliases = ["editor::SomeAction"]` specifies deprecated old names for the action.
-/// These action names should *not* correspond to any actions that are registered. These old names
-/// can then still be used to refer to invoke this action. In Zed, the keymap JSON schema will
-/// accept these old names and provide warnings.
+///   These action names should *not* correspond to any actions that are registered. These old names
+///   can then still be used to refer to invoke this action. In Zed, the keymap JSON schema will
+///   accept these old names and provide warnings.
 ///
 /// - `deprecated = "Message about why this action is deprecation"` specifies a deprecation message.
-/// In Zed, the keymap JSON schema will cause this to be displayed as a warning.
+///   In Zed, the keymap JSON schema will cause this to be displayed as a warning.
 ///
 /// # Manual Implementation
 ///
@@ -403,12 +403,10 @@ impl ActionRegistry {
 /// Useful for transforming the list of available actions into a
 /// format suited for static analysis such as in validating keymaps, or
 /// generating documentation.
-pub fn generate_list_of_all_registered_actions() -> Vec<MacroActionData> {
-    let mut actions = Vec::new();
-    for builder in inventory::iter::<MacroActionBuilder> {
-        actions.push(builder.0());
-    }
-    actions
+pub fn generate_list_of_all_registered_actions() -> impl Iterator<Item = MacroActionData> {
+    inventory::iter::<MacroActionBuilder>
+        .into_iter()
+        .map(|builder| builder.0())
 }
 
 mod no_action {

@@ -12,7 +12,7 @@ use gpui::{
     Action as _, AppContext, Context, Corner, Entity, FocusHandle, Focusable, HighlightStyle, Hsla,
     Render, Subscription, Task, TextStyle, WeakEntity, actions,
 };
-use language::{Buffer, CodeLabel, ToOffset};
+use language::{Anchor, Buffer, CodeLabel, TextBufferSnapshot, ToOffset};
 use menu::{Confirm, SelectNext, SelectPrevious};
 use project::{
     Completion, CompletionResponse,
@@ -352,7 +352,7 @@ impl Console {
                     .child(
                         div()
                             .px_1()
-                            .child(Icon::new(IconName::ChevronDownSmall).size(IconSize::XSmall)),
+                            .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall)),
                     ),
             )
             .when(
@@ -365,9 +365,9 @@ impl Console {
                         Some(ContextMenu::build(window, cx, |context_menu, _, _| {
                             context_menu
                                 .when_some(keybinding_target.clone(), |el, keybinding_target| {
-                                    el.context(keybinding_target.clone())
+                                    el.context(keybinding_target)
                                 })
-                                .action("Watch expression", WatchExpression.boxed_clone())
+                                .action("Watch Expression", WatchExpression.boxed_clone())
                         }))
                     })
                 },
@@ -452,18 +452,22 @@ impl Render for Console {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let query_focus_handle = self.query_bar.focus_handle(cx);
         self.update_output(window, cx);
+
         v_flex()
             .track_focus(&self.focus_handle)
             .key_context("DebugConsole")
             .on_action(cx.listener(Self::evaluate))
             .on_action(cx.listener(Self::watch_expression))
             .size_full()
+            .border_2()
+            .bg(cx.theme().colors().editor_background)
             .child(self.render_console(cx))
             .when(self.is_running(cx), |this| {
                 this.child(Divider::horizontal()).child(
                     h_flex()
                         .on_action(cx.listener(Self::previous_query))
                         .on_action(cx.listener(Self::next_query))
+                        .p_1()
                         .gap_1()
                         .bg(cx.theme().colors().editor_background)
                         .child(self.render_query_bar(cx))
@@ -474,6 +478,9 @@ impl Render for Console {
                             .on_click(move |_, window, cx| {
                                 window.dispatch_action(Box::new(Confirm), cx)
                             })
+                            .layer(ui::ElevationIndex::ModalSurface)
+                            .size(ui::ButtonSize::Compact)
+                            .child(Label::new("Evaluate"))
                             .tooltip({
                                 let query_focus_handle = query_focus_handle.clone();
 
@@ -486,10 +493,7 @@ impl Render for Console {
                                         cx,
                                     )
                                 }
-                            })
-                            .layer(ui::ElevationIndex::ModalSurface)
-                            .size(ui::ButtonSize::Compact)
-                            .child(Label::new("Evaluate")),
+                            }),
                             self.render_submit_menu(
                                 ElementId::Name("split-button-right-confirm-button".into()),
                                 Some(query_focus_handle.clone()),
@@ -499,7 +503,6 @@ impl Render for Console {
                         )),
                 )
             })
-            .border_2()
     }
 }
 
@@ -608,17 +611,16 @@ impl ConsoleQueryBarCompletionProvider {
             for variable in console.variable_list.update(cx, |variable_list, cx| {
                 variable_list.completion_variables(cx)
             }) {
-                if let Some(evaluate_name) = &variable.evaluate_name {
-                    if variables
+                if let Some(evaluate_name) = &variable.evaluate_name
+                    && variables
                         .insert(evaluate_name.clone(), variable.value.clone())
                         .is_none()
-                    {
-                        string_matches.push(StringMatchCandidate {
-                            id: 0,
-                            string: evaluate_name.clone(),
-                            char_bag: evaluate_name.chars().collect(),
-                        });
-                    }
+                {
+                    string_matches.push(StringMatchCandidate {
+                        id: 0,
+                        string: evaluate_name.clone(),
+                        char_bag: evaluate_name.chars().collect(),
+                    });
                 }
 
                 if variables
@@ -637,27 +639,13 @@ impl ConsoleQueryBarCompletionProvider {
         });
 
         let snapshot = buffer.read(cx).text_snapshot();
-        let query = snapshot.text();
-        let replace_range = {
-            let buffer_offset = buffer_position.to_offset(&snapshot);
-            let reversed_chars = snapshot.reversed_chars_for_range(0..buffer_offset);
-            let mut word_len = 0;
-            for ch in reversed_chars {
-                if ch.is_alphanumeric() || ch == '_' {
-                    word_len += 1;
-                } else {
-                    break;
-                }
-            }
-            let word_start_offset = buffer_offset - word_len;
-            let start_anchor = snapshot.anchor_at(word_start_offset, Bias::Left);
-            start_anchor..buffer_position
-        };
+        let buffer_text = snapshot.text();
+
         cx.spawn(async move |_, cx| {
             const LIMIT: usize = 10;
             let matches = fuzzy::match_strings(
                 &string_matches,
-                &query,
+                &buffer_text,
                 true,
                 true,
                 LIMIT,
@@ -672,7 +660,12 @@ impl ConsoleQueryBarCompletionProvider {
                     let variable_value = variables.get(&string_match.string)?;
 
                     Some(project::Completion {
-                        replace_range: replace_range.clone(),
+                        replace_range: Self::replace_range_for_completion(
+                            &buffer_text,
+                            buffer_position,
+                            string_match.string.as_bytes(),
+                            &snapshot,
+                        ),
                         new_text: string_match.string.clone(),
                         label: CodeLabel {
                             filter_range: 0..string_match.string.len(),
@@ -695,6 +688,28 @@ impl ConsoleQueryBarCompletionProvider {
                 completions,
             }])
         })
+    }
+
+    fn replace_range_for_completion(
+        buffer_text: &String,
+        buffer_position: Anchor,
+        new_bytes: &[u8],
+        snapshot: &TextBufferSnapshot,
+    ) -> Range<Anchor> {
+        let buffer_offset = buffer_position.to_offset(snapshot);
+        let buffer_bytes = &buffer_text.as_bytes()[0..buffer_offset];
+
+        let mut prefix_len = 0;
+        for i in (0..new_bytes.len()).rev() {
+            if buffer_bytes.ends_with(&new_bytes[0..i]) {
+                prefix_len = i;
+                break;
+            }
+        }
+
+        let start = snapshot.clip_offset(buffer_offset - prefix_len, Bias::Left);
+
+        snapshot.anchor_before(start)..buffer_position
     }
 
     const fn completion_type_score(completion_type: CompletionItemType) -> usize {
@@ -744,6 +759,8 @@ impl ConsoleQueryBarCompletionProvider {
         cx.background_executor().spawn(async move {
             let completions = completion_task.await?;
 
+            let buffer_text = snapshot.text();
+
             let completions = completions
                 .into_iter()
                 .map(|completion| {
@@ -753,26 +770,14 @@ impl ConsoleQueryBarCompletionProvider {
                         .as_ref()
                         .unwrap_or(&completion.label)
                         .to_owned();
-                    let buffer_text = snapshot.text();
-                    let buffer_bytes = buffer_text.as_bytes();
-                    let new_bytes = new_text.as_bytes();
-
-                    let mut prefix_len = 0;
-                    for i in (0..new_bytes.len()).rev() {
-                        if buffer_bytes.ends_with(&new_bytes[0..i]) {
-                            prefix_len = i;
-                            break;
-                        }
-                    }
-
-                    let buffer_offset = buffer_position.to_offset(&snapshot);
-                    let start = buffer_offset - prefix_len;
-                    let start = snapshot.clip_offset(start, Bias::Left);
-                    let start = snapshot.anchor_before(start);
-                    let replace_range = start..buffer_position;
 
                     project::Completion {
-                        replace_range,
+                        replace_range: Self::replace_range_for_completion(
+                            &buffer_text,
+                            buffer_position,
+                            new_text.as_bytes(),
+                            &snapshot,
+                        ),
                         new_text,
                         label: CodeLabel {
                             filter_range: 0..completion.label.len(),
@@ -943,4 +948,65 @@ fn color_fetcher(color: ansi::Color) -> fn(&Theme) -> Hsla {
         }
     };
     color_fetcher
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tests::init_test;
+    use editor::test::editor_test_context::EditorTestContext;
+    use gpui::TestAppContext;
+    use language::Point;
+
+    #[track_caller]
+    fn assert_completion_range(
+        input: &str,
+        expect: &str,
+        replacement: &str,
+        cx: &mut EditorTestContext,
+    ) {
+        cx.set_state(input);
+
+        let buffer_position =
+            cx.editor(|editor, _, cx| editor.selections.newest::<Point>(cx).start);
+
+        let snapshot = &cx.buffer_snapshot();
+
+        let replace_range = ConsoleQueryBarCompletionProvider::replace_range_for_completion(
+            &cx.buffer_text(),
+            snapshot.anchor_before(buffer_position),
+            replacement.as_bytes(),
+            snapshot,
+        );
+
+        cx.update_editor(|editor, _, cx| {
+            editor.edit(
+                vec![(
+                    snapshot.offset_for_anchor(&replace_range.start)
+                        ..snapshot.offset_for_anchor(&replace_range.end),
+                    replacement,
+                )],
+                cx,
+            );
+        });
+
+        pretty_assertions::assert_eq!(expect, cx.display_text());
+    }
+
+    #[gpui::test]
+    async fn test_determine_completion_replace_range(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let mut cx = EditorTestContext::new(cx).await;
+
+        assert_completion_range("resˇ", "result", "result", &mut cx);
+        assert_completion_range("print(resˇ)", "print(result)", "result", &mut cx);
+        assert_completion_range("$author->nˇ", "$author->name", "$author->name", &mut cx);
+        assert_completion_range(
+            "$author->books[ˇ",
+            "$author->books[0]",
+            "$author->books[0]",
+            &mut cx,
+        );
+    }
 }

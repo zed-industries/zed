@@ -18,7 +18,7 @@ jobs:
               URL="https://zed.dev/releases/stable/latest"
           fi
 
-          echo "URL=$URL" >> $GITHUB_OUTPUT
+          echo "URL=$URL" >> "$GITHUB_OUTPUT"
       - name: Get content
         uses: 2428392/gh-truncate-string-action@b3ff790d21cf42af3ca7579146eedb93c8fb0757 # v1.4.1
         id: get-content
@@ -50,9 +50,9 @@ jobs:
           PREVIEW_TAG="${VERSION}-pre"
 
           if git rev-parse "$PREVIEW_TAG" > /dev/null 2>&1; then
-              echo "was_promoted_from_preview=true" >> $GITHUB_OUTPUT
+              echo "was_promoted_from_preview=true" >> "$GITHUB_OUTPUT"
           else
-              echo "was_promoted_from_preview=false" >> $GITHUB_OUTPUT
+              echo "was_promoted_from_preview=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Send release notes email

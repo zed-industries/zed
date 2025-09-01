@@ -136,7 +136,10 @@ impl Focusable for CommandPalette {
 
 impl Render for CommandPalette {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().w(rems(34.)).child(self.picker.clone())
+        v_flex()
+            .key_context("CommandPalette")
+            .w(rems(34.))
+            .child(self.picker.clone())
     }
 }
 
@@ -203,7 +206,7 @@ impl CommandPaletteDelegate {
         if parse_zed_link(&query, cx).is_some() {
             intercept_results = vec![CommandInterceptResult {
                 action: OpenZedUrl { url: query.clone() }.boxed_clone(),
-                string: query.clone(),
+                string: query,
                 positions: vec![],
             }]
         }
@@ -242,7 +245,7 @@ impl CommandPaletteDelegate {
             self.selected_ix = cmp::min(self.selected_ix, self.matches.len() - 1);
         }
     }
-    ///
+
     /// Hit count for each command in the palette.
     /// We only account for commands triggered directly via command palette and not by e.g. keystrokes because
     /// if a user already knows a keystroke for a command, they are unlikely to use a command palette to look for it.

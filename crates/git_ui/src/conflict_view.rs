@@ -11,10 +11,7 @@ use gpui::{
 use language::{Anchor, Buffer, BufferId};
 use project::{ConflictRegion, ConflictSet, ConflictSetUpdate, ProjectItem as _};
 use std::{ops::Range, sync::Arc};
-use ui::{
-    ActiveTheme, AnyElement, Element as _, StatefulInteractiveElement, Styled,
-    StyledTypography as _, Window, div, h_flex, rems,
-};
+use ui::{ActiveTheme, Element as _, Styled, Window, prelude::*};
 use util::{ResultExt as _, debug_panic, maybe};
 
 pub(crate) struct ConflictAddon {
@@ -58,7 +55,7 @@ pub fn register_editor(editor: &mut Editor, buffer: Entity<MultiBuffer>, cx: &mu
         buffers: Default::default(),
     });
 
-    let buffers = buffer.read(cx).all_buffers().clone();
+    let buffers = buffer.read(cx).all_buffers();
     for buffer in buffers {
         buffer_added(editor, buffer, cx);
     }
@@ -115,7 +112,7 @@ fn excerpt_for_buffer_updated(
 }
 
 fn buffer_added(editor: &mut Editor, buffer: Entity<Buffer>, cx: &mut Context<Editor>) {
-    let Some(project) = &editor.project else {
+    let Some(project) = editor.project() else {
         return;
     };
     let git_store = project.read(cx).git_store().clone();
@@ -132,7 +129,7 @@ fn buffer_added(editor: &mut Editor, buffer: Entity<Buffer>, cx: &mut Context<Ed
             let subscription = cx.subscribe(&conflict_set, conflicts_updated);
             BufferConflicts {
                 block_ids: Vec::new(),
-                conflict_set: conflict_set.clone(),
+                conflict_set,
                 _subscription: subscription,
             }
         });
@@ -159,7 +156,7 @@ fn buffers_removed(editor: &mut Editor, removed_buffer_ids: &[BufferId], cx: &mu
         .unwrap()
         .buffers
         .retain(|buffer_id, buffer| {
-            if removed_buffer_ids.contains(&buffer_id) {
+            if removed_buffer_ids.contains(buffer_id) {
                 removed_block_ids.extend(buffer.block_ids.iter().map(|(_, block_id)| *block_id));
                 false
             } else {
@@ -225,12 +222,12 @@ fn conflicts_updated(
                 let precedes_start = range
                     .context
                     .start
-                    .cmp(&conflict_range.start, &buffer_snapshot)
+                    .cmp(&conflict_range.start, buffer_snapshot)
                     .is_le();
                 let follows_end = range
                     .context
                     .end
-                    .cmp(&conflict_range.start, &buffer_snapshot)
+                    .cmp(&conflict_range.start, buffer_snapshot)
                     .is_ge();
                 precedes_start && follows_end
             }) else {
@@ -271,12 +268,12 @@ fn conflicts_updated(
             let precedes_start = range
                 .context
                 .start
-                .cmp(&conflict.range.start, &buffer_snapshot)
+                .cmp(&conflict.range.start, buffer_snapshot)
                 .is_le();
             let follows_end = range
                 .context
                 .end
-                .cmp(&conflict.range.start, &buffer_snapshot)
+                .cmp(&conflict.range.start, buffer_snapshot)
                 .is_ge();
             precedes_start && follows_end
         }) else {
@@ -300,7 +297,6 @@ fn conflicts_updated(
                 move |cx| render_conflict_buttons(&conflict, excerpt_id, editor_handle.clone(), cx)
             }),
             priority: 0,
-            render_in_minimap: true,
         })
     }
     let new_block_ids = editor.insert_blocks(blocks, None, cx);
@@ -391,20 +387,15 @@ fn render_conflict_buttons(
     cx: &mut BlockContext,
 ) -> AnyElement {
     h_flex()
-        .h(cx.line_height)
-        .items_end()
-        .ml(cx.margins.gutter.width)
         .id(cx.block_id)
-        .gap_0p5()
+        .h(cx.line_height)
+        .ml(cx.margins.gutter.width)
+        .items_end()
+        .gap_1()
+        .bg(cx.theme().colors().editor_background)
         .child(
-            div()
-                .id("ours")
-                .px_1()
-                .child("Take Ours")
-                .rounded_t(rems(0.2))
-                .text_ui_sm(cx)
-                .hover(|this| this.bg(cx.theme().colors().element_background))
-                .cursor_pointer()
+            Button::new("head", "Use HEAD")
+                .label_size(LabelSize::Small)
                 .on_click({
                     let editor = editor.clone();
                     let conflict = conflict.clone();
@@ -423,14 +414,8 @@ fn render_conflict_buttons(
                 }),
         )
         .child(
-            div()
-                .id("theirs")
-                .px_1()
-                .child("Take Theirs")
-                .rounded_t(rems(0.2))
-                .text_ui_sm(cx)
-                .hover(|this| this.bg(cx.theme().colors().element_background))
-                .cursor_pointer()
+            Button::new("origin", "Use Origin")
+                .label_size(LabelSize::Small)
                 .on_click({
                     let editor = editor.clone();
                     let conflict = conflict.clone();
@@ -449,16 +434,9 @@ fn render_conflict_buttons(
                 }),
         )
         .child(
-            div()
-                .id("both")
-                .px_1()
-                .child("Take Both")
-                .rounded_t(rems(0.2))
-                .text_ui_sm(cx)
-                .hover(|this| this.bg(cx.theme().colors().element_background))
-                .cursor_pointer()
+            Button::new("both", "Use Both")
+                .label_size(LabelSize::Small)
                 .on_click({
-                    let editor = editor.clone();
                     let conflict = conflict.clone();
                     let ours = conflict.ours.clone();
                     let theirs = conflict.theirs.clone();
@@ -490,7 +468,7 @@ pub(crate) fn resolve_conflict(
         let Some((workspace, project, multibuffer, buffer)) = editor
             .update(cx, |editor, cx| {
                 let workspace = editor.workspace()?;
-                let project = editor.project.clone()?;
+                let project = editor.project()?.clone();
                 let multibuffer = editor.buffer().clone();
                 let buffer_id = resolved_conflict.ours.end.buffer_id?;
                 let buffer = multibuffer.read(cx).buffer(buffer_id)?;

@@ -13,7 +13,6 @@ use dap::{
     DapRegistry,
     adapters::{
         self, AdapterVersion, DapDelegate, DebugAdapter, DebugAdapterBinary, DebugAdapterName,
-        GithubRepo,
     },
     configure_tcp_connection,
 };

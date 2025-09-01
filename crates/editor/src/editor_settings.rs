@@ -6,12 +6,12 @@ use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, VsCodeSettings};
+use settings::{Settings, SettingsSources, SettingsUi, VsCodeSettings};
 use util::serde::default_true;
 
 /// Imports from the VSCode settings at
 /// https://code.visualstudio.com/docs/reference/default-settings
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, SettingsUi)]
 pub struct EditorSettings {
     pub cursor_blink: bool,
     pub cursor_shape: Option<CursorShape>,
@@ -20,6 +20,7 @@ pub struct EditorSettings {
     pub lsp_highlight_debounce: u64,
     pub hover_popover_enabled: bool,
     pub hover_popover_delay: u64,
+    pub status_bar: StatusBar,
     pub toolbar: Toolbar,
     pub scrollbar: Scrollbar,
     pub minimap: Minimap,
@@ -36,6 +37,7 @@ pub struct EditorSettings {
     pub multi_cursor_modifier: MultiCursorModifier,
     pub redact_private_values: bool,
     pub expand_excerpt_lines: u32,
+    pub excerpt_context_lines: u32,
     pub middle_click_paste: bool,
     #[serde(default)]
     pub double_click_in_multibuffer: DoubleClickInMultibuffer,
@@ -52,8 +54,9 @@ pub struct EditorSettings {
     #[serde(default)]
     pub diagnostics_max_severity: Option<DiagnosticSeverity>,
     pub inline_code_actions: bool,
-    pub drag_and_drop_selection: bool,
+    pub drag_and_drop_selection: DragAndDropSelection,
     pub lsp_document_colors: DocumentColorsRenderMode,
+    pub minimum_contrast_for_highlights: f32,
 }
 
 /// How to render LSP `textDocument/documentColor` colors in the editor.
@@ -123,6 +126,18 @@ pub struct JupyterContent {
     ///
     /// Default: true
     pub enabled: Option<bool>,
+}
+
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct StatusBar {
+    /// Whether to display the active language button in the status bar.
+    ///
+    /// Default: true
+    pub active_language_button: bool,
+    /// Whether to show the cursor position button in the status bar.
+    ///
+    /// Default: true
+    pub cursor_position_button: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -275,6 +290,26 @@ pub struct ScrollbarAxes {
     pub vertical: bool,
 }
 
+/// Whether to allow drag and drop text selection in buffer.
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct DragAndDropSelection {
+    /// When true, enables drag and drop text selection in buffer.
+    ///
+    /// Default: true
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    /// The delay in milliseconds that must elapse before drag and drop is allowed. Otherwise, a new text selection is created.
+    ///
+    /// Default: 300
+    #[serde(default = "default_drag_and_drop_selection_delay_ms")]
+    pub delay: u64,
+}
+
+fn default_drag_and_drop_selection_delay_ms() -> u64 {
+    300
+}
+
 /// Which diagnostic indicators to show in the scrollbar.
 ///
 /// Default: all
@@ -375,6 +410,8 @@ pub enum SnippetSortOrder {
     Inline,
     /// Place snippets at the bottom of the completion list
     Bottom,
+    /// Do not show snippets in the completion list
+    None,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -418,6 +455,8 @@ pub struct EditorSettingsContent {
     ///
     /// Default: 300
     pub hover_popover_delay: Option<u64>,
+    /// Status bar related settings
+    pub status_bar: Option<StatusBarContent>,
     /// Toolbar related settings
     pub toolbar: Option<ToolbarContent>,
     /// Scrollbar related settings
@@ -478,6 +517,11 @@ pub struct EditorSettingsContent {
     /// Default: 3
     pub expand_excerpt_lines: Option<u32>,
 
+    /// How many lines of context to provide in multibuffer excerpts by default
+    ///
+    /// Default: 2
+    pub excerpt_context_lines: Option<u32>,
+
     /// Whether to enable middle-click paste on Linux
     ///
     /// Default: true
@@ -507,6 +551,12 @@ pub struct EditorSettingsContent {
     ///
     /// Default: false
     pub show_signature_help_after_edits: Option<bool>,
+    /// The minimum APCA perceptual contrast to maintain when
+    /// rendering text over highlight backgrounds in the editor.
+    ///
+    /// Values range from 0 to 106. Set to 0 to disable adjustments.
+    /// Default: 45
+    pub minimum_contrast_for_highlights: Option<f32>,
 
     /// Whether to follow-up empty go to definition responses from the language server or not.
     /// `FindAllReferences` allows to look up references of the same symbol instead.
@@ -536,15 +586,26 @@ pub struct EditorSettingsContent {
     /// Default: true
     pub inline_code_actions: Option<bool>,
 
-    /// Whether to allow drag and drop text selection in buffer.
-    ///
-    /// Default: true
-    pub drag_and_drop_selection: Option<bool>,
+    /// Drag and drop related settings
+    pub drag_and_drop_selection: Option<DragAndDropSelection>,
 
     /// How to render LSP `textDocument/documentColor` colors in the editor.
     ///
     /// Default: [`DocumentColorsRenderMode::Inlay`]
     pub lsp_document_colors: Option<DocumentColorsRenderMode>,
+}
+
+// Status bar related settings
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct StatusBarContent {
+    /// Whether to display the active language button in the status bar.
+    ///
+    /// Default: true
+    pub active_language_button: Option<bool>,
+    /// Whether to show the cursor position button in the status bar.
+    ///
+    /// Default: true
+    pub cursor_position_button: Option<bool>,
 }
 
 // Toolbar related settings
@@ -762,10 +823,8 @@ impl Settings for EditorSettings {
             if gutter.line_numbers.is_some() {
                 old_gutter.line_numbers = gutter.line_numbers
             }
-        } else {
-            if gutter != GutterContent::default() {
-                current.gutter = Some(gutter)
-            }
+        } else if gutter != GutterContent::default() {
+            current.gutter = Some(gutter)
         }
         if let Some(b) = vscode.read_bool("editor.scrollBeyondLastLine") {
             current.scroll_beyond_last_line = Some(if b {

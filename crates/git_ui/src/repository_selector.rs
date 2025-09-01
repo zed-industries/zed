@@ -109,7 +109,10 @@ impl Focusable for RepositorySelector {
 
 impl Render for RepositorySelector {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div().w(self.width).child(self.picker.clone())
+        div()
+            .key_context("GitRepositorySelector")
+            .w(self.width)
+            .child(self.picker.clone())
     }
 }
 

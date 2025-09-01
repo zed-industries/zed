@@ -4,17 +4,20 @@ use crate::{
     schema::json_schema_for,
     ui::{COLLAPSED_LINES, ToolOutputPreview},
 };
+use action_log::ActionLog;
+use agent_settings;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{
-    ActionLog, AnyToolCard, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput,
-    ToolUseStatus,
+    AnyToolCard, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput, ToolUseStatus,
 };
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
-use editor::{Editor, EditorMode, MinimapVisibility, MultiBuffer, PathKey};
+use editor::{
+    Editor, EditorMode, MinimapVisibility, MultiBuffer, PathKey, multibuffer_context_lines,
+};
 use futures::StreamExt;
 use gpui::{
     Animation, AnimationExt, AnyWindowHandle, App, AppContext, AsyncApp, Entity, Task,
-    TextStyleRefinement, WeakEntity, pulsating_between, px,
+    TextStyleRefinement, Transformation, WeakEntity, percentage, pulsating_between, px,
 };
 use indoc::formatdoc;
 use language::{
@@ -24,6 +27,7 @@ use language::{
 };
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
+use paths;
 use project::{
     Project, ProjectPath,
     lsp_store::{FormatTrigger, LspFormatTarget},
@@ -125,8 +129,47 @@ impl Tool for EditFileTool {
         "edit_file".into()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
-        false
+    fn needs_confirmation(
+        &self,
+        input: &serde_json::Value,
+        project: &Entity<Project>,
+        cx: &App,
+    ) -> bool {
+        if agent_settings::AgentSettings::get_global(cx).always_allow_tool_actions {
+            return false;
+        }
+
+        let Ok(input) = serde_json::from_value::<EditFileToolInput>(input.clone()) else {
+            // If it's not valid JSON, it's going to error and confirming won't do anything.
+            return false;
+        };
+
+        // If any path component matches the local settings folder, then this could affect
+        // the editor in ways beyond the project source, so prompt.
+        let local_settings_folder = paths::local_settings_folder_relative_path();
+        let path = Path::new(&input.path);
+        if path
+            .components()
+            .any(|component| component.as_os_str() == local_settings_folder.as_os_str())
+        {
+            return true;
+        }
+
+        // It's also possible that the global config dir is configured to be inside the project,
+        // so check for that edge case too.
+        if let Ok(canonical_path) = std::fs::canonicalize(&input.path)
+            && canonical_path.starts_with(paths::config_dir())
+        {
+            return true;
+        }
+
+        // Check if path is inside the global config directory
+        // First check if it's already inside project - if not, try to canonicalize
+        let project_path = project.read(cx).find_project_path(&input.path, cx);
+
+        // If the path is inside the project, and it's not one of the above edge cases,
+        // then no confirmation is necessary. Otherwise, confirmation is necessary.
+        project_path.is_none()
     }
 
     fn may_perform_edits(&self) -> bool {
@@ -138,7 +181,7 @@ impl Tool for EditFileTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::Pencil
+        IconName::ToolPencil
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
@@ -147,7 +190,25 @@ impl Tool for EditFileTool {
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<EditFileToolInput>(input.clone()) {
-            Ok(input) => input.display_description,
+            Ok(input) => {
+                let path = Path::new(&input.path);
+                let mut description = input.display_description.clone();
+
+                // Add context about why confirmation may be needed
+                let local_settings_folder = paths::local_settings_folder_relative_path();
+                if path
+                    .components()
+                    .any(|c| c.as_os_str() == local_settings_folder.as_os_str())
+                {
+                    description.push_str(" (local settings)");
+                } else if let Ok(canonical_path) = std::fs::canonicalize(&input.path)
+                    && canonical_path.starts_with(paths::config_dir())
+                {
+                    description.push_str(" (global settings)");
+                }
+
+                description
+            }
             Err(_) => "Editing file".to_string(),
         }
     }
@@ -248,7 +309,7 @@ impl Tool for EditFileTool {
             let mut ambiguous_ranges = Vec::new();
             while let Some(event) = events.next().await {
                 match event {
-                    EditAgentOutputEvent::Edited => {
+                    EditAgentOutputEvent::Edited { .. } => {
                         if let Some(card) = card_clone.as_ref() {
                             card.update(cx, |card, cx| card.update_diff(cx))?;
                         }
@@ -277,6 +338,9 @@ impl Tool for EditFileTool {
                 .unwrap_or(false);
 
             if format_on_save_enabled {
+                action_log.update(cx, |log, cx| {
+                    log.buffer_edited(buffer.clone(), cx);
+                })?;
                 let format_task = project.update(cx, |project, cx| {
                     project.format(
                         HashSet::from_iter([buffer.clone()]),
@@ -314,7 +378,7 @@ impl Tool for EditFileTool {
 
             let output = EditFileToolOutput {
                 original_path: project_path.path.to_path_buf(),
-                new_text: new_text.clone(),
+                new_text,
                 old_text,
                 raw_output: Some(agent_output),
             };
@@ -412,7 +476,7 @@ impl Tool for EditFileTool {
                             PathKey::for_buffer(&buffer, cx),
                             buffer,
                             diff_hunk_ranges,
-                            editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                            multibuffer_context_lines(cx),
                             cx,
                         );
                         multibuffer.add_diff(buffer_diff, cx);
@@ -474,7 +538,7 @@ fn resolve_path(
 
             let parent_entry = parent_project_path
                 .as_ref()
-                .and_then(|path| project.entry_for_path(&path, cx))
+                .and_then(|path| project.entry_for_path(path, cx))
                 .context("Can't create file: parent directory doesn't exist")?;
 
             anyhow::ensure!(
@@ -515,7 +579,9 @@ pub struct EditFileToolCard {
 
 impl EditFileToolCard {
     pub fn new(path: PathBuf, project: Entity<Project>, window: &mut Window, cx: &mut App) -> Self {
+        let expand_edit_card = agent_settings::AgentSettings::get_global(cx).expand_edit_card;
         let multibuffer = cx.new(|_| MultiBuffer::without_headers(Capability::ReadOnly));
+
         let editor = cx.new(|cx| {
             let mut editor = Editor::new(
                 EditorMode::Full {
@@ -556,7 +622,7 @@ impl EditFileToolCard {
             diff_task: None,
             preview_expanded: true,
             error_expanded: None,
-            full_height_expanded: true,
+            full_height_expanded: expand_edit_card,
             total_lines: None,
         }
     }
@@ -579,7 +645,7 @@ impl EditFileToolCard {
             diff
         });
 
-        self.buffer = Some(buffer.clone());
+        self.buffer = Some(buffer);
         self.base_text = Some(base_text.into());
         self.buffer_diff = Some(buffer_diff.clone());
 
@@ -639,7 +705,7 @@ impl EditFileToolCard {
                 PathKey::for_buffer(buffer, cx),
                 buffer.clone(),
                 ranges,
-                editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                multibuffer_context_lines(cx),
                 cx,
             );
             let end = multibuffer.len(cx);
@@ -659,13 +725,13 @@ impl EditFileToolCard {
         let buffer = buffer.read(cx);
         let diff = diff.read(cx);
         let mut ranges = diff
-            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &buffer, cx)
-            .map(|diff_hunk| diff_hunk.buffer_range.to_point(&buffer))
+            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, buffer, cx)
+            .map(|diff_hunk| diff_hunk.buffer_range.to_point(buffer))
             .collect::<Vec<_>>();
         ranges.extend(
             self.revealed_ranges
                 .iter()
-                .map(|range| range.to_point(&buffer)),
+                .map(|range| range.to_point(buffer)),
         );
         ranges.sort_unstable_by_key(|range| (range.start, Reverse(range.end)));
 
@@ -712,7 +778,6 @@ impl EditFileToolCard {
 
         let buffer_diff = cx.spawn({
             let buffer = buffer.clone();
-            let language_registry = language_registry.clone();
             async move |_this, cx| {
                 build_buffer_diff(base_text, &buffer, &language_registry, cx).await
             }
@@ -728,7 +793,7 @@ impl EditFileToolCard {
                         path_key,
                         buffer,
                         ranges,
-                        editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                        multibuffer_context_lines(cx),
                         cx,
                     );
                     multibuffer.add_diff(buffer_diff.clone(), cx);
@@ -755,6 +820,13 @@ impl ToolCard for EditFileToolCard {
             _ => None,
         };
 
+        let running_or_pending = match status {
+            ToolUseStatus::Running | ToolUseStatus::Pending => Some(()),
+            _ => None,
+        };
+
+        let should_show_loading = running_or_pending.is_some() && !self.full_height_expanded;
+
         let path_label_button = h_flex()
             .id(("edit-tool-path-label-button", self.editor.entity_id()))
             .w_full()
@@ -773,8 +845,8 @@ impl ToolCard for EditFileToolCard {
             .child(
                 h_flex()
                     .child(
-                        Icon::new(IconName::Pencil)
-                            .size(IconSize::XSmall)
+                        Icon::new(IconName::ToolPencil)
+                            .size(IconSize::Small)
                             .color(Color::Muted),
                     )
                     .child(
@@ -786,13 +858,12 @@ impl ToolCard for EditFileToolCard {
                     )
                     .child(
                         Icon::new(IconName::ArrowUpRight)
-                            .size(IconSize::XSmall)
+                            .size(IconSize::Small)
                             .color(Color::Ignored),
                     ),
             )
             .on_click({
                 let path = self.path.clone();
-                let workspace = workspace.clone();
                 move |_, window, cx| {
                     workspace
                         .update(cx, {
@@ -863,6 +934,18 @@ impl ToolCard for EditFileToolCard {
                 header.bg(codeblock_header_bg)
             })
             .child(path_label_button)
+            .when(should_show_loading, |header| {
+                header.pr_1p5().child(
+                    Icon::new(IconName::ArrowCircle)
+                        .size(IconSize::XSmall)
+                        .color(Color::Info)
+                        .with_animation(
+                            "arrow-circle",
+                            Animation::new(Duration::from_secs(2)).repeat(),
+                            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                        ),
+                )
+            })
             .when_some(error_message, |header, error_message| {
                 header.child(
                     h_flex()
@@ -1150,19 +1233,20 @@ async fn build_buffer_diff(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ::fs::Fs;
     use client::TelemetrySettings;
-    use fs::{FakeFs, Fs};
     use gpui::{TestAppContext, UpdateGlobal};
     use language_model::fake_provider::FakeLanguageModel;
     use serde_json::json;
     use settings::SettingsStore;
+    use std::fs;
     use util::path;
 
     #[gpui::test]
     async fn test_edit_nonexistent_file(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let fs = FakeFs::new(cx.executor());
+        let fs = project::FakeFs::new(cx.executor());
         fs.insert_tree("/root", json!({})).await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
@@ -1252,7 +1336,7 @@ mod tests {
     ) -> anyhow::Result<ProjectPath> {
         init_test(cx);
 
-        let fs = FakeFs::new(cx.executor());
+        let fs = project::FakeFs::new(cx.executor());
         fs.insert_tree(
             "/root",
             json!({
@@ -1272,8 +1356,7 @@ mod tests {
             mode: mode.clone(),
         };
 
-        let result = cx.update(|cx| resolve_path(&input, project, cx));
-        result
+        cx.update(|cx| resolve_path(&input, project, cx))
     }
 
     fn assert_resolved_path_eq(path: anyhow::Result<ProjectPath>, expected: &str) {
@@ -1359,6 +1442,21 @@ mod tests {
             cx.set_global(settings_store);
             language::init(cx);
             TelemetrySettings::register(cx);
+            agent_settings::AgentSettings::register(cx);
+            Project::init_settings(cx);
+        });
+    }
+
+    fn init_test_with_config(cx: &mut TestAppContext, data_dir: &Path) {
+        cx.update(|cx| {
+            // Set custom data directory (config will be under data_dir/config)
+            paths::set_custom_data_dir(data_dir.to_str().unwrap());
+
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            language::init(cx);
+            TelemetrySettings::register(cx);
+            agent_settings::AgentSettings::register(cx);
             Project::init_settings(cx);
         });
     }
@@ -1367,7 +1465,7 @@ mod tests {
     async fn test_format_on_save(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let fs = FakeFs::new(cx.executor());
+        let fs = project::FakeFs::new(cx.executor());
         fs.insert_tree("/root", json!({"src": {}})).await;
 
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
@@ -1478,7 +1576,7 @@ mod tests {
 
             // Stream the unformatted content
             cx.executor().run_until_parked();
-            model.stream_last_completion_response(UNFORMATTED_CONTENT.to_string());
+            model.send_last_completion_stream_text_chunk(UNFORMATTED_CONTENT.to_string());
             model.end_last_completion_stream();
 
             edit_task.await
@@ -1542,7 +1640,7 @@ mod tests {
 
             // Stream the unformatted content
             cx.executor().run_until_parked();
-            model.stream_last_completion_response(UNFORMATTED_CONTENT.to_string());
+            model.send_last_completion_stream_text_chunk(UNFORMATTED_CONTENT.to_string());
             model.end_last_completion_stream();
 
             edit_task.await
@@ -1566,7 +1664,7 @@ mod tests {
     async fn test_remove_trailing_whitespace(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let fs = FakeFs::new(cx.executor());
+        let fs = project::FakeFs::new(cx.executor());
         fs.insert_tree("/root", json!({"src": {}})).await;
 
         // Create a simple file with trailing whitespace
@@ -1621,7 +1719,9 @@ mod tests {
 
             // Stream the content with trailing whitespace
             cx.executor().run_until_parked();
-            model.stream_last_completion_response(CONTENT_WITH_TRAILING_WHITESPACE.to_string());
+            model.send_last_completion_stream_text_chunk(
+                CONTENT_WITH_TRAILING_WHITESPACE.to_string(),
+            );
             model.end_last_completion_stream();
 
             edit_task.await
@@ -1678,7 +1778,9 @@ mod tests {
 
             // Stream the content with trailing whitespace
             cx.executor().run_until_parked();
-            model.stream_last_completion_response(CONTENT_WITH_TRAILING_WHITESPACE.to_string());
+            model.send_last_completion_stream_text_chunk(
+                CONTENT_WITH_TRAILING_WHITESPACE.to_string(),
+            );
             model.end_last_completion_stream();
 
             edit_task.await
@@ -1697,5 +1799,642 @@ mod tests {
             CONTENT_WITH_TRAILING_WHITESPACE,
             "Trailing whitespace should remain when remove_trailing_whitespace_on_save is disabled"
         );
+    }
+
+    #[gpui::test]
+    async fn test_needs_confirmation(cx: &mut TestAppContext) {
+        init_test(cx);
+        let tool = Arc::new(EditFileTool);
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({})).await;
+
+        // Test 1: Path with .zed component should require confirmation
+        let input_with_zed = json!({
+            "display_description": "Edit settings",
+            "path": ".zed/settings.json",
+            "mode": "edit"
+        });
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        cx.update(|cx| {
+            assert!(
+                tool.needs_confirmation(&input_with_zed, &project, cx),
+                "Path with .zed component should require confirmation"
+            );
+        });
+
+        // Test 2: Absolute path should require confirmation
+        let input_absolute = json!({
+            "display_description": "Edit file",
+            "path": "/etc/hosts",
+            "mode": "edit"
+        });
+        cx.update(|cx| {
+            assert!(
+                tool.needs_confirmation(&input_absolute, &project, cx),
+                "Absolute path should require confirmation"
+            );
+        });
+
+        // Test 3: Relative path without .zed should not require confirmation
+        let input_relative = json!({
+            "display_description": "Edit file",
+            "path": "root/src/main.rs",
+            "mode": "edit"
+        });
+        cx.update(|cx| {
+            assert!(
+                !tool.needs_confirmation(&input_relative, &project, cx),
+                "Relative path without .zed should not require confirmation"
+            );
+        });
+
+        // Test 4: Path with .zed in the middle should require confirmation
+        let input_zed_middle = json!({
+            "display_description": "Edit settings",
+            "path": "root/.zed/tasks.json",
+            "mode": "edit"
+        });
+        cx.update(|cx| {
+            assert!(
+                tool.needs_confirmation(&input_zed_middle, &project, cx),
+                "Path with .zed in any component should require confirmation"
+            );
+        });
+
+        // Test 5: When always_allow_tool_actions is enabled, no confirmation needed
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.always_allow_tool_actions = true;
+            agent_settings::AgentSettings::override_global(settings, cx);
+
+            assert!(
+                !tool.needs_confirmation(&input_with_zed, &project, cx),
+                "When always_allow_tool_actions is true, no confirmation should be needed"
+            );
+            assert!(
+                !tool.needs_confirmation(&input_absolute, &project, cx),
+                "When always_allow_tool_actions is true, no confirmation should be needed for absolute paths"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_ui_text_shows_correct_context(cx: &mut TestAppContext) {
+        // Set up a custom config directory for testing
+        let temp_dir = tempfile::tempdir().unwrap();
+        init_test_with_config(cx, temp_dir.path());
+
+        let tool = Arc::new(EditFileTool);
+
+        // Test ui_text shows context for various paths
+        let test_cases = vec![
+            (
+                json!({
+                    "display_description": "Update config",
+                    "path": ".zed/settings.json",
+                    "mode": "edit"
+                }),
+                "Update config (local settings)",
+                ".zed path should show local settings context",
+            ),
+            (
+                json!({
+                    "display_description": "Fix bug",
+                    "path": "src/.zed/local.json",
+                    "mode": "edit"
+                }),
+                "Fix bug (local settings)",
+                "Nested .zed path should show local settings context",
+            ),
+            (
+                json!({
+                    "display_description": "Update readme",
+                    "path": "README.md",
+                    "mode": "edit"
+                }),
+                "Update readme",
+                "Normal path should not show additional context",
+            ),
+            (
+                json!({
+                    "display_description": "Edit config",
+                    "path": "config.zed",
+                    "mode": "edit"
+                }),
+                "Edit config",
+                ".zed as extension should not show context",
+            ),
+        ];
+
+        for (input, expected_text, description) in test_cases {
+            cx.update(|_cx| {
+                let ui_text = tool.ui_text(&input);
+                assert_eq!(ui_text, expected_text, "Failed for case: {}", description);
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn test_needs_confirmation_outside_project(cx: &mut TestAppContext) {
+        init_test(cx);
+        let tool = Arc::new(EditFileTool);
+        let fs = project::FakeFs::new(cx.executor());
+
+        // Create a project in /project directory
+        fs.insert_tree("/project", json!({})).await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+        // Test file outside project requires confirmation
+        let input_outside = json!({
+            "display_description": "Edit file",
+            "path": "/outside/file.txt",
+            "mode": "edit"
+        });
+        cx.update(|cx| {
+            assert!(
+                tool.needs_confirmation(&input_outside, &project, cx),
+                "File outside project should require confirmation"
+            );
+        });
+
+        // Test file inside project doesn't require confirmation
+        let input_inside = json!({
+            "display_description": "Edit file",
+            "path": "project/file.txt",
+            "mode": "edit"
+        });
+        cx.update(|cx| {
+            assert!(
+                !tool.needs_confirmation(&input_inside, &project, cx),
+                "File inside project should not require confirmation"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_needs_confirmation_config_paths(cx: &mut TestAppContext) {
+        // Set up a custom data directory for testing
+        let temp_dir = tempfile::tempdir().unwrap();
+        init_test_with_config(cx, temp_dir.path());
+
+        let tool = Arc::new(EditFileTool);
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree("/home/user/myproject", json!({})).await;
+        let project = Project::test(fs.clone(), [path!("/home/user/myproject").as_ref()], cx).await;
+
+        // Get the actual local settings folder name
+        let local_settings_folder = paths::local_settings_folder_relative_path();
+
+        // Test various config path patterns
+        let test_cases = vec![
+            (
+                format!("{}/settings.json", local_settings_folder.display()),
+                true,
+                "Top-level local settings file".to_string(),
+            ),
+            (
+                format!(
+                    "myproject/{}/settings.json",
+                    local_settings_folder.display()
+                ),
+                true,
+                "Local settings in project path".to_string(),
+            ),
+            (
+                format!("src/{}/config.toml", local_settings_folder.display()),
+                true,
+                "Local settings in subdirectory".to_string(),
+            ),
+            (
+                ".zed.backup/file.txt".to_string(),
+                true,
+                ".zed.backup is outside project".to_string(),
+            ),
+            (
+                "my.zed/file.txt".to_string(),
+                true,
+                "my.zed is outside project".to_string(),
+            ),
+            (
+                "myproject/src/file.zed".to_string(),
+                false,
+                ".zed as file extension".to_string(),
+            ),
+            (
+                "myproject/normal/path/file.rs".to_string(),
+                false,
+                "Normal file without config paths".to_string(),
+            ),
+        ];
+
+        for (path, should_confirm, description) in test_cases {
+            let input = json!({
+                "display_description": "Edit file",
+                "path": path,
+                "mode": "edit"
+            });
+            cx.update(|cx| {
+                assert_eq!(
+                    tool.needs_confirmation(&input, &project, cx),
+                    should_confirm,
+                    "Failed for case: {} - path: {}",
+                    description,
+                    path
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn test_needs_confirmation_global_config(cx: &mut TestAppContext) {
+        // Set up a custom data directory for testing
+        let temp_dir = tempfile::tempdir().unwrap();
+        init_test_with_config(cx, temp_dir.path());
+
+        let tool = Arc::new(EditFileTool);
+        let fs = project::FakeFs::new(cx.executor());
+
+        // Create test files in the global config directory
+        let global_config_dir = paths::config_dir();
+        fs::create_dir_all(&global_config_dir).unwrap();
+        let global_settings_path = global_config_dir.join("settings.json");
+        fs::write(&global_settings_path, "{}").unwrap();
+
+        fs.insert_tree("/project", json!({})).await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+        // Test global config paths
+        let test_cases = vec![
+            (
+                global_settings_path.to_str().unwrap().to_string(),
+                true,
+                "Global settings file should require confirmation",
+            ),
+            (
+                global_config_dir
+                    .join("keymap.json")
+                    .to_str()
+                    .unwrap()
+                    .to_string(),
+                true,
+                "Global keymap file should require confirmation",
+            ),
+            (
+                "project/normal_file.rs".to_string(),
+                false,
+                "Normal project file should not require confirmation",
+            ),
+        ];
+
+        for (path, should_confirm, description) in test_cases {
+            let input = json!({
+                "display_description": "Edit file",
+                "path": path,
+                "mode": "edit"
+            });
+            cx.update(|cx| {
+                assert_eq!(
+                    tool.needs_confirmation(&input, &project, cx),
+                    should_confirm,
+                    "Failed for case: {}",
+                    description
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn test_needs_confirmation_with_multiple_worktrees(cx: &mut TestAppContext) {
+        init_test(cx);
+        let tool = Arc::new(EditFileTool);
+        let fs = project::FakeFs::new(cx.executor());
+
+        // Create multiple worktree directories
+        fs.insert_tree(
+            "/workspace/frontend",
+            json!({
+                "src": {
+                    "main.js": "console.log('frontend');"
+                }
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/workspace/backend",
+            json!({
+                "src": {
+                    "main.rs": "fn main() {}"
+                }
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/workspace/shared",
+            json!({
+                ".zed": {
+                    "settings.json": "{}"
+                }
+            }),
+        )
+        .await;
+
+        // Create project with multiple worktrees
+        let project = Project::test(
+            fs.clone(),
+            [
+                path!("/workspace/frontend").as_ref(),
+                path!("/workspace/backend").as_ref(),
+                path!("/workspace/shared").as_ref(),
+            ],
+            cx,
+        )
+        .await;
+
+        // Test files in different worktrees
+        let test_cases = vec![
+            ("frontend/src/main.js", false, "File in first worktree"),
+            ("backend/src/main.rs", false, "File in second worktree"),
+            (
+                "shared/.zed/settings.json",
+                true,
+                ".zed file in third worktree",
+            ),
+            ("/etc/hosts", true, "Absolute path outside all worktrees"),
+            (
+                "../outside/file.txt",
+                true,
+                "Relative path outside worktrees",
+            ),
+        ];
+
+        for (path, should_confirm, description) in test_cases {
+            let input = json!({
+                "display_description": "Edit file",
+                "path": path,
+                "mode": "edit"
+            });
+            cx.update(|cx| {
+                assert_eq!(
+                    tool.needs_confirmation(&input, &project, cx),
+                    should_confirm,
+                    "Failed for case: {} - path: {}",
+                    description,
+                    path
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn test_needs_confirmation_edge_cases(cx: &mut TestAppContext) {
+        init_test(cx);
+        let tool = Arc::new(EditFileTool);
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".zed": {
+                    "settings.json": "{}"
+                },
+                "src": {
+                    ".zed": {
+                        "local.json": "{}"
+                    }
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+        // Test edge cases
+        let test_cases = vec![
+            // Empty path - find_project_path returns Some for empty paths
+            ("", false, "Empty path is treated as project root"),
+            // Root directory
+            ("/", true, "Root directory should be outside project"),
+            // Parent directory references - find_project_path resolves these
+            (
+                "project/../other",
+                false,
+                "Path with .. is resolved by find_project_path",
+            ),
+            (
+                "project/./src/file.rs",
+                false,
+                "Path with . should work normally",
+            ),
+            // Windows-style paths (if on Windows)
+            #[cfg(target_os = "windows")]
+            ("C:\\Windows\\System32\\hosts", true, "Windows system path"),
+            #[cfg(target_os = "windows")]
+            ("project\\src\\main.rs", false, "Windows-style project path"),
+        ];
+
+        for (path, should_confirm, description) in test_cases {
+            let input = json!({
+                "display_description": "Edit file",
+                "path": path,
+                "mode": "edit"
+            });
+            cx.update(|cx| {
+                assert_eq!(
+                    tool.needs_confirmation(&input, &project, cx),
+                    should_confirm,
+                    "Failed for case: {} - path: {}",
+                    description,
+                    path
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn test_ui_text_with_all_path_types(cx: &mut TestAppContext) {
+        init_test(cx);
+        let tool = Arc::new(EditFileTool);
+
+        // Test UI text for various scenarios
+        let test_cases = vec![
+            (
+                json!({
+                    "display_description": "Update config",
+                    "path": ".zed/settings.json",
+                    "mode": "edit"
+                }),
+                "Update config (local settings)",
+                ".zed path should show local settings context",
+            ),
+            (
+                json!({
+                    "display_description": "Fix bug",
+                    "path": "src/.zed/local.json",
+                    "mode": "edit"
+                }),
+                "Fix bug (local settings)",
+                "Nested .zed path should show local settings context",
+            ),
+            (
+                json!({
+                    "display_description": "Update readme",
+                    "path": "README.md",
+                    "mode": "edit"
+                }),
+                "Update readme",
+                "Normal path should not show additional context",
+            ),
+            (
+                json!({
+                    "display_description": "Edit config",
+                    "path": "config.zed",
+                    "mode": "edit"
+                }),
+                "Edit config",
+                ".zed as extension should not show context",
+            ),
+        ];
+
+        for (input, expected_text, description) in test_cases {
+            cx.update(|_cx| {
+                let ui_text = tool.ui_text(&input);
+                assert_eq!(ui_text, expected_text, "Failed for case: {}", description);
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn test_needs_confirmation_with_different_modes(cx: &mut TestAppContext) {
+        init_test(cx);
+        let tool = Arc::new(EditFileTool);
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                "existing.txt": "content",
+                ".zed": {
+                    "settings.json": "{}"
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+        // Test different EditFileMode values
+        let modes = vec![
+            EditFileMode::Edit,
+            EditFileMode::Create,
+            EditFileMode::Overwrite,
+        ];
+
+        for mode in modes {
+            // Test .zed path with different modes
+            let input_zed = json!({
+                "display_description": "Edit settings",
+                "path": "project/.zed/settings.json",
+                "mode": mode
+            });
+            cx.update(|cx| {
+                assert!(
+                    tool.needs_confirmation(&input_zed, &project, cx),
+                    ".zed path should require confirmation regardless of mode: {:?}",
+                    mode
+                );
+            });
+
+            // Test outside path with different modes
+            let input_outside = json!({
+                "display_description": "Edit file",
+                "path": "/outside/file.txt",
+                "mode": mode
+            });
+            cx.update(|cx| {
+                assert!(
+                    tool.needs_confirmation(&input_outside, &project, cx),
+                    "Outside path should require confirmation regardless of mode: {:?}",
+                    mode
+                );
+            });
+
+            // Test normal path with different modes
+            let input_normal = json!({
+                "display_description": "Edit file",
+                "path": "project/normal.txt",
+                "mode": mode
+            });
+            cx.update(|cx| {
+                assert!(
+                    !tool.needs_confirmation(&input_normal, &project, cx),
+                    "Normal path should not require confirmation regardless of mode: {:?}",
+                    mode
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn test_always_allow_tool_actions_bypasses_all_checks(cx: &mut TestAppContext) {
+        // Set up with custom directories for deterministic testing
+        let temp_dir = tempfile::tempdir().unwrap();
+        init_test_with_config(cx, temp_dir.path());
+
+        let tool = Arc::new(EditFileTool);
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({})).await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+        // Enable always_allow_tool_actions
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.always_allow_tool_actions = true;
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        // Test that all paths that normally require confirmation are bypassed
+        let global_settings_path = paths::config_dir().join("settings.json");
+        fs::create_dir_all(paths::config_dir()).unwrap();
+        fs::write(&global_settings_path, "{}").unwrap();
+
+        let test_cases = vec![
+            ".zed/settings.json",
+            "project/.zed/config.toml",
+            global_settings_path.to_str().unwrap(),
+            "/etc/hosts",
+            "/absolute/path/file.txt",
+            "../outside/project.txt",
+        ];
+
+        for path in test_cases {
+            let input = json!({
+                "display_description": "Edit file",
+                "path": path,
+                "mode": "edit"
+            });
+            cx.update(|cx| {
+                assert!(
+                    !tool.needs_confirmation(&input, &project, cx),
+                    "Path {} should not require confirmation when always_allow_tool_actions is true",
+                    path
+                );
+            });
+        }
+
+        // Disable always_allow_tool_actions and verify confirmation is required again
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.always_allow_tool_actions = false;
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        // Verify .zed path requires confirmation again
+        let input = json!({
+            "display_description": "Edit file",
+            "path": ".zed/settings.json",
+            "mode": "edit"
+        });
+        cx.update(|cx| {
+            assert!(
+                tool.needs_confirmation(&input, &project, cx),
+                ".zed path should require confirmation when always_allow_tool_actions is false"
+            );
+        });
     }
 }

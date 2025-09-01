@@ -1,9 +1,10 @@
 use db::anyhow;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsSources, SettingsUi};
 
-#[derive(Copy, Clone, Deserialize, Debug)]
+#[derive(Copy, Clone, Deserialize, Debug, SettingsUi)]
+#[settings_ui(group = "Title Bar", path = "title_bar")]
 pub struct TitleBarSettings {
     pub show_branch_icon: bool,
     pub show_onboarding_banner: bool,
@@ -11,6 +12,7 @@ pub struct TitleBarSettings {
     pub show_branch_name: bool,
     pub show_project_items: bool,
     pub show_sign_in: bool,
+    pub show_menus: bool,
 }
 
 #[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
@@ -39,6 +41,10 @@ pub struct TitleBarSettingsContent {
     ///
     /// Default: true
     pub show_sign_in: Option<bool>,
+    /// Whether to show the menus in the title bar.
+    ///
+    /// Default: false
+    pub show_menus: Option<bool>,
 }
 
 impl Settings for TitleBarSettings {

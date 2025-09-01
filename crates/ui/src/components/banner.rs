@@ -1,15 +1,6 @@
 use crate::prelude::*;
 use gpui::{AnyElement, IntoElement, ParentElement, Styled};
 
-/// Severity levels that determine the style of the banner.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Severity {
-    Info,
-    Success,
-    Warning,
-    Error,
-}
-
 /// Banners provide informative and brief messages without interrupting the user.
 /// This component offers four severity levels that can be used depending on the message.
 ///
@@ -19,12 +10,12 @@ pub enum Severity {
 /// use ui::{Banner};
 ///
 ///    Banner::new()
-///     .severity(Severity::Info)
-///     .children(Label::new("This is an informational message"))
+///     .severity(Severity::Success)
+///     .children(Label::new("This is a success message"))
 ///     .action_slot(
 ///         Button::new("learn-more", "Learn More")
 ///             .icon(IconName::ArrowUpRight)
-///             .icon_size(IconSize::XSmall)
+///             .icon_size(IconSize::Small)
 ///             .icon_position(IconPosition::End),
 ///     )
 /// ```
@@ -32,7 +23,6 @@ pub enum Severity {
 pub struct Banner {
     severity: Severity,
     children: Vec<AnyElement>,
-    icon: Option<(IconName, Option<Color>)>,
     action_slot: Option<AnyElement>,
 }
 
@@ -42,7 +32,6 @@ impl Banner {
         Self {
             severity: Severity::Info,
             children: Vec::new(),
-            icon: None,
             action_slot: None,
         }
     }
@@ -50,12 +39,6 @@ impl Banner {
     /// Sets the severity of the banner.
     pub fn severity(mut self, severity: Severity) -> Self {
         self.severity = severity;
-        self
-    }
-
-    /// Sets an icon to display in the banner with an optional color.
-    pub fn icon(mut self, icon: IconName, color: Option<impl Into<Color>>) -> Self {
-        self.icon = Some((icon, color.map(|c| c.into())));
         self
     }
 
@@ -73,12 +56,13 @@ impl ParentElement for Banner {
 }
 
 impl RenderOnce for Banner {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let base = h_flex()
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let banner = h_flex()
             .py_0p5()
-            .rounded_sm()
+            .gap_1p5()
             .flex_wrap()
             .justify_between()
+            .rounded_sm()
             .border_1();
 
         let (icon, icon_color, bg_color, border_color) = match self.severity {
@@ -108,35 +92,37 @@ impl RenderOnce for Banner {
             ),
         };
 
-        let mut container = base.bg(bg_color).border_color(border_color);
+        let mut banner = banner.bg(bg_color).border_color(border_color);
 
-        let mut content_area = h_flex().id("content_area").gap_1p5().overflow_x_scroll();
-
-        if self.icon.is_none() {
-            content_area =
-                content_area.child(Icon::new(icon).size(IconSize::XSmall).color(icon_color));
-        }
-
-        content_area = content_area.children(self.children);
+        let icon_and_child = h_flex()
+            .items_start()
+            .min_w_0()
+            .gap_1p5()
+            .child(
+                h_flex()
+                    .h(window.line_height())
+                    .flex_shrink_0()
+                    .child(Icon::new(icon).size(IconSize::XSmall).color(icon_color)),
+            )
+            .child(div().min_w_0().children(self.children));
 
         if let Some(action_slot) = self.action_slot {
-            container = container
+            banner = banner
                 .pl_2()
-                .pr_0p5()
-                .gap_2()
-                .child(content_area)
+                .pr_1()
+                .child(icon_and_child)
                 .child(action_slot);
         } else {
-            container = container.px_2().child(div().w_full().child(content_area));
+            banner = banner.px_2().child(icon_and_child);
         }
 
-        container
+        banner
     }
 }
 
 impl Component for Banner {
     fn scope() -> ComponentScope {
-        ComponentScope::Notification
+        ComponentScope::DataDisplay
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
@@ -155,7 +141,7 @@ impl Component for Banner {
                     .action_slot(
                         Button::new("learn-more", "Learn More")
                             .icon(IconName::ArrowUpRight)
-                            .icon_size(IconSize::XSmall)
+                            .icon_size(IconSize::Small)
                             .icon_position(IconPosition::End),
                     )
                     .into_any_element(),

@@ -567,15 +567,20 @@ vertex UnderlineVertexOutput underline_vertex(
 fragment float4 underline_fragment(UnderlineFragmentInput input [[stage_in]],
                                    constant Underline *underlines
                                    [[buffer(UnderlineInputIndex_Underlines)]]) {
+  const float WAVE_FREQUENCY = 2.0;
+  const float WAVE_HEIGHT_RATIO = 0.8;
+
   Underline underline = underlines[input.underline_id];
   if (underline.wavy) {
     float half_thickness = underline.thickness * 0.5;
     float2 origin =
         float2(underline.bounds.origin.x, underline.bounds.origin.y);
+
     float2 st = ((input.position.xy - origin) / underline.bounds.size.height) -
                 float2(0., 0.5);
-    float frequency = (M_PI_F * (3. * underline.thickness)) / 8.;
-    float amplitude = 1. / (2. * underline.thickness);
+    float frequency = (M_PI_F * WAVE_FREQUENCY * underline.thickness) / underline.bounds.size.height;
+    float amplitude = (underline.thickness * WAVE_HEIGHT_RATIO) / underline.bounds.size.height;
+
     float sine = sin(st.x * frequency) * amplitude;
     float dSine = cos(st.x * frequency) * amplitude * frequency;
     float distance = (st.y - sine) / sqrt(1. + dSine * dSine);
@@ -698,63 +703,120 @@ fragment float4 polychrome_sprite_fragment(
   return color;
 }
 
-struct PathVertexOutput {
+struct PathRasterizationVertexOutput {
   float4 position [[position]];
-  uint sprite_id [[flat]];
-  float4 solid_color [[flat]];
-  float4 color0 [[flat]];
-  float4 color1 [[flat]];
-  float4 clip_distance;
+  float2 st_position;
+  uint vertex_id [[flat]];
+  float clip_rect_distance [[clip_distance]][4];
 };
 
-vertex PathVertexOutput path_vertex(
-    uint vertex_id [[vertex_id]],
-    constant PathVertex_ScaledPixels *vertices [[buffer(PathInputIndex_Vertices)]],
-    uint sprite_id [[instance_id]],
-    constant PathSprite *sprites [[buffer(PathInputIndex_Sprites)]],
-    constant Size_DevicePixels *input_viewport_size [[buffer(PathInputIndex_ViewportSize)]]) {
-  PathVertex_ScaledPixels v = vertices[vertex_id];
+struct PathRasterizationFragmentInput {
+  float4 position [[position]];
+  float2 st_position;
+  uint vertex_id [[flat]];
+};
+
+vertex PathRasterizationVertexOutput path_rasterization_vertex(
+  uint vertex_id [[vertex_id]],
+  constant PathRasterizationVertex *vertices [[buffer(PathRasterizationInputIndex_Vertices)]],
+  constant Size_DevicePixels *atlas_size [[buffer(PathRasterizationInputIndex_ViewportSize)]]
+) {
+  PathRasterizationVertex v = vertices[vertex_id];
   float2 vertex_position = float2(v.xy_position.x, v.xy_position.y);
-  float2 viewport_size = float2((float)input_viewport_size->width,
-                                (float)input_viewport_size->height);
-  PathSprite sprite = sprites[sprite_id];
-  float4 device_position = float4(vertex_position / viewport_size * float2(2., -2.) + float2(-1., 1.), 0., 1.);
-
-  GradientColor gradient = prepare_fill_color(
-    sprite.color.tag,
-    sprite.color.color_space,
-    sprite.color.solid,
-    sprite.color.colors[0].color,
-    sprite.color.colors[1].color
+  float4 position = float4(
+    vertex_position * float2(2. / atlas_size->width, -2. / atlas_size->height) + float2(-1., 1.),
+    0.,
+    1.
   );
-
-  return PathVertexOutput{
-    device_position,
-    sprite_id,
-    gradient.solid,
-    gradient.color0,
-    gradient.color1,
-    {v.xy_position.x - v.content_mask.bounds.origin.x,
-       v.content_mask.bounds.origin.x + v.content_mask.bounds.size.width -
-           v.xy_position.x,
-       v.xy_position.y - v.content_mask.bounds.origin.y,
-       v.content_mask.bounds.origin.y + v.content_mask.bounds.size.height -
-           v.xy_position.y}
+  return PathRasterizationVertexOutput{
+      position,
+      float2(v.st_position.x, v.st_position.y),
+      vertex_id,
+      {
+        v.xy_position.x - v.bounds.origin.x,
+        v.bounds.origin.x + v.bounds.size.width - v.xy_position.x,
+        v.xy_position.y - v.bounds.origin.y,
+        v.bounds.origin.y + v.bounds.size.height - v.xy_position.y
+      }
   };
 }
 
-fragment float4 path_fragment(
-    PathVertexOutput input [[stage_in]],
-    constant PathSprite *sprites [[buffer(PathInputIndex_Sprites)]]) {
-  if (any(input.clip_distance < float4(0.0))) {
-    return float4(0.0);
+fragment float4 path_rasterization_fragment(
+  PathRasterizationFragmentInput input [[stage_in]],
+  constant PathRasterizationVertex *vertices [[buffer(PathRasterizationInputIndex_Vertices)]]
+) {
+  float2 dx = dfdx(input.st_position);
+  float2 dy = dfdy(input.st_position);
+
+  PathRasterizationVertex v = vertices[input.vertex_id];
+  Background background = v.color;
+  Bounds_ScaledPixels path_bounds = v.bounds;
+  float alpha;
+  if (length(float2(dx.x, dy.x)) < 0.001) {
+    alpha = 1.0;
+  } else {
+    float2 gradient = float2(
+      (2. * input.st_position.x) * dx.x - dx.y,
+      (2. * input.st_position.x) * dy.x - dy.y
+    );
+    float f = (input.st_position.x * input.st_position.x) - input.st_position.y;
+    float distance = f / length(gradient);
+    alpha = saturate(0.5 - distance);
   }
 
-  PathSprite sprite = sprites[input.sprite_id];
-  Background background = sprite.color;
-  float4 color = fill_color(background, input.position.xy, sprite.bounds,
-    input.solid_color, input.color0, input.color1);
-  return color;
+  GradientColor gradient_color = prepare_fill_color(
+    background.tag,
+    background.color_space,
+    background.solid,
+    background.colors[0].color,
+    background.colors[1].color
+  );
+
+  float4 color = fill_color(
+    background,
+    input.position.xy,
+    path_bounds,
+    gradient_color.solid,
+    gradient_color.color0,
+    gradient_color.color1
+  );
+  return float4(color.rgb * color.a * alpha, alpha * color.a);
+}
+
+struct PathSpriteVertexOutput {
+  float4 position [[position]];
+  float2 texture_coords;
+};
+
+vertex PathSpriteVertexOutput path_sprite_vertex(
+  uint unit_vertex_id [[vertex_id]],
+  uint sprite_id [[instance_id]],
+  constant float2 *unit_vertices [[buffer(SpriteInputIndex_Vertices)]],
+  constant PathSprite *sprites [[buffer(SpriteInputIndex_Sprites)]],
+  constant Size_DevicePixels *viewport_size [[buffer(SpriteInputIndex_ViewportSize)]]
+) {
+  float2 unit_vertex = unit_vertices[unit_vertex_id];
+  PathSprite sprite = sprites[sprite_id];
+  // Don't apply content mask because it was already accounted for when
+  // rasterizing the path.
+  float4 device_position =
+      to_device_position(unit_vertex, sprite.bounds, viewport_size);
+
+  float2 screen_position = float2(sprite.bounds.origin.x, sprite.bounds.origin.y) + unit_vertex * float2(sprite.bounds.size.width, sprite.bounds.size.height);
+  float2 texture_coords = screen_position / float2(viewport_size->width, viewport_size->height);
+
+  return PathSpriteVertexOutput{
+    device_position,
+    texture_coords
+  };
+}
+
+fragment float4 path_sprite_fragment(
+  PathSpriteVertexOutput input [[stage_in]],
+  texture2d<float> intermediate_texture [[texture(SpriteInputIndex_AtlasTexture)]]
+) {
+  constexpr sampler intermediate_texture_sampler(mag_filter::linear, min_filter::linear);
+  return intermediate_texture.sample(intermediate_texture_sampler, input.texture_coords);
 }
 
 struct SurfaceVertexOutput {

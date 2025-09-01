@@ -3,7 +3,7 @@ use anyhow::Result;
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+use settings::{Settings, SettingsStore, SettingsUi};
 
 pub fn init(cx: &mut App) {
     ZlogSettings::register(cx);
@@ -15,7 +15,7 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi)]
 pub struct ZlogSettings {
     #[serde(default, flatten)]
     pub scopes: std::collections::HashMap<String, String>,

@@ -54,6 +54,7 @@ const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
     ("nu", &["nu"]),
     ("ocaml", &["ml", "mli"]),
     ("php", &["php"]),
+    ("powershell", &["ps1", "psm1"]),
     ("prisma", &["prisma"]),
     ("proto", &["proto"]),
     ("purescript", &["purs"]),

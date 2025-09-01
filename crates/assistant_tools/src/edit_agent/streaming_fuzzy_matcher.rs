@@ -319,7 +319,7 @@ mod tests {
         );
         let snapshot = buffer.snapshot();
 
-        let mut finder = StreamingFuzzyMatcher::new(snapshot.clone());
+        let mut finder = StreamingFuzzyMatcher::new(snapshot);
         assert_eq!(push(&mut finder, ""), None);
         assert_eq!(finish(finder), None);
     }
@@ -333,7 +333,7 @@ mod tests {
         );
         let snapshot = buffer.snapshot();
 
-        let mut finder = StreamingFuzzyMatcher::new(snapshot.clone());
+        let mut finder = StreamingFuzzyMatcher::new(snapshot);
 
         // Push partial query
         assert_eq!(push(&mut finder, "This"), None);
@@ -365,7 +365,7 @@ mod tests {
         );
         let snapshot = buffer.snapshot();
 
-        let mut finder = StreamingFuzzyMatcher::new(snapshot.clone());
+        let mut finder = StreamingFuzzyMatcher::new(snapshot);
 
         // Push a fuzzy query that should match the first function
         assert_eq!(
@@ -391,7 +391,7 @@ mod tests {
         );
         let snapshot = buffer.snapshot();
 
-        let mut finder = StreamingFuzzyMatcher::new(snapshot.clone());
+        let mut finder = StreamingFuzzyMatcher::new(snapshot);
 
         // No match initially
         assert_eq!(push(&mut finder, "Lin"), None);
@@ -420,7 +420,7 @@ mod tests {
         );
         let snapshot = buffer.snapshot();
 
-        let mut finder = StreamingFuzzyMatcher::new(snapshot.clone());
+        let mut finder = StreamingFuzzyMatcher::new(snapshot);
 
         // Push text in small chunks across line boundaries
         assert_eq!(push(&mut finder, "jumps "), None); // No newline yet
@@ -458,7 +458,7 @@ mod tests {
         );
         let snapshot = buffer.snapshot();
 
-        let mut finder = StreamingFuzzyMatcher::new(snapshot.clone());
+        let mut finder = StreamingFuzzyMatcher::new(snapshot);
 
         assert_eq!(
             push(&mut finder, "impl Debug for User {\n"),
@@ -711,7 +711,7 @@ mod tests {
             "Expected to match `second_function` based on the line hint"
         );
 
-        let mut matcher = StreamingFuzzyMatcher::new(snapshot.clone());
+        let mut matcher = StreamingFuzzyMatcher::new(snapshot);
         matcher.push(query, None);
         matcher.finish();
         let best_match = matcher.select_best_match();
@@ -727,7 +727,7 @@ mod tests {
         let buffer = TextBuffer::new(0, BufferId::new(1).unwrap(), text.clone());
         let snapshot = buffer.snapshot();
 
-        let mut matcher = StreamingFuzzyMatcher::new(snapshot.clone());
+        let mut matcher = StreamingFuzzyMatcher::new(snapshot);
 
         // Split query into random chunks
         let chunks = to_random_chunks(rng, query);
@@ -794,10 +794,8 @@ mod tests {
     fn finish(mut finder: StreamingFuzzyMatcher) -> Option<String> {
         let snapshot = finder.snapshot.clone();
         let matches = finder.finish();
-        if let Some(range) = matches.first() {
-            Some(snapshot.text_for_range(range.clone()).collect::<String>())
-        } else {
-            None
-        }
+        matches
+            .first()
+            .map(|range| snapshot.text_for_range(range.clone()).collect::<String>())
     }
 }

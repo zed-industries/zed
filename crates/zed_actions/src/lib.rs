@@ -76,6 +76,9 @@ pub struct Extensions {
     /// Filters the extensions page down to extensions that are in the specified category.
     #[serde(default)]
     pub category_filter: Option<ExtensionCategoryFilter>,
+    /// Focuses just the extension with the specified ID.
+    #[serde(default)]
+    pub id: Option<String>,
 }
 
 /// Decreases the font size in the editor buffer.
@@ -153,7 +156,10 @@ pub mod workspace {
             #[action(deprecated_aliases = ["editor::CopyPath", "outline_panel::CopyPath", "project_panel::CopyPath"])]
             CopyPath,
             #[action(deprecated_aliases = ["editor::CopyRelativePath", "outline_panel::CopyRelativePath", "project_panel::CopyRelativePath"])]
-            CopyRelativePath
+            CopyRelativePath,
+            /// Opens the selected file with the system's default application.
+            #[action(deprecated_aliases = ["project_panel::OpenWithSystem"])]
+            OpenWithSystem,
         ]
     );
 }
@@ -257,18 +263,38 @@ pub mod icon_theme_selector {
     }
 }
 
+pub mod settings_profile_selector {
+    use gpui::Action;
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+
+    #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+    #[action(namespace = settings_profile_selector)]
+    pub struct Toggle;
+}
+
 pub mod agent {
     use gpui::actions;
 
     actions!(
         agent,
         [
-            /// Opens the agent configuration panel.
-            OpenConfiguration,
+            /// Opens the agent settings panel.
+            #[action(deprecated_aliases = ["agent::OpenConfiguration"])]
+            OpenSettings,
             /// Opens the agent onboarding modal.
             OpenOnboardingModal,
+            /// Opens the ACP onboarding modal.
+            OpenAcpOnboardingModal,
             /// Resets the agent onboarding state.
-            ResetOnboarding
+            ResetOnboarding,
+            /// Starts a chat conversation with the agent.
+            Chat,
+            /// Toggles the language model selector dropdown.
+            #[action(deprecated_aliases = ["assistant::ToggleModelSelector", "assistant2::ToggleModelSelector"])]
+            ToggleModelSelector,
+            /// Triggers re-authentication on Gemini
+            ReauthenticateAgent
         ]
     );
 }

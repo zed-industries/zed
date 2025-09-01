@@ -1,5 +1,7 @@
 use crate::{Keep, KeepAll, OpenAgentDiff, Reject, RejectAll};
-use agent::{Thread, ThreadEvent};
+use acp_thread::{AcpThread, AcpThreadEvent};
+use action_log::ActionLog;
+use agent::{Thread, ThreadEvent, ThreadSummary};
 use agent_settings::AgentSettings;
 use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
@@ -8,6 +10,7 @@ use editor::{
     Direction, Editor, EditorEvent, EditorSettings, MultiBuffer, MultiBufferSnapshot,
     SelectionEffects, ToPoint,
     actions::{GoToHunk, GoToPreviousHunk},
+    multibuffer_context_lines,
     scroll::Autoscroll,
 };
 use gpui::{
@@ -41,16 +44,108 @@ use zed_actions::assistant::ToggleFocus;
 pub struct AgentDiffPane {
     multibuffer: Entity<MultiBuffer>,
     editor: Entity<Editor>,
-    thread: Entity<Thread>,
+    thread: AgentDiffThread,
     focus_handle: FocusHandle,
     workspace: WeakEntity<Workspace>,
     title: SharedString,
     _subscriptions: Vec<Subscription>,
 }
 
+#[derive(PartialEq, Eq, Clone)]
+pub enum AgentDiffThread {
+    Native(Entity<Thread>),
+    AcpThread(Entity<AcpThread>),
+}
+
+impl AgentDiffThread {
+    fn project(&self, cx: &App) -> Entity<Project> {
+        match self {
+            AgentDiffThread::Native(thread) => thread.read(cx).project().clone(),
+            AgentDiffThread::AcpThread(thread) => thread.read(cx).project().clone(),
+        }
+    }
+    fn action_log(&self, cx: &App) -> Entity<ActionLog> {
+        match self {
+            AgentDiffThread::Native(thread) => thread.read(cx).action_log().clone(),
+            AgentDiffThread::AcpThread(thread) => thread.read(cx).action_log().clone(),
+        }
+    }
+
+    fn summary(&self, cx: &App) -> ThreadSummary {
+        match self {
+            AgentDiffThread::Native(thread) => thread.read(cx).summary().clone(),
+            AgentDiffThread::AcpThread(thread) => ThreadSummary::Ready(thread.read(cx).title()),
+        }
+    }
+
+    fn is_generating(&self, cx: &App) -> bool {
+        match self {
+            AgentDiffThread::Native(thread) => thread.read(cx).is_generating(),
+            AgentDiffThread::AcpThread(thread) => {
+                thread.read(cx).status() == acp_thread::ThreadStatus::Generating
+            }
+        }
+    }
+
+    fn has_pending_edit_tool_uses(&self, cx: &App) -> bool {
+        match self {
+            AgentDiffThread::Native(thread) => thread.read(cx).has_pending_edit_tool_uses(),
+            AgentDiffThread::AcpThread(thread) => thread.read(cx).has_pending_edit_tool_calls(),
+        }
+    }
+
+    fn downgrade(&self) -> WeakAgentDiffThread {
+        match self {
+            AgentDiffThread::Native(thread) => WeakAgentDiffThread::Native(thread.downgrade()),
+            AgentDiffThread::AcpThread(thread) => {
+                WeakAgentDiffThread::AcpThread(thread.downgrade())
+            }
+        }
+    }
+}
+
+impl From<Entity<Thread>> for AgentDiffThread {
+    fn from(entity: Entity<Thread>) -> Self {
+        AgentDiffThread::Native(entity)
+    }
+}
+
+impl From<Entity<AcpThread>> for AgentDiffThread {
+    fn from(entity: Entity<AcpThread>) -> Self {
+        AgentDiffThread::AcpThread(entity)
+    }
+}
+
+#[derive(PartialEq, Eq, Clone)]
+pub enum WeakAgentDiffThread {
+    Native(WeakEntity<Thread>),
+    AcpThread(WeakEntity<AcpThread>),
+}
+
+impl WeakAgentDiffThread {
+    pub fn upgrade(&self) -> Option<AgentDiffThread> {
+        match self {
+            WeakAgentDiffThread::Native(weak) => weak.upgrade().map(AgentDiffThread::Native),
+            WeakAgentDiffThread::AcpThread(weak) => weak.upgrade().map(AgentDiffThread::AcpThread),
+        }
+    }
+}
+
+impl From<WeakEntity<Thread>> for WeakAgentDiffThread {
+    fn from(entity: WeakEntity<Thread>) -> Self {
+        WeakAgentDiffThread::Native(entity)
+    }
+}
+
+impl From<WeakEntity<AcpThread>> for WeakAgentDiffThread {
+    fn from(entity: WeakEntity<AcpThread>) -> Self {
+        WeakAgentDiffThread::AcpThread(entity)
+    }
+}
+
 impl AgentDiffPane {
     pub fn deploy(
-        thread: Entity<Thread>,
+        thread: impl Into<AgentDiffThread>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut App,
@@ -61,14 +156,16 @@ impl AgentDiffPane {
     }
 
     pub fn deploy_in_workspace(
-        thread: Entity<Thread>,
+        thread: impl Into<AgentDiffThread>,
         workspace: &mut Workspace,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
+        let thread = thread.into();
         let existing_diff = workspace
             .items_of_type::<AgentDiffPane>(cx)
             .find(|diff| diff.read(cx).thread == thread);
+
         if let Some(existing_diff) = existing_diff {
             workspace.activate_item(&existing_diff, true, true, window, cx);
             existing_diff
@@ -81,7 +178,7 @@ impl AgentDiffPane {
     }
 
     pub fn new(
-        thread: Entity<Thread>,
+        thread: AgentDiffThread,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -89,7 +186,7 @@ impl AgentDiffPane {
         let focus_handle = cx.focus_handle();
         let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
 
-        let project = thread.read(cx).project().clone();
+        let project = thread.project(cx);
         let editor = cx.new(|cx| {
             let mut editor =
                 Editor::for_multibuffer(multibuffer.clone(), Some(project.clone()), window, cx);
@@ -100,15 +197,23 @@ impl AgentDiffPane {
             editor
         });
 
-        let action_log = thread.read(cx).action_log().clone();
+        let action_log = thread.action_log(cx);
+
         let mut this = Self {
             _subscriptions: vec![
                 cx.observe_in(&action_log, window, |this, _action_log, window, cx| {
                     this.update_excerpts(window, cx)
                 }),
-                cx.subscribe(&thread, |this, _thread, event, cx| {
-                    this.handle_thread_event(event, cx)
-                }),
+                match &thread {
+                    AgentDiffThread::Native(thread) => cx
+                        .subscribe(thread, |this, _thread, event, cx| {
+                            this.handle_native_thread_event(event, cx)
+                        }),
+                    AgentDiffThread::AcpThread(thread) => cx
+                        .subscribe(thread, |this, _thread, event, cx| {
+                            this.handle_acp_thread_event(event, cx)
+                        }),
+                },
             ],
             title: SharedString::default(),
             multibuffer,
@@ -123,8 +228,7 @@ impl AgentDiffPane {
     }
 
     fn update_excerpts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let thread = self.thread.read(cx);
-        let changed_buffers = thread.action_log().read(cx).changed_buffers(cx);
+        let changed_buffers = self.thread.action_log(cx).read(cx).changed_buffers(cx);
         let mut paths_to_delete = self.multibuffer.read(cx).paths().collect::<HashSet<_>>();
 
         for (buffer, diff_handle) in changed_buffers {
@@ -154,7 +258,7 @@ impl AgentDiffPane {
                         path_key.clone(),
                         buffer.clone(),
                         diff_hunk_ranges,
-                        editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                        multibuffer_context_lines(cx),
                         cx,
                     );
                     multibuffer.add_diff(diff_handle, cx);
@@ -182,7 +286,7 @@ impl AgentDiffPane {
                     && buffer
                         .read(cx)
                         .file()
-                        .map_or(false, |file| file.disk_state() == DiskState::Deleted)
+                        .is_some_and(|file| file.disk_state() == DiskState::Deleted)
                 {
                     editor.fold_buffer(snapshot.text.remote_id(), cx)
                 }
@@ -211,17 +315,22 @@ impl AgentDiffPane {
     }
 
     fn update_title(&mut self, cx: &mut Context<Self>) {
-        let new_title = self.thread.read(cx).summary().unwrap_or("Agent Changes");
+        let new_title = self.thread.summary(cx).unwrap_or("Agent Changes");
         if new_title != self.title {
             self.title = new_title;
             cx.emit(EditorEvent::TitleChanged);
         }
     }
 
-    fn handle_thread_event(&mut self, event: &ThreadEvent, cx: &mut Context<Self>) {
-        match event {
-            ThreadEvent::SummaryGenerated => self.update_title(cx),
-            _ => {}
+    fn handle_native_thread_event(&mut self, event: &ThreadEvent, cx: &mut Context<Self>) {
+        if let ThreadEvent::SummaryGenerated = event {
+            self.update_title(cx)
+        }
+    }
+
+    fn handle_acp_thread_event(&mut self, event: &AcpThreadEvent, cx: &mut Context<Self>) {
+        if let AcpThreadEvent::TitleUpdated = event {
+            self.update_title(cx)
         }
     }
 
@@ -275,14 +384,15 @@ impl AgentDiffPane {
 
     fn keep_all(&mut self, _: &KeepAll, _window: &mut Window, cx: &mut Context<Self>) {
         self.thread
-            .update(cx, |thread, cx| thread.keep_all_edits(cx));
+            .action_log(cx)
+            .update(cx, |action_log, cx| action_log.keep_all_edits(cx))
     }
 }
 
 fn keep_edits_in_selection(
     editor: &mut Editor,
     buffer_snapshot: &MultiBufferSnapshot,
-    thread: &Entity<Thread>,
+    thread: &AgentDiffThread,
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
@@ -291,13 +401,13 @@ fn keep_edits_in_selection(
         .disjoint_anchor_ranges()
         .collect::<Vec<_>>();
 
-    keep_edits_in_ranges(editor, buffer_snapshot, &thread, ranges, window, cx)
+    keep_edits_in_ranges(editor, buffer_snapshot, thread, ranges, window, cx)
 }
 
 fn reject_edits_in_selection(
     editor: &mut Editor,
     buffer_snapshot: &MultiBufferSnapshot,
-    thread: &Entity<Thread>,
+    thread: &AgentDiffThread,
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
@@ -305,13 +415,13 @@ fn reject_edits_in_selection(
         .selections
         .disjoint_anchor_ranges()
         .collect::<Vec<_>>();
-    reject_edits_in_ranges(editor, buffer_snapshot, &thread, ranges, window, cx)
+    reject_edits_in_ranges(editor, buffer_snapshot, thread, ranges, window, cx)
 }
 
 fn keep_edits_in_ranges(
     editor: &mut Editor,
     buffer_snapshot: &MultiBufferSnapshot,
-    thread: &Entity<Thread>,
+    thread: &AgentDiffThread,
     ranges: Vec<Range<editor::Anchor>>,
     window: &mut Window,
     cx: &mut Context<Editor>,
@@ -326,8 +436,8 @@ fn keep_edits_in_ranges(
     for hunk in &diff_hunks_in_ranges {
         let buffer = multibuffer.read(cx).buffer(hunk.buffer_id);
         if let Some(buffer) = buffer {
-            thread.update(cx, |thread, cx| {
-                thread.keep_edits_in_range(buffer, hunk.buffer_range.clone(), cx)
+            thread.action_log(cx).update(cx, |action_log, cx| {
+                action_log.keep_edits_in_range(buffer, hunk.buffer_range.clone(), cx)
             });
         }
     }
@@ -336,7 +446,7 @@ fn keep_edits_in_ranges(
 fn reject_edits_in_ranges(
     editor: &mut Editor,
     buffer_snapshot: &MultiBufferSnapshot,
-    thread: &Entity<Thread>,
+    thread: &AgentDiffThread,
     ranges: Vec<Range<editor::Anchor>>,
     window: &mut Window,
     cx: &mut Context<Editor>,
@@ -362,8 +472,9 @@ fn reject_edits_in_ranges(
 
     for (buffer, ranges) in ranges_by_buffer {
         thread
-            .update(cx, |thread, cx| {
-                thread.reject_edits_in_ranges(buffer, ranges, cx)
+            .action_log(cx)
+            .update(cx, |action_log, cx| {
+                action_log.reject_edits_in_ranges(buffer, ranges, cx)
             })
             .detach_and_log_err(cx);
     }
@@ -395,8 +506,7 @@ fn update_editor_selection(
                         &[last_kept_hunk_end..editor::Anchor::max()],
                         buffer_snapshot,
                     )
-                    .skip(1)
-                    .next()
+                    .nth(1)
             })
             .or_else(|| {
                 let first_kept_hunk = diff_hunks.first()?;
@@ -461,7 +571,7 @@ impl Item for AgentDiffPane {
     }
 
     fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
-        let summary = self.thread.read(cx).summary().unwrap_or("Agent Changes");
+        let summary = self.thread.summary(cx).unwrap_or("Agent Changes");
         Label::new(format!("Review: {}", summary))
             .color(if params.selected {
                 Color::Default
@@ -641,7 +751,7 @@ impl Render for AgentDiffPane {
     }
 }
 
-fn diff_hunk_controls(thread: &Entity<Thread>) -> editor::RenderDiffHunkControlsFn {
+fn diff_hunk_controls(thread: &AgentDiffThread) -> editor::RenderDiffHunkControlsFn {
     let thread = thread.clone();
 
     Arc::new(
@@ -676,7 +786,7 @@ fn render_diff_hunk_controls(
     hunk_range: Range<editor::Anchor>,
     is_created_file: bool,
     line_height: Pixels,
-    thread: &Entity<Thread>,
+    thread: &AgentDiffThread,
     editor: &Entity<Editor>,
     window: &mut Window,
     cx: &mut App,
@@ -893,7 +1003,7 @@ impl AgentDiffToolbar {
             return;
         };
 
-        *state = agent_diff.read(cx).editor_state(&editor);
+        *state = agent_diff.read(cx).editor_state(editor);
         self.update_location(cx);
         cx.notify();
     }
@@ -936,23 +1046,23 @@ impl ToolbarItemView for AgentDiffToolbar {
                 return self.location(cx);
             }
 
-            if let Some(editor) = item.act_as::<Editor>(cx) {
-                if editor.read(cx).mode().is_full() {
-                    let agent_diff = AgentDiff::global(cx);
+            if let Some(editor) = item.act_as::<Editor>(cx)
+                && editor.read(cx).mode().is_full()
+            {
+                let agent_diff = AgentDiff::global(cx);
 
-                    self.active_item = Some(AgentDiffToolbarItem::Editor {
-                        editor: editor.downgrade(),
-                        state: agent_diff.read(cx).editor_state(&editor.downgrade()),
-                        _diff_subscription: cx.observe(&agent_diff, Self::handle_diff_notify),
-                    });
+                self.active_item = Some(AgentDiffToolbarItem::Editor {
+                    editor: editor.downgrade(),
+                    state: agent_diff.read(cx).editor_state(&editor.downgrade()),
+                    _diff_subscription: cx.observe(&agent_diff, Self::handle_diff_notify),
+                });
 
-                    return self.location(cx);
-                }
+                return self.location(cx);
             }
         }
 
         self.active_item = None;
-        return self.location(cx);
+        self.location(cx)
     }
 
     fn pane_focus_update(
@@ -1112,11 +1222,8 @@ impl Render for AgentDiffToolbar {
                     return Empty.into_any();
                 };
 
-                let has_pending_edit_tool_use = agent_diff
-                    .read(cx)
-                    .thread
-                    .read(cx)
-                    .has_pending_edit_tool_uses();
+                let has_pending_edit_tool_use =
+                    agent_diff.read(cx).thread.has_pending_edit_tool_uses(cx);
 
                 if has_pending_edit_tool_use {
                     return div().px_2().child(spinner_icon).into_any();
@@ -1187,8 +1294,8 @@ pub enum EditorState {
 }
 
 struct WorkspaceThread {
-    thread: WeakEntity<Thread>,
-    _thread_subscriptions: [Subscription; 2],
+    thread: WeakAgentDiffThread,
+    _thread_subscriptions: (Subscription, Subscription),
     singleton_editors: HashMap<WeakEntity<Buffer>, HashMap<WeakEntity<Editor>, Subscription>>,
     _settings_subscription: Subscription,
     _workspace_subscription: Option<Subscription>,
@@ -1206,29 +1313,29 @@ impl AgentDiff {
                 let entity = cx.new(|_cx| Self::default());
                 let global = AgentDiffGlobal(entity.clone());
                 cx.set_global(global);
-                entity.clone()
+                entity
             })
     }
 
     pub fn set_active_thread(
         workspace: &WeakEntity<Workspace>,
-        thread: &Entity<Thread>,
+        thread: impl Into<AgentDiffThread>,
         window: &mut Window,
         cx: &mut App,
     ) {
         Self::global(cx).update(cx, |this, cx| {
-            this.register_active_thread_impl(workspace, thread, window, cx);
+            this.register_active_thread_impl(workspace, thread.into(), window, cx);
         });
     }
 
     fn register_active_thread_impl(
         &mut self,
         workspace: &WeakEntity<Workspace>,
-        thread: &Entity<Thread>,
+        thread: AgentDiffThread,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let action_log = thread.read(cx).action_log().clone();
+        let action_log = thread.action_log(cx);
 
         let action_log_subscription = cx.observe_in(&action_log, window, {
             let workspace = workspace.clone();
@@ -1237,18 +1344,26 @@ impl AgentDiff {
             }
         });
 
-        let thread_subscription = cx.subscribe_in(&thread, window, {
-            let workspace = workspace.clone();
-            move |this, _thread, event, window, cx| {
-                this.handle_thread_event(&workspace, event, window, cx)
-            }
-        });
+        let thread_subscription = match &thread {
+            AgentDiffThread::Native(thread) => cx.subscribe_in(thread, window, {
+                let workspace = workspace.clone();
+                move |this, _thread, event, window, cx| {
+                    this.handle_native_thread_event(&workspace, event, window, cx)
+                }
+            }),
+            AgentDiffThread::AcpThread(thread) => cx.subscribe_in(thread, window, {
+                let workspace = workspace.clone();
+                move |this, thread, event, window, cx| {
+                    this.handle_acp_thread_event(&workspace, thread, event, window, cx)
+                }
+            }),
+        };
 
-        if let Some(workspace_thread) = self.workspace_threads.get_mut(&workspace) {
+        if let Some(workspace_thread) = self.workspace_threads.get_mut(workspace) {
             // replace thread and action log subscription, but keep editors
             workspace_thread.thread = thread.downgrade();
-            workspace_thread._thread_subscriptions = [action_log_subscription, thread_subscription];
-            self.update_reviewing_editors(&workspace, window, cx);
+            workspace_thread._thread_subscriptions = (action_log_subscription, thread_subscription);
+            self.update_reviewing_editors(workspace, window, cx);
             return;
         }
 
@@ -1272,7 +1387,7 @@ impl AgentDiff {
             workspace.clone(),
             WorkspaceThread {
                 thread: thread.downgrade(),
-                _thread_subscriptions: [action_log_subscription, thread_subscription],
+                _thread_subscriptions: (action_log_subscription, thread_subscription),
                 singleton_editors: HashMap::default(),
                 _settings_subscription: settings_subscription,
                 _workspace_subscription: workspace_subscription,
@@ -1319,7 +1434,7 @@ impl AgentDiff {
 
     fn register_review_action<T: Action>(
         workspace: &mut Workspace,
-        review: impl Fn(&Entity<Editor>, &Entity<Thread>, &mut Window, &mut App) -> PostReviewState
+        review: impl Fn(&Entity<Editor>, &AgentDiffThread, &mut Window, &mut App) -> PostReviewState
         + 'static,
         this: &Entity<AgentDiff>,
     ) {
@@ -1338,7 +1453,7 @@ impl AgentDiff {
         });
     }
 
-    fn handle_thread_event(
+    fn handle_native_thread_event(
         &mut self,
         workspace: &WeakEntity<Workspace>,
         event: &ThreadEvent,
@@ -1375,8 +1490,48 @@ impl AgentDiff {
             | ThreadEvent::ToolConfirmationNeeded
             | ThreadEvent::ToolUseLimitReached
             | ThreadEvent::CancelEditing
-            | ThreadEvent::RetriesFailed { .. }
             | ThreadEvent::ProfileChanged => {}
+        }
+    }
+
+    fn handle_acp_thread_event(
+        &mut self,
+        workspace: &WeakEntity<Workspace>,
+        thread: &Entity<AcpThread>,
+        event: &AcpThreadEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            AcpThreadEvent::NewEntry => {
+                if thread
+                    .read(cx)
+                    .entries()
+                    .last()
+                    .is_some_and(|entry| entry.diffs().next().is_some())
+                {
+                    self.update_reviewing_editors(workspace, window, cx);
+                }
+            }
+            AcpThreadEvent::EntryUpdated(ix) => {
+                if thread
+                    .read(cx)
+                    .entries()
+                    .get(*ix)
+                    .is_some_and(|entry| entry.diffs().next().is_some())
+                {
+                    self.update_reviewing_editors(workspace, window, cx);
+                }
+            }
+            AcpThreadEvent::Stopped | AcpThreadEvent::Error | AcpThreadEvent::LoadError(_) => {
+                self.update_reviewing_editors(workspace, window, cx);
+            }
+            AcpThreadEvent::TitleUpdated
+            | AcpThreadEvent::TokenUsageUpdated
+            | AcpThreadEvent::EntriesRemoved(_)
+            | AcpThreadEvent::ToolAuthorizationRequired
+            | AcpThreadEvent::PromptCapabilitiesUpdated
+            | AcpThreadEvent::Retry(_) => {}
         }
     }
 
@@ -1387,21 +1542,11 @@ impl AgentDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match event {
-            workspace::Event::ItemAdded { item } => {
-                if let Some(editor) = item.downcast::<Editor>() {
-                    if let Some(buffer) = Self::full_editor_buffer(editor.read(cx), cx) {
-                        self.register_editor(
-                            workspace.downgrade(),
-                            buffer.clone(),
-                            editor,
-                            window,
-                            cx,
-                        );
-                    }
-                }
-            }
-            _ => {}
+        if let workspace::Event::ItemAdded { item } = event
+            && let Some(editor) = item.downcast::<Editor>()
+            && let Some(buffer) = Self::full_editor_buffer(editor.read(cx), cx)
+        {
+            self.register_editor(workspace.downgrade(), buffer, editor, window, cx);
         }
     }
 
@@ -1485,7 +1630,7 @@ impl AgentDiff {
             return;
         };
 
-        let action_log = thread.read(cx).action_log();
+        let action_log = thread.action_log(cx);
         let changed_buffers = action_log.read(cx).changed_buffers(cx);
 
         let mut unaffected = self.reviewing_editors.clone();
@@ -1500,7 +1645,7 @@ impl AgentDiff {
                 continue;
             };
 
-            for (weak_editor, _) in buffer_editors {
+            for weak_editor in buffer_editors.keys() {
                 let Some(editor) = weak_editor.upgrade() else {
                     continue;
                 };
@@ -1510,7 +1655,7 @@ impl AgentDiff {
                     multibuffer.add_diff(diff_handle.clone(), cx);
                 });
 
-                let new_state = if thread.read(cx).is_generating() {
+                let new_state = if thread.is_generating(cx) {
                     EditorState::Generating
                 } else {
                     EditorState::Reviewing
@@ -1528,7 +1673,7 @@ impl AgentDiff {
                         editor.register_addon(EditorAgentDiffAddon);
                     });
                 } else {
-                    unaffected.remove(&weak_editor);
+                    unaffected.remove(weak_editor);
                 }
 
                 if new_state == EditorState::Reviewing && previous_state != Some(new_state) {
@@ -1561,7 +1706,7 @@ impl AgentDiff {
                 .read_with(cx, |editor, _cx| editor.workspace())
                 .ok()
                 .flatten()
-                .map_or(false, |editor_workspace| {
+                .is_some_and(|editor_workspace| {
                     editor_workspace.entity_id() == workspace.entity_id()
                 });
 
@@ -1581,7 +1726,7 @@ impl AgentDiff {
 
     fn editor_state(&self, editor: &WeakEntity<Editor>) -> EditorState {
         self.reviewing_editors
-            .get(&editor)
+            .get(editor)
             .cloned()
             .unwrap_or(EditorState::Idle)
     }
@@ -1606,7 +1751,7 @@ impl AgentDiff {
 
     fn keep_all(
         editor: &Entity<Editor>,
-        thread: &Entity<Thread>,
+        thread: &AgentDiffThread,
         window: &mut Window,
         cx: &mut App,
     ) -> PostReviewState {
@@ -1626,7 +1771,7 @@ impl AgentDiff {
 
     fn reject_all(
         editor: &Entity<Editor>,
-        thread: &Entity<Thread>,
+        thread: &AgentDiffThread,
         window: &mut Window,
         cx: &mut App,
     ) -> PostReviewState {
@@ -1646,7 +1791,7 @@ impl AgentDiff {
 
     fn keep(
         editor: &Entity<Editor>,
-        thread: &Entity<Thread>,
+        thread: &AgentDiffThread,
         window: &mut Window,
         cx: &mut App,
     ) -> PostReviewState {
@@ -1659,7 +1804,7 @@ impl AgentDiff {
 
     fn reject(
         editor: &Entity<Editor>,
-        thread: &Entity<Thread>,
+        thread: &AgentDiffThread,
         window: &mut Window,
         cx: &mut App,
     ) -> PostReviewState {
@@ -1682,7 +1827,7 @@ impl AgentDiff {
     fn review_in_active_editor(
         &mut self,
         workspace: &mut Workspace,
-        review: impl Fn(&Entity<Editor>, &Entity<Thread>, &mut Window, &mut App) -> PostReviewState,
+        review: impl Fn(&Entity<Editor>, &AgentDiffThread, &mut Window, &mut App) -> PostReviewState,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
@@ -1701,26 +1846,26 @@ impl AgentDiff {
 
         let thread = thread.upgrade()?;
 
-        if let PostReviewState::AllReviewed = review(&editor, &thread, window, cx) {
-            if let Some(curr_buffer) = editor.read(cx).buffer().read(cx).as_singleton() {
-                let changed_buffers = thread.read(cx).action_log().read(cx).changed_buffers(cx);
+        if let PostReviewState::AllReviewed = review(&editor, &thread, window, cx)
+            && let Some(curr_buffer) = editor.read(cx).buffer().read(cx).as_singleton()
+        {
+            let changed_buffers = thread.action_log(cx).read(cx).changed_buffers(cx);
 
-                let mut keys = changed_buffers.keys().cycle();
-                keys.find(|k| *k == &curr_buffer);
-                let next_project_path = keys
-                    .next()
-                    .filter(|k| *k != &curr_buffer)
-                    .and_then(|after| after.read(cx).project_path(cx));
+            let mut keys = changed_buffers.keys().cycle();
+            keys.find(|k| *k == &curr_buffer);
+            let next_project_path = keys
+                .next()
+                .filter(|k| *k != &curr_buffer)
+                .and_then(|after| after.read(cx).project_path(cx));
 
-                if let Some(path) = next_project_path {
-                    let task = workspace.open_path(path, None, true, window, cx);
-                    let task = cx.spawn(async move |_, _cx| task.await.map(|_| ()));
-                    return Some(task);
-                }
+            if let Some(path) = next_project_path {
+                let task = workspace.open_path(path, None, true, window, cx);
+                let task = cx.spawn(async move |_, _cx| task.await.map(|_| ()));
+                return Some(task);
             }
         }
 
-        return Some(Task::ready(Ok(())));
+        Some(Task::ready(Ok(())))
     }
 }
 
@@ -1801,8 +1946,9 @@ mod tests {
             })
             .await
             .unwrap();
-        let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
-        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
+        let thread =
+            AgentDiffThread::Native(thread_store.update(cx, |store, cx| store.create_thread(cx)));
+        let action_log = cx.read(|cx| thread.action_log(cx));
 
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
@@ -1988,8 +2134,9 @@ mod tests {
         });
 
         // Set the active thread
+        let thread = AgentDiffThread::Native(thread);
         cx.update(|window, cx| {
-            AgentDiff::set_active_thread(&workspace.downgrade(), &thread, window, cx)
+            AgentDiff::set_active_thread(&workspace.downgrade(), thread.clone(), window, cx)
         });
 
         let buffer1 = project

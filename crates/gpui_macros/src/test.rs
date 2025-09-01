@@ -73,7 +73,7 @@ impl Parse for Args {
                 (Meta::NameValue(meta), "seed") => {
                     seeds = vec![parse_usize_from_expr(&meta.value)? as u64]
                 }
-                (Meta::List(list), "seeds") => seeds = parse_u64_array(&list)?,
+                (Meta::List(list), "seeds") => seeds = parse_u64_array(list)?,
                 (Meta::Path(_), _) => {
                     return Err(syn::Error::new(meta.span(), "invalid path argument"));
                 }
@@ -86,7 +86,7 @@ impl Parse for Args {
         Ok(Args {
             seeds,
             max_retries,
-            max_iterations: max_iterations,
+            max_iterations,
             on_failure_fn_name,
         })
     }
@@ -152,27 +152,28 @@ fn generate_test_function(
                         }
                         _ => {}
                     }
-                } else if let Type::Reference(ty) = &*arg.ty {
-                    if let Type::Path(ty) = &*ty.elem {
-                        let last_segment = ty.path.segments.last();
-                        if let Some("TestAppContext") =
-                            last_segment.map(|s| s.ident.to_string()).as_deref()
-                        {
-                            let cx_varname = format_ident!("cx_{}", ix);
-                            cx_vars.extend(quote!(
-                                let mut #cx_varname = gpui::TestAppContext::build(
-                                    dispatcher.clone(),
-                                    Some(stringify!(#outer_fn_name)),
-                                );
-                            ));
-                            cx_teardowns.extend(quote!(
-                                dispatcher.run_until_parked();
-                                #cx_varname.quit();
-                                dispatcher.run_until_parked();
-                            ));
-                            inner_fn_args.extend(quote!(&mut #cx_varname,));
-                            continue;
-                        }
+                } else if let Type::Reference(ty) = &*arg.ty
+                    && let Type::Path(ty) = &*ty.elem
+                {
+                    let last_segment = ty.path.segments.last();
+                    if let Some("TestAppContext") =
+                        last_segment.map(|s| s.ident.to_string()).as_deref()
+                    {
+                        let cx_varname = format_ident!("cx_{}", ix);
+                        cx_vars.extend(quote!(
+                            let mut #cx_varname = gpui::TestAppContext::build(
+                                dispatcher.clone(),
+                                Some(stringify!(#outer_fn_name)),
+                            );
+                        ));
+                        cx_teardowns.extend(quote!(
+                            dispatcher.run_until_parked();
+                            #cx_varname.executor().forbid_parking();
+                            #cx_varname.quit();
+                            dispatcher.run_until_parked();
+                        ));
+                        inner_fn_args.extend(quote!(&mut #cx_varname,));
+                        continue;
                     }
                 }
             }
@@ -214,47 +215,48 @@ fn generate_test_function(
                         inner_fn_args.extend(quote!(rand::SeedableRng::seed_from_u64(_seed),));
                         continue;
                     }
-                } else if let Type::Reference(ty) = &*arg.ty {
-                    if let Type::Path(ty) = &*ty.elem {
-                        let last_segment = ty.path.segments.last();
-                        match last_segment.map(|s| s.ident.to_string()).as_deref() {
-                            Some("App") => {
-                                let cx_varname = format_ident!("cx_{}", ix);
-                                let cx_varname_lock = format_ident!("cx_{}_lock", ix);
-                                cx_vars.extend(quote!(
-                                    let mut #cx_varname = gpui::TestAppContext::build(
-                                       dispatcher.clone(),
-                                       Some(stringify!(#outer_fn_name))
-                                    );
-                                    let mut #cx_varname_lock = #cx_varname.app.borrow_mut();
-                                ));
-                                inner_fn_args.extend(quote!(&mut #cx_varname_lock,));
-                                cx_teardowns.extend(quote!(
+                } else if let Type::Reference(ty) = &*arg.ty
+                    && let Type::Path(ty) = &*ty.elem
+                {
+                    let last_segment = ty.path.segments.last();
+                    match last_segment.map(|s| s.ident.to_string()).as_deref() {
+                        Some("App") => {
+                            let cx_varname = format_ident!("cx_{}", ix);
+                            let cx_varname_lock = format_ident!("cx_{}_lock", ix);
+                            cx_vars.extend(quote!(
+                                let mut #cx_varname = gpui::TestAppContext::build(
+                                   dispatcher.clone(),
+                                   Some(stringify!(#outer_fn_name))
+                                );
+                                let mut #cx_varname_lock = #cx_varname.app.borrow_mut();
+                            ));
+                            inner_fn_args.extend(quote!(&mut #cx_varname_lock,));
+                            cx_teardowns.extend(quote!(
                                     drop(#cx_varname_lock);
                                     dispatcher.run_until_parked();
-                                    #cx_varname.update(|cx| { cx.quit() });
+                                    #cx_varname.update(|cx| { cx.background_executor().forbid_parking(); cx.quit(); });
                                     dispatcher.run_until_parked();
                                 ));
-                                continue;
-                            }
-                            Some("TestAppContext") => {
-                                let cx_varname = format_ident!("cx_{}", ix);
-                                cx_vars.extend(quote!(
-                                    let mut #cx_varname = gpui::TestAppContext::build(
-                                        dispatcher.clone(),
-                                        Some(stringify!(#outer_fn_name))
-                                    );
-                                ));
-                                cx_teardowns.extend(quote!(
-                                    dispatcher.run_until_parked();
-                                    #cx_varname.quit();
-                                    dispatcher.run_until_parked();
-                                ));
-                                inner_fn_args.extend(quote!(&mut #cx_varname,));
-                                continue;
-                            }
-                            _ => {}
+                            continue;
                         }
+                        Some("TestAppContext") => {
+                            let cx_varname = format_ident!("cx_{}", ix);
+                            cx_vars.extend(quote!(
+                                let mut #cx_varname = gpui::TestAppContext::build(
+                                    dispatcher.clone(),
+                                    Some(stringify!(#outer_fn_name))
+                                );
+                            ));
+                            cx_teardowns.extend(quote!(
+                                dispatcher.run_until_parked();
+                                #cx_varname.executor().forbid_parking();
+                                #cx_varname.quit();
+                                dispatcher.run_until_parked();
+                            ));
+                            inner_fn_args.extend(quote!(&mut #cx_varname,));
+                            continue;
+                        }
+                        _ => {}
                     }
                 }
             }

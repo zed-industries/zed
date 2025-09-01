@@ -72,10 +72,10 @@ impl<M: ManagedView> PopoverMenuHandle<M> {
     }
 
     pub fn hide(&self, cx: &mut App) {
-        if let Some(state) = self.0.borrow().as_ref() {
-            if let Some(menu) = state.menu.borrow().as_ref() {
-                menu.update(cx, |_, cx| cx.emit(DismissEvent));
-            }
+        if let Some(state) = self.0.borrow().as_ref()
+            && let Some(menu) = state.menu.borrow().as_ref()
+        {
+            menu.update(cx, |_, cx| cx.emit(DismissEvent));
         }
     }
 
@@ -93,16 +93,16 @@ impl<M: ManagedView> PopoverMenuHandle<M> {
         self.0
             .borrow()
             .as_ref()
-            .map_or(false, |state| state.menu.borrow().as_ref().is_some())
+            .is_some_and(|state| state.menu.borrow().as_ref().is_some())
     }
 
     pub fn is_focused(&self, window: &Window, cx: &App) -> bool {
-        self.0.borrow().as_ref().map_or(false, |state| {
+        self.0.borrow().as_ref().is_some_and(|state| {
             state
                 .menu
                 .borrow()
                 .as_ref()
-                .map_or(false, |model| model.focus_handle(cx).is_focused(window))
+                .is_some_and(|model| model.focus_handle(cx).is_focused(window))
         })
     }
 
@@ -278,10 +278,10 @@ fn show_menu<M: ManagedView>(
 
     window
         .subscribe(&new_menu, cx, move |modal, _: &DismissEvent, window, cx| {
-            if modal.focus_handle(cx).contains_focused(window, cx) {
-                if let Some(previous_focus_handle) = previous_focus_handle.as_ref() {
-                    window.focus(previous_focus_handle);
-                }
+            if modal.focus_handle(cx).contains_focused(window, cx)
+                && let Some(previous_focus_handle) = previous_focus_handle.as_ref()
+            {
+                window.focus(previous_focus_handle);
             }
             *menu2.borrow_mut() = None;
             window.refresh();
@@ -373,14 +373,14 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
                     (child_builder)(element_state.menu.clone(), self.menu_builder.clone())
                 });
 
-                if let Some(trigger_handle) = self.trigger_handle.take() {
-                    if let Some(menu_builder) = self.menu_builder.clone() {
-                        *trigger_handle.0.borrow_mut() = Some(PopoverMenuHandleState {
-                            menu_builder,
-                            menu: element_state.menu.clone(),
-                            on_open: self.on_open.clone(),
-                        });
-                    }
+                if let Some(trigger_handle) = self.trigger_handle.take()
+                    && let Some(menu_builder) = self.menu_builder.clone()
+                {
+                    *trigger_handle.0.borrow_mut() = Some(PopoverMenuHandleState {
+                        menu_builder,
+                        menu: element_state.menu.clone(),
+                        on_open: self.on_open.clone(),
+                    });
                 }
 
                 let child_layout_id = child_element

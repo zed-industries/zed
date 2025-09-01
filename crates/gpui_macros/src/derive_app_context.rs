@@ -53,6 +53,16 @@ pub fn derive_app_context(input: TokenStream) -> TokenStream {
                 self.#app_variable.update_entity(handle, update)
             }
 
+            fn as_mut<'y, 'z, T>(
+                &'y mut self,
+                handle: &'z gpui::Entity<T>,
+            ) -> Self::Result<gpui::GpuiBorrow<'y, T>>
+            where
+                T: 'static,
+            {
+                self.#app_variable.as_mut(handle)
+            }
+
             fn read_entity<T, R>(
                 &self,
                 handle: &gpui::Entity<T>,

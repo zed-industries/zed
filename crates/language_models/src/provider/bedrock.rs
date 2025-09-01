@@ -150,7 +150,7 @@ impl State {
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
         cx.spawn(async move |this, cx| {
             credentials_provider
-                .delete_credentials(AMAZON_AWS_URL, &cx)
+                .delete_credentials(AMAZON_AWS_URL, cx)
                 .await
                 .log_err();
             this.update(cx, |this, cx| {
@@ -174,7 +174,7 @@ impl State {
                     AMAZON_AWS_URL,
                     "Bearer",
                     &serde_json::to_vec(&credentials)?,
-                    &cx,
+                    cx,
                 )
                 .await?;
             this.update(cx, |this, cx| {
@@ -206,7 +206,7 @@ impl State {
                     (credentials, true)
                 } else {
                     let (_, credentials) = credentials_provider
-                        .read_credentials(AMAZON_AWS_URL, &cx)
+                        .read_credentials(AMAZON_AWS_URL, cx)
                         .await?
                         .ok_or_else(|| AuthenticateError::CredentialsNotFound)?;
                     (
@@ -243,7 +243,7 @@ impl State {
 
 pub struct BedrockLanguageModelProvider {
     http_client: AwsHttpClient,
-    handler: tokio::runtime::Handle,
+    handle: tokio::runtime::Handle,
     state: gpui::Entity<State>,
 }
 
@@ -258,13 +258,9 @@ impl BedrockLanguageModelProvider {
             }),
         });
 
-        let tokio_handle = Tokio::handle(cx);
-
-        let coerced_client = AwsHttpClient::new(http_client.clone(), tokio_handle.clone());
-
         Self {
-            http_client: coerced_client,
-            handler: tokio_handle.clone(),
+            http_client: AwsHttpClient::new(http_client.clone()),
+            handle: Tokio::handle(cx),
             state,
         }
     }
@@ -274,7 +270,7 @@ impl BedrockLanguageModelProvider {
             id: LanguageModelId::from(model.id().to_string()),
             model,
             http_client: self.http_client.clone(),
-            handler: self.handler.clone(),
+            handle: self.handle.clone(),
             state: self.state.clone(),
             client: OnceCell::new(),
             request_limiter: RateLimiter::new(4),
@@ -352,7 +348,12 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView {
+    fn configuration_view(
+        &self,
+        _target_agent: language_model::ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyView {
         cx.new(|cx| ConfigurationView::new(self.state.clone(), window, cx))
             .into()
     }
@@ -375,7 +376,7 @@ struct BedrockModel {
     id: LanguageModelId,
     model: Model,
     http_client: AwsHttpClient,
-    handler: tokio::runtime::Handle,
+    handle: tokio::runtime::Handle,
     client: OnceCell<BedrockClient>,
     state: gpui::Entity<State>,
     request_limiter: RateLimiter,
@@ -411,10 +412,10 @@ impl BedrockModel {
                     .region(Region::new(region))
                     .timeout_config(TimeoutConfig::disabled());
 
-                if let Some(endpoint_url) = endpoint {
-                    if !endpoint_url.is_empty() {
-                        config_builder = config_builder.endpoint_url(endpoint_url);
-                    }
+                if let Some(endpoint_url) = endpoint
+                    && !endpoint_url.is_empty()
+                {
+                    config_builder = config_builder.endpoint_url(endpoint_url);
                 }
 
                 match auth_method {
@@ -447,7 +448,7 @@ impl BedrockModel {
                     }
                 }
 
-                let config = self.handler.block_on(config_builder.load());
+                let config = self.handle.block_on(config_builder.load());
                 anyhow::Ok(BedrockClient::new(&config))
             })
             .context("initializing Bedrock client")?;
@@ -464,7 +465,7 @@ impl BedrockModel {
         Result<BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>>,
     > {
         let Ok(runtime_client) = self
-            .get_or_init_client(&cx)
+            .get_or_init_client(cx)
             .cloned()
             .context("Bedrock client not initialized")
         else {
@@ -727,11 +728,11 @@ pub fn into_bedrock(
                     Role::Assistant => bedrock::BedrockRole::Assistant,
                     Role::System => unreachable!("System role should never occur here"),
                 };
-                if let Some(last_message) = new_messages.last_mut() {
-                    if last_message.role == bedrock_role {
-                        last_message.content.extend(bedrock_message_content);
-                        continue;
-                    }
+                if let Some(last_message) = new_messages.last_mut()
+                    && last_message.role == bedrock_role
+                {
+                    last_message.content.extend(bedrock_message_content);
+                    continue;
                 }
                 new_messages.push(
                     BedrockMessage::builder()
@@ -799,7 +800,9 @@ pub fn into_bedrock(
         max_tokens: max_output_tokens,
         system: Some(system_message),
         tools: Some(tool_config),
-        thinking: if let BedrockModelMode::Thinking { budget_tokens } = mode {
+        thinking: if request.thinking_allowed
+            && let BedrockModelMode::Thinking { budget_tokens } = mode
+        {
             Some(bedrock::Thinking::Enabled { budget_tokens })
         } else {
             None
@@ -914,7 +917,7 @@ pub fn map_to_language_model_completion_events(
                             Some(ContentBlockDelta::ReasoningContent(thinking)) => match thinking {
                                 ReasoningContentBlockDelta::Text(thoughts) => {
                                     Some(Ok(LanguageModelCompletionEvent::Thinking {
-                                        text: thoughts.clone(),
+                                        text: thoughts,
                                         signature: None,
                                     }))
                                 }
@@ -965,7 +968,7 @@ pub fn map_to_language_model_completion_events(
                                         id: tool_use.id.into(),
                                         name: tool_use.name.into(),
                                         is_input_complete: true,
-                                        raw_input: tool_use.input_json.clone(),
+                                        raw_input: tool_use.input_json,
                                         input,
                                     },
                                 ))
@@ -1083,21 +1086,18 @@ impl ConfigurationView {
             .access_key_id_editor
             .read(cx)
             .text(cx)
-            .to_string()
             .trim()
             .to_string();
         let secret_access_key = self
             .secret_access_key_editor
             .read(cx)
             .text(cx)
-            .to_string()
             .trim()
             .to_string();
         let session_token = self
             .session_token_editor
             .read(cx)
             .text(cx)
-            .to_string()
             .trim()
             .to_string();
         let session_token = if session_token.is_empty() {
@@ -1105,13 +1105,7 @@ impl ConfigurationView {
         } else {
             Some(session_token)
         };
-        let region = self
-            .region_editor
-            .read(cx)
-            .text(cx)
-            .to_string()
-            .trim()
-            .to_string();
+        let region = self.region_editor.read(cx).text(cx).trim().to_string();
         let region = if region.is_empty() {
             "us-east-1".to_string()
         } else {
@@ -1253,7 +1247,7 @@ impl Render for ConfigurationView {
         v_flex()
             .size_full()
             .on_action(cx.listener(ConfigurationView::save_credentials))
-            .child(Label::new("To use Zed's assistant with Bedrock, you can set a custom authentication strategy through the settings.json, or use static credentials."))
+            .child(Label::new("To use Zed's agent with Bedrock, you can set a custom authentication strategy through the settings.json, or use static credentials."))
             .child(Label::new("But, to access models on AWS, you need to:").mt_1())
             .child(
                 List::new()

@@ -112,7 +112,7 @@ impl State {
             .clone();
         cx.spawn(async move |this, cx| {
             credentials_provider
-                .delete_credentials(&api_url, &cx)
+                .delete_credentials(&api_url, cx)
                 .await
                 .log_err();
             this.update(cx, |this, cx| {
@@ -131,7 +131,7 @@ impl State {
             .clone();
         cx.spawn(async move |this, cx| {
             credentials_provider
-                .write_credentials(&api_url, "Bearer", api_key.as_bytes(), &cx)
+                .write_credentials(&api_url, "Bearer", api_key.as_bytes(), cx)
                 .await
                 .log_err();
             this.update(cx, |this, cx| {
@@ -157,7 +157,7 @@ impl State {
                 (api_key, true)
             } else {
                 let (_, api_key) = credentials_provider
-                    .read_credentials(&api_url, &cx)
+                    .read_credentials(&api_url, cx)
                     .await?
                     .ok_or(AuthenticateError::CredentialsNotFound)?;
                 (
@@ -306,7 +306,12 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView {
+    fn configuration_view(
+        &self,
+        _target_agent: language_model::ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyView {
         cx.new(|cx| ConfigurationView::new(self.state.clone(), window, cx))
             .into()
     }
@@ -376,7 +381,7 @@ impl LanguageModel for OpenRouterLanguageModel {
 
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
         let model_id = self.model.id().trim().to_lowercase();
-        if model_id.contains("gemini") {
+        if model_id.contains("gemini") || model_id.contains("grok") {
             LanguageModelToolSchemaFormat::JsonSchemaSubset
         } else {
             LanguageModelToolSchemaFormat::JsonSchema
@@ -523,7 +528,9 @@ pub fn into_open_router(
             None
         },
         usage: open_router::RequestUsage { include: true },
-        reasoning: if let OpenRouterModelMode::Thinking { budget_tokens } = model.mode {
+        reasoning: if request.thinking_allowed
+            && let OpenRouterModelMode::Thinking { budget_tokens } = model.mode
+        {
             Some(open_router::Reasoning {
                 effort: None,
                 max_tokens: budget_tokens,
@@ -853,7 +860,7 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new("To use Zed's assistant with OpenRouter, you need to add an API key. Follow these steps:"))
+                .child(Label::new("To use Zed's agent with OpenRouter, you need to add an API key. Follow these steps:"))
                 .child(
                     List::new()
                         .child(InstructionListItem::new(

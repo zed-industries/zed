@@ -121,6 +121,7 @@ message UpdateRepository {
     uint64 scan_id = 9;
     bool is_last_update = 10;
     optional GitCommitDetails head_commit_details = 11;
+    optional string merge_message = 12;
 }
 
 message RemoveRepository {
@@ -200,6 +201,16 @@ message GitInit {
     uint64 project_id = 1;
     string abs_path = 2;
     string fallback_branch_name = 3;
+}
+
+message GitClone {
+    uint64 project_id = 1;
+    string abs_path = 2;
+    string remote_repo = 3;
+}
+
+message GitCloneResponse {
+    bool success = 1;
 }
 
 message CheckForPushedCommits {
@@ -286,6 +297,17 @@ message Unstage {
     repeated string paths = 4;
 }
 
+message Stash {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    repeated string paths = 3;
+}
+
+message StashPop {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+}
+
 message Commit {
     uint64 project_id = 1;
     reserved 2;
@@ -294,9 +316,11 @@ message Commit {
     optional string email = 5;
     string message = 6;
     optional CommitOptions options = 7;
+    reserved 8;
 
     message CommitOptions {
         bool amend = 1;
+        bool signoff = 2;
     }
 }
 
@@ -408,4 +432,13 @@ message BlameBufferResponse {
     optional BlameResponse blame_response = 5;
 
     reserved 1 to 4;
+}
+
+message GetDefaultBranch {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+}
+
+message GetDefaultBranchResponse {
+    optional string branch = 1;
 }

@@ -51,7 +51,6 @@ impl OnboardingBanner {
     }
 
     fn dismiss(&mut self, cx: &mut Context<Self>) {
-        telemetry::event!("Banner Dismissed", source = self.source);
         persist_dismissed(&self.source, cx);
         self.dismissed = true;
         cx.notify();
@@ -74,7 +73,7 @@ fn get_dismissed(source: &str) -> bool {
     db::kvp::KEY_VALUE_STORE
         .read_kvp(&dismissed_at)
         .log_err()
-        .map_or(false, |dismissed| dismissed.is_some())
+        .is_some_and(|dismissed| dismissed.is_some())
 }
 
 fn persist_dismissed(source: &str, cx: &mut App) {
@@ -120,7 +119,7 @@ impl Render for OnboardingBanner {
                         h_flex()
                             .h_full()
                             .gap_1()
-                            .child(Icon::new(self.details.icon_name).size(IconSize::Small))
+                            .child(Icon::new(self.details.icon_name).size(IconSize::XSmall))
                             .child(
                                 h_flex()
                                     .gap_0p5()
@@ -144,7 +143,10 @@ impl Render for OnboardingBanner {
                 div().border_l_1().border_color(border_color).child(
                     IconButton::new("close", IconName::Close)
                         .icon_size(IconSize::Indicator)
-                        .on_click(cx.listener(|this, _, _window, cx| this.dismiss(cx)))
+                        .on_click(cx.listener(|this, _, _window, cx| {
+                            telemetry::event!("Banner Dismissed", source = this.source);
+                            this.dismiss(cx)
+                        }))
                         .tooltip(|window, cx| {
                             Tooltip::with_meta(
                                 "Close Announcement Banner",

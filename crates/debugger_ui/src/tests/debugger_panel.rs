@@ -427,7 +427,7 @@ async fn test_handle_start_debugging_request(
     let sessions = workspace
         .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
-            debug_panel.read(cx).sessions()
+            debug_panel.read(cx).sessions().collect::<Vec<_>>()
         })
         .unwrap();
     assert_eq!(sessions.len(), 1);
@@ -451,7 +451,7 @@ async fn test_handle_start_debugging_request(
                 .unwrap()
                 .read(cx)
                 .session(cx);
-            let current_sessions = debug_panel.read(cx).sessions();
+            let current_sessions = debug_panel.read(cx).sessions().collect::<Vec<_>>();
             assert_eq!(active_session, current_sessions[1].read(cx).session(cx));
             assert_eq!(
                 active_session.read(cx).parent_session(),
@@ -918,7 +918,7 @@ async fn test_debug_panel_item_thread_status_reset_on_failure(
     .unwrap();
 
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
-    const THREAD_ID_NUM: u64 = 1;
+    const THREAD_ID_NUM: i64 = 1;
 
     client.on_request::<dap::requests::Threads, _>(move |_, _| {
         Ok(dap::ThreadsResponse {
@@ -1330,7 +1330,6 @@ async fn test_unsetting_breakpoints_on_clear_breakpoint_action(
     let called_set_breakpoints = Arc::new(AtomicBool::new(false));
 
     client.on_request::<SetBreakpoints, _>({
-        let called_set_breakpoints = called_set_breakpoints.clone();
         move |_, args| {
             assert!(
                 args.breakpoints.is_none_or(|bps| bps.is_empty()),
@@ -1445,7 +1444,6 @@ async fn test_we_send_arguments_from_user_config(
     let launch_handler_called = Arc::new(AtomicBool::new(false));
 
     start_debug_session_with(&workspace, cx, debug_definition.clone(), {
-        let debug_definition = debug_definition.clone();
         let launch_handler_called = launch_handler_called.clone();
 
         move |client| {
@@ -1783,9 +1781,8 @@ async fn test_debug_adapters_shutdown_on_app_quit(
     let disconnect_request_received = Arc::new(AtomicBool::new(false));
     let disconnect_clone = disconnect_request_received.clone();
 
-    let disconnect_clone_for_handler = disconnect_clone.clone();
     client.on_request::<Disconnect, _>(move |_, _| {
-        disconnect_clone_for_handler.store(true, Ordering::SeqCst);
+        disconnect_clone.store(true, Ordering::SeqCst);
         Ok(())
     });
 
@@ -1796,7 +1793,7 @@ async fn test_debug_adapters_shutdown_on_app_quit(
             let panel = workspace.panel::<DebugPanel>(cx).unwrap();
             panel.read_with(cx, |panel, _| {
                 assert!(
-                    !panel.sessions().is_empty(),
+                    panel.sessions().next().is_some(),
                     "Debug session should be active"
                 );
             });

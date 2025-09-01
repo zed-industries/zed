@@ -1,5 +1,5 @@
 use super::{
-    BoolExt, MacKeyboardLayout,
+    BoolExt, MacKeyboardLayout, MacKeyboardMapper,
     attributed_string::{NSAttributedString, NSMutableAttributedString},
     events::key_to_native,
     renderer,
@@ -7,9 +7,10 @@ use super::{
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardString,
     CursorStyle, ForegroundExecutor, Image, ImageFormat, KeyContext, Keymap, MacDispatcher,
-    MacDisplay, MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
-    PlatformKeyboardLayout, PlatformTextSystem, PlatformWindow, Result, SemanticVersion, Task,
-    WindowAppearance, WindowParams, hash,
+    MacDisplay, MacWindow, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions, Platform,
+    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    PlatformWindow, Result, SemanticVersion, SystemMenuType, Task, WindowAppearance, WindowParams,
+    hash,
 };
 use anyhow::{Context as _, anyhow};
 use block::ConcreteBlock;
@@ -47,7 +48,7 @@ use objc::{
 use parking_lot::Mutex;
 use ptr::null_mut;
 use std::{
-    cell::{Cell, LazyCell},
+    cell::Cell,
     convert::TryInto,
     ffi::{CStr, OsStr, c_void},
     os::{raw::c_char, unix::ffi::OsStrExt},
@@ -56,7 +57,7 @@ use std::{
     ptr,
     rc::Rc,
     slice, str,
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
 use strum::IntoEnumIterator;
 use util::ResultExt;
@@ -170,6 +171,8 @@ pub(crate) struct MacPlatformState {
     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
     finish_launching: Option<Box<dyn FnOnce()>>,
     dock_menu: Option<id>,
+    menus: Option<Vec<OwnedMenu>>,
+    keyboard_mapper: Rc<MacKeyboardMapper>,
 }
 
 impl Default for MacPlatform {
@@ -187,6 +190,9 @@ impl MacPlatform {
 
         #[cfg(not(feature = "font-kit"))]
         let text_system = Arc::new(crate::NoopTextSystem::new());
+
+        let keyboard_layout = MacKeyboardLayout::new();
+        let keyboard_mapper = Rc::new(MacKeyboardMapper::new(keyboard_layout.id()));
 
         Self(Mutex::new(MacPlatformState {
             headless,
@@ -207,6 +213,8 @@ impl MacPlatform {
             finish_launching: None,
             dock_menu: None,
             on_keyboard_layout_change: None,
+            menus: None,
+            keyboard_mapper,
         }))
     }
 
@@ -226,7 +234,7 @@ impl MacPlatform {
 
     unsafe fn create_menu_bar(
         &self,
-        menus: Vec<Menu>,
+        menus: &Vec<Menu>,
         delegate: id,
         actions: &mut Vec<Box<dyn Action>>,
         keymap: &Keymap,
@@ -241,7 +249,7 @@ impl MacPlatform {
                 menu.setTitle_(menu_title);
                 menu.setDelegate_(delegate);
 
-                for item_config in menu_config.items {
+                for item_config in &menu_config.items {
                     menu.addItem_(Self::create_menu_item(
                         item_config,
                         delegate,
@@ -277,7 +285,7 @@ impl MacPlatform {
             dock_menu.setDelegate_(delegate);
             for item_config in menu_items {
                 dock_menu.addItem_(Self::create_menu_item(
-                    item_config,
+                    &item_config,
                     delegate,
                     actions,
                     keymap,
@@ -289,23 +297,12 @@ impl MacPlatform {
     }
 
     unsafe fn create_menu_item(
-        item: MenuItem,
+        item: &MenuItem,
         delegate: id,
         actions: &mut Vec<Box<dyn Action>>,
         keymap: &Keymap,
     ) -> id {
-        const DEFAULT_CONTEXT: LazyCell<Vec<KeyContext>> = LazyCell::new(|| {
-            let mut workspace_context = KeyContext::new_with_defaults();
-            workspace_context.add("Workspace");
-            let mut pane_context = KeyContext::new_with_defaults();
-            pane_context.add("Pane");
-            let mut editor_context = KeyContext::new_with_defaults();
-            editor_context.add("Editor");
-
-            pane_context.extend(&editor_context);
-            workspace_context.extend(&pane_context);
-            vec![workspace_context]
-        });
+        static DEFAULT_CONTEXT: OnceLock<Vec<KeyContext>> = OnceLock::new();
 
         unsafe {
             match item {
@@ -321,9 +318,20 @@ impl MacPlatform {
                     let keystrokes = keymap
                         .bindings_for_action(action.as_ref())
                         .find_or_first(|binding| {
-                            binding
-                                .predicate()
-                                .is_none_or(|predicate| predicate.eval(&DEFAULT_CONTEXT))
+                            binding.predicate().is_none_or(|predicate| {
+                                predicate.eval(DEFAULT_CONTEXT.get_or_init(|| {
+                                    let mut workspace_context = KeyContext::new_with_defaults();
+                                    workspace_context.add("Workspace");
+                                    let mut pane_context = KeyContext::new_with_defaults();
+                                    pane_context.add("Pane");
+                                    let mut editor_context = KeyContext::new_with_defaults();
+                                    editor_context.add("Editor");
+
+                                    pane_context.extend(&editor_context);
+                                    workspace_context.extend(&pane_context);
+                                    vec![workspace_context]
+                                }))
+                            })
                         })
                         .map(|binding| binding.keystrokes());
 
@@ -346,19 +354,19 @@ impl MacPlatform {
                             let mut mask = NSEventModifierFlags::empty();
                             for (modifier, flag) in &[
                                 (
-                                    keystroke.modifiers.platform,
+                                    keystroke.modifiers().platform,
                                     NSEventModifierFlags::NSCommandKeyMask,
                                 ),
                                 (
-                                    keystroke.modifiers.control,
+                                    keystroke.modifiers().control,
                                     NSEventModifierFlags::NSControlKeyMask,
                                 ),
                                 (
-                                    keystroke.modifiers.alt,
+                                    keystroke.modifiers().alt,
                                     NSEventModifierFlags::NSAlternateKeyMask,
                                 ),
                                 (
-                                    keystroke.modifiers.shift,
+                                    keystroke.modifiers().shift,
                                     NSEventModifierFlags::NSShiftKeyMask,
                                 ),
                             ] {
@@ -369,9 +377,9 @@ impl MacPlatform {
 
                             item = NSMenuItem::alloc(nil)
                                 .initWithTitle_action_keyEquivalent_(
-                                    ns_string(&name),
+                                    ns_string(name),
                                     selector,
-                                    ns_string(key_to_native(&keystroke.key).as_ref()),
+                                    ns_string(key_to_native(keystroke.key()).as_ref()),
                                 )
                                 .autorelease();
                             if Self::os_version() >= SemanticVersion::new(12, 0, 0) {
@@ -381,7 +389,7 @@ impl MacPlatform {
                         } else {
                             item = NSMenuItem::alloc(nil)
                                 .initWithTitle_action_keyEquivalent_(
-                                    ns_string(&name),
+                                    ns_string(name),
                                     selector,
                                     ns_string(""),
                                 )
@@ -390,7 +398,7 @@ impl MacPlatform {
                     } else {
                         item = NSMenuItem::alloc(nil)
                             .initWithTitle_action_keyEquivalent_(
-                                ns_string(&name),
+                                ns_string(name),
                                 selector,
                                 ns_string(""),
                             )
@@ -399,7 +407,7 @@ impl MacPlatform {
 
                     let tag = actions.len() as NSInteger;
                     let _: () = msg_send![item, setTag: tag];
-                    actions.push(action);
+                    actions.push(action.boxed_clone());
                     item
                 }
                 MenuItem::Submenu(Menu { name, items }) => {
@@ -410,10 +418,21 @@ impl MacPlatform {
                         submenu.addItem_(Self::create_menu_item(item, delegate, actions, keymap));
                     }
                     item.setSubmenu_(submenu);
-                    item.setTitle_(ns_string(&name));
-                    if name == "Services" {
-                        let app: id = msg_send![APP_CLASS, sharedApplication];
-                        app.setServicesMenu_(item);
+                    item.setTitle_(ns_string(name));
+                    item
+                }
+                MenuItem::SystemMenu(OsMenu { name, menu_type }) => {
+                    let item = NSMenuItem::new(nil).autorelease();
+                    let submenu = NSMenu::new(nil).autorelease();
+                    submenu.setDelegate_(delegate);
+                    item.setSubmenu_(submenu);
+                    item.setTitle_(ns_string(name));
+
+                    match menu_type {
+                        SystemMenuType::Services => {
+                            let app: id = msg_send![APP_CLASS, sharedApplication];
+                            app.setServicesMenu_(item);
+                        }
                     }
 
                     item
@@ -581,7 +600,7 @@ impl Platform for MacPlatform {
     #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<Result<Vec<Box<dyn crate::ScreenCaptureSource>>>> {
+    ) -> oneshot::Receiver<Result<Vec<Rc<dyn crate::ScreenCaptureSource>>>> {
         super::screen_capture::get_sources()
     }
 
@@ -692,6 +711,7 @@ impl Platform for MacPlatform {
                     panel.setCanChooseDirectories_(options.directories.to_objc());
                     panel.setCanChooseFiles_(options.files.to_objc());
                     panel.setAllowsMultipleSelection_(options.multiple.to_objc());
+
                     panel.setCanCreateDirectories(true.to_objc());
                     panel.setResolvesAliases_(false.to_objc());
                     let done_tx = Cell::new(Some(done_tx));
@@ -701,10 +721,10 @@ impl Platform for MacPlatform {
                             let urls = panel.URLs();
                             for i in 0..urls.count() {
                                 let url = urls.objectAtIndex(i);
-                                if url.isFileURL() == YES {
-                                    if let Ok(path) = ns_url_to_path(url) {
-                                        result.push(path)
-                                    }
+                                if url.isFileURL() == YES
+                                    && let Ok(path) = ns_url_to_path(url)
+                                {
+                                    result.push(path)
                                 }
                             }
                             Some(result)
@@ -717,6 +737,11 @@ impl Platform for MacPlatform {
                         }
                     });
                     let block = block.copy();
+
+                    if let Some(prompt) = options.prompt {
+                        let _: () = msg_send![panel, setPrompt: ns_string(&prompt)];
+                    }
+
                     let _: () = msg_send![panel, beginWithCompletionHandler: block];
                 }
             })
@@ -724,8 +749,13 @@ impl Platform for MacPlatform {
         done_rx
     }
 
-    fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Result<Option<PathBuf>>> {
+    fn prompt_for_new_path(
+        &self,
+        directory: &Path,
+        suggested_name: Option<&str>,
+    ) -> oneshot::Receiver<Result<Option<PathBuf>>> {
         let directory = directory.to_owned();
+        let suggested_name = suggested_name.map(|s| s.to_owned());
         let (done_tx, done_rx) = oneshot::channel();
         self.foreground_executor()
             .spawn(async move {
@@ -734,6 +764,11 @@ impl Platform for MacPlatform {
                     let path = ns_string(directory.to_string_lossy().as_ref());
                     let url = NSURL::fileURLWithPath_isDirectory_(nil, path, true.to_objc());
                     panel.setDirectoryURL(url);
+
+                    if let Some(suggested_name) = suggested_name {
+                        let name_string = ns_string(&suggested_name);
+                        let _: () = msg_send![panel, setNameFieldStringValue: name_string];
+                    }
 
                     let done_tx = Cell::new(Some(done_tx));
                     let block = ConcreteBlock::new(move |response: NSModalResponse| {
@@ -757,17 +792,18 @@ impl Platform for MacPlatform {
                                     // This is conditional on OS version because I'd like to get rid of it, so that
                                     // you can manually create a file called `a.sql.s`. That said it seems better
                                     // to break that use-case than breaking `a.sql`.
-                                    if chunks.len() == 3 && chunks[1].starts_with(chunks[2]) {
-                                        if Self::os_version() >= SemanticVersion::new(15, 0, 0) {
-                                            let new_filename = OsStr::from_bytes(
-                                                &filename.as_bytes()
-                                                    [..chunks[0].len() + 1 + chunks[1].len()],
-                                            )
-                                            .to_owned();
-                                            result.set_file_name(&new_filename);
-                                        }
+                                    if chunks.len() == 3
+                                        && chunks[1].starts_with(chunks[2])
+                                        && Self::os_version() >= SemanticVersion::new(15, 0, 0)
+                                    {
+                                        let new_filename = OsStr::from_bytes(
+                                            &filename.as_bytes()
+                                                [..chunks[0].len() + 1 + chunks[1].len()],
+                                        )
+                                        .to_owned();
+                                        result.set_file_name(&new_filename);
                                     }
-                                    return result;
+                                    result
                                 })
                             }
                         }
@@ -852,6 +888,10 @@ impl Platform for MacPlatform {
         Box::new(MacKeyboardLayout::new())
     }
 
+    fn keyboard_mapper(&self) -> Rc<dyn PlatformKeyboardMapper> {
+        self.0.lock().keyboard_mapper.clone()
+    }
+
     fn app_path(&self) -> Result<PathBuf> {
         unsafe {
             let bundle: id = NSBundle::mainBundle();
@@ -865,10 +905,15 @@ impl Platform for MacPlatform {
             let app: id = msg_send![APP_CLASS, sharedApplication];
             let mut state = self.0.lock();
             let actions = &mut state.menu_actions;
-            let menu = self.create_menu_bar(menus, NSWindow::delegate(app), actions, keymap);
+            let menu = self.create_menu_bar(&menus, NSWindow::delegate(app), actions, keymap);
             drop(state);
             app.setMainMenu_(menu);
         }
+        self.0.lock().menus = Some(menus.into_iter().map(|menu| menu.owned()).collect());
+    }
+
+    fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
+        self.0.lock().menus.clone()
     }
 
     fn set_dock_menu(&self, menu: Vec<MenuItem>, keymap: &Keymap) {
@@ -1358,6 +1403,8 @@ extern "C" fn will_terminate(this: &mut Object, _: Sel, _: id) {
 extern "C" fn on_keyboard_layout_change(this: &mut Object, _: Sel, _: id) {
     let platform = unsafe { get_mac_platform(this) };
     let mut lock = platform.0.lock();
+    let keyboard_layout = MacKeyboardLayout::new();
+    lock.keyboard_mapper = Rc::new(MacKeyboardMapper::new(keyboard_layout.id()));
     if let Some(mut callback) = lock.on_keyboard_layout_change.take() {
         drop(lock);
         callback();

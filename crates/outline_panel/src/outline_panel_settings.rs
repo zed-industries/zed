@@ -2,7 +2,7 @@ use editor::ShowScrollbar;
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsSources, SettingsUi};
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Copy, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -18,7 +18,7 @@ pub enum ShowIndentGuides {
     Never,
 }
 
-#[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, SettingsUi)]
 pub struct OutlinePanelSettings {
     pub button: bool,
     pub default_width: Pixels,
@@ -31,6 +31,7 @@ pub struct OutlinePanelSettings {
     pub auto_reveal_entries: bool,
     pub auto_fold_dirs: bool,
     pub scrollbar: ScrollbarSettings,
+    pub expand_outlines_with_depth: usize,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -105,6 +106,13 @@ pub struct OutlinePanelSettingsContent {
     pub indent_guides: Option<IndentGuidesSettingsContent>,
     /// Scrollbar-related settings
     pub scrollbar: Option<ScrollbarSettingsContent>,
+    /// Default depth to expand outline items in the current file.
+    /// The default depth to which outline entries are expanded on reveal.
+    /// - Set to 0 to collapse all items that have children
+    /// - Set to 1 or higher to collapse items at that depth or deeper
+    ///
+    /// Default: 100
+    pub expand_outlines_with_depth: Option<usize>,
 }
 
 impl Settings for OutlinePanelSettings {

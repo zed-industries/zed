@@ -5,10 +5,8 @@ use super::{
     session::{self, Session, SessionStateEvent},
 };
 use crate::{
-    InlayHint, InlayHintLabel, ProjectEnvironment, ResolveState,
-    project_settings::ProjectSettings,
-    terminals::{SshCommand, wrap_for_ssh},
-    worktree_store::WorktreeStore,
+    InlayHint, InlayHintLabel, ProjectEnvironment, ResolveState, debugger::session::SessionQuirks,
+    project_settings::ProjectSettings, worktree_store::WorktreeStore,
 };
 use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
@@ -33,7 +31,7 @@ use http_client::HttpClient;
 use language::{Buffer, LanguageToolchainStore, language_settings::InlayHintKind};
 use node_runtime::NodeRuntime;
 
-use remote::SshRemoteClient;
+use remote::RemoteClient;
 use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self},
@@ -67,7 +65,7 @@ pub enum DapStoreEvent {
 
 enum DapStoreMode {
     Local(LocalDapStore),
-    Ssh(SshDapStore),
+    Remote(RemoteDapStore),
     Collab,
 }
 
@@ -79,8 +77,8 @@ pub struct LocalDapStore {
     toolchain_store: Arc<dyn LanguageToolchainStore>,
 }
 
-pub struct SshDapStore {
-    ssh_client: Entity<SshRemoteClient>,
+pub struct RemoteDapStore {
+    remote_client: Entity<RemoteClient>,
     upstream_client: AnyProtoClient,
     upstream_project_id: u64,
 }
@@ -146,16 +144,16 @@ impl DapStore {
         Self::new(mode, breakpoint_store, worktree_store, cx)
     }
 
-    pub fn new_ssh(
+    pub fn new_remote(
         project_id: u64,
-        ssh_client: Entity<SshRemoteClient>,
+        remote_client: Entity<RemoteClient>,
         breakpoint_store: Entity<BreakpointStore>,
         worktree_store: Entity<WorktreeStore>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mode = DapStoreMode::Ssh(SshDapStore {
-            upstream_client: ssh_client.read(cx).proto_client(),
-            ssh_client,
+        let mode = DapStoreMode::Remote(RemoteDapStore {
+            upstream_client: remote_client.read(cx).proto_client(),
+            remote_client,
             upstream_project_id: project_id,
         });
 
@@ -214,7 +212,7 @@ impl DapStore {
                     dap_settings.and_then(|s| s.binary.as_ref().map(PathBuf::from));
                 let user_args = dap_settings.map(|s| s.args.clone());
 
-                let delegate = self.delegate(&worktree, console, cx);
+                let delegate = self.delegate(worktree, console, cx);
                 let cwd: Arc<Path> = worktree.read(cx).abs_path().as_ref().into();
 
                 cx.spawn(async move |this, cx| {
@@ -241,53 +239,57 @@ impl DapStore {
                     Ok(binary)
                 })
             }
-            DapStoreMode::Ssh(ssh) => {
-                let request = ssh.upstream_client.request(proto::GetDebugAdapterBinary {
-                    session_id: session_id.to_proto(),
-                    project_id: ssh.upstream_project_id,
-                    worktree_id: worktree.read(cx).id().to_proto(),
-                    definition: Some(definition.to_proto()),
-                });
-                let ssh_client = ssh.ssh_client.clone();
+            DapStoreMode::Remote(remote) => {
+                let request = remote
+                    .upstream_client
+                    .request(proto::GetDebugAdapterBinary {
+                        session_id: session_id.to_proto(),
+                        project_id: remote.upstream_project_id,
+                        worktree_id: worktree.read(cx).id().to_proto(),
+                        definition: Some(definition.to_proto()),
+                    });
+                let remote = remote.remote_client.clone();
 
                 cx.spawn(async move |_, cx| {
                     let response = request.await?;
                     let binary = DebugAdapterBinary::from_proto(response)?;
-                    let mut ssh_command = ssh_client.read_with(cx, |ssh, _| {
-                        anyhow::Ok(SshCommand {
-                            arguments: ssh.ssh_args().context("SSH arguments not found")?,
-                        })
-                    })??;
 
-                    let mut connection = None;
+                    let port_forwarding;
+                    let connection;
                     if let Some(c) = binary.connection {
-                        let local_bind_addr = Ipv4Addr::LOCALHOST;
-                        let port =
-                            dap::transport::TcpTransport::unused_port(local_bind_addr).await?;
-
-                        ssh_command.add_port_forwarding(port, c.host.to_string(), c.port);
+                        let host = Ipv4Addr::LOCALHOST;
+                        let port;
+                        if remote.read_with(cx, |remote, _cx| remote.shares_network_interface())? {
+                            port = c.port;
+                            port_forwarding = None;
+                        } else {
+                            port = dap::transport::TcpTransport::unused_port(host).await?;
+                            port_forwarding = Some((port, c.host.to_string(), c.port));
+                        }
                         connection = Some(TcpArguments {
                             port,
-                            host: local_bind_addr,
+                            host,
                             timeout: c.timeout,
                         })
+                    } else {
+                        port_forwarding = None;
+                        connection = None;
                     }
 
-                    let (program, args) = wrap_for_ssh(
-                        &ssh_command,
-                        binary
-                            .command
-                            .as_ref()
-                            .map(|command| (command, &binary.arguments)),
-                        binary.cwd.as_deref(),
-                        binary.envs,
-                        None,
-                    );
+                    let command = remote.read_with(cx, |remote, _cx| {
+                        remote.build_command(
+                            binary.command,
+                            &binary.arguments,
+                            &binary.envs,
+                            binary.cwd.map(|path| path.display().to_string()),
+                            port_forwarding,
+                        )
+                    })??;
 
                     Ok(DebugAdapterBinary {
-                        command: Some(program),
-                        arguments: args,
-                        envs: HashMap::default(),
+                        command: Some(command.program),
+                        arguments: command.args,
+                        envs: command.env,
                         cwd: None,
                         connection,
                         request_args: binary.request_args,
@@ -353,9 +355,9 @@ impl DapStore {
                     )))
                 }
             }
-            DapStoreMode::Ssh(ssh) => {
-                let request = ssh.upstream_client.request(proto::RunDebugLocators {
-                    project_id: ssh.upstream_project_id,
+            DapStoreMode::Remote(remote) => {
+                let request = remote.upstream_client.request(proto::RunDebugLocators {
+                    project_id: remote.upstream_project_id,
                     build_command: Some(build_command.to_proto()),
                     locator: locator_name.to_owned(),
                 });
@@ -379,10 +381,11 @@ impl DapStore {
 
     pub fn new_session(
         &mut self,
-        label: SharedString,
+        label: Option<SharedString>,
         adapter: DebugAdapterName,
         task_context: TaskContext,
         parent_session: Option<Entity<Session>>,
+        quirks: SessionQuirks,
         cx: &mut Context<Self>,
     ) -> Entity<Session> {
         let session_id = SessionId(util::post_inc(&mut self.next_session_id));
@@ -400,6 +403,7 @@ impl DapStore {
             label,
             adapter,
             task_context,
+            quirks,
             cx,
         );
 
@@ -461,9 +465,8 @@ impl DapStore {
         session_id: impl Borrow<SessionId>,
     ) -> Option<Entity<session::Session>> {
         let session_id = session_id.borrow();
-        let client = self.sessions.get(session_id).cloned();
 
-        client
+        self.sessions.get(session_id).cloned()
     }
     pub fn sessions(&self) -> impl Iterator<Item = &Entity<Session>> {
         self.sessions.values()
@@ -554,6 +557,11 @@ impl DapStore {
         fn format_value(mut value: String) -> String {
             const LIMIT: usize = 100;
 
+            if let Some(index) = value.find("\n") {
+                value.truncate(index);
+                value.push_str("…");
+            }
+
             if value.len() > LIMIT {
                 let mut index = LIMIT;
                 // If index isn't a char boundary truncate will cause a panic
@@ -561,7 +569,7 @@ impl DapStore {
                     index -= 1;
                 }
                 value.truncate(index);
-                value.push_str("...");
+                value.push_str("…");
             }
 
             format!(": {}", value)
@@ -671,7 +679,7 @@ impl DapStore {
             let shutdown_id = parent_session.update(cx, |parent_session, _| {
                 parent_session.remove_child_session_id(session_id);
 
-                if parent_session.child_session_ids().len() == 0 {
+                if parent_session.child_session_ids().is_empty() {
                     Some(parent_session.session_id())
                 } else {
                     None
@@ -688,7 +696,7 @@ impl DapStore {
         cx.emit(DapStoreEvent::DebugClientShutdown(session_id));
 
         cx.background_spawn(async move {
-            if shutdown_children.len() > 0 {
+            if !shutdown_children.is_empty() {
                 let _ = join_all(shutdown_children).await;
             }
 
@@ -708,7 +716,7 @@ impl DapStore {
         downstream_client: AnyProtoClient,
         _: &mut Context<Self>,
     ) {
-        self.downstream_client = Some((downstream_client.clone(), project_id));
+        self.downstream_client = Some((downstream_client, project_id));
     }
 
     pub fn unshared(&mut self, cx: &mut Context<Self>) {
@@ -888,7 +896,7 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
     }
 
     fn worktree_root_path(&self) -> &Path {
-        &self.worktree.abs_path()
+        self.worktree.abs_path()
     }
     fn http_client(&self) -> Arc<dyn HttpClient> {
         self.http_client.clone()
@@ -906,10 +914,20 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
         self.console.unbounded_send(msg).ok();
     }
 
+    #[cfg(not(target_os = "windows"))]
     async fn which(&self, command: &OsStr) -> Option<PathBuf> {
         let worktree_abs_path = self.worktree.abs_path();
         let shell_path = self.shell_env().await.get("PATH").cloned();
         which::which_in(command, shell_path.as_ref(), worktree_abs_path).ok()
+    }
+
+    #[cfg(target_os = "windows")]
+    async fn which(&self, command: &OsStr) -> Option<PathBuf> {
+        // On Windows, `PATH` is handled differently from Unix. Windows generally expects users to modify the `PATH` themselves,
+        // and every program loads it directly from the system at startup.
+        // There's also no concept of a default shell on Windows, and you can't really retrieve one, so trying to get shell environment variables
+        // from a specific directory doesn’t make sense on Windows.
+        which::which(command).ok()
     }
 
     async fn shell_env(&self) -> HashMap<String, String> {

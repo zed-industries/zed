@@ -83,6 +83,6 @@ Visit [the AI overview page](./ai/overview.md) to learn how to quickly get start
 
 ## Set up your key bindings
 
-To open your custom keymap to add your key bindings, use the {#kb zed::OpenKeymap} keybinding.
+To edit your custom keymap and add or remap bindings, you can either use {#kb zed::OpenKeymapEditor} to spawn the Zed Keymap Editor ({#action zed::OpenKeymapEditor}) or you can directly open your Zed Keymap json (`~/.config/zed/keymap.json`) with {#action zed::OpenKeymap}.
 
 To access the default key binding set, open the Command Palette with {#kb command_palette::Toggle} and search for "zed: open default keymap". See [Key Bindings](./key-bindings.md) for more info.

@@ -278,7 +278,7 @@ impl PathBuilder {
         options: &StrokeOptions,
     ) -> Result<Path<Pixels>, Error> {
         let path = if let Some(dash_array) = dash_array {
-            let measurements = lyon::algorithms::measure::PathMeasurements::from_path(&path, 0.01);
+            let measurements = lyon::algorithms::measure::PathMeasurements::from_path(path, 0.01);
             let mut sampler = measurements
                 .create_sampler(path, lyon::algorithms::measure::SampleType::Normalized);
             let mut builder = lyon::path::Path::builder();
@@ -336,7 +336,10 @@ impl PathBuilder {
             let v1 = buf.vertices[i1];
             let v2 = buf.vertices[i2];
 
-            path.push_triangle((v0.into(), v1.into(), v2.into()));
+            path.push_triangle(
+                (v0.into(), v1.into(), v2.into()),
+                (point(0., 1.), point(0., 1.), point(0., 1.)),
+            );
         }
 
         path

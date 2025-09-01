@@ -103,26 +103,21 @@ impl ActivityIndicator {
             cx.subscribe_in(
                 &workspace_handle,
                 window,
-                |activity_indicator, _, event, window, cx| match event {
-                    workspace::Event::ClearActivityIndicator { .. } => {
-                        if activity_indicator.statuses.pop().is_some() {
-                            activity_indicator.dismiss_error_message(
-                                &DismissErrorMessage,
-                                window,
-                                cx,
-                            );
-                            cx.notify();
-                        }
+                |activity_indicator, _, event, window, cx| {
+                    if let workspace::Event::ClearActivityIndicator = event
+                        && activity_indicator.statuses.pop().is_some()
+                    {
+                        activity_indicator.dismiss_error_message(&DismissErrorMessage, window, cx);
+                        cx.notify();
                     }
-                    _ => {}
                 },
             )
             .detach();
 
             cx.subscribe(
                 &project.read(cx).lsp_store(),
-                |activity_indicator, _, event, cx| match event {
-                    LspStoreEvent::LanguageServerUpdate { name, message, .. } => {
+                |activity_indicator, _, event, cx| {
+                    if let LspStoreEvent::LanguageServerUpdate { name, message, .. } = event {
                         if let proto::update_language_server::Variant::StatusUpdate(status_update) =
                             message
                         {
@@ -191,7 +186,6 @@ impl ActivityIndicator {
                         }
                         cx.notify()
                     }
-                    _ => {}
                 },
             )
             .detach();
@@ -206,9 +200,10 @@ impl ActivityIndicator {
 
             cx.subscribe(
                 &project.read(cx).git_store().clone(),
-                |_, _, event: &GitStoreEvent, cx| match event {
-                    project::git_store::GitStoreEvent::JobsUpdated => cx.notify(),
-                    _ => {}
+                |_, _, event: &GitStoreEvent, cx| {
+                    if let project::git_store::GitStoreEvent::JobsUpdated = event {
+                        cx.notify()
+                    }
                 },
             )
             .detach();
@@ -231,7 +226,6 @@ impl ActivityIndicator {
                 status,
             } => {
                 let create_buffer = project.update(cx, |project, cx| project.create_buffer(cx));
-                let project = project.clone();
                 let status = status.clone();
                 let server_name = server_name.clone();
                 cx.spawn_in(window, async move |workspace, cx| {
@@ -247,8 +241,7 @@ impl ActivityIndicator {
                     workspace.update_in(cx, |workspace, window, cx| {
                         workspace.add_item_to_active_pane(
                             Box::new(cx.new(|cx| {
-                                let mut editor =
-                                    Editor::for_buffer(buffer, Some(project.clone()), window, cx);
+                                let mut editor = Editor::for_buffer(buffer, None, window, cx);
                                 editor.set_read_only(true);
                                 editor
                             })),
@@ -448,7 +441,7 @@ impl ActivityIndicator {
                         .into_any_element(),
                 ),
                 message: format!("Debug: {}", session.read(cx).adapter()),
-                tooltip_message: Some(session.read(cx).label().to_string()),
+                tooltip_message: session.read(cx).label().map(|label| label.to_string()),
                 on_click: None,
             });
         }
@@ -460,26 +453,24 @@ impl ActivityIndicator {
             .map(|r| r.read(cx))
             .and_then(Repository::current_job);
         // Show any long-running git command
-        if let Some(job_info) = current_job {
-            if Instant::now() - job_info.start >= GIT_OPERATION_DELAY {
-                return Some(Content {
-                    icon: Some(
-                        Icon::new(IconName::ArrowCircle)
-                            .size(IconSize::Small)
-                            .with_animation(
-                                "arrow-circle",
-                                Animation::new(Duration::from_secs(2)).repeat(),
-                                |icon, delta| {
-                                    icon.transform(Transformation::rotate(percentage(delta)))
-                                },
-                            )
-                            .into_any_element(),
-                    ),
-                    message: job_info.message.into(),
-                    on_click: None,
-                    tooltip_message: None,
-                });
-            }
+        if let Some(job_info) = current_job
+            && Instant::now() - job_info.start >= GIT_OPERATION_DELAY
+        {
+            return Some(Content {
+                icon: Some(
+                    Icon::new(IconName::ArrowCircle)
+                        .size(IconSize::Small)
+                        .with_animation(
+                            "arrow-circle",
+                            Animation::new(Duration::from_secs(2)).repeat(),
+                            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                        )
+                        .into_any_element(),
+                ),
+                message: job_info.message.into(),
+                on_click: None,
+                tooltip_message: None,
+            });
         }
 
         // Show any language server installation info.
@@ -704,7 +695,7 @@ impl ActivityIndicator {
                     on_click: Some(Arc::new(|this, window, cx| {
                         this.dismiss_error_message(&DismissErrorMessage, window, cx)
                     })),
-                    tooltip_message: Some(Self::version_tooltip_message(&version)),
+                    tooltip_message: Some(Self::version_tooltip_message(version)),
                 }),
                 AutoUpdateStatus::Installing { version } => Some(Content {
                     icon: Some(
@@ -716,21 +707,13 @@ impl ActivityIndicator {
                     on_click: Some(Arc::new(|this, window, cx| {
                         this.dismiss_error_message(&DismissErrorMessage, window, cx)
                     })),
-                    tooltip_message: Some(Self::version_tooltip_message(&version)),
+                    tooltip_message: Some(Self::version_tooltip_message(version)),
                 }),
-                AutoUpdateStatus::Updated {
-                    binary_path,
-                    version,
-                } => Some(Content {
+                AutoUpdateStatus::Updated { version } => Some(Content {
                     icon: None,
                     message: "Click to restart and update Zed".to_string(),
-                    on_click: Some(Arc::new({
-                        let reload = workspace::Reload {
-                            binary_path: Some(binary_path.clone()),
-                        };
-                        move |_, _, cx| workspace::reload(&reload, cx)
-                    })),
-                    tooltip_message: Some(Self::version_tooltip_message(&version)),
+                    on_click: Some(Arc::new(move |_, _, cx| workspace::reload(cx))),
+                    tooltip_message: Some(Self::version_tooltip_message(version)),
                 }),
                 AutoUpdateStatus::Errored => Some(Content {
                     icon: Some(
@@ -750,21 +733,20 @@ impl ActivityIndicator {
 
         if let Some(extension_store) =
             ExtensionStore::try_global(cx).map(|extension_store| extension_store.read(cx))
+            && let Some(extension_id) = extension_store.outstanding_operations().keys().next()
         {
-            if let Some(extension_id) = extension_store.outstanding_operations().keys().next() {
-                return Some(Content {
-                    icon: Some(
-                        Icon::new(IconName::Download)
-                            .size(IconSize::Small)
-                            .into_any_element(),
-                    ),
-                    message: format!("Updating {extension_id} extension…"),
-                    on_click: Some(Arc::new(|this, window, cx| {
-                        this.dismiss_error_message(&DismissErrorMessage, window, cx)
-                    })),
-                    tooltip_message: None,
-                });
-            }
+            return Some(Content {
+                icon: Some(
+                    Icon::new(IconName::Download)
+                        .size(IconSize::Small)
+                        .into_any_element(),
+                ),
+                message: format!("Updating {extension_id} extension…"),
+                on_click: Some(Arc::new(|this, window, cx| {
+                    this.dismiss_error_message(&DismissErrorMessage, window, cx)
+                })),
+                tooltip_message: None,
+            });
         }
 
         None

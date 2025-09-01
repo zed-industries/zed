@@ -2,6 +2,8 @@ use std::path::Path;
 
 use anyhow::{Context as _, Result};
 use async_zip::base::read;
+#[cfg(not(windows))]
+use futures::AsyncSeek;
 use futures::{AsyncRead, io::BufReader};
 
 #[cfg(windows)]
@@ -62,7 +64,15 @@ pub async fn extract_zip<R: AsyncRead + Unpin>(destination: &Path, reader: R) ->
     futures::io::copy(&mut BufReader::new(reader), &mut file)
         .await
         .context("saving archive contents into the temporary file")?;
-    let mut reader = read::seek::ZipFileReader::new(BufReader::new(file))
+    extract_seekable_zip(destination, file).await
+}
+
+#[cfg(not(windows))]
+pub async fn extract_seekable_zip<R: AsyncRead + AsyncSeek + Unpin>(
+    destination: &Path,
+    reader: R,
+) -> Result<()> {
+    let mut reader = read::seek::ZipFileReader::new(BufReader::new(reader))
         .await
         .context("reading the zip archive")?;
     let destination = &destination
@@ -144,7 +154,7 @@ mod tests {
                 let mut builder =
                     ZipEntryBuilder::new(filename.into(), async_zip::Compression::Deflate);
                 use std::os::unix::fs::PermissionsExt;
-                let metadata = std::fs::metadata(&path)?;
+                let metadata = std::fs::metadata(path)?;
                 let perms = metadata.permissions().mode() as u16;
                 builder = builder.unix_permissions(perms);
                 writer.write_entry_whole(builder, &data).await?;

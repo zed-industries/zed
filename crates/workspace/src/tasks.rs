@@ -20,7 +20,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match self.project.read(cx).ssh_connection_state(cx) {
+        match self.project.read(cx).remote_connection_state(cx) {
             None | Some(ConnectionState::Connected) => {}
             Some(
                 ConnectionState::Connecting
@@ -73,7 +73,7 @@ impl Workspace {
 
         if let Some(terminal_provider) = self.terminal_provider.as_ref() {
             let task_status = terminal_provider.spawn(spawn_in_terminal, window, cx);
-            cx.background_spawn(async move {
+            let task = cx.background_spawn(async move {
                 match task_status.await {
                     Some(Ok(status)) => {
                         if status.success() {
@@ -82,11 +82,11 @@ impl Workspace {
                             log::debug!("Task spawn failed, code: {:?}", status.code());
                         }
                     }
-                    Some(Err(e)) => log::error!("Task spawn failed: {e}"),
+                    Some(Err(e)) => log::error!("Task spawn failed: {e:#}"),
                     None => log::debug!("Task spawn got cancelled"),
                 }
-            })
-            .detach();
+            });
+            self.scheduled_tasks.push(task);
         }
     }
 

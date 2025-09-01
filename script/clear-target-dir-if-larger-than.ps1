@@ -18,5 +18,5 @@ Write-Host "target directory size: ${current_size_gb}GB. max size: ${MAX_SIZE_IN
 
 if ($current_size_gb -gt $MAX_SIZE_IN_GB) {
     Write-Host "clearing target directory"
-    Remove-Item -Recurse -Force -Path "target\*"
+    Remove-Item -Recurse -Force -Path "target\*" -ErrorAction SilentlyContinue
 }

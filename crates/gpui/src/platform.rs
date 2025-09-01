@@ -13,8 +13,7 @@ mod mac;
         any(target_os = "linux", target_os = "freebsd"),
         any(feature = "x11", feature = "wayland")
     ),
-    target_os = "windows",
-    feature = "macos-blade"
+    all(target_os = "macos", feature = "macos-blade")
 ))]
 mod blade;
 
@@ -26,8 +25,13 @@ mod windows;
 
 #[cfg(all(
     feature = "screen-capture",
-    any(target_os = "linux", target_os = "freebsd"),
-    any(feature = "wayland", feature = "x11"),
+    any(
+        target_os = "windows",
+        all(
+            any(target_os = "linux", target_os = "freebsd"),
+            any(feature = "wayland", feature = "x11"),
+        )
+    )
 ))]
 pub(crate) mod scap_screen_capture;
 
@@ -36,8 +40,8 @@ use crate::{
     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
     ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
     Point, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, ScaledPixels, Scene,
-    ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SvgSize, Task, TaskLabel, Window,
-    WindowControlArea, hash, point, px, size,
+    ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SvgSize, SystemWindowTab, Task,
+    TaskLabel, Window, WindowControlArea, hash, point, px, size,
 };
 use anyhow::Result;
 use async_task::Runnable;
@@ -80,7 +84,7 @@ pub(crate) use test::*;
 pub(crate) use windows::*;
 
 #[cfg(any(test, feature = "test-support"))]
-pub use test::{TestDispatcher, TestScreenCaptureSource};
+pub use test::{TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream};
 
 /// Returns a background executor for the current platform.
 pub fn background_executor() -> BackgroundExecutor {
@@ -184,13 +188,12 @@ pub(crate) trait Platform: 'static {
         false
     }
     #[cfg(feature = "screen-capture")]
-    fn screen_capture_sources(
-        &self,
-    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>>;
+    fn screen_capture_sources(&self)
+    -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>>;
     #[cfg(not(feature = "screen-capture"))]
     fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<anyhow::Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+    ) -> oneshot::Receiver<anyhow::Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
         let (sources_tx, sources_rx) = oneshot::channel();
         sources_tx
             .send(Err(anyhow::anyhow!(
@@ -217,14 +220,17 @@ pub(crate) trait Platform: 'static {
         &self,
         options: PathPromptOptions,
     ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>>;
-    fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Result<Option<PathBuf>>>;
+    fn prompt_for_new_path(
+        &self,
+        directory: &Path,
+        suggested_name: Option<&str>,
+    ) -> oneshot::Receiver<Result<Option<PathBuf>>>;
     fn can_select_mixed_files_and_dirs(&self) -> bool;
     fn reveal_path(&self, path: &Path);
     fn open_with_system(&self, path: &Path);
 
     fn on_quit(&self, callback: Box<dyn FnMut()>);
     fn on_reopen(&self, callback: Box<dyn FnMut()>);
-    fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>);
 
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap);
     fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
@@ -244,7 +250,6 @@ pub(crate) trait Platform: 'static {
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>);
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>);
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
-    fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout>;
 
     fn compositor_name(&self) -> &'static str {
         ""
@@ -265,6 +270,10 @@ pub(crate) trait Platform: 'static {
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>>;
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>>;
     fn delete_credentials(&self, url: &str) -> Task<Result<()>>;
+
+    fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout>;
+    fn keyboard_mapper(&self) -> Rc<dyn PlatformKeyboardMapper>;
+    fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>);
 }
 
 /// A handle to a platform's display, e.g. a monitor or laptop screen.
@@ -288,10 +297,23 @@ pub trait PlatformDisplay: Send + Sync + Debug {
     }
 }
 
+/// Metadata for a given [ScreenCaptureSource]
+#[derive(Clone)]
+pub struct SourceMetadata {
+    /// Opaque identifier of this screen.
+    pub id: u64,
+    /// Human-readable label for this source.
+    pub label: Option<SharedString>,
+    /// Whether this source is the main display.
+    pub is_main: Option<bool>,
+    /// Video resolution of this source.
+    pub resolution: Size<DevicePixels>,
+}
+
 /// A source of on-screen video content that can be captured.
 pub trait ScreenCaptureSource {
-    /// Returns the video resolution of this source.
-    fn resolution(&self) -> Result<Size<DevicePixels>>;
+    /// Returns metadata for this source.
+    fn metadata(&self) -> Result<SourceMetadata>;
 
     /// Start capture video from this source, invoking the given callback
     /// with each frame.
@@ -303,7 +325,10 @@ pub trait ScreenCaptureSource {
 }
 
 /// A video stream captured from a screen.
-pub trait ScreenCaptureStream {}
+pub trait ScreenCaptureStream {
+    /// Returns metadata for this source.
+    fn metadata(&self) -> Result<SourceMetadata>;
+}
 
 /// A frame of video captured from a screen.
 pub struct ScreenCaptureFrame(pub PlatformScreenCaptureFrame);
@@ -428,6 +453,8 @@ impl Tiling {
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
 pub(crate) struct RequestFrameOptions {
     pub(crate) require_presentation: bool,
+    /// Force refresh of all rendering states when true
+    pub(crate) force_render: bool,
 }
 
 pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
@@ -475,9 +502,27 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
 
     // macOS specific methods
+    fn get_title(&self) -> String {
+        String::new()
+    }
+    fn tabbed_windows(&self) -> Option<Vec<SystemWindowTab>> {
+        None
+    }
+    fn tab_bar_visible(&self) -> bool {
+        false
+    }
     fn set_edited(&mut self, _edited: bool) {}
     fn show_character_palette(&self) {}
     fn titlebar_double_click(&self) {}
+    fn on_move_tab_to_new_window(&self, _callback: Box<dyn FnMut()>) {}
+    fn on_merge_all_windows(&self, _callback: Box<dyn FnMut()>) {}
+    fn on_select_previous_tab(&self, _callback: Box<dyn FnMut()>) {}
+    fn on_select_next_tab(&self, _callback: Box<dyn FnMut()>) {}
+    fn on_toggle_tab_bar(&self, _callback: Box<dyn FnMut()>) {}
+    fn merge_all_windows(&self) {}
+    fn move_tab_to_new_window(&self) {}
+    fn toggle_window_tab_overview(&self) {}
+    fn set_tabbing_identifier(&self, _identifier: Option<String>) {}
 
     #[cfg(target_os = "windows")]
     fn get_raw_handle(&self) -> windows::HWND;
@@ -567,7 +612,7 @@ impl PlatformTextSystem for NoopTextSystem {
     }
 
     fn font_id(&self, _descriptor: &Font) -> Result<FontId> {
-        return Ok(FontId(1));
+        Ok(FontId(1))
     }
 
     fn font_metrics(&self, _font_id: FontId) -> FontMetrics {
@@ -648,7 +693,7 @@ impl PlatformTextSystem for NoopTextSystem {
             }
         }
         let mut runs = Vec::default();
-        if glyphs.len() > 0 {
+        if !glyphs.is_empty() {
             runs.push(ShapedRun {
                 font_id: FontId(0),
                 glyphs,
@@ -1064,6 +1109,12 @@ pub struct WindowOptions {
     /// Whether the window should be movable by the user
     pub is_movable: bool,
 
+    /// Whether the window should be resizable by the user
+    pub is_resizable: bool,
+
+    /// Whether the window should be minimized by the user
+    pub is_minimizable: bool,
+
     /// The display to create the window on, if this is None,
     /// the window will be created on the main display
     pub display_id: Option<DisplayId>,
@@ -1080,6 +1131,9 @@ pub struct WindowOptions {
     /// Whether to use client or server side decorations. Wayland only
     /// Note that this may be ignored.
     pub window_decorations: Option<WindowDecorations>,
+
+    /// Tab group name, allows opening the window as a native tab on macOS 10.12+. Windows with the same tabbing identifier will be grouped together.
+    pub tabbing_identifier: Option<String>,
 }
 
 /// The variables that can be configured when creating a new window
@@ -1106,6 +1160,14 @@ pub(crate) struct WindowParams {
     #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
     pub is_movable: bool,
 
+    /// Whether the window should be resizable by the user
+    #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
+    pub is_resizable: bool,
+
+    /// Whether the window should be minimized by the user
+    #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
+    pub is_minimizable: bool,
+
     #[cfg_attr(
         any(target_os = "linux", target_os = "freebsd", target_os = "windows"),
         allow(dead_code)
@@ -1119,6 +1181,8 @@ pub(crate) struct WindowParams {
     pub display_id: Option<DisplayId>,
 
     pub window_min_size: Option<Size<Pixels>>,
+    #[cfg(target_os = "macos")]
+    pub tabbing_identifier: Option<String>,
 }
 
 /// Represents the status of how a window should be opened.
@@ -1164,11 +1228,14 @@ impl Default for WindowOptions {
             show: true,
             kind: WindowKind::Normal,
             is_movable: true,
+            is_resizable: true,
+            is_minimizable: true,
             display_id: None,
             window_background: WindowBackgroundAppearance::default(),
             app_id: None,
             window_min_size: None,
             window_decorations: None,
+            tabbing_identifier: None,
         }
     }
 }
@@ -1253,7 +1320,7 @@ pub enum WindowBackgroundAppearance {
 }
 
 /// The options that can be configured for a file dialog prompt
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct PathPromptOptions {
     /// Should the prompt allow files to be selected?
     pub files: bool,
@@ -1261,6 +1328,8 @@ pub struct PathPromptOptions {
     pub directories: bool,
     /// Should the prompt allow multiple files to be selected?
     pub multiple: bool,
+    /// The prompt to show to a user when selecting a path
+    pub prompt: Option<SharedString>,
 }
 
 /// What kind of prompt styling to show
@@ -1481,7 +1550,7 @@ impl ClipboardItem {
 
         for entry in self.entries.iter() {
             if let ClipboardEntry::String(ClipboardString { text, metadata: _ }) = entry {
-                answer.push_str(&text);
+                answer.push_str(text);
                 any_entries = true;
             }
         }
