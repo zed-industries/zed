@@ -23,7 +23,7 @@ use windows::{
             Imaging::{CLSID_WICImagingFactory, IWICImagingFactory},
         },
         Security::Credentials::*,
-        System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*, Threading::*},
+        System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*},
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
     core::*,
@@ -99,7 +99,7 @@ impl WindowsPlatform {
         register_platform_window_class();
         let mut context = PlatformWindowCreateContext {
             inner: None,
-            raw_window_handles,
+            raw_window_handles: raw_window_handles.clone(),
             validation_number,
             main_receiver,
         };
