@@ -1638,8 +1638,8 @@ pub(crate) mod shader_resources {
             let target_cstr = PCSTR::from_raw(target.as_ptr());
 
             // really dirty trick because winapi bindings are unhappy otherwise
-            let include_handler = std::mem::transmute::<&usize, &ID3DInclude>(
-                &(D3D_COMPILE_STANDARD_FILE_INCLUDE as usize),
+            let include_handler = &std::mem::transmute::<usize, ID3DInclude>(
+                D3D_COMPILE_STANDARD_FILE_INCLUDE as usize,
             );
 
             let ret = D3DCompileFromFile(
