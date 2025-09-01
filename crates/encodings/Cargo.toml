@@ -5,7 +5,6 @@ publish.workspace = true
 edition.workspace = true
 
 [dependencies]
-anyhow.workspace = true
 editor.workspace = true
 encoding_rs.workspace = true
 fuzzy.workspace = true
