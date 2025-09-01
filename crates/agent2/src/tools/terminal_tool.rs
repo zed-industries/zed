@@ -167,9 +167,41 @@ impl AgentTool for TerminalTool {
                 })?;
                 event_stream.update_terminal(acp_terminal.clone());
 
+                let guard = cx.update(|cx| {
+                    let terminal = terminal.downgrade();
+                    let acp_terminal = acp_terminal.downgrade();
+                    let guard = cx.new(|_| false);
+                    cx.observe_release(&guard, move |cancelled, cx| {
+                        if *cancelled {
+                            return;
+                        }
+                        let Some(exit_status) = terminal
+                            .update(cx, |terminal, cx| {
+                                terminal.kill_active_task();
+                                terminal.wait_for_completed_task(cx)
+                            })
+                            .ok()
+                        else {
+                            return;
+                        };
+                        cx.spawn(async move |cx| {
+                            let exit_status = exit_status.await;
+                            acp_terminal
+                                .update(cx, |acp_terminal, cx| {
+                                    acp_terminal.finish(exit_status, 0, 0, 0, true, cx);
+                                })
+                                .ok();
+                        })
+                        .detach();
+                    })
+                    .detach();
+                    guard
+                })?;
+
                 let exit_status = terminal
                     .update(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
                     .await;
+                guard.update(cx, |cancelled, _| *cancelled = true);
                 let (content, content_line_count) = terminal.read_with(cx, |terminal, _| {
                     (terminal.get_content(), terminal.total_lines())
                 })?;
