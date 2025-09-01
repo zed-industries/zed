@@ -48,7 +48,7 @@ pub(crate) struct WindowsPlatform {
 
 struct WindowsPlatformInner {
     state: RefCell<WindowsPlatformState>,
-    raw_window_handles: Arc<RwLock<SmallVec<[SafeHwnd; 4]>>>,
+    raw_window_handles: std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
     // The below members will never change throughout the entire lifecycle of the app.
     validation_number: usize,
     main_receiver: flume::Receiver<Runnable>,
@@ -99,21 +99,21 @@ impl WindowsPlatform {
         register_platform_window_class();
         let mut context = PlatformWindowCreateContext {
             inner: None,
-            raw_window_handles: raw_window_handles.clone(),
+            raw_window_handles: Arc::downgrade(&raw_window_handles),
             validation_number,
             main_receiver: Some(main_receiver),
         };
         let result = unsafe {
             CreateWindowExW(
-                WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_TOOLWINDOW,
+                WINDOW_EX_STYLE(0),
                 PLATFORM_WINDOW_CLASS_NAME,
                 None,
-                WS_OVERLAPPED,
+                WINDOW_STYLE(0),
                 0,
                 0,
                 0,
                 0,
-                None,
+                Some(HWND_MESSAGE),
                 None,
                 None,
                 Some(&context as *const _ as *const _),
@@ -706,7 +706,11 @@ impl WindowsPlatformInner {
     }
 
     fn close_one_window(&self, target_window: HWND) -> bool {
-        let mut lock = self.raw_window_handles.write();
+        let Some(all_windows) = self.raw_window_handles.upgrade() else {
+            log::error!("Failed to upgrade raw window handles");
+            return false;
+        };
+        let mut lock = all_windows.write();
         let index = lock
             .iter()
             .position(|handle| handle.as_raw() == target_window)
@@ -782,7 +786,7 @@ pub(crate) struct WindowCreationInfo {
 
 struct PlatformWindowCreateContext {
     inner: Option<Result<Rc<WindowsPlatformInner>>>,
-    raw_window_handles: Arc<RwLock<SmallVec<[SafeHwnd; 4]>>>,
+    raw_window_handles: std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
     validation_number: usize,
     main_receiver: Option<flume::Receiver<Runnable>>,
 }
