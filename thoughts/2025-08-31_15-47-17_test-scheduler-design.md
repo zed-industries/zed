@@ -1,24 +1,16 @@
-<file_path>
-zed/thoughts/2025-08-31_15-47-17_test-scheduler-design.md
-</file_path>
-
-<edit_description>
-Updating TestScheduler to use Mutex instead of RwLock and fix lock dropping in tick_internal for single-threaded safety
-</edit_description>
-
 # TestScheduler Design Details
 
-This document expands on the [Unified Scheduler Architecture Plan](2025-08-31_15-47-17_unified-scheduler-architecture.md) by providing a detailed design and complete implementation of the TestScheduler. It assumes familiarity with the broader architecture, including the shared `Scheduler` trait, domain separation (GPUI vs. Cloud), and multi-threading test scenarios.
+This document expands on the [Unified Scheduler Architecture Plan](2025-08-31_15-47-17_unified-scheduler-architecture.md) by providing a detailed design and complete implementation of the TestScheduler. It assumes familiarity with the broader architecture, including the shared `Scheduler` trait, domain separation (GPUI vs. Cloud), and multi-threading test scenarios. **Updates incorporate Executor and ForegroundExecutor wrappers around Arc<dyn Scheduler>, with ForegroundExecutor using PhantomData<Rc<()>> for !Send and panicking if not on the creation thread, applied to both GPUI and Cloud for consistency and simplicity.**
 
 ## Overview
 
 The TestScheduler is the **single concrete test implementation** of the `Scheduler` trait (see Section 3: Scheduler Trait Definition in the original plan). It serves as the unified core for all test scenarios, enabling:
 
 - **GPUI Testing**: Deterministic UI scheduling with task labels, deprioritization, main thread isolation, and tick-based execution (see Section 4.1: GPUI Integration in the original plan).
-- **Cloud Testing**: Session coordination, time-range delays, wait-until task tracking, and cleanup validation (see Section 5: Cloud Integration in the original plan).
+- **Cloud Testing**: Session coordination, time-range delays, wait-until task tracking, and cleanup validation (see Section 5: Cloud Integration in the original plan). **ForegroundExecutor is now used in Cloud for single-threaded simplicity, avoiding Send requirements on futures.**
 - **Unified Testing**: Shared across test threads for client-cloud interactions, seeded randomness, and task lifecycle management.
 
-There is **no separate TestScheduler trait**—all test-specific methods are directly on the TestScheduler struct for simplicity, as it is the only implementation in the test context.
+There is **no separate TestScheduler trait**—all test-specific methods are directly on the TestScheduler struct for simplicity, as it is the only implementation in the test context. **Executors wrap Arc<dyn Scheduler>, with ForegroundExecutor enforcing thread safety via phantom Rc and creation-thread checks.**
 
 ## Design Principles
 
@@ -26,7 +18,8 @@ There is **no separate TestScheduler trait**—all test-specific methods are dir
 - **Merged Capabilities**: Combines GPUI queues with Cloud session logic in a single state machine.
 - **Determinism**: Always seeded with configurable randomization.
 - **Multi-threading Ready**: `Arc` and `Mutex` for shared access in collaborative tests.
-- **Domain Wrappers**: GPUI/Cloud test code wraps this core for specific APIs (e.g., GPUI's BackgroundExecutor).
+- **Domain Wrappers**: GPUI/Cloud test code wraps this core for specific APIs (e.g., GPUI's BackgroundExecutor now uses Executor and ForegroundExecutor).
+- **Thread Safety Enforcement**: ForegroundExecutor uses phantom Rc for !Send and checks against creation thread for main-thread isolation.
 
 ## Complete TestScheduler Implementation
 
@@ -38,6 +31,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
@@ -179,13 +173,13 @@ struct SchedulerState {
     parking_allowed: AtomicBool,
     execution_history: Vec<String>,
     fuzz_inputs: Option<FuzzedSchedulerInputs>,
+    creation_thread_id: thread::ThreadId,  // Added for thread safety checks
 }
 
 // Concrete implementation
 pub struct TestScheduler {
     state: Arc<Mutex<SchedulerState>>,
 }
-```
 
 impl TestScheduler {
     /// Primary constructor: Create a scheduler from full configuration.
@@ -215,8 +209,17 @@ impl TestScheduler {
             parking_allowed: AtomicBool::new(false),
             execution_history: Vec::new(),
             fuzz_inputs,
+            creation_thread_id: thread::current().id(),  // Capture creation thread
         };
         Arc::new(Self { state: Arc::new(Mutex::new(state)) })
+    }
+
+    // Added for ForegroundExecutor thread checks
+    pub fn assert_main_thread(&self) {
+        let state = self.state.lock().unwrap();
+        if thread::current().id() != state.creation_thread_id {
+            panic!("ForegroundExecutor method called from wrong thread");
+        }
     }
 
     /// Convenience helper: Create a seeded scheduler (randomization enabled by default).
@@ -378,24 +381,41 @@ impl TestScheduler {
 
 ## GPUI Usage Example
 
-GPUI wraps the TestScheduler to maintain its existing API:
+GPUI wraps the TestScheduler using Executor and ForegroundExecutor:
 
 ```rust
-pub struct BackgroundExecutor {
-    scheduler: Arc<dyn Scheduler>,  // TestScheduler implements Scheduler
+use std::marker::PhantomData;
+use std::rc::Rc;
+
+// Generic Executor for background tasks (Send futures)
+pub struct Executor {
+    scheduler: Arc<dyn Scheduler>,
 }
 
-impl BackgroundExecutor {
-    pub fn spawn_labeled<R>(
-        &self, 
-        label: TaskLabel,
-        future: impl Future<Output = R> + Send + 'static
-    ) -> Task<R> {
-        // Direct downcast for GPUI test features
+impl Executor {
+    pub fn new(scheduler: Arc<dyn Scheduler>) -> Self {
+        Self { scheduler }
+    }
+
+    pub fn spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R>
+    where R: Send + 'static {
+        // Delegate to scheduler via downcast for test methods if applicable
         if let Some(test_sched) = self.scheduler.as_any().downcast_ref::<TestScheduler>() {
-            test_sched.deprioritize(label);  // Use test method directly
+            // Use test_sched methods
         }
         self.scheduler.spawn(future)
+    }
+
+    pub fn spawn_labeled<R>(
+        &self,
+        label: TaskLabel,
+        future: impl Future<Output = R> + Send + 'static
+    ) -> Task<R>
+    where R: Send + 'static {
+        if let Some(test_sched) = self.scheduler.as_any().downcast_ref::<TestScheduler>() {
+            test_sched.deprioritize(label);
+        }
+        self.scheduler.spawn_labeled(label, future)
     }
 
     pub fn deprioritize(&self, label: TaskLabel) {
@@ -403,23 +423,81 @@ impl BackgroundExecutor {
             test_sched.deprioritize(label);
         }
     }
+
+    pub fn timer(&self, duration: Duration) -> Task<()> {
+        self.scheduler.timer(duration)
+    }
+
+    pub fn tick(&self) -> Option<bool> {
+        self.scheduler.as_any().downcast_ref::<TestScheduler>().map(|ts| ts.tick(false))
+    }
+}
+
+// ForegroundExecutor for main-thread tasks (!Send futures, thread checks)
+pub struct ForegroundExecutor {
+    executor: Executor,
+    _phantom: PhantomData<Rc<()>>,  // Enforces !Send
+}
+
+impl !Send for ForegroundExecutor {}  // Explicitly !Send
+
+impl ForegroundExecutor {
+    pub fn new(scheduler: Arc<dyn Scheduler>) -> Result<Self> {
+        let executor = Executor::new(scheduler);
+        // Check thread immediately via scheduler
+        if let Some(test_sched) = executor.scheduler.as_any().downcast_ref::<TestScheduler>() {
+            test_sched.assert_main_thread();
+        } else {
+            // Production: assume created on main thread
+        }
+        Ok(Self { executor, _phantom: PhantomData })
+    }
+
+    pub fn spawn<R>(&self, future: impl Future<Output = R> + 'static) -> Task<R>
+    where R: 'static {
+        // Assert thread before delegating
+        if let Some(test_sched) = self.executor.scheduler.as_any().downcast_ref::<TestScheduler>() {
+            test_sched.assert_main_thread();
+        }
+        self.executor.scheduler.spawn_foreground(future)
+    }
+
+    pub fn timer(&self, duration: Duration) -> Task<()> {
+        if let Some(test_sched) = self.executor.scheduler.as_any().downcast_ref::<TestScheduler>() {
+            test_sched.assert_main_thread();
+        }
+        self.executor.scheduler.timer(duration)
+    }
+
+    // Other methods mirror Executor but with thread checks
 }
 ```
 
 ## Cloud Usage Example
 
-Cloud wraps for session coordination:
+Cloud wraps using ForegroundExecutor for single-threaded simplicity (no Send futures required):
 
 ```rust
 impl SimulatedExecutionContext {
+    pub fn new(scheduler: Arc<dyn Scheduler>) -> Result<Self> {
+        let fg_executor = ForegroundExecutor::new(scheduler)?;  // Use ForegroundExecutor for thread safety and simplicity
+        Self {
+            executor: fg_executor,
+            session_counter: AtomicUsize::new(0),
+            sessions: Mutex::new(HashMap::new()),
+            current_session: Mutex::new(None),
+        }
+    }
+
     pub fn wait_until(&self, future: LocalBoxFuture<'static, Result<()>>) -> Result<()> {
-        let task = self.scheduler.spawn(async move { future.await })?;
+        let task = self.executor.spawn(async move { future.await })?;
         
-        // Direct use of TestScheduler methods
-        let scheduler = self.scheduler.as_any().downcast_ref::<TestScheduler>().unwrap();
-        if let Some(session_id) = scheduler.get_current_session() {
-            scheduler.track_task_for_session(task.id(), session_id);
-            scheduler.add_wait_until_task(session_id, task.id());
+        // Direct use of TestScheduler methods via downcast from executor
+        if let Some(test_sched) = self.executor.scheduler.as_any().downcast_ref::<TestScheduler>() {
+            if let Some(session_id) = test_sched.get_current_session() {
+                test_sched.track_task_for_session(task.id(), session_id);
+                test_sched.add_wait_until_task(session_id, task.id());
+            }
         }
         
         Ok(())
@@ -435,7 +513,8 @@ impl SimulatedExecutionContext {
 - **futures**: For channels.
 - **chrono**: For time ranges (optional).
 - **anyhow**: For errors.
+- **std::thread**: For thread ID comparison.
 
 The scheduler assumes no `dyn Any` is implemented on `Scheduler`; add `fn as_any(&self) -> &dyn std::any::Any;` if needed for downcasting.
 
-This implementation provides the complete unified test core, enabling both GPUI's deterministic UI testing and Cloud's session-aware simulation in a single ~250-line struct.
+This implementation provides the complete unified test core, enabling both GPUI's deterministic UI testing and Cloud's session-aware simulation in a single ~250-line struct, now wrapped by Executors for better encapsulation and thread safety.
