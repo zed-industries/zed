@@ -5,14 +5,17 @@ pub use clock::*;
 pub use executor::*;
 
 use async_task::Runnable;
-use futures::{FutureExt as _, channel::oneshot, future::BoxFuture};
+use futures::{FutureExt as _, channel::oneshot};
 use parking::{Parker, Unparker};
 use parking_lot::Mutex;
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 use std::{
     collections::VecDeque,
+    future::Future,
+    pin::Pin,
     sync::Arc,
+    task::{Context, Poll},
     thread,
     time::{Duration, Instant},
 };
@@ -51,14 +54,29 @@ struct ScheduledTask {
     runnable: Runnable,
 }
 
-struct Timer {
+struct ScheduledTimer {
     expiration: Instant,
     _notify: oneshot::Sender<()>,
 }
 
+pub struct Timer {
+    rx: oneshot::Receiver<()>,
+}
+
+impl Future for Timer {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<()> {
+        match self.rx.poll_unpin(cx) {
+            Poll::Ready(_) => Poll::Ready(()),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
 struct SchedulerState {
     tasks: VecDeque<ScheduledTask>,
-    timers: Vec<Timer>,
+    timers: Vec<ScheduledTimer>,
     rng: ChaCha8Rng,
     randomize_order: bool,
     allow_parking: bool,
@@ -69,7 +87,7 @@ pub trait Scheduler: Send + Sync {
     fn is_main_thread(&self) -> bool;
     fn schedule_foreground(&self, session_id: SessionId, runnable: Runnable);
     fn schedule_background(&self, runnable: Runnable);
-    fn timer(&self, timeout: Duration) -> BoxFuture<'static, ()>;
+    fn timer(&self, timeout: Duration) -> Timer;
     fn park(&self, timeout: Option<Duration>) -> bool;
     fn unparker(&self) -> Unparker;
     fn step(&self) -> bool;
@@ -197,22 +215,19 @@ impl Scheduler for TestScheduler {
         self.unparker.unpark();
     }
 
-    fn timer(&self, duration: Duration) -> BoxFuture<'static, ()> {
+    fn timer(&self, duration: Duration) -> Timer {
         let (tx, rx) = oneshot::channel();
         let expiration = self.clock.now() + duration;
         {
             let state = &mut *self.state.lock();
-            state.timers.push(Timer {
+            state.timers.push(ScheduledTimer {
                 expiration,
                 _notify: tx,
             });
             state.timers.sort_by_key(|timer| timer.expiration);
         }
         self.unparker.unpark();
-        async move {
-            rx.await.ok();
-        }
-        .boxed()
+        Timer { rx }
     }
 
     fn park(&self, timeout: Option<Duration>) -> bool {

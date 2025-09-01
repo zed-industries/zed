@@ -1,6 +1,6 @@
-use crate::{Scheduler, SessionId};
+use crate::{Scheduler, SessionId, Timer};
 use async_task::Task;
-use futures::{FutureExt as _, future::BoxFuture};
+use futures::FutureExt as _;
 use std::{
     future::Future,
     marker::PhantomData,
@@ -108,7 +108,7 @@ impl BackgroundExecutor {
         })
     }
 
-    pub fn timer(&self, duration: Duration) -> BoxFuture<'static, ()> {
+    pub fn timer(&self, duration: Duration) -> Timer {
         self.scheduler.timer(duration)
     }
 }
