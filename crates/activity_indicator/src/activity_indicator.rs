@@ -1,6 +1,6 @@
 use auto_update::{AutoUpdateStatus, AutoUpdater, DismissErrorMessage, VersionCheckType};
 use editor::Editor;
-use extension_host::ExtensionStore;
+use extension_host::{ExtensionOperation, ExtensionStore};
 use futures::StreamExt;
 use gpui::{
     Animation, AnimationExt as _, App, Context, CursorStyle, Entity, EventEmitter,
@@ -671,8 +671,9 @@ impl ActivityIndicator {
         }
 
         // Show any application auto-update info.
-        if let Some(updater) = &self.auto_updater {
-            return match &updater.read(cx).status() {
+        self.auto_updater
+            .as_ref()
+            .and_then(|updater| match &updater.read(cx).status() {
                 AutoUpdateStatus::Checking => Some(Content {
                     icon: Some(
                         Icon::new(IconName::Download)
@@ -728,28 +729,56 @@ impl ActivityIndicator {
                     tooltip_message: None,
                 }),
                 AutoUpdateStatus::Idle => None,
-            };
-        }
+            })
+            .or_else(|| {
+                if let Some(extension_store) =
+                    ExtensionStore::try_global(cx).map(|extension_store| extension_store.read(cx))
+                    && let Some((extension_id, operation)) =
+                        extension_store.outstanding_operations().iter().next()
+                {
+                    let (message, icon, rotate) = match operation {
+                        ExtensionOperation::Install => (
+                            format!("Installing {extension_id} extension…"),
+                            IconName::LoadCircle,
+                            true,
+                        ),
+                        ExtensionOperation::Upgrade => (
+                            format!("Updating {extension_id} extension…"),
+                            IconName::Download,
+                            false,
+                        ),
+                        ExtensionOperation::Remove => (
+                            format!("Removing {extension_id} extension…"),
+                            IconName::LoadCircle,
+                            true,
+                        ),
+                    };
 
-        if let Some(extension_store) =
-            ExtensionStore::try_global(cx).map(|extension_store| extension_store.read(cx))
-            && let Some(extension_id) = extension_store.outstanding_operations().keys().next()
-        {
-            return Some(Content {
-                icon: Some(
-                    Icon::new(IconName::Download)
-                        .size(IconSize::Small)
-                        .into_any_element(),
-                ),
-                message: format!("Updating {extension_id} extension…"),
-                on_click: Some(Arc::new(|this, window, cx| {
-                    this.dismiss_error_message(&DismissErrorMessage, window, cx)
-                })),
-                tooltip_message: None,
-            });
-        }
-
-        None
+                    Some(Content {
+                        icon: Some(Icon::new(icon).size(IconSize::Small).map(|this| {
+                            if rotate {
+                                this.with_animation(
+                                    "activity_indicator_animation",
+                                    Animation::new(Duration::from_secs(3)).repeat(),
+                                    |icon, delta| {
+                                        icon.transform(Transformation::rotate(percentage(delta)))
+                                    },
+                                )
+                                .into_any_element()
+                            } else {
+                                this.into_any_element()
+                            }
+                        })),
+                        message,
+                        on_click: Some(Arc::new(|this, window, cx| {
+                            this.dismiss_error_message(&Default::default(), window, cx)
+                        })),
+                        tooltip_message: None,
+                    })
+                } else {
+                    None
+                }
+            })
     }
 
     fn version_tooltip_message(version: &VersionCheckType) -> String {
