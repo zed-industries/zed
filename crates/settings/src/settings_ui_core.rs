@@ -14,35 +14,20 @@ pub trait SettingsUi {
 
     fn settings_ui_entry() -> SettingsUiEntry {
         SettingsUiEntry {
-            item: SettingsUiEntryVariant::None,
+            path: None,
+            title: "None entry",
+            item: SettingsUiItem::None,
         }
     }
 }
 
 pub struct SettingsUiEntry {
     // todo(settings_ui): move this back here once there isn't a None variant
-    // pub path: &'static str,
-    // pub title: &'static str,
-    pub item: SettingsUiEntryVariant,
-}
-
-pub enum SettingsUiEntryVariant {
-    Group {
-        path: &'static str,
-        title: &'static str,
-        items: Vec<SettingsUiEntry>,
-    },
-    Item {
-        path: &'static str,
-        item: SettingsUiItemSingle,
-    },
-    Dynamic {
-        path: &'static str,
-        options: Vec<SettingsUiEntry>,
-        determine_option: fn(&serde_json::Value, &mut App) -> usize,
-    },
-    // todo(settings_ui): remove
-    None,
+    /// The path in the settings JSON file for this setting. Relative to parent
+    /// None implies `#[serde(flatten)]` or `Settings::KEY.is_none()` for top level settings
+    pub path: Option<&'static str>,
+    pub title: &'static str,
+    pub item: SettingsUiItem,
 }
 
 pub enum SettingsUiItemSingle {
@@ -96,16 +81,19 @@ impl<T: serde::Serialize> SettingsValue<T> {
     }
 }
 
+pub struct SettingsUiItemDynamic {
+    pub options: Vec<SettingsUiEntry>,
+    pub determine_option: fn(&serde_json::Value, &mut App) -> usize,
+}
+
+pub struct SettingsUiItemGroup {
+    pub items: Vec<SettingsUiEntry>,
+}
+
 pub enum SettingsUiItem {
-    Group {
-        title: &'static str,
-        items: Vec<SettingsUiEntry>,
-    },
+    Group(SettingsUiItemGroup),
     Single(SettingsUiItemSingle),
-    Dynamic {
-        options: Vec<SettingsUiEntry>,
-        determine_option: fn(&serde_json::Value, &mut App) -> usize,
-    },
+    Dynamic(SettingsUiItemDynamic),
     None,
 }
 

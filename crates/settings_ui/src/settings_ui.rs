@@ -9,7 +9,10 @@ use command_palette_hooks::CommandPaletteFilter;
 use editor::EditorSettingsControls;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
 use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, ReadGlobal, actions};
-use settings::{SettingsStore, SettingsUiEntryVariant, SettingsUiItemSingle, SettingsValue};
+use settings::{
+    SettingsStore, SettingsUiEntry, SettingsUiItem, SettingsUiItemDynamic, SettingsUiItemGroup,
+    SettingsUiItemSingle, SettingsValue,
+};
 use smallvec::SmallVec;
 use ui::{NumericStepper, SwitchField, ToggleButtonGroup, ToggleButtonSimple, prelude::*};
 use workspace::{
@@ -134,7 +137,7 @@ impl Item for SettingsPage {
 
 struct UiEntry {
     title: &'static str,
-    path: &'static str,
+    path: Option<&'static str>,
     _depth: usize,
     // a
     //  b     < a descendant range < a total descendant range
@@ -182,14 +185,15 @@ struct SettingsUiTree {
 
 fn build_tree_item(
     tree: &mut Vec<UiEntry>,
-    entry: SettingsUiEntryVariant,
+    entry: SettingsUiEntry,
     depth: usize,
     prev_index: Option<usize>,
 ) {
     let index = tree.len();
     tree.push(UiEntry {
-        title: "",
-        path: "",
+        title: entry.title,
+        // todo! make this an option too
+        path: entry.path,
         _depth: depth,
         descendant_range: index + 1..index + 1,
         total_descendant_range: index + 1..index + 1,
@@ -200,14 +204,8 @@ fn build_tree_item(
     if let Some(prev_index) = prev_index {
         tree[prev_index].next_sibling = Some(index);
     }
-    match entry {
-        SettingsUiEntryVariant::Group {
-            path,
-            title,
-            items: group_items,
-        } => {
-            tree[index].path = path;
-            tree[index].title = title;
+    match entry.item {
+        SettingsUiItem::Group(SettingsUiItemGroup { items: group_items }) => {
             for group_item in group_items {
                 let prev_index = tree[index]
                     .descendant_range
@@ -215,22 +213,17 @@ fn build_tree_item(
                     .not()
                     .then_some(tree[index].descendant_range.end - 1);
                 tree[index].descendant_range.end = tree.len() + 1;
-                build_tree_item(tree, group_item.item, depth + 1, prev_index);
+                build_tree_item(tree, group_item, depth + 1, prev_index);
                 tree[index].total_descendant_range.end = tree.len();
             }
         }
-        SettingsUiEntryVariant::Item { path, item } => {
-            tree[index].path = path;
-            // todo(settings_ui) create title from path in macro, and use here
-            tree[index].title = path;
+        SettingsUiItem::Single(item) => {
             tree[index].render = Some(item);
         }
-        SettingsUiEntryVariant::Dynamic {
-            path,
+        SettingsUiItem::Dynamic(SettingsUiItemDynamic {
             options,
             determine_option,
-        } => {
-            tree[index].path = path;
+        }) => {
             tree[index].select_descendant = Some(determine_option);
             for option in options {
                 let prev_index = tree[index]
@@ -239,11 +232,11 @@ fn build_tree_item(
                     .not()
                     .then_some(tree[index].descendant_range.end - 1);
                 tree[index].descendant_range.end = tree.len() + 1;
-                build_tree_item(tree, option.item, depth + 1, prev_index);
+                build_tree_item(tree, option, depth + 1, prev_index);
                 tree[index].total_descendant_range.end = tree.len();
             }
         }
-        SettingsUiEntryVariant::None => {
+        SettingsUiItem::None => {
             return;
         }
     }
@@ -255,21 +248,17 @@ impl SettingsUiTree {
         let mut tree = vec![];
         let mut root_entry_indices = vec![];
         for item in settings_store.settings_ui_items() {
-            if matches!(item.item, SettingsUiEntryVariant::None) {
+            if matches!(item.item, SettingsUiItem::None)
+            // todo(settings_ui): How to handle top level single items? BaseKeymap is in this category. Probably need a way to
+            // link them to other groups
+            || matches!(item.item, SettingsUiItem::Single(_))
+            {
                 continue;
             }
 
-            assert!(
-                matches!(item.item, SettingsUiEntryVariant::Group { .. }),
-                "top level items must be groups: {:?}",
-                match item.item {
-                    SettingsUiEntryVariant::Item { path, .. } => path,
-                    _ => unreachable!(),
-                }
-            );
             let prev_root_entry_index = root_entry_indices.last().copied();
             root_entry_indices.push(tree.len());
-            build_tree_item(&mut tree, item.item, 0, prev_root_entry_index);
+            build_tree_item(&mut tree, item, 0, prev_root_entry_index);
         }
 
         root_entry_indices.sort_by_key(|i| tree[*i].title);
@@ -316,7 +305,10 @@ fn render_content(
     };
     let mut content = v_flex().size_full().gap_4();
 
-    let mut path = smallvec::smallvec![active_entry.path];
+    let mut path = smallvec::smallvec![];
+    if let Some(active_entry_path) = active_entry.path {
+        path.push(active_entry_path);
+    }
     let mut entry_index_queue = VecDeque::new();
 
     if let Some(child_index) = active_entry.first_descendant_index() {
@@ -331,7 +323,11 @@ fn render_content(
     while let Some(index) = entry_index_queue.pop_front() {
         // todo(settings_ui): subgroups?
         let child = &tree.entries[index];
-        path.push(child.path);
+        let mut pushed_path = false;
+        if let Some(child_path) = child.path {
+            path.push(child_path);
+            pushed_path = true;
+        }
         let settings_value = settings_value_from_settings_and_path(
             path.clone(),
             // PERF: how to structure this better? There feels like there's a way to avoid the clone
@@ -347,7 +343,9 @@ fn render_content(
                 entry_index_queue.push_front(descendant_index);
             }
         }
-        path.pop();
+        if pushed_path {
+            path.pop();
+        }
         let Some(child_render) = child.render.as_ref() else {
             continue;
         };
