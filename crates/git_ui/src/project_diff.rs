@@ -10,6 +10,7 @@ use collections::HashSet;
 use editor::{
     Editor, EditorEvent, SelectionEffects,
     actions::{GoToHunk, GoToPreviousHunk},
+    multibuffer_context_lines,
     scroll::Autoscroll,
 };
 use futures::StreamExt;
@@ -465,7 +466,7 @@ impl ProjectDiff {
                 path_key.clone(),
                 buffer,
                 excerpt_ranges,
-                editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                multibuffer_context_lines(cx),
                 cx,
             );
             (was_empty, is_newly_added)

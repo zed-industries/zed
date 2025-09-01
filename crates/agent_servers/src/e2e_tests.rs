@@ -1,4 +1,6 @@
 use crate::{AgentServer, AgentServerDelegate};
+#[cfg(test)]
+use crate::{AgentServerCommand, CustomAgentServerSettings};
 use acp_thread::{AcpThread, AgentThreadEntry, ToolCall, ToolCallStatus};
 use agent_client_protocol as acp;
 use futures::{FutureExt, StreamExt, channel::mpsc, select};
@@ -471,7 +473,13 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
         #[cfg(test)]
         crate::AllAgentServersSettings::override_global(
             crate::AllAgentServersSettings {
-                claude: Some(crate::claude::tests::local_command().into()),
+                claude: Some(CustomAgentServerSettings {
+                    command: AgentServerCommand {
+                        path: "claude-code-acp".into(),
+                        args: vec![],
+                        env: None,
+                    },
+                }),
                 gemini: Some(crate::gemini::tests::local_command().into()),
                 custom: collections::HashMap::default(),
             },
@@ -490,7 +498,7 @@ pub async fn new_test_thread(
     current_dir: impl AsRef<Path>,
     cx: &mut TestAppContext,
 ) -> Entity<AcpThread> {
-    let delegate = AgentServerDelegate::new(project.clone(), watch::channel("".into()).0);
+    let delegate = AgentServerDelegate::new(project.clone(), None);
 
     let connection = cx
         .update(|cx| server.connect(current_dir.as_ref(), delegate, cx))

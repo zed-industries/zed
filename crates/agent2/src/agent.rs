@@ -762,18 +762,15 @@ impl NativeAgentConnection {
                                 options,
                                 response,
                             }) => {
-                                let recv = acp_thread.update(cx, |thread, cx| {
+                                let outcome_task = acp_thread.update(cx, |thread, cx| {
                                     thread.request_tool_call_authorization(tool_call, options, cx)
-                                })?;
+                                })??;
                                 cx.background_spawn(async move {
-                                    if let Some(recv) = recv.log_err()
-                                        && let Some(option) = recv
-                                            .await
-                                            .context("authorization sender was dropped")
-                                            .log_err()
+                                    if let acp::RequestPermissionOutcome::Selected { option_id } =
+                                        outcome_task.await
                                     {
                                         response
-                                            .send(option)
+                                            .send(option_id)
                                             .map(|_| anyhow!("authorization receiver was dropped"))
                                             .log_err();
                                     }

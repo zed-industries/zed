@@ -86,7 +86,7 @@ use zed_actions::{
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct SerializedAgentPanel {
     width: Option<Pixels>,
     selected_agent: Option<AgentType>,
@@ -280,6 +280,17 @@ impl AgentType {
             Self::Gemini => Some(IconName::AiGemini),
             Self::ClaudeCode => Some(IconName::AiClaude),
             Self::Custom { .. } => Some(IconName::Terminal),
+        }
+    }
+}
+
+impl From<ExternalAgent> for AgentType {
+    fn from(value: ExternalAgent) -> Self {
+        match value {
+            ExternalAgent::Gemini => Self::Gemini,
+            ExternalAgent::ClaudeCode => Self::ClaudeCode,
+            ExternalAgent::Custom { name, command } => Self::Custom { name, command },
+            ExternalAgent::NativeAgent => Self::NativeAgent,
         }
     }
 }
@@ -592,7 +603,7 @@ impl AgentPanel {
                 .log_err()
                 .flatten()
             {
-                Some(serde_json::from_str::<SerializedAgentPanel>(&panel)?)
+                serde_json::from_str::<SerializedAgentPanel>(&panel).log_err()
             } else {
                 None
             };
@@ -1049,6 +1060,11 @@ impl AgentPanel {
             editor
         });
 
+        if self.selected_agent != AgentType::TextThread {
+            self.selected_agent = AgentType::TextThread;
+            self.serialize(cx);
+        }
+
         self.set_active_view(
             ActiveView::prompt_editor(
                 context_editor.clone(),
@@ -1138,6 +1154,12 @@ impl AgentPanel {
                             return;
                         }
                     }
+                }
+
+                let selected_agent = ext_agent.into();
+                if this.selected_agent != selected_agent {
+                    this.selected_agent = selected_agent;
+                    this.serialize(cx);
                 }
 
                 let thread_view = cx.new(|cx| {
@@ -1235,6 +1257,12 @@ impl AgentPanel {
                 cx,
             )
         });
+
+        if self.selected_agent != AgentType::TextThread {
+            self.selected_agent = AgentType::TextThread;
+            self.serialize(cx);
+        }
+
         self.set_active_view(
             ActiveView::prompt_editor(
                 editor,
@@ -1860,11 +1888,6 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.selected_agent != agent {
-            self.selected_agent = agent.clone();
-            self.serialize(cx);
-        }
-
         match agent {
             AgentType::Zed => {
                 window.dispatch_action(

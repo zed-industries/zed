@@ -355,6 +355,15 @@
     }
   },
   {
+    "context": "showing_completions",
+    "bindings": {
+      "ctrl-d": "vim::ScrollDown",
+      "ctrl-u": "vim::ScrollUp",
+      "ctrl-e": "vim::LineDown",
+      "ctrl-y": "vim::LineUp"
+    }
+  },
+  {
     "context": "(vim_mode == normal || vim_mode == helix_normal) && !menu",
     "bindings": {
       "escape": "editor::Cancel",

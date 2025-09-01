@@ -8,6 +8,7 @@ version = "0.1.0"
 dependencies = [
  "action_log",
  "agent-client-protocol",
+ "agent_settings",
  "anyhow",
  "buffer_diff",
  "collections",
@@ -191,9 +192,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.0.31"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "289eb34ee17213dadcca47eedadd386a5e7678094095414e475965d1bcca2860"
+checksum = "6b91e5ec3ce05e8effb2a7a3b7b1a587daa6699b9f98bbde6a35e44b8c6c773a"
 dependencies = [
  "anyhow",
  "async-broadcast",
@@ -292,14 +293,12 @@ dependencies = [
  "anyhow",
  "client",
  "collections",
- "context_server",
  "env_logger 0.11.8",
  "fs",
  "futures 0.3.31",
  "gpui",
  "gpui_tokio",
  "indoc",
- "itertools 0.14.0",
  "language",
  "language_model",
  "language_models",
@@ -309,7 +308,6 @@ dependencies = [
  "node_runtime",
  "paths",
  "project",
- "rand 0.8.5",
  "reqwest_client",
  "schemars",
  "semver",
@@ -317,12 +315,10 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
- "strum 0.27.1",
  "tempfile",
  "thiserror 2.0.12",
  "ui",
  "util",
- "uuid",
  "watch",
  "which 6.0.3",
  "workspace-hack",
@@ -419,6 +415,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
+ "shlex",
  "smol",
  "streaming_diff",
  "task",
@@ -510,7 +507,7 @@ dependencies = [
  "parking_lot",
  "piper",
  "polling",
- "regex-automata 0.4.9",
+ "regex-automata",
  "rustix-openpty",
  "serde",
  "signal-hook",
@@ -2460,7 +2457,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "234113d19d0d7d613b40e86fb654acf958910802bcceab913a4f9e7cda03b1a4"
 dependencies = [
  "memchr",
- "regex-automata 0.4.9",
+ "regex-automata",
  "serde",
 ]
 
@@ -4735,7 +4732,7 @@ version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b545b8c50194bdd008283985ab0b31dba153cfd5b3066a92770634fbc0d7d291"
 dependencies = [
- "nu-ansi-term 0.50.1",
+ "nu-ansi-term",
 ]
 
 [[package]]
@@ -5634,8 +5631,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "531e46835a22af56d1e3b66f04844bed63158bc094a628bec1d321d9b4c44bf2"
 dependencies = [
  "bit-set 0.5.3",
- "regex-automata 0.4.9",
- "regex-syntax 0.8.5",
+ "regex-automata",
+ "regex-syntax",
 ]
 
 [[package]]
@@ -5645,8 +5642,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6e24cb5a94bcae1e5408b0effca5cd7172ea3c5755049c5f3af4cd283a165298"
 dependencies = [
  "bit-set 0.8.0",
- "regex-automata 0.4.9",
- "regex-syntax 0.8.5",
+ "regex-automata",
+ "regex-syntax",
 ]
 
 [[package]]
@@ -7296,8 +7293,8 @@ dependencies = [
  "aho-corasick",
  "bstr",
  "log",
- "regex-automata 0.4.9",
- "regex-syntax 0.8.5",
+ "regex-automata",
+ "regex-syntax",
 ]
 
 [[package]]
@@ -8302,7 +8299,7 @@ dependencies = [
  "globset",
  "log",
  "memchr",
- "regex-automata 0.4.9",
+ "regex-automata",
  "same-file",
  "walkdir",
  "winapi-util",
@@ -8901,7 +8898,7 @@ dependencies = [
  "percent-encoding",
  "referencing",
  "regex",
- "regex-syntax 0.8.5",
+ "regex-syntax",
  "reqwest 0.12.15 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde",
  "serde_json",
@@ -8952,6 +8949,44 @@ dependencies = [
  "serde_json",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "keymap_editor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "command_palette",
+ "component",
+ "db",
+ "editor",
+ "fs",
+ "fuzzy",
+ "gpui",
+ "itertools 0.14.0",
+ "language",
+ "log",
+ "menu",
+ "notifications",
+ "paths",
+ "project",
+ "search",
+ "serde",
+ "serde_json",
+ "settings",
+ "telemetry",
+ "tempfile",
+ "theme",
+ "tree-sitter-json",
+ "tree-sitter-rust",
+ "ui",
+ "ui_input",
+ "util",
+ "vim",
+ "workspace",
+ "workspace-hack",
+ "zed_actions",
 ]
 
 [[package]]
@@ -9703,7 +9738,7 @@ dependencies = [
  "lazy_static",
  "proc-macro2",
  "quote",
- "regex-syntax 0.8.5",
+ "regex-syntax",
  "rustc_version",
  "syn 2.0.101",
 ]
@@ -9775,7 +9810,7 @@ dependencies = [
 [[package]]
 name = "lsp-types"
 version = "0.95.1"
-source = "git+https://github.com/zed-industries/lsp-types?rev=39f629bdd03d59abd786ed9fc27e8bca02c0c0ec#39f629bdd03d59abd786ed9fc27e8bca02c0c0ec"
+source = "git+https://github.com/zed-industries/lsp-types?rev=0874f8742fe55b4dc94308c1e3c0069710d8eeaf#0874f8742fe55b4dc94308c1e3c0069710d8eeaf"
 dependencies = [
  "bitflags 1.3.2",
  "serde",
@@ -9918,9 +9953,11 @@ dependencies = [
  "editor",
  "fs",
  "gpui",
+ "html5ever 0.27.0",
  "language",
  "linkify",
  "log",
+ "markup5ever_rcdom",
  "pretty_assertions",
  "pulldown-cmark 0.12.2",
  "settings",
@@ -9981,11 +10018,11 @@ dependencies = [
 
 [[package]]
 name = "matchers"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8263075bb86c5a1b1427b5ae862e8889656f126e9f77c484496e8b47cf5c5558"
+checksum = "d1525a2a28c7f4fa0fc98bb91ae755d1e2d1505079e05539e35bc876b5d65ae9"
 dependencies = [
- "regex-automata 0.1.10",
+ "regex-automata",
 ]
 
 [[package]]
@@ -10688,16 +10725,6 @@ dependencies = [
 
 [[package]]
 name = "nu-ansi-term"
-version = "0.46.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77a8165726e8236064dbb45459242600304b42a5ea24ee2948e18e023bf7ba84"
-dependencies = [
- "overload",
- "winapi",
-]
-
-[[package]]
-name = "nu-ansi-term"
 version = "0.50.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4a28e057d01f97e61255210fcff094d74ed0466038633e95017f5beb68e4399"
@@ -11388,12 +11415,6 @@ name = "outref"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1a80800c0488c3a21695ea981a54918fbb37abf04f4d0720c453632255e2ff0e"
-
-[[package]]
-name = "overload"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b15813163c1d831bf4a13c3610c05c0d03b39feb07f7e09fa234dac9b15aaf39"
 
 [[package]]
 name = "p256"
@@ -13385,17 +13406,8 @@ checksum = "b544ef1b4eac5dc2db33ea63606ae9ffcfac26c1416a2806ae0bf5f56b201191"
 dependencies = [
  "aho-corasick",
  "memchr",
- "regex-automata 0.4.9",
- "regex-syntax 0.8.5",
-]
-
-[[package]]
-name = "regex-automata"
-version = "0.1.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c230d73fb8d8c1b9c0b3135c5142a8acee3a0558fb8db5cf1cb65f8d7862132"
-dependencies = [
- "regex-syntax 0.6.29",
+ "regex-automata",
+ "regex-syntax",
 ]
 
 [[package]]
@@ -13406,7 +13418,7 @@ checksum = "809e8dc61f6de73b46c85f4c96486310fe304c434cfa43669d7b40f711150908"
 dependencies = [
  "aho-corasick",
  "memchr",
- "regex-syntax 0.8.5",
+ "regex-syntax",
 ]
 
 [[package]]
@@ -13414,12 +13426,6 @@ name = "regex-lite"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "53a49587ad06b26609c52e423de037e7f57f20d53535d66e08c695f347df952a"
-
-[[package]]
-name = "regex-syntax"
-version = "0.6.29"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f162c6dd7b008981e4d40210aca20b4bd0f9b60ca9271061b07f78537722f2e1"
 
 [[package]]
 name = "regex-syntax"
@@ -14859,6 +14865,8 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "serde_json_lenient",
+ "serde_path_to_error",
+ "settings_ui_macros",
  "smallvec",
  "tree-sitter",
  "tree-sitter-json",
@@ -14894,39 +14902,28 @@ name = "settings_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "collections",
- "command_palette",
  "command_palette_hooks",
- "component",
- "db",
  "editor",
  "feature_flags",
- "fs",
- "fuzzy",
  "gpui",
- "itertools 0.14.0",
- "language",
- "log",
- "menu",
- "notifications",
- "paths",
- "project",
- "search",
  "serde",
  "serde_json",
  "settings",
- "telemetry",
- "tempfile",
+ "smallvec",
  "theme",
- "tree-sitter-json",
- "tree-sitter-rust",
  "ui",
- "ui_input",
- "util",
- "vim",
  "workspace",
  "workspace-hack",
- "zed_actions",
+]
+
+[[package]]
+name = "settings_ui_macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.101",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -16742,6 +16739,7 @@ dependencies = [
  "db",
  "gpui",
  "http_client",
+ "keymap_editor",
  "notifications",
  "pretty_assertions",
  "project",
@@ -16750,7 +16748,6 @@ dependencies = [
  "schemars",
  "serde",
  "settings",
- "settings_ui",
  "smallvec",
  "story",
  "telemetry",
@@ -17119,14 +17116,14 @@ dependencies = [
 
 [[package]]
 name = "tracing-subscriber"
-version = "0.3.19"
+version = "0.3.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8189decb5ac0fa7bc8b96b7cb9b2701d60d48805aca84a238004d665fcc4008"
+checksum = "2054a14f5307d601f88daf0553e1cbf472acc4f2c51afab632431cdcd72124d5"
 dependencies = [
  "matchers",
- "nu-ansi-term 0.46.0",
+ "nu-ansi-term",
  "once_cell",
- "regex",
+ "regex-automata",
  "serde",
  "serde_json",
  "sharded-slab",
@@ -17157,7 +17154,7 @@ checksum = "a7cf18d43cbf0bfca51f657132cc616a5097edc4424d538bae6fa60142eaf9f0"
 dependencies = [
  "cc",
  "regex",
- "regex-syntax 0.8.5",
+ "regex-syntax",
  "serde_json",
  "streaming-iterator",
  "tree-sitter-language",
@@ -19955,8 +19952,8 @@ dependencies = [
  "rand_core 0.6.4",
  "regalloc2",
  "regex",
- "regex-automata 0.4.9",
- "regex-syntax 0.8.5",
+ "regex-automata",
+ "regex-syntax",
  "ring",
  "rust_decimal",
  "rustc-hash 1.1.0",
@@ -20461,6 +20458,7 @@ dependencies = [
  "itertools 0.14.0",
  "jj_ui",
  "journal",
+ "keymap_editor",
  "language",
  "language_extension",
  "language_model",
@@ -20790,6 +20788,7 @@ dependencies = [
  "gpui",
  "http_client",
  "indoc",
+ "itertools 0.14.0",
  "language",
  "language_model",
  "log",
@@ -20804,6 +20803,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "strum 0.27.1",
  "telemetry",
  "telemetry_events",
  "theme",
@@ -20811,7 +20811,6 @@ dependencies = [
  "tree-sitter-go",
  "tree-sitter-rust",
  "ui",
- "unindent",
  "util",
  "uuid",
  "workspace",

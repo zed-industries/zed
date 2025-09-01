@@ -393,14 +393,15 @@ mod test_support {
                     };
                     let task = cx.spawn(async move |cx| {
                         if let Some((tool_call, options)) = permission_request {
-                            let permission = thread.update(cx, |thread, cx| {
-                                thread.request_tool_call_authorization(
-                                    tool_call.clone().into(),
-                                    options.clone(),
-                                    cx,
-                                )
-                            })?;
-                            permission?.await?;
+                            thread
+                                .update(cx, |thread, cx| {
+                                    thread.request_tool_call_authorization(
+                                        tool_call.clone().into(),
+                                        options.clone(),
+                                        cx,
+                                    )
+                                })??
+                                .await;
                         }
                         thread.update(cx, |thread, cx| {
                             thread.handle_session_update(update.clone(), cx).unwrap();

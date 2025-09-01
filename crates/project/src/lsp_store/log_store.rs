@@ -21,8 +21,8 @@ const SERVER_LOGS: &str = "Server Logs";
 const SERVER_TRACE: &str = "Server Trace";
 const SERVER_INFO: &str = "Server Info";
 
-pub fn init(store_logs: bool, cx: &mut App) -> Entity<LogStore> {
-    let log_store = cx.new(|cx| LogStore::new(store_logs, cx));
+pub fn init(on_headless_host: bool, cx: &mut App) -> Entity<LogStore> {
+    let log_store = cx.new(|cx| LogStore::new(on_headless_host, cx));
     cx.set_global(GlobalLogStore(log_store.clone()));
     log_store
 }
@@ -43,7 +43,7 @@ pub enum Event {
 impl EventEmitter<Event> for LogStore {}
 
 pub struct LogStore {
-    store_logs: bool,
+    on_headless_host: bool,
     projects: HashMap<WeakEntity<Project>, ProjectState>,
     pub copilot_log_subscription: Option<lsp::Subscription>,
     pub language_servers: HashMap<LanguageServerId, LanguageServerState>,
@@ -138,6 +138,7 @@ pub struct LanguageServerState {
     pub trace_level: TraceValue,
     pub log_level: MessageType,
     io_logs_subscription: Option<lsp::Subscription>,
+    pub toggled_log_kind: Option<LogKind>,
 }
 
 impl std::fmt::Debug for LanguageServerState {
@@ -151,6 +152,7 @@ impl std::fmt::Debug for LanguageServerState {
             .field("rpc_state", &self.rpc_state)
             .field("trace_level", &self.trace_level)
             .field("log_level", &self.log_level)
+            .field("toggled_log_kind", &self.toggled_log_kind)
             .finish_non_exhaustive()
     }
 }
@@ -226,14 +228,14 @@ impl LogKind {
 }
 
 impl LogStore {
-    pub fn new(store_logs: bool, cx: &mut Context<Self>) -> Self {
+    pub fn new(on_headless_host: bool, cx: &mut Context<Self>) -> Self {
         let (io_tx, mut io_rx) = mpsc::unbounded();
 
         let log_store = Self {
             projects: HashMap::default(),
             language_servers: HashMap::default(),
             copilot_log_subscription: None,
-            store_logs,
+            on_headless_host,
             io_tx,
         };
         cx.spawn(async move |log_store, cx| {
@@ -351,12 +353,26 @@ impl LogStore {
                                     }
                                 }
                             }
-                            crate::Event::ToggleLspLogs { server_id, enabled } => {
-                                // we do not support any other log toggling yet
-                                if *enabled {
-                                    log_store.enable_rpc_trace_for_language_server(*server_id);
-                                } else {
-                                    log_store.disable_rpc_trace_for_language_server(*server_id);
+                            crate::Event::ToggleLspLogs {
+                                server_id,
+                                enabled,
+                                toggled_log_kind,
+                            } => {
+                                if let Some(server_state) =
+                                    log_store.get_language_server_state(*server_id)
+                                {
+                                    if *enabled {
+                                        server_state.toggled_log_kind = Some(*toggled_log_kind);
+                                    } else {
+                                        server_state.toggled_log_kind = None;
+                                    }
+                                }
+                                if LogKind::Rpc == *toggled_log_kind {
+                                    if *enabled {
+                                        log_store.enable_rpc_trace_for_language_server(*server_id);
+                                    } else {
+                                        log_store.disable_rpc_trace_for_language_server(*server_id);
+                                    }
                                 }
                             }
                             _ => {}
@@ -395,6 +411,7 @@ impl LogStore {
                 trace_level: TraceValue::Off,
                 log_level: MessageType::LOG,
                 io_logs_subscription: None,
+                toggled_log_kind: None,
             }
         });
 
@@ -425,7 +442,7 @@ impl LogStore {
         message: &str,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        let store_logs = self.store_logs;
+        let store_logs = !self.on_headless_host;
         let language_server_state = self.get_language_server_state(id)?;
 
         let log_lines = &mut language_server_state.log_messages;
@@ -464,7 +481,7 @@ impl LogStore {
         verbose_info: Option<String>,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        let store_logs = self.store_logs;
+        let store_logs = !self.on_headless_host;
         let language_server_state = self.get_language_server_state(id)?;
 
         let log_lines = &mut language_server_state.trace_messages;
@@ -530,7 +547,7 @@ impl LogStore {
         message: &str,
         cx: &mut Context<'_, Self>,
     ) {
-        let store_logs = self.store_logs;
+        let store_logs = !self.on_headless_host;
         let Some(state) = self
             .get_language_server_state(language_server_id)
             .and_then(|state| state.rpc_state.as_mut())
@@ -673,6 +690,7 @@ impl LogStore {
     }
 
     fn emit_event(&mut self, e: Event, cx: &mut Context<Self>) {
+        let on_headless_host = self.on_headless_host;
         match &e {
             Event::NewServerLogEntry { id, kind, text } => {
                 if let Some(state) = self.get_language_server_state(*id) {
@@ -686,14 +704,18 @@ impl LogStore {
                     }
                     .and_then(|lsp_store| lsp_store.read(cx).downstream_client());
                     if let Some((client, project_id)) = downstream_client {
-                        client
-                            .send(proto::LanguageServerLog {
-                                project_id,
-                                language_server_id: id.to_proto(),
-                                message: text.clone(),
-                                log_type: Some(kind.to_proto()),
-                            })
-                            .ok();
+                        if on_headless_host
+                            || Some(LogKind::from_server_log_type(kind)) == state.toggled_log_kind
+                        {
+                            client
+                                .send(proto::LanguageServerLog {
+                                    project_id,
+                                    language_server_id: id.to_proto(),
+                                    message: text.clone(),
+                                    log_type: Some(kind.to_proto()),
+                                })
+                                .ok();
+                        }
                     }
                 }
             }
