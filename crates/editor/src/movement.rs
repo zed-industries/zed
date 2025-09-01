@@ -284,7 +284,7 @@ pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> Displa
 
 /// Returns a position of the previous word boundary, where a word character is defined as either
 /// uppercase letter, lowercase letter, '_' character, language-specific word character (like '-' in CSS) or newline.
-fn previous_word_start_or_newline(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+pub fn previous_word_start_or_newline(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let raw_point = point.to_point(map);
     let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
 
@@ -295,34 +295,107 @@ fn previous_word_start_or_newline(map: &DisplaySnapshot, point: DisplayPoint) ->
     })
 }
 
-// TODO kb docs
-pub fn previous_word_start_for_deletion(
+pub fn adjust_greedy_deletion(
     map: &DisplaySnapshot,
-    point: DisplayPoint,
-    ignore_newlines: bool,
-    greedy: bool,
+    delete_from: DisplayPoint,
+    delete_until: DisplayPoint,
 ) -> DisplayPoint {
-    let raw_point = point.to_point(map);
-    let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
-    let mut is_first_iteration = ignore_newlines;
+    if delete_from == delete_until {
+        return delete_until;
+    }
+    let is_backward = delete_from > delete_until;
+    let delete_range = if is_backward {
+        map.display_point_to_point(delete_until, Bias::Left)
+            .to_offset(&map.buffer_snapshot)
+            ..map
+                .display_point_to_point(delete_from, Bias::Right)
+                .to_offset(&map.buffer_snapshot)
+    } else {
+        map.display_point_to_point(delete_from, Bias::Left)
+            .to_offset(&map.buffer_snapshot)
+            ..map
+                .display_point_to_point(delete_until, Bias::Right)
+                .to_offset(&map.buffer_snapshot)
+    };
 
-    find_preceding_boundary_display_point(map, point, FindRange::MultiLine, |left, right| {
-        // Make alt-left skip punctuation to respect VSCode behaviour. For example: hello.| goes to |hello.
-        if is_first_iteration
-            && classifier.is_punctuation(right)
-            && !classifier.is_punctuation(left)
-            && left != '\n'
-        {
-            is_first_iteration = false;
-            return false;
+    let brackets_in_delete_range = map
+        .buffer_snapshot
+        .bracket_ranges(delete_range.clone())
+        .into_iter()
+        .flatten()
+        .flat_map(|(left_bracket, right_bracket)| {
+            [
+                left_bracket.start,
+                left_bracket.end,
+                right_bracket.start,
+                right_bracket.end,
+            ]
+        })
+        .filter(|&bracket| delete_range.start < bracket && bracket < delete_range.end);
+    let closest_bracket = if is_backward {
+        brackets_in_delete_range.max()
+    } else {
+        brackets_in_delete_range.min()
+    };
+
+    let trimmed_delete_range = if is_backward {
+        closest_bracket.unwrap_or(delete_range.start)..delete_range.end
+    } else {
+        delete_range.start..closest_bracket.unwrap_or(delete_range.end)
+    };
+
+    let mut whitespace_sequences = Vec::new();
+    let mut current_offset = trimmed_delete_range.start;
+    let mut whitespace_sequence_length = 0;
+    let mut whitespace_sequence_start = 0;
+    for ch in map
+        .buffer_snapshot
+        .text_for_range(trimmed_delete_range.clone())
+        .flat_map(str::chars)
+    {
+        if ch.is_whitespace() {
+            if whitespace_sequence_length == 0 {
+                whitespace_sequence_start = current_offset;
+            }
+            whitespace_sequence_length += 1;
+        } else {
+            if whitespace_sequence_length >= 2 {
+                whitespace_sequences.push((whitespace_sequence_start, current_offset));
+            }
+            whitespace_sequence_start = 0;
+            whitespace_sequence_length = 0;
         }
-        is_first_iteration = false;
+        current_offset += ch.len_utf8();
+    }
+    if whitespace_sequence_length >= 2 {
+        whitespace_sequences.push((whitespace_sequence_start, current_offset));
+    }
 
-        (classifier.kind(left) != classifier.kind(right)
-            && (!classifier.is_whitespace(right) || (!greedy && !classifier.is_whitespace(left))))
-            || left == '\n'
-            || (!ignore_newlines && right == '\n')
-    })
+    dbg!(&whitespace_sequences);
+    let closest_whitespace_end = if is_backward {
+        whitespace_sequences.last().map(|&(start, _)| start)
+    } else {
+        whitespace_sequences.first().map(|&(_, end)| end)
+    };
+
+    dbg!((
+        delete_from,
+        delete_until,
+        is_backward,
+        closest_bracket,
+        trimmed_delete_range.clone(),
+        closest_whitespace_end,
+    ));
+
+    closest_whitespace_end
+        .unwrap_or_else(|| {
+            if is_backward {
+                trimmed_delete_range.start
+            } else {
+                trimmed_delete_range.end
+            }
+        })
+        .to_display_point(map)
 }
 
 /// Returns a position of the previous subword boundary, where a subword is defined as a run of
@@ -367,7 +440,7 @@ pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint
 
 /// Returns a position of the next word boundary, where a word character is defined as either
 /// uppercase letter, lowercase letter, '_' character, language-specific word character (like '-' in CSS) or newline.
-fn next_word_end_or_newline(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+pub fn next_word_end_or_newline(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let raw_point = point.to_point(map);
     let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
 
@@ -380,52 +453,6 @@ fn next_word_end_or_newline(map: &DisplaySnapshot, point: DisplayPoint) -> Displ
             && ((on_starting_row && !left.is_whitespace())
                 || (!on_starting_row && !right.is_whitespace())))
             || right == '\n'
-    })
-}
-
-// TODO kb docs
-pub fn next_word_end_for_deletion(
-    map: &DisplaySnapshot,
-    point: DisplayPoint,
-    ignore_newlines: bool,
-    greedy: bool,
-) -> DisplayPoint {
-    let raw_point = point.to_point(map);
-    let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
-    let mut is_first_iteration = true;
-    let mut on_starting_row = true;
-
-    find_boundary(map, point, FindRange::MultiLine, |left, right| {
-        let different_classifiers = classifier.kind(left) != classifier.kind(right);
-        if ignore_newlines {
-            // Make alt-right skip punctuation to respect VSCode behaviour. For example: |.hello goes to .hello|
-            if is_first_iteration
-                && classifier.is_punctuation(left)
-                && !classifier.is_punctuation(right)
-                && right != '\n'
-            {
-                is_first_iteration = false;
-                return false;
-            }
-            is_first_iteration = false;
-
-            (different_classifiers
-                && (!classifier.is_whitespace(left)
-                    || (!greedy && !classifier.is_whitespace(right))))
-                || right == '\n'
-        } else {
-            if left == '\n' {
-                on_starting_row = false;
-            }
-
-            (different_classifiers
-                && ((on_starting_row && !classifier.is_whitespace(left))
-                    || (!on_starting_row && !classifier.is_whitespace(right))
-                    || (!greedy
-                        && classifier.is_whitespace(left)
-                        && !classifier.is_whitespace(right))))
-                || right == '\n'
-        }
     })
 }
 

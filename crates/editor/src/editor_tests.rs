@@ -2612,9 +2612,155 @@ async fn test_delete_to_word_boundary(cx: &mut TestAppContext) {
         );
     });
     cx.assert_editor_state("here is some textˇwith a space");
+    // TODO kb split off into a separate test
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                greedy: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("here is some ˇwith a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                greedy: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("here is ˇwith a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                greedy: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("here ˇwith a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                greedy: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("ˇwith a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                greedy: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("ˇwith a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_next_word_end(
+            &DeleteToNextWordEnd {
+                ignore_newlines: true,
+                greedy: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("ˇ a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_next_word_end(
+            &DeleteToNextWordEnd {
+                ignore_newlines: true,
+                greedy: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("ˇ space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_next_word_end(
+            &DeleteToNextWordEnd {
+                ignore_newlines: true,
+                greedy: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("ˇ");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_next_word_end(
+            &DeleteToNextWordEnd {
+                ignore_newlines: true,
+                greedy: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("ˇ");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                greedy: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("ˇ");
 
-    // TODO kb split the test?
-    // TODO kb test `todo!("// ^TODO");` case
+    // TODO kb split off into a separate test
+    cx.set_state(r#"todo!("// ˇTODO");"#);
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                greedy: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state(r#"todo!("ˇTODO");"#);
+
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                greedy: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state(r#"todo!(ˇTODO");"#);
+
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                greedy: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state(r#"todo!ˇTODO");"#);
 }
 
 #[gpui::test]
