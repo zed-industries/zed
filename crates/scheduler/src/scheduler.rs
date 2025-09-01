@@ -315,6 +315,8 @@ mod tests {
     use futures::sink::SinkExt;
     use futures::stream::StreamExt;
     use std::collections::HashSet;
+    use std::pin::Pin;
+    use std::task::Context;
 
     #[test]
     fn test_foreground_executor_spawn() {
@@ -510,5 +512,24 @@ mod tests {
         // Block on receiving the value
         let result = executor.block(async { rx.await.unwrap() });
         assert_eq!(result, 42);
+    }
+
+    #[test]
+    #[should_panic(expected = "Parking forbidden")]
+    fn test_parking_panics() {
+        // Custom future that yields indefinitely without completing
+        struct NeverFuture;
+
+        impl Future for NeverFuture {
+            type Output = ();
+
+            fn poll(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Self::Output> {
+                Poll::Pending
+            }
+        }
+
+        let scheduler = Arc::new(TestScheduler::new(SchedulerConfig::default()));
+        let executor = BackgroundExecutor::new(scheduler);
+        executor.block(NeverFuture);
     }
 }
