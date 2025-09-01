@@ -6276,7 +6276,7 @@ async fn test_rewrap_block_comments(cx: &mut TestAppContext) {
              * consectetur adipiscing elit.
              */
         "},
-        rust_lang.clone(),
+        rust_lang,
         &mut cx,
     );
 
