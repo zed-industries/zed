@@ -736,9 +736,9 @@ impl DirectWriteState {
         unsafe {
             font.font_face.GetRecommendedRenderingMode(
                 params.font_size.0,
-                // The dpi here seems that it has the same effect with `Some(&transform)`
-                1.0,
-                1.0,
+                // Using 96 as scale is applied by the transform
+                96.0,
+                96.0,
                 Some(&transform),
                 false,
                 DWRITE_OUTLINE_THRESHOLD_ANTIALIASED,
