@@ -186,9 +186,7 @@ impl GPUState {
 }
 
 impl DirectWriteTextSystem {
-    pub(crate) fn new(
-        gpu_context: &DirectXDevices,
-    ) -> Result<Self> {
+    pub(crate) fn new(gpu_context: &DirectXDevices) -> Result<Self> {
         let components = DirectWriteComponent::new(gpu_context)?;
         let system_font_collection = unsafe {
             let mut result = std::mem::zeroed();
@@ -701,7 +699,6 @@ impl DirectWriteState {
     fn create_glyph_run_analysis(
         &self,
         params: &RenderGlyphParams,
-        monochrome: bool,
     ) -> Result<IDWriteGlyphRunAnalysis> {
         let font = &self.fonts[params.font_id.0];
         let glyph_id = [params.glyph_id.0 as u16];
@@ -756,7 +753,7 @@ impl DirectWriteState {
                 rendering_mode,
                 DWRITE_MEASURING_MODE_NATURAL,
                 grid_fit_mode,
-                if monochrome { DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE } else { DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE },
+                DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE,
                 baseline_origin_x,
                 baseline_origin_y,
             )
@@ -765,12 +762,16 @@ impl DirectWriteState {
     }
 
     fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
-        let glyph_analysis = self.create_glyph_run_analysis(params, !params.is_emoji)?;
+        let glyph_analysis = self.create_glyph_run_analysis(params)?;
 
-        let bounds = unsafe { glyph_analysis.GetAlphaTextureBounds(if params.is_emoji { DWRITE_TEXTURE_CLEARTYPE_3x1 } else { DWRITE_TEXTURE_ALIASED_1x1 })? };
-        // Some glyphs cannot be drawn with ClearType, such as bitmap fonts. In that case
-        // GetAlphaTextureBounds() supposedly returns an empty RECT, but I haven't tested that yet.
-        if !unsafe { IsRectEmpty(&bounds) }.as_bool() {
+        let bounds = unsafe { glyph_analysis.GetAlphaTextureBounds(DWRITE_TEXTURE_ALIASED_1x1)? };
+
+        if bounds.right < bounds.left {
+            Ok(Bounds {
+                origin: point(0.into(), 0.into()),
+                size: size(0.into(), 0.into()),
+            })
+        } else {
             Ok(Bounds {
                 origin: point(bounds.left.into(), bounds.top.into()),
                 size: size(
@@ -778,25 +779,6 @@ impl DirectWriteState {
                     (bounds.bottom - bounds.top).into(),
                 ),
             })
-        } else {
-            // If it's empty, retry with grayscale AA.
-            let bounds =
-                unsafe { glyph_analysis.GetAlphaTextureBounds(DWRITE_TEXTURE_ALIASED_1x1)? };
-
-            if bounds.right < bounds.left {
-                Ok(Bounds {
-                    origin: point(0.into(), 0.into()),
-                    size: size(0.into(), 0.into()),
-                })
-            } else {
-                Ok(Bounds {
-                    origin: point(bounds.left.into(), bounds.top.into()),
-                    size: size(
-                        (bounds.right - bounds.left).into(),
-                        (bounds.bottom - bounds.top).into(),
-                    ),
-                })
-            }
         }
     }
 
@@ -847,7 +829,7 @@ impl DirectWriteState {
         let mut bitmap_data =
             vec![0u8; glyph_bounds.size.width.0 as usize * glyph_bounds.size.height.0 as usize];
 
-        let glyph_analysis = self.create_glyph_run_analysis(params, true)?;
+        let glyph_analysis = self.create_glyph_run_analysis(params)?;
         unsafe {
             glyph_analysis.CreateAlphaTexture(
                 DWRITE_TEXTURE_ALIASED_1x1,
@@ -929,25 +911,24 @@ impl DirectWriteState {
                         DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC,
                         DWRITE_MEASURING_MODE_NATURAL,
                         DWRITE_GRID_FIT_MODE_DEFAULT,
-                        DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE,
+                        DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE,
                         baseline_origin_x,
                         baseline_origin_y,
                     )
                 }?;
 
                 let color_bounds =
-                    unsafe { color_analysis.GetAlphaTextureBounds(DWRITE_TEXTURE_CLEARTYPE_3x1) }?;
+                    unsafe { color_analysis.GetAlphaTextureBounds(DWRITE_TEXTURE_ALIASED_1x1) }?;
 
                 let color_size = size(
                     color_bounds.right - color_bounds.left,
                     color_bounds.bottom - color_bounds.top,
                 );
                 if color_size.width > 0 && color_size.height > 0 {
-                    let mut alpha_data =
-                        vec![0u8; (color_size.width * color_size.height * 3) as usize];
+                    let mut alpha_data = vec![0u8; (color_size.width * color_size.height) as usize];
                     unsafe {
                         color_analysis.CreateAlphaTexture(
-                            DWRITE_TEXTURE_CLEARTYPE_3x1,
+                            DWRITE_TEXTURE_ALIASED_1x1,
                             &color_bounds,
                             &mut alpha_data,
                         )
@@ -963,10 +944,6 @@ impl DirectWriteState {
                         }
                     };
                     let bounds = bounds(point(color_bounds.left, color_bounds.top), color_size);
-                    let alpha_data = alpha_data
-                        .chunks_exact(3)
-                        .flat_map(|chunk| [chunk[0], chunk[1], chunk[2], 255])
-                        .collect::<Vec<_>>();
                     glyph_layers.push(GlyphLayerTexture::new(
                         &self.components.gpu_state,
                         run_color,
@@ -1083,10 +1060,18 @@ impl DirectWriteState {
         unsafe { device_context.PSSetSamplers(0, Some(&gpu_state.sampler)) };
         unsafe { device_context.OMSetBlendState(&gpu_state.blend_state, None, 0xffffffff) };
 
+        let crate::FontInfo {
+            gamma_ratios,
+            grayscale_enhanced_contrast,
+        } = DirectXRenderer::get_font_info();
+
         for layer in glyph_layers {
             let params = GlyphLayerTextureParams {
                 run_color: layer.run_color,
                 bounds: layer.bounds,
+                gamma_ratios: *gamma_ratios,
+                grayscale_enhanced_contrast: *grayscale_enhanced_contrast,
+                _pad: [0f32; 3],
             };
             unsafe {
                 let mut dest = std::mem::zeroed();
@@ -1246,7 +1231,7 @@ impl GlyphLayerTexture {
             Height: texture_size.height as u32,
             MipLevels: 1,
             ArraySize: 1,
-            Format: DXGI_FORMAT_R8G8B8A8_UNORM,
+            Format: DXGI_FORMAT_R8_UNORM,
             SampleDesc: DXGI_SAMPLE_DESC {
                 Count: 1,
                 Quality: 0,
@@ -1282,7 +1267,7 @@ impl GlyphLayerTexture {
                 0,
                 None,
                 alpha_data.as_ptr() as _,
-                (texture_size.width * 4) as u32,
+                texture_size.width as u32,
                 0,
             )
         };
@@ -1300,6 +1285,9 @@ impl GlyphLayerTexture {
 struct GlyphLayerTextureParams {
     bounds: Bounds<i32>,
     run_color: Rgba,
+    gamma_ratios: [f32; 4],
+    grayscale_enhanced_contrast: f32,
+    _pad: [f32; 3],
 }
 
 struct TextRendererWrapper(pub IDWriteTextRenderer);
