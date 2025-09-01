@@ -45,14 +45,15 @@ use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, update_settings_file};
 use smol::stream::StreamExt;
-use std::fmt::Write;
 use std::{
     collections::BTreeMap,
     ops::RangeInclusive,
     path::Path,
+    rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
 };
+use std::{fmt::Write, path::PathBuf};
 use util::{ResultExt, debug_panic, markdown::MarkdownCodeBlock};
 use uuid::Uuid;
 
@@ -523,6 +524,22 @@ pub enum AgentMessageContent {
     ToolUse(LanguageModelToolUse),
 }
 
+pub trait TerminalHandle {
+    fn id(&self, cx: &AsyncApp) -> Result<acp::TerminalId>;
+    fn current_output(&self, cx: &AsyncApp) -> Result<acp::TerminalOutputResponse>;
+    fn wait_for_exit(&self, cx: &AsyncApp) -> Result<Shared<Task<acp::TerminalExitStatus>>>;
+}
+
+pub trait ThreadEnvironment {
+    fn create_terminal(
+        &self,
+        command: String,
+        cwd: Option<PathBuf>,
+        output_byte_limit: Option<u64>,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<Rc<dyn TerminalHandle>>>;
+}
+
 #[derive(Debug)]
 pub enum ThreadEvent {
     UserMessage(UserMessage),
@@ -533,6 +550,14 @@ pub enum ThreadEvent {
     ToolCallAuthorization(ToolCallAuthorization),
     Retry(acp_thread::RetryStatus),
     Stop(acp::StopReason),
+}
+
+#[derive(Debug)]
+pub struct NewTerminal {
+    pub command: String,
+    pub output_byte_limit: Option<u64>,
+    pub cwd: Option<PathBuf>,
+    pub response: oneshot::Sender<Result<Entity<acp_thread::Terminal>>>,
 }
 
 #[derive(Debug)]
@@ -1024,7 +1049,11 @@ impl Thread {
         }
     }
 
-    pub fn add_default_tools(&mut self, cx: &mut Context<Self>) {
+    pub fn add_default_tools(
+        &mut self,
+        environment: Rc<dyn ThreadEnvironment>,
+        cx: &mut Context<Self>,
+    ) {
         let language_registry = self.project.read(cx).languages().clone();
         self.add_tool(CopyPathTool::new(self.project.clone()));
         self.add_tool(CreateDirectoryTool::new(self.project.clone()));
@@ -1045,7 +1074,7 @@ impl Thread {
             self.project.clone(),
             self.action_log.clone(),
         ));
-        self.add_tool(TerminalTool::new(self.project.clone(), cx));
+        self.add_tool(TerminalTool::new(self.project.clone(), environment));
         self.add_tool(ThinkingTool);
         self.add_tool(WebSearchTool);
     }
@@ -2383,19 +2412,6 @@ impl ToolCallEventStream {
                 acp_thread::ToolCallUpdateDiff {
                     id: acp::ToolCallId(self.tool_use_id.to_string().into()),
                     diff,
-                }
-                .into(),
-            )))
-            .ok();
-    }
-
-    pub fn update_terminal(&self, terminal: Entity<acp_thread::Terminal>) {
-        self.stream
-            .0
-            .unbounded_send(Ok(ThreadEvent::ToolCallUpdate(
-                acp_thread::ToolCallUpdateTerminal {
-                    id: acp::ToolCallId(self.tool_use_id.to_string().into()),
-                    terminal,
                 }
                 .into(),
             )))
