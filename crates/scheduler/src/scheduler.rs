@@ -184,6 +184,7 @@ impl BackgroundExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::channel::oneshot;
     use futures::executor::block_on;
 
     #[test]
@@ -206,6 +207,28 @@ mod tests {
         scheduler.run();
 
         // Block on the task to ensure it resolves
+        let result = block_on(task);
+        assert_eq!(result, 42);
+    }
+
+    #[test]
+    fn test_send_from_bg_to_fg() {
+        let scheduler = Arc::new(TestScheduler::new());
+        let foreground = ForegroundExecutor::new(scheduler.clone());
+        let background = BackgroundExecutor::new(scheduler.clone());
+
+        let (sender, receiver) = oneshot::channel::<i32>();
+
+        background
+            .spawn(async move {
+                sender.send(42).unwrap();
+            })
+            .detach();
+
+        let task = foreground.spawn(async move { receiver.await.unwrap() });
+
+        scheduler.run();
+
         let result = block_on(task);
         assert_eq!(result, 42);
     }
