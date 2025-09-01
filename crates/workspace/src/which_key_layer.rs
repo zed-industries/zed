@@ -165,9 +165,6 @@ impl Render for WhichKeyLayer {
             (Pixels::ZERO, Pixels::ZERO, Pixels::ZERO)
         };
 
-        let margin = DynamicSpacing::Base12.px(cx);
-        let padding = DynamicSpacing::Base16.px(cx);
-
         let mut binding_data: Vec<_> = bindings
             .iter()
             .map(|binding| {
@@ -250,8 +247,13 @@ impl Render for WhichKeyLayer {
                 .into_any_element();
         }
 
+        let column_gap = DynamicSpacing::Base32.px(cx); // Gap between columns
+        let row_gap = DynamicSpacing::Base04.px(cx); // Gap between rows
+        let content_gap = px(10.0); // Gap between current pending keystroke and grid of keys+actions
+        let margin = DynamicSpacing::Base08.px(cx); // Margin around the panel
+        let padding = DynamicSpacing::Base16.px(cx); // Padding inside the panel
+
         // Calculate column width based on UI font size (as maximum)
-        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
         let max_column_width = ui_font_size * 125.0;
 
         // Calculate actual column width based on largest binding element
@@ -273,10 +275,6 @@ impl Render for WhichKeyLayer {
         let window_width = window.viewport_size().width;
         let available_width =
             window_width - (left_margin + right_margin + (margin * 2.0) + (padding * 2.0));
-
-        let column_gap = DynamicSpacing::Base32.px(cx); // Gap between columns
-        let row_gap = DynamicSpacing::Base04.px(cx); // Gap between rows
-        let content_gap = px(10.0); // Gap between current pending keystroke and grid of keys+actions
 
         // Calculate number of columns that can fit
         let columns = ((available_width + column_gap) / (column_width + column_gap))
@@ -337,7 +335,7 @@ impl Render for WhichKeyLayer {
         let total_height = base_height
             + (rows_per_column * row_height) /* Rows */
             + ((rows_per_column - 1) * row_gap); /* Rows gap */
-        // Calculate minimum height (to show 2.5 rows, using 2.15 as the last row spills over in the margin)
+        // Calculate minimum height (to show ~2.5 rows, using 2.15 as the last row spills over in the margin)
         let minimum_rows = (rows_per_column as f32).min(2.15);
         let minimum_height = base_height
             + (minimum_rows * row_height) /* Rows */
