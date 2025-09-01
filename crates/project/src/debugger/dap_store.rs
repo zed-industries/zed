@@ -258,8 +258,14 @@ impl DapStore {
                     let connection;
                     if let Some(c) = binary.connection {
                         let host = Ipv4Addr::LOCALHOST;
-                        let port = dap::transport::TcpTransport::unused_port(host).await?;
-                        port_forwarding = Some((port, c.host.to_string(), c.port));
+                        let port;
+                        if remote.read_with(cx, |remote, _cx| remote.shares_network_interface())? {
+                            port = c.port;
+                            port_forwarding = None;
+                        } else {
+                            port = dap::transport::TcpTransport::unused_port(host).await?;
+                            port_forwarding = Some((port, c.host.to_string(), c.port));
+                        }
                         connection = Some(TcpArguments {
                             port,
                             host,
@@ -276,7 +282,6 @@ impl DapStore {
                             &binary.arguments,
                             &binary.envs,
                             binary.cwd.map(|path| path.display().to_string()),
-                            None,
                             port_forwarding,
                         )
                     })??;

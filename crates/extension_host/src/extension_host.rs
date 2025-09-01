@@ -43,7 +43,7 @@ use language::{
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
 use release_channel::ReleaseChannel;
-use remote::RemoteClient;
+use remote::{RemoteClient, RemoteConnectionOptions};
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -117,7 +117,7 @@ pub struct ExtensionStore {
     pub wasm_host: Arc<WasmHost>,
     pub wasm_extensions: Vec<(Arc<ExtensionManifest>, WasmExtension)>,
     pub tasks: Vec<Task<()>>,
-    pub remote_clients: HashMap<String, WeakEntity<RemoteClient>>,
+    pub remote_clients: HashMap<RemoteConnectionOptions, WeakEntity<RemoteClient>>,
     pub ssh_registered_tx: UnboundedSender<()>,
 }
 
@@ -1779,16 +1779,15 @@ impl ExtensionStore {
     }
 
     pub fn register_remote_client(&mut self, client: Entity<RemoteClient>, cx: &mut Context<Self>) {
-        let connection_options = client.read(cx).connection_options();
-        let ssh_url = connection_options.ssh_url();
+        let options = client.read(cx).connection_options();
 
-        if let Some(existing_client) = self.remote_clients.get(&ssh_url)
+        if let Some(existing_client) = self.remote_clients.get(&options)
             && existing_client.upgrade().is_some()
         {
             return;
         }
 
-        self.remote_clients.insert(ssh_url, client.downgrade());
+        self.remote_clients.insert(options, client.downgrade());
         self.ssh_registered_tx.unbounded_send(()).ok();
     }
 }

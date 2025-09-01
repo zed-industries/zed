@@ -11,6 +11,7 @@ use editor::{
     Anchor, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN, MultiBuffer, SelectionEffects,
     actions::{Backtab, SelectAll, Tab},
     items::active_match_index,
+    multibuffer_context_lines,
 };
 use futures::{StreamExt, stream::FuturesOrdered};
 use gpui::{
@@ -345,7 +346,7 @@ impl ProjectSearch {
                                     excerpts.set_anchored_excerpts_for_path(
                                         buffer,
                                         ranges,
-                                        editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                                        multibuffer_context_lines(cx),
                                         cx,
                                     )
                                 })

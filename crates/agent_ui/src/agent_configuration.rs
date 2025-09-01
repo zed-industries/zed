@@ -331,6 +331,7 @@ impl AgentConfiguration {
                             .gap_0p5()
                             .child(
                                 h_flex()
+                                    .pr_1()
                                     .w_full()
                                     .gap_2()
                                     .justify_between()
@@ -1022,6 +1023,7 @@ impl AgentConfiguration {
                             .gap_0p5()
                             .child(
                                 h_flex()
+                                    .pr_1()
                                     .w_full()
                                     .gap_2()
                                     .justify_between()
@@ -1052,7 +1054,7 @@ impl AgentConfiguration {
                             )
                             .child(
                                 Label::new(
-                                    "Bring the agent of your choice to Zed via our new Agent Client Protocol.",
+                                    "All agents connected through the Agent Client Protocol.",
                                 )
                                 .color(Color::Muted),
                             ),
@@ -1063,7 +1065,12 @@ impl AgentConfiguration {
                         ExternalAgent::Gemini,
                         cx,
                     ))
-                    // TODO add CC
+                    .child(self.render_agent_server(
+                        IconName::AiClaude,
+                        "Claude Code",
+                        ExternalAgent::ClaudeCode,
+                        cx,
+                    ))
                     .children(user_defined_agents),
             )
     }
@@ -1093,26 +1100,24 @@ impl AgentConfiguration {
                     .child(Label::new(name.clone())),
             )
             .child(
-                h_flex().gap_1().child(
-                    Button::new(
-                        SharedString::from(format!("start_acp_thread-{name}")),
-                        "Start New Thread",
-                    )
-                    .label_size(LabelSize::Small)
-                    .icon(IconName::Thread)
-                    .icon_position(IconPosition::Start)
-                    .icon_size(IconSize::XSmall)
-                    .icon_color(Color::Muted)
-                    .on_click(move |_, window, cx| {
-                        window.dispatch_action(
-                            NewExternalAgentThread {
-                                agent: Some(agent.clone()),
-                            }
-                            .boxed_clone(),
-                            cx,
-                        );
-                    }),
-                ),
+                Button::new(
+                    SharedString::from(format!("start_acp_thread-{name}")),
+                    "Start New Thread",
+                )
+                .label_size(LabelSize::Small)
+                .icon(IconName::Thread)
+                .icon_position(IconPosition::Start)
+                .icon_size(IconSize::XSmall)
+                .icon_color(Color::Muted)
+                .on_click(move |_, window, cx| {
+                    window.dispatch_action(
+                        NewExternalAgentThread {
+                            agent: Some(agent.clone()),
+                        }
+                        .boxed_clone(),
+                        cx,
+                    );
+                }),
             )
     }
 }

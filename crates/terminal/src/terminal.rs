@@ -354,7 +354,7 @@ impl TerminalBuilder {
         window_id: u64,
         completion_tx: Option<Sender<Option<ExitStatus>>>,
         cx: &App,
-        activation_script: Option<String>,
+        activation_script: Vec<String>,
     ) -> Result<TerminalBuilder> {
         // If the parent environment doesn't have a locale set
         // (As is the case when launched from a .app on MacOS),
@@ -493,7 +493,9 @@ impl TerminalBuilder {
         let pty_tx = event_loop.channel();
         let _io_thread = event_loop.spawn(); // DANGER
 
-        let terminal = Terminal {
+        let no_task = task.is_none();
+
+        let mut terminal = Terminal {
             task,
             pty_tx: Notifier(pty_tx),
             completion_tx,
@@ -518,7 +520,7 @@ impl TerminalBuilder {
             last_hyperlink_search_position: None,
             #[cfg(windows)]
             shell_program,
-            activation_script,
+            activation_script: activation_script.clone(),
             template: CopyTemplate {
                 shell,
                 env,
@@ -528,6 +530,14 @@ impl TerminalBuilder {
                 window_id,
             },
         };
+
+        if !activation_script.is_empty() && no_task {
+            for activation_script in activation_script {
+                terminal.input(activation_script.into_bytes());
+                terminal.write_to_pty(b"\n");
+            }
+            terminal.clear();
+        }
 
         Ok(TerminalBuilder {
             terminal,
@@ -712,7 +722,7 @@ pub struct Terminal {
     #[cfg(windows)]
     shell_program: Option<String>,
     template: CopyTemplate,
-    activation_script: Option<String>,
+    activation_script: Vec<String>,
 }
 
 struct CopyTemplate {
@@ -2218,7 +2228,7 @@ mod tests {
                 0,
                 Some(completion_tx),
                 cx,
-                None,
+                vec![],
             )
             .unwrap()
             .subscribe(cx)
