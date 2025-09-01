@@ -2476,7 +2476,7 @@ async fn test_delete_to_beginning_of_line(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_delete_to_word_boundary(cx: &mut TestAppContext) {
+async fn test_delete_whitespaces(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
@@ -2723,8 +2723,49 @@ async fn test_delete_to_word_boundary(cx: &mut TestAppContext) {
         );
     });
     cx.assert_editor_state("ˇ");
+}
 
-    // TODO kb split off into a separate test
+#[gpui::test]
+async fn test_delete_to_bracket(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                brackets: BracketPairConfig {
+                    pairs: vec![
+                        BracketPair {
+                            start: "\"".to_string(),
+                            end: "\"".to_string(),
+                            close: true,
+                            surround: true,
+                            newline: false,
+                        },
+                        BracketPair {
+                            start: "(".to_string(),
+                            end: ")".to_string(),
+                            close: true,
+                            surround: true,
+                            newline: true,
+                        },
+                    ],
+                    ..BracketPairConfig::default()
+                },
+                ..LanguageConfig::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_brackets_query(
+            r#"
+                ("(" @open ")" @close)
+                ("\"" @open "\"" @close)
+            "#,
+        )
+        .unwrap(),
+    );
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
     cx.set_state(r#"todo!("// ˇTODO");"#);
     cx.update_editor(|editor, window, cx| {
         editor.delete_to_previous_word_start(
@@ -2761,6 +2802,63 @@ async fn test_delete_to_word_boundary(cx: &mut TestAppContext) {
         );
     });
     cx.assert_editor_state(r#"todo!ˇTODO");"#);
+
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                greedy: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state(r#"ˇTODO");"#);
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                greedy: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state(r#"ˇTODO");"#);
+
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_next_word_end(
+            &DeleteToNextWordEnd {
+                ignore_newlines: true,
+                greedy: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state(r#"ˇ");"#);
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_next_word_end(
+            &DeleteToNextWordEnd {
+                ignore_newlines: true,
+                greedy: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state(r#"ˇ"#);
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_next_word_end(
+            &DeleteToNextWordEnd {
+                ignore_newlines: true,
+                greedy: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state(r#"ˇ"#);
 }
 
 #[gpui::test]

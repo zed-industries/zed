@@ -371,21 +371,11 @@ pub fn adjust_greedy_deletion(
         whitespace_sequences.push((whitespace_sequence_start, current_offset));
     }
 
-    dbg!(&whitespace_sequences);
     let closest_whitespace_end = if is_backward {
         whitespace_sequences.last().map(|&(start, _)| start)
     } else {
         whitespace_sequences.first().map(|&(_, end)| end)
     };
-
-    dbg!((
-        delete_from,
-        delete_until,
-        is_backward,
-        closest_bracket,
-        trimmed_delete_range.clone(),
-        closest_whitespace_end,
-    ));
 
     closest_whitespace_end
         .unwrap_or_else(|| {
