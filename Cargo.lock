@@ -9512,6 +9512,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "line_ending_selector"
+version = "0.1.0"
+dependencies = [
+ "editor",
+ "fuzzy",
+ "gpui",
+ "language",
+ "picker",
+ "project",
+ "ui",
+ "util",
+ "workspace",
+ "workspace-hack",
+]
+
+[[package]]
 name = "link-cplusplus"
 version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -20467,6 +20483,7 @@ dependencies = [
  "language_tools",
  "languages",
  "libc",
+ "line_ending_selector",
  "livekit_client",
  "log",
  "markdown",

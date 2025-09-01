@@ -282,6 +282,14 @@ pub enum Operation {
         /// The language server ID.
         server_id: LanguageServerId,
     },
+
+    /// An update to the line ending type of this buffer.
+    UpdateLineEnding {
+        /// The line ending type.
+        line_ending: LineEnding,
+        /// The buffer's lamport timestamp.
+        lamport_timestamp: clock::Lamport,
+    },
 }
 
 /// An event that occurs in a buffer.
@@ -1240,6 +1248,21 @@ impl Buffer {
 
     pub fn language_registry(&self) -> Option<Arc<LanguageRegistry>> {
         self.syntax_map.lock().language_registry()
+    }
+
+    /// Assign the line ending type to the buffer.
+    pub fn set_line_ending(&mut self, line_ending: LineEnding, cx: &mut Context<Self>) {
+        self.text.set_line_ending(line_ending);
+
+        let lamport_timestamp = self.text.lamport_clock.tick();
+        self.send_operation(
+            Operation::UpdateLineEnding {
+                line_ending,
+                lamport_timestamp,
+            },
+            true,
+            cx,
+        );
     }
 
     /// Assign the buffer a new [`Capability`].
@@ -2563,7 +2586,7 @@ impl Buffer {
             Operation::UpdateSelections { selections, .. } => selections
                 .iter()
                 .all(|s| self.can_resolve(&s.start) && self.can_resolve(&s.end)),
-            Operation::UpdateCompletionTriggers { .. } => true,
+            Operation::UpdateCompletionTriggers { .. } | Operation::UpdateLineEnding { .. } => true,
         }
     }
 
@@ -2627,6 +2650,13 @@ impl Buffer {
                         .insert(server_id, triggers.iter().cloned().collect());
                     self.completion_triggers.extend(triggers);
                 }
+                self.text.lamport_clock.observe(lamport_timestamp);
+            }
+            Operation::UpdateLineEnding {
+                line_ending,
+                lamport_timestamp,
+            } => {
+                self.text.set_line_ending(line_ending);
                 self.text.lamport_clock.observe(lamport_timestamp);
             }
         }
@@ -4819,6 +4849,9 @@ impl operation_queue::Operation for Operation {
                 lamport_timestamp, ..
             }
             | Operation::UpdateCompletionTriggers {
+                lamport_timestamp, ..
+            }
+            | Operation::UpdateLineEnding {
                 lamport_timestamp, ..
             } => *lamport_timestamp,
         }
