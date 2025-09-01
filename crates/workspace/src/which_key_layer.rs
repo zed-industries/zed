@@ -280,6 +280,7 @@ impl Render for WhichKeyLayer {
 
         // Calculate number of columns that can fit
         let gap_width = DynamicSpacing::Base32.px(cx);
+        let row_gap = DynamicSpacing::Base04.px(cx);
         let columns = ((available_width + gap_width) / (column_width + gap_width))
             .floor()
             .max(1.0) as usize;
@@ -305,14 +306,13 @@ impl Render for WhichKeyLayer {
                 .iter()
                 .map(|(remaining_keystrokes, _)| {
                     Label::new(text_for_keystrokes(remaining_keystrokes, cx))
-                        .weight(FontWeight::BOLD)
                         .into_any_element()
                         .layout_as_root(AvailableSpace::min_size(), window, cx)
                         .width
                 })
                 .max_by(|x, y| x.0.partial_cmp(&y.0).unwrap());
 
-            let column = v_flex().gap_1().children(column_items.iter().map(
+            let column = v_flex().gap(row_gap).children(column_items.iter().map(
                 |(remaining_keystrokes, action_name)| {
                     create_aligned_binding_element(
                         remaining_keystrokes,
@@ -326,20 +326,71 @@ impl Render for WhichKeyLayer {
             column_elements.push(column);
         }
 
+        // Calculate real size of 1 row
+        let row_height = Label::new("")
+            .into_any_element()
+            .layout_as_root(AvailableSpace::min_size(), window, cx)
+            .height;
+
+        let content_gap = px(10.0);
+
+        // Calculate height
+        let base_height = (padding * 2) /* Container padding */
+            + (row_height) /* Pending keys */
+            + content_gap; /* Pending keys gap */
+        let total_height = base_height
+            + (rows_per_column * row_height) /* Rows */
+            + ((rows_per_column - 1) * row_gap); /* Rows gap */
+        // Calculate minimum height (to show 2.5 rows, using 2.15 as the last row spills over in the margin)
+        let minimum_rows = (rows_per_column as f32).min(2.15);
+        let minimum_height = base_height
+            + (minimum_rows * row_height) /* Rows */
+            + ((minimum_rows - 1.0) * row_gap); /* Rows gap */
+
+        let cursor_position = self
+            .workspace
+            .read_with(cx, |workspace, cx| {
+                workspace
+                    .active_item(cx)
+                    .and_then(|item| item.pixel_position_of_cursor(cx))
+            })
+            .unwrap_or(None);
+
+        let panel_bottom_y = bottom_margin + status_bar_height + margin;
+
+        // Adjust height to avoid covering cursor
+        let adjusted_height = if let Some(cursor_pos) = cursor_position {
+            let cursor_padding = ((ThemeSettings::get_global(cx).buffer_font_size(cx)
+                * ThemeSettings::get_global(cx).line_height())
+                / 2.0)
+                + margin;
+            let window_height = window.viewport_size().height;
+            // Calculate available space from cursor to bottom of panel
+            let available_space = window_height - panel_bottom_y - cursor_pos.y - cursor_padding;
+            if available_space > px(0.0) {
+                total_height.min(available_space).max(minimum_height)
+            } else {
+                total_height
+            }
+        } else {
+            total_height
+        };
+
         div()
             .id("which-key-buffer-panel-scroll")
             .occlude()
             .absolute()
-            .bottom(bottom_margin + status_bar_height + margin)
+            .bottom(panel_bottom_y)
             .left(left_margin + margin)
             .right(right_margin + margin)
             .elevation_3(cx)
             .p(padding)
             .overflow_y_scroll()
-            .max_h_128()
+            // .max_h_128()
+            .h(adjusted_height)
             .child(
                 v_flex()
-                    .gap_2p5()
+                    .gap(content_gap)
                     .child(
                         Label::new(text_for_keystrokes(pending_keys, cx)).weight(FontWeight::BOLD),
                     )
