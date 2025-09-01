@@ -88,7 +88,34 @@ pub fn derive_settings_ui(input: proc_macro::TokenStream) -> proc_macro::TokenSt
     proc_macro::TokenStream::from(expanded)
 }
 
+fn extract_type_from_option(ty: TokenStream) -> TokenStream {
+    match option_inner_type(ty.clone()) {
+        Some(inner_type) => inner_type,
+        None => ty,
+    }
+}
+
+fn option_inner_type(ty: TokenStream) -> Option<TokenStream> {
+    let ty = syn::parse2::<syn::Type>(ty).ok()?;
+    let syn::Type::Path(path) = ty else {
+        return None;
+    };
+    let segment = path.path.segments.last()?;
+    if segment.ident != "Option" {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return None;
+    };
+    let arg = args.args.first()?;
+    let syn::GenericArgument::Type(ty) = arg else {
+        return None;
+    };
+    return Some(ty.to_token_stream());
+}
+
 fn map_ui_item_to_render(path: &str, ty: TokenStream) -> TokenStream {
+    let ty = extract_type_from_option(ty);
     quote! {
         settings::SettingsUiEntry {
             item: match #ty::settings_ui_item() {

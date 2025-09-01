@@ -96,12 +96,12 @@ actions!(
     ]
 );
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
 pub struct ClientSettingsContent {
     server_url: Option<String>,
 }
 
-#[derive(Deserialize, SettingsUi)]
+#[derive(Deserialize)]
 pub struct ClientSettings {
     pub server_url: String,
 }
@@ -122,12 +122,12 @@ impl Settings for ClientSettings {
     fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
-#[derive(Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, SettingsUi)]
 pub struct ProxySettingsContent {
     proxy: Option<String>,
 }
 
-#[derive(Deserialize, Default, SettingsUi)]
+#[derive(Deserialize, Default)]
 pub struct ProxySettings {
     pub proxy: Option<String>,
 }
@@ -520,14 +520,14 @@ impl<T: 'static> Drop for PendingEntitySubscription<T> {
     }
 }
 
-#[derive(Copy, Clone, Deserialize, Debug, SettingsUi)]
+#[derive(Copy, Clone, Deserialize, Debug)]
 pub struct TelemetrySettings {
     pub diagnostics: bool,
     pub metrics: bool,
 }
 
 /// Control what info is collected by Zed.
-#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, Debug, SettingsUi)]
 pub struct TelemetrySettingsContent {
     /// Send debug info like crash reports.
     ///
