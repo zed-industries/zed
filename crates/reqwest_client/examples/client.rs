@@ -20,14 +20,19 @@ fn main() {
             ];
             let mut requests = requests.into_iter().collect::<FuturesUnordered<_>>();
             while let Some(response) = requests.next().await {
+                let unwrapped_response = response.unwrap();
+                println!("Status: {}", unwrapped_response.status());
+                println!("Headers: {:#?}", unwrapped_response.headers());
+
                 let mut body = String::new();
-                response
-                    .unwrap()
+                match unwrapped_response
                     .into_body()
                     .read_to_string(&mut body)
                     .await
-                    .unwrap();
-                println!("{}", &body.len());
+                {
+                    Ok(body) => println!("{}", body),
+                    Err(e) => println!("Failed to get text: {}", e),
+                }
             }
             println!("{:?}", start.elapsed());
 
