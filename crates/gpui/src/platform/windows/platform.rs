@@ -3,7 +3,7 @@ use std::{
     ffi::OsStr,
     mem::ManuallyDrop,
     path::{Path, PathBuf},
-    rc::Rc,
+    rc::{Rc, Weak},
     sync::Arc,
 };
 
@@ -32,7 +32,7 @@ use windows::{
 use crate::*;
 
 pub(crate) struct WindowsPlatform {
-    state: RefCell<WindowsPlatformState>,
+    inner: Rc<WindowsPlatformInner>,
     raw_window_handles: Arc<RwLock<SmallVec<[SafeHwnd; 4]>>>,
     // The below members will never change throughout the entire lifecycle of the app.
     icon: HICON,
@@ -92,10 +92,9 @@ impl WindowsPlatform {
             OleInitialize(None).context("unable to initialize Windows OLE")?;
         }
         let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
-        let main_thread_id_win32 = unsafe { GetCurrentThreadId() };
         let validation_number = rand::random::<usize>();
         register_platform_window_class();
-        let context = PlatformWindowCreateContext { inner: None };
+        let mut context = PlatformWindowCreateContext { inner: None };
         let result = unsafe {
             CreateWindowExW(
                 WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_TOOLWINDOW,
@@ -112,11 +111,11 @@ impl WindowsPlatform {
                 Some(&context as *const _ as *const _),
             )
         };
-        let this = context.inner.take().unwrap()?;
-        let hwnd = result?;
+        let inner = context.inner.take().unwrap()?;
+        let handle = result?;
         let dispatcher = Arc::new(WindowsDispatcher::new(
             main_sender,
-            main_thread_id_win32,
+            handle,
             validation_number,
         ));
         let disable_direct_composition = std::env::var(DISABLE_DIRECT_COMPOSITION)
@@ -138,12 +137,12 @@ impl WindowsPlatform {
                 .context("Error creating drop target helper.")?
         };
         let icon = load_icon().unwrap_or_default();
-        let state = RefCell::new(WindowsPlatformState::new());
         let raw_window_handles = Arc::new(RwLock::new(SmallVec::new()));
         let windows_version = WindowsVersion::new().context("Error retrieve windows version")?;
 
         Ok(Self {
-            state,
+            inner,
+            handle,
             raw_window_handles,
             icon,
             main_receiver,
@@ -155,7 +154,6 @@ impl WindowsPlatform {
             bitmap_factory,
             drop_target_helper,
             validation_number,
-            main_thread_id_win32,
         })
     }
 
@@ -199,18 +197,18 @@ impl WindowsPlatform {
         WindowCreationInfo {
             icon: self.icon,
             executor: self.foreground_executor.clone(),
-            current_cursor: self.state.borrow().current_cursor,
+            current_cursor: self.inner.state.borrow().current_cursor,
             windows_version: self.windows_version,
             drop_target_helper: self.drop_target_helper.clone(),
             validation_number: self.validation_number,
             main_receiver: self.main_receiver.clone(),
-            main_thread_id_win32: self.main_thread_id_win32,
+            platform_window_handle: self.handle,
             disable_direct_composition: self.disable_direct_composition,
         }
     }
 
     fn handle_dock_action_event(&self, action_idx: usize) {
-        let mut lock = self.state.borrow_mut();
+        let mut lock = self.inner.state.borrow_mut();
         if let Some(mut callback) = lock.callbacks.app_menu_action.take() {
             let Some(action) = lock
                 .jump_list
@@ -224,16 +222,17 @@ impl WindowsPlatform {
             };
             drop(lock);
             callback(&*action);
-            self.state.borrow_mut().callbacks.app_menu_action = Some(callback);
+            self.inner.state.borrow_mut().callbacks.app_menu_action = Some(callback);
         }
     }
 
     fn handle_input_lang_change(&self) {
-        let mut lock = self.state.borrow_mut();
+        let mut lock = self.inner.state.borrow_mut();
         if let Some(mut callback) = lock.callbacks.keyboard_layout_change.take() {
             drop(lock);
             callback();
-            self.state
+            self.inner
+                .state
                 .borrow_mut()
                 .callbacks
                 .keyboard_layout_change
@@ -297,7 +296,7 @@ impl WindowsPlatform {
                 actions.push(dock_menu);
             }
         });
-        let mut lock = self.state.borrow_mut();
+        let mut lock = self.inner.state.borrow_mut();
         lock.jump_list.dock_menus = actions;
         update_jump_list(&lock.jump_list).log_err();
     }
@@ -313,7 +312,7 @@ impl WindowsPlatform {
                 actions.push(dock_menu);
             }
         });
-        let mut lock = self.state.borrow_mut();
+        let mut lock = self.inner.state.borrow_mut();
         lock.jump_list.dock_menus = actions;
         lock.jump_list.recent_workspaces = entries;
         update_jump_list(&lock.jump_list)
@@ -380,7 +379,11 @@ impl Platform for WindowsPlatform {
     }
 
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>) {
-        self.state.borrow_mut().callbacks.keyboard_layout_change = Some(callback);
+        self.inner
+            .state
+            .borrow_mut()
+            .callbacks
+            .keyboard_layout_change = Some(callback);
     }
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
@@ -388,7 +391,7 @@ impl Platform for WindowsPlatform {
         self.begin_vsync_thread();
         self.handle_events();
 
-        if let Some(ref mut callback) = self.state.borrow_mut().callbacks.quit {
+        if let Some(ref mut callback) = self.inner.state.borrow_mut().callbacks.quit {
             callback();
         }
     }
@@ -503,7 +506,7 @@ impl Platform for WindowsPlatform {
     }
 
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
-        self.state.borrow_mut().callbacks.open_urls = Some(callback);
+        self.inner.state.borrow_mut().callbacks.open_urls = Some(callback);
     }
 
     fn prompt_for_paths(
@@ -573,19 +576,19 @@ impl Platform for WindowsPlatform {
     }
 
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
-        self.state.borrow_mut().callbacks.quit = Some(callback);
+        self.inner.state.borrow_mut().callbacks.quit = Some(callback);
     }
 
     fn on_reopen(&self, callback: Box<dyn FnMut()>) {
-        self.state.borrow_mut().callbacks.reopen = Some(callback);
+        self.inner.state.borrow_mut().callbacks.reopen = Some(callback);
     }
 
     fn set_menus(&self, menus: Vec<Menu>, _keymap: &Keymap) {
-        self.state.borrow_mut().menus = menus.into_iter().map(|menu| menu.owned()).collect();
+        self.inner.state.borrow_mut().menus = menus.into_iter().map(|menu| menu.owned()).collect();
     }
 
     fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
-        Some(self.state.borrow().menus.clone())
+        Some(self.inner.state.borrow().menus.clone())
     }
 
     fn set_dock_menu(&self, menus: Vec<MenuItem>, _keymap: &Keymap) {
@@ -593,15 +596,19 @@ impl Platform for WindowsPlatform {
     }
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
-        self.state.borrow_mut().callbacks.app_menu_action = Some(callback);
+        self.inner.state.borrow_mut().callbacks.app_menu_action = Some(callback);
     }
 
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>) {
-        self.state.borrow_mut().callbacks.will_open_app_menu = Some(callback);
+        self.inner.state.borrow_mut().callbacks.will_open_app_menu = Some(callback);
     }
 
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
-        self.state.borrow_mut().callbacks.validate_app_menu_command = Some(callback);
+        self.inner
+            .state
+            .borrow_mut()
+            .callbacks
+            .validate_app_menu_command = Some(callback);
     }
 
     fn app_path(&self) -> Result<PathBuf> {
@@ -615,7 +622,7 @@ impl Platform for WindowsPlatform {
 
     fn set_cursor_style(&self, style: CursorStyle) {
         let hcursor = load_cursor(style);
-        let mut lock = self.state.borrow_mut();
+        let mut lock = self.inner.state.borrow_mut();
         if lock.current_cursor.map(|c| c.0) != hcursor.map(|c| c.0) {
             self.post_message(
                 WM_GPUI_CURSOR_STYLE_CHANGED,
@@ -718,8 +725,8 @@ impl Platform for WindowsPlatform {
 
     fn perform_dock_menu_action(&self, action: usize) {
         unsafe {
-            PostThreadMessageW(
-                self.main_thread_id_win32,
+            PostMessageW(
+                Some(self.handle),
                 WM_GPUI_DOCK_MENU_ACTION,
                 WPARAM(self.validation_number),
                 LPARAM(action as isize),
@@ -734,6 +741,27 @@ impl Platform for WindowsPlatform {
         entries: Vec<SmallVec<[PathBuf; 2]>>,
     ) -> Vec<SmallVec<[PathBuf; 2]>> {
         self.update_jump_list(menus, entries)
+    }
+}
+
+impl WindowsPlatformInner {
+    fn new(
+        context: &PlatformWindowCreateContext,
+        hwnd: HWND,
+        cs: &CREATESTRUCTW,
+    ) -> Result<Rc<Self>> {
+        let state = RefCell::new(WindowsPlatformState::new());
+        Ok(Rc::new(Self { state }))
+    }
+    
+    fn handle_msg(
+        self: &Rc<Self>,
+        handle: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        
     }
 }
 
@@ -754,7 +782,7 @@ pub(crate) struct WindowCreationInfo {
     pub(crate) drop_target_helper: IDropTargetHelper,
     pub(crate) validation_number: usize,
     pub(crate) main_receiver: flume::Receiver<Runnable>,
-    pub(crate) main_thread_id_win32: u32,
+    pub(crate) platform_window_handle: HWND,
     pub(crate) disable_direct_composition: bool,
 }
 
@@ -950,6 +978,42 @@ unsafe extern "system" fn window_procedure(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    if msg == WM_NCCREATE {
+        let params = lparam.0 as *const CREATESTRUCTW;
+        let params = unsafe { &*params };
+        let creation_context = params.lpCreateParams as *mut PlatformWindowCreateContext;
+        let creation_context = unsafe { &mut *creation_context };
+        return match WindowsPlatformInner::new(creation_context, hwnd, params) {
+            Ok(window_state) => {
+                let weak = Box::new(Rc::downgrade(&window_state));
+                unsafe { set_window_long(hwnd, GWLP_USERDATA, Box::into_raw(weak) as isize) };
+                creation_context.inner = Some(Ok(window_state));
+                unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+            }
+            Err(error) => {
+                creation_context.inner = Some(Err(error));
+                LRESULT(0)
+            }
+        };
+    }
+
+    let ptr = unsafe { get_window_long(hwnd, GWLP_USERDATA) } as *mut Weak<WindowsPlatformInner>;
+    if ptr.is_null() {
+        return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
+    }
+    let inner = unsafe { &*ptr };
+    let result = if let Some(inner) = inner.upgrade() {
+        inner.handle_msg(hwnd, msg, wparam, lparam)
+    } else {
+        unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+    };
+
+    if msg == WM_NCDESTROY {
+        unsafe { set_window_long(hwnd, GWLP_USERDATA, 0) };
+        unsafe { drop(Box::from_raw(ptr)) };
+    }
+
+    result
 }
 
 #[cfg(test)]
