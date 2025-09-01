@@ -11,7 +11,7 @@ use gpui::{
     Focusable, ParentElement, Render, Styled, Subscription, Task, WeakEntity, Window, actions,
     pulsating_between,
 };
-use language::{Language, LanguageName, Toolchain, ToolchainList};
+use language::{Language, LanguageName, Toolchain, ToolchainList, ToolchainScope};
 use picker::{Picker, PickerDelegate};
 use project::{DirectoryLister, Project, ProjectPath, WorktreeId};
 use std::{
@@ -20,7 +20,10 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use ui::{Divider, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, prelude::*};
+use ui::{
+    ContextMenu, ContextMenuEntry, ContextMenuItem, Divider, DocumentationAside, DocumentationSide,
+    DropdownMenu, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*,
+};
 use util::{ResultExt, maybe, paths::PathStyle};
 use workspace::{ModalView, Workspace};
 
@@ -73,6 +76,7 @@ enum AddState {
     Name {
         toolchain: Toolchain,
         editor: Entity<Editor>,
+        scope: ToolchainScope,
     },
 }
 
@@ -225,6 +229,7 @@ impl AddToolchainState {
                             editor
                         }),
                         toolchain,
+                        scope: ToolchainScope::Global,
                     };
                     this.focus_handle(cx).focus(window);
                 });
@@ -278,7 +283,10 @@ impl AddToolchainState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let AddState::Name { toolchain, editor } = &mut self.state else {
+        let AddState::Name {
+            toolchain, editor, ..
+        } = &mut self.state
+        else {
             return;
         };
 
@@ -317,9 +325,10 @@ impl Focusable for State {
 }
 impl Render for AddToolchainState {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
+        let theme = cx.theme().clone();
         let weak = self.weak.upgrade();
         let label = SharedString::new_static("Add");
+
         v_flex()
             .size_full()
             .rounded_md()
@@ -338,18 +347,23 @@ impl Render for AddToolchainState {
             .bg(theme.colors().background)
             .map(|this| match &self.state {
                 AddState::Path { picker, .. } => this.child(picker.clone()),
-                AddState::Name { editor, .. } => this
+                AddState::Name { editor, scope, .. } => this
                     .child(
-                        h_flex().w_full().child(
-                            h_flex()
-                                .w_full()
-                                .bg(theme.colors().editor_background)
-                                .p_2()
-                                .rounded_sm()
-                                .border_1()
-                                .border_color(theme.colors().border)
-                                .child(editor.clone()),
-                        ),
+                        h_flex()
+                            .w_full()
+                            .gap_1()
+                            .pl_1()
+                            .child(h_flex().p_1().child(Label::new("Name")))
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .bg(theme.colors().editor_background)
+                                    .p_2()
+                                    .rounded_sm()
+                                    .border_1()
+                                    .border_color(theme.colors().border)
+                                    .child(editor.clone()),
+                            ),
                     )
                     .child(
                         h_flex()
@@ -358,18 +372,67 @@ impl Render for AddToolchainState {
                             .bg(theme.colors().background)
                             .p_2()
                             .justify_between()
+                            .child({
+                                let current_scope = *scope;
+                                let weak = cx.weak_entity();
+                                let menu = DropdownMenu::new(
+                                    "toolchain-creator-scope-picker",
+                                    scope.label(),
+                                    ContextMenu::build(window, cx, |mut menu, window, cx| {
+                                        for s in [
+                                            ToolchainScope::Global,
+                                            ToolchainScope::Project,
+                                            ToolchainScope::Subproject,
+                                        ] {
+                                            let weak = weak.clone();
+                                            let description = s.description();
+                                            let label = s.label();
+
+                                            menu = menu.custom_entry(
+                                                move |_, _| {
+                                                    h_flex()
+                                                        .id(SharedString::from(format!(
+                                                            "toolchain-selector-dropdown-{label}"
+                                                        )))
+                                                        .gap_2()
+                                                        .child(Label::new(label))
+                                                        .child(
+                                                            Label::new(description)
+                                                                .size(LabelSize::Small)
+                                                                .color(Color::Disabled),
+                                                        )
+                                                        .tooltip(Tooltip::text(description))
+                                                        .into_any()
+                                                },
+                                                move |_, cx| {
+                                                    weak.update(cx, |this, cx| {
+                                                        if let AddState::Name { scope, .. } =
+                                                            &mut this.state
+                                                        {
+                                                            *scope = s;
+                                                            cx.notify();
+                                                        };
+                                                    })
+                                                    .ok();
+                                                },
+                                            );
+                                            if s == current_scope {
+                                                menu.select_last(window, cx);
+                                            }
+                                        }
+                                        menu
+                                    }),
+                                );
+                                h_flex().gap_1().child(Label::new("Scope")).child(menu)
+                            })
                             .map(|this| {
                                 let is_disabled = editor.read(cx).is_empty(cx);
-
+                                let handle = self.focus_handle(cx);
                                 this.child(
-                                    Label::new("Name")
-                                        .color(Color::Disabled)
-                                        .size(LabelSize::Small),
-                                )
-                                .child(
                                     Button::new("add-toolchain", label)
-                                        .key_binding(KeyBinding::for_action(
+                                        .key_binding(KeyBinding::for_action_in(
                                             &menu::Confirm,
+                                            &handle,
                                             window,
                                             cx,
                                         ))

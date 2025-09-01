@@ -29,6 +29,41 @@ pub struct Toolchain {
     pub as_json: serde_json::Value,
 }
 
+/// Declares a scope of a toolchain added by user.
+///
+/// When the user adds a toolchain, we give them an option to see that toolchain in:
+/// - All of their projects
+/// - A project they're currently in.
+/// - Only in the subproject they're currently in.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ToolchainScope {
+    Subproject,
+    Project,
+    Global,
+}
+
+impl ToolchainScope {
+    pub fn label(&self) -> &'static str {
+        match self {
+            ToolchainScope::Subproject => "Subproject",
+            ToolchainScope::Project => "Project",
+            ToolchainScope::Global => "Global",
+        }
+    }
+
+    pub fn description(&self) -> &'static str {
+        match self {
+            ToolchainScope::Subproject => {
+                "This toolchain will be available only in the subproject you're currently in."
+            }
+            ToolchainScope::Project => {
+                "This toolchain will be available in all locations in your current project."
+            }
+            ToolchainScope::Global => "This toolchain will be available in all of your projects.",
+        }
+    }
+}
+
 impl std::hash::Hash for Toolchain {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         let Self {
