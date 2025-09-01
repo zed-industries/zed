@@ -955,7 +955,7 @@ async fn installation_id() -> Result<IdType> {
 async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp) -> Result<()> {
     if let Some(locations) = restorable_workspace_locations(cx, &app_state).await {
         let use_system_window_tabs = cx
-            .update(|cx| WorkspaceSettings::get(None, cx).use_system_window_tabs)
+            .update(|cx| WorkspaceSettings::get_global(cx).use_system_window_tabs)
             .unwrap_or(false);
         let mut results: Vec<Result<(), Error>> = Vec::new();
         let mut tasks = Vec::new();
