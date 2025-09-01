@@ -1,0 +1,27 @@
+<file_path>
+zed/crates/scheduler/Cargo.toml
+</file_path>
+
+<edit_description>
+Create Cargo.toml for scheduler crate
+</edit_description>
+
+[package]
+name = "scheduler"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/scheduler.rs"
+doctest = false
+
+[features]
+test-support = []
+
+[dependencies]
+workspace-hack.workspace = true
