@@ -14,7 +14,7 @@ impl Menu {
     /// Create an OwnedMenu from this Menu
     pub fn owned(self) -> OwnedMenu {
         OwnedMenu {
-            name: self.name.to_string().into(),
+            name: self.name.clone(),
             items: self.items.into_iter().map(|item| item.owned()).collect(),
         }
     }
@@ -35,7 +35,7 @@ impl OsMenu {
     /// Create an OwnedOsMenu from this OsMenu
     pub fn owned(self) -> OwnedOsMenu {
         OwnedOsMenu {
-            name: self.name.to_string().into(),
+            name: self.name.clone(),
             menu_type: self.menu_type,
         }
     }

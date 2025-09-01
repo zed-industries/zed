@@ -465,18 +465,14 @@ impl LineLayoutCache {
         curr_frame.used_wrapped_lines.clear();
     }
 
-    pub fn layout_wrapped_line<Text>(
+    pub fn layout_wrapped_line(
         &self,
-        text: Text,
+        text: &SharedString,
         font_size: Pixels,
         runs: &[FontRun],
         wrap_width: Option<Pixels>,
         max_lines: Option<usize>,
-    ) -> Arc<WrappedLineLayout>
-    where
-        Text: AsRef<str>,
-        SharedString: From<Text>,
-    {
+    ) -> Arc<WrappedLineLayout> {
         let key = &CacheKeyRef {
             text: text.as_ref(),
             font_size,
@@ -500,8 +496,7 @@ impl LineLayoutCache {
             layout
         } else {
             drop(current_frame);
-            let text = SharedString::from(text);
-            let unwrapped_layout = self.layout_line::<&SharedString>(&text, font_size, runs, None);
+            let unwrapped_layout = self.layout_line(text, Clone::clone, font_size, runs, None);
             let wrap_boundaries = if let Some(wrap_width) = wrap_width {
                 unwrapped_layout.compute_wrap_boundaries(text.as_ref(), wrap_width, max_lines)
             } else {
@@ -513,7 +508,7 @@ impl LineLayoutCache {
                 wrap_width,
             });
             let key = Arc::new(CacheKey {
-                text,
+                text: text.clone(),
                 font_size,
                 runs: SmallVec::from(runs),
                 wrap_width,
@@ -533,13 +528,13 @@ impl LineLayoutCache {
     pub fn layout_line<Text>(
         &self,
         text: Text,
+        to_shared: impl FnOnce(Text) -> SharedString,
         font_size: Pixels,
         runs: &[FontRun],
         force_width: Option<Pixels>,
     ) -> Arc<LineLayout>
     where
         Text: AsRef<str>,
-        SharedString: From<Text>,
     {
         let key = &CacheKeyRef {
             text: text.as_ref(),
@@ -560,7 +555,7 @@ impl LineLayoutCache {
             current_frame.used_lines.push(key);
             layout
         } else {
-            let text = SharedString::from(text);
+            let text = to_shared(text);
             let mut layout = self
                 .platform_text_system
                 .layout_line(&text, font_size, runs);

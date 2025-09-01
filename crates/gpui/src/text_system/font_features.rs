@@ -5,18 +5,18 @@ use schemars::{JsonSchema, json_schema};
 
 /// The OpenType features that can be configured for a given font.
 #[derive(Default, Clone, Eq, PartialEq, Hash)]
-pub struct FontFeatures(pub Arc<Vec<(String, u32)>>);
+pub struct FontFeatures(pub Arc<[(String, u32)]>);
 
 impl FontFeatures {
     /// Disables `calt`.
     pub fn disable_ligatures() -> Self {
-        Self(Arc::new(vec![("calt".into(), 0)]))
+        Self(Arc::from([("calt".into(), 0)]))
     }
 
     /// Get the tag name list of the font OpenType features
     /// only enabled or disabled features are returned
     pub fn tag_value_list(&self) -> &[(String, u32)] {
-        self.0.as_slice()
+        &self.0
     }
 
     /// Returns whether the `calt` feature is enabled.
@@ -103,7 +103,7 @@ impl<'de> serde::Deserialize<'de> for FontFeatures {
                     }
                 }
 
-                Ok(FontFeatures(Arc::new(feature_list)))
+                Ok(FontFeatures(Arc::from(feature_list)))
             }
         }
 

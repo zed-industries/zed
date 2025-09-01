@@ -361,7 +361,7 @@ impl EditableSettingControl for UiFontLigaturesControl {
             features.push(("calt".into(), value));
         }
 
-        settings.ui_font_features = Some(FontFeatures(Arc::new(features)));
+        settings.ui_font_features = Some(FontFeatures(Arc::from(features)));
     }
 }
 

@@ -249,7 +249,7 @@ impl EditableSettingControl for BufferFontLigaturesControl {
             features.push(("calt".into(), value));
         }
 
-        settings.buffer_font_features = Some(FontFeatures(Arc::new(features)));
+        settings.buffer_font_features = Some(FontFeatures(Arc::from(features)));
     }
 }
 

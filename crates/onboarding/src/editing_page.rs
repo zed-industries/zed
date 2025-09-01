@@ -166,7 +166,7 @@ fn write_font_ligatures(enabled: bool, cx: &mut App) {
             features.push(("calt".into(), bit));
         }
 
-        theme_settings.buffer_font_features = Some(FontFeatures(Arc::new(features)));
+        theme_settings.buffer_font_features = Some(FontFeatures(Arc::from(features)));
     });
 }
 

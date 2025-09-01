@@ -500,10 +500,10 @@ impl WindowTextSystem {
             && let Some(second_line) = split_lines.next()
         {
             processed = true;
-            process_line(first_line.to_string().into());
-            process_line(second_line.to_string().into());
+            process_line(SharedString::new(first_line));
+            process_line(SharedString::new(second_line));
             for line_text in split_lines {
-                process_line(line_text.to_string().into());
+                process_line(SharedString::new(line_text));
             }
         }
 
@@ -566,7 +566,8 @@ impl WindowTextSystem {
         }
 
         let layout = self.line_layout_cache.layout_line(
-            &SharedString::new(text),
+            text,
+            SharedString::new,
             font_size,
             &font_runs,
             force_width,

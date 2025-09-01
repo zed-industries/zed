@@ -393,7 +393,7 @@ impl KeyBindingContextPredicate {
                 let (identifier, rest) = source.split_at(len);
                 source = skip_whitespace(rest);
                 Ok((
-                    KeyBindingContextPredicate::Identifier(identifier.to_string().into()),
+                    KeyBindingContextPredicate::Identifier(SharedString::new(identifier)),
                     source,
                 ))
             }
@@ -401,7 +401,7 @@ impl KeyBindingContextPredicate {
                 let (operator, rest) = source.split_at(1);
                 source = skip_whitespace(rest);
                 Ok((
-                    KeyBindingContextPredicate::Identifier(operator.to_string().into()),
+                    KeyBindingContextPredicate::Identifier(SharedString::new(operator)),
                     source,
                 ))
             }

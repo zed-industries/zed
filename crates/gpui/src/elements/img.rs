@@ -64,7 +64,7 @@ impl<'a> From<&'a str> for ImageSource {
         if is_uri(s) {
             Self::Resource(Resource::Uri(s.to_string().into()))
         } else {
-            Self::Resource(Resource::Embedded(s.to_string().into()))
+            Self::Resource(Resource::Embedded(SharedString::new(s)))
         }
     }
 }
