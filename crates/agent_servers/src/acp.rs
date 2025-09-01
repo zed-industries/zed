@@ -329,16 +329,17 @@ impl AgentConnection for AcpConnection {
             .detach();
     }
 
-    fn commands(
+    fn list_commands(
         &self,
         session_id: &agent_client_protocol::SessionId,
-        cx: &App,
-    ) -> Option<Rc<dyn acp_thread::AgentSessionCommands>> {
+        _cx: &App,
+    ) -> Option<Rc<dyn acp_thread::AgentSessionListCommands>> {
         if self.agent_capabilities.supports_commands {
             Some(Rc::new(AcpAgentSessionCommands {
                 session_id: session_id.clone(),
                 connection: self.connection.clone(),
-            }) as Rc<dyn acp_thread::AgentSessionCommands>)
+            })
+                as Rc<dyn acp_thread::AgentSessionListCommands>)
         } else {
             None
         }
@@ -354,8 +355,8 @@ struct AcpAgentSessionCommands {
     connection: Rc<acp::ClientSideConnection>,
 }
 
-impl acp_thread::AgentSessionCommands for AcpAgentSessionCommands {
-    fn list(&self, cx: &mut App) -> Task<Result<Vec<acp::CommandInfo>>> {
+impl acp_thread::AgentSessionListCommands for AcpAgentSessionCommands {
+    fn run(&self, cx: &mut App) -> Task<Result<Vec<acp::CommandInfo>>> {
         let connection = self.connection.clone();
         let session_id = self.session_id.clone();
 
@@ -368,10 +369,6 @@ impl acp_thread::AgentSessionCommands for AcpAgentSessionCommands {
                 Err(e) => Err(anyhow::anyhow!(e)),
             }
         })
-    }
-
-    fn run(&self, command: String, argument: Option<String>, cx: &mut App) -> Task<Result<()>> {
-        Task::ready(Ok(()))
     }
 }
 

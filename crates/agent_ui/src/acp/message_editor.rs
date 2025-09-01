@@ -2,7 +2,7 @@ use crate::{
     acp::completion_provider::ContextPickerCompletionProvider,
     context_picker::{ContextPickerAction, fetch_context_picker::fetch_url_content},
 };
-use acp_thread::{AgentSessionCommands, MentionUri, selection_name};
+use acp_thread::{AgentSessionListCommands, MentionUri, selection_name};
 use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use agent2::HistoryStore;
@@ -222,7 +222,7 @@ impl MessageEditor {
             .collect()
     }
 
-    pub fn set_command_provider(&mut self, provider: Option<Rc<dyn AgentSessionCommands>>) {
+    pub fn set_command_provider(&mut self, provider: Option<Rc<dyn AgentSessionListCommands>>) {
         self.completion_provider.set_command_provider(provider);
     }
 

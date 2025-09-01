@@ -56,11 +56,11 @@ pub trait AgentConnection {
         None
     }
 
-    fn commands(
+    fn list_commands(
         &self,
         _session_id: &acp::SessionId,
         _cx: &App,
-    ) -> Option<Rc<dyn AgentSessionCommands>> {
+    ) -> Option<Rc<dyn AgentSessionListCommands>> {
         None
     }
 
@@ -104,9 +104,8 @@ pub trait AgentSessionSetTitle {
     fn run(&self, title: SharedString, cx: &mut App) -> Task<Result<()>>;
 }
 
-pub trait AgentSessionCommands {
-    fn list(&self, cx: &mut App) -> Task<Result<Vec<acp::CommandInfo>>>;
-    fn run(&self, command: String, argument: Option<String>, cx: &mut App) -> Task<Result<()>>;
+pub trait AgentSessionListCommands {
+    fn run(&self, cx: &mut App) -> Task<Result<Vec<acp::CommandInfo>>>;
 }
 
 pub trait AgentTelemetry {

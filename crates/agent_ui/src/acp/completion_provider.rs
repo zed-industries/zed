@@ -4,7 +4,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use acp_thread::{AgentSessionCommands, MentionUri};
+use acp_thread::{AgentSessionListCommands, MentionUri};
 use agent_client_protocol as acp;
 use agent2::{HistoryEntry, HistoryStore};
 use anyhow::Context as _;
@@ -70,7 +70,7 @@ pub struct ContextPickerCompletionProvider {
     history_store: Entity<HistoryStore>,
     prompt_store: Option<Entity<PromptStore>>,
     prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
-    command_provider: RefCell<Option<Rc<dyn AgentSessionCommands>>>,
+    list_commands_provider: RefCell<Option<Rc<dyn AgentSessionListCommands>>>,
 }
 
 impl ContextPickerCompletionProvider {
@@ -87,12 +87,12 @@ impl ContextPickerCompletionProvider {
             history_store,
             prompt_store,
             prompt_capabilities,
-            command_provider: RefCell::default(),
+            list_commands_provider: RefCell::default(),
         }
     }
 
-    pub fn set_command_provider(&self, provider: Option<Rc<dyn AgentSessionCommands>>) {
-        *self.command_provider.borrow_mut() = provider;
+    pub fn set_command_provider(&self, provider: Option<Rc<dyn AgentSessionListCommands>>) {
+        *self.list_commands_provider.borrow_mut() = provider;
     }
 
     fn completion_for_entry(
@@ -379,12 +379,12 @@ impl ContextPickerCompletionProvider {
     }
 
     fn search_slash_commands(&self, query: String, cx: &mut App) -> Task<Vec<acp::CommandInfo>> {
-        let Some(commands) = self.command_provider.borrow().clone() else {
+        let Some(list_commands) = self.list_commands_provider.borrow().clone() else {
             return Task::ready(Vec::new());
         };
-        let commands_task = commands.list(cx);
+        let list_commands_task = list_commands.run(cx);
         cx.spawn(async move |cx| {
-            let Some(commands) = commands_task
+            let Some(commands) = list_commands_task
                 .await
                 .context("failed to query slash commands")
                 .log_err()
