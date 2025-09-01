@@ -9,6 +9,8 @@ use std::future::Future;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
+use futures::channel::oneshot;
+use futures::executor;
 use std::thread::{self, ThreadId};
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
@@ -192,28 +194,22 @@ mod tests {
     fn test_background_task_with_foreground_wait() {
         let scheduler = Arc::new(TestScheduler::new(SchedulerConfig::default()));
 
-        let flag = Arc::new(AtomicBool::new(false));
-        assert!(!flag.load(Ordering::SeqCst));
+        // Create a oneshot channel to send data from background to foreground
+        let (tx, rx) = oneshot::channel();
 
-        // Spawn background task
+        // Spawn background task that sends 42
         let bg_executor = BackgroundExecutor::new(scheduler.clone()).unwrap();
-        let _background_task = bg_executor.spawn({
-            let flag = flag.clone();
-            async move {
-                flag.store(true, Ordering::SeqCst);
-            }
-        });
-
-        // Spawn foreground task (nothing special, just demonstrates both types)
-        let fg_executor = ForegroundExecutor::new(scheduler.clone()).unwrap();
-        let _fg_task = fg_executor.spawn(async move {
-            // Foreground-specific work if needed
+        let _background_task = bg_executor.spawn(async move {
+            tx.send(42).unwrap();
         });
 
         // Run all tasks
         scheduler.run();
 
-        // Background task should have run and set the flag
-        assert!(flag.load(Ordering::SeqCst));
+        // Block on receiving the value from the background task
+        let received = executor::block_on(rx).unwrap();
+
+        // Assert on the result
+        assert_eq!(received, 42);
     }
 }
