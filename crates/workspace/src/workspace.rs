@@ -19,7 +19,7 @@ mod workspace_settings;
 
 pub use crate::notifications::NotificationFrame;
 pub use dock::Panel;
-use encoding::all::UTF_8;
+use encoding_rs::UTF_8;
 use fs::encodings::EncodingWrapper;
 pub use path_list::PathList;
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
