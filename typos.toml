@@ -35,8 +35,6 @@ extend-exclude = [
     "crates/rpc/src/auth.rs",
     # glsl isn't recognized by this tool.
     "extensions/glsl/languages/glsl/",
-    # Windows likes its abbreviations.
-    "crates/gpui/src/platform/windows/",
     # Some typos in the base mdBook CSS.
     "docs/theme/css/",
     # Spellcheck triggers on `|Fixe[sd]|` regex part.
