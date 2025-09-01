@@ -221,6 +221,7 @@ mod tests {
     use futures::executor::block_on;
     use futures::sink::SinkExt;
     use futures::stream::StreamExt;
+    use std::collections::HashSet;
 
     #[test]
     fn test_foreground_executor_spawn() {
@@ -268,102 +269,70 @@ mod tests {
         assert_eq!(result, 42);
     }
 
-    #[test]
-    fn test_randomize_order_setting() {
-        use std::collections::HashSet;
+    async fn capture_execution_order(config: SchedulerConfig) -> Vec<String> {
+        let scheduler = Arc::new(TestScheduler::new(config));
+        let foreground = ForegroundExecutor::new(scheduler.clone());
+        let background = BackgroundExecutor::new(scheduler.clone());
 
-        // Test deterministic mode: different seeds should produce same execution order
-        let mut deterministic_results = HashSet::new();
+        let (sender, receiver) = mpsc::unbounded::<String>();
+
+        // Spawn foreground tasks
+        for i in 0..3 {
+            let mut sender = sender.clone();
+            foreground
+                .spawn(async move {
+                    sender.send(format!("fg-{}", i)).await.ok();
+                })
+                .detach();
+        }
+
+        // Spawn background tasks
+        for i in 0..3 {
+            let mut sender = sender.clone();
+            background
+                .spawn(async move {
+                    sender.send(format!("bg-{}", i)).await.ok();
+                })
+                .detach();
+        }
+
+        drop(sender); // Close sender to signal no more messages
+        scheduler.run();
+
+        receiver.collect().await
+    }
+
+    #[test]
+    fn test_deterministic_order_consistency() {
+        let mut orders = HashSet::new();
+
         for seed in 0..10 {
             let config = SchedulerConfig {
                 seed,
                 randomize_order: false,
             };
-            let scheduler = Arc::new(TestScheduler::new(config));
-            let foreground = ForegroundExecutor::new(scheduler.clone());
-            let background = BackgroundExecutor::new(scheduler.clone());
-
-            let (sender, receiver) = mpsc::unbounded::<String>();
-
-            // Spawn foreground tasks
-            for i in 0..3 {
-                let mut sender = sender.clone();
-                foreground
-                    .spawn(async move {
-                        sender.send(format!("fg-{}", i)).await.ok();
-                    })
-                    .detach();
-            }
-
-            // Spawn background tasks
-            for i in 0..3 {
-                let mut sender = sender.clone();
-                background
-                    .spawn(async move {
-                        sender.send(format!("bg-{}", i)).await.ok();
-                    })
-                    .detach();
-            }
-
-            scheduler.run();
-
-            drop(sender); // Close sender to signal no more messages
-            let order = block_on(async { receiver.take(6).collect::<Vec<_>>().await });
-            deterministic_results.insert(order);
+            let order = block_on(capture_execution_order(config));
+            assert_eq!(order.len(), 6);
+            orders.insert(order);
         }
 
-        // All deterministic runs should produce the same result
-        assert_eq!(
-            deterministic_results.len(),
-            1,
-            "Deterministic mode should always produce same execution order"
-        );
+        assert_eq!(orders.len(), 1, "All runs should produce the same order");
+    }
 
-        // Test randomized mode: different seeds can produce different execution orders
-        let mut randomized_results = HashSet::new();
+    #[test]
+    fn test_randomized_order_works() {
+        let mut orders = HashSet::new();
+
         for seed in 0..20 {
             let config = SchedulerConfig {
                 seed,
                 randomize_order: true,
             };
-            let scheduler = Arc::new(TestScheduler::new(config));
-            let foreground = ForegroundExecutor::new(scheduler.clone());
-            let background = BackgroundExecutor::new(scheduler.clone());
-
-            let (sender, receiver) = mpsc::unbounded::<String>();
-
-            // Spawn foreground tasks
-            for i in 0..3 {
-                let mut sender = sender.clone();
-                foreground
-                    .spawn(async move {
-                        sender.send(format!("fg-{}", i)).await.ok();
-                    })
-                    .detach();
-            }
-
-            // Spawn background tasks
-            for i in 0..3 {
-                let mut sender = sender.clone();
-                background
-                    .spawn(async move {
-                        sender.send(format!("bg-{}", i)).await.ok();
-                    })
-                    .detach();
-            }
-
-            scheduler.run();
-
-            drop(sender); // Close sender to signal no more messages
-            let order = block_on(async { receiver.take(6).collect::<Vec<_>>().await });
-            randomized_results.insert(order);
+            let order = block_on(capture_execution_order(config));
+            assert_eq!(order.len(), 6);
+            orders.insert(order);
         }
 
-        // Randomized mode should produce multiple different execution orders
-        // (though it might not with small task counts, so we just verify it works without crashing)
-        assert!(
-            !randomized_results.is_empty(),
-            "Randomized mode should produce some execution order"
-        );
+        assert!(!orders.is_empty(), "Randomized mode should produce orders");
     }
 }
