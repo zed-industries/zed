@@ -1955,6 +1955,21 @@ impl AcpThread {
         })
     }
 
+    pub fn kill_terminal(
+        &mut self,
+        terminal_id: acp::TerminalId,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        self.terminals
+            .get(&terminal_id)
+            .context("Terminal not found")?
+            .update(cx, |terminal, cx| {
+                terminal.kill(cx);
+            });
+
+        Ok(())
+    }
+
     pub fn release_terminal(
         &mut self,
         terminal_id: acp::TerminalId,

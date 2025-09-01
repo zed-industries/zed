@@ -451,6 +451,15 @@ impl acp::Client for ClientDelegate {
         )
     }
 
+    async fn kill_terminal(&self, args: acp::KillTerminalRequest) -> Result<(), acp::Error> {
+        self.session_thread(&args.session_id)?
+            .update(&mut self.cx.clone(), |thread, cx| {
+                thread.kill_terminal(args.terminal_id, cx)
+            })??;
+
+        Ok(())
+    }
+
     async fn release_terminal(&self, args: acp::ReleaseTerminalRequest) -> Result<(), acp::Error> {
         self.session_thread(&args.session_id)?
             .update(&mut self.cx.clone(), |thread, cx| {
