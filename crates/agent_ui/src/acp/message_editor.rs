@@ -1531,7 +1531,13 @@ impl Addon for MessageEditorAddon {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::Cell, ops::Range, path::Path, rc::Rc, sync::Arc};
+    use std::{
+        cell::{Cell, RefCell},
+        ops::Range,
+        path::Path,
+        rc::Rc,
+        sync::Arc,
+    };
 
     use acp_thread::MentionUri;
     use agent_client_protocol as acp;
@@ -1685,7 +1691,163 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_context_completion_provider(cx: &mut TestAppContext) {
+    async fn test_completion_provider_commands(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let app_state = cx.update(AppState::test);
+
+        cx.update(|cx| {
+            language::init(cx);
+            editor::init(cx);
+            workspace::init(app_state.clone(), cx);
+            Project::init_settings(cx);
+        });
+
+        let project = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = window.root(cx).unwrap();
+
+        let mut cx = VisualTestContext::from_window(*window, cx);
+
+        let context_store = cx.new(|cx| ContextStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
+        let prompt_capabilities = Rc::new(Cell::new(acp::PromptCapabilities::default()));
+        let available_commands = Rc::new(RefCell::new(vec![
+            acp::AvailableCommand {
+                name: "quick-math".to_string(),
+                description: "2 + 2 = 4 - 1 = 3".to_string(),
+                input: None,
+            },
+            acp::AvailableCommand {
+                name: "say-hello".to_string(),
+                description: "Say hello to whoever you want".to_string(),
+                input: Some(acp::AvailableCommandInput::Unstructured {
+                    hint: "Who do you want to say hello to?".to_string(),
+                }),
+            },
+        ]));
+
+        let editor = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let workspace_handle = cx.weak_entity();
+            let message_editor = cx.new(|cx| {
+                MessageEditor::new(
+                    workspace_handle,
+                    project.clone(),
+                    history_store.clone(),
+                    None,
+                    prompt_capabilities.clone(),
+                    available_commands.clone(),
+                    "Test",
+                    EditorMode::AutoHeight {
+                        max_lines: None,
+                        min_lines: 1,
+                    },
+                    window,
+                    cx,
+                )
+            });
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.add_item(
+                    Box::new(cx.new(|_| MessageEditorItem(message_editor.clone()))),
+                    true,
+                    true,
+                    None,
+                    window,
+                    cx,
+                );
+            });
+            message_editor.read(cx).focus_handle(cx).focus(window);
+            message_editor.read(cx).editor().clone()
+        });
+
+        cx.simulate_input("/");
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            assert_eq!(editor.text(cx), "/");
+            assert!(editor.has_visible_completions_menu());
+
+            assert_eq!(
+                current_completion_labels_with_documentation(editor),
+                &[
+                    ("quick-math".into(), "2 + 2 = 4 - 1 = 3".into()),
+                    ("say-hello".into(), "Say hello to whoever you want".into())
+                ]
+            );
+            editor.set_text("", window, cx);
+        });
+
+        cx.simulate_input("/qui");
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            assert_eq!(editor.text(cx), "/qui");
+            assert!(editor.has_visible_completions_menu());
+
+            assert_eq!(
+                current_completion_labels_with_documentation(editor),
+                &[("quick-math".into(), "2 + 2 = 4 - 1 = 3".into())]
+            );
+            editor.set_text("", window, cx);
+        });
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            assert!(editor.has_visible_completions_menu());
+            editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
+        });
+
+        cx.run_until_parked();
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            assert_eq!(editor.text(cx), "/quick-math");
+            assert!(!editor.has_visible_completions_menu());
+            editor.set_text("", window, cx);
+        });
+
+        cx.simulate_input("/say");
+
+        editor.update_in(&mut cx, |editor, _window, cx| {
+            assert_eq!(editor.text(cx), "/say");
+            assert!(editor.has_visible_completions_menu());
+
+            assert_eq!(
+                current_completion_labels_with_documentation(editor),
+                &[("say-hello".into(), "Say hello to whoever you want".into())]
+            );
+        });
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            assert!(editor.has_visible_completions_menu());
+            editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
+        });
+
+        cx.run_until_parked();
+
+        editor.update_in(&mut cx, |editor, _window, cx| {
+            assert_eq!(editor.text(cx), "/say-hello ");
+            assert!(editor.has_visible_completions_menu());
+
+            assert_eq!(
+                current_completion_labels_with_documentation(editor),
+                &[("say-hello".into(), "Say hello to whoever you want".into())]
+            );
+        });
+
+        cx.simulate_input("GPT5");
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            assert!(editor.has_visible_completions_menu());
+            editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
+        });
+
+        cx.run_until_parked();
+
+        editor.update_in(&mut cx, |editor, _window, cx| {
+            assert_eq!(editor.text(cx), "/say-hello GPT5");
+            assert!(!editor.has_visible_completions_menu());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_context_completion_provider_mentions(cx: &mut TestAppContext) {
         init_test(cx);
 
         let app_state = cx.update(AppState::test);
@@ -1809,7 +1971,6 @@ mod tests {
             assert_eq!(editor.text(cx), "Lorem @");
             assert!(editor.has_visible_completions_menu());
 
-            // Only files since we have default capabilities
             assert_eq!(
                 current_completion_labels(editor),
                 &[
@@ -2203,6 +2364,22 @@ mod tests {
         completions
             .into_iter()
             .map(|completion| completion.label.text)
+            .collect::<Vec<_>>()
+    }
+
+    fn current_completion_labels_with_documentation(editor: &Editor) -> Vec<(String, String)> {
+        let completions = editor.current_completions().expect("Missing completions");
+        completions
+            .into_iter()
+            .map(|completion| {
+                (
+                    completion.label.text,
+                    completion
+                        .documentation
+                        .map(|d| d.text().to_string())
+                        .unwrap_or_default(),
+                )
+            })
             .collect::<Vec<_>>()
     }
 }
