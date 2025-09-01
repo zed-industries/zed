@@ -696,6 +696,7 @@ features = [
     "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Gdi",
     "Win32_Graphics_Imaging",
+    "Win32_Graphics_Hlsl",
     "Win32_Networking_WinSock",
     "Win32_Security",
     "Win32_Security_Credentials",
