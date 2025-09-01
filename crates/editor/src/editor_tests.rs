@@ -6170,8 +6170,7 @@ async fn test_rewrap_block_comments(cx: &mut TestAppContext) {
     );
 
     // selection w/ abutting short block comments
-    // FIXME unhandled edge case; not correct, just documenting known issues
-    // should not be combined; should rewrap as 2 comments
+    // TODO: should not be combined; should rewrap as 2 comments
     assert_rewrap(
         indoc! {"
             «/* Lorem ipsum dolor sit amet, consectetur adipiscing elit. */
@@ -6201,7 +6200,7 @@ async fn test_rewrap_block_comments(cx: &mut TestAppContext) {
         &mut cx,
     );
 
-    // FIXME same as above, but with delimiters on separate line
+    // TODO: same as above, but with delimiters on separate line
     // assert_rewrap(
     //     indoc! {"
     //         «/* Lorem ipsum dolor sit amet, consectetur adipiscing elit.
