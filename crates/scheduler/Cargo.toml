@@ -1,11 +1,3 @@
-<file_path>
-zed/crates/scheduler/Cargo.toml
-</file_path>
-
-<edit_description>
-Create Cargo.toml for scheduler crate
-</edit_description>
-
 [package]
 name = "scheduler"
 version = "0.1.0"
@@ -24,4 +16,7 @@ doctest = false
 test-support = []
 
 [dependencies]
+async-task = "4.7.1"
+rand = "0.8"
+rand_chacha = "0.3"
 workspace-hack.workspace = true
