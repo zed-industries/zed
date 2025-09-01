@@ -108,8 +108,8 @@ impl BackgroundExecutor {
         let mut future = pin!(async { future.await }.fuse());
         self.block(async {
             futures::select_biased! {
-                _ = timer => None,
                 output = future => Some(output),
+                _ = timer => None,
             }
         })
     }

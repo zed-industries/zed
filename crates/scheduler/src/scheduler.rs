@@ -15,7 +15,7 @@ use rand_chacha::ChaCha8Rng;
 use std::{
     collections::VecDeque,
     future::Future,
-    panic,
+    panic::{self, AssertUnwindSafe},
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -121,7 +121,16 @@ impl TestScheduler {
     /// Run a test multiple times with sequential seeds (0, 1, 2, ...)
     pub fn many<R>(iterations: usize, mut f: impl AsyncFnMut(Arc<TestScheduler>) -> R) -> Vec<R> {
         (0..iterations as u64)
-            .map(|i| Self::with_seed(i, &mut f))
+            .map(|seed| {
+                let mut unwind_safe_f = AssertUnwindSafe(&mut f);
+                match panic::catch_unwind(move || Self::with_seed(seed, &mut *unwind_safe_f)) {
+                    Ok(result) => result,
+                    Err(error) => {
+                        eprintln!("Failing Seed: {seed}");
+                        panic::resume_unwind(error);
+                    }
+                }
+            })
             .collect()
     }
 
@@ -199,13 +208,21 @@ impl TestScheduler {
             return true;
         }
 
-        let state = &mut *self.state.lock();
-        if let Some(timer) = state.timers.choose(&mut state.rng) {
-            self.clock.set_now(timer.expiration);
+        if self.advance_clock() {
             return true;
         }
 
         false
+    }
+
+    fn advance_clock(&self) -> bool {
+        let state = &mut *self.state.lock();
+        if let Some(timer) = state.timers.choose(&mut state.rng) {
+            self.clock.set_now(timer.expiration);
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -296,9 +313,21 @@ impl Scheduler for TestScheduler {
     fn block(&self, runnable: Runnable) {
         let waker = runnable.waker();
 
-        while self.state.lock().rng.gen_bool(0.5) && self.step() {}
-        runnable.run();
         while self.state.lock().rng.gen_bool(0.5) {
+            if self.state.lock().rng.gen_bool(0.3) {
+                self.advance_clock();
+            }
+
+            self.step();
+        }
+
+        runnable.run();
+
+        while self.state.lock().rng.gen_bool(0.5) {
+            if self.state.lock().rng.gen_bool(0.3) {
+                self.advance_clock();
+            }
+
             if !self.step() {
                 return;
             }

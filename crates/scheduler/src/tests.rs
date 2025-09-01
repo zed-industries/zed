@@ -3,14 +3,16 @@ use futures::{
     FutureExt,
     channel::{mpsc, oneshot},
     executor::block_on,
+    future,
     sink::SinkExt,
     stream::{FuturesUnordered, StreamExt},
 };
 use std::{
     cell::RefCell,
-    collections::HashSet,
+    collections::{BTreeSet, HashSet},
     pin::Pin,
     rc::Rc,
+    sync::Arc,
     task::{Context, Poll},
 };
 
@@ -244,23 +246,12 @@ fn test_block() {
 #[test]
 #[should_panic(expected = "Parking forbidden")]
 fn test_parking_panics() {
-    // Custom future that yields indefinitely without completing
-    struct NeverFuture;
-
-    impl Future for NeverFuture {
-        type Output = ();
-
-        fn poll(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Self::Output> {
-            Poll::Pending
-        }
-    }
-
     let scheduler = Arc::new(TestScheduler::new(
         Arc::new(TestClock::new(Instant::now())),
         SchedulerConfig::default(),
     ));
     let executor = BackgroundExecutor::new(scheduler);
-    executor.block(NeverFuture);
+    executor.block(future::pending::<()>());
 }
 
 #[test]
@@ -313,4 +304,57 @@ fn test_helper_methods() {
         task.await
     });
     assert_eq!(result, 99);
+}
+
+#[test]
+fn test_block_with_timeout() {
+    // Test case: future completes within timeout
+    TestScheduler::once(async |scheduler| {
+        let background = scheduler.background();
+        let mut future = future::ready(42);
+        let output = background.block_with_timeout(&mut future, Duration::from_millis(100));
+        assert_eq!(output, Some(42));
+    });
+
+    // Test case: future times out
+    TestScheduler::once(async |scheduler| {
+        let background = scheduler.background();
+        let mut future = future::pending::<()>();
+        let output = background.block_with_timeout(&mut future, Duration::from_millis(50));
+        assert_eq!(output, None);
+    });
+
+    // Test case: future makes progress via timer but still times out
+    let mut results = BTreeSet::new();
+    TestScheduler::many(100, async |scheduler| {
+        let background = scheduler.background();
+        let mut task = background.spawn(async move {
+            Yield { polls: 10 }.await;
+            42
+        });
+        let output = background.block_with_timeout(&mut task, Duration::from_millis(50));
+        results.insert(output);
+    });
+    assert_eq!(
+        results.into_iter().collect::<Vec<_>>(),
+        vec![None, Some(42)]
+    );
+}
+
+struct Yield {
+    polls: usize,
+}
+
+impl Future for Yield {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.polls -= 1;
+        if self.polls == 0 {
+            Poll::Ready(())
+        } else {
+            cx.waker().wake_by_ref();
+            Poll::Pending
+        }
+    }
 }
