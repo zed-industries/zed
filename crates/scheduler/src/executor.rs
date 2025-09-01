@@ -72,21 +72,27 @@ impl BackgroundExecutor {
     }
 
     pub fn block<Fut: Future>(&self, future: Fut) -> Fut::Output {
-        let mut future = pin!(future);
-        let waker = Waker::from(Arc::new(WakerFn::new({
-            let unparker = self.scheduler.unparker();
-            move || {
-                unparker.unpark();
-            }
-        })));
-        let mut cx = Context::from_waker(&waker);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let (runnable, mut task) = unsafe {
+            async_task::spawn_unchecked(future, move |runnable| {
+                sender.send(runnable).unwrap();
+            })
+        };
+
+        self.scheduler.block(runnable);
         loop {
-            match future.as_mut().poll(&mut cx) {
+            while let Ok(runnable) = receiver.try_recv() {
+                self.scheduler.block(runnable);
+            }
+
+            let unparker = self.scheduler.unparker();
+            let waker = Waker::from(Arc::new(WakerFn::new(move || {
+                unparker.unpark();
+            })));
+            let mut cx = Context::from_waker(&waker);
+            match task.poll_unpin(&mut cx) {
                 Poll::Ready(result) => return result,
                 Poll::Pending => {
-                    if self.scheduler.step() {
-                        continue;
-                    }
                     self.scheduler.park(None);
                 }
             }
