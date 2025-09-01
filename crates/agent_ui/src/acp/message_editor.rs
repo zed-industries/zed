@@ -1998,7 +1998,6 @@ mod tests {
             image: true,
             audio: true,
             embedded_context: true,
-            supports_commands: true,
         });
 
         cx.simulate_input("Lorem ");
@@ -2070,7 +2069,6 @@ mod tests {
             image: true,
             audio: true,
             embedded_context: true,
-            supports_commands: true,
         };
 
         let contents = message_editor

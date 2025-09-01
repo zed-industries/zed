@@ -1038,6 +1038,11 @@ struct SlashCommandCompletion {
 
 impl SlashCommandCompletion {
     fn try_parse(line: &str, offset_to_line: usize) -> Option<Self> {
+        // If we decide to support commands that are not at the beginning of the prompt, we can remove this check
+        if !line.starts_with('/') || offset_to_line != 0 {
+            return None;
+        }
+
         let last_command_start = line.rfind('/')?;
         if last_command_start >= line.len() {
             return Some(Self::default());
@@ -1148,63 +1153,58 @@ mod tests {
 
     #[test]
     fn test_slash_command_completion_parse() {
-        assert_eq!(SlashCommandCompletion::try_parse("Lorem Ipsum", 0), None);
-
         assert_eq!(
-            SlashCommandCompletion::try_parse("Lorem /", 0),
+            SlashCommandCompletion::try_parse("/", 0),
             Some(SlashCommandCompletion {
-                source_range: 6..7,
+                source_range: 0..1,
                 command: None,
                 argument: None,
             })
         );
 
         assert_eq!(
-            SlashCommandCompletion::try_parse("Lorem /help", 0),
+            SlashCommandCompletion::try_parse("/help", 0),
             Some(SlashCommandCompletion {
-                source_range: 6..11,
+                source_range: 0..5,
                 command: Some("help".to_string()),
                 argument: None,
             })
         );
 
         assert_eq!(
-            SlashCommandCompletion::try_parse("Lorem /help ", 0),
+            SlashCommandCompletion::try_parse("/help ", 0),
             Some(SlashCommandCompletion {
-                source_range: 6..11,
+                source_range: 0..5,
                 command: Some("help".to_string()),
                 argument: None,
             })
         );
 
         assert_eq!(
-            SlashCommandCompletion::try_parse("Lorem /help main.rs", 0),
+            SlashCommandCompletion::try_parse("/help arg1", 0),
             Some(SlashCommandCompletion {
-                source_range: 6..19,
+                source_range: 0..10,
                 command: Some("help".to_string()),
-                argument: Some("main.rs".to_string()),
+                argument: Some("arg1".to_string()),
             })
         );
 
         assert_eq!(
-            SlashCommandCompletion::try_parse("Lorem /help main.rs ", 0),
+            SlashCommandCompletion::try_parse("/help arg1 arg2", 0),
             Some(SlashCommandCompletion {
-                source_range: 6..19,
+                source_range: 0..15,
                 command: Some("help".to_string()),
-                argument: Some("main.rs".to_string()),
+                argument: Some("arg1 arg2".to_string()),
             })
         );
 
-        assert_eq!(
-            SlashCommandCompletion::try_parse("Lorem /help main.rs index.js", 0),
-            Some(SlashCommandCompletion {
-                source_range: 6..28,
-                command: Some("help".to_string()),
-                argument: Some("main.rs index.js".to_string()),
-            })
-        );
+        assert_eq!(SlashCommandCompletion::try_parse("Lorem Ipsum", 0), None);
 
-        assert_eq!(SlashCommandCompletion::try_parse("test/", 0), None);
+        assert_eq!(SlashCommandCompletion::try_parse("Lorem /", 0), None);
+
+        assert_eq!(SlashCommandCompletion::try_parse("Lorem /help", 0), None);
+
+        assert_eq!(SlashCommandCompletion::try_parse("Lorem/", 0), None);
     }
 
     #[test]
