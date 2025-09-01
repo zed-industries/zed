@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
-use encoding::all::UTF_8;
+use encoding_rs::UTF_8;
 use fs::{Fs, encodings::EncodingWrapper};
 use futures::{
     FutureExt,

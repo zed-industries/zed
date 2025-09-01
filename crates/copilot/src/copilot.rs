@@ -1193,7 +1193,7 @@ async fn get_copilot_lsp(fs: Arc<dyn Fs>, node_runtime: NodeRuntime) -> anyhow::
 #[cfg(test)]
 mod tests {
     use super::*;
-    use encoding::Encoding;
+    use encoding_rs::Encoding;
     use gpui::TestAppContext;
     use util::path;
 
@@ -1408,7 +1408,7 @@ mod tests {
             unimplemented!()
         }
 
-        fn load_with_encoding(&self, _: &App, _: &'static dyn Encoding) -> Task<Result<String>> {
+        fn load_with_encoding(&self, _: &App, _: &'static Encoding) -> Task<Result<String>> {
             unimplemented!()
         }
     }
