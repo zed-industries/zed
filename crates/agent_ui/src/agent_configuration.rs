@@ -15,6 +15,7 @@ use context_server::ContextServerId;
 use editor::{Editor, SelectionEffects, scroll::Autoscroll};
 use extension::ExtensionManifest;
 use extension_host::ExtensionStore;
+use feature_flags::{ClaudeCodeFeatureFlag, FeatureFlagAppExt};
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt as _, AnyView, App, AsyncWindowContext, Corner, Entity,
@@ -1065,12 +1066,14 @@ impl AgentConfiguration {
                         ExternalAgent::Gemini,
                         cx,
                     ))
-                    .child(self.render_agent_server(
-                        IconName::AiClaude,
-                        "Claude Code",
-                        ExternalAgent::ClaudeCode,
-                        cx,
-                    ))
+                    .when(cx.has_flag::<ClaudeCodeFeatureFlag>(), |this| {
+                        this.child(self.render_agent_server(
+                            IconName::AiClaude,
+                            "Claude Code",
+                            ExternalAgent::ClaudeCode,
+                            cx,
+                        ))
+                    })
                     .children(user_defined_agents),
             )
     }
