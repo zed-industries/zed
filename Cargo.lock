@@ -14355,6 +14355,7 @@ version = "0.1.0"
 dependencies = [
  "async-task",
  "futures 0.3.31",
+ "parking",
  "parking_lot",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
