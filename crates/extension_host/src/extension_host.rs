@@ -12,7 +12,7 @@ use async_tar::Archive;
 use client::ExtensionProvides;
 use client::{Client, ExtensionMetadata, GetExtensionsResponse, proto, telemetry::Telemetry};
 use collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map};
-use encoding::all::UTF_8;
+use encoding_rs::UTF_8;
 pub use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{

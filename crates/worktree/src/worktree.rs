@@ -7,7 +7,7 @@ use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{Context as _, Result, anyhow};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet, VecDeque};
-use encoding::Encoding;
+use encoding_rs::Encoding;
 use fs::{
     Fs, MTime, PathEvent, RemoveOptions, Watcher, copy_recursive, encodings::EncodingWrapper,
     read_dir_items,
@@ -735,7 +735,7 @@ impl Worktree {
         text: Rope,
         line_ending: LineEnding,
         cx: &Context<Worktree>,
-        encoding: &'static dyn Encoding,
+        encoding: &'static Encoding,
     ) -> Task<Result<Arc<File>>> {
         match self {
             Worktree::Local(this) => this.write_file(path, text, line_ending, cx, encoding),
@@ -1451,7 +1451,7 @@ impl LocalWorktree {
         text: Rope,
         line_ending: LineEnding,
         cx: &Context<Worktree>,
-        encoding: &'static dyn Encoding,
+        encoding: &'static Encoding,
     ) -> Task<Result<Arc<File>>> {
         let fs = self.fs.clone();
         let is_private = self.is_path_private(&path);
@@ -3132,7 +3132,7 @@ impl language::LocalFile for File {
     fn load_with_encoding(
         &self,
         cx: &App,
-        encoding: &'static dyn Encoding,
+        encoding: &'static Encoding,
     ) -> Task<Result<String>> {
         let worktree = self.worktree.read(cx).as_local().unwrap();
         let path = worktree.absolutize(&self.path);

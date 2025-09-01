@@ -2176,7 +2176,7 @@ mod tests {
     use assets::Assets;
     use collections::HashSet;
     use editor::{DisplayPoint, Editor, SelectionEffects, display_map::DisplayRow};
-    use encoding::all::UTF_8;
+    use encoding_rs::UTF_8;
     use fs::encodings::EncodingWrapper;
     use gpui::{
         Action, AnyWindowHandle, App, AssetSource, BorrowAppContext, SemanticVersion,

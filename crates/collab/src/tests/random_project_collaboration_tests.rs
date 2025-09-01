@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use call::ActiveCall;
 use collections::{BTreeMap, HashMap};
 use editor::Bias;
-use encoding::all::UTF_8;
+use encoding_rs::UTF_8;
 use fs::{FakeFs, Fs as _, encodings::EncodingWrapper};
 use git::status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
 use gpui::{BackgroundExecutor, Entity, TestAppContext};
