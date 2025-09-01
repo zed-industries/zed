@@ -102,7 +102,7 @@ impl MessageEditor {
             history_store.clone(),
             prompt_store.clone(),
             prompt_capabilities.clone(),
-            available_commands.clone(),
+            available_commands,
         ));
         let mention_set = MentionSet::default();
         let editor = cx.new(|cx| {

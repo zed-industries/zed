@@ -722,7 +722,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                         .into_iter()
                         .map(|command| {
                             let new_text = if let Some(argument) = argument.as_ref() {
-                                format!("/{} {}", command.name, argument.to_string())
+                                format!("/{} {}", command.name, argument)
                             } else {
                                 format!("/{} ", command.name)
                             };
@@ -733,7 +733,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                 new_text,
                                 label: CodeLabel::plain(command.name.to_string(), None),
                                 documentation: Some(CompletionDocumentation::SingleLine(
-                                    command.description.to_string().into(),
+                                    command.description.into(),
                                 )),
                                 source: project::CompletionSource::Custom,
                                 icon_path: None,
