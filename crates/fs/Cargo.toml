@@ -35,7 +35,6 @@ text.workspace = true
 time.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
-schemars.workspace = true
 
 
 
