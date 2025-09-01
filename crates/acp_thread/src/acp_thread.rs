@@ -3,6 +3,7 @@ mod diff;
 mod mention;
 mod terminal;
 
+use agent_settings::AgentSettings;
 use collections::HashSet;
 pub use connection::*;
 pub use diff::*;
@@ -10,6 +11,7 @@ use language::language_settings::FormatOnSave;
 pub use mention::*;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use serde::{Deserialize, Serialize};
+use settings::Settings as _;
 pub use terminal::*;
 
 use action_log::ActionLog;
@@ -1230,8 +1232,28 @@ impl AcpThread {
         tool_call: acp::ToolCallUpdate,
         options: Vec<acp::PermissionOption>,
         cx: &mut Context<Self>,
-    ) -> Result<oneshot::Receiver<acp::PermissionOptionId>, acp::Error> {
+    ) -> Result<BoxFuture<'static, acp::RequestPermissionOutcome>> {
         let (tx, rx) = oneshot::channel();
+
+        if AgentSettings::get_global(cx).always_allow_tool_actions {
+            // Don't use AllowAlways, because then if you were to turn off always_allow_tool_actions,
+            // some tools would (incorrectly) continue to auto-accept.
+            if let Some(allow_once_option) = options.iter().find_map(|option| {
+                if matches!(option.kind, acp::PermissionOptionKind::AllowOnce) {
+                    Some(option.id.clone())
+                } else {
+                    None
+                }
+            }) {
+                self.upsert_tool_call_inner(tool_call, ToolCallStatus::Pending, cx)?;
+                return Ok(async {
+                    acp::RequestPermissionOutcome::Selected {
+                        option_id: allow_once_option,
+                    }
+                }
+                .boxed());
+            }
+        }
 
         let status = ToolCallStatus::WaitingForConfirmation {
             options,
@@ -1240,7 +1262,16 @@ impl AcpThread {
 
         self.upsert_tool_call_inner(tool_call, status, cx)?;
         cx.emit(AcpThreadEvent::ToolAuthorizationRequired);
-        Ok(rx)
+
+        let fut = async {
+            match rx.await {
+                Ok(option) => acp::RequestPermissionOutcome::Selected { option_id: option },
+                Err(oneshot::Canceled) => acp::RequestPermissionOutcome::Cancelled,
+            }
+        }
+        .boxed();
+
+        Ok(fut)
     }
 
     pub fn authorize_tool_call(

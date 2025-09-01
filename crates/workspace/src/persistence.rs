@@ -20,6 +20,7 @@ use project::debugger::breakpoint_store::{BreakpointState, SourceBreakpoint};
 
 use language::{LanguageName, Toolchain};
 use project::WorktreeId;
+use remote::{RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions};
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::{SqlType, Statement},
@@ -33,11 +34,12 @@ use uuid::Uuid;
 use crate::{
     WorkspaceId,
     path_list::{PathList, SerializedPathList},
+    persistence::model::RemoteConnectionKind,
 };
 
 use model::{
-    GroupId, ItemId, PaneId, SerializedItem, SerializedPane, SerializedPaneGroup,
-    SerializedSshConnection, SerializedWorkspace, SshConnectionId,
+    GroupId, ItemId, PaneId, RemoteConnectionId, SerializedItem, SerializedPane,
+    SerializedPaneGroup, SerializedWorkspace,
 };
 
 use self::model::{DockStructure, SerializedWorkspaceLocation};
@@ -627,6 +629,88 @@ impl Domain for WorkspaceDb {
             END
             WHERE paths IS NOT NULL
         ),
+        sql!(
+            CREATE TABLE remote_connections(
+                id INTEGER PRIMARY KEY,
+                kind TEXT NOT NULL,
+                host TEXT,
+                port INTEGER,
+                user TEXT,
+                distro TEXT
+            );
+
+            CREATE TABLE workspaces_2(
+                workspace_id INTEGER PRIMARY KEY,
+                paths TEXT,
+                paths_order TEXT,
+                remote_connection_id INTEGER REFERENCES remote_connections(id),
+                timestamp TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                window_state TEXT,
+                window_x REAL,
+                window_y REAL,
+                window_width REAL,
+                window_height REAL,
+                display BLOB,
+                left_dock_visible INTEGER,
+                left_dock_active_panel TEXT,
+                right_dock_visible INTEGER,
+                right_dock_active_panel TEXT,
+                bottom_dock_visible INTEGER,
+                bottom_dock_active_panel TEXT,
+                left_dock_zoom INTEGER,
+                right_dock_zoom INTEGER,
+                bottom_dock_zoom INTEGER,
+                fullscreen INTEGER,
+                centered_layout INTEGER,
+                session_id TEXT,
+                window_id INTEGER
+            ) STRICT;
+
+            INSERT INTO remote_connections
+            SELECT
+                id,
+                "ssh" as kind,
+                host,
+                port,
+                user,
+                NULL as distro
+            FROM ssh_connections;
+
+            INSERT
+            INTO workspaces_2
+            SELECT
+                workspace_id,
+                paths,
+                paths_order,
+                ssh_connection_id as remote_connection_id,
+                timestamp,
+                window_state,
+                window_x,
+                window_y,
+                window_width,
+                window_height,
+                display,
+                left_dock_visible,
+                left_dock_active_panel,
+                right_dock_visible,
+                right_dock_active_panel,
+                bottom_dock_visible,
+                bottom_dock_active_panel,
+                left_dock_zoom,
+                right_dock_zoom,
+                bottom_dock_zoom,
+                fullscreen,
+                centered_layout,
+                session_id,
+                window_id
+            FROM
+                workspaces;
+
+            DROP TABLE workspaces;
+            ALTER TABLE workspaces_2 RENAME TO workspaces;
+
+            CREATE UNIQUE INDEX ix_workspaces_location ON workspaces(remote_connection_id, paths);
+        ),
     ];
 
     // Allow recovering from bad migration that was initially shipped to nightly
@@ -650,10 +734,10 @@ impl WorkspaceDb {
         self.workspace_for_roots_internal(worktree_roots, None)
     }
 
-    pub(crate) fn ssh_workspace_for_roots<P: AsRef<Path>>(
+    pub(crate) fn remote_workspace_for_roots<P: AsRef<Path>>(
         &self,
         worktree_roots: &[P],
-        ssh_project_id: SshConnectionId,
+        ssh_project_id: RemoteConnectionId,
     ) -> Option<SerializedWorkspace> {
         self.workspace_for_roots_internal(worktree_roots, Some(ssh_project_id))
     }
@@ -661,7 +745,7 @@ impl WorkspaceDb {
     pub(crate) fn workspace_for_roots_internal<P: AsRef<Path>>(
         &self,
         worktree_roots: &[P],
-        ssh_connection_id: Option<SshConnectionId>,
+        remote_connection_id: Option<RemoteConnectionId>,
     ) -> Option<SerializedWorkspace> {
         // paths are sorted before db interactions to ensure that the order of the paths
         // doesn't affect the workspace selection for existing workspaces
@@ -713,13 +797,13 @@ impl WorkspaceDb {
                 FROM workspaces
                 WHERE
                     paths IS ? AND
-                    ssh_connection_id IS ?
+                    remote_connection_id IS ?
                 LIMIT 1
             })
             .map(|mut prepared_statement| {
                 (prepared_statement)((
                     root_paths.serialize().paths,
-                    ssh_connection_id.map(|id| id.0 as i32),
+                    remote_connection_id.map(|id| id.0 as i32),
                 ))
                 .unwrap()
             })
@@ -803,14 +887,12 @@ impl WorkspaceDb {
         log::debug!("Saving workspace at location: {:?}", workspace.location);
         self.write(move |conn| {
             conn.with_savepoint("update_worktrees", || {
-                let ssh_connection_id = match &workspace.location {
+                let remote_connection_id = match workspace.location.clone() {
                     SerializedWorkspaceLocation::Local => None,
-                    SerializedWorkspaceLocation::Ssh(connection) => {
-                        Some(Self::get_or_create_ssh_connection_query(
+                    SerializedWorkspaceLocation::Remote(connection_options) => {
+                        Some(Self::get_or_create_remote_connection_internal(
                             conn,
-                            connection.host.clone(),
-                            connection.port,
-                            connection.user.clone(),
+                            connection_options
                         )?.0)
                     }
                 };
@@ -860,11 +942,11 @@ impl WorkspaceDb {
                     WHERE
                         workspace_id != ?1 AND
                         paths IS ?2 AND
-                        ssh_connection_id IS ?3
+                        remote_connection_id IS ?3
                 ))?((
                     workspace.id,
                     paths.paths.clone(),
-                    ssh_connection_id,
+                    remote_connection_id,
                 ))
                 .context("clearing out old locations")?;
 
@@ -874,7 +956,7 @@ impl WorkspaceDb {
                         workspace_id,
                         paths,
                         paths_order,
-                        ssh_connection_id,
+                        remote_connection_id,
                         left_dock_visible,
                         left_dock_active_panel,
                         left_dock_zoom,
@@ -893,7 +975,7 @@ impl WorkspaceDb {
                     UPDATE SET
                         paths = ?2,
                         paths_order = ?3,
-                        ssh_connection_id = ?4,
+                        remote_connection_id = ?4,
                         left_dock_visible = ?5,
                         left_dock_active_panel = ?6,
                         left_dock_zoom = ?7,
@@ -912,7 +994,7 @@ impl WorkspaceDb {
                     workspace.id,
                     paths.paths.clone(),
                     paths.order.clone(),
-                    ssh_connection_id,
+                    remote_connection_id,
                     workspace.docks,
                     workspace.session_id,
                     workspace.window_id,
@@ -931,39 +1013,78 @@ impl WorkspaceDb {
         .await;
     }
 
-    pub(crate) async fn get_or_create_ssh_connection(
+    pub(crate) async fn get_or_create_remote_connection(
         &self,
-        host: String,
-        port: Option<u16>,
-        user: Option<String>,
-    ) -> Result<SshConnectionId> {
-        self.write(move |conn| Self::get_or_create_ssh_connection_query(conn, host, port, user))
+        options: RemoteConnectionOptions,
+    ) -> Result<RemoteConnectionId> {
+        self.write(move |conn| Self::get_or_create_remote_connection_internal(conn, options))
             .await
     }
 
-    fn get_or_create_ssh_connection_query(
+    fn get_or_create_remote_connection_internal(
         this: &Connection,
-        host: String,
+        options: RemoteConnectionOptions,
+    ) -> Result<RemoteConnectionId> {
+        let kind;
+        let user;
+        let mut host = None;
+        let mut port = None;
+        let mut distro = None;
+        match options {
+            RemoteConnectionOptions::Ssh(options) => {
+                kind = RemoteConnectionKind::Ssh;
+                host = Some(options.host);
+                port = options.port;
+                user = options.username;
+            }
+            RemoteConnectionOptions::Wsl(options) => {
+                kind = RemoteConnectionKind::Wsl;
+                distro = Some(options.distro_name);
+                user = options.user;
+            }
+        }
+        Self::get_or_create_remote_connection_query(this, kind, host, port, user, distro)
+    }
+
+    fn get_or_create_remote_connection_query(
+        this: &Connection,
+        kind: RemoteConnectionKind,
+        host: Option<String>,
         port: Option<u16>,
         user: Option<String>,
-    ) -> Result<SshConnectionId> {
+        distro: Option<String>,
+    ) -> Result<RemoteConnectionId> {
         if let Some(id) = this.select_row_bound(sql!(
-            SELECT id FROM ssh_connections WHERE host IS ? AND port IS ? AND user IS ? LIMIT 1
-        ))?((host.clone(), port, user.clone()))?
-        {
-            Ok(SshConnectionId(id))
+            SELECT id
+            FROM remote_connections
+            WHERE
+                kind IS ? AND
+                host IS ? AND
+                port IS ? AND
+                user IS ? AND
+                distro IS ?
+            LIMIT 1
+        ))?((
+            kind.serialize(),
+            host.clone(),
+            port,
+            user.clone(),
+            distro.clone(),
+        ))? {
+            Ok(RemoteConnectionId(id))
         } else {
-            log::debug!("Inserting SSH project at host {host}");
             let id = this.select_row_bound(sql!(
-                INSERT INTO ssh_connections (
+                INSERT INTO remote_connections (
+                    kind,
                     host,
                     port,
-                    user
-                ) VALUES (?1, ?2, ?3)
+                    user,
+                    distro
+                ) VALUES (?1, ?2, ?3, ?4, ?5)
                 RETURNING id
-            ))?((host, port, user))?
-            .context("failed to insert ssh project")?;
-            Ok(SshConnectionId(id))
+            ))?((kind.serialize(), host, port, user, distro))?
+            .context("failed to insert remote project")?;
+            Ok(RemoteConnectionId(id))
         }
     }
 
@@ -973,15 +1094,17 @@ impl WorkspaceDb {
         }
     }
 
-    fn recent_workspaces(&self) -> Result<Vec<(WorkspaceId, PathList, Option<u64>)>> {
+    fn recent_workspaces(
+        &self,
+    ) -> Result<Vec<(WorkspaceId, PathList, Option<RemoteConnectionId>)>> {
         Ok(self
             .recent_workspaces_query()?
             .into_iter()
-            .map(|(id, paths, order, ssh_connection_id)| {
+            .map(|(id, paths, order, remote_connection_id)| {
                 (
                     id,
                     PathList::deserialize(&SerializedPathList { paths, order }),
-                    ssh_connection_id,
+                    remote_connection_id.map(RemoteConnectionId),
                 )
             })
             .collect())
@@ -989,11 +1112,11 @@ impl WorkspaceDb {
 
     query! {
         fn recent_workspaces_query() -> Result<Vec<(WorkspaceId, String, String, Option<u64>)>> {
-            SELECT workspace_id, paths, paths_order, ssh_connection_id
+            SELECT workspace_id, paths, paths_order, remote_connection_id
             FROM workspaces
             WHERE
                 paths IS NOT NULL OR
-                ssh_connection_id IS NOT NULL
+                remote_connection_id IS NOT NULL
             ORDER BY timestamp DESC
         }
     }
@@ -1001,15 +1124,15 @@ impl WorkspaceDb {
     fn session_workspaces(
         &self,
         session_id: String,
-    ) -> Result<Vec<(PathList, Option<u64>, Option<SshConnectionId>)>> {
+    ) -> Result<Vec<(PathList, Option<u64>, Option<RemoteConnectionId>)>> {
         Ok(self
             .session_workspaces_query(session_id)?
             .into_iter()
-            .map(|(paths, order, window_id, ssh_connection_id)| {
+            .map(|(paths, order, window_id, remote_connection_id)| {
                 (
                     PathList::deserialize(&SerializedPathList { paths, order }),
                     window_id,
-                    ssh_connection_id.map(SshConnectionId),
+                    remote_connection_id.map(RemoteConnectionId),
                 )
             })
             .collect())
@@ -1017,7 +1140,7 @@ impl WorkspaceDb {
 
     query! {
         fn session_workspaces_query(session_id: String) -> Result<Vec<(String, String, Option<u64>, Option<u64>)>> {
-            SELECT paths, paths_order, window_id, ssh_connection_id
+            SELECT paths, paths_order, window_id, remote_connection_id
             FROM workspaces
             WHERE session_id = ?1
             ORDER BY timestamp DESC
@@ -1039,40 +1162,55 @@ impl WorkspaceDb {
         }
     }
 
-    fn ssh_connections(&self) -> Result<HashMap<SshConnectionId, SerializedSshConnection>> {
-        Ok(self
-            .ssh_connections_query()?
-            .into_iter()
-            .map(|(id, host, port, user)| {
-                (
-                    SshConnectionId(id),
-                    SerializedSshConnection { host, port, user },
-                )
-            })
-            .collect())
-    }
-
-    query! {
-        pub fn ssh_connections_query() -> Result<Vec<(u64, String, Option<u16>, Option<String>)>> {
-            SELECT id, host, port, user
-            FROM ssh_connections
-        }
-    }
-
-    pub(crate) fn ssh_connection(&self, id: SshConnectionId) -> Result<SerializedSshConnection> {
-        let row = self.ssh_connection_query(id.0)?;
-        Ok(SerializedSshConnection {
-            host: row.0,
-            port: row.1,
-            user: row.2,
+    fn remote_connections(&self) -> Result<HashMap<RemoteConnectionId, RemoteConnectionOptions>> {
+        Ok(self.select(sql!(
+            SELECT
+                id, kind, host, port, user, distro
+            FROM
+                remote_connections
+        ))?()?
+        .into_iter()
+        .filter_map(|(id, kind, host, port, user, distro)| {
+            Some((
+                RemoteConnectionId(id),
+                Self::remote_connection_from_row(kind, host, port, user, distro)?,
+            ))
         })
+        .collect())
     }
 
-    query! {
-        fn ssh_connection_query(id: u64) -> Result<(String, Option<u16>, Option<String>)> {
-            SELECT host, port, user
-            FROM ssh_connections
+    pub(crate) fn remote_connection(
+        &self,
+        id: RemoteConnectionId,
+    ) -> Result<RemoteConnectionOptions> {
+        let (kind, host, port, user, distro) = self.select_row_bound(sql!(
+            SELECT kind, host, port, user, distro
+            FROM remote_connections
             WHERE id = ?
+        ))?(id.0)?
+        .context("no such remote connection")?;
+        Self::remote_connection_from_row(kind, host, port, user, distro)
+            .context("invalid remote_connection row")
+    }
+
+    fn remote_connection_from_row(
+        kind: String,
+        host: Option<String>,
+        port: Option<u16>,
+        user: Option<String>,
+        distro: Option<String>,
+    ) -> Option<RemoteConnectionOptions> {
+        match RemoteConnectionKind::deserialize(&kind)? {
+            RemoteConnectionKind::Wsl => Some(RemoteConnectionOptions::Wsl(WslConnectionOptions {
+                distro_name: distro?,
+                user: user,
+            })),
+            RemoteConnectionKind::Ssh => Some(RemoteConnectionOptions::Ssh(SshConnectionOptions {
+                host: host?,
+                port,
+                username: user,
+                ..Default::default()
+            })),
         }
     }
 
@@ -1108,14 +1246,14 @@ impl WorkspaceDb {
     ) -> Result<Vec<(WorkspaceId, SerializedWorkspaceLocation, PathList)>> {
         let mut result = Vec::new();
         let mut delete_tasks = Vec::new();
-        let ssh_connections = self.ssh_connections()?;
+        let remote_connections = self.remote_connections()?;
 
-        for (id, paths, ssh_connection_id) in self.recent_workspaces()? {
-            if let Some(ssh_connection_id) = ssh_connection_id.map(SshConnectionId) {
-                if let Some(ssh_connection) = ssh_connections.get(&ssh_connection_id) {
+        for (id, paths, remote_connection_id) in self.recent_workspaces()? {
+            if let Some(remote_connection_id) = remote_connection_id {
+                if let Some(connection_options) = remote_connections.get(&remote_connection_id) {
                     result.push((
                         id,
-                        SerializedWorkspaceLocation::Ssh(ssh_connection.clone()),
+                        SerializedWorkspaceLocation::Remote(connection_options.clone()),
                         paths,
                     ));
                 } else {
@@ -1157,12 +1295,14 @@ impl WorkspaceDb {
     ) -> Result<Vec<(SerializedWorkspaceLocation, PathList)>> {
         let mut workspaces = Vec::new();
 
-        for (paths, window_id, ssh_connection_id) in
+        for (paths, window_id, remote_connection_id) in
             self.session_workspaces(last_session_id.to_owned())?
         {
-            if let Some(ssh_connection_id) = ssh_connection_id {
+            if let Some(remote_connection_id) = remote_connection_id {
                 workspaces.push((
-                    SerializedWorkspaceLocation::Ssh(self.ssh_connection(ssh_connection_id)?),
+                    SerializedWorkspaceLocation::Remote(
+                        self.remote_connection(remote_connection_id)?,
+                    ),
                     paths,
                     window_id.map(WindowId::from),
                 ));
@@ -1545,6 +1685,7 @@ mod tests {
     };
     use gpui;
     use pretty_assertions::assert_eq;
+    use remote::SshConnectionOptions;
     use std::{thread, time::Duration};
 
     #[gpui::test]
@@ -2196,14 +2337,20 @@ mod tests {
         };
 
         let connection_id = db
-            .get_or_create_ssh_connection("my-host".to_string(), Some(1234), None)
+            .get_or_create_remote_connection(RemoteConnectionOptions::Ssh(SshConnectionOptions {
+                host: "my-host".to_string(),
+                port: Some(1234),
+                ..Default::default()
+            }))
             .await
             .unwrap();
 
         let workspace_5 = SerializedWorkspace {
             id: WorkspaceId(5),
             paths: PathList::default(),
-            location: SerializedWorkspaceLocation::Ssh(db.ssh_connection(connection_id).unwrap()),
+            location: SerializedWorkspaceLocation::Remote(
+                db.remote_connection(connection_id).unwrap(),
+            ),
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -2362,13 +2509,12 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_last_session_workspace_locations_ssh_projects() {
-        let db = WorkspaceDb::open_test_db(
-            "test_serializing_workspaces_last_session_workspaces_ssh_projects",
-        )
-        .await;
+    async fn test_last_session_workspace_locations_remote() {
+        let db =
+            WorkspaceDb::open_test_db("test_serializing_workspaces_last_session_workspaces_remote")
+                .await;
 
-        let ssh_connections = [
+        let remote_connections = [
             ("host-1", "my-user-1"),
             ("host-2", "my-user-2"),
             ("host-3", "my-user-3"),
@@ -2376,30 +2522,31 @@ mod tests {
         ]
         .into_iter()
         .map(|(host, user)| async {
-            db.get_or_create_ssh_connection(host.to_string(), None, Some(user.to_string()))
+            let options = RemoteConnectionOptions::Ssh(SshConnectionOptions {
+                host: host.to_string(),
+                username: Some(user.to_string()),
+                ..Default::default()
+            });
+            db.get_or_create_remote_connection(options.clone())
                 .await
                 .unwrap();
-            SerializedSshConnection {
-                host: host.into(),
-                port: None,
-                user: Some(user.into()),
-            }
+            options
         })
         .collect::<Vec<_>>();
 
-        let ssh_connections = futures::future::join_all(ssh_connections).await;
+        let remote_connections = futures::future::join_all(remote_connections).await;
 
         let workspaces = [
-            (1, ssh_connections[0].clone(), 9),
-            (2, ssh_connections[1].clone(), 5),
-            (3, ssh_connections[2].clone(), 8),
-            (4, ssh_connections[3].clone(), 2),
+            (1, remote_connections[0].clone(), 9),
+            (2, remote_connections[1].clone(), 5),
+            (3, remote_connections[2].clone(), 8),
+            (4, remote_connections[3].clone(), 2),
         ]
         .into_iter()
-        .map(|(id, ssh_connection, window_id)| SerializedWorkspace {
+        .map(|(id, remote_connection, window_id)| SerializedWorkspace {
             id: WorkspaceId(id),
             paths: PathList::default(),
-            location: SerializedWorkspaceLocation::Ssh(ssh_connection),
+            location: SerializedWorkspaceLocation::Remote(remote_connection),
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -2429,28 +2576,28 @@ mod tests {
         assert_eq!(
             have[0],
             (
-                SerializedWorkspaceLocation::Ssh(ssh_connections[3].clone()),
+                SerializedWorkspaceLocation::Remote(remote_connections[3].clone()),
                 PathList::default()
             )
         );
         assert_eq!(
             have[1],
             (
-                SerializedWorkspaceLocation::Ssh(ssh_connections[2].clone()),
+                SerializedWorkspaceLocation::Remote(remote_connections[2].clone()),
                 PathList::default()
             )
         );
         assert_eq!(
             have[2],
             (
-                SerializedWorkspaceLocation::Ssh(ssh_connections[1].clone()),
+                SerializedWorkspaceLocation::Remote(remote_connections[1].clone()),
                 PathList::default()
             )
         );
         assert_eq!(
             have[3],
             (
-                SerializedWorkspaceLocation::Ssh(ssh_connections[0].clone()),
+                SerializedWorkspaceLocation::Remote(remote_connections[0].clone()),
                 PathList::default()
             )
         );
@@ -2465,13 +2612,23 @@ mod tests {
         let user = Some("user".to_string());
 
         let connection_id = db
-            .get_or_create_ssh_connection(host.clone(), port, user.clone())
+            .get_or_create_remote_connection(RemoteConnectionOptions::Ssh(SshConnectionOptions {
+                host: host.clone(),
+                port,
+                username: user.clone(),
+                ..Default::default()
+            }))
             .await
             .unwrap();
 
         // Test that calling the function again with the same parameters returns the same project
         let same_connection = db
-            .get_or_create_ssh_connection(host.clone(), port, user.clone())
+            .get_or_create_remote_connection(RemoteConnectionOptions::Ssh(SshConnectionOptions {
+                host: host.clone(),
+                port,
+                username: user.clone(),
+                ..Default::default()
+            }))
             .await
             .unwrap();
 
@@ -2483,7 +2640,12 @@ mod tests {
         let user2 = Some("otheruser".to_string());
 
         let different_connection = db
-            .get_or_create_ssh_connection(host2.clone(), port2, user2.clone())
+            .get_or_create_remote_connection(RemoteConnectionOptions::Ssh(SshConnectionOptions {
+                host: host2.clone(),
+                port: port2,
+                username: user2.clone(),
+                ..Default::default()
+            }))
             .await
             .unwrap();
 
@@ -2497,12 +2659,22 @@ mod tests {
         let (host, port, user) = ("example.com".to_string(), None, None);
 
         let connection_id = db
-            .get_or_create_ssh_connection(host.clone(), port, None)
+            .get_or_create_remote_connection(RemoteConnectionOptions::Ssh(SshConnectionOptions {
+                host: host.clone(),
+                port,
+                username: None,
+                ..Default::default()
+            }))
             .await
             .unwrap();
 
         let same_connection_id = db
-            .get_or_create_ssh_connection(host.clone(), port, user.clone())
+            .get_or_create_remote_connection(RemoteConnectionOptions::Ssh(SshConnectionOptions {
+                host: host.clone(),
+                port,
+                username: user.clone(),
+                ..Default::default()
+            }))
             .await
             .unwrap();
 
@@ -2510,8 +2682,8 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_get_ssh_connections() {
-        let db = WorkspaceDb::open_test_db("test_get_ssh_connections").await;
+    async fn test_get_remote_connections() {
+        let db = WorkspaceDb::open_test_db("test_get_remote_connections").await;
 
         let connections = [
             ("example.com".to_string(), None, None),
@@ -2526,39 +2698,49 @@ mod tests {
         let mut ids = Vec::new();
         for (host, port, user) in connections.iter() {
             ids.push(
-                db.get_or_create_ssh_connection(host.clone(), *port, user.clone())
-                    .await
-                    .unwrap(),
+                db.get_or_create_remote_connection(RemoteConnectionOptions::Ssh(
+                    SshConnectionOptions {
+                        host: host.clone(),
+                        port: *port,
+                        username: user.clone(),
+                        ..Default::default()
+                    },
+                ))
+                .await
+                .unwrap(),
             );
         }
 
-        let stored_projects = db.ssh_connections().unwrap();
+        let stored_connections = db.remote_connections().unwrap();
         assert_eq!(
-            stored_projects,
+            stored_connections,
             [
                 (
                     ids[0],
-                    SerializedSshConnection {
+                    RemoteConnectionOptions::Ssh(SshConnectionOptions {
                         host: "example.com".into(),
                         port: None,
-                        user: None,
-                    }
+                        username: None,
+                        ..Default::default()
+                    }),
                 ),
                 (
                     ids[1],
-                    SerializedSshConnection {
+                    RemoteConnectionOptions::Ssh(SshConnectionOptions {
                         host: "anotherexample.com".into(),
                         port: Some(123),
-                        user: Some("user2".into()),
-                    }
+                        username: Some("user2".into()),
+                        ..Default::default()
+                    }),
                 ),
                 (
                     ids[2],
-                    SerializedSshConnection {
+                    RemoteConnectionOptions::Ssh(SshConnectionOptions {
                         host: "yetanother.com".into(),
                         port: Some(345),
-                        user: None,
-                    }
+                        username: None,
+                        ..Default::default()
+                    }),
                 ),
             ]
             .into_iter()

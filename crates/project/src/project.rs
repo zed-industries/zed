@@ -88,7 +88,7 @@ use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 pub use prettier_store::PrettierStore;
 use project_settings::{ProjectSettings, SettingsObserver, SettingsObserverEvent};
-use remote::{RemoteClient, SshConnectionOptions};
+use remote::{RemoteClient, RemoteConnectionOptions};
 use rpc::{
     AnyProtoClient, ErrorCode,
     proto::{FromProto, LanguageServerPromptResponse, REMOTE_SERVER_PROJECT_ID, ToProto},
@@ -931,7 +931,7 @@ pub enum LspPullDiagnostics {
         /// The id of the language server that produced diagnostics.
         server_id: LanguageServerId,
         /// URI of the resource,
-        uri: lsp::Url,
+        uri: lsp::Uri,
         /// The diagnostics produced by this language server.
         diagnostics: PulledDiagnostics,
     },
@@ -953,7 +953,7 @@ pub enum PulledDiagnostics {
 /// Whether to disable all AI features in Zed.
 ///
 /// Default: false
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, settings::SettingsUi)]
 pub struct DisableAiSettings {
     pub disable_ai: bool,
 }
@@ -1917,7 +1917,7 @@ impl Project {
             .map(|remote| remote.read(cx).connection_state())
     }
 
-    pub fn remote_connection_options(&self, cx: &App) -> Option<SshConnectionOptions> {
+    pub fn remote_connection_options(&self, cx: &App) -> Option<RemoteConnectionOptions> {
         self.remote_client
             .as_ref()
             .map(|remote| remote.read(cx).connection_options())
@@ -3627,7 +3627,7 @@ impl Project {
 
     pub fn open_local_buffer_via_lsp(
         &mut self,
-        abs_path: lsp::Url,
+        abs_path: lsp::Uri,
         language_server_id: LanguageServerId,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
