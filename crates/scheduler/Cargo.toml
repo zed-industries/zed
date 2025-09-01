@@ -18,6 +18,7 @@ test-support = []
 [dependencies]
 async-task = "4.7.1"
 parking_lot = "0.12"
+futures = "0.3"
 rand = "0.8"
 rand_chacha = "0.3"
 workspace-hack.workspace = true

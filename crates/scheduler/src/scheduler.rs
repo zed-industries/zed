@@ -2,7 +2,6 @@ use async_task::{Runnable, Task};
 use parking_lot::Mutex;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
-use std::cell::RefCell;
 use std::collections::{HashSet, VecDeque};
 use std::future::Future;
 use std::marker::PhantomData;
@@ -185,32 +184,29 @@ impl BackgroundExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::executor::block_on;
 
     #[test]
     fn test_foreground_executor_spawn() {
         let scheduler = Arc::new(TestScheduler::new());
         let executor = ForegroundExecutor::new(scheduler.clone());
-        let task_ran = Rc::new(RefCell::new(false));
-        let _task = executor.spawn({
-            let task_ran = task_ran.clone();
-            async move {
-                *task_ran.borrow_mut() = true;
-            }
-        });
+        let task = executor.spawn(async move { 42 });
         scheduler.run();
-        assert!(*task_ran.borrow());
+
+        // Block on the task to ensure it resolves
+        let result = block_on(task);
+        assert_eq!(result, 42);
     }
 
     #[test]
     fn test_background_executor_spawn() {
         let scheduler = Arc::new(TestScheduler::new());
         let executor = BackgroundExecutor::new(scheduler.clone());
-        let executed = Arc::new(parking_lot::Mutex::new(false));
-        let executed_clone = executed.clone();
-        let _task = executor.spawn(async move {
-            *executed_clone.lock() = true;
-        });
+        let task = executor.spawn(async move { 42 });
         scheduler.run();
-        assert!(*executed.lock());
+
+        // Block on the task to ensure it resolves
+        let result = block_on(task);
+        assert_eq!(result, 42);
     }
 }
