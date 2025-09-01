@@ -212,6 +212,19 @@ impl BackgroundExecutor {
         runnable.schedule();
         task
     }
+
+    pub fn spawn_labeled<F>(&self, future: F, label: TaskLabel) -> Task<F::Output>
+    where
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        let scheduler = Arc::clone(&self.scheduler);
+        let (runnable, task) = async_task::spawn(future, move |runnable| {
+            scheduler.schedule_background(runnable, Some(label));
+        });
+        runnable.schedule();
+        task
+    }
 }
 
 #[cfg(test)]
@@ -267,6 +280,67 @@ mod tests {
 
         let result = block_on(task);
         assert_eq!(result, 42);
+    }
+
+    #[test]
+    fn test_deprioritize_task() {
+        let scheduler = Arc::new(TestScheduler::new(SchedulerConfig {
+            seed: 0,
+            randomize_order: false,
+        }));
+        let background = BackgroundExecutor::new(scheduler.clone());
+
+        let label = TaskLabel::new();
+
+        let (sender, receiver) = mpsc::unbounded::<i32>();
+
+        // Spawn first background task
+        {
+            background
+                .spawn({
+                    let mut sender = sender.clone();
+                    async move {
+                        sender.send(1).await.ok();
+                    }
+                })
+                .detach();
+        }
+
+        // Deprioritize the middle task's label before spawning it
+        scheduler.deprioritize(label);
+
+        // Spawn second (deprioritized) background task
+        {
+            background
+                .spawn_labeled(
+                    {
+                        let mut sender = sender.clone();
+                        async move {
+                            sender.send(2).await.ok();
+                        }
+                    },
+                    label,
+                )
+                .detach();
+        }
+
+        // Spawn third background task
+        {
+            background
+                .spawn({
+                    let mut sender = sender.clone();
+                    async move {
+                        sender.send(3).await.ok();
+                    }
+                })
+                .detach();
+        }
+
+        drop(sender); // Close sender to signal no more messages
+        scheduler.run();
+
+        let order: Vec<i32> = block_on(receiver.collect());
+        assert_eq!(order, vec![1, 3, 2]);
     }
 
     #[test]
