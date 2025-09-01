@@ -23,7 +23,7 @@ pub struct SchedulerConfig {
 }
 
 impl SchedulerConfig {
-    pub fn from_seed(seed: u64) -> Self {
+    pub fn with_seed(seed: u64) -> Self {
         Self {
             seed,
             ..Default::default()
@@ -115,7 +115,7 @@ impl TestScheduler {
         (0..iterations)
             .map(|i| {
                 let seed = i as u64;
-                let scheduler = Arc::new(TestScheduler::new(SchedulerConfig::from_seed(seed)));
+                let scheduler = Arc::new(TestScheduler::new(SchedulerConfig::with_seed(seed)));
                 let background = BackgroundExecutor::new(scheduler.clone());
 
                 let future = f(scheduler.clone());
@@ -131,7 +131,7 @@ impl TestScheduler {
         Fut: Future + 'static,
         Fut::Output: 'static,
     {
-        let scheduler = Arc::new(TestScheduler::new(SchedulerConfig::from_seed(seed)));
+        let scheduler = Arc::new(TestScheduler::new(SchedulerConfig::with_seed(seed)));
         let background = BackgroundExecutor::new(scheduler.clone());
 
         // Call the callback to spawn tasks and get the final future
@@ -383,48 +383,40 @@ mod tests {
 
     #[test]
     fn test_foreground_executor_spawn() {
-        let scheduler = Arc::new(TestScheduler::new(SchedulerConfig::default()));
-        let executor = ForegroundExecutor::new(scheduler.clone());
-        let task = executor.spawn(async move { 42 });
-        scheduler.run();
-
-        // Block on the task to ensure it resolves
-        let result = block_on(task);
+        let result = TestScheduler::once(|scheduler| async move {
+            let task = scheduler.foreground().spawn(async move { 42 });
+            task.await
+        });
         assert_eq!(result, 42);
     }
 
     #[test]
     fn test_background_executor_spawn() {
-        let scheduler = Arc::new(TestScheduler::new(SchedulerConfig::default()));
-        let executor = BackgroundExecutor::new(scheduler.clone());
-        let task = executor.spawn(async move { 42 });
-        scheduler.run();
-
-        // Block on the task to ensure it resolves
-        let result = block_on(task);
-        assert_eq!(result, 42);
+        TestScheduler::once(|scheduler| async move {
+            let task = scheduler.background().spawn(async move { 42 });
+            let result = task.await;
+            assert_eq!(result, 42);
+        });
     }
 
     #[test]
     fn test_send_from_bg_to_fg() {
-        let scheduler = Arc::new(TestScheduler::new(SchedulerConfig::default()));
-        let foreground = ForegroundExecutor::new(scheduler.clone());
-        let background = BackgroundExecutor::new(scheduler.clone());
+        TestScheduler::once(|scheduler| async move {
+            let foreground = scheduler.foreground();
+            let background = scheduler.background();
 
-        let (sender, receiver) = oneshot::channel::<i32>();
+            let (sender, receiver) = oneshot::channel::<i32>();
 
-        background
-            .spawn(async move {
-                sender.send(42).unwrap();
-            })
-            .detach();
+            background
+                .spawn(async move {
+                    sender.send(42).unwrap();
+                })
+                .detach();
 
-        let task = foreground.spawn(async move { receiver.await.unwrap() });
-
-        scheduler.run();
-
-        let result = block_on(task);
-        assert_eq!(result, 42);
+            let task = foreground.spawn(async move { receiver.await.unwrap() });
+            let result = task.await;
+            assert_eq!(result, 42);
+        });
     }
 
     #[test]
@@ -433,7 +425,7 @@ mod tests {
             randomize_order: false,
             ..Default::default()
         }));
-        let background = BackgroundExecutor::new(scheduler.clone());
+        let background = scheduler.background();
 
         let label = TaskLabel::new();
 
@@ -513,7 +505,7 @@ mod tests {
         // Test randomized mode: different seeds can produce different execution orders
         let mut randomized_results = HashSet::new();
         for seed in 0..20 {
-            let config = SchedulerConfig::from_seed(seed);
+            let config = SchedulerConfig::with_seed(seed);
             let order = block_on(capture_execution_order(config));
             assert_eq!(order.len(), 6);
             randomized_results.insert(order);
@@ -625,23 +617,23 @@ mod tests {
             let background = scheduler.background();
             background.spawn(async { 42 }).await
         });
-        // assert_eq!(result, 42);
+        assert_eq!(result, 42);
 
-        // // Test the many method
-        // let results = TestScheduler::many(3, async |scheduler: Arc<TestScheduler>| {
-        //     let background = scheduler.background();
-        //     background.spawn(async { 10 }).await
-        // });
-        // assert_eq!(results, vec![10, 10, 10]);
+        // Test the many method
+        let results = TestScheduler::many(3, async |scheduler: Arc<TestScheduler>| {
+            let background = scheduler.background();
+            background.spawn(async { 10 }).await
+        });
+        assert_eq!(results, vec![10, 10, 10]);
 
-        // // Test the with_seed method
-        // let result = TestScheduler::with_seed(123, async |scheduler: Arc<TestScheduler>| {
-        //     let background = scheduler.background();
+        // Test the with_seed method
+        let result = TestScheduler::with_seed(123, async |scheduler: Arc<TestScheduler>| {
+            let background = scheduler.background();
 
-        //     // Spawn a background task and wait for its result
-        //     let task = background.spawn(async { 99 });
-        //     task.await
-        // });
-        // assert_eq!(result, 99);
+            // Spawn a background task and wait for its result
+            let task = background.spawn(async { 99 });
+            task.await
+        });
+        assert_eq!(result, 99);
     }
 }
