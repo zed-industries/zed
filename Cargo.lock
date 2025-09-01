@@ -23,6 +23,7 @@ dependencies = [
  "language_model",
  "markdown",
  "parking_lot",
+ "portable-pty",
  "project",
  "prompt_store",
  "rand 0.8.5",
@@ -30,6 +31,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "task",
  "tempfile",
  "terminal",
  "ui",
@@ -37,6 +39,7 @@ dependencies = [
  "util",
  "uuid",
  "watch",
+ "which 6.0.3",
  "workspace-hack",
 ]
 
@@ -192,9 +195,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.1.1"
+version = "0.2.0-alpha.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b91e5ec3ce05e8effb2a7a3b7b1a587daa6699b9f98bbde6a35e44b8c6c773a"
+checksum = "4ec42b8b612665799c7667890df4b5f5cb441b18a68619fd770f1e054480ee3f"
 dependencies = [
  "anyhow",
  "async-broadcast",
@@ -248,7 +251,6 @@ dependencies = [
  "open",
  "parking_lot",
  "paths",
- "portable-pty",
  "pretty_assertions",
  "project",
  "prompt_store",
@@ -274,7 +276,6 @@ dependencies = [
  "uuid",
  "watch",
  "web_search",
- "which 6.0.3",
  "workspace-hack",
  "worktree",
  "zlog",
