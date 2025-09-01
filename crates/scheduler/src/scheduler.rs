@@ -495,14 +495,20 @@ mod tests {
     }
 
     #[test]
-    fn test_block_method() {
-        let config = SchedulerConfig {
-            allow_parking: true,
-            ..Default::default()
-        };
-        let scheduler = Arc::new(TestScheduler::new(config));
-        let executor = BackgroundExecutor::new(scheduler);
-        let result = executor.block(async { 42 });
+    fn test_block() {
+        let scheduler = Arc::new(TestScheduler::new(SchedulerConfig::default()));
+        let executor = BackgroundExecutor::new(scheduler.clone());
+        let (tx, rx) = oneshot::channel();
+
+        // Spawn background task to send value
+        let _ = executor
+            .spawn(async move {
+                tx.send(42).unwrap();
+            })
+            .detach();
+
+        // Block on receiving the value
+        let result = executor.block(async { rx.await.unwrap() });
         assert_eq!(result, 42);
     }
 }
