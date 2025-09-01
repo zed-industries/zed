@@ -333,6 +333,9 @@ mod tests {
             orders.insert(order);
         }
 
-        assert!(!orders.is_empty(), "Randomized mode should produce orders");
+        assert!(
+            orders.len() > 1,
+            "Randomized mode should produce multiple different orders"
+        );
     }
 }
