@@ -2,7 +2,7 @@ mod appearance_settings_controls;
 
 use std::any::TypeId;
 use std::collections::VecDeque;
-use std::ops::{Not, Range};
+use std::ops::{Add, Not, Range, Sub};
 
 use anyhow::Context as _;
 use command_palette_hooks::CommandPaletteFilter;
@@ -10,8 +10,8 @@ use editor::EditorSettingsControls;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
 use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, ReadGlobal, actions};
 use settings::{
-    SettingsStore, SettingsUiEntry, SettingsUiItem, SettingsUiItemDynamic, SettingsUiItemGroup,
-    SettingsUiItemSingle, SettingsValue,
+    NumType, SettingsStore, SettingsUiEntry, SettingsUiItem, SettingsUiItemDynamic,
+    SettingsUiItemGroup, SettingsUiItemSingle, SettingsValue,
 };
 use smallvec::SmallVec;
 use ui::{NumericStepper, SwitchField, ToggleButtonGroup, ToggleButtonSimple, prelude::*};
@@ -192,7 +192,6 @@ fn build_tree_item(
     let index = tree.len();
     tree.push(UiEntry {
         title: entry.title,
-        // todo! make this an option too
         path: entry.path,
         _depth: depth,
         descendant_range: index + 1..index + 1,
@@ -303,7 +302,7 @@ fn render_content(
             .size_full()
             .child(Label::new(SharedString::new_static("No settings found")).color(Color::Error));
     };
-    let mut content = v_flex().size_full().gap_4();
+    let mut content = v_flex().size_full().gap_4().overflow_hidden();
 
     let mut path = smallvec::smallvec![];
     if let Some(active_entry_path) = active_entry.path {
@@ -431,8 +430,8 @@ fn render_item_single(
         SettingsUiItemSingle::SwitchField => {
             render_any_item(settings_value, render_switch_field, window, cx)
         }
-        SettingsUiItemSingle::NumericStepper => {
-            render_any_item(settings_value, render_numeric_stepper, window, cx)
+        SettingsUiItemSingle::NumericStepper(num_type) => {
+            render_any_numeric_stepper(settings_value, *num_type, window, cx)
         }
         SettingsUiItemSingle::ToggleGroup(variants) => {
             render_toggle_button_group(settings_value, variants, window, cx)
@@ -466,6 +465,7 @@ fn downcast_any_item<T: serde::de::DeserializeOwned>(
         .map(|value| serde_json::from_value::<T>(value).expect("value is not a T"));
     // todo(settings_ui) Create test that constructs UI tree, and asserts that all elements have default values
     let default_value = serde_json::from_value::<T>(settings_value.default_value)
+        .with_context(|| format!("path: {:?}", settings_value.path.join(".")))
         .expect("default value is not an Option<T>");
     let deserialized_setting_value = SettingsValue {
         title: settings_value.title,
@@ -486,14 +486,62 @@ fn render_any_item<T: serde::de::DeserializeOwned>(
     render_fn(deserialized_setting_value, window, cx)
 }
 
-fn render_numeric_stepper(
-    value: SettingsValue<u64>,
+fn render_any_numeric_stepper(
+    settings_value: SettingsValue<serde_json::Value>,
+    num_type: NumType,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    match num_type {
+        NumType::U64 => render_numeric_stepper::<u64>(
+            downcast_any_item(settings_value),
+            u64::saturating_sub,
+            u64::saturating_add,
+            |n| {
+                serde_json::Number::try_from(n)
+                    .context("Failed to convert u64 to serde_json::Number")
+            },
+            window,
+            cx,
+        ),
+        NumType::U32 => render_numeric_stepper::<u32>(
+            downcast_any_item(settings_value),
+            u32::saturating_sub,
+            u32::saturating_add,
+            |n| {
+                serde_json::Number::try_from(n)
+                    .context("Failed to convert u32 to serde_json::Number")
+            },
+            window,
+            cx,
+        ),
+        NumType::F32 => render_numeric_stepper::<f32>(
+            downcast_any_item(settings_value),
+            |a, b| a - b,
+            |a, b| a + b,
+            |n| {
+                serde_json::Number::from_f64(n as f64)
+                    .context("Failed to convert f32 to serde_json::Number")
+            },
+            window,
+            cx,
+        ),
+    }
+}
+
+fn render_numeric_stepper<
+    T: serde::de::DeserializeOwned + std::fmt::Display + Copy + From<u8> + 'static,
+>(
+    value: SettingsValue<T>,
+    saturating_sub: fn(T, T) -> T,
+    saturating_add: fn(T, T) -> T,
+    to_serde_number: fn(T) -> anyhow::Result<serde_json::Number>,
     _window: &mut Window,
     _cx: &mut App,
 ) -> AnyElement {
     let id = element_id_from_path(&value.path);
     let path = value.path.clone();
-    let num = value.value.unwrap_or_else(|| value.default_value);
+    let num = *value.read();
 
     NumericStepper::new(
         id,
@@ -501,8 +549,7 @@ fn render_numeric_stepper(
         {
             let path = value.path.clone();
             move |_, _, cx| {
-                let Some(number) = serde_json::Number::from_u128(num.saturating_sub(1) as u128)
-                else {
+                let Some(number) = to_serde_number(saturating_sub(num, 1.into())).ok() else {
                     return;
                 };
                 let new_value = serde_json::Value::Number(number);
@@ -510,7 +557,7 @@ fn render_numeric_stepper(
             }
         },
         move |_, _, cx| {
-            let Some(number) = serde_json::Number::from_u128(num.saturating_add(1) as u128) else {
+            let Some(number) = to_serde_number(saturating_add(num, 1.into())).ok() else {
                 return;
             };
 

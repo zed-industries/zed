@@ -125,13 +125,7 @@ fn generate_ui_item_body(
 ) -> TokenStream {
     match (group_name, path_name, &input.data) {
         (_, _, Data::Union(_)) => unimplemented!("Derive SettingsUi for Unions"),
-        (None, None, Data::Struct(_)) => quote! {
-            settings::SettingsUiItem::None
-        },
-        (Some(_), None, Data::Struct(_)) => quote! {
-            settings::SettingsUiItem::None
-        },
-        (None, Some(_), Data::Struct(_)) => quote! {
+        (None, _, Data::Struct(_)) => quote! {
             settings::SettingsUiItem::None
         },
         (Some(_), _, Data::Struct(data_struct)) => {

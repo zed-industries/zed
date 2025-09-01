@@ -1,3 +1,5 @@
+use std::any::{TypeId, type_name};
+
 use anyhow::Context as _;
 use fs::Fs;
 use gpui::{AnyElement, App, AppContext as _, ReadGlobal as _, Window};
@@ -32,7 +34,8 @@ pub struct SettingsUiEntry {
 
 pub enum SettingsUiItemSingle {
     SwitchField,
-    NumericStepper,
+    /// A numeric stepper for a specific type of number
+    NumericStepper(NumType),
     ToggleGroup(&'static [&'static str]),
     /// This should be used when toggle group size > 6
     DropDown(&'static [&'static str]),
@@ -109,8 +112,56 @@ impl SettingsUi for Option<bool> {
     }
 }
 
-impl SettingsUi for u64 {
-    fn settings_ui_item() -> SettingsUiItem {
-        SettingsUiItem::Single(SettingsUiItemSingle::NumericStepper)
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NumType {
+    U64 = 0,
+    U32 = 1,
+    F32 = 2,
+}
+
+impl NumType {
+    const COUNT: usize = 3;
+    const ALL: [NumType; Self::COUNT] = [NumType::U64, NumType::U32, NumType::F32];
+    pub const TYPE_NAMES: std::sync::LazyLock<[&'static str; Self::COUNT]> =
+        std::sync::LazyLock::new(|| Self::ALL.map(Self::type_name));
+    pub const TYPE_IDS: std::sync::LazyLock<[TypeId; Self::COUNT]> =
+        std::sync::LazyLock::new(|| Self::ALL.map(Self::type_id));
+
+    pub fn type_id(self) -> TypeId {
+        match self {
+            NumType::U64 => TypeId::of::<u64>(),
+            NumType::U32 => TypeId::of::<u32>(),
+            NumType::F32 => TypeId::of::<f32>(),
+        }
+    }
+
+    pub fn type_name(self) -> &'static str {
+        match self {
+            NumType::U64 => std::any::type_name::<u64>(),
+            NumType::U32 => std::any::type_name::<u32>(),
+            NumType::F32 => std::any::type_name::<f32>(),
+        }
     }
 }
+
+macro_rules! numeric_stepper_for_num_type {
+    ($type:ty, $num_type:ident) => {
+        impl SettingsUi for $type {
+            fn settings_ui_item() -> SettingsUiItem {
+                SettingsUiItem::Single(SettingsUiItemSingle::NumericStepper(NumType::$num_type))
+            }
+        }
+
+        impl SettingsUi for Option<$type> {
+            fn settings_ui_item() -> SettingsUiItem {
+                SettingsUiItem::Single(SettingsUiItemSingle::NumericStepper(NumType::$num_type))
+            }
+        }
+    };
+}
+
+numeric_stepper_for_num_type!(u64, U64);
+numeric_stepper_for_num_type!(u32, U32);
+// todo(settings_ui) is there a better ui for f32?
+numeric_stepper_for_num_type!(f32, F32);
