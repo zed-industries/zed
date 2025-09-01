@@ -201,7 +201,7 @@ impl AgentTool for TerminalTool {
                 let exit_status = terminal
                     .update(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
                     .await;
-                guard.update(cx, |cancelled, _| *cancelled = true);
+                guard.update(cx, |cancelled, _| *cancelled = true)?;
                 let (content, content_line_count) = terminal.read_with(cx, |terminal, _| {
                     (terminal.get_content(), terminal.total_lines())
                 })?;
