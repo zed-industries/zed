@@ -1,18 +1,19 @@
 use editor::{Bias, Editor, SelectionEffects, scroll::Autoscroll, styled_runs_for_code_label};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    App, Context, DismissEvent, Entity, FontWeight, ParentElement, StyledText, Task, WeakEntity,
-    Window, rems,
+    App, Context, DismissEvent, Entity, HighlightStyle, ParentElement, StyledText, Task, TextStyle,
+    WeakEntity, Window, relative, rems,
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use project::{Project, Symbol};
+use settings::Settings;
 use std::{borrow::Cow, cmp::Reverse, sync::Arc};
-use theme::ActiveTheme;
+use theme::{ActiveTheme, ThemeSettings};
 use util::ResultExt;
 use workspace::{
     Workspace,
-    ui::{Color, Label, LabelCommon, LabelLike, ListItem, ListItemSpacing, Toggleable, v_flex},
+    ui::{LabelLike, ListItem, ListItemSpacing, prelude::*},
 };
 
 pub fn init(cx: &mut App) {
@@ -213,7 +214,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         &self,
         ix: usize,
         selected: bool,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let string_match = &self.matches[ix];
@@ -235,18 +236,29 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         let label = symbol.label.text.clone();
         let path = path.to_string();
 
-        let highlights = gpui::combine_highlights(
-            string_match
-                .positions
-                .iter()
-                .map(|pos| (*pos..pos + 1, FontWeight::BOLD.into())),
-            syntax_runs.map(|(range, mut highlight)| {
-                // Ignore font weight for syntax highlighting, as we'll use it
-                // for fuzzy matches.
-                highlight.font_weight = None;
-                (range, highlight)
-            }),
-        );
+        let settings = ThemeSettings::get_global(cx);
+
+        let text_style = TextStyle {
+            color: cx.theme().colors().text,
+            font_family: settings.buffer_font.family.clone(),
+            font_features: settings.buffer_font.features.clone(),
+            font_fallbacks: settings.buffer_font.fallbacks.clone(),
+            font_size: settings.buffer_font_size(cx).into(),
+            font_weight: settings.buffer_font.weight,
+            line_height: relative(1.),
+            ..Default::default()
+        };
+
+        let highlight_style = HighlightStyle {
+            background_color: Some(cx.theme().colors().text_accent.alpha(0.3)),
+            ..Default::default()
+        };
+        let custom_highlights = string_match
+            .positions
+            .iter()
+            .map(|pos| (*pos..pos + 1, highlight_style));
+
+        let highlights = gpui::combine_highlights(custom_highlights, syntax_runs);
 
         Some(
             ListItem::new(ix)
@@ -255,13 +267,10 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                 .toggle_state(selected)
                 .child(
                     v_flex()
-                        .child(
-                            LabelLike::new().child(
-                                StyledText::new(label)
-                                    .with_default_highlights(&window.text_style(), highlights),
-                            ),
-                        )
-                        .child(Label::new(path).color(Color::Muted)),
+                        .child(LabelLike::new().child(
+                            StyledText::new(label).with_default_highlights(&text_style, highlights),
+                        ))
+                        .child(Label::new(path).size(LabelSize::Small).color(Color::Muted)),
                 ),
         )
     }
@@ -437,7 +446,7 @@ mod tests {
             deprecated: None,
             container_name: None,
             location: lsp::Location::new(
-                lsp::Url::from_file_path(path.as_ref()).unwrap(),
+                lsp::Uri::from_file_path(path.as_ref()).unwrap(),
                 lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
             ),
         }

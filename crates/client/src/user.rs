@@ -46,11 +46,6 @@ impl ProjectId {
     }
 }
 
-#[derive(
-    Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, serde::Serialize, serde::Deserialize,
-)]
-pub struct DevServerProjectId(pub u64);
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ParticipantIndex(pub u32);
 
@@ -221,7 +216,9 @@ impl UserStore {
                         return Ok(());
                     };
                     match status {
-                        Status::Authenticated | Status::Connected { .. } => {
+                        Status::Authenticated
+                        | Status::Reauthenticated
+                        | Status::Connected { .. } => {
                             if let Some(user_id) = client.user_id() {
                                 let response = client
                                     .cloud_client()

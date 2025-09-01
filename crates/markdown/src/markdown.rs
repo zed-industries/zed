@@ -1085,10 +1085,10 @@ impl Element for MarkdownElement {
                                 );
                                 el.child(
                                     h_flex()
-                                        .w_5()
+                                        .w_4()
                                         .absolute()
-                                        .top_1()
-                                        .right_1()
+                                        .top_1p5()
+                                        .right_1p5()
                                         .justify_end()
                                         .child(codeblock),
                                 )
@@ -1115,11 +1115,12 @@ impl Element for MarkdownElement {
                                     cx,
                                 );
                                 el.child(
-                                    div()
+                                    h_flex()
+                                        .w_4()
                                         .absolute()
                                         .top_0()
                                         .right_0()
-                                        .w_5()
+                                        .justify_end()
                                         .visible_on_hover("code_block")
                                         .child(codeblock),
                                 )
@@ -1322,7 +1323,7 @@ fn render_copy_code_block_button(
     .icon_size(IconSize::Small)
     .style(ButtonStyle::Filled)
     .shape(ui::IconButtonShape::Square)
-    .tooltip(Tooltip::text("Copy Code"))
+    .tooltip(Tooltip::text("Copy"))
     .on_click({
         let markdown = markdown;
         move |_event, _window, cx| {

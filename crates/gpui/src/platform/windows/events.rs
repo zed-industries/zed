@@ -708,7 +708,7 @@ impl WindowsWindowInner {
                 .system_settings
                 .auto_hide_taskbar_position
         {
-            // Fot the auto-hide taskbar, adjust in by 1 pixel on taskbar edge,
+            // For the auto-hide taskbar, adjust in by 1 pixel on taskbar edge,
             // so the window isn't treated as a "fullscreen app", which would cause
             // the taskbar to disappear.
             match taskbar_position {

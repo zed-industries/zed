@@ -273,6 +273,13 @@ impl AgentTool for EditFileTool {
 
             let diff = cx.new(|cx| Diff::new(buffer.clone(), cx))?;
             event_stream.update_diff(diff.clone());
+            let _finalize_diff = util::defer({
+               let diff = diff.downgrade();
+               let mut cx = cx.clone();
+               move || {
+                   diff.update(&mut cx, |diff, cx| diff.finalize(cx)).ok();
+               }
+            });
 
             let old_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
             let old_text = cx
@@ -388,8 +395,6 @@ impl AgentTool for EditFileTool {
                     }
                 })
                 .await;
-
-            diff.update(cx, |diff, cx| diff.finalize(cx)).ok();
 
             let input_path = input.path.display();
             if unified_diff.is_empty() {
@@ -1543,6 +1548,100 @@ mod tests {
             tool.initial_title(Err(serde_json::Value::Null)),
             DEFAULT_UI_TEXT
         );
+    }
+
+    #[gpui::test]
+    async fn test_diff_finalization(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree("/", json!({"main.rs": ""})).await;
+
+        let project = Project::test(fs.clone(), [path!("/").as_ref()], cx).await;
+        let languages = project.read_with(cx, |project, _cx| project.languages().clone());
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry.clone(),
+                Templates::new(),
+                Some(model.clone()),
+                cx,
+            )
+        });
+
+        // Ensure the diff is finalized after the edit completes.
+        {
+            let tool = Arc::new(EditFileTool::new(thread.downgrade(), languages.clone()));
+            let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+            let edit = cx.update(|cx| {
+                tool.run(
+                    EditFileToolInput {
+                        display_description: "Edit file".into(),
+                        path: path!("/main.rs").into(),
+                        mode: EditFileMode::Edit,
+                    },
+                    stream_tx,
+                    cx,
+                )
+            });
+            stream_rx.expect_update_fields().await;
+            let diff = stream_rx.expect_diff().await;
+            diff.read_with(cx, |diff, _| assert!(matches!(diff, Diff::Pending(_))));
+            cx.run_until_parked();
+            model.end_last_completion_stream();
+            edit.await.unwrap();
+            diff.read_with(cx, |diff, _| assert!(matches!(diff, Diff::Finalized(_))));
+        }
+
+        // Ensure the diff is finalized if an error occurs while editing.
+        {
+            model.forbid_requests();
+            let tool = Arc::new(EditFileTool::new(thread.downgrade(), languages.clone()));
+            let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+            let edit = cx.update(|cx| {
+                tool.run(
+                    EditFileToolInput {
+                        display_description: "Edit file".into(),
+                        path: path!("/main.rs").into(),
+                        mode: EditFileMode::Edit,
+                    },
+                    stream_tx,
+                    cx,
+                )
+            });
+            stream_rx.expect_update_fields().await;
+            let diff = stream_rx.expect_diff().await;
+            diff.read_with(cx, |diff, _| assert!(matches!(diff, Diff::Pending(_))));
+            edit.await.unwrap_err();
+            diff.read_with(cx, |diff, _| assert!(matches!(diff, Diff::Finalized(_))));
+            model.allow_requests();
+        }
+
+        // Ensure the diff is finalized if the tool call gets dropped.
+        {
+            let tool = Arc::new(EditFileTool::new(thread.downgrade(), languages.clone()));
+            let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+            let edit = cx.update(|cx| {
+                tool.run(
+                    EditFileToolInput {
+                        display_description: "Edit file".into(),
+                        path: path!("/main.rs").into(),
+                        mode: EditFileMode::Edit,
+                    },
+                    stream_tx,
+                    cx,
+                )
+            });
+            stream_rx.expect_update_fields().await;
+            let diff = stream_rx.expect_diff().await;
+            diff.read_with(cx, |diff, _| assert!(matches!(diff, Diff::Pending(_))));
+            drop(edit);
+            cx.run_until_parked();
+            diff.read_with(cx, |diff, _| assert!(matches!(diff, Diff::Finalized(_))));
+        }
     }
 
     fn init_test(cx: &mut TestAppContext) {

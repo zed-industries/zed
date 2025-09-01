@@ -86,23 +86,18 @@ impl RenderOnce for UsageCallout {
             (IconName::Warning, Severity::Warning)
         };
 
-        div()
-            .border_t_1()
-            .border_color(cx.theme().colors().border)
-            .child(
-                Callout::new()
-                    .icon(icon)
-                    .severity(severity)
-                    .icon(icon)
-                    .title(title)
-                    .description(message)
-                    .actions_slot(
-                        Button::new("upgrade", button_text)
-                            .label_size(LabelSize::Small)
-                            .on_click(move |_, _, cx| {
-                                cx.open_url(&url);
-                            }),
-                    ),
+        Callout::new()
+            .icon(icon)
+            .severity(severity)
+            .icon(icon)
+            .title(title)
+            .description(message)
+            .actions_slot(
+                Button::new("upgrade", button_text)
+                    .label_size(LabelSize::Small)
+                    .on_click(move |_, _, cx| {
+                        cx.open_url(&url);
+                    }),
             )
             .into_any_element()
     }

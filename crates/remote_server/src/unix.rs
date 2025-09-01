@@ -19,14 +19,14 @@ use project::project_settings::ProjectSettings;
 
 use proto::CrashReport;
 use release_channel::{AppVersion, RELEASE_CHANNEL, ReleaseChannel};
-use remote::SshRemoteClient;
+use remote::RemoteClient;
 use remote::{
     json_log::LogRecord,
     protocol::{read_message, write_message},
     proxy::ProxyLaunchError,
 };
 use reqwest_client::ReqwestClient;
-use rpc::proto::{self, Envelope, SSH_PROJECT_ID};
+use rpc::proto::{self, Envelope, REMOTE_SERVER_PROJECT_ID};
 use rpc::{AnyProtoClient, TypedEnvelope};
 use settings::{Settings, SettingsStore, watch_config_file};
 use smol::channel::{Receiver, Sender};
@@ -36,6 +36,7 @@ use smol::Async;
 use smol::{net::unix::UnixListener, stream::StreamExt as _};
 use std::ffi::OsStr;
 use std::ops::ControlFlow;
+use std::process::ExitStatus;
 use std::str::FromStr;
 use std::sync::LazyLock;
 use std::{env, thread};
@@ -46,6 +47,7 @@ use std::{
     sync::Arc,
 };
 use telemetry_events::LocationData;
+use thiserror::Error;
 use util::ResultExt;
 
 pub static VERSION: LazyLock<&str> = LazyLock::new(|| match *RELEASE_CHANNEL {
@@ -394,7 +396,7 @@ fn start_server(
     })
     .detach();
 
-    SshRemoteClient::proto_client_from_channels(incoming_rx, outgoing_tx, cx, "server")
+    RemoteClient::proto_client_from_channels(incoming_rx, outgoing_tx, cx, "server")
 }
 
 fn init_paths() -> anyhow::Result<()> {
@@ -526,7 +528,23 @@ pub fn execute_run(
     Ok(())
 }
 
-#[derive(Clone)]
+#[derive(Debug, Error)]
+pub(crate) enum ServerPathError {
+    #[error("Failed to create server_dir `{path}`")]
+    CreateServerDir {
+        #[source]
+        source: std::io::Error,
+        path: PathBuf,
+    },
+    #[error("Failed to create logs_dir `{path}`")]
+    CreateLogsDir {
+        #[source]
+        source: std::io::Error,
+        path: PathBuf,
+    },
+}
+
+#[derive(Clone, Debug)]
 struct ServerPaths {
     log_file: PathBuf,
     pid_file: PathBuf,
@@ -536,10 +554,19 @@ struct ServerPaths {
 }
 
 impl ServerPaths {
-    fn new(identifier: &str) -> Result<Self> {
+    fn new(identifier: &str) -> Result<Self, ServerPathError> {
         let server_dir = paths::remote_server_state_dir().join(identifier);
-        std::fs::create_dir_all(&server_dir)?;
-        std::fs::create_dir_all(&logs_dir())?;
+        std::fs::create_dir_all(&server_dir).map_err(|source| {
+            ServerPathError::CreateServerDir {
+                source,
+                path: server_dir.clone(),
+            }
+        })?;
+        let log_dir = logs_dir();
+        std::fs::create_dir_all(log_dir).map_err(|source| ServerPathError::CreateLogsDir {
+            source: source,
+            path: log_dir.clone(),
+        })?;
 
         let pid_file = server_dir.join("server.pid");
         let stdin_socket = server_dir.join("stdin.sock");
@@ -557,7 +584,43 @@ impl ServerPaths {
     }
 }
 
-pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
+#[derive(Debug, Error)]
+pub(crate) enum ExecuteProxyError {
+    #[error("Failed to init server paths")]
+    ServerPath(#[from] ServerPathError),
+
+    #[error(transparent)]
+    ServerNotRunning(#[from] ProxyLaunchError),
+
+    #[error("Failed to check PidFile '{path}'")]
+    CheckPidFile {
+        #[source]
+        source: CheckPidError,
+        path: PathBuf,
+    },
+
+    #[error("Failed to kill existing server with pid '{pid}'")]
+    KillRunningServer {
+        #[source]
+        source: std::io::Error,
+        pid: u32,
+    },
+
+    #[error("failed to spawn server")]
+    SpawnServer(#[source] SpawnServerError),
+
+    #[error("stdin_task failed")]
+    StdinTask(#[source] anyhow::Error),
+    #[error("stdout_task failed")]
+    StdoutTask(#[source] anyhow::Error),
+    #[error("stderr_task failed")]
+    StderrTask(#[source] anyhow::Error),
+}
+
+pub(crate) fn execute_proxy(
+    identifier: String,
+    is_reconnecting: bool,
+) -> Result<(), ExecuteProxyError> {
     init_logging_proxy();
 
     let server_paths = ServerPaths::new(&identifier)?;
@@ -574,12 +637,19 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
 
     log::info!("starting proxy process. PID: {}", std::process::id());
 
-    let server_pid = check_pid_file(&server_paths.pid_file)?;
+    let server_pid = check_pid_file(&server_paths.pid_file).map_err(|source| {
+        ExecuteProxyError::CheckPidFile {
+            source,
+            path: server_paths.pid_file.clone(),
+        }
+    })?;
     let server_running = server_pid.is_some();
     if is_reconnecting {
         if !server_running {
             log::error!("attempted to reconnect, but no server running");
-            anyhow::bail!(ProxyLaunchError::ServerNotRunning);
+            return Err(ExecuteProxyError::ServerNotRunning(
+                ProxyLaunchError::ServerNotRunning,
+            ));
         }
     } else {
         if let Some(pid) = server_pid {
@@ -590,7 +660,7 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
             kill_running_server(pid, &server_paths)?;
         }
 
-        spawn_server(&server_paths)?;
+        spawn_server(&server_paths).map_err(ExecuteProxyError::SpawnServer)?;
     };
 
     let stdin_task = smol::spawn(async move {
@@ -630,9 +700,9 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
 
     if let Err(forwarding_result) = smol::block_on(async move {
         futures::select! {
-            result = stdin_task.fuse() => result.context("stdin_task failed"),
-            result = stdout_task.fuse() => result.context("stdout_task failed"),
-            result = stderr_task.fuse() => result.context("stderr_task failed"),
+            result = stdin_task.fuse() => result.map_err(ExecuteProxyError::StdinTask),
+            result = stdout_task.fuse() => result.map_err(ExecuteProxyError::StdoutTask),
+            result = stderr_task.fuse() => result.map_err(ExecuteProxyError::StderrTask),
         }
     }) {
         log::error!(
@@ -645,12 +715,12 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
     Ok(())
 }
 
-fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<()> {
+fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<(), ExecuteProxyError> {
     log::info!("killing existing server with PID {}", pid);
     std::process::Command::new("kill")
         .arg(pid.to_string())
         .output()
-        .context("failed to kill existing server")?;
+        .map_err(|source| ExecuteProxyError::KillRunningServer { source, pid })?;
 
     for file in [
         &paths.pid_file,
@@ -664,18 +734,39 @@ fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<()> {
     Ok(())
 }
 
-fn spawn_server(paths: &ServerPaths) -> Result<()> {
+#[derive(Debug, Error)]
+pub(crate) enum SpawnServerError {
+    #[error("failed to remove stdin socket")]
+    RemoveStdinSocket(#[source] std::io::Error),
+
+    #[error("failed to remove stdout socket")]
+    RemoveStdoutSocket(#[source] std::io::Error),
+
+    #[error("failed to remove stderr socket")]
+    RemoveStderrSocket(#[source] std::io::Error),
+
+    #[error("failed to get current_exe")]
+    CurrentExe(#[source] std::io::Error),
+
+    #[error("failed to launch server process")]
+    ProcessStatus(#[source] std::io::Error),
+
+    #[error("failed to launch and detach server process: {status}\n{paths}")]
+    LaunchStatus { status: ExitStatus, paths: String },
+}
+
+fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
     if paths.stdin_socket.exists() {
-        std::fs::remove_file(&paths.stdin_socket)?;
+        std::fs::remove_file(&paths.stdin_socket).map_err(SpawnServerError::RemoveStdinSocket)?;
     }
     if paths.stdout_socket.exists() {
-        std::fs::remove_file(&paths.stdout_socket)?;
+        std::fs::remove_file(&paths.stdout_socket).map_err(SpawnServerError::RemoveStdoutSocket)?;
     }
     if paths.stderr_socket.exists() {
-        std::fs::remove_file(&paths.stderr_socket)?;
+        std::fs::remove_file(&paths.stderr_socket).map_err(SpawnServerError::RemoveStderrSocket)?;
     }
 
-    let binary_name = std::env::current_exe()?;
+    let binary_name = std::env::current_exe().map_err(SpawnServerError::CurrentExe)?;
     let mut server_process = std::process::Command::new(binary_name);
     server_process
         .arg("run")
@@ -692,11 +783,17 @@ fn spawn_server(paths: &ServerPaths) -> Result<()> {
 
     let status = server_process
         .status()
-        .context("failed to launch server process")?;
-    anyhow::ensure!(
-        status.success(),
-        "failed to launch and detach server process"
-    );
+        .map_err(SpawnServerError::ProcessStatus)?;
+
+    if !status.success() {
+        return Err(SpawnServerError::LaunchStatus {
+            status,
+            paths: format!(
+                "log file: {:?}, pid file: {:?}",
+                paths.log_file, paths.pid_file,
+            ),
+        });
+    }
 
     let mut total_time_waited = std::time::Duration::from_secs(0);
     let wait_duration = std::time::Duration::from_millis(20);
@@ -717,7 +814,15 @@ fn spawn_server(paths: &ServerPaths) -> Result<()> {
     Ok(())
 }
 
-fn check_pid_file(path: &Path) -> Result<Option<u32>> {
+#[derive(Debug, Error)]
+#[error("Failed to remove PID file for missing process (pid `{pid}`")]
+pub(crate) struct CheckPidError {
+    #[source]
+    source: std::io::Error,
+    pid: u32,
+}
+
+fn check_pid_file(path: &Path) -> Result<Option<u32>, CheckPidError> {
     let Some(pid) = std::fs::read_to_string(&path)
         .ok()
         .and_then(|contents| contents.parse::<u32>().ok())
@@ -742,7 +847,7 @@ fn check_pid_file(path: &Path) -> Result<Option<u32>> {
             log::debug!(
                 "Found PID file, but process with that PID does not exist. Removing PID file."
             );
-            std::fs::remove_file(&path).context("Failed to remove PID file")?;
+            std::fs::remove_file(&path).map_err(|source| CheckPidError { source, pid })?;
             Ok(None)
         }
     }
@@ -762,32 +867,19 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    use remote::protocol::read_message_raw;
+    use remote::protocol::{read_message_raw, write_size_prefixed_buffer};
 
     let mut buffer = Vec::new();
     loop {
         read_message_raw(&mut reader, &mut buffer)
             .await
             .with_context(|| format!("failed to read message from {}", socket_name))?;
-
         write_size_prefixed_buffer(&mut writer, &mut buffer)
             .await
             .with_context(|| format!("failed to write message to {}", socket_name))?;
-
         writer.flush().await?;
-
         buffer.clear();
     }
-}
-
-async fn write_size_prefixed_buffer<S: AsyncWrite + Unpin>(
-    stream: &mut S,
-    buffer: &mut Vec<u8>,
-) -> Result<()> {
-    let len = buffer.len() as u32;
-    stream.write_all(len.to_le_bytes().as_slice()).await?;
-    stream.write_all(buffer).await?;
-    Ok(())
 }
 
 fn initialize_settings(
@@ -805,7 +897,7 @@ fn initialize_settings(
 
                 session
                     .send(proto::Toast {
-                        project_id: SSH_PROJECT_ID,
+                        project_id: REMOTE_SERVER_PROJECT_ID,
                         notification_id: "server-settings-failed".to_string(),
                         message: format!(
                             "Error in settings on remote host {:?}: {}",
@@ -817,7 +909,7 @@ fn initialize_settings(
             } else {
                 session
                     .send(proto::HideToast {
-                        project_id: SSH_PROJECT_ID,
+                        project_id: REMOTE_SERVER_PROJECT_ID,
                         notification_id: "server-settings-failed".to_string(),
                     })
                     .log_err();

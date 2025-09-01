@@ -514,7 +514,7 @@ impl Pane {
         }
     }
 
-    fn alternate_file(&mut self, window: &mut Window, cx: &mut Context<Pane>) {
+    fn alternate_file(&mut self, _: &AlternateFile, window: &mut Window, cx: &mut Context<Pane>) {
         let (_, alternative) = &self.alternate_file_items;
         if let Some(alternative) = alternative {
             let existing = self
@@ -788,7 +788,7 @@ impl Pane {
         !self.nav_history.0.lock().forward_stack.is_empty()
     }
 
-    pub fn navigate_backward(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn navigate_backward(&mut self, _: &GoBack, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(workspace) = self.workspace.upgrade() {
             let pane = cx.entity().downgrade();
             window.defer(cx, move |window, cx| {
@@ -799,7 +799,7 @@ impl Pane {
         }
     }
 
-    fn navigate_forward(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn navigate_forward(&mut self, _: &GoForward, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(workspace) = self.workspace.upgrade() {
             let pane = cx.entity().downgrade();
             window.defer(cx, move |window, cx| {
@@ -1283,9 +1283,9 @@ impl Pane {
         }
     }
 
-    pub fn activate_prev_item(
+    pub fn activate_previous_item(
         &mut self,
-        activate_pane: bool,
+        _: &ActivatePreviousItem,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1295,12 +1295,12 @@ impl Pane {
         } else if !self.items.is_empty() {
             index = self.items.len() - 1;
         }
-        self.activate_item(index, activate_pane, activate_pane, window, cx);
+        self.activate_item(index, true, true, window, cx);
     }
 
     pub fn activate_next_item(
         &mut self,
-        activate_pane: bool,
+        _: &ActivateNextItem,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1310,10 +1310,15 @@ impl Pane {
         } else {
             index = 0;
         }
-        self.activate_item(index, activate_pane, activate_pane, window, cx);
+        self.activate_item(index, true, true, window, cx);
     }
 
-    pub fn swap_item_left(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn swap_item_left(
+        &mut self,
+        _: &SwapItemLeft,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let index = self.active_item_index;
         if index == 0 {
             return;
@@ -1323,14 +1328,29 @@ impl Pane {
         self.activate_item(index - 1, true, true, window, cx);
     }
 
-    pub fn swap_item_right(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn swap_item_right(
+        &mut self,
+        _: &SwapItemRight,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let index = self.active_item_index;
-        if index + 1 == self.items.len() {
+        if index + 1 >= self.items.len() {
             return;
         }
 
         self.items.swap(index, index + 1);
         self.activate_item(index + 1, true, true, window, cx);
+    }
+
+    pub fn activate_last_item(
+        &mut self,
+        _: &ActivateLastItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let index = self.items.len().saturating_sub(1);
+        self.activate_item(index, true, true, window, cx);
     }
 
     pub fn close_active_item(
@@ -2881,7 +2901,9 @@ impl Pane {
             .on_click({
                 let entity = cx.entity();
                 move |_, window, cx| {
-                    entity.update(cx, |pane, cx| pane.navigate_backward(window, cx))
+                    entity.update(cx, |pane, cx| {
+                        pane.navigate_backward(&Default::default(), window, cx)
+                    })
                 }
             })
             .disabled(!self.can_navigate_backward())
@@ -2896,7 +2918,11 @@ impl Pane {
             .icon_size(IconSize::Small)
             .on_click({
                 let entity = cx.entity();
-                move |_, window, cx| entity.update(cx, |pane, cx| pane.navigate_forward(window, cx))
+                move |_, window, cx| {
+                    entity.update(cx, |pane, cx| {
+                        pane.navigate_forward(&Default::default(), window, cx)
+                    })
+                }
             })
             .disabled(!self.can_navigate_forward())
             .tooltip({
@@ -3528,9 +3554,6 @@ impl Render for Pane {
             .size_full()
             .flex_none()
             .overflow_hidden()
-            .on_action(cx.listener(|pane, _: &AlternateFile, window, cx| {
-                pane.alternate_file(window, cx);
-            }))
             .on_action(
                 cx.listener(|pane, _: &SplitLeft, _, cx| pane.split(SplitDirection::Left, cx)),
             )
@@ -3547,12 +3570,6 @@ impl Render for Pane {
             .on_action(
                 cx.listener(|pane, _: &SplitDown, _, cx| pane.split(SplitDirection::Down, cx)),
             )
-            .on_action(
-                cx.listener(|pane, _: &GoBack, window, cx| pane.navigate_backward(window, cx)),
-            )
-            .on_action(
-                cx.listener(|pane, _: &GoForward, window, cx| pane.navigate_forward(window, cx)),
-            )
             .on_action(cx.listener(|_, _: &JoinIntoNext, _, cx| {
                 cx.emit(Event::JoinIntoNext);
             }))
@@ -3560,6 +3577,8 @@ impl Render for Pane {
                 cx.emit(Event::JoinAll);
             }))
             .on_action(cx.listener(Pane::toggle_zoom))
+            .on_action(cx.listener(Self::navigate_backward))
+            .on_action(cx.listener(Self::navigate_forward))
             .on_action(
                 cx.listener(|pane: &mut Pane, action: &ActivateItem, window, cx| {
                     pane.activate_item(
@@ -3571,33 +3590,14 @@ impl Render for Pane {
                     );
                 }),
             )
-            .on_action(
-                cx.listener(|pane: &mut Pane, _: &ActivateLastItem, window, cx| {
-                    pane.activate_item(pane.items.len().saturating_sub(1), true, true, window, cx);
-                }),
-            )
-            .on_action(
-                cx.listener(|pane: &mut Pane, _: &ActivatePreviousItem, window, cx| {
-                    pane.activate_prev_item(true, window, cx);
-                }),
-            )
-            .on_action(
-                cx.listener(|pane: &mut Pane, _: &ActivateNextItem, window, cx| {
-                    pane.activate_next_item(true, window, cx);
-                }),
-            )
-            .on_action(
-                cx.listener(|pane, _: &SwapItemLeft, window, cx| pane.swap_item_left(window, cx)),
-            )
-            .on_action(
-                cx.listener(|pane, _: &SwapItemRight, window, cx| pane.swap_item_right(window, cx)),
-            )
-            .on_action(cx.listener(|pane, action, window, cx| {
-                pane.toggle_pin_tab(action, window, cx);
-            }))
-            .on_action(cx.listener(|pane, action, window, cx| {
-                pane.unpin_all_tabs(action, window, cx);
-            }))
+            .on_action(cx.listener(Self::alternate_file))
+            .on_action(cx.listener(Self::activate_last_item))
+            .on_action(cx.listener(Self::activate_previous_item))
+            .on_action(cx.listener(Self::activate_next_item))
+            .on_action(cx.listener(Self::swap_item_left))
+            .on_action(cx.listener(Self::swap_item_right))
+            .on_action(cx.listener(Self::toggle_pin_tab))
+            .on_action(cx.listener(Self::unpin_all_tabs))
             .when(PreviewTabsSettings::get_global(cx).enabled, |this| {
                 this.on_action(cx.listener(|pane: &mut Pane, _: &TogglePreviewTab, _, cx| {
                     if let Some(active_item_id) = pane.active_item().map(|i| i.item_id()) {
@@ -6450,6 +6450,57 @@ mod tests {
         })
         .await
         .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_item_swapping_actions(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        assert_item_labels(&pane, [], cx);
+
+        // Test that these actions do not panic
+        pane.update_in(cx, |pane, window, cx| {
+            pane.swap_item_right(&Default::default(), window, cx);
+        });
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.swap_item_left(&Default::default(), window, cx);
+        });
+
+        add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        add_labeled_item(&pane, "C", false, cx);
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.swap_item_right(&Default::default(), window, cx);
+        });
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.swap_item_left(&Default::default(), window, cx);
+        });
+        assert_item_labels(&pane, ["A", "C*", "B"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.swap_item_left(&Default::default(), window, cx);
+        });
+        assert_item_labels(&pane, ["C*", "A", "B"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.swap_item_left(&Default::default(), window, cx);
+        });
+        assert_item_labels(&pane, ["C*", "A", "B"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.swap_item_right(&Default::default(), window, cx);
+        });
+        assert_item_labels(&pane, ["A", "C*", "B"], cx);
     }
 
     fn init_test(cx: &mut TestAppContext) {

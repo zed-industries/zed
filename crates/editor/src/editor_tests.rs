@@ -4404,6 +4404,129 @@ async fn test_unique_lines_single_selection(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_wrap_in_tag_single_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let js_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "JavaScript".into(),
+            wrap_characters: Some(language::WrapCharactersConfig {
+                start_prefix: "<".into(),
+                start_suffix: ">".into(),
+                end_prefix: "</".into(),
+                end_suffix: ">".into(),
+            }),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(js_language), cx));
+
+    cx.set_state(indoc! {"
+        «testˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.wrap_selections_in_tag(&WrapSelectionsInTag, window, cx));
+    cx.assert_editor_state(indoc! {"
+        <«ˇ»>test</«ˇ»>
+    "});
+
+    cx.set_state(indoc! {"
+        «test
+         testˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.wrap_selections_in_tag(&WrapSelectionsInTag, window, cx));
+    cx.assert_editor_state(indoc! {"
+        <«ˇ»>test
+         test</«ˇ»>
+    "});
+
+    cx.set_state(indoc! {"
+        teˇst
+    "});
+    cx.update_editor(|e, window, cx| e.wrap_selections_in_tag(&WrapSelectionsInTag, window, cx));
+    cx.assert_editor_state(indoc! {"
+        te<«ˇ»></«ˇ»>st
+    "});
+}
+
+#[gpui::test]
+async fn test_wrap_in_tag_multi_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let js_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "JavaScript".into(),
+            wrap_characters: Some(language::WrapCharactersConfig {
+                start_prefix: "<".into(),
+                start_suffix: ">".into(),
+                end_prefix: "</".into(),
+                end_suffix: ">".into(),
+            }),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(js_language), cx));
+
+    cx.set_state(indoc! {"
+        «testˇ»
+        «testˇ» «testˇ»
+        «testˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.wrap_selections_in_tag(&WrapSelectionsInTag, window, cx));
+    cx.assert_editor_state(indoc! {"
+        <«ˇ»>test</«ˇ»>
+        <«ˇ»>test</«ˇ»> <«ˇ»>test</«ˇ»>
+        <«ˇ»>test</«ˇ»>
+    "});
+
+    cx.set_state(indoc! {"
+        «test
+         testˇ»
+        «test
+         testˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.wrap_selections_in_tag(&WrapSelectionsInTag, window, cx));
+    cx.assert_editor_state(indoc! {"
+        <«ˇ»>test
+         test</«ˇ»>
+        <«ˇ»>test
+         test</«ˇ»>
+    "});
+}
+
+#[gpui::test]
+async fn test_wrap_in_tag_does_nothing_in_unsupported_languages(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let plaintext_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Plain Text".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(plaintext_language), cx));
+
+    cx.set_state(indoc! {"
+        «testˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.wrap_selections_in_tag(&WrapSelectionsInTag, window, cx));
+    cx.assert_editor_state(indoc! {"
+      «testˇ»
+    "});
+}
+
+#[gpui::test]
 async fn test_manipulate_immutable_lines_with_multi_selection(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -9786,7 +9909,7 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
             move |params, _| async move {
                 assert_eq!(
                     params.text_document.uri,
-                    lsp::Url::from_file_path(path!("/file.rs")).unwrap()
+                    lsp::Uri::from_file_path(path!("/file.rs")).unwrap()
                 );
                 assert_eq!(params.options.tab_size, 4);
                 Ok(Some(vec![lsp::TextEdit::new(
@@ -9829,7 +9952,7 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
             move |params, _| async move {
                 assert_eq!(
                     params.text_document.uri,
-                    lsp::Url::from_file_path(path!("/file.rs")).unwrap()
+                    lsp::Uri::from_file_path(path!("/file.rs")).unwrap()
                 );
                 futures::future::pending::<()>().await;
                 unreachable!()
@@ -9877,7 +10000,7 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
             .set_request_handler::<lsp::request::Formatting, _, _>(move |params, _| async move {
                 assert_eq!(
                     params.text_document.uri,
-                    lsp::Url::from_file_path(path!("/file.rs")).unwrap()
+                    lsp::Uri::from_file_path(path!("/file.rs")).unwrap()
                 );
                 assert_eq!(params.options.tab_size, 8);
                 Ok(Some(vec![]))
@@ -10425,7 +10548,7 @@ async fn test_range_format_on_save_success(cx: &mut TestAppContext) {
         .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path(path!("/file.rs")).unwrap()
+                lsp::Uri::from_file_path(path!("/file.rs")).unwrap()
             );
             assert_eq!(params.options.tab_size, 4);
             Ok(Some(vec![lsp::TextEdit::new(
@@ -10458,7 +10581,7 @@ async fn test_range_format_on_save_timeout(cx: &mut TestAppContext) {
         move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path(path!("/file.rs")).unwrap()
+                lsp::Uri::from_file_path(path!("/file.rs")).unwrap()
             );
             futures::future::pending::<()>().await;
             unreachable!()
@@ -10551,7 +10674,7 @@ async fn test_range_format_respects_language_tab_size_override(cx: &mut TestAppC
         .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path(path!("/file.rs")).unwrap()
+                lsp::Uri::from_file_path(path!("/file.rs")).unwrap()
             );
             assert_eq!(params.options.tab_size, 8);
             Ok(Some(Vec::new()))
@@ -10638,7 +10761,7 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
         .set_request_handler::<lsp::request::Formatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path(path!("/file.rs")).unwrap()
+                lsp::Uri::from_file_path(path!("/file.rs")).unwrap()
             );
             assert_eq!(params.options.tab_size, 4);
             Ok(Some(vec![lsp::TextEdit::new(
@@ -10663,7 +10786,7 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
         move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path(path!("/file.rs")).unwrap()
+                lsp::Uri::from_file_path(path!("/file.rs")).unwrap()
             );
             futures::future::pending::<()>().await;
             unreachable!()
@@ -10759,7 +10882,7 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
                 params.context.only,
                 Some(vec!["code-action-1".into(), "code-action-2".into()])
             );
-            let uri = lsp::Url::from_file_path(path!("/file.rs")).unwrap();
+            let uri = lsp::Uri::from_file_path(path!("/file.rs")).unwrap();
             Ok(Some(vec![
                 lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
                     kind: Some("code-action-1".into()),
@@ -10819,7 +10942,7 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
                         edit: lsp::WorkspaceEdit {
                             changes: Some(
                                 [(
-                                    lsp::Url::from_file_path(path!("/file.rs")).unwrap(),
+                                    lsp::Uri::from_file_path(path!("/file.rs")).unwrap(),
                                     vec![lsp::TextEdit {
                                         range: lsp::Range::new(
                                             lsp::Position::new(0, 0),
@@ -11030,7 +11153,7 @@ async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
         .set_request_handler::<lsp::request::CodeActionRequest, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path(path!("/file.ts")).unwrap()
+                lsp::Uri::from_file_path(path!("/file.ts")).unwrap()
             );
             Ok(Some(vec![lsp::CodeActionOrCommand::CodeAction(
                 lsp::CodeAction {
@@ -11078,7 +11201,7 @@ async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
         move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path(path!("/file.ts")).unwrap()
+                lsp::Uri::from_file_path(path!("/file.ts")).unwrap()
             );
             futures::future::pending::<()>().await;
             unreachable!()
@@ -15355,7 +15478,7 @@ async fn go_to_prev_overlapping_diagnostic(executor: BackgroundExecutor, cx: &mu
                 .update_diagnostics(
                     LanguageServerId(0),
                     lsp::PublishDiagnosticsParams {
-                        uri: lsp::Url::from_file_path(path!("/root/file")).unwrap(),
+                        uri: lsp::Uri::from_file_path(path!("/root/file")).unwrap(),
                         version: None,
                         diagnostics: vec![
                             lsp::Diagnostic {
@@ -15751,7 +15874,7 @@ async fn test_on_type_formatting_not_triggered(cx: &mut TestAppContext) {
         |params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri,
-                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
             );
             assert_eq!(
                 params.text_document_position.position,
@@ -16276,7 +16399,7 @@ async fn test_context_menus_hide_hover_popover(cx: &mut gpui::TestAppContext) {
                     edit: Some(lsp::WorkspaceEdit {
                         changes: Some(
                             [(
-                                lsp::Url::from_file_path(path!("/file.rs")).unwrap(),
+                                lsp::Uri::from_file_path(path!("/file.rs")).unwrap(),
                                 vec![lsp::TextEdit {
                                     range: lsp::Range::new(
                                         lsp::Position::new(5, 4),
@@ -19744,7 +19867,7 @@ async fn test_display_diff_hunks(cx: &mut TestAppContext) {
                 PathKey::namespaced(0, buffer.read(cx).file().unwrap().path().clone()),
                 buffer.clone(),
                 vec![text::Anchor::MIN.to_point(&snapshot)..text::Anchor::MAX.to_point(&snapshot)],
-                DEFAULT_MULTIBUFFER_CONTEXT,
+                2,
                 cx,
             );
         }
@@ -21944,7 +22067,7 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
                                 edit: lsp::WorkspaceEdit {
                                     changes: Some(
                                         [(
-                                            lsp::Url::from_file_path(path!("/dir/a.ts")).unwrap(),
+                                            lsp::Uri::from_file_path(path!("/dir/a.ts")).unwrap(),
                                             vec![lsp::TextEdit {
                                                 range: lsp::Range::new(
                                                     lsp::Position::new(0, 0),
@@ -22715,7 +22838,7 @@ async fn test_invisible_worktree_servers(cx: &mut TestAppContext) {
     .await
     .unwrap();
     pane.update_in(cx, |pane, window, cx| {
-        pane.navigate_backward(window, cx);
+        pane.navigate_backward(&Default::default(), window, cx);
     });
     cx.run_until_parked();
     pane.update(cx, |pane, cx| {
@@ -23916,7 +24039,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
             let result_id = Some(new_result_id.to_string());
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path(path!("/a/first.rs")).unwrap()
+                lsp::Uri::from_file_path(path!("/a/first.rs")).unwrap()
             );
             async move {
                 Ok(lsp::DocumentDiagnosticReportResult::Report(
@@ -24131,7 +24254,7 @@ async fn test_document_colors(cx: &mut TestAppContext) {
             async move {
                 assert_eq!(
                     params.text_document.uri,
-                    lsp::Url::from_file_path(path!("/a/first.rs")).unwrap()
+                    lsp::Uri::from_file_path(path!("/a/first.rs")).unwrap()
                 );
                 requests_made.fetch_add(1, atomic::Ordering::Release);
                 Ok(vec![
@@ -24302,7 +24425,7 @@ async fn test_document_colors(cx: &mut TestAppContext) {
     workspace
         .update(cx, |workspace, window, cx| {
             workspace.active_pane().update(cx, |pane, cx| {
-                pane.navigate_backward(window, cx);
+                pane.navigate_backward(&Default::default(), window, cx);
             })
         })
         .unwrap();

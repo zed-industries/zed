@@ -73,11 +73,8 @@ impl AcpModelPickerDelegate {
                     this.update_in(cx, |this, window, cx| {
                         this.delegate.models = models.ok();
                         this.delegate.selected_model = selected_model.ok();
-                        this.delegate.update_matches(this.query(cx), window, cx)
-                    })?
-                    .await;
-
-                    Ok(())
+                        this.refresh(window, cx)
+                    })
                 }
 
                 refresh(&this, &session_id, cx).await.log_err();

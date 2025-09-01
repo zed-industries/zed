@@ -26,7 +26,7 @@ use node_runtime::NodeRuntime;
 use notifications::NotificationStore;
 use parking_lot::Mutex;
 use project::{Project, WorktreeId};
-use remote::SshRemoteClient;
+use remote::RemoteClient;
 use rpc::{
     RECEIVE_TIMEOUT,
     proto::{self, ChannelRole},
@@ -765,11 +765,11 @@ impl TestClient {
     pub async fn build_ssh_project(
         &self,
         root_path: impl AsRef<Path>,
-        ssh: Entity<SshRemoteClient>,
+        ssh: Entity<RemoteClient>,
         cx: &mut TestAppContext,
     ) -> (Entity<Project>, WorktreeId) {
         let project = cx.update(|cx| {
-            Project::ssh(
+            Project::remote(
                 ssh,
                 self.client().clone(),
                 self.app_state.node_runtime.clone(),

@@ -61,16 +61,19 @@ pub struct LanguageModels {
     model_list: acp_thread::AgentModelList,
     refresh_models_rx: watch::Receiver<()>,
     refresh_models_tx: watch::Sender<()>,
+    _authenticate_all_providers_task: Task<()>,
 }
 
 impl LanguageModels {
-    fn new(cx: &App) -> Self {
+    fn new(cx: &mut App) -> Self {
         let (refresh_models_tx, refresh_models_rx) = watch::channel(());
+
         let mut this = Self {
             models: HashMap::default(),
             model_list: acp_thread::AgentModelList::Grouped(IndexMap::default()),
             refresh_models_rx,
             refresh_models_tx,
+            _authenticate_all_providers_task: Self::authenticate_all_language_model_providers(cx),
         };
         this.refresh_list(cx);
         this
@@ -90,7 +93,7 @@ impl LanguageModels {
         let mut recommended = Vec::new();
         for provider in &providers {
             for model in provider.recommended_models(cx) {
-                recommended_models.insert(model.id());
+                recommended_models.insert((model.provider_id(), model.id()));
                 recommended.push(Self::map_language_model_to_info(&model, provider));
             }
         }
@@ -107,7 +110,7 @@ impl LanguageModels {
             for model in provider.provided_models(cx) {
                 let model_info = Self::map_language_model_to_info(&model, &provider);
                 let model_id = model_info.id.clone();
-                if !recommended_models.contains(&model.id()) {
+                if !recommended_models.contains(&(model.provider_id(), model.id())) {
                     provider_models.push(model_info);
                 }
                 models.insert(model_id, model);
@@ -150,6 +153,52 @@ impl LanguageModels {
     fn model_id(model: &Arc<dyn LanguageModel>) -> acp_thread::AgentModelId {
         acp_thread::AgentModelId(format!("{}/{}", model.provider_id().0, model.id().0).into())
     }
+
+    fn authenticate_all_language_model_providers(cx: &mut App) -> Task<()> {
+        let authenticate_all_providers = LanguageModelRegistry::global(cx)
+            .read(cx)
+            .providers()
+            .iter()
+            .map(|provider| (provider.id(), provider.name(), provider.authenticate(cx)))
+            .collect::<Vec<_>>();
+
+        cx.background_spawn(async move {
+            for (provider_id, provider_name, authenticate_task) in authenticate_all_providers {
+                if let Err(err) = authenticate_task.await {
+                    if matches!(err, language_model::AuthenticateError::CredentialsNotFound) {
+                        // Since we're authenticating these providers in the
+                        // background for the purposes of populating the
+                        // language selector, we don't care about providers
+                        // where the credentials are not found.
+                    } else {
+                        // Some providers have noisy failure states that we
+                        // don't want to spam the logs with every time the
+                        // language model selector is initialized.
+                        //
+                        // Ideally these should have more clear failure modes
+                        // that we know are safe to ignore here, like what we do
+                        // with `CredentialsNotFound` above.
+                        match provider_id.0.as_ref() {
+                            "lmstudio" | "ollama" => {
+                                // LM Studio and Ollama both make fetch requests to the local APIs to determine if they are "authenticated".
+                                //
+                                // These fail noisily, so we don't log them.
+                            }
+                            "copilot_chat" => {
+                                // Copilot Chat returns an error if Copilot is not enabled, so we don't log those errors.
+                            }
+                            _ => {
+                                log::error!(
+                                    "Failed to authenticate provider: {}: {err}",
+                                    provider_name.0
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        })
+    }
 }
 
 pub struct NativeAgent {
@@ -180,7 +229,7 @@ impl NativeAgent {
         fs: Arc<dyn Fs>,
         cx: &mut AsyncApp,
     ) -> Result<Entity<NativeAgent>> {
-        log::info!("Creating new NativeAgent");
+        log::debug!("Creating new NativeAgent");
 
         let project_context = cx
             .update(|cx| Self::build_project_context(&project, prompt_store.as_ref(), cx))?
@@ -228,7 +277,7 @@ impl NativeAgent {
     ) -> Entity<AcpThread> {
         let connection = Rc::new(NativeAgentConnection(cx.entity()));
         let registry = LanguageModelRegistry::read_global(cx);
-        let summarization_model = registry.thread_summary_model(cx).map(|c| c.model);
+        let summarization_model = registry.thread_summary_model().map(|c| c.model);
 
         thread_handle.update(cx, |thread, cx| {
             thread.set_summarization_model(summarization_model, cx);
@@ -240,13 +289,16 @@ impl NativeAgent {
         let title = thread.title();
         let project = thread.project.clone();
         let action_log = thread.action_log.clone();
-        let acp_thread = cx.new(|_cx| {
+        let prompt_capabilities_rx = thread.prompt_capabilities_rx.clone();
+        let acp_thread = cx.new(|cx| {
             acp_thread::AcpThread::new(
                 title,
                 connection,
                 project.clone(),
                 action_log.clone(),
                 session_id.clone(),
+                prompt_capabilities_rx,
+                cx,
             )
         });
         let subscriptions = vec![
@@ -521,7 +573,7 @@ impl NativeAgent {
 
         let registry = LanguageModelRegistry::read_global(cx);
         let default_model = registry.default_model().map(|m| m.model);
-        let summarization_model = registry.thread_summary_model(cx).map(|m| m.model);
+        let summarization_model = registry.thread_summary_model().map(|m| m.model);
 
         for session in self.sessions.values_mut() {
             session.thread.update(cx, |thread, cx| {
@@ -710,18 +762,15 @@ impl NativeAgentConnection {
                                 options,
                                 response,
                             }) => {
-                                let recv = acp_thread.update(cx, |thread, cx| {
+                                let outcome_task = acp_thread.update(cx, |thread, cx| {
                                     thread.request_tool_call_authorization(tool_call, options, cx)
-                                })?;
+                                })??;
                                 cx.background_spawn(async move {
-                                    if let Some(recv) = recv.log_err()
-                                        && let Some(option) = recv
-                                            .await
-                                            .context("authorization sender was dropped")
-                                            .log_err()
+                                    if let acp::RequestPermissionOutcome::Selected { option_id } =
+                                        outcome_task.await
                                     {
                                         response
-                                            .send(option)
+                                            .send(option_id)
                                             .map(|_| anyhow!("authorization receiver was dropped"))
                                             .log_err();
                                     }
@@ -756,7 +805,7 @@ impl NativeAgentConnection {
                 }
             }
 
-            log::info!("Response stream completed");
+            log::debug!("Response stream completed");
             anyhow::Ok(acp::PromptResponse {
                 stop_reason: acp::StopReason::EndTurn,
             })
@@ -781,7 +830,7 @@ impl AgentModelSelector for NativeAgentConnection {
         model_id: acp_thread::AgentModelId,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        log::info!("Setting model for session {}: {}", session_id, model_id);
+        log::debug!("Setting model for session {}: {}", session_id, model_id);
         let Some(thread) = self
             .0
             .read(cx)
@@ -852,7 +901,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         cx: &mut App,
     ) -> Task<Result<Entity<acp_thread::AcpThread>>> {
         let agent = self.0.clone();
-        log::info!("Creating new thread for project at: {:?}", cwd);
+        log::debug!("Creating new thread for project at: {:?}", cwd);
 
         cx.spawn(async move |cx| {
             log::debug!("Starting thread creation in async context");
@@ -917,7 +966,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                 .into_iter()
                 .map(Into::into)
                 .collect::<Vec<_>>();
-            log::info!("Converted prompt to message: {} chars", content.len());
+            log::debug!("Converted prompt to message: {} chars", content.len());
             log::debug!("Message id: {:?}", id);
             log::debug!("Message content: {:?}", content);
 
@@ -925,18 +974,10 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         })
     }
 
-    fn prompt_capabilities(&self) -> acp::PromptCapabilities {
-        acp::PromptCapabilities {
-            image: true,
-            audio: false,
-            embedded_context: true,
-        }
-    }
-
     fn resume(
         &self,
         session_id: &acp::SessionId,
-        _cx: &mut App,
+        _cx: &App,
     ) -> Option<Rc<dyn acp_thread::AgentSessionResume>> {
         Some(Rc::new(NativeAgentSessionResume {
             connection: self.clone(),
@@ -956,9 +997,9 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
     fn truncate(
         &self,
         session_id: &agent_client_protocol::SessionId,
-        cx: &mut App,
+        cx: &App,
     ) -> Option<Rc<dyn acp_thread::AgentSessionTruncate>> {
-        self.0.update(cx, |agent, _cx| {
+        self.0.read_with(cx, |agent, _cx| {
             agent.sessions.get(session_id).map(|session| {
                 Rc::new(NativeAgentSessionEditor {
                     thread: session.thread.clone(),
@@ -971,7 +1012,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
     fn set_title(
         &self,
         session_id: &acp::SessionId,
-        _cx: &mut App,
+        _cx: &App,
     ) -> Option<Rc<dyn acp_thread::AgentSessionSetTitle>> {
         Some(Rc::new(NativeAgentSessionSetTitle {
             connection: self.clone(),

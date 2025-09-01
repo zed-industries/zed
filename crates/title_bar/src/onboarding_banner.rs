@@ -119,7 +119,7 @@ impl Render for OnboardingBanner {
                         h_flex()
                             .h_full()
                             .gap_1()
-                            .child(Icon::new(self.details.icon_name).size(IconSize::Small))
+                            .child(Icon::new(self.details.icon_name).size(IconSize::XSmall))
                             .child(
                                 h_flex()
                                     .gap_0p5()

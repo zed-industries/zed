@@ -283,17 +283,13 @@ pub(crate) fn render_ai_setup_page(
             v_flex()
                 .mt_2()
                 .gap_6()
-                .child({
-                    let mut ai_upsell_card =
-                        AiUpsellCard::new(client, &user_store, user_store.read(cx).plan(), cx);
-
-                    ai_upsell_card.tab_index = Some({
-                        tab_index += 1;
-                        tab_index - 1
-                    });
-
-                    ai_upsell_card
-                })
+                .child(
+                    AiUpsellCard::new(client, &user_store, user_store.read(cx).plan(), cx)
+                        .tab_index(Some({
+                            tab_index += 1;
+                            tab_index - 1
+                        })),
+                )
                 .child(render_llm_provider_section(
                     &mut tab_index,
                     workspace,

@@ -186,20 +186,29 @@ impl Render for WhichKeyLayer {
 
         let mut binding_data: Vec<_> = bindings
             .iter()
-            .filter(|binding| {
-                let full_keystrokes = binding.keystrokes();
-
+            .map(|binding| {
+                (
+                    binding
+                        .keystrokes()
+                        .iter()
+                        .map(|k| k.inner().to_owned())
+                        .collect::<Vec<_>>()[pending_keys.len()..]
+                        .to_vec(),
+                    binding.action(),
+                )
+            })
+            .filter(|(keystrokes, _action)| {
                 // Check if this binding matches any filtered keystroke pattern
                 let should_filter = filtered_keystrokes.iter().any(|filtered| {
-                    full_keystrokes.len() >= filtered.len()
-                        && full_keystrokes[..filtered.len()] == filtered[..]
+                    keystrokes.len() >= filtered.len()
+                        && keystrokes[..filtered.len()] == filtered[..]
                 });
 
                 !should_filter
             })
-            .map(|binding| {
-                let remaining_keystrokes = binding.keystrokes()[pending_keys.len()..].to_vec();
-                let action_name = humanize_action_name(binding.action().name());
+            .map(|(keystrokes, action)| {
+                let remaining_keystrokes = keystrokes[pending_keys.len()..].to_vec();
+                let action_name = humanize_action_name(action.name());
                 (remaining_keystrokes, action_name)
             })
             .collect();

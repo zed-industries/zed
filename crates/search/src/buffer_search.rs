@@ -749,14 +749,16 @@ impl BufferSearchBar {
             return false;
         };
 
-        self.configured_options =
+        let configured_options =
             SearchOptions::from_settings(&EditorSettings::get_global(cx).search);
-        if self.dismissed
-            && (self.configured_options != self.default_options
-                || self.configured_options != self.search_options)
-        {
-            self.search_options = self.configured_options;
-            self.default_options = self.configured_options;
+        let settings_changed = configured_options != self.configured_options;
+
+        if self.dismissed && settings_changed {
+            // Only update configuration options when search bar is dismissed,
+            // so we don't miss updates even after calling show twice
+            self.configured_options = configured_options;
+            self.search_options = configured_options;
+            self.default_options = configured_options;
         }
 
         self.dismissed = false;
@@ -1514,18 +1516,25 @@ mod tests {
                 cx,
             )
         });
-        let cx = cx.add_empty_window();
-        let editor =
-            cx.new_window_entity(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
-
-        let search_bar = cx.new_window_entity(|window, cx| {
+        let mut editor = None;
+        let window = cx.add_window(|window, cx| {
+            let default_key_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+                "keymaps/default-macos.json",
+                cx,
+            )
+            .unwrap();
+            cx.bind_keys(default_key_bindings);
+            editor = Some(cx.new(|cx| Editor::for_buffer(buffer.clone(), None, window, cx)));
             let mut search_bar = BufferSearchBar::new(None, window, cx);
-            search_bar.set_active_pane_item(Some(&editor), window, cx);
+            search_bar.set_active_pane_item(Some(&editor.clone().unwrap()), window, cx);
             search_bar.show(window, cx);
             search_bar
         });
+        let search_bar = window.root(cx).unwrap();
 
-        (editor, search_bar, cx)
+        let cx = VisualTestContext::from_window(*window, cx).into_mut();
+
+        (editor.unwrap(), search_bar, cx)
     }
 
     #[gpui::test]
@@ -2751,11 +2760,6 @@ mod tests {
             );
             search_bar.deploy(&deploy, window, cx);
             assert_eq!(
-                search_bar.configured_options,
-                SearchOptions::NONE,
-                "Should have configured search options matching the settings"
-            );
-            assert_eq!(
                 search_bar.search_options,
                 SearchOptions::WHOLE_WORD,
                 "After (re)deploying, the option should still be enabled"
@@ -2765,21 +2769,22 @@ mod tests {
             search_bar.deploy(&deploy, window, cx);
             assert_eq!(
                 search_bar.search_options,
-                SearchOptions::NONE,
-                "After hiding and showing the search bar, default options should be used"
+                SearchOptions::WHOLE_WORD,
+                "After hiding and showing the search bar, search options should be preserved"
             );
 
             search_bar.toggle_search_option(SearchOptions::REGEX, window, cx);
             search_bar.toggle_search_option(SearchOptions::WHOLE_WORD, window, cx);
             assert_eq!(
                 search_bar.search_options,
-                SearchOptions::REGEX | SearchOptions::WHOLE_WORD,
+                SearchOptions::REGEX,
                 "Should enable the options toggled"
             );
             assert!(
                 !search_bar.dismissed,
                 "Search bar should be present and visible"
             );
+            search_bar.toggle_search_option(SearchOptions::WHOLE_WORD, window, cx);
         });
 
         update_search_settings(
@@ -2801,11 +2806,6 @@ mod tests {
 
             search_bar.deploy(&deploy, window, cx);
             assert_eq!(
-                search_bar.configured_options,
-                SearchOptions::CASE_SENSITIVE,
-                "Should have configured search options matching the settings"
-            );
-            assert_eq!(
                 search_bar.search_options,
                 SearchOptions::REGEX | SearchOptions::WHOLE_WORD,
                 "Toggling a non-dismissed search bar with custom options should not change the default options"
@@ -2813,9 +2813,36 @@ mod tests {
             search_bar.dismiss(&Dismiss, window, cx);
             search_bar.deploy(&deploy, window, cx);
             assert_eq!(
+                search_bar.configured_options,
+                SearchOptions::CASE_SENSITIVE,
+                "After a settings update and toggling the search bar, configured options should be updated"
+            );
+            assert_eq!(
                 search_bar.search_options,
                 SearchOptions::CASE_SENSITIVE,
-                "After hiding and showing the search bar, default options should be used"
+                "After a settings update and toggling the search bar, configured options should be used"
+            );
+        });
+
+        update_search_settings(
+            SearchSettings {
+                button: true,
+                whole_word: true,
+                case_sensitive: true,
+                include_ignored: false,
+                regex: false,
+            },
+            cx,
+        );
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.deploy(&deploy, window, cx);
+            search_bar.dismiss(&Dismiss, window, cx);
+            search_bar.show(window, cx);
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::CASE_SENSITIVE | SearchOptions::WHOLE_WORD,
+                "Calling deploy on an already deployed search bar should not prevent settings updates from being detected"
             );
         });
     }

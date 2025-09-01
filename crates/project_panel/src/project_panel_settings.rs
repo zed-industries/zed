@@ -2,7 +2,7 @@ use editor::ShowScrollbar;
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsSources, SettingsUi};
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Copy, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -28,7 +28,7 @@ pub enum EntrySpacing {
     Standard,
 }
 
-#[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, SettingsUi)]
 pub struct ProjectPanelSettings {
     pub button: bool,
     pub hide_gitignore: bool,
@@ -47,6 +47,7 @@ pub struct ProjectPanelSettings {
     pub scrollbar: ScrollbarSettings,
     pub show_diagnostics: ShowDiagnostics,
     pub hide_root: bool,
+    pub drag_and_drop: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -160,6 +161,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub sticky_scroll: Option<bool>,
+    /// Whether to enable drag-and-drop operations in the project panel.
+    ///
+    /// Default: true
+    pub drag_and_drop: Option<bool>,
 }
 
 impl Settings for ProjectPanelSettings {

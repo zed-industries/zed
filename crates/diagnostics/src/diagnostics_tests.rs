@@ -24,6 +24,7 @@ use settings::SettingsStore;
 use std::{
     env,
     path::{Path, PathBuf},
+    str::FromStr,
 };
 use unindent::Unindent as _;
 use util::{RandomCharIter, path, post_inc};
@@ -70,7 +71,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*window, cx);
     let workspace = window.root(cx).unwrap();
-    let uri = lsp::Url::from_file_path(path!("/test/main.rs")).unwrap();
+    let uri = lsp::Uri::from_file_path(path!("/test/main.rs")).unwrap();
 
     // Create some diagnostics
     lsp_store.update(cx, |lsp_store, cx| {
@@ -167,7 +168,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
             .update_diagnostics(
                 language_server_id,
                 lsp::PublishDiagnosticsParams {
-                    uri: lsp::Url::from_file_path(path!("/test/consts.rs")).unwrap(),
+                    uri: lsp::Uri::from_file_path(path!("/test/consts.rs")).unwrap(),
                     diagnostics: vec![lsp::Diagnostic {
                         range: lsp::Range::new(
                             lsp::Position::new(0, 15),
@@ -243,7 +244,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
             .update_diagnostics(
                 language_server_id,
                 lsp::PublishDiagnosticsParams {
-                    uri: lsp::Url::from_file_path(path!("/test/consts.rs")).unwrap(),
+                    uri: lsp::Uri::from_file_path(path!("/test/consts.rs")).unwrap(),
                     diagnostics: vec![
                         lsp::Diagnostic {
                             range: lsp::Range::new(
@@ -356,14 +357,14 @@ async fn test_diagnostics_with_folds(cx: &mut TestAppContext) {
             .update_diagnostics(
                 server_id_1,
                 lsp::PublishDiagnosticsParams {
-                    uri: lsp::Url::from_file_path(path!("/test/main.js")).unwrap(),
+                    uri: lsp::Uri::from_file_path(path!("/test/main.js")).unwrap(),
                     diagnostics: vec![lsp::Diagnostic {
                         range: lsp::Range::new(lsp::Position::new(4, 0), lsp::Position::new(4, 4)),
                         severity: Some(lsp::DiagnosticSeverity::WARNING),
                         message: "no method `tset`".to_string(),
                         related_information: Some(vec![lsp::DiagnosticRelatedInformation {
                             location: lsp::Location::new(
-                                lsp::Url::from_file_path(path!("/test/main.js")).unwrap(),
+                                lsp::Uri::from_file_path(path!("/test/main.js")).unwrap(),
                                 lsp::Range::new(
                                     lsp::Position::new(0, 9),
                                     lsp::Position::new(0, 13),
@@ -465,7 +466,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
             .update_diagnostics(
                 server_id_1,
                 lsp::PublishDiagnosticsParams {
-                    uri: lsp::Url::from_file_path(path!("/test/main.js")).unwrap(),
+                    uri: lsp::Uri::from_file_path(path!("/test/main.js")).unwrap(),
                     diagnostics: vec![lsp::Diagnostic {
                         range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 1)),
                         severity: Some(lsp::DiagnosticSeverity::WARNING),
@@ -509,7 +510,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
             .update_diagnostics(
                 server_id_2,
                 lsp::PublishDiagnosticsParams {
-                    uri: lsp::Url::from_file_path(path!("/test/main.js")).unwrap(),
+                    uri: lsp::Uri::from_file_path(path!("/test/main.js")).unwrap(),
                     diagnostics: vec![lsp::Diagnostic {
                         range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 1)),
                         severity: Some(lsp::DiagnosticSeverity::ERROR),
@@ -552,7 +553,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
             .update_diagnostics(
                 server_id_1,
                 lsp::PublishDiagnosticsParams {
-                    uri: lsp::Url::from_file_path(path!("/test/main.js")).unwrap(),
+                    uri: lsp::Uri::from_file_path(path!("/test/main.js")).unwrap(),
                     diagnostics: vec![lsp::Diagnostic {
                         range: lsp::Range::new(lsp::Position::new(2, 0), lsp::Position::new(2, 1)),
                         severity: Some(lsp::DiagnosticSeverity::WARNING),
@@ -571,7 +572,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
             .update_diagnostics(
                 server_id_2,
                 lsp::PublishDiagnosticsParams {
-                    uri: lsp::Url::from_file_path(path!("/test/main.rs")).unwrap(),
+                    uri: lsp::Uri::from_file_path(path!("/test/main.rs")).unwrap(),
                     diagnostics: vec![],
                     version: None,
                 },
@@ -608,7 +609,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
             .update_diagnostics(
                 server_id_2,
                 lsp::PublishDiagnosticsParams {
-                    uri: lsp::Url::from_file_path(path!("/test/main.js")).unwrap(),
+                    uri: lsp::Uri::from_file_path(path!("/test/main.js")).unwrap(),
                     diagnostics: vec![lsp::Diagnostic {
                         range: lsp::Range::new(lsp::Position::new(3, 0), lsp::Position::new(3, 1)),
                         severity: Some(lsp::DiagnosticSeverity::WARNING),
@@ -745,8 +746,8 @@ async fn test_random_diagnostics_blocks(cx: &mut TestAppContext, mut rng: StdRng
                         .update_diagnostics(
                             server_id,
                             lsp::PublishDiagnosticsParams {
-                                uri: lsp::Url::from_file_path(&path).unwrap_or_else(|_| {
-                                    lsp::Url::parse("file:///test/fallback.rs").unwrap()
+                                uri: lsp::Uri::from_file_path(&path).unwrap_or_else(|_| {
+                                    lsp::Uri::from_str("file:///test/fallback.rs").unwrap()
                                 }),
                                 diagnostics: diagnostics.clone(),
                                 version: None,
@@ -934,8 +935,8 @@ async fn test_random_diagnostics_with_inlays(cx: &mut TestAppContext, mut rng: S
                         .update_diagnostics(
                             server_id,
                             lsp::PublishDiagnosticsParams {
-                                uri: lsp::Url::from_file_path(&path).unwrap_or_else(|_| {
-                                    lsp::Url::parse("file:///test/fallback.rs").unwrap()
+                                uri: lsp::Uri::from_file_path(&path).unwrap_or_else(|_| {
+                                    lsp::Uri::from_str("file:///test/fallback.rs").unwrap()
                                 }),
                                 diagnostics: diagnostics.clone(),
                                 version: None,
@@ -985,7 +986,7 @@ async fn active_diagnostics_dismiss_after_invalidation(cx: &mut TestAppContext) 
                 .update_diagnostics(
                     LanguageServerId(0),
                     lsp::PublishDiagnosticsParams {
-                        uri: lsp::Url::from_file_path(path!("/root/file")).unwrap(),
+                        uri: lsp::Uri::from_file_path(path!("/root/file")).unwrap(),
                         version: None,
                         diagnostics: vec![lsp::Diagnostic {
                             range: lsp::Range::new(
@@ -1028,7 +1029,7 @@ async fn active_diagnostics_dismiss_after_invalidation(cx: &mut TestAppContext) 
                 .update_diagnostics(
                     LanguageServerId(0),
                     lsp::PublishDiagnosticsParams {
-                        uri: lsp::Url::from_file_path(path!("/root/file")).unwrap(),
+                        uri: lsp::Uri::from_file_path(path!("/root/file")).unwrap(),
                         version: None,
                         diagnostics: Vec::new(),
                     },
@@ -1078,7 +1079,7 @@ async fn cycle_through_same_place_diagnostics(cx: &mut TestAppContext) {
                 .update_diagnostics(
                     LanguageServerId(0),
                     lsp::PublishDiagnosticsParams {
-                        uri: lsp::Url::from_file_path(path!("/root/file")).unwrap(),
+                        uri: lsp::Uri::from_file_path(path!("/root/file")).unwrap(),
                         version: None,
                         diagnostics: vec![
                             lsp::Diagnostic {
@@ -1246,7 +1247,7 @@ async fn test_diagnostics_with_links(cx: &mut TestAppContext) {
             lsp_store.update_diagnostics(
                 LanguageServerId(0),
                 lsp::PublishDiagnosticsParams {
-                    uri: lsp::Url::from_file_path(path!("/root/file")).unwrap(),
+                    uri: lsp::Uri::from_file_path(path!("/root/file")).unwrap(),
                     version: None,
                     diagnostics: vec![lsp::Diagnostic {
                         range: lsp::Range::new(lsp::Position::new(0, 8), lsp::Position::new(0, 12)),
@@ -1299,7 +1300,7 @@ async fn test_hover_diagnostic_and_info_popovers(cx: &mut gpui::TestAppContext) 
             lsp_store.update_diagnostics(
                 LanguageServerId(0),
                 lsp::PublishDiagnosticsParams {
-                    uri: lsp::Url::from_file_path(path!("/root/dir/file.rs")).unwrap(),
+                    uri: lsp::Uri::from_file_path(path!("/root/dir/file.rs")).unwrap(),
                     version: None,
                     diagnostics: vec![lsp::Diagnostic {
                         range,
@@ -1376,7 +1377,7 @@ async fn test_diagnostics_with_code(cx: &mut TestAppContext) {
     let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*window, cx);
     let workspace = window.root(cx).unwrap();
-    let uri = lsp::Url::from_file_path(path!("/root/main.js")).unwrap();
+    let uri = lsp::Uri::from_file_path(path!("/root/main.js")).unwrap();
 
     // Create diagnostics with code fields
     lsp_store.update(cx, |lsp_store, cx| {
@@ -1460,7 +1461,7 @@ async fn go_to_diagnostic_with_severity(cx: &mut TestAppContext) {
                 .update_diagnostics(
                     LanguageServerId(0),
                     lsp::PublishDiagnosticsParams {
-                        uri: lsp::Url::from_file_path(path!("/root/file")).unwrap(),
+                        uri: lsp::Uri::from_file_path(path!("/root/file")).unwrap(),
                         version: None,
                         diagnostics: vec![
                             lsp::Diagnostic {
@@ -1673,7 +1674,7 @@ fn random_lsp_diagnostic(
             );
 
             related_info.push(lsp::DiagnosticRelatedInformation {
-                location: lsp::Location::new(lsp::Url::from_file_path(path).unwrap(), info_range),
+                location: lsp::Location::new(lsp::Uri::from_file_path(path).unwrap(), info_range),
                 message: format!("related info {i} for diagnostic {unique_id}"),
             });
         }

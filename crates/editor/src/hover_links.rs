@@ -188,22 +188,26 @@ impl Editor {
 
     pub fn scroll_hover(
         &mut self,
-        amount: &ScrollAmount,
+        amount: ScrollAmount,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
         let selection = self.selections.newest_anchor().head();
         let snapshot = self.snapshot(window, cx);
 
-        let Some(popover) = self.hover_state.info_popovers.iter().find(|popover| {
+        if let Some(popover) = self.hover_state.info_popovers.iter().find(|popover| {
             popover
                 .symbol_range
                 .point_within_range(&TriggerPoint::Text(selection), &snapshot)
-        }) else {
-            return false;
-        };
-        popover.scroll(amount, window, cx);
-        true
+        }) {
+            popover.scroll(amount, window, cx);
+            true
+        } else if let Some(context_menu) = self.context_menu.borrow_mut().as_mut() {
+            context_menu.scroll_aside(amount, window, cx);
+            true
+        } else {
+            false
+        }
     }
 
     fn cmd_click_reveal_task(

@@ -16,8 +16,8 @@ pub use typed_envelope::*;
 
 include!(concat!(env!("OUT_DIR"), "/zed.messages.rs"));
 
-pub const SSH_PEER_ID: PeerId = PeerId { owner_id: 0, id: 0 };
-pub const SSH_PROJECT_ID: u64 = 0;
+pub const REMOTE_SERVER_PEER_ID: PeerId = PeerId { owner_id: 0, id: 0 };
+pub const REMOTE_SERVER_PROJECT_ID: u64 = 0;
 
 messages!(
     (Ack, Foreground),
@@ -312,7 +312,8 @@ messages!(
     (GetDefaultBranch, Background),
     (GetDefaultBranchResponse, Background),
     (GitClone, Background),
-    (GitCloneResponse, Background)
+    (GitCloneResponse, Background),
+    (ToggleLspLogs, Background),
 );
 
 request_messages!(
@@ -481,7 +482,8 @@ request_messages!(
     (GetDocumentDiagnostics, GetDocumentDiagnosticsResponse),
     (PullWorkspaceDiagnostics, Ack),
     (GetDefaultBranch, GetDefaultBranchResponse),
-    (GitClone, GitCloneResponse)
+    (GitClone, GitCloneResponse),
+    (ToggleLspLogs, Ack),
 );
 
 lsp_messages!(
@@ -612,6 +614,7 @@ entity_messages!(
     GitReset,
     GitCheckoutFiles,
     SetIndexText,
+    ToggleLspLogs,
 
     Push,
     Fetch,

@@ -382,10 +382,17 @@ impl WindowsWindow {
         let (mut dwexstyle, dwstyle) = if params.kind == WindowKind::PopUp {
             (WS_EX_TOOLWINDOW, WINDOW_STYLE(0x0))
         } else {
-            (
-                WS_EX_APPWINDOW,
-                WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX,
-            )
+            let mut dwstyle = WS_SYSMENU;
+
+            if params.is_resizable {
+                dwstyle |= WS_THICKFRAME | WS_MAXIMIZEBOX;
+            }
+
+            if params.is_minimizable {
+                dwstyle |= WS_MINIMIZEBOX;
+            }
+
+            (WS_EX_APPWINDOW, dwstyle)
         };
         if !disable_direct_composition {
             dwexstyle |= WS_EX_NOREDIRECTIONBITMAP;
