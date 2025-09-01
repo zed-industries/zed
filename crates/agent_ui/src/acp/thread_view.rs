@@ -6,7 +6,7 @@ use acp_thread::{
 use acp_thread::{AgentConnection, Plan};
 use action_log::ActionLog;
 use agent_client_protocol::{self as acp, PromptCapabilities};
-use agent_servers::{AgentServer, AgentServerDelegate};
+use agent_servers::{AgentServer, AgentServerDelegate, ClaudeCode};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode, NotifyWhenAgentWaiting};
 use agent2::{DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore};
 use anyhow::{Context as _, Result, anyhow, bail};

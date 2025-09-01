@@ -134,11 +134,7 @@ impl AcpConnection {
                         read_text_file: true,
                         write_text_file: true,
                     },
-<<<<<<< HEAD
-                    terminal: false,
-=======
                     terminal: true,
->>>>>>> main
                 },
             })
             .await?;
