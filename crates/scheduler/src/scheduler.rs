@@ -269,6 +269,46 @@ mod tests {
         assert_eq!(result, 42);
     }
 
+    #[test]
+    fn test_randomize_order() {
+        // Test deterministic mode: different seeds should produce same execution order
+        let mut deterministic_results = HashSet::new();
+        for seed in 0..10 {
+            let config = SchedulerConfig {
+                seed,
+                randomize_order: false,
+            };
+            let order = block_on(capture_execution_order(config));
+            assert_eq!(order.len(), 6);
+            deterministic_results.insert(order);
+        }
+
+        // All deterministic runs should produce the same result
+        assert_eq!(
+            deterministic_results.len(),
+            1,
+            "Deterministic mode should always produce same execution order"
+        );
+
+        // Test randomized mode: different seeds can produce different execution orders
+        let mut randomized_results = HashSet::new();
+        for seed in 0..20 {
+            let config = SchedulerConfig {
+                seed,
+                randomize_order: true,
+            };
+            let order = block_on(capture_execution_order(config));
+            assert_eq!(order.len(), 6);
+            randomized_results.insert(order);
+        }
+
+        // Randomized mode should produce multiple different execution orders
+        assert!(
+            randomized_results.len() > 1,
+            "Randomized mode should produce multiple different orders"
+        );
+    }
+
     async fn capture_execution_order(config: SchedulerConfig) -> Vec<String> {
         let scheduler = Arc::new(TestScheduler::new(config));
         let foreground = ForegroundExecutor::new(scheduler.clone());
@@ -300,42 +340,5 @@ mod tests {
         scheduler.run();
 
         receiver.collect().await
-    }
-
-    #[test]
-    fn test_deterministic_order_consistency() {
-        let mut orders = HashSet::new();
-
-        for seed in 0..10 {
-            let config = SchedulerConfig {
-                seed,
-                randomize_order: false,
-            };
-            let order = block_on(capture_execution_order(config));
-            assert_eq!(order.len(), 6);
-            orders.insert(order);
-        }
-
-        assert_eq!(orders.len(), 1, "All runs should produce the same order");
-    }
-
-    #[test]
-    fn test_randomized_order_works() {
-        let mut orders = HashSet::new();
-
-        for seed in 0..20 {
-            let config = SchedulerConfig {
-                seed,
-                randomize_order: true,
-            };
-            let order = block_on(capture_execution_order(config));
-            assert_eq!(order.len(), 6);
-            orders.insert(order);
-        }
-
-        assert!(
-            orders.len() > 1,
-            "Randomized mode should produce multiple different orders"
-        );
     }
 }
