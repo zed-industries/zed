@@ -1465,7 +1465,6 @@ impl AcpThread {
         let request = acp::PromptRequest {
             prompt: message.clone(),
             session_id: self.session_id.clone(),
-            command_name: None,
         };
         let git_store = self.project.read(cx).git_store().clone();
 

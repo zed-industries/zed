@@ -1929,7 +1929,6 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
                 acp::PromptRequest {
                     session_id: session_id.clone(),
                     prompt: vec!["ghi".into()],
-                    command_name: None,
                 },
                 cx,
             )
