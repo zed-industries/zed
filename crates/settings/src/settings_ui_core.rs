@@ -1,4 +1,4 @@
-use std::any::{TypeId, type_name};
+use std::any::TypeId;
 
 use anyhow::Context as _;
 use fs::Fs;

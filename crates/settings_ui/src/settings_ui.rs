@@ -2,7 +2,7 @@ mod appearance_settings_controls;
 
 use std::any::TypeId;
 use std::collections::VecDeque;
-use std::ops::{Add, Not, Range, Sub};
+use std::ops::{Not, Range};
 
 use anyhow::Context as _;
 use command_palette_hooks::CommandPaletteFilter;

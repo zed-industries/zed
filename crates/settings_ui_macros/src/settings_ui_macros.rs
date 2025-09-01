@@ -61,7 +61,7 @@ pub fn derive_settings_ui(input: proc_macro::TokenStream) -> proc_macro::TokenSt
 
     // todo(settings_ui): Reformat title to be title case with spaces if group name not present,
     // and make group name optional, repurpose group as tag indicating item is group
-    let title = group_name.clone().unwrap_or(input.ident.to_string());
+    let title = group_name.unwrap_or(input.ident.to_string());
 
     let ui_entry_fn_body = map_ui_item_to_entry(path_name.as_deref(), &title, quote! { Self });
 
