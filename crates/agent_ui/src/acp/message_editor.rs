@@ -6,7 +6,7 @@ use acp_thread::{AgentSessionListCommands, MentionUri, selection_name};
 use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use agent2::HistoryStore;
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_slash_commands::codeblock_fence_for_path;
 use collections::{HashMap, HashSet};
 use editor::{
@@ -65,6 +65,7 @@ pub struct MessageEditor {
     completion_provider: Rc<ContextPickerCompletionProvider>,
     _subscriptions: Vec<Subscription>,
     _parse_slash_command_task: Task<()>,
+    list_commands_task: Shared<Task<Vec<acp::CommandInfo>>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -154,6 +155,7 @@ impl MessageEditor {
             completion_provider,
             _subscriptions: subscriptions,
             _parse_slash_command_task: Task::ready(()),
+            list_commands_task: Task::ready(Vec::new()).shared(),
         }
     }
 
@@ -209,8 +211,28 @@ impl MessageEditor {
             .collect()
     }
 
-    pub fn set_command_provider(&mut self, provider: Option<Rc<dyn AgentSessionListCommands>>) {
-        self.completion_provider.set_command_provider(provider);
+    pub fn set_command_provider(
+        &mut self,
+        provider: Option<Rc<dyn AgentSessionListCommands>>,
+        cx: &mut Context<Self>,
+    ) {
+        let task = if let Some(provider) = provider.as_ref() {
+            let list_commands_task = provider.run(cx);
+            cx.background_spawn(async move {
+                list_commands_task
+                    .await
+                    .context("Failed to list available commands")
+                    .log_err()
+                    .unwrap_or_default()
+            })
+            .shared()
+        } else {
+            Task::ready(Vec::new()).shared()
+        };
+
+        self.completion_provider
+            .set_available_commands_task(task.clone());
+        self.list_commands_task = task;
     }
 
     pub fn confirm_command_completion(

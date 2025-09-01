@@ -4,12 +4,13 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use acp_thread::{AgentSessionListCommands, MentionUri};
+use acp_thread::MentionUri;
 use agent_client_protocol as acp;
 use agent2::{HistoryEntry, HistoryStore};
-use anyhow::Context as _;
 use anyhow::Result;
 use editor::{CompletionProvider, Editor, ExcerptId};
+use futures::FutureExt;
+use futures::future::Shared;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{App, Entity, Task, WeakEntity};
 use language::{Buffer, CodeLabel, HighlightId};
@@ -22,7 +23,6 @@ use prompt_store::PromptStore;
 use rope::Point;
 use text::{Anchor, ToPoint as _};
 use ui::prelude::*;
-use util::ResultExt as _;
 use workspace::Workspace;
 
 use crate::AgentPanel;
@@ -70,7 +70,7 @@ pub struct ContextPickerCompletionProvider {
     history_store: Entity<HistoryStore>,
     prompt_store: Option<Entity<PromptStore>>,
     prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
-    list_commands_provider: RefCell<Option<Rc<dyn AgentSessionListCommands>>>,
+    available_commands_task: RefCell<Shared<Task<Vec<acp::CommandInfo>>>>,
 }
 
 impl ContextPickerCompletionProvider {
@@ -87,12 +87,12 @@ impl ContextPickerCompletionProvider {
             history_store,
             prompt_store,
             prompt_capabilities,
-            list_commands_provider: RefCell::default(),
+            available_commands_task: RefCell::new(Task::ready(Vec::new()).shared()),
         }
     }
 
-    pub fn set_command_provider(&self, provider: Option<Rc<dyn AgentSessionListCommands>>) {
-        *self.list_commands_provider.borrow_mut() = provider;
+    pub fn set_available_commands_task(&self, task: Shared<Task<Vec<acp::CommandInfo>>>) {
+        *self.available_commands_task.borrow_mut() = task;
     }
 
     fn completion_for_entry(
@@ -379,18 +379,12 @@ impl ContextPickerCompletionProvider {
     }
 
     fn search_slash_commands(&self, query: String, cx: &mut App) -> Task<Vec<acp::CommandInfo>> {
-        let Some(list_commands) = self.list_commands_provider.borrow().clone() else {
-            return Task::ready(Vec::new());
-        };
-        let list_commands_task = list_commands.run(cx);
+        let commands = self.available_commands_task.borrow().clone();
         cx.spawn(async move |cx| {
-            let Some(commands) = list_commands_task
-                .await
-                .context("failed to query slash commands")
-                .log_err()
-            else {
+            let commands = commands.await;
+            if commands.is_empty() {
                 return Vec::new();
-            };
+            }
 
             let candidates = commands
                 .iter()

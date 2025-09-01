@@ -485,7 +485,8 @@ impl AcpThreadView {
 
                         this.message_editor.update(cx, |editor, cx| {
                             let session_id = thread.read(cx).session_id();
-                            editor.set_command_provider(connection.list_commands(session_id, cx));
+                            editor
+                                .set_command_provider(connection.list_commands(session_id, cx), cx);
                         });
 
                         this.prompt_capabilities
