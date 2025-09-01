@@ -1,63 +1,43 @@
-use std::sync::OnceLock;
-use std::time::Duration;
-
+use crate::Workspace;
 use crate::{BottomDockLayout, WorkspaceSettings};
 use gpui::{
     AvailableSpace, FontWeight, KeyBinding, Keystroke, Task, WeakEntity, humanize_action_name,
 };
 use settings::Settings;
+use std::time::Duration;
 use theme::ThemeSettings;
 use ui::{DynamicSpacing, prelude::*, text_for_keystrokes};
 use util::ResultExt;
 use which_key::{WhichKeyLocation, WhichKeySettings};
 
-use crate::Workspace;
-
 // Hard-coded list of keystrokes to filter out from which-key display
 static FILTERED_KEYSTROKES: &[&str] = &[
-    // Modifiers on normal vim commands
-    "g h",
-    "g j",
-    "g k",
-    "g l",
-    "g $",
-    "g ^",
-    // Duplicate keys with "ctrl" held, e.g. "ctrl-w ctrl-a" is duplicate of "ctrl-w a"
-    "ctrl-w ctrl-a",
-    "ctrl-w ctrl-c",
-    "ctrl-w ctrl-h",
-    "ctrl-w ctrl-j",
-    "ctrl-w ctrl-k",
-    "ctrl-w ctrl-l",
-    "ctrl-w ctrl-n",
-    "ctrl-w ctrl-o",
-    "ctrl-w ctrl-p",
-    "ctrl-w ctrl-q",
-    "ctrl-w ctrl-s",
-    "ctrl-w ctrl-v",
-    "ctrl-w ctrl-w",
-    "ctrl-w ctrl-]",
-    "ctrl-w ctrl-shift-w",
-    "ctrl-w ctrl-g t",
-    "ctrl-w ctrl-g shift-t",
+    // // Modifiers on normal vim commands
+    // "g h",
+    // "g j",
+    // "g k",
+    // "g l",
+    // "g $",
+    // "g ^",
+    // // Duplicate keys with "ctrl" held, e.g. "ctrl-w ctrl-a" is duplicate of "ctrl-w a"
+    // "ctrl-w ctrl-a",
+    // "ctrl-w ctrl-c",
+    // "ctrl-w ctrl-h",
+    // "ctrl-w ctrl-j",
+    // "ctrl-w ctrl-k",
+    // "ctrl-w ctrl-l",
+    // "ctrl-w ctrl-n",
+    // "ctrl-w ctrl-o",
+    // "ctrl-w ctrl-p",
+    // "ctrl-w ctrl-q",
+    // "ctrl-w ctrl-s",
+    // "ctrl-w ctrl-v",
+    // "ctrl-w ctrl-w",
+    // "ctrl-w ctrl-]",
+    // "ctrl-w ctrl-shift-w",
+    // "ctrl-w ctrl-g t",
+    // "ctrl-w ctrl-g shift-t",
 ];
-
-static PARSED_FILTERED_KEYSTROKES: OnceLock<Vec<Vec<Keystroke>>> = OnceLock::new();
-
-fn get_filtered_keystrokes() -> &'static Vec<Vec<Keystroke>> {
-    PARSED_FILTERED_KEYSTROKES.get_or_init(|| {
-        FILTERED_KEYSTROKES
-            .iter()
-            .filter_map(|s| {
-                let keystrokes: Result<Vec<_>, _> = s
-                    .split(' ')
-                    .map(|keystroke_str| Keystroke::parse(keystroke_str))
-                    .collect();
-                keystrokes.ok()
-            })
-            .collect()
-    })
-}
 
 pub struct WhichKeyLayer {
     timer: Option<Task<()>>,
@@ -65,6 +45,7 @@ pub struct WhichKeyLayer {
     pending_keys: Option<Vec<Keystroke>>,
     bindings: Option<Vec<KeyBinding>>,
     workspace: WeakEntity<Workspace>,
+    filtered_keystrokes: Vec<Vec<Keystroke>>,
 }
 
 impl WhichKeyLayer {
@@ -85,6 +66,16 @@ impl WhichKeyLayer {
             bindings: None,
             show: false,
             workspace,
+            filtered_keystrokes: FILTERED_KEYSTROKES
+                .iter()
+                .filter_map(|s| {
+                    let keystrokes: Result<Vec<_>, _> = s
+                        .split(' ')
+                        .map(|keystroke_str| Keystroke::parse(keystroke_str))
+                        .collect();
+                    keystrokes.ok()
+                })
+                .collect(),
         }
     }
 
@@ -174,39 +165,31 @@ impl Render for WhichKeyLayer {
             (Pixels::ZERO, Pixels::ZERO, Pixels::ZERO)
         };
 
-        // Check if we should show in left panel
-        let show_in_left_panel = which_key_settings.location == WhichKeyLocation::LeftPanel
-            && left_margin >= ui_font_size * 20.0
-            && !is_zoomed;
-
         let margin = DynamicSpacing::Base12.px(cx);
         let padding = DynamicSpacing::Base16.px(cx);
-
-        let filtered_keystrokes = get_filtered_keystrokes();
 
         let mut binding_data: Vec<_> = bindings
             .iter()
             .map(|binding| {
+                // Map to keystrokes
                 (
                     binding
                         .keystrokes()
                         .iter()
                         .map(|k| k.inner().to_owned())
-                        .collect::<Vec<_>>()[pending_keys.len()..]
-                        .to_vec(),
+                        .collect::<Vec<_>>(),
                     binding.action(),
                 )
             })
             .filter(|(keystrokes, _action)| {
                 // Check if this binding matches any filtered keystroke pattern
-                let should_filter = filtered_keystrokes.iter().any(|filtered| {
+                !self.filtered_keystrokes.iter().any(|filtered| {
                     keystrokes.len() >= filtered.len()
                         && keystrokes[..filtered.len()] == filtered[..]
-                });
-
-                !should_filter
+                })
             })
             .map(|(keystrokes, action)| {
+                // Map to remaining keystrokes and action name
                 let remaining_keystrokes = keystrokes[pending_keys.len()..].to_vec();
                 let action_name = humanize_action_name(action.name());
                 (remaining_keystrokes, action_name)
@@ -249,7 +232,11 @@ impl Render for WhichKeyLayer {
         // Remove duplicates
         binding_data.dedup();
 
-        if show_in_left_panel {
+        // Check if we should show in left panel
+        if which_key_settings.location == WhichKeyLocation::LeftPanel
+            && left_margin >= ui_font_size * 20.0
+            && !is_zoomed
+        {
             return self
                 .render_in_left_panel(
                     pending_keys,
@@ -287,10 +274,12 @@ impl Render for WhichKeyLayer {
         let available_width =
             window_width - (left_margin + right_margin + (margin * 2.0) + (padding * 2.0));
 
+        let column_gap = DynamicSpacing::Base32.px(cx); // Gap between columns
+        let row_gap = DynamicSpacing::Base04.px(cx); // Gap between rows
+        let content_gap = px(10.0); // Gap between current pending keystroke and grid of keys+actions
+
         // Calculate number of columns that can fit
-        let gap_width = DynamicSpacing::Base32.px(cx);
-        let row_gap = DynamicSpacing::Base04.px(cx);
-        let columns = ((available_width + gap_width) / (column_width + gap_width))
+        let columns = ((available_width + column_gap) / (column_width + column_gap))
             .floor()
             .max(1.0) as usize;
 
@@ -340,8 +329,6 @@ impl Render for WhichKeyLayer {
             .into_any_element()
             .layout_as_root(AvailableSpace::min_size(), window, cx)
             .height;
-
-        let content_gap = px(10.0);
 
         // Calculate height
         let base_height = (padding * 2) /* Container padding */
@@ -405,7 +392,7 @@ impl Render for WhichKeyLayer {
                     )
                     .child(
                         h_flex()
-                            .gap(gap_width)
+                            .gap(column_gap)
                             .items_start()
                             .children(column_elements),
                     ),
