@@ -1,3 +1,5 @@
+#include "alpha_correction.hlsl"
+
 cbuffer GlobalParams: register(b0) {
     float4 gamma_ratios;
     float2 global_viewport_size;
@@ -1098,35 +1100,9 @@ MonochromeSpriteVertexOutput monochrome_sprite_vertex(uint vertex_id: SV_VertexI
     return output;
 }
 
-float color_brightness(float3 color) {
-    // REC. 601 luminance coefficients for percieved brightness
-    return dot(color, float3(0.30f, 0.59f, 0.11f));
-}
-
-float light_on_dark_contrast(float enhancedContrast, float3 color) {
-    float brightness = color_brightness(color);
-    float multiplier = saturate(4.0f * (0.75f - brightness));
-    return enhancedContrast * multiplier;
-}
-
-float enhance_contrast(float alpha, float k) {
-    return alpha * (k + 1.0f) / (alpha * k + 1.0f);
-}
-
-float apply_alpha_correction(float a, float b, float4 g) {
-    float brightness_adjustment = g.x * b + g.y;
-    float correction = brightness_adjustment * a + (g.z * b + g.w);
-    return a + a * (1.0f - a) * correction;
-}
-
 float4 monochrome_sprite_fragment(MonochromeSpriteFragmentInput input): SV_Target {
-    float enhanced_contrast = light_on_dark_contrast(grayscale_enhanced_contrast, input.color.rgb);
-    float brightness = color_brightness(input.color.rgb);
-
     float sample = t_sprite.Sample(s_sprite, input.tile_position).r;
-    float contrasted = enhance_contrast(sample, enhanced_contrast);
-    float alpha_corrected = apply_alpha_correction(contrasted, brightness, gamma_ratios);
-
+    float alpha_corrected = apply_contrast_and_gamma_correction(sample, input.color.rgb, grayscale_enhanced_contrast, gamma_ratios);
     return float4(input.color.rgb, input.color.a * alpha_corrected);
 }
 
