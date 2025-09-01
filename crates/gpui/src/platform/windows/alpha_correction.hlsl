@@ -1,5 +1,5 @@
 float color_brightness(float3 color) {
-    // REC. 601 luminance coefficients for percieved brightness
+    // REC. 601 luminance coefficients for perceived brightness
     return dot(color, float3(0.30f, 0.59f, 0.11f));
 }
 
