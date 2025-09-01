@@ -1,20 +1,22 @@
-mod waker_fn;
+mod executor;
 
-use async_task::{Runnable, Task};
+pub use executor::*;
+
+use async_task::Runnable;
 use parking::{Parker, Unparker};
 use parking_lot::Mutex;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use std::collections::VecDeque;
 use std::future::Future;
-use std::marker::PhantomData;
-use std::pin::pin;
-use std::rc::Rc;
+use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Poll, Waker};
+use std::task::{Context, Poll};
 use std::thread;
 use std::time::Duration;
-use waker_fn::*;
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub struct SessionId(u16);
 
 #[derive(Clone)]
 pub struct SchedulerConfig {
@@ -42,18 +44,26 @@ impl Default for SchedulerConfig {
     }
 }
 
+struct ScheduledTask {
+    session_id: Option<SessionId>,
+    runnable: Runnable,
+}
+
 struct SchedulerState {
-    runnables: VecDeque<Runnable>,
+    tasks: VecDeque<ScheduledTask>,
     rng: ChaCha8Rng,
     randomize_order: bool,
     allow_parking: bool,
+    next_session_id: SessionId,
 }
 
-pub trait Scheduler {
-    fn schedule_foreground(&self, runnable: Runnable);
+pub trait Scheduler: Send + Sync {
+    fn is_main_thread(&self) -> bool;
+    fn schedule_foreground(&self, session_id: SessionId, runnable: Runnable);
     fn schedule_background(&self, runnable: Runnable);
     fn park(&self, timeout: Option<Duration>) -> bool;
     fn unparker(&self) -> Unparker;
+    fn step(&self) -> bool;
 }
 
 pub struct TestScheduler {
@@ -66,34 +76,19 @@ pub struct TestScheduler {
 
 impl TestScheduler {
     /// Run a test once with default configuration (seed 0)
-    pub fn once<F, Fut>(f: F) -> Fut::Output
-    where
-        F: FnOnce(Arc<TestScheduler>) -> Fut,
-        Fut: Future + 'static,
-        Fut::Output: 'static,
-    {
+    pub fn once<R>(f: impl AsyncFnOnce(Arc<TestScheduler>) -> R) -> R {
         Self::with_seed(0, f)
     }
 
     /// Run a test multiple times with sequential seeds (0, 1, 2, ...)
-    pub fn many<F, Fut>(iterations: usize, f: F) -> Vec<Fut::Output>
-    where
-        F: Fn(Arc<TestScheduler>) -> Fut + Clone,
-        Fut: Future + 'static,
-        Fut::Output: 'static,
-    {
+    pub fn many<R>(iterations: usize, mut f: impl AsyncFnMut(Arc<TestScheduler>) -> R) -> Vec<R> {
         (0..iterations as u64)
-            .map(|i| Self::with_seed(i, &f))
+            .map(|i| Self::with_seed(i, &mut f))
             .collect()
     }
 
     /// Run a test once with a specific seed
-    pub fn with_seed<F, Fut>(seed: u64, f: F) -> Fut::Output
-    where
-        F: FnOnce(Arc<TestScheduler>) -> Fut,
-        Fut: Future + 'static,
-        Fut::Output: 'static,
-    {
+    pub fn with_seed<R>(seed: u64, f: impl AsyncFnOnce(Arc<TestScheduler>) -> R) -> R {
         let scheduler = Arc::new(TestScheduler::new(SchedulerConfig::with_seed(seed)));
         let background = BackgroundExecutor::new(scheduler.clone());
         let future = f(scheduler.clone());
@@ -104,10 +99,11 @@ impl TestScheduler {
         let (parker, unparker) = parking::pair();
         Self {
             state: Mutex::new(SchedulerState {
-                runnables: VecDeque::new(),
+                tasks: VecDeque::new(),
                 rng: ChaCha8Rng::seed_from_u64(config.seed),
                 randomize_order: config.randomize_order,
                 allow_parking: config.allow_parking,
+                next_session_id: SessionId(0),
             }),
             thread_id: thread::current().id(),
             config,
@@ -116,19 +112,26 @@ impl TestScheduler {
         }
     }
 
-    pub fn is_main_thread(&self) -> bool {
-        thread::current().id() == self.thread_id
-    }
-
     pub fn run(&self) {
         while self.step() {
             // Continue stepping until no work remains
         }
     }
 
+    pub fn random_delay(&self) -> Yield {
+        Yield {
+            count: self.state.lock().rng.gen_range(0..=10),
+        }
+    }
+
     /// Create a foreground executor for this scheduler
     pub fn foreground(self: &Arc<Self>) -> ForegroundExecutor {
-        ForegroundExecutor::new(self.clone())
+        let session_id = {
+            let mut state = self.state.lock();
+            state.next_session_id.0 += 1;
+            state.next_session_id
+        };
+        ForegroundExecutor::new(session_id, self.clone())
     }
 
     /// Create a background executor for this scheduler
@@ -138,8 +141,31 @@ impl TestScheduler {
 }
 
 impl Scheduler for TestScheduler {
-    fn schedule_foreground(&self, runnable: Runnable) {
-        self.state.lock().runnables.push_back(runnable);
+    fn is_main_thread(&self) -> bool {
+        thread::current().id() == self.thread_id
+    }
+
+    fn schedule_foreground(&self, session_id: SessionId, runnable: Runnable) {
+        {
+            let state = &mut *self.state.lock();
+            let ix = if state.randomize_order {
+                let start_ix = state
+                    .tasks
+                    .iter()
+                    .rposition(|task| task.session_id == Some(session_id))
+                    .map_or(0, |ix| ix + 1);
+                state.rng.gen_range(start_ix..=state.tasks.len())
+            } else {
+                state.tasks.len()
+            };
+            state.tasks.insert(
+                ix,
+                ScheduledTask {
+                    session_id: Some(session_id),
+                    runnable,
+                },
+            );
+        }
         self.unparker.unpark();
     }
 
@@ -147,11 +173,17 @@ impl Scheduler for TestScheduler {
         {
             let state = &mut *self.state.lock();
             let ix = if state.randomize_order {
-                state.rng.gen_range(0..=state.runnables.len())
+                state.rng.gen_range(0..=state.tasks.len())
             } else {
-                state.runnables.len()
+                state.tasks.len()
             };
-            state.runnables.insert(ix, runnable);
+            state.tasks.insert(
+                ix,
+                ScheduledTask {
+                    session_id: None,
+                    runnable,
+                },
+            );
         }
         self.unparker.unpark();
     }
@@ -176,14 +208,12 @@ impl Scheduler for TestScheduler {
     fn unparker(&self) -> Unparker {
         self.unparker.clone()
     }
-}
 
-impl TestScheduler {
-    pub fn step(&self) -> bool {
+    fn step(&self) -> bool {
         let mut state = self.state.lock();
-        if let Some(runnable) = state.runnables.pop_front() {
+        if let Some(task) = state.tasks.pop_front() {
             drop(state);
-            runnable.run();
+            task.runnable.run();
             true
         } else {
             false
@@ -191,82 +221,20 @@ impl TestScheduler {
     }
 }
 
-pub struct ForegroundExecutor {
-    scheduler: Arc<TestScheduler>,
-    not_send: PhantomData<Rc<()>>,
+pub struct Yield {
+    count: usize,
 }
 
-impl ForegroundExecutor {
-    pub fn spawn<F>(&self, future: F) -> Task<F::Output>
-    where
-        F: Future + 'static,
-        F::Output: 'static,
-    {
-        let scheduler = Arc::clone(&self.scheduler);
-        let (runnable, task) = async_task::spawn_local(future, move |runnable| {
-            scheduler.schedule_foreground(runnable);
-        });
-        runnable.schedule();
-        task
-    }
-}
+impl Future for Yield {
+    type Output = ();
 
-impl ForegroundExecutor {
-    pub fn new(scheduler: Arc<TestScheduler>) -> Self {
-        assert!(
-            scheduler.is_main_thread(),
-            "ForegroundExecutor must be created on the same thread as the Scheduler"
-        );
-        Self {
-            scheduler,
-            not_send: PhantomData,
-        }
-    }
-}
-
-impl BackgroundExecutor {
-    pub fn new(scheduler: Arc<TestScheduler>) -> Self {
-        Self { scheduler }
-    }
-}
-
-pub struct BackgroundExecutor {
-    scheduler: Arc<TestScheduler>,
-}
-
-impl BackgroundExecutor {
-    pub fn spawn<F>(&self, future: F) -> Task<F::Output>
-    where
-        F: Future + Send + 'static,
-        F::Output: Send + 'static,
-    {
-        let scheduler = Arc::clone(&self.scheduler);
-        let (runnable, task) = async_task::spawn(future, move |runnable| {
-            scheduler.schedule_background(runnable);
-        });
-        runnable.schedule();
-        task
-    }
-
-    pub fn block<Fut: Future>(&self, future: Fut) -> Fut::Output {
-        let mut future = pin!(future);
-        let waker = Waker::from(Arc::new(WakerFn::new({
-            let unparker = self.scheduler.unparker();
-            move || {
-                unparker.unpark();
-            }
-        })));
-        let mut cx = std::task::Context::from_waker(&waker);
-        loop {
-            match future.as_mut().poll(&mut cx) {
-                Poll::Ready(result) => return result,
-                Poll::Pending => {
-                    if self.scheduler.step() {
-                        continue;
-                    }
-                    self.scheduler.park(None);
-                }
-            }
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        if self.count == 0 {
+            Poll::Ready(())
+        } else {
+            cx.waker().wake_by_ref();
+            self.count -= 1;
+            Poll::Pending
         }
     }
 }
@@ -278,13 +246,15 @@ mod tests {
     use futures::executor::block_on;
     use futures::sink::SinkExt;
     use futures::stream::StreamExt;
+    use std::cell::RefCell;
     use std::collections::HashSet;
     use std::pin::Pin;
-    use std::task::Context;
+    use std::rc::Rc;
+    use std::task::{Context, Poll};
 
     #[test]
     fn test_foreground_executor_spawn() {
-        let result = TestScheduler::once(|scheduler| async move {
+        let result = TestScheduler::once(async |scheduler| {
             let task = scheduler.foreground().spawn(async move { 42 });
             task.await
         });
@@ -293,7 +263,7 @@ mod tests {
 
     #[test]
     fn test_background_executor_spawn() {
-        TestScheduler::once(|scheduler| async move {
+        TestScheduler::once(async |scheduler| {
             let task = scheduler.background().spawn(async move { 42 });
             let result = task.await;
             assert_eq!(result, 42);
@@ -301,8 +271,72 @@ mod tests {
     }
 
     #[test]
+    fn test_foreground_ordering() {
+        let mut traces = HashSet::new();
+
+        TestScheduler::many(1000, async |scheduler| {
+            #[derive(Hash, PartialEq, Eq)]
+            struct TraceEntry {
+                session: usize,
+                task: usize,
+            }
+
+            let trace = Rc::new(RefCell::new(Vec::new()));
+
+            let foreground_1 = scheduler.foreground();
+            for task in 0..10 {
+                foreground_1
+                    .spawn({
+                        let trace = trace.clone();
+                        async move {
+                            trace.borrow_mut().push(TraceEntry { session: 0, task });
+                        }
+                    })
+                    .detach();
+            }
+
+            let foreground_2 = scheduler.foreground();
+            for task in 0..10 {
+                foreground_2
+                    .spawn({
+                        let trace = trace.clone();
+                        async move {
+                            trace.borrow_mut().push(TraceEntry { session: 1, task });
+                        }
+                    })
+                    .detach();
+            }
+
+            scheduler.run();
+
+            assert_eq!(
+                trace
+                    .borrow()
+                    .iter()
+                    .filter(|entry| entry.session == 0)
+                    .map(|entry| entry.task)
+                    .collect::<Vec<_>>(),
+                (0..10).collect::<Vec<_>>()
+            );
+            assert_eq!(
+                trace
+                    .borrow()
+                    .iter()
+                    .filter(|entry| entry.session == 1)
+                    .map(|entry| entry.task)
+                    .collect::<Vec<_>>(),
+                (0..10).collect::<Vec<_>>()
+            );
+
+            traces.insert(trace.take());
+        });
+
+        assert!(traces.len() > 1, "Expected at least two traces");
+    }
+
+    #[test]
     fn test_send_from_bg_to_fg() {
-        TestScheduler::once(|scheduler| async move {
+        TestScheduler::once(async |scheduler| {
             let foreground = scheduler.foreground();
             let background = scheduler.background();
 
@@ -360,8 +394,8 @@ mod tests {
 
     async fn capture_execution_order(config: SchedulerConfig) -> Vec<String> {
         let scheduler = Arc::new(TestScheduler::new(config));
-        let foreground = ForegroundExecutor::new(scheduler.clone());
-        let background = BackgroundExecutor::new(scheduler.clone());
+        let foreground = scheduler.foreground();
+        let background = scheduler.background();
 
         let (sender, receiver) = mpsc::unbounded::<String>();
 
