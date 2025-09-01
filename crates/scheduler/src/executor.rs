@@ -1,11 +1,15 @@
 use crate::{Scheduler, SessionId};
 use async_task::Task;
-use std::future::Future;
-use std::marker::PhantomData;
-use std::pin::pin;
-use std::rc::Rc;
-use std::sync::Arc;
-use std::task::{Context, Poll, Wake, Waker};
+use futures::{FutureExt as _, future::BoxFuture};
+use std::{
+    future::Future,
+    marker::PhantomData,
+    pin::pin,
+    rc::Rc,
+    sync::Arc,
+    task::{Context, Poll, Wake, Waker},
+    time::Duration,
+};
 
 pub struct ForegroundExecutor {
     session_id: SessionId,
@@ -87,6 +91,25 @@ impl BackgroundExecutor {
                 }
             }
         }
+    }
+
+    pub fn block_with_timeout<Fut: Unpin + Future>(
+        &self,
+        future: &mut Fut,
+        timeout: Duration,
+    ) -> Option<Fut::Output> {
+        let mut timer = self.timer(timeout).fuse();
+        let mut future = pin!(async { future.await }.fuse());
+        self.block(async {
+            futures::select_biased! {
+                _ = timer => None,
+                output = future => Some(output),
+            }
+        })
+    }
+
+    pub fn timer(&self, duration: Duration) -> BoxFuture<'static, ()> {
+        self.scheduler.timer(duration)
     }
 }
 

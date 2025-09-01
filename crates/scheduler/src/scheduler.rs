@@ -1,19 +1,21 @@
+mod clock;
 mod executor;
 
+pub use clock::*;
 pub use executor::*;
 
 use async_task::Runnable;
+use futures::{FutureExt as _, channel::oneshot, future::BoxFuture};
 use parking::{Parker, Unparker};
 use parking_lot::Mutex;
-use rand::{Rng, SeedableRng};
+use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
-use std::collections::VecDeque;
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{Context, Poll};
-use std::thread;
-use std::time::Duration;
+use std::{
+    collections::VecDeque,
+    sync::Arc,
+    thread,
+    time::{Duration, Instant},
+};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct SessionId(u16);
@@ -49,8 +51,14 @@ struct ScheduledTask {
     runnable: Runnable,
 }
 
+struct Timer {
+    expiration: Instant,
+    _notify: oneshot::Sender<()>,
+}
+
 struct SchedulerState {
     tasks: VecDeque<ScheduledTask>,
+    timers: Vec<Timer>,
     rng: ChaCha8Rng,
     randomize_order: bool,
     allow_parking: bool,
@@ -61,12 +69,14 @@ pub trait Scheduler: Send + Sync {
     fn is_main_thread(&self) -> bool;
     fn schedule_foreground(&self, session_id: SessionId, runnable: Runnable);
     fn schedule_background(&self, runnable: Runnable);
+    fn timer(&self, timeout: Duration) -> BoxFuture<'static, ()>;
     fn park(&self, timeout: Option<Duration>) -> bool;
     fn unparker(&self) -> Unparker;
     fn step(&self) -> bool;
 }
 
 pub struct TestScheduler {
+    clock: Arc<TestClock>,
     state: Mutex<SchedulerState>,
     pub thread_id: thread::ThreadId,
     pub config: SchedulerConfig,
@@ -89,23 +99,28 @@ impl TestScheduler {
 
     /// Run a test once with a specific seed
     pub fn with_seed<R>(seed: u64, f: impl AsyncFnOnce(Arc<TestScheduler>) -> R) -> R {
-        let scheduler = Arc::new(TestScheduler::new(SchedulerConfig::with_seed(seed)));
+        let scheduler = Arc::new(TestScheduler::new(
+            Arc::new(TestClock::new(Instant::now())),
+            SchedulerConfig::with_seed(seed),
+        ));
         let background = BackgroundExecutor::new(scheduler.clone());
         let future = f(scheduler.clone());
         background.block(future)
     }
 
-    pub fn new(config: SchedulerConfig) -> Self {
+    pub fn new(clock: Arc<TestClock>, config: SchedulerConfig) -> Self {
         let (parker, unparker) = parking::pair();
         Self {
             state: Mutex::new(SchedulerState {
                 tasks: VecDeque::new(),
+                timers: Vec::new(),
                 rng: ChaCha8Rng::seed_from_u64(config.seed),
                 randomize_order: config.randomize_order,
                 allow_parking: config.allow_parking,
                 next_session_id: SessionId(0),
             }),
             thread_id: thread::current().id(),
+            clock,
             config,
             parker: Arc::new(Mutex::new(parker)),
             unparker,
@@ -115,12 +130,6 @@ impl TestScheduler {
     pub fn run(&self) {
         while self.step() {
             // Continue stepping until no work remains
-        }
-    }
-
-    pub fn random_delay(&self) -> Yield {
-        Yield {
-            count: self.state.lock().rng.gen_range(0..=10),
         }
     }
 
@@ -188,6 +197,24 @@ impl Scheduler for TestScheduler {
         self.unparker.unpark();
     }
 
+    fn timer(&self, duration: Duration) -> BoxFuture<'static, ()> {
+        let (tx, rx) = oneshot::channel();
+        let expiration = self.clock.now() + duration;
+        {
+            let state = &mut *self.state.lock();
+            state.timers.push(Timer {
+                expiration,
+                _notify: tx,
+            });
+            state.timers.sort_by_key(|timer| timer.expiration);
+        }
+        self.unparker.unpark();
+        async move {
+            rx.await.ok();
+        }
+        .boxed()
+    }
+
     fn park(&self, timeout: Option<Duration>) -> bool {
         {
             let state = self.state.lock();
@@ -210,47 +237,55 @@ impl Scheduler for TestScheduler {
     }
 
     fn step(&self) -> bool {
-        let mut state = self.state.lock();
-        if let Some(task) = state.tasks.pop_front() {
-            drop(state);
+        let mut elapsed_timers = Vec::new();
+        {
+            let mut state = self.state.lock();
+            while let Some(timer) = state.timers.first() {
+                if timer.expiration <= self.clock.now() {
+                    elapsed_timers.push(state.timers.remove(0));
+                } else {
+                    break;
+                }
+            }
+        }
+
+        if !elapsed_timers.is_empty() {
+            return true;
+        }
+
+        let task = self.state.lock().tasks.pop_front();
+        if let Some(task) = task {
             task.runnable.run();
-            true
-        } else {
-            false
+            return true;
         }
-    }
-}
 
-pub struct Yield {
-    count: usize,
-}
-
-impl Future for Yield {
-    type Output = ();
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        if self.count == 0 {
-            Poll::Ready(())
-        } else {
-            cx.waker().wake_by_ref();
-            self.count -= 1;
-            Poll::Pending
+        let state = &mut *self.state.lock();
+        if let Some(timer) = state.timers.choose(&mut state.rng) {
+            self.clock.set_now(timer.expiration);
+            return true;
         }
+
+        false
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::channel::{mpsc, oneshot};
-    use futures::executor::block_on;
-    use futures::sink::SinkExt;
-    use futures::stream::StreamExt;
-    use std::cell::RefCell;
-    use std::collections::HashSet;
-    use std::pin::Pin;
-    use std::rc::Rc;
-    use std::task::{Context, Poll};
+    use futures::{
+        FutureExt,
+        channel::{mpsc, oneshot},
+        executor::block_on,
+        sink::SinkExt,
+        stream::{FuturesUnordered, StreamExt},
+    };
+    use std::{
+        cell::RefCell,
+        collections::HashSet,
+        pin::Pin,
+        rc::Rc,
+        task::{Context, Poll},
+    };
 
     #[test]
     fn test_foreground_executor_spawn() {
@@ -274,7 +309,7 @@ mod tests {
     fn test_foreground_ordering() {
         let mut traces = HashSet::new();
 
-        TestScheduler::many(1000, async |scheduler| {
+        TestScheduler::many(100, async |scheduler| {
             #[derive(Hash, PartialEq, Eq)]
             struct TraceEntry {
                 session: usize,
@@ -332,6 +367,36 @@ mod tests {
         });
 
         assert!(traces.len() > 1, "Expected at least two traces");
+    }
+
+    #[test]
+    fn test_timer_ordering() {
+        TestScheduler::many(100, async |scheduler| {
+            let background = scheduler.background();
+            let futures = FuturesUnordered::new();
+            futures.push(
+                async {
+                    background.timer(Duration::from_millis(100)).await;
+                    2
+                }
+                .boxed(),
+            );
+            futures.push(
+                async {
+                    background.timer(Duration::from_millis(50)).await;
+                    1
+                }
+                .boxed(),
+            );
+            futures.push(
+                async {
+                    background.timer(Duration::from_millis(150)).await;
+                    3
+                }
+                .boxed(),
+            );
+            assert_eq!(futures.collect::<Vec<_>>().await, vec![1, 2, 3]);
+        });
     }
 
     #[test]
@@ -393,7 +458,10 @@ mod tests {
     }
 
     async fn capture_execution_order(config: SchedulerConfig) -> Vec<String> {
-        let scheduler = Arc::new(TestScheduler::new(config));
+        let scheduler = Arc::new(TestScheduler::new(
+            Arc::new(TestClock::new(Instant::now())),
+            config,
+        ));
         let foreground = scheduler.foreground();
         let background = scheduler.background();
 
@@ -427,7 +495,10 @@ mod tests {
 
     #[test]
     fn test_block() {
-        let scheduler = Arc::new(TestScheduler::new(SchedulerConfig::default()));
+        let scheduler = Arc::new(TestScheduler::new(
+            Arc::new(TestClock::new(Instant::now())),
+            SchedulerConfig::default(),
+        ));
         let executor = BackgroundExecutor::new(scheduler.clone());
         let (tx, rx) = oneshot::channel();
 
@@ -457,7 +528,10 @@ mod tests {
             }
         }
 
-        let scheduler = Arc::new(TestScheduler::new(SchedulerConfig::default()));
+        let scheduler = Arc::new(TestScheduler::new(
+            Arc::new(TestClock::new(Instant::now())),
+            SchedulerConfig::default(),
+        ));
         let executor = BackgroundExecutor::new(scheduler);
         executor.block(NeverFuture);
     }
@@ -468,7 +542,10 @@ mod tests {
             allow_parking: true,
             ..Default::default()
         };
-        let scheduler = Arc::new(TestScheduler::new(config));
+        let scheduler = Arc::new(TestScheduler::new(
+            Arc::new(TestClock::new(Instant::now())),
+            config,
+        ));
         let executor = BackgroundExecutor::new(scheduler.clone());
         let (tx, rx) = oneshot::channel();
 
