@@ -676,8 +676,8 @@ impl WindowsPlatformInner {
         let handled = match msg {
             WM_GPUI_CLOSE_ONE_WINDOW
             | WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD
-            | WM_GPUI_DOCK_MENU_ACTION => self.handle_gpui_events(msg, wparam, lparam),
-            WM_INPUTLANGCHANGE => self.handle_input_lang_change(),
+            | WM_GPUI_DOCK_MENU_ACTION
+            | WM_GPUI_KEYBOARD_LAYOUT_CHANGED => self.handle_gpui_events(msg, wparam, lparam),
             _ => None,
         };
         if let Some(result) = handled {
@@ -701,6 +701,7 @@ impl WindowsPlatformInner {
             }
             WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD => self.run_foreground_task(),
             WM_GPUI_DOCK_MENU_ACTION => self.handle_dock_action_event(lparam.0 as _),
+            WM_GPUI_KEYBOARD_LAYOUT_CHANGED => self.handle_keyboard_layout_change(),
             _ => unreachable!(),
         }
     }
@@ -747,7 +748,7 @@ impl WindowsPlatformInner {
         Some(0)
     }
 
-    fn handle_input_lang_change(&self) -> Option<isize> {
+    fn handle_keyboard_layout_change(&self) -> Option<isize> {
         let mut callback = self
             .state
             .borrow_mut()
