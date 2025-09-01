@@ -30,7 +30,7 @@ pub struct AcpConnection {
     connection: Rc<acp::ClientSideConnection>,
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
     auth_methods: Vec<acp::AuthMethod>,
-    prompt_capabilities: acp::PromptCapabilities,
+    agent_capabilities: acp::AgentCapabilities,
     _io_task: Task<Result<()>>,
     _wait_task: Task<Result<()>>,
     _stderr_task: Task<Result<()>>,
@@ -150,7 +150,7 @@ impl AcpConnection {
             connection,
             server_name,
             sessions,
-            prompt_capabilities: response.agent_capabilities.prompt_capabilities,
+            agent_capabilities: response.agent_capabilities,
             _io_task: io_task,
             _wait_task: wait_task,
             _stderr_task: stderr_task,
@@ -158,7 +158,7 @@ impl AcpConnection {
     }
 
     pub fn prompt_capabilities(&self) -> &acp::PromptCapabilities {
-        &self.prompt_capabilities
+        &self.agent_capabilities.prompt_capabilities
     }
 }
 
@@ -225,7 +225,7 @@ impl AgentConnection for AcpConnection {
                     action_log,
                     session_id.clone(),
                     // ACP doesn't currently support per-session prompt capabilities or changing capabilities dynamically.
-                    watch::Receiver::constant(self.prompt_capabilities),
+                    watch::Receiver::constant(self.agent_capabilities.prompt_capabilities),
                     cx,
                 )
             })?;
@@ -334,7 +334,7 @@ impl AgentConnection for AcpConnection {
         session_id: &agent_client_protocol::SessionId,
         cx: &App,
     ) -> Option<Rc<dyn acp_thread::AgentSessionCommands>> {
-        if self.prompt_capabilities.supports_commands {
+        if self.agent_capabilities.supports_commands {
             Some(Rc::new(AcpAgentSessionCommands {
                 session_id: session_id.clone(),
                 connection: self.connection.clone(),

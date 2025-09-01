@@ -2638,7 +2638,6 @@ mod tests {
                         image: true,
                         audio: true,
                         embedded_context: true,
-                        supports_commands: true,
                     }),
                     cx,
                 )

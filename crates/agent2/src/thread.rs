@@ -588,7 +588,6 @@ impl Thread {
             image,
             audio: false,
             embedded_context: true,
-            supports_commands: false,
         }
     }
 
