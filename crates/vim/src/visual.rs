@@ -118,21 +118,25 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         let count = Vim::take_count(cx).unwrap_or(1);
         Vim::take_forced_motion(cx);
         for _ in 0..count {
-            vim.update_editor(window, cx, |_, editor, window, cx| {
+            vim.update_editor(cx, |_, editor, cx| {
                 editor.select_next_syntax_node(&Default::default(), window, cx);
             });
         }
     });
 
-    Vim::action(editor, cx, |vim, _: &SelectPreviousSyntaxNode, window, cx| {
-        let count = Vim::take_count(cx).unwrap_or(1);
-        Vim::take_forced_motion(cx);
-        for _ in 0..count {
-            vim.update_editor(window, cx, |_, editor, window, cx| {
-                editor.select_prev_syntax_node(&Default::default(), window, cx);
-            });
-        }
-    });
+    Vim::action(
+        editor,
+        cx,
+        |vim, _: &SelectPreviousSyntaxNode, window, cx| {
+            let count = Vim::take_count(cx).unwrap_or(1);
+            Vim::take_forced_motion(cx);
+            for _ in 0..count {
+                vim.update_editor(cx, |_, editor, cx| {
+                    editor.select_prev_syntax_node(&Default::default(), window, cx);
+                });
+            }
+        },
+    );
 
     Vim::action(
         editor,
