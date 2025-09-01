@@ -610,6 +610,7 @@ entity_messages!(
     ListToolchains,
     ActivateToolchain,
     ActiveToolchain,
+    ResolveToolchain,
     GetPathMetadata,
     CancelLanguageServerWork,
     RegisterBufferWithLanguageServers,

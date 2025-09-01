@@ -17,7 +17,10 @@ use language::{
 };
 use rpc::{
     AnyProtoClient, TypedEnvelope,
-    proto::{self, FromProto, ToProto},
+    proto::{
+        self, FromProto, ResolveToolchainResponse, ToProto,
+        resolve_toolchain_response::Response as ResolveResponsePayload,
+    },
 };
 use settings::WorktreeId;
 use util::ResultExt as _;
@@ -45,6 +48,7 @@ impl ToolchainStore {
         client.add_entity_request_handler(Self::handle_activate_toolchain);
         client.add_entity_request_handler(Self::handle_list_toolchains);
         client.add_entity_request_handler(Self::handle_active_toolchain);
+        client.add_entity_request_handler(Self::handle_resolve_toolchain);
     }
 
     pub fn local(
@@ -272,6 +276,35 @@ impl ToolchainStore {
             relative_worktree_path: Some(relative_path.to_string_lossy().into_owned()),
         })
     }
+
+    async fn handle_resolve_toolchain(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::ResolveToolchain>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::ResolveToolchainResponse> {
+        let toolchain = this
+            .update(&mut cx, |this, cx| {
+                let language_name = LanguageName::from_proto(envelope.payload.language_name);
+                let path = PathBuf::from(envelope.payload.abs_path);
+                this.resolve_toolchain(path, language_name, cx)
+            })?
+            .await;
+        let response = match toolchain {
+            Ok(toolchain) => {
+                let toolchain = proto::Toolchain {
+                    name: toolchain.name.to_string(),
+                    path: toolchain.path.to_string(),
+                    raw_json: toolchain.as_json.to_string(),
+                };
+                ResolveResponsePayload::Toolchain(toolchain)
+            }
+            Err(e) => ResolveResponsePayload::Error(e.to_string()),
+        };
+        Ok(ResolveToolchainResponse {
+            response: Some(response),
+        })
+    }
+
     pub fn as_language_toolchain_store(&self) -> Arc<dyn LanguageToolchainStore> {
         match &self.mode {
             ToolchainStoreInner::Local(local) => Arc::new(LocalStore(local.downgrade())),
