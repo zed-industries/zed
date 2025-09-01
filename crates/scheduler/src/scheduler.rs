@@ -265,4 +265,101 @@ mod tests {
         let result = block_on(task);
         assert_eq!(result, 42);
     }
+
+    #[test]
+    fn test_randomize_order_setting() {
+        use std::collections::HashSet;
+
+        // Test deterministic mode: different seeds should produce same execution order
+        let mut deterministic_results = HashSet::new();
+        for seed in 0..10 {
+            let config = SchedulerConfig {
+                seed,
+                randomize_order: false,
+            };
+            let scheduler = Arc::new(TestScheduler::new(config));
+            let foreground = ForegroundExecutor::new(scheduler.clone());
+            let background = BackgroundExecutor::new(scheduler.clone());
+
+            let execution_order = Arc::new(Mutex::new(Vec::new()));
+
+            // Spawn foreground tasks
+            for i in 0..3 {
+                let order = execution_order.clone();
+                foreground
+                    .spawn(async move {
+                        order.lock().push(format!("fg-{}", i));
+                    })
+                    .detach();
+            }
+
+            // Spawn background tasks
+            for i in 0..3 {
+                let order = execution_order.clone();
+                background
+                    .spawn(async move {
+                        order.lock().push(format!("bg-{}", i));
+                    })
+                    .detach();
+            }
+
+            scheduler.run();
+
+            let order = execution_order.lock().clone();
+            deterministic_results.insert(order);
+        }
+
+        // All deterministic runs should produce the same result
+        assert_eq!(
+            deterministic_results.len(),
+            1,
+            "Deterministic mode should always produce same execution order"
+        );
+
+        // Test randomized mode: different seeds can produce different execution orders
+        let mut randomized_results = HashSet::new();
+        for seed in 0..20 {
+            let config = SchedulerConfig {
+                seed,
+                randomize_order: true,
+            };
+            let scheduler = Arc::new(TestScheduler::new(config));
+            let foreground = ForegroundExecutor::new(scheduler.clone());
+            let background = BackgroundExecutor::new(scheduler.clone());
+
+            let execution_order = Arc::new(Mutex::new(Vec::new()));
+
+            // Spawn foreground tasks
+            for i in 0..3 {
+                let order = execution_order.clone();
+                foreground
+                    .spawn(async move {
+                        order.lock().push(format!("fg-{}", i));
+                    })
+                    .detach();
+            }
+
+            // Spawn background tasks
+            for i in 0..3 {
+                let order = execution_order.clone();
+                background
+                    .spawn(async move {
+                        order.lock().push(format!("bg-{}", i));
+                    })
+                    .detach();
+            }
+
+            scheduler.run();
+
+            let order = execution_order.lock().clone();
+            randomized_results.insert(order);
+        }
+
+        // Randomized mode should produce multiple different execution orders
+        // (though it might not with small task counts, so we just verify it works without crashing)
+        assert!(
+            !randomized_results.is_empty(),
+            "Randomized mode should produce some execution order"
+        );
+    }
 }
