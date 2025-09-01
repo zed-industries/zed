@@ -284,14 +284,44 @@ pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> Displa
 
 /// Returns a position of the previous word boundary, where a word character is defined as either
 /// uppercase letter, lowercase letter, '_' character, language-specific word character (like '-' in CSS) or newline.
-pub fn previous_word_start_or_newline(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+fn previous_word_start_or_newline(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let raw_point = point.to_point(map);
     let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
 
     find_preceding_boundary_display_point(map, point, FindRange::MultiLine, |left, right| {
-        (classifier.kind(left) != classifier.kind(right) && !right.is_whitespace())
+        (classifier.kind(left) != classifier.kind(right) && !classifier.is_whitespace(right))
             || left == '\n'
             || right == '\n'
+    })
+}
+
+// TODO kb docs
+pub fn previous_word_start_for_deletion(
+    map: &DisplaySnapshot,
+    point: DisplayPoint,
+    ignore_newlines: bool,
+    greedy: bool,
+) -> DisplayPoint {
+    let raw_point = point.to_point(map);
+    let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
+    let mut is_first_iteration = ignore_newlines;
+
+    find_preceding_boundary_display_point(map, point, FindRange::MultiLine, |left, right| {
+        // Make alt-left skip punctuation to respect VSCode behaviour. For example: hello.| goes to |hello.
+        if is_first_iteration
+            && classifier.is_punctuation(right)
+            && !classifier.is_punctuation(left)
+            && left != '\n'
+        {
+            is_first_iteration = false;
+            return false;
+        }
+        is_first_iteration = false;
+
+        (classifier.kind(left) != classifier.kind(right)
+            && (!classifier.is_whitespace(right) || (!greedy && !classifier.is_whitespace(left))))
+            || left == '\n'
+            || (!ignore_newlines && right == '\n')
     })
 }
 
@@ -337,7 +367,7 @@ pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint
 
 /// Returns a position of the next word boundary, where a word character is defined as either
 /// uppercase letter, lowercase letter, '_' character, language-specific word character (like '-' in CSS) or newline.
-pub fn next_word_end_or_newline(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+fn next_word_end_or_newline(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let raw_point = point.to_point(map);
     let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
 
@@ -350,6 +380,52 @@ pub fn next_word_end_or_newline(map: &DisplaySnapshot, point: DisplayPoint) -> D
             && ((on_starting_row && !left.is_whitespace())
                 || (!on_starting_row && !right.is_whitespace())))
             || right == '\n'
+    })
+}
+
+// TODO kb docs
+pub fn next_word_end_for_deletion(
+    map: &DisplaySnapshot,
+    point: DisplayPoint,
+    ignore_newlines: bool,
+    greedy: bool,
+) -> DisplayPoint {
+    let raw_point = point.to_point(map);
+    let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
+    let mut is_first_iteration = true;
+    let mut on_starting_row = true;
+
+    find_boundary(map, point, FindRange::MultiLine, |left, right| {
+        let different_classifiers = classifier.kind(left) != classifier.kind(right);
+        if ignore_newlines {
+            // Make alt-right skip punctuation to respect VSCode behaviour. For example: |.hello goes to .hello|
+            if is_first_iteration
+                && classifier.is_punctuation(left)
+                && !classifier.is_punctuation(right)
+                && right != '\n'
+            {
+                is_first_iteration = false;
+                return false;
+            }
+            is_first_iteration = false;
+
+            (different_classifiers
+                && (!classifier.is_whitespace(left)
+                    || (!greedy && !classifier.is_whitespace(right))))
+                || right == '\n'
+        } else {
+            if left == '\n' {
+                on_starting_row = false;
+            }
+
+            (different_classifiers
+                && ((on_starting_row && !classifier.is_whitespace(left))
+                    || (!on_starting_row && !classifier.is_whitespace(right))
+                    || (!greedy
+                        && classifier.is_whitespace(left)
+                        && !classifier.is_whitespace(right))))
+                || right == '\n'
+        }
     })
 }
 

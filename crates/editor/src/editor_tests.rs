@@ -2488,6 +2488,7 @@ async fn test_delete_to_word_boundary(cx: &mut TestAppContext) {
         editor.delete_to_previous_word_start(
             &DeleteToPreviousWordStart {
                 ignore_newlines: false,
+                greedy: false,
             },
             window,
             cx,
@@ -2500,6 +2501,7 @@ async fn test_delete_to_word_boundary(cx: &mut TestAppContext) {
         editor.delete_to_next_word_end(
             &DeleteToNextWordEnd {
                 ignore_newlines: false,
+                greedy: false,
             },
             window,
             cx,
@@ -2512,6 +2514,46 @@ async fn test_delete_to_word_boundary(cx: &mut TestAppContext) {
         editor.delete_to_previous_word_start(
             &DeleteToPreviousWordStart {
                 ignore_newlines: false,
+                greedy: true,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("here is some ˇwith a space");
+
+    cx.set_state("here is some text    ˇwith a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                greedy: true,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("here is some ˇwith a space");
+
+    cx.set_state("here is some text    ˇwith a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: false,
+                greedy: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("here is some textˇwith a space");
+
+    cx.set_state("here is some text    ˇwith a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                greedy: false,
             },
             window,
             cx,
@@ -2524,12 +2566,55 @@ async fn test_delete_to_word_boundary(cx: &mut TestAppContext) {
         editor.delete_to_next_word_end(
             &DeleteToNextWordEnd {
                 ignore_newlines: false,
+                greedy: true,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("here is some textˇ a space");
+
+    cx.set_state("here is some textˇ    with a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_next_word_end(
+            &DeleteToNextWordEnd {
+                ignore_newlines: true,
+                greedy: true,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("here is some textˇ a space");
+
+    cx.set_state("here is some textˇ    with a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_next_word_end(
+            &DeleteToNextWordEnd {
+                ignore_newlines: false,
+                greedy: false,
             },
             window,
             cx,
         );
     });
     cx.assert_editor_state("here is some textˇwith a space");
+
+    cx.set_state("here is some textˇ    with a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_next_word_end(
+            &DeleteToNextWordEnd {
+                ignore_newlines: true,
+                greedy: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("here is some textˇwith a space");
+
+    // TODO kb split the test?
+    // TODO kb test `todo!("// ^TODO");` case
 }
 
 #[gpui::test]
@@ -2542,9 +2627,11 @@ fn test_delete_to_previous_word_start_or_newline(cx: &mut TestAppContext) {
     });
     let del_to_prev_word_start = DeleteToPreviousWordStart {
         ignore_newlines: false,
+        greedy: false,
     };
     let del_to_prev_word_start_ignore_newlines = DeleteToPreviousWordStart {
         ignore_newlines: true,
+        greedy: false,
     };
 
     _ = editor.update(cx, |editor, window, cx| {
@@ -2578,9 +2665,11 @@ fn test_delete_to_next_word_end_or_newline(cx: &mut TestAppContext) {
     });
     let del_to_next_word_end = DeleteToNextWordEnd {
         ignore_newlines: false,
+        greedy: false,
     };
     let del_to_next_word_end_ignore_newlines = DeleteToNextWordEnd {
         ignore_newlines: true,
+        greedy: false,
     };
 
     _ = editor.update(cx, |editor, window, cx| {

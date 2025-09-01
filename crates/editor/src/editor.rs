@@ -13132,11 +13132,12 @@ impl Editor {
             this.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(|map, selection| {
                     if selection.is_empty() {
-                        let cursor = if action.ignore_newlines {
-                            movement::previous_word_start(map, selection.head())
-                        } else {
-                            movement::previous_word_start_or_newline(map, selection.head())
-                        };
+                        let cursor = movement::previous_word_start_for_deletion(
+                            map,
+                            selection.head(),
+                            action.ignore_newlines,
+                            action.greedy,
+                        );
                         selection.set_head(cursor, SelectionGoal::None);
                     }
                 });
@@ -13233,11 +13234,12 @@ impl Editor {
             this.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(|map, selection| {
                     if selection.is_empty() {
-                        let cursor = if action.ignore_newlines {
-                            movement::next_word_end(map, selection.head())
-                        } else {
-                            movement::next_word_end_or_newline(map, selection.head())
-                        };
+                        let cursor = movement::next_word_end_for_deletion(
+                            map,
+                            selection.head(),
+                            action.ignore_newlines,
+                            action.greedy,
+                        );
                         selection.set_head(cursor, SelectionGoal::None);
                     }
                 });
