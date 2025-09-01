@@ -140,6 +140,7 @@ members = [
     "crates/rpc",
     "crates/rules_library",
     "crates/schema_generator",
+    "crates/scheduler",
     "crates/search",
     "crates/semantic_index",
     "crates/semantic_version",

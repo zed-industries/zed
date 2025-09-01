@@ -14350,6 +14350,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "scheduler"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-task",
+ "parking_lot",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+]
+
+[[package]]
 name = "schema_generator"
 version = "0.1.0"
 dependencies = [
