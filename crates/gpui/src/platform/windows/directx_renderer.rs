@@ -1760,7 +1760,7 @@ mod amd {
                 anyhow::bail!("Failed to initialize AMD AGS, error code: {}", result);
             }
 
-            // Vulkan acctually returns this as the driver version
+            // Vulkan actually returns this as the driver version
             let software_version = if !gpu_info.radeon_software_version.is_null() {
                 std::ffi::CStr::from_ptr(gpu_info.radeon_software_version)
                     .to_string_lossy()
