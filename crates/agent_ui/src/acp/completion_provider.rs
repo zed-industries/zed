@@ -9,8 +9,6 @@ use agent_client_protocol as acp;
 use agent2::{HistoryEntry, HistoryStore};
 use anyhow::Result;
 use editor::{CompletionProvider, Editor, ExcerptId};
-use futures::FutureExt;
-use futures::future::Shared;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{App, Entity, Task, WeakEntity};
 use language::{Buffer, CodeLabel, HighlightId};
@@ -70,7 +68,7 @@ pub struct ContextPickerCompletionProvider {
     history_store: Entity<HistoryStore>,
     prompt_store: Option<Entity<PromptStore>>,
     prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
-    available_commands_task: RefCell<Shared<Task<Vec<acp::CommandInfo>>>>,
+    available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
 }
 
 impl ContextPickerCompletionProvider {
@@ -80,6 +78,7 @@ impl ContextPickerCompletionProvider {
         history_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
         prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
+        available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
     ) -> Self {
         Self {
             message_editor,
@@ -87,12 +86,8 @@ impl ContextPickerCompletionProvider {
             history_store,
             prompt_store,
             prompt_capabilities,
-            available_commands_task: RefCell::new(Task::ready(Vec::new()).shared()),
+            available_commands,
         }
-    }
-
-    pub fn set_available_commands_task(&self, task: Shared<Task<Vec<acp::CommandInfo>>>) {
-        *self.available_commands_task.borrow_mut() = task;
     }
 
     fn completion_for_entry(
@@ -378,14 +373,17 @@ impl ContextPickerCompletionProvider {
         })
     }
 
-    fn search_slash_commands(&self, query: String, cx: &mut App) -> Task<Vec<acp::CommandInfo>> {
-        let commands = self.available_commands_task.borrow().clone();
-        cx.spawn(async move |cx| {
-            let commands = commands.await;
-            if commands.is_empty() {
-                return Vec::new();
-            }
+    fn search_slash_commands(
+        &self,
+        query: String,
+        cx: &mut App,
+    ) -> Task<Vec<acp::AvailableCommand>> {
+        let commands = self.available_commands.borrow().clone();
+        if commands.is_empty() {
+            return Task::ready(Vec::new());
+        }
 
+        cx.spawn(async move |cx| {
             let candidates = commands
                 .iter()
                 .enumerate()
@@ -725,14 +723,14 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                         .map(|command| {
                             let new_text = if let Some(argument) = argument.as_ref() {
                                 format!("/{} {}", command.name, argument.to_string())
+                            } else if command.input.is_some() {
+                                format!("/{} ", command.name)
                             } else {
                                 format!("/{}", command.name)
                             };
                             let new_text_len = new_text.len();
 
-                            let is_missing_argument =
-                                argument.is_none() && command.requires_argument;
-
+                            let is_missing_argument = argument.is_none() && command.input.is_some();
                             Completion {
                                 replace_range: source_range.clone(),
                                 new_text,
@@ -750,24 +748,26 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                     let source_range = source_range.clone();
                                     let editor = editor.clone();
                                     move |intent, window, cx| {
-                                        window.defer(cx, {
-                                            let command_name = command_name.clone();
-                                            let command_description = command_description.clone();
-                                            let editor = editor.clone();
-                                            move |window, cx| {
-                                                editor
-                                                    .update(cx, |editor, cx| {
-                                                        editor
-                                                            .confirm_command_completion(
-                                                                command_name,
-                                                                Some(command_description),
-                                                                source_range.start,
-                                                                new_text_len,
-                                                                window,
-                                                                cx,
-                                                            )
-                                                            .detach();
-                                                        match intent {
+                                        if !is_missing_argument {
+                                            window.defer(cx, {
+                                                let command_name = command_name.clone();
+                                                let command_description =
+                                                    command_description.clone();
+                                                let editor = editor.clone();
+                                                move |window, cx| {
+                                                    editor
+                                                        .update(cx, |editor, cx| {
+                                                            editor
+                                                                .confirm_command_completion(
+                                                                    command_name,
+                                                                    Some(command_description),
+                                                                    source_range.start,
+                                                                    new_text_len,
+                                                                    window,
+                                                                    cx,
+                                                                )
+                                                                .detach();
+                                                            match intent {
                                                         CompletionIntent::Complete
                                                         | CompletionIntent::CompleteWithInsert
                                                         | CompletionIntent::CompleteWithReplace => {
@@ -777,10 +777,11 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                                         }
                                                         CompletionIntent::Compose => {}
                                                     }
-                                                    })
-                                                    .ok();
-                                            }
-                                        });
+                                                        })
+                                                        .ok();
+                                                }
+                                            });
+                                        }
                                         is_missing_argument
                                     }
                                 })),

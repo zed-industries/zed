@@ -56,14 +56,6 @@ pub trait AgentConnection {
         None
     }
 
-    fn list_commands(
-        &self,
-        _session_id: &acp::SessionId,
-        _cx: &App,
-    ) -> Option<Rc<dyn AgentSessionListCommands>> {
-        None
-    }
-
     fn set_title(
         &self,
         _session_id: &acp::SessionId,
@@ -102,10 +94,6 @@ pub trait AgentSessionResume {
 
 pub trait AgentSessionSetTitle {
     fn run(&self, title: SharedString, cx: &mut App) -> Task<Result<()>>;
-}
-
-pub trait AgentSessionListCommands {
-    fn run(&self, cx: &mut App) -> Task<Result<Vec<acp::CommandInfo>>>;
 }
 
 pub trait AgentTelemetry {
@@ -350,6 +338,7 @@ mod test_support {
                         audio: true,
                         embedded_context: true,
                     }),
+                    vec![],
                     cx,
                 )
             });

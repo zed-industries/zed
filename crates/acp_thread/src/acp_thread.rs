@@ -562,6 +562,7 @@ impl ToolCallContent {
                     cx,
                 )
             })),
+            acp::ToolCallContent::Terminal { terminal_id: _ } => todo!(),
         }
     }
 
@@ -760,6 +761,7 @@ pub struct AcpThread {
     session_id: acp::SessionId,
     token_usage: Option<TokenUsage>,
     prompt_capabilities: acp::PromptCapabilities,
+    available_commands: Vec<acp::AvailableCommand>,
     _observe_prompt_capabilities: Task<anyhow::Result<()>>,
 }
 
@@ -831,6 +833,7 @@ impl AcpThread {
         action_log: Entity<ActionLog>,
         session_id: acp::SessionId,
         mut prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
+        available_commands: Vec<acp::AvailableCommand>,
         cx: &mut Context<Self>,
     ) -> Self {
         let prompt_capabilities = *prompt_capabilities_rx.borrow();
@@ -856,12 +859,17 @@ impl AcpThread {
             session_id,
             token_usage: None,
             prompt_capabilities,
+            available_commands,
             _observe_prompt_capabilities: task,
         }
     }
 
     pub fn prompt_capabilities(&self) -> acp::PromptCapabilities {
         self.prompt_capabilities
+    }
+
+    pub fn available_commands(&self) -> Vec<acp::AvailableCommand> {
+        self.available_commands.clone()
     }
 
     pub fn connection(&self) -> &Rc<dyn AgentConnection> {
@@ -1360,6 +1368,7 @@ impl AcpThread {
         let request = acp::PromptRequest {
             prompt: message.clone(),
             session_id: self.session_id.clone(),
+            command_name: None,
         };
         let git_store = self.project.read(cx).git_store().clone();
 
@@ -2639,6 +2648,7 @@ mod tests {
                         audio: true,
                         embedded_context: true,
                     }),
+                    vec![],
                     cx,
                 )
             });

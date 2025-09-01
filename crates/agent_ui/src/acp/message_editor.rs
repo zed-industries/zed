@@ -2,11 +2,11 @@ use crate::{
     acp::completion_provider::ContextPickerCompletionProvider,
     context_picker::{ContextPickerAction, fetch_context_picker::fetch_url_content},
 };
-use acp_thread::{AgentSessionListCommands, MentionUri, selection_name};
+use acp_thread::{MentionUri, selection_name};
 use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use agent2::HistoryStore;
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Result, anyhow};
 use assistant_slash_commands::codeblock_fence_for_path;
 use collections::{HashMap, HashSet};
 use editor::{
@@ -33,7 +33,7 @@ use prompt_store::{PromptId, PromptStore};
 use rope::Point;
 use settings::Settings;
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     ffi::OsStr,
     fmt::Write,
     ops::{Range, RangeInclusive},
@@ -62,10 +62,8 @@ pub struct MessageEditor {
     history_store: Entity<HistoryStore>,
     prompt_store: Option<Entity<PromptStore>>,
     prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
-    completion_provider: Rc<ContextPickerCompletionProvider>,
     _subscriptions: Vec<Subscription>,
     _parse_slash_command_task: Task<()>,
-    list_commands_task: Shared<Task<Vec<acp::CommandInfo>>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -85,6 +83,7 @@ impl MessageEditor {
         history_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
         prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
+        available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
         placeholder: impl Into<Arc<str>>,
         mode: EditorMode,
         window: &mut Window,
@@ -103,6 +102,7 @@ impl MessageEditor {
             history_store.clone(),
             prompt_store.clone(),
             prompt_capabilities.clone(),
+            available_commands.clone(),
         ));
         let mention_set = MentionSet::default();
         let editor = cx.new(|cx| {
@@ -152,10 +152,8 @@ impl MessageEditor {
             history_store,
             prompt_store,
             prompt_capabilities,
-            completion_provider,
             _subscriptions: subscriptions,
             _parse_slash_command_task: Task::ready(()),
-            list_commands_task: Task::ready(Vec::new()).shared(),
         }
     }
 
@@ -209,30 +207,6 @@ impl MessageEditor {
             .values()
             .map(|(uri, _)| uri.clone())
             .collect()
-    }
-
-    pub fn set_command_provider(
-        &mut self,
-        provider: Option<Rc<dyn AgentSessionListCommands>>,
-        cx: &mut Context<Self>,
-    ) {
-        let task = if let Some(provider) = provider.as_ref() {
-            let list_commands_task = provider.run(cx);
-            cx.background_spawn(async move {
-                list_commands_task
-                    .await
-                    .context("Failed to list available commands")
-                    .log_err()
-                    .unwrap_or_default()
-            })
-            .shared()
-        } else {
-            Task::ready(Vec::new()).shared()
-        };
-
-        self.completion_provider
-            .set_available_commands_task(task.clone());
-        self.list_commands_task = task;
     }
 
     pub fn confirm_command_completion(
@@ -1604,6 +1578,7 @@ mod tests {
                     history_store.clone(),
                     None,
                     Default::default(),
+                    Default::default(),
                     "Test",
                     EditorMode::AutoHeight {
                         min_lines: 1,
@@ -1803,6 +1778,7 @@ mod tests {
                     history_store.clone(),
                     None,
                     prompt_capabilities.clone(),
+                    Default::default(),
                     "Test",
                     EditorMode::AutoHeight {
                         max_lines: None,

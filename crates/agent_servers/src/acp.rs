@@ -226,6 +226,7 @@ impl AgentConnection for AcpConnection {
                     session_id.clone(),
                     // ACP doesn't currently support per-session prompt capabilities or changing capabilities dynamically.
                     watch::Receiver::constant(self.agent_capabilities.prompt_capabilities),
+                    response.available_commands,
                     cx,
                 )
             })?;
@@ -329,46 +330,8 @@ impl AgentConnection for AcpConnection {
             .detach();
     }
 
-    fn list_commands(
-        &self,
-        session_id: &agent_client_protocol::SessionId,
-        _cx: &App,
-    ) -> Option<Rc<dyn acp_thread::AgentSessionListCommands>> {
-        if self.agent_capabilities.supports_commands {
-            Some(Rc::new(AcpAgentSessionCommands {
-                session_id: session_id.clone(),
-                connection: self.connection.clone(),
-            })
-                as Rc<dyn acp_thread::AgentSessionListCommands>)
-        } else {
-            None
-        }
-    }
-
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
         self
-    }
-}
-
-struct AcpAgentSessionCommands {
-    session_id: acp::SessionId,
-    connection: Rc<acp::ClientSideConnection>,
-}
-
-impl acp_thread::AgentSessionListCommands for AcpAgentSessionCommands {
-    fn run(&self, cx: &mut App) -> Task<Result<Vec<acp::CommandInfo>>> {
-        let connection = self.connection.clone();
-        let session_id = self.session_id.clone();
-
-        cx.foreground_executor().spawn(async move {
-            match connection
-                .list_commands(acp::ListCommandsRequest { session_id })
-                .await
-            {
-                Ok(response) => Ok(response.commands),
-                Err(e) => Err(anyhow::anyhow!(e)),
-            }
-        })
     }
 }
 
@@ -480,5 +443,34 @@ impl acp::Client for ClientDelegate {
         })??;
 
         Ok(())
+    }
+
+    async fn create_terminal(
+        &self,
+        _args: agent_client_protocol::CreateTerminalRequest,
+    ) -> Result<acp::CreateTerminalResponse, acp::Error> {
+        todo!()
+    }
+
+    async fn terminal_output(
+        &self,
+        _args: acp::TerminalOutputRequest,
+    ) -> Result<acp::TerminalOutputResponse, acp::Error> {
+        todo!()
+    }
+
+    async fn release_terminal(&self, _args: acp::ReleaseTerminalRequest) -> Result<(), acp::Error> {
+        todo!()
+    }
+
+    async fn wait_for_terminal_exit(
+        &self,
+        _args: acp::WaitForTerminalExitRequest,
+    ) -> Result<acp::WaitForTerminalExitResponse, acp::Error> {
+        todo!()
+    }
+
+    async fn kill_terminal(&self, _args: acp::KillTerminalRequest) -> Result<(), acp::Error> {
+        todo!()
     }
 }

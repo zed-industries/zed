@@ -191,7 +191,7 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.2.0-alpha.0"
+version = "0.2.0-alpha.3"
 dependencies = [
  "anyhow",
  "async-broadcast",

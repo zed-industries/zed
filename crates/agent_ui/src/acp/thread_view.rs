@@ -35,7 +35,7 @@ use project::{Project, ProjectEntryId};
 use prompt_store::{PromptId, PromptStore};
 use rope::Point;
 use settings::{Settings as _, SettingsStore};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
@@ -284,6 +284,7 @@ pub struct AcpThreadView {
     should_be_following: bool,
     editing_message: Option<usize>,
     prompt_capabilities: Rc<Cell<PromptCapabilities>>,
+    available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
     is_loading_contents: bool,
     _cancel_task: Option<Task<()>>,
     _subscriptions: [Subscription; 3],
@@ -325,6 +326,7 @@ impl AcpThreadView {
         cx: &mut Context<Self>,
     ) -> Self {
         let prompt_capabilities = Rc::new(Cell::new(acp::PromptCapabilities::default()));
+        let available_commands = Rc::new(RefCell::new(vec![]));
 
         let placeholder = if agent.name() == "Zed Agent" {
             format!("Message the {} — @ to include context", agent.name())
@@ -339,6 +341,7 @@ impl AcpThreadView {
                 history_store.clone(),
                 prompt_store.clone(),
                 prompt_capabilities.clone(),
+                available_commands.clone(),
                 placeholder,
                 editor::EditorMode::AutoHeight {
                     min_lines: MIN_EDITOR_LINES,
@@ -362,6 +365,7 @@ impl AcpThreadView {
                 history_store.clone(),
                 prompt_store.clone(),
                 prompt_capabilities.clone(),
+                available_commands.clone(),
             )
         });
 
@@ -393,11 +397,12 @@ impl AcpThreadView {
             editing_message: None,
             edits_expanded: false,
             plan_expanded: false,
+            prompt_capabilities,
+            available_commands,
             editor_expanded: false,
             should_be_following: false,
             history_store,
             hovered_recent_history_item: None,
-            prompt_capabilities,
             is_loading_contents: false,
             _subscriptions: subscriptions,
             _cancel_task: None,
@@ -483,11 +488,8 @@ impl AcpThreadView {
                     Ok(thread) => {
                         let action_log = thread.read(cx).action_log().clone();
 
-                        this.message_editor.update(cx, |editor, cx| {
-                            let session_id = thread.read(cx).session_id();
-                            editor
-                                .set_command_provider(connection.list_commands(session_id, cx), cx);
-                        });
+                        this.available_commands
+                            .replace(thread.read(cx).available_commands());
 
                         this.prompt_capabilities
                             .set(thread.read(cx).prompt_capabilities());
@@ -5510,6 +5512,7 @@ pub(crate) mod tests {
                         audio: true,
                         embedded_context: true,
                     }),
+                    vec![],
                     cx,
                 )
             })))

@@ -426,7 +426,7 @@ zlog_settings = { path = "crates/zlog_settings" }
 # External crates
 #
 
-agent-client-protocol = { path = "../agent-client-protocol" }
+agent-client-protocol = { path = "../agent-client-protocol", features = ["unstable"]}
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", branch = "add-hush-login-flag" }
 any_vec = "0.14"
