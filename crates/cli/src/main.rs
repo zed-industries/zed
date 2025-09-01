@@ -84,13 +84,15 @@ struct Args {
     /// Run zed in dev-server mode
     #[arg(long)]
     dev_server_token: Option<String>,
-    /// The username and WSL distribution to use when opening paths. ,If not specified,
+    /// The username and WSL distribution to use when opening paths. If not specified,
     /// Zed will attempt to open the paths directly.
     ///
     /// The username is optional, and if not specified, the default user for the distribution
     /// will be used.
     ///
-    /// Example: `me@Ubuntu` or `Ubuntu` for default distribution.
+    /// Example: `me@Ubuntu` or `Ubuntu`.
+    ///
+    /// WARN: You should not fill in this field by hand.
     #[arg(long, value_name = "USER@DISTRO")]
     wsl: Option<String>,
     /// Not supported in Zed CLI, only supported on Zed binary
