@@ -21,7 +21,7 @@ use anyhow::{Context as _, Result};
 pub use clock::ReplicaId;
 use clock::{AGENT_REPLICA_ID, Lamport};
 use collections::HashMap;
-use encoding::Encoding;
+use encoding_rs::Encoding;
 use fs::MTime;
 use futures::channel::oneshot;
 use gpui::{
@@ -129,7 +129,7 @@ pub struct Buffer {
     has_unsaved_edits: Cell<(clock::Global, bool)>,
     change_bits: Vec<rc::Weak<Cell<bool>>>,
     _subscriptions: Vec<gpui::Subscription>,
-    pub encoding: &'static dyn encoding::Encoding,
+    pub encoding: &'static Encoding,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -411,7 +411,7 @@ pub trait LocalFile: File {
     fn load_bytes(&self, cx: &App) -> Task<Result<Vec<u8>>>;
 
     /// Loads the file contents from disk, decoding them with the given encoding.
-    fn load_with_encoding(&self, cx: &App, encoding: &'static dyn Encoding)
+    fn load_with_encoding(&self, cx: &App, encoding: &'static Encoding)
     -> Task<Result<String>>;
 }
 
@@ -975,7 +975,7 @@ impl Buffer {
             has_conflict: false,
             change_bits: Default::default(),
             _subscriptions: Vec::new(),
-            encoding: encoding::all::UTF_8,
+            encoding: encoding_rs::UTF_8,
         }
     }
 
@@ -5149,7 +5149,7 @@ impl LocalFile for TestFile {
         unimplemented!()
     }
 
-    fn load_with_encoding(&self, _: &App, _: &'static dyn Encoding) -> Task<Result<String>> {
+    fn load_with_encoding(&self, _: &App, _: &'static Encoding) -> Task<Result<String>> {
         unimplemented!()
     }
 }

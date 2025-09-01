@@ -1231,7 +1231,7 @@ mod tests {
     use super::*;
     use ::fs::{Fs, encodings::EncodingWrapper};
     use client::TelemetrySettings;
-    use encoding::all::UTF_8;
+    use encoding_rs::UTF_8;
     use gpui::{TestAppContext, UpdateGlobal};
     use language_model::fake_provider::FakeLanguageModel;
     use serde_json::json;
