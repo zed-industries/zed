@@ -220,23 +220,24 @@ impl SvgPreviewView {
                 _workspace_subscription: workspace_subscription,
                 _project_subscription: project_subscription,
             };
-            
+
             view
         })
     }
 
     fn setup_project_subscription(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let (Some(workspace), Some(project_path)) = 
-            (self.workspace_handle.upgrade(), &self.project_path) 
+        if let (Some(workspace), Some(project_path)) =
+            (self.workspace_handle.upgrade(), &self.project_path)
         {
             let project = workspace.read(cx).project().clone();
             let worktree_id = project_path.worktree_id;
             let worktree = {
                 let project_read = project.read(cx);
-                project_read.worktrees(cx)
+                project_read
+                    .worktrees(cx)
                     .find(|worktree| worktree.read(cx).id() == worktree_id)
             };
-            
+
             if let Some(worktree) = worktree {
                 self._project_subscription = Some(cx.subscribe_in(
                     &worktree,
@@ -260,7 +261,7 @@ impl SvgPreviewView {
                                 }
                             }
                         }
-                    }
+                    },
                 ));
             }
         }
