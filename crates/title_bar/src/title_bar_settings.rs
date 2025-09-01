@@ -3,8 +3,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources, SettingsUi};
 
-#[derive(Copy, Clone, Deserialize, Debug, SettingsUi)]
-#[settings_ui(group = "Title Bar", path = "title_bar")]
+#[derive(Copy, Clone, Deserialize, Debug)]
 pub struct TitleBarSettings {
     pub show_branch_icon: bool,
     pub show_onboarding_banner: bool,
@@ -15,7 +14,8 @@ pub struct TitleBarSettings {
     pub show_menus: bool,
 }
 
-#[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi)]
+#[settings_ui(group = "Title Bar", path = "title_bar")]
 pub struct TitleBarSettingsContent {
     /// Whether to show the branch icon beside branch switcher in the title bar.
     ///

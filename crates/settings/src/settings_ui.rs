@@ -7,9 +7,16 @@ use crate::SettingsStore;
 
 pub trait SettingsUi {
     fn settings_ui_item() -> SettingsUiItem {
+        // todo(settings_ui): remove this default impl, only entry should have a default impl
+        // because it's expected that the macro or custom impl use the item and the known paths to create the entry
         SettingsUiItem::None
     }
-    fn settings_ui_entry() -> SettingsUiEntry;
+
+    fn settings_ui_entry() -> SettingsUiEntry {
+        SettingsUiEntry {
+            item: SettingsUiEntryVariant::None,
+        }
+    }
 }
 
 pub struct SettingsUiEntry {
@@ -106,22 +113,16 @@ impl SettingsUi for bool {
     fn settings_ui_item() -> SettingsUiItem {
         SettingsUiItem::Single(SettingsUiItemSingle::SwitchField)
     }
+}
 
-    fn settings_ui_entry() -> SettingsUiEntry {
-        SettingsUiEntry {
-            item: SettingsUiEntryVariant::None,
-        }
+impl SettingsUi for Option<bool> {
+    fn settings_ui_item() -> SettingsUiItem {
+        SettingsUiItem::Single(SettingsUiItemSingle::SwitchField)
     }
 }
 
 impl SettingsUi for u64 {
     fn settings_ui_item() -> SettingsUiItem {
         SettingsUiItem::Single(SettingsUiItemSingle::NumericStepper)
-    }
-
-    fn settings_ui_entry() -> SettingsUiEntry {
-        SettingsUiEntry {
-            item: SettingsUiEntryVariant::None,
-        }
     }
 }
