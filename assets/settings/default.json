@@ -1776,7 +1776,7 @@
       "api_url": "http://localhost:1234/api/v0"
     },
     "deepseek": {
-      "api_url": "https://api.deepseek.com"
+      "api_url": "https://api.deepseek.com/v1"
     },
     "mistral": {
       "api_url": "https://api.mistral.ai/v1"
