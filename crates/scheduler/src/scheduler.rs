@@ -1,19 +1,20 @@
+mod waker_fn;
+
 use async_task::{Runnable, Task};
 use parking::{Parker, Unparker};
 use parking_lot::Mutex;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::future::Future;
 use std::marker::PhantomData;
+use std::pin::pin;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::task::{Poll, Waker};
 use std::thread;
 use std::time::Duration;
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct TaskLabel(usize);
+use waker_fn::*;
 
 #[derive(Clone)]
 pub struct SchedulerConfig {
@@ -41,40 +42,16 @@ impl Default for SchedulerConfig {
     }
 }
 
-impl TaskLabel {
-    pub fn new() -> Self {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        static NEXT_TASK_LABEL: AtomicUsize = AtomicUsize::new(1);
-        Self(NEXT_TASK_LABEL.fetch_add(1, Ordering::SeqCst))
-    }
-}
-
-struct CustomWaker {
-    unparker: Unparker,
-}
-
-impl std::task::Wake for CustomWaker {
-    fn wake(self: Arc<Self>) {
-        self.unparker.unpark();
-    }
-    fn wake_by_ref(self: &Arc<Self>) {
-        self.unparker.unpark();
-    }
-}
-
 struct SchedulerState {
-    foreground: VecDeque<Runnable<()>>,
-    background: VecDeque<Runnable<()>>,
-    deprioritized: VecDeque<Runnable<()>>,
+    runnables: VecDeque<Runnable>,
     rng: ChaCha8Rng,
-    deprioritized_labels: HashSet<TaskLabel>,
     randomize_order: bool,
     allow_parking: bool,
 }
 
 pub trait Scheduler {
-    fn schedule_foreground(&self, runnable: Runnable<()>, label: Option<TaskLabel>);
-    fn schedule_background(&self, runnable: Runnable<()>, label: Option<TaskLabel>);
+    fn schedule_foreground(&self, runnable: Runnable);
+    fn schedule_background(&self, runnable: Runnable);
     fn park(&self, timeout: Option<Duration>) -> bool;
     fn unparker(&self) -> Unparker;
 }
@@ -95,14 +72,7 @@ impl TestScheduler {
         Fut: Future + 'static,
         Fut::Output: 'static,
     {
-        let scheduler = Arc::new(TestScheduler::new(SchedulerConfig::default()));
-        let background = BackgroundExecutor::new(scheduler.clone());
-
-        // Call the callback to spawn tasks and get the final future
-        let future = f(scheduler.clone());
-
-        // Use background.block() to execute and wait for the future
-        background.block(future)
+        Self::with_seed(0, f)
     }
 
     /// Run a test multiple times with sequential seeds (0, 1, 2, ...)
@@ -112,15 +82,8 @@ impl TestScheduler {
         Fut: Future + 'static,
         Fut::Output: 'static,
     {
-        (0..iterations)
-            .map(|i| {
-                let seed = i as u64;
-                let scheduler = Arc::new(TestScheduler::new(SchedulerConfig::with_seed(seed)));
-                let background = BackgroundExecutor::new(scheduler.clone());
-
-                let future = f(scheduler.clone());
-                background.block(future)
-            })
+        (0..iterations as u64)
+            .map(|i| Self::with_seed(i, &f))
             .collect()
     }
 
@@ -133,11 +96,7 @@ impl TestScheduler {
     {
         let scheduler = Arc::new(TestScheduler::new(SchedulerConfig::with_seed(seed)));
         let background = BackgroundExecutor::new(scheduler.clone());
-
-        // Call the callback to spawn tasks and get the final future
         let future = f(scheduler.clone());
-
-        // Use background.block() to execute and wait for the future
         background.block(future)
     }
 
@@ -145,11 +104,8 @@ impl TestScheduler {
         let (parker, unparker) = parking::pair();
         Self {
             state: Mutex::new(SchedulerState {
-                foreground: VecDeque::new(),
-                background: VecDeque::new(),
-                deprioritized: VecDeque::new(),
+                runnables: VecDeque::new(),
                 rng: ChaCha8Rng::seed_from_u64(config.seed),
-                deprioritized_labels: HashSet::new(),
                 randomize_order: config.randomize_order,
                 allow_parking: config.allow_parking,
             }),
@@ -162,10 +118,6 @@ impl TestScheduler {
 
     pub fn is_main_thread(&self) -> bool {
         thread::current().id() == self.thread_id
-    }
-
-    pub fn deprioritize(&self, label: TaskLabel) {
-        self.state.lock().deprioritized_labels.insert(label);
     }
 
     pub fn run(&self) {
@@ -186,31 +138,32 @@ impl TestScheduler {
 }
 
 impl Scheduler for TestScheduler {
-    fn schedule_foreground(&self, runnable: Runnable<()>, _label: Option<TaskLabel>) {
-        self.state.lock().foreground.push_back(runnable);
+    fn schedule_foreground(&self, runnable: Runnable) {
+        self.state.lock().runnables.push_back(runnable);
         self.unparker.unpark();
     }
 
-    fn schedule_background(&self, runnable: Runnable<()>, label: Option<TaskLabel>) {
-        let mut state = self.state.lock();
-        if let Some(ref lbl) = label {
-            if state.deprioritized_labels.contains(lbl) {
-                state.deprioritized.push_back(runnable);
-                return;
-            }
+    fn schedule_background(&self, runnable: Runnable) {
+        {
+            let state = &mut *self.state.lock();
+            let ix = if state.randomize_order {
+                state.rng.gen_range(0..=state.runnables.len())
+            } else {
+                state.runnables.len()
+            };
+            state.runnables.insert(ix, runnable);
         }
-        state.background.push_back(runnable);
-        drop(state);
         self.unparker.unpark();
     }
 
     fn park(&self, timeout: Option<Duration>) -> bool {
-        let state = self.state.lock();
-        if !state.allow_parking {
-            drop(state);
-            panic!("Parking forbidden");
+        {
+            let state = self.state.lock();
+            if !state.allow_parking {
+                drop(state);
+                panic!("Parking forbidden");
+            }
         }
-        drop(state);
 
         if let Some(duration) = timeout {
             self.parker.lock().park_timeout(duration);
@@ -228,51 +181,11 @@ impl Scheduler for TestScheduler {
 impl TestScheduler {
     pub fn step(&self) -> bool {
         let mut state = self.state.lock();
-        let foreground_count = state.foreground.len();
-        let background_count = state.background.len();
-
-        if foreground_count > 0 || background_count > 0 {
-            if !state.randomize_order {
-                // Deterministic: prefer foreground if available, else background
-                if foreground_count > 0 {
-                    let runnable = state.foreground.pop_front().unwrap();
-                    drop(state);
-                    runnable.run();
-                    return true;
-                } else if background_count > 0 {
-                    let runnable = state.background.pop_front().unwrap();
-                    drop(state);
-                    runnable.run();
-                    return true;
-                }
-            } else {
-                // Weighted random selection between foreground and background, like GPUI
-                let total_count = foreground_count + background_count;
-                let should_pick_foreground = state
-                    .rng
-                    .gen_ratio(foreground_count as u32, total_count as u32);
-
-                if should_pick_foreground && foreground_count > 0 {
-                    let runnable = state.foreground.pop_front().unwrap();
-                    drop(state);
-                    runnable.run();
-                    return true;
-                } else if background_count > 0 {
-                    let runnable = state.background.pop_front().unwrap();
-                    drop(state);
-                    runnable.run();
-                    return true;
-                }
-            }
-            false
-        } else if !state.deprioritized.is_empty() {
-            // Only when foreground/background empty, run deprioritized
-            let runnable = state.deprioritized.pop_front().unwrap();
+        if let Some(runnable) = state.runnables.pop_front() {
             drop(state);
             runnable.run();
             true
         } else {
-            // No work available
             false
         }
     }
@@ -291,7 +204,7 @@ impl ForegroundExecutor {
     {
         let scheduler = Arc::clone(&self.scheduler);
         let (runnable, task) = async_task::spawn_local(future, move |runnable| {
-            scheduler.schedule_foreground(runnable, None);
+            scheduler.schedule_foreground(runnable);
         });
         runnable.schedule();
         task
@@ -329,34 +242,22 @@ impl BackgroundExecutor {
     {
         let scheduler = Arc::clone(&self.scheduler);
         let (runnable, task) = async_task::spawn(future, move |runnable| {
-            scheduler.schedule_background(runnable, None);
-        });
-        runnable.schedule();
-        task
-    }
-
-    pub fn spawn_labeled<F>(&self, future: F, label: TaskLabel) -> Task<F::Output>
-    where
-        F: Future + Send + 'static,
-        F::Output: Send + 'static,
-    {
-        let scheduler = Arc::clone(&self.scheduler);
-        let (runnable, task) = async_task::spawn(future, move |runnable| {
-            scheduler.schedule_background(runnable, Some(label));
+            scheduler.schedule_background(runnable);
         });
         runnable.schedule();
         task
     }
 
     pub fn block<Fut: Future>(&self, future: Fut) -> Fut::Output {
-        let mut future = Box::pin(future);
-
+        let mut future = pin!(future);
+        let waker = Waker::from(Arc::new(WakerFn::new({
+            let unparker = self.scheduler.unparker();
+            move || {
+                unparker.unpark();
+            }
+        })));
+        let mut cx = std::task::Context::from_waker(&waker);
         loop {
-            let waker = Waker::from(Arc::new(CustomWaker {
-                unparker: self.scheduler.unparker(),
-            }));
-            let mut cx = std::task::Context::from_waker(&waker);
-
             match future.as_mut().poll(&mut cx) {
                 Poll::Ready(result) => return result,
                 Poll::Pending => {
@@ -417,67 +318,6 @@ mod tests {
             let result = task.await;
             assert_eq!(result, 42);
         });
-    }
-
-    #[test]
-    fn test_deprioritize_task() {
-        let scheduler = Arc::new(TestScheduler::new(SchedulerConfig {
-            randomize_order: false,
-            ..Default::default()
-        }));
-        let background = scheduler.background();
-
-        let label = TaskLabel::new();
-
-        let (sender, receiver) = mpsc::unbounded::<i32>();
-
-        // Spawn first background task
-        {
-            background
-                .spawn({
-                    let mut sender = sender.clone();
-                    async move {
-                        sender.send(1).await.ok();
-                    }
-                })
-                .detach();
-        }
-
-        // Deprioritize the middle task's label before spawning it
-        scheduler.deprioritize(label);
-
-        // Spawn second (deprioritized) background task
-        {
-            background
-                .spawn_labeled(
-                    {
-                        let mut sender = sender.clone();
-                        async move {
-                            sender.send(2).await.ok();
-                        }
-                    },
-                    label,
-                )
-                .detach();
-        }
-
-        // Spawn third background task
-        {
-            background
-                .spawn({
-                    let mut sender = sender.clone();
-                    async move {
-                        sender.send(3).await.ok();
-                    }
-                })
-                .detach();
-        }
-
-        drop(sender); // Close sender to signal no more messages
-        scheduler.run();
-
-        let order: Vec<i32> = block_on(receiver.collect());
-        assert_eq!(order, vec![1, 3, 2]);
     }
 
     #[test]
