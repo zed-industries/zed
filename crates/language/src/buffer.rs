@@ -420,8 +420,7 @@ pub trait LocalFile: File {
     fn load_bytes(&self, cx: &App) -> Task<Result<Vec<u8>>>;
 
     /// Loads the file contents from disk, decoding them with the given encoding.
-    fn load_with_encoding(&self, cx: &App, encoding: &'static Encoding)
-    -> Task<Result<String>>;
+    fn load_with_encoding(&self, cx: &App, encoding: &'static Encoding) -> Task<Result<String>>;
 }
 
 /// The auto-indent behavior associated with an editing operation.

@@ -3129,11 +3129,7 @@ impl language::LocalFile for File {
         cx.background_spawn(async move { fs.load_bytes(&abs_path).await })
     }
 
-    fn load_with_encoding(
-        &self,
-        cx: &App,
-        encoding: &'static Encoding,
-    ) -> Task<Result<String>> {
+    fn load_with_encoding(&self, cx: &App, encoding: &'static Encoding) -> Task<Result<String>> {
         let worktree = self.worktree.read(cx).as_local().unwrap();
         let path = worktree.absolutize(&self.path);
         let fs = worktree.fs.clone();
