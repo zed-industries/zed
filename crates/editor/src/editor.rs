@@ -12067,7 +12067,7 @@ impl Editor {
                 .lines()
                 .enumerate()
                 .map(|(ix, line)| {
-                    let line_trimmed = line.trim();
+                    let line_trimmed = line.trim_start();
                     if rewrap_prefix.is_some() && ix > 0 {
                         Ok(line_trimmed)
                     } else if let Some(
