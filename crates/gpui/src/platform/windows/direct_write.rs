@@ -10,11 +10,8 @@ use windows::{
         Foundation::*,
         Globalization::GetUserDefaultLocaleName,
         Graphics::{
-            Direct3D::D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
-            Direct3D11::*,
-            DirectWrite::*,
-            Dxgi::Common::*,
-            Gdi::{IsRectEmpty, LOGFONTW},
+            Direct3D::D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP, Direct3D11::*, DirectWrite::*,
+            Dxgi::Common::*, Gdi::LOGFONTW,
         },
         System::SystemServices::LOCALE_NAME_MAX_LENGTH,
         UI::WindowsAndMessaging::*,
