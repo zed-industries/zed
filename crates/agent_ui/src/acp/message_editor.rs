@@ -12,7 +12,7 @@ use collections::{HashMap, HashSet};
 use editor::{
     Addon, Anchor, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement,
     EditorEvent, EditorMode, EditorSnapshot, EditorStyle, ExcerptId, FoldPlaceholder, MultiBuffer,
-    SemanticsProvider, ToOffset, ToPoint as _,
+    ToOffset, ToPoint as _,
     actions::Paste,
     display_map::{Crease, CreaseId, FoldId},
 };
@@ -22,8 +22,8 @@ use futures::{
 };
 use gpui::{
     Animation, AnimationExt as _, AppContext, ClipboardEntry, Context, Entity, EntityId,
-    EventEmitter, FocusHandle, Focusable, HighlightStyle, Image, ImageFormat, Img, KeyContext,
-    Subscription, Task, TextStyle, UnderlineStyle, WeakEntity, pulsating_between,
+    EventEmitter, FocusHandle, Focusable, Image, ImageFormat, Img, KeyContext, Subscription, Task,
+    TextStyle, WeakEntity, pulsating_between,
 };
 use language::{Buffer, Language};
 use language_model::LanguageModelImage;
@@ -42,19 +42,17 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use text::{OffsetRangeExt, ToOffset as _};
+use text::OffsetRangeExt;
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, AnyElement, App, ButtonCommon, ButtonLike, ButtonStyle, Clickable as _, Color,
     Element as _, ElevationIndex, FluentBuilder as _, Icon, IconName, IconSize, InteractiveElement,
     IntoElement, Label, LabelCommon, LabelSize, ParentElement, Render, SelectableButton,
-    SharedString, Styled, TextSize, TintColor, Toggleable, Tooltip, Window, div, h_flex, px,
+    SharedString, Styled, TextSize, TintColor, Toggleable, Tooltip, Window, div, h_flex,
 };
 use util::{ResultExt, debug_panic};
 use workspace::{Workspace, notifications::NotifyResultExt as _};
 use zed_actions::agent::Chat;
-
-const PARSE_SLASH_COMMAND_DEBOUNCE: Duration = Duration::from_millis(50);
 
 pub struct MessageEditor {
     mention_set: MentionSet,
@@ -63,7 +61,6 @@ pub struct MessageEditor {
     workspace: WeakEntity<Workspace>,
     history_store: Entity<HistoryStore>,
     prompt_store: Option<Entity<PromptStore>>,
-    prevent_slash_commands: bool,
     prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
     completion_provider: Rc<ContextPickerCompletionProvider>,
     _subscriptions: Vec<Subscription>,
@@ -88,7 +85,6 @@ impl MessageEditor {
         prompt_store: Option<Entity<PromptStore>>,
         prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
         placeholder: impl Into<Arc<str>>,
-        prevent_slash_commands: bool,
         mode: EditorMode,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -140,14 +136,6 @@ impl MessageEditor {
         subscriptions.push(cx.subscribe_in(&editor, window, {
             move |this, editor, event, window, cx| {
                 if let EditorEvent::Edited { .. } = event {
-                    // if prevent_slash_commands {
-                    //     this.highlight_slash_command(
-                    //         semantics_provider.clone(),
-                    //         editor.clone(),
-                    //         window,
-                    //         cx,
-                    //     );
-                    // }
                     let snapshot = editor.update(cx, |editor, cx| editor.snapshot(window, cx));
                     this.mention_set.remove_invalid(snapshot);
                     cx.notify();
@@ -162,7 +150,6 @@ impl MessageEditor {
             workspace,
             history_store,
             prompt_store,
-            prevent_slash_commands,
             prompt_capabilities,
             completion_provider,
             _subscriptions: subscriptions,
@@ -738,7 +725,6 @@ impl MessageEditor {
             .mention_set
             .contents(&self.prompt_capabilities.get(), cx);
         let editor = self.editor.clone();
-        let prevent_slash_commands = self.prevent_slash_commands;
 
         cx.spawn(async move |_, cx| {
             let contents = contents.await?;
@@ -1195,48 +1181,6 @@ impl MessageEditor {
         cx.notify();
     }
 
-    fn highlight_slash_command(
-        &mut self,
-        semantics_provider: Rc<SlashCommandSemanticsProvider>,
-        editor: Entity<Editor>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        struct InvalidSlashCommand;
-
-        self._parse_slash_command_task = cx.spawn_in(window, async move |_, cx| {
-            cx.background_executor()
-                .timer(PARSE_SLASH_COMMAND_DEBOUNCE)
-                .await;
-            editor
-                .update_in(cx, |editor, window, cx| {
-                    let snapshot = editor.snapshot(window, cx);
-                    let range = parse_slash_command(&editor.text(cx));
-                    semantics_provider.range.set(range);
-                    if let Some((start, end)) = range {
-                        editor.highlight_text::<InvalidSlashCommand>(
-                            vec![
-                                snapshot.buffer_snapshot.anchor_after(start)
-                                    ..snapshot.buffer_snapshot.anchor_before(end),
-                            ],
-                            HighlightStyle {
-                                underline: Some(UnderlineStyle {
-                                    thickness: px(1.),
-                                    color: Some(gpui::red()),
-                                    wavy: true,
-                                }),
-                                ..Default::default()
-                            },
-                            cx,
-                        );
-                    } else {
-                        editor.clear_highlights::<InvalidSlashCommand>(cx);
-                    }
-                })
-                .ok();
-        })
-    }
-
     pub fn text(&self, cx: &App) -> String {
         self.editor.read(cx).text(cx)
     }
@@ -1564,118 +1508,6 @@ impl MentionSet {
     }
 }
 
-struct SlashCommandSemanticsProvider {
-    range: Cell<Option<(usize, usize)>>,
-}
-
-impl SemanticsProvider for SlashCommandSemanticsProvider {
-    fn hover(
-        &self,
-        buffer: &Entity<Buffer>,
-        position: text::Anchor,
-        cx: &mut App,
-    ) -> Option<Task<Option<Vec<project::Hover>>>> {
-        let snapshot = buffer.read(cx).snapshot();
-        let offset = position.to_offset(&snapshot);
-        let (start, end) = self.range.get()?;
-        if !(start..end).contains(&offset) {
-            return None;
-        }
-        let range = snapshot.anchor_after(start)..snapshot.anchor_after(end);
-        Some(Task::ready(Some(vec![project::Hover {
-            contents: vec![project::HoverBlock {
-                text: "Slash commands are not supported".into(),
-                kind: project::HoverBlockKind::PlainText,
-            }],
-            range: Some(range),
-            language: None,
-        }])))
-    }
-
-    fn inline_values(
-        &self,
-        _buffer_handle: Entity<Buffer>,
-        _range: Range<text::Anchor>,
-        _cx: &mut App,
-    ) -> Option<Task<anyhow::Result<Vec<project::InlayHint>>>> {
-        None
-    }
-
-    fn inlay_hints(
-        &self,
-        _buffer_handle: Entity<Buffer>,
-        _range: Range<text::Anchor>,
-        _cx: &mut App,
-    ) -> Option<Task<anyhow::Result<Vec<project::InlayHint>>>> {
-        None
-    }
-
-    fn resolve_inlay_hint(
-        &self,
-        _hint: project::InlayHint,
-        _buffer_handle: Entity<Buffer>,
-        _server_id: lsp::LanguageServerId,
-        _cx: &mut App,
-    ) -> Option<Task<anyhow::Result<project::InlayHint>>> {
-        None
-    }
-
-    fn supports_inlay_hints(&self, _buffer: &Entity<Buffer>, _cx: &mut App) -> bool {
-        false
-    }
-
-    fn document_highlights(
-        &self,
-        _buffer: &Entity<Buffer>,
-        _position: text::Anchor,
-        _cx: &mut App,
-    ) -> Option<Task<Result<Vec<project::DocumentHighlight>>>> {
-        None
-    }
-
-    fn definitions(
-        &self,
-        _buffer: &Entity<Buffer>,
-        _position: text::Anchor,
-        _kind: editor::GotoDefinitionKind,
-        _cx: &mut App,
-    ) -> Option<Task<Result<Option<Vec<project::LocationLink>>>>> {
-        None
-    }
-
-    fn range_for_rename(
-        &self,
-        _buffer: &Entity<Buffer>,
-        _position: text::Anchor,
-        _cx: &mut App,
-    ) -> Option<Task<Result<Option<Range<text::Anchor>>>>> {
-        None
-    }
-
-    fn perform_rename(
-        &self,
-        _buffer: &Entity<Buffer>,
-        _position: text::Anchor,
-        _new_name: String,
-        _cx: &mut App,
-    ) -> Option<Task<Result<project::ProjectTransaction>>> {
-        None
-    }
-}
-
-fn parse_slash_command(text: &str) -> Option<(usize, usize)> {
-    if let Some(remainder) = text.strip_prefix('/') {
-        let pos = remainder
-            .find(char::is_whitespace)
-            .unwrap_or(remainder.len());
-        let command = &remainder[..pos];
-        if !command.is_empty() && command.chars().all(char::is_alphanumeric) {
-            return Some((0, 1 + command.len()));
-        }
-    }
-    None
-}
-
 pub struct MessageEditorAddon {}
 
 impl MessageEditorAddon {
@@ -1751,7 +1583,6 @@ mod tests {
                     None,
                     Default::default(),
                     "Test",
-                    false,
                     EditorMode::AutoHeight {
                         min_lines: 1,
                         max_lines: None,
@@ -1951,7 +1782,6 @@ mod tests {
                     None,
                     prompt_capabilities.clone(),
                     "Test",
-                    false,
                     EditorMode::AutoHeight {
                         max_lines: None,
                         min_lines: 1,

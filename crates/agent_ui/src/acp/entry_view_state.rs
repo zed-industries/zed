@@ -26,7 +26,6 @@ pub struct EntryViewState {
     history_store: Entity<HistoryStore>,
     prompt_store: Option<Entity<PromptStore>>,
     entries: Vec<Entry>,
-    prevent_slash_commands: bool,
     prompt_capabilities: Rc<Cell<PromptCapabilities>>,
 }
 
@@ -37,7 +36,6 @@ impl EntryViewState {
         history_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
         prompt_capabilities: Rc<Cell<PromptCapabilities>>,
-        prevent_slash_commands: bool,
     ) -> Self {
         Self {
             workspace,
@@ -45,7 +43,6 @@ impl EntryViewState {
             history_store,
             prompt_store,
             entries: Vec::new(),
-            prevent_slash_commands,
             prompt_capabilities,
         }
     }
@@ -86,7 +83,6 @@ impl EntryViewState {
                             self.prompt_store.clone(),
                             self.prompt_capabilities.clone(),
                             "Edit message － @ to include context",
-                            self.prevent_slash_commands,
                             editor::EditorMode::AutoHeight {
                                 min_lines: 1,
                                 max_lines: None,
@@ -457,7 +453,6 @@ mod tests {
                 history_store,
                 None,
                 Default::default(),
-                false,
             )
         });
 
