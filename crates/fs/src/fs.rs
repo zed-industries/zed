@@ -618,7 +618,7 @@ impl Fs for RealFs {
 
     async fn load(&self, path: &Path) -> Result<String> {
         let path = path.to_path_buf();
-        let encoding = EncodingWrapper::new(encoding::all::UTF_8);
+        let encoding = EncodingWrapper::new(encoding_rs::UTF_8);
         let text =
             smol::unblock(async || Ok(encodings::to_utf8(std::fs::read(path)?, encoding).await?))
                 .await

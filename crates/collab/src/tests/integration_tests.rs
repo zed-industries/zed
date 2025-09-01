@@ -12,7 +12,7 @@ use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus, assert_hunks};
 use call::{ActiveCall, ParticipantLocation, Room, room};
 use client::{RECEIVE_TIMEOUT, User};
 use collections::{HashMap, HashSet};
-use encoding::all::UTF_8;
+use encoding_rs::UTF_8;
 use fs::{FakeFs, Fs as _, RemoveOptions, encodings::EncodingWrapper};
 use futures::{StreamExt as _, channel::mpsc};
 use git::{

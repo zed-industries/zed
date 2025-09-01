@@ -12,7 +12,7 @@ use buffer_diff::{
     BufferDiffEvent, CALCULATE_DIFF_TASK, DiffHunkSecondaryStatus, DiffHunkStatus,
     DiffHunkStatusKind, assert_hunks,
 };
-use encoding::all::UTF_8;
+use encoding_rs::UTF_8;
 use fs::{FakeFs, encodings::EncodingWrapper};
 use futures::{StreamExt, future};
 use git::{

@@ -563,7 +563,7 @@ mod tests {
     use super::*;
     use crate::{ContextServerRegistry, Templates};
     use client::TelemetrySettings;
-    use encoding::all::UTF_8;
+    use encoding_rs::UTF_8;
     use fs::{Fs, encodings::EncodingWrapper};
     use gpui::{TestAppContext, UpdateGlobal};
     use language_model::fake_provider::FakeLanguageModel;

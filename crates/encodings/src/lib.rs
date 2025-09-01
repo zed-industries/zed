@@ -1,13 +1,6 @@
 ///! A crate for handling file encodings in the text editor.
 use editor::{Editor, EditorSettings};
-use encoding::Encoding;
-use encoding::all::{
-    BIG5_2003, EUC_JP, GB18030, GBK, HZ, IBM866, ISO_2022_JP, ISO_8859_1, ISO_8859_2, ISO_8859_3,
-    ISO_8859_4, ISO_8859_5, ISO_8859_6, ISO_8859_7, ISO_8859_8, ISO_8859_10, ISO_8859_13,
-    ISO_8859_14, ISO_8859_15, ISO_8859_16, KOI8_R, KOI8_U, MAC_CYRILLIC, MAC_ROMAN, UTF_8,
-    UTF_16BE, UTF_16LE, WINDOWS_874, WINDOWS_949, WINDOWS_1250, WINDOWS_1251, WINDOWS_1252,
-    WINDOWS_1253, WINDOWS_1254, WINDOWS_1255, WINDOWS_1256, WINDOWS_1257, WINDOWS_1258,
-};
+use encoding_rs::Encoding;
 use gpui::{ClickEvent, Entity, Subscription, WeakEntity};
 use settings::Settings;
 use ui::{Button, ButtonCommon, Context, LabelSize, Render, Tooltip, Window, div};
@@ -18,7 +11,7 @@ use crate::selectors::save_or_reopen::EncodingSaveOrReopenSelector;
 
 /// A status bar item that shows the current file encoding and allows changing it.
 pub struct EncodingIndicator {
-    pub encoding: Option<&'static dyn Encoding>,
+    pub encoding: Option<&'static Encoding>,
     pub workspace: WeakEntity<Workspace>,
     observe: Option<Subscription>, // Subscription to observe changes in the active editor
     show: bool, // Whether to show the indicator or not, based on whether an editor is active
@@ -37,7 +30,7 @@ impl Render for EncodingIndicator {
         }
 
         status_element.child(
-            Button::new("encoding", encoding_name(self.encoding.unwrap_or(UTF_8)))
+            Button::new("encoding", encoding_name(self.encoding.unwrap_or(encoding_rs::UTF_8)))
                 .label_size(LabelSize::Small)
                 .tooltip(Tooltip::text("Select Encoding"))
                 .on_click(cx.listener(|indicator, _: &ClickEvent, window, cx| {
@@ -54,7 +47,7 @@ impl Render for EncodingIndicator {
 
 impl EncodingIndicator {
     pub fn new(
-        encoding: Option<&'static dyn encoding::Encoding>,
+        encoding: Option<&'static Encoding>,
         workspace: WeakEntity<Workspace>,
         observe: Option<Subscription>,
     ) -> EncodingIndicator {
@@ -105,140 +98,117 @@ impl StatusItemView for EncodingIndicator {
 }
 
 /// Get a human-readable name for the given encoding.
-pub fn encoding_name(encoding: &'static dyn Encoding) -> String {
+pub fn encoding_name(encoding: &'static Encoding) -> String {
     let name = encoding.name();
 
-    match () {
-        () if name == UTF_8.name() => "UTF-8",
-        () if name == UTF_16LE.name() => "UTF-16 LE",
-        () if name == UTF_16BE.name() => "UTF-16 BE",
-        () if name == IBM866.name() => "IBM866",
-        () if name == ISO_8859_1.name() => "ISO 8859-1",
-        () if name == ISO_8859_2.name() => "ISO 8859-2",
-        () if name == ISO_8859_3.name() => "ISO 8859-3",
-        () if name == ISO_8859_4.name() => "ISO 8859-4",
-        () if name == ISO_8859_5.name() => "ISO 8859-5",
-        () if name == ISO_8859_6.name() => "ISO 8859-6",
-        () if name == ISO_8859_7.name() => "ISO 8859-7",
-        () if name == ISO_8859_8.name() => "ISO 8859-8",
-        () if name == ISO_8859_10.name() => "ISO 8859-10",
-        () if name == ISO_8859_13.name() => "ISO 8859-13",
-        () if name == ISO_8859_14.name() => "ISO 8859-14",
-        () if name == ISO_8859_15.name() => "ISO 8859-15",
-        () if name == ISO_8859_16.name() => "ISO 8859-16",
-        () if name == KOI8_R.name() => "KOI8-R",
-        () if name == KOI8_U.name() => "KOI8-U",
-        () if name == MAC_ROMAN.name() => "MacRoman",
-        () if name == MAC_CYRILLIC.name() => "Mac Cyrillic",
-        () if name == WINDOWS_874.name() => "Windows-874",
-        () if name == WINDOWS_1250.name() => "Windows-1250",
-        () if name == WINDOWS_1251.name() => "Windows-1251",
-        () if name == WINDOWS_1252.name() => "Windows-1252",
-        () if name == WINDOWS_1253.name() => "Windows-1253",
-        () if name == WINDOWS_1254.name() => "Windows-1254",
-        () if name == WINDOWS_1255.name() => "Windows-1255",
-        () if name == WINDOWS_1256.name() => "Windows-1256",
-        () if name == WINDOWS_1257.name() => "Windows-1257",
-        () if name == WINDOWS_1258.name() => "Windows-1258",
-        () if name == WINDOWS_949.name() => "Windows-949",
-        () if name == EUC_JP.name() => "EUC-JP",
-        () if name == ISO_2022_JP.name() => "ISO 2022-JP",
-        () if name == GBK.name() => "GBK",
-        () if name == GB18030.name() => "GB18030",
-        () if name == BIG5_2003.name() => "Big5",
-        () if name == HZ.name() => "HZ-GB-2312",
-        _ => "",
+    match name {
+        "UTF-8" => "UTF-8",
+        "windows-1252" => "Windows-1252",
+        "windows-1251" => "Windows-1251",
+        "windows-1250" => "Windows-1250",
+        "ISO-8859-2" => "ISO 8859-2",
+        "ISO-8859-3" => "ISO 8859-3",
+        "ISO-8859-4" => "ISO 8859-4",
+        "ISO-8859-5" => "ISO 8859-5",
+        "ISO-8859-6" => "ISO 8859-6",
+        "ISO-8859-7" => "ISO 8859-7",
+        "ISO-8859-8" => "ISO 8859-8",
+        "ISO-8859-13" => "ISO 8859-13",
+        "ISO-8859-15" => "ISO 8859-15",
+        "KOI8-R" => "KOI8-R",
+        "KOI8-U" => "KOI8-U",
+        "macintosh" => "MacRoman",
+        "x-mac-cyrillic" => "Mac Cyrillic",
+        "windows-874" => "Windows-874",
+        "windows-1253" => "Windows-1253",
+        "windows-1254" => "Windows-1254",
+        "windows-1255" => "Windows-1255",
+        "windows-1256" => "Windows-1256",
+        "windows-1257" => "Windows-1257",
+        "windows-1258" => "Windows-1258",
+        "EUC-KR" => "Windows-949",
+        "EUC-JP" => "EUC-JP",
+        "ISO-2022-JP" => "ISO 2022-JP",
+        "GBK" => "GBK",
+        "gb18030" => "GB18030",
+        "Big5" => "Big5",
+        _ => name,
     }
     .to_string()
 }
 
 /// Get an encoding from its index in the predefined list.
 /// If the index is out of range, UTF-8 is returned as a default.
-pub fn encoding_from_index(index: usize) -> &'static dyn Encoding {
+pub fn encoding_from_index(index: usize) -> &'static Encoding {
     match index {
-        0 => UTF_8,
-        1 => UTF_16LE,
-        2 => UTF_16BE,
-        3 => IBM866,
-        4 => ISO_8859_1,
-        5 => ISO_8859_2,
-        6 => ISO_8859_3,
-        7 => ISO_8859_4,
-        8 => ISO_8859_5,
-        9 => ISO_8859_6,
-        10 => ISO_8859_7,
-        11 => ISO_8859_8,
-        12 => ISO_8859_10,
-        13 => ISO_8859_13,
-        14 => ISO_8859_14,
-        15 => ISO_8859_15,
-        16 => ISO_8859_16,
-        17 => KOI8_R,
-        18 => KOI8_U,
-        19 => MAC_ROMAN,
-        20 => MAC_CYRILLIC,
-        21 => WINDOWS_874,
-        22 => WINDOWS_1250,
-        23 => WINDOWS_1251,
-        24 => WINDOWS_1252,
-        25 => WINDOWS_1253,
-        26 => WINDOWS_1254,
-        27 => WINDOWS_1255,
-        28 => WINDOWS_1256,
-        29 => WINDOWS_1257,
-        30 => WINDOWS_1258,
-        31 => WINDOWS_949,
-        32 => EUC_JP,
-        33 => ISO_2022_JP,
-        34 => GBK,
-        35 => GB18030,
-        36 => BIG5_2003,
-        37 => HZ,
-        _ => UTF_8,
+        0 => encoding_rs::UTF_8,
+        1 => encoding_rs::WINDOWS_1252,
+        2 => encoding_rs::WINDOWS_1251,
+        3 => encoding_rs::WINDOWS_1250,
+        4 => encoding_rs::ISO_8859_2,
+        5 => encoding_rs::ISO_8859_3,
+        6 => encoding_rs::ISO_8859_4,
+        7 => encoding_rs::ISO_8859_5,
+        8 => encoding_rs::ISO_8859_6,
+        9 => encoding_rs::ISO_8859_7,
+        10 => encoding_rs::ISO_8859_8,
+        11 => encoding_rs::ISO_8859_13,
+        12 => encoding_rs::ISO_8859_15,
+        13 => encoding_rs::KOI8_R,
+        14 => encoding_rs::KOI8_U,
+        15 => encoding_rs::MACINTOSH,
+        16 => encoding_rs::X_MAC_CYRILLIC,
+        17 => encoding_rs::WINDOWS_874,
+        18 => encoding_rs::WINDOWS_1253,
+        19 => encoding_rs::WINDOWS_1254,
+        20 => encoding_rs::WINDOWS_1255,
+        21 => encoding_rs::WINDOWS_1256,
+        22 => encoding_rs::WINDOWS_1257,
+        23 => encoding_rs::WINDOWS_1258,
+        24 => encoding_rs::EUC_KR,
+        25 => encoding_rs::EUC_JP,
+        26 => encoding_rs::ISO_2022_JP,
+        27 => encoding_rs::GBK,
+        28 => encoding_rs::GB18030,
+        29 => encoding_rs::BIG5,
+        _ => encoding_rs::UTF_8,
     }
 }
 
 /// Get an encoding from its name.
-pub fn encoding_from_name(name: &str) -> &'static dyn Encoding {
+pub fn encoding_from_name(name: &str) -> &'static Encoding {
     match name {
-        "UTF-8" => UTF_8,
-        "UTF-16 LE" => UTF_16LE,
-        "UTF-16 BE" => UTF_16BE,
-        "IBM866" => IBM866,
-        "ISO 8859-1" => ISO_8859_1,
-        "ISO 8859-2" => ISO_8859_2,
-        "ISO 8859-3" => ISO_8859_3,
-        "ISO 8859-4" => ISO_8859_4,
-        "ISO 8859-5" => ISO_8859_5,
-        "ISO 8859-6" => ISO_8859_6,
-        "ISO 8859-7" => ISO_8859_7,
-        "ISO 8859-8" => ISO_8859_8,
-        "ISO 8859-10" => ISO_8859_10,
-        "ISO 8859-13" => ISO_8859_13,
-        "ISO 8859-14" => ISO_8859_14,
-        "ISO 8859-15" => ISO_8859_15,
-        "ISO 8859-16" => ISO_8859_16,
-        "KOI8-R" => KOI8_R,
-        "KOI8-U" => KOI8_U,
-        "MacRoman" => MAC_ROMAN,
-        "Mac Cyrillic" => MAC_CYRILLIC,
-        "Windows-874" => WINDOWS_874,
-        "Windows-1250" => WINDOWS_1250,
-        "Windows-1251" => WINDOWS_1251,
-        "Windows-1252" => WINDOWS_1252,
-        "Windows-1253" => WINDOWS_1253,
-        "Windows-1254" => WINDOWS_1254,
-        "Windows-1255" => WINDOWS_1255,
-        "Windows-1256" => WINDOWS_1256,
-        "Windows-1257" => WINDOWS_1257,
-        "Windows-1258" => WINDOWS_1258,
-        "Windows-949" => WINDOWS_949,
-        "EUC-JP" => EUC_JP,
-        "ISO 2022-JP" => ISO_2022_JP,
-        "GBK" => GBK,
-        "GB18030" => GB18030,
-        "Big5" => BIG5_2003,
-        "HZ-GB-2312" => HZ,
-        _ => UTF_8, // Default to UTF-8 for unknown names
+        "UTF-8" => encoding_rs::UTF_8,
+        "Windows-1252" => encoding_rs::WINDOWS_1252,
+        "Windows-1251" => encoding_rs::WINDOWS_1251,
+        "Windows-1250" => encoding_rs::WINDOWS_1250,
+        "ISO 8859-2" => encoding_rs::ISO_8859_2,
+        "ISO 8859-3" => encoding_rs::ISO_8859_3,
+        "ISO 8859-4" => encoding_rs::ISO_8859_4,
+        "ISO 8859-5" => encoding_rs::ISO_8859_5,
+        "ISO 8859-6" => encoding_rs::ISO_8859_6,
+        "ISO 8859-7" => encoding_rs::ISO_8859_7,
+        "ISO 8859-8" => encoding_rs::ISO_8859_8,
+        "ISO 8859-13" => encoding_rs::ISO_8859_13,
+        "ISO 8859-15" => encoding_rs::ISO_8859_15,
+        "KOI8-R" => encoding_rs::KOI8_R,
+        "KOI8-U" => encoding_rs::KOI8_U,
+        "MacRoman" => encoding_rs::MACINTOSH,
+        "Mac Cyrillic" => encoding_rs::X_MAC_CYRILLIC,
+        "Windows-874" => encoding_rs::WINDOWS_874,
+        "Windows-1253" => encoding_rs::WINDOWS_1253,
+        "Windows-1254" => encoding_rs::WINDOWS_1254,
+        "Windows-1255" => encoding_rs::WINDOWS_1255,
+        "Windows-1256" => encoding_rs::WINDOWS_1256,
+        "Windows-1257" => encoding_rs::WINDOWS_1257,
+        "Windows-1258" => encoding_rs::WINDOWS_1258,
+        "Windows-949" => encoding_rs::EUC_KR,
+        "EUC-JP" => encoding_rs::EUC_JP,
+        "ISO 2022-JP" => encoding_rs::ISO_2022_JP,
+        "GBK" => encoding_rs::GBK,
+        "GB18030" => encoding_rs::GB18030,
+        "Big5" => encoding_rs::BIG5,
+        "HZ-GB-2312" => encoding_rs::UTF_8, // encoding_rs doesn't support HZ, fallback to UTF-8
+        _ => encoding_rs::UTF_8, // Default to UTF-8 for unknown names
     }
 }
