@@ -44,8 +44,12 @@ pub(crate) struct WindowsPlatform {
     bitmap_factory: ManuallyDrop<IWICImagingFactory>,
     drop_target_helper: IDropTargetHelper,
     validation_number: usize,
-    main_thread_id_win32: u32,
+    handle: HWND,
     disable_direct_composition: bool,
+}
+
+struct WindowsPlatformInner {
+    state: RefCell<WindowsPlatformState>,
 }
 
 pub(crate) struct WindowsPlatformState {
@@ -90,6 +94,26 @@ impl WindowsPlatform {
         let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
         let main_thread_id_win32 = unsafe { GetCurrentThreadId() };
         let validation_number = rand::random::<usize>();
+        register_platform_window_class();
+        let context = PlatformWindowCreateContext { inner: None };
+        let result = unsafe {
+            CreateWindowExW(
+                WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_TOOLWINDOW,
+                WINDOW_CLASS_NAME,
+                None,
+                WS_OVERLAPPED,
+                0,
+                0,
+                0,
+                0,
+                None,
+                None,
+                None,
+                Some(&context as *const _ as *const _),
+            )
+        };
+        let this = context.inner.take().unwrap()?;
+        let hwnd = result?;
         let dispatcher = Arc::new(WindowsDispatcher::new(
             main_sender,
             main_thread_id_win32,
@@ -734,6 +758,10 @@ pub(crate) struct WindowCreationInfo {
     pub(crate) disable_direct_composition: bool,
 }
 
+struct PlatformWindowCreateContext {
+    inner: Option<Result<Rc<WindowsPlatformInner>>>,
+}
+
 fn open_target(target: impl AsRef<OsStr>) -> Result<()> {
     let target = target.as_ref();
     let ret = unsafe {
@@ -902,6 +930,26 @@ fn load_icon() -> Result<HICON> {
 fn should_auto_hide_scrollbars() -> Result<bool> {
     let ui_settings = UISettings::new()?;
     Ok(ui_settings.AutoHideScrollBars()?)
+}
+
+const WINDOW_CLASS_NAME: PCWSTR = w!("Zed::PlatformWindow");
+
+fn register_platform_window_class() {
+    let wc = WNDCLASSW {
+        lpfnWndProc: Some(window_procedure),
+        lpszClassName: PCWSTR(WINDOW_CLASS_NAME.as_ptr()),
+        style: CS_HREDRAW | CS_VREDRAW,
+        ..Default::default()
+    };
+    unsafe { RegisterClassW(&wc) };
+}
+
+unsafe extern "system" fn window_procedure(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
 }
 
 #[cfg(test)]
