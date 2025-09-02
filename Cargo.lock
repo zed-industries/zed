@@ -14921,6 +14921,7 @@ dependencies = [
 name = "settings_ui_macros"
 version = "0.1.0"
 dependencies = [
+ "heck 0.5.0",
  "proc-macro2",
  "quote",
  "syn 2.0.101",
