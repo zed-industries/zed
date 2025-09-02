@@ -1523,7 +1523,7 @@ impl SearchableItem for TerminalView {
 
     /// Clear stored matches
     fn clear_matches(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        self.terminal().update(cx, |term, _| term.clear_matches())
+        self.terminal().update(cx, |term, _| term.matches.clear())
     }
 
     /// Store matches returned from find_matches somewhere for rendering
