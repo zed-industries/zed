@@ -342,6 +342,7 @@ impl AcpThreadView {
                 prompt_store.clone(),
                 prompt_capabilities.clone(),
                 available_commands.clone(),
+                agent.name(),
                 placeholder,
                 editor::EditorMode::AutoHeight {
                     min_lines: MIN_EDITOR_LINES,
@@ -366,6 +367,7 @@ impl AcpThreadView {
                 prompt_store.clone(),
                 prompt_capabilities.clone(),
                 available_commands.clone(),
+                agent.name(),
             )
         });
 
