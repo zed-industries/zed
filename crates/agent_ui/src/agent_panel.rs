@@ -1888,13 +1888,17 @@ impl AgentPanel {
             AgentType::Gemini => {
                 self.external_thread(Some(crate::ExternalAgent::Gemini), None, None, window, cx)
             }
-            AgentType::ClaudeCode => self.external_thread(
-                Some(crate::ExternalAgent::ClaudeCode),
-                None,
-                None,
-                window,
-                cx,
-            ),
+            AgentType::ClaudeCode => {
+                self.selected_agent = AgentType::ClaudeCode;
+                self.serialize(cx);
+                self.external_thread(
+                    Some(crate::ExternalAgent::ClaudeCode),
+                    None,
+                    None,
+                    window,
+                    cx,
+                )
+            }
             AgentType::Custom { name, command } => self.external_thread(
                 Some(crate::ExternalAgent::Custom { name, command }),
                 None,
