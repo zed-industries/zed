@@ -316,7 +316,7 @@ impl ScrollAxes {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 enum ReservedSpace {
     #[default]
     None,
@@ -334,7 +334,7 @@ impl ReservedSpace {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default)]
 enum ScrollbarWidth {
     #[default]
     Normal,
@@ -773,7 +773,7 @@ struct ScrollbarElement<S: ScrollbarVisibilitySetting, T: ScrollableHandle> {
     state: Entity<ScrollbarState<S, T>>,
 }
 
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default, Debug, PartialEq, Eq)]
 enum ThumbState {
     #[default]
     Inactive,
@@ -870,7 +870,6 @@ enum ScrollbarMouseEvent {
     ThumbDrag(Pixels),
 }
 
-#[derive(Clone)]
 struct ScrollbarLayout {
     thumb_bounds: Bounds<Pixels>,
     track_bounds: Bounds<Pixels>,
@@ -922,7 +921,6 @@ impl PartialEq for ScrollbarLayout {
     }
 }
 
-#[derive(Clone)]
 pub struct ScrollbarPrepaintState {
     parent_bounds: Bounds<Pixels>,
     thumbs: SmallVec<[ScrollbarLayout; 2]>,
@@ -1109,12 +1107,12 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> Element for ScrollbarEl
                 } in &prepaint_state.thumbs
                 {
                     const MAXIMUM_OPACITY: f32 = 0.7;
-                    let thumb_state = self.state.read(cx).thumb_state;
+                    let thumb_state = &self.state.read(cx).thumb_state;
                     let (thumb_base_color, hovered) = match thumb_state {
-                        ThumbState::Dragging(dragged_axis, _) if dragged_axis == *axis => {
+                        ThumbState::Dragging(dragged_axis, _) if dragged_axis == axis => {
                             (colors.scrollbar_thumb_active_background, false)
                         }
-                        ThumbState::Hover(hovered_axis) if hovered_axis == *axis => {
+                        ThumbState::Hover(hovered_axis) if hovered_axis == axis => {
                             (colors.scrollbar_thumb_hover_background, true)
                         }
                         _ => (colors.scrollbar_thumb_background, false),
