@@ -38,23 +38,29 @@ pub trait AgentConnection {
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>>;
 
-    fn prompt_capabilities(&self) -> acp::PromptCapabilities;
-
     fn resume(
         &self,
         _session_id: &acp::SessionId,
-        _cx: &mut App,
+        _cx: &App,
     ) -> Option<Rc<dyn AgentSessionResume>> {
         None
     }
 
     fn cancel(&self, session_id: &acp::SessionId, cx: &mut App);
 
-    fn session_editor(
+    fn truncate(
         &self,
         _session_id: &acp::SessionId,
-        _cx: &mut App,
-    ) -> Option<Rc<dyn AgentSessionEditor>> {
+        _cx: &App,
+    ) -> Option<Rc<dyn AgentSessionTruncate>> {
+        None
+    }
+
+    fn set_title(
+        &self,
+        _session_id: &acp::SessionId,
+        _cx: &App,
+    ) -> Option<Rc<dyn AgentSessionSetTitle>> {
         None
     }
 
@@ -69,7 +75,6 @@ pub trait AgentConnection {
     fn telemetry(&self) -> Option<Rc<dyn AgentTelemetry>> {
         None
     }
-
     fn into_any(self: Rc<Self>) -> Rc<dyn Any>;
 }
 
@@ -79,12 +84,16 @@ impl dyn AgentConnection {
     }
 }
 
-pub trait AgentSessionEditor {
-    fn truncate(&self, message_id: UserMessageId, cx: &mut App) -> Task<Result<()>>;
+pub trait AgentSessionTruncate {
+    fn run(&self, message_id: UserMessageId, cx: &mut App) -> Task<Result<()>>;
 }
 
 pub trait AgentSessionResume {
     fn run(&self, cx: &mut App) -> Task<Result<acp::PromptResponse>>;
+}
+
+pub trait AgentSessionSetTitle {
+    fn run(&self, title: SharedString, cx: &mut App) -> Task<Result<()>>;
 }
 
 pub trait AgentTelemetry {
@@ -317,13 +326,20 @@ mod test_support {
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             let session_id = acp::SessionId(self.sessions.lock().len().to_string().into());
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
-            let thread = cx.new(|_cx| {
+            let thread = cx.new(|cx| {
                 AcpThread::new(
                     "Test",
                     self.clone(),
                     project,
                     action_log,
                     session_id.clone(),
+                    watch::Receiver::constant(acp::PromptCapabilities {
+                        image: true,
+                        audio: true,
+                        embedded_context: true,
+                    }),
+                    vec![],
+                    cx,
                 )
             });
             self.sessions.lock().insert(
@@ -334,14 +350,6 @@ mod test_support {
                 },
             );
             Task::ready(Ok(thread))
-        }
-
-        fn prompt_capabilities(&self) -> acp::PromptCapabilities {
-            acp::PromptCapabilities {
-                image: true,
-                audio: true,
-                embedded_context: true,
-            }
         }
 
         fn authenticate(
@@ -385,14 +393,15 @@ mod test_support {
                     };
                     let task = cx.spawn(async move |cx| {
                         if let Some((tool_call, options)) = permission_request {
-                            let permission = thread.update(cx, |thread, cx| {
-                                thread.request_tool_call_authorization(
-                                    tool_call.clone().into(),
-                                    options.clone(),
-                                    cx,
-                                )
-                            })?;
-                            permission?.await?;
+                            thread
+                                .update(cx, |thread, cx| {
+                                    thread.request_tool_call_authorization(
+                                        tool_call.clone().into(),
+                                        options.clone(),
+                                        cx,
+                                    )
+                                })??
+                                .await;
                         }
                         thread.update(cx, |thread, cx| {
                             thread.handle_session_update(update.clone(), cx).unwrap();
@@ -424,11 +433,11 @@ mod test_support {
             }
         }
 
-        fn session_editor(
+        fn truncate(
             &self,
             _session_id: &agent_client_protocol::SessionId,
-            _cx: &mut App,
-        ) -> Option<Rc<dyn AgentSessionEditor>> {
+            _cx: &App,
+        ) -> Option<Rc<dyn AgentSessionTruncate>> {
             Some(Rc::new(StubAgentSessionEditor))
         }
 
@@ -439,8 +448,8 @@ mod test_support {
 
     struct StubAgentSessionEditor;
 
-    impl AgentSessionEditor for StubAgentSessionEditor {
-        fn truncate(&self, _: UserMessageId, _: &mut App) -> Task<Result<()>> {
+    impl AgentSessionTruncate for StubAgentSessionEditor {
+        fn run(&self, _: UserMessageId, _: &mut App) -> Task<Result<()>> {
             Task::ready(Ok(()))
         }
     }

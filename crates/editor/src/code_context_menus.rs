@@ -1,7 +1,9 @@
+use crate::scroll::ScrollAmount;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AnyElement, Entity, Focusable, FontWeight, ListSizingBehavior, ScrollStrategy, SharedString,
-    Size, StrikethroughStyle, StyledText, Task, UniformListScrollHandle, div, px, uniform_list,
+    AnyElement, Entity, Focusable, FontWeight, ListSizingBehavior, ScrollHandle, ScrollStrategy,
+    SharedString, Size, StrikethroughStyle, StyledText, Task, UniformListScrollHandle, div, px,
+    uniform_list,
 };
 use itertools::Itertools;
 use language::CodeLabel;
@@ -184,6 +186,20 @@ impl CodeContextMenu {
             CodeContextMenu::CodeActions(_) => false,
         }
     }
+
+    pub fn scroll_aside(
+        &mut self,
+        scroll_amount: ScrollAmount,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        match self {
+            CodeContextMenu::Completions(completions_menu) => {
+                completions_menu.scroll_aside(scroll_amount, window, cx)
+            }
+            CodeContextMenu::CodeActions(_) => (),
+        }
+    }
 }
 
 pub enum ContextMenuOrigin {
@@ -207,6 +223,9 @@ pub struct CompletionsMenu {
     filter_task: Task<()>,
     cancel_filter: Arc<AtomicBool>,
     scroll_handle: UniformListScrollHandle,
+    // The `ScrollHandle` used on the Markdown documentation rendered on the
+    // side of the completions menu.
+    pub scroll_handle_aside: ScrollHandle,
     resolve_completions: bool,
     show_completion_documentation: bool,
     last_rendered_range: Rc<RefCell<Option<Range<usize>>>>,
@@ -279,6 +298,7 @@ impl CompletionsMenu {
             filter_task: Task::ready(()),
             cancel_filter: Arc::new(AtomicBool::new(false)),
             scroll_handle: UniformListScrollHandle::new(),
+            scroll_handle_aside: ScrollHandle::new(),
             resolve_completions: true,
             last_rendered_range: RefCell::new(None).into(),
             markdown_cache: RefCell::new(VecDeque::new()).into(),
@@ -348,6 +368,7 @@ impl CompletionsMenu {
             filter_task: Task::ready(()),
             cancel_filter: Arc::new(AtomicBool::new(false)),
             scroll_handle: UniformListScrollHandle::new(),
+            scroll_handle_aside: ScrollHandle::new(),
             resolve_completions: false,
             show_completion_documentation: false,
             last_rendered_range: RefCell::new(None).into(),
@@ -911,6 +932,7 @@ impl CompletionsMenu {
                         .max_w(max_size.width)
                         .max_h(max_size.height)
                         .overflow_y_scroll()
+                        .track_scroll(&self.scroll_handle_aside)
                         .occlude(),
                 )
                 .into_any_element(),
@@ -1174,6 +1196,23 @@ impl CompletionsMenu {
                     }
                 }
             });
+    }
+
+    pub fn scroll_aside(
+        &mut self,
+        amount: ScrollAmount,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        let mut offset = self.scroll_handle_aside.offset();
+
+        offset.y -= amount.pixels(
+            window.line_height(),
+            self.scroll_handle_aside.bounds().size.height - px(16.),
+        ) / 2.0;
+
+        cx.notify();
+        self.scroll_handle_aside.set_offset(offset);
     }
 }
 

@@ -1,0 +1,30 @@
+[package]
+name = "acp_tools"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/acp_tools.rs"
+doctest = false
+
+[dependencies]
+agent-client-protocol.workspace = true
+collections.workspace = true
+gpui.workspace = true
+language.workspace= true
+markdown.workspace = true
+project.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+settings.workspace = true
+theme.workspace = true
+ui.workspace = true
+util.workspace = true
+workspace-hack.workspace = true
+workspace.workspace = true

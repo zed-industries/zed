@@ -186,11 +186,11 @@ impl AgentTool for EditFileTool {
     type Input = EditFileToolInput;
     type Output = EditFileToolOutput;
 
-    fn name(&self) -> SharedString {
-        "edit_file".into()
+    fn name() -> &'static str {
+        "edit_file"
     }
 
-    fn kind(&self) -> acp::ToolKind {
+    fn kind() -> acp::ToolKind {
         acp::ToolKind::Edit
     }
 
@@ -273,6 +273,13 @@ impl AgentTool for EditFileTool {
 
             let diff = cx.new(|cx| Diff::new(buffer.clone(), cx))?;
             event_stream.update_diff(diff.clone());
+            let _finalize_diff = util::defer({
+               let diff = diff.downgrade();
+               let mut cx = cx.clone();
+               move || {
+                   diff.update(&mut cx, |diff, cx| diff.finalize(cx)).ok();
+               }
+            });
 
             let old_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
             let old_text = cx
@@ -388,8 +395,6 @@ impl AgentTool for EditFileTool {
                     }
                 })
                 .await;
-
-            diff.update(cx, |diff, cx| diff.finalize(cx)).ok();
 
             let input_path = input.path.display();
             if unified_diff.is_empty() {
@@ -517,7 +522,6 @@ fn resolve_path(
 mod tests {
     use super::*;
     use crate::{ContextServerRegistry, Templates};
-    use action_log::ActionLog;
     use client::TelemetrySettings;
     use fs::Fs;
     use gpui::{TestAppContext, UpdateGlobal};
@@ -535,7 +539,6 @@ mod tests {
         fs.insert_tree("/root", json!({})).await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
@@ -544,7 +547,6 @@ mod tests {
                 project,
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
-                action_log,
                 Templates::new(),
                 Some(model),
                 cx,
@@ -735,7 +737,6 @@ mod tests {
             }
         });
 
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
@@ -744,7 +745,6 @@ mod tests {
                 project,
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
-                action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
                 cx,
@@ -801,7 +801,9 @@ mod tests {
             "Code should be formatted when format_on_save is enabled"
         );
 
-        let stale_buffer_count = action_log.read_with(cx, |log, cx| log.stale_buffers(cx).count());
+        let stale_buffer_count = thread
+            .read_with(cx, |thread, _cx| thread.action_log.clone())
+            .read_with(cx, |log, cx| log.stale_buffers(cx).count());
 
         assert_eq!(
             stale_buffer_count, 0,
@@ -879,14 +881,12 @@ mod tests {
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let model = Arc::new(FakeLanguageModel::default());
         let thread = cx.new(|cx| {
             Thread::new(
                 project,
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
-                action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
                 cx,
@@ -1008,14 +1008,12 @@ mod tests {
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let model = Arc::new(FakeLanguageModel::default());
         let thread = cx.new(|cx| {
             Thread::new(
                 project,
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
-                action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
                 cx,
@@ -1146,14 +1144,12 @@ mod tests {
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let model = Arc::new(FakeLanguageModel::default());
         let thread = cx.new(|cx| {
             Thread::new(
                 project,
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
-                action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
                 cx,
@@ -1254,7 +1250,6 @@ mod tests {
         )
         .await;
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
@@ -1263,7 +1258,6 @@ mod tests {
                 project.clone(),
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry.clone(),
-                action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
                 cx,
@@ -1336,7 +1330,6 @@ mod tests {
         .await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
@@ -1345,7 +1338,6 @@ mod tests {
                 project.clone(),
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry.clone(),
-                action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
                 cx,
@@ -1421,7 +1413,6 @@ mod tests {
         .await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
@@ -1430,7 +1421,6 @@ mod tests {
                 project.clone(),
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry.clone(),
-                action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
                 cx,
@@ -1503,7 +1493,6 @@ mod tests {
         let fs = project::FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
@@ -1512,7 +1501,6 @@ mod tests {
                 project.clone(),
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
-                action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
                 cx,
@@ -1560,6 +1548,100 @@ mod tests {
             tool.initial_title(Err(serde_json::Value::Null)),
             DEFAULT_UI_TEXT
         );
+    }
+
+    #[gpui::test]
+    async fn test_diff_finalization(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree("/", json!({"main.rs": ""})).await;
+
+        let project = Project::test(fs.clone(), [path!("/").as_ref()], cx).await;
+        let languages = project.read_with(cx, |project, _cx| project.languages().clone());
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry.clone(),
+                Templates::new(),
+                Some(model.clone()),
+                cx,
+            )
+        });
+
+        // Ensure the diff is finalized after the edit completes.
+        {
+            let tool = Arc::new(EditFileTool::new(thread.downgrade(), languages.clone()));
+            let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+            let edit = cx.update(|cx| {
+                tool.run(
+                    EditFileToolInput {
+                        display_description: "Edit file".into(),
+                        path: path!("/main.rs").into(),
+                        mode: EditFileMode::Edit,
+                    },
+                    stream_tx,
+                    cx,
+                )
+            });
+            stream_rx.expect_update_fields().await;
+            let diff = stream_rx.expect_diff().await;
+            diff.read_with(cx, |diff, _| assert!(matches!(diff, Diff::Pending(_))));
+            cx.run_until_parked();
+            model.end_last_completion_stream();
+            edit.await.unwrap();
+            diff.read_with(cx, |diff, _| assert!(matches!(diff, Diff::Finalized(_))));
+        }
+
+        // Ensure the diff is finalized if an error occurs while editing.
+        {
+            model.forbid_requests();
+            let tool = Arc::new(EditFileTool::new(thread.downgrade(), languages.clone()));
+            let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+            let edit = cx.update(|cx| {
+                tool.run(
+                    EditFileToolInput {
+                        display_description: "Edit file".into(),
+                        path: path!("/main.rs").into(),
+                        mode: EditFileMode::Edit,
+                    },
+                    stream_tx,
+                    cx,
+                )
+            });
+            stream_rx.expect_update_fields().await;
+            let diff = stream_rx.expect_diff().await;
+            diff.read_with(cx, |diff, _| assert!(matches!(diff, Diff::Pending(_))));
+            edit.await.unwrap_err();
+            diff.read_with(cx, |diff, _| assert!(matches!(diff, Diff::Finalized(_))));
+            model.allow_requests();
+        }
+
+        // Ensure the diff is finalized if the tool call gets dropped.
+        {
+            let tool = Arc::new(EditFileTool::new(thread.downgrade(), languages.clone()));
+            let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+            let edit = cx.update(|cx| {
+                tool.run(
+                    EditFileToolInput {
+                        display_description: "Edit file".into(),
+                        path: path!("/main.rs").into(),
+                        mode: EditFileMode::Edit,
+                    },
+                    stream_tx,
+                    cx,
+                )
+            });
+            stream_rx.expect_update_fields().await;
+            let diff = stream_rx.expect_diff().await;
+            diff.read_with(cx, |diff, _| assert!(matches!(diff, Diff::Pending(_))));
+            drop(edit);
+            cx.run_until_parked();
+            diff.read_with(cx, |diff, _| assert!(matches!(diff, Diff::Finalized(_))));
+        }
     }
 
     fn init_test(cx: &mut TestAppContext) {

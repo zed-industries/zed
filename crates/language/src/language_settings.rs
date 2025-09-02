@@ -17,7 +17,7 @@ use serde::{
 };
 
 use settings::{
-    ParameterizedJsonSchema, Settings, SettingsLocation, SettingsSources, SettingsStore,
+    ParameterizedJsonSchema, Settings, SettingsLocation, SettingsSources, SettingsStore, SettingsUi,
 };
 use shellexpand;
 use std::{borrow::Cow, num::NonZeroU32, path::Path, slice, sync::Arc};
@@ -292,7 +292,7 @@ pub struct CopilotSettings {
 }
 
 /// The settings for all languages.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, SettingsUi)]
 pub struct AllLanguageSettingsContent {
     /// The settings for enabling/disabling features.
     #[serde(default)]
@@ -350,6 +350,12 @@ pub struct CompletionSettings {
     /// Default: `fallback`
     #[serde(default = "default_words_completion_mode")]
     pub words: WordsCompletionMode,
+    /// How many characters has to be in the completions query to automatically show the words-based completions.
+    /// Before that value, it's still possible to trigger the words-based completion manually with the corresponding editor command.
+    ///
+    /// Default: 3
+    #[serde(default = "default_3")]
+    pub words_min_length: usize,
     /// Whether to fetch LSP completions or not.
     ///
     /// Default: true
@@ -359,7 +365,7 @@ pub struct CompletionSettings {
     /// When set to 0, waits indefinitely.
     ///
     /// Default: 0
-    #[serde(default = "default_lsp_fetch_timeout_ms")]
+    #[serde(default)]
     pub lsp_fetch_timeout_ms: u64,
     /// Controls how LSP completions are inserted.
     ///
@@ -405,8 +411,8 @@ fn default_lsp_insert_mode() -> LspInsertMode {
     LspInsertMode::ReplaceSuffix
 }
 
-fn default_lsp_fetch_timeout_ms() -> u64 {
-    0
+fn default_3() -> usize {
+    3
 }
 
 /// The settings for a particular language.
@@ -1468,6 +1474,7 @@ impl settings::Settings for AllLanguageSettings {
             } else {
                 d.completions = Some(CompletionSettings {
                     words: mode,
+                    words_min_length: 3,
                     lsp: true,
                     lsp_fetch_timeout_ms: 0,
                     lsp_insert_mode: LspInsertMode::ReplaceSuffix,

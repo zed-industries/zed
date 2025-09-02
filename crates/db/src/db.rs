@@ -110,26 +110,19 @@ pub async fn open_test_db<M: Migrator>(db_name: &str) -> ThreadSafeConnection {
 }
 
 /// Implements a basic DB wrapper for a given domain
+///
+/// Arguments:
+/// - static variable name for connection
+/// - type of connection wrapper
+/// - dependencies, whose migrations should be run prior to this domain's migrations
 #[macro_export]
-macro_rules! define_connection {
-    (pub static ref $id:ident: $t:ident<()> = $migrations:expr; $($global:ident)?) => {
-        pub struct $t($crate::sqlez::thread_safe_connection::ThreadSafeConnection);
-
+macro_rules! static_connection {
+    ($id:ident, $t:ident, [ $($d:ty),* ] $(, $global:ident)?) => {
         impl ::std::ops::Deref for $t {
             type Target = $crate::sqlez::thread_safe_connection::ThreadSafeConnection;
 
             fn deref(&self) -> &Self::Target {
                 &self.0
-            }
-        }
-
-        impl $crate::sqlez::domain::Domain for $t {
-            fn name() -> &'static str {
-                stringify!($t)
-            }
-
-            fn migrations() -> &'static [&'static str] {
-                $migrations
             }
         }
 
@@ -142,7 +135,8 @@ macro_rules! define_connection {
 
         #[cfg(any(test, feature = "test-support"))]
         pub static $id: std::sync::LazyLock<$t> = std::sync::LazyLock::new(|| {
-            $t($crate::smol::block_on($crate::open_test_db::<$t>(stringify!($id))))
+            #[allow(unused_parens)]
+            $t($crate::smol::block_on($crate::open_test_db::<($($d,)* $t)>(stringify!($id))))
         });
 
         #[cfg(not(any(test, feature = "test-support")))]
@@ -153,46 +147,10 @@ macro_rules! define_connection {
             } else {
                 $crate::RELEASE_CHANNEL.dev_name()
             };
-            $t($crate::smol::block_on($crate::open_db::<$t>(db_dir, scope)))
+            #[allow(unused_parens)]
+            $t($crate::smol::block_on($crate::open_db::<($($d,)* $t)>(db_dir, scope)))
         });
-    };
-    (pub static ref $id:ident: $t:ident<$($d:ty),+> = $migrations:expr; $($global:ident)?) => {
-        pub struct $t($crate::sqlez::thread_safe_connection::ThreadSafeConnection);
-
-        impl ::std::ops::Deref for $t {
-            type Target = $crate::sqlez::thread_safe_connection::ThreadSafeConnection;
-
-            fn deref(&self) -> &Self::Target {
-                &self.0
-            }
-        }
-
-        impl $crate::sqlez::domain::Domain for $t {
-            fn name() -> &'static str {
-                stringify!($t)
-            }
-
-            fn migrations() -> &'static [&'static str] {
-                $migrations
-            }
-        }
-
-        #[cfg(any(test, feature = "test-support"))]
-        pub static $id: std::sync::LazyLock<$t> = std::sync::LazyLock::new(|| {
-            $t($crate::smol::block_on($crate::open_test_db::<($($d),+, $t)>(stringify!($id))))
-        });
-
-        #[cfg(not(any(test, feature = "test-support")))]
-        pub static $id: std::sync::LazyLock<$t> = std::sync::LazyLock::new(|| {
-            let db_dir = $crate::database_dir();
-            let scope = if false $(|| stringify!($global) == "global")? {
-                "global"
-            } else {
-                $crate::RELEASE_CHANNEL.dev_name()
-            };
-            $t($crate::smol::block_on($crate::open_db::<($($d),+, $t)>(db_dir, scope)))
-        });
-    };
+    }
 }
 
 pub fn write_and_log<F>(cx: &App, db_write: impl FnOnce() -> F + Send + 'static)
@@ -219,17 +177,12 @@ mod tests {
         enum BadDB {}
 
         impl Domain for BadDB {
-            fn name() -> &'static str {
-                "db_tests"
-            }
-
-            fn migrations() -> &'static [&'static str] {
-                &[
-                    sql!(CREATE TABLE test(value);),
-                    // failure because test already exists
-                    sql!(CREATE TABLE test(value);),
-                ]
-            }
+            const NAME: &str = "db_tests";
+            const MIGRATIONS: &[&str] = &[
+                sql!(CREATE TABLE test(value);),
+                // failure because test already exists
+                sql!(CREATE TABLE test(value);),
+            ];
         }
 
         let tempdir = tempfile::Builder::new()
@@ -251,25 +204,15 @@ mod tests {
         enum CorruptedDB {}
 
         impl Domain for CorruptedDB {
-            fn name() -> &'static str {
-                "db_tests"
-            }
-
-            fn migrations() -> &'static [&'static str] {
-                &[sql!(CREATE TABLE test(value);)]
-            }
+            const NAME: &str = "db_tests";
+            const MIGRATIONS: &[&str] = &[sql!(CREATE TABLE test(value);)];
         }
 
         enum GoodDB {}
 
         impl Domain for GoodDB {
-            fn name() -> &'static str {
-                "db_tests" //Notice same name
-            }
-
-            fn migrations() -> &'static [&'static str] {
-                &[sql!(CREATE TABLE test2(value);)] //But different migration
-            }
+            const NAME: &str = "db_tests"; //Notice same name
+            const MIGRATIONS: &[&str] = &[sql!(CREATE TABLE test2(value);)];
         }
 
         let tempdir = tempfile::Builder::new()
@@ -305,25 +248,16 @@ mod tests {
         enum CorruptedDB {}
 
         impl Domain for CorruptedDB {
-            fn name() -> &'static str {
-                "db_tests"
-            }
+            const NAME: &str = "db_tests";
 
-            fn migrations() -> &'static [&'static str] {
-                &[sql!(CREATE TABLE test(value);)]
-            }
+            const MIGRATIONS: &[&str] = &[sql!(CREATE TABLE test(value);)];
         }
 
         enum GoodDB {}
 
         impl Domain for GoodDB {
-            fn name() -> &'static str {
-                "db_tests" //Notice same name
-            }
-
-            fn migrations() -> &'static [&'static str] {
-                &[sql!(CREATE TABLE test2(value);)] //But different migration
-            }
+            const NAME: &str = "db_tests"; //Notice same name
+            const MIGRATIONS: &[&str] = &[sql!(CREATE TABLE test2(value);)]; // But different migration
         }
 
         let tempdir = tempfile::Builder::new()

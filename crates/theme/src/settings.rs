@@ -13,7 +13,7 @@ use gpui::{
 use refineable::Refineable;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
-use settings::{ParameterizedJsonSchema, Settings, SettingsSources};
+use settings::{ParameterizedJsonSchema, Settings, SettingsSources, SettingsUi};
 use std::sync::Arc;
 use util::ResultExt as _;
 use util::schemars::replace_subschema;
@@ -365,7 +365,7 @@ impl IconThemeSelection {
 }
 
 /// Settings for rendering text in UI and text buffers.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
 pub struct ThemeSettingsContent {
     /// The default font size for text in the UI.
     #[serde(default)]

@@ -5,7 +5,7 @@ use editor::{Editor, SelectionEffects};
 use gpui::{App, AppContext as _, Context, Window, actions};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsSources, SettingsUi};
 use std::{
     fs::OpenOptions,
     path::{Path, PathBuf},
@@ -22,7 +22,7 @@ actions!(
 );
 
 /// Settings specific to journaling
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, SettingsUi)]
 pub struct JournalSettings {
     /// The path of the directory where journal entries are stored.
     ///

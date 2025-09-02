@@ -6,7 +6,7 @@ use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, VsCodeSettings};
+use settings::{Settings, SettingsSources, SettingsUi, VsCodeSettings};
 use util::serde::default_true;
 
 /// Imports from the VSCode settings at
@@ -17,6 +17,7 @@ pub struct EditorSettings {
     pub cursor_shape: Option<CursorShape>,
     pub current_line_highlight: CurrentLineHighlight,
     pub selection_highlight: bool,
+    pub rounded_selection: bool,
     pub lsp_highlight_debounce: u64,
     pub hover_popover_enabled: bool,
     pub hover_popover_delay: u64,
@@ -37,6 +38,7 @@ pub struct EditorSettings {
     pub multi_cursor_modifier: MultiCursorModifier,
     pub redact_private_values: bool,
     pub expand_excerpt_lines: u32,
+    pub excerpt_context_lines: u32,
     pub middle_click_paste: bool,
     #[serde(default)]
     pub double_click_in_multibuffer: DoubleClickInMultibuffer,
@@ -55,10 +57,13 @@ pub struct EditorSettings {
     pub inline_code_actions: bool,
     pub drag_and_drop_selection: DragAndDropSelection,
     pub lsp_document_colors: DocumentColorsRenderMode,
+    pub minimum_contrast_for_highlights: f32,
 }
 
 /// How to render LSP `textDocument/documentColor` colors in the editor.
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(
+    Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DocumentColorsRenderMode {
     /// Do not query and render document colors.
@@ -72,7 +77,7 @@ pub enum DocumentColorsRenderMode {
     Background,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi)]
 #[serde(rename_all = "snake_case")]
 pub enum CurrentLineHighlight {
     // Don't highlight the current line.
@@ -86,7 +91,7 @@ pub enum CurrentLineHighlight {
 }
 
 /// When to populate a new search's query based on the text under the cursor.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi)]
 #[serde(rename_all = "snake_case")]
 pub enum SeedQuerySetting {
     /// Always populate the search query with the word under the cursor.
@@ -98,7 +103,9 @@ pub enum SeedQuerySetting {
 }
 
 /// What to do when multibuffer is double clicked in some of its excerpts (parts of singleton buffers).
-#[derive(Default, Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(
+    Default, Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DoubleClickInMultibuffer {
     /// Behave as a regular buffer and select the whole word.
@@ -117,7 +124,9 @@ pub struct Jupyter {
     pub enabled: bool,
 }
 
-#[derive(Default, Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(
+    Default, Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi,
+)]
 #[serde(rename_all = "snake_case")]
 pub struct JupyterContent {
     /// Whether the Jupyter feature is enabled.
@@ -289,7 +298,9 @@ pub struct ScrollbarAxes {
 }
 
 /// Whether to allow drag and drop text selection in buffer.
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(
+    Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, SettingsUi,
+)]
 pub struct DragAndDropSelection {
     /// When true, enables drag and drop text selection in buffer.
     ///
@@ -329,7 +340,7 @@ pub enum ScrollbarDiagnostics {
 /// The key to use for adding multiple cursors
 ///
 /// Default: alt
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, SettingsUi)]
 #[serde(rename_all = "snake_case")]
 pub enum MultiCursorModifier {
     Alt,
@@ -340,7 +351,7 @@ pub enum MultiCursorModifier {
 /// Whether the editor will scroll beyond the last line.
 ///
 /// Default: one_page
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, SettingsUi)]
 #[serde(rename_all = "snake_case")]
 pub enum ScrollBeyondLastLine {
     /// The editor will not scroll beyond the last line.
@@ -354,7 +365,9 @@ pub enum ScrollBeyondLastLine {
 }
 
 /// Default options for buffer and project search items.
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(
+    Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, SettingsUi,
+)]
 pub struct SearchSettings {
     /// Whether to show the project search button in the status bar.
     #[serde(default = "default_true")]
@@ -370,7 +383,9 @@ pub struct SearchSettings {
 }
 
 /// What to do when go to definition yields no results.
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(
+    Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum GoToDefinitionFallback {
     /// Disables the fallback.
@@ -383,7 +398,9 @@ pub enum GoToDefinitionFallback {
 /// Determines when the mouse cursor should be hidden in an editor or input box.
 ///
 /// Default: on_typing_and_movement
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(
+    Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum HideMouseMode {
     /// Never hide the mouse cursor
@@ -398,7 +415,9 @@ pub enum HideMouseMode {
 /// Determines how snippets are sorted relative to other completion items.
 ///
 /// Default: inline
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(
+    Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum SnippetSortOrder {
     /// Place snippets at the top of the completion list
@@ -412,7 +431,8 @@ pub enum SnippetSortOrder {
     None,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
+#[settings_ui(group = "Editor")]
 pub struct EditorSettingsContent {
     /// Whether the cursor blinks in the editor.
     ///
@@ -421,7 +441,7 @@ pub struct EditorSettingsContent {
     /// Cursor shape for the default editor.
     /// Can be "bar", "block", "underline", or "hollow".
     ///
-    /// Default: None
+    /// Default: bar
     pub cursor_shape: Option<CursorShape>,
     /// Determines when the mouse cursor should be hidden in an editor or input box.
     ///
@@ -439,6 +459,10 @@ pub struct EditorSettingsContent {
     ///
     /// Default: true
     pub selection_highlight: Option<bool>,
+    /// Whether the text selection should have rounded corners.
+    ///
+    /// Default: true
+    pub rounded_selection: Option<bool>,
     /// The debounce delay before querying highlights from the language
     /// server based on the current cursor location.
     ///
@@ -515,6 +539,11 @@ pub struct EditorSettingsContent {
     /// Default: 3
     pub expand_excerpt_lines: Option<u32>,
 
+    /// How many lines of context to provide in multibuffer excerpts by default
+    ///
+    /// Default: 2
+    pub excerpt_context_lines: Option<u32>,
+
     /// Whether to enable middle-click paste on Linux
     ///
     /// Default: true
@@ -544,6 +573,12 @@ pub struct EditorSettingsContent {
     ///
     /// Default: false
     pub show_signature_help_after_edits: Option<bool>,
+    /// The minimum APCA perceptual contrast to maintain when
+    /// rendering text over highlight backgrounds in the editor.
+    ///
+    /// Values range from 0 to 106. Set to 0 to disable adjustments.
+    /// Default: 45
+    pub minimum_contrast_for_highlights: Option<f32>,
 
     /// Whether to follow-up empty go to definition responses from the language server or not.
     /// `FindAllReferences` allows to look up references of the same symbol instead.
@@ -583,7 +618,7 @@ pub struct EditorSettingsContent {
 }
 
 // Status bar related settings
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq, SettingsUi)]
 pub struct StatusBarContent {
     /// Whether to display the active language button in the status bar.
     ///
@@ -596,7 +631,7 @@ pub struct StatusBarContent {
 }
 
 // Toolbar related settings
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq, SettingsUi)]
 pub struct ToolbarContent {
     /// Whether to display breadcrumbs in the editor toolbar.
     ///
@@ -622,7 +657,9 @@ pub struct ToolbarContent {
 }
 
 /// Scrollbar related settings
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Default)]
+#[derive(
+    Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Default, SettingsUi,
+)]
 pub struct ScrollbarContent {
     /// When to show the scrollbar in the editor.
     ///
@@ -657,7 +694,9 @@ pub struct ScrollbarContent {
 }
 
 /// Minimap related settings
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(
+    Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, SettingsUi,
+)]
 pub struct MinimapContent {
     /// When to show the minimap in the editor.
     ///
@@ -705,7 +744,9 @@ pub struct ScrollbarAxesContent {
 }
 
 /// Gutter related settings
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(
+    Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq, SettingsUi,
+)]
 pub struct GutterContent {
     /// Whether to show line numbers in the gutter.
     ///
@@ -781,6 +822,7 @@ impl Settings for EditorSettings {
             "editor.selectionHighlight",
             &mut current.selection_highlight,
         );
+        vscode.bool_setting("editor.roundedSelection", &mut current.rounded_selection);
         vscode.bool_setting("editor.hover.enabled", &mut current.hover_popover_enabled);
         vscode.u64_setting("editor.hover.delay", &mut current.hover_popover_delay);
 

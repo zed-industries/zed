@@ -57,7 +57,9 @@ use util::{
 use workspace::{
     CloseActiveItem, CloseAllItems, CloseOtherItems, MoveItemToPaneInDirection, NavigationEntry,
     OpenOptions, ViewId,
+    invalid_buffer_view::InvalidBufferView,
     item::{FollowEvent, FollowableItem, Item, ItemHandle, SaveOptions},
+    register_project_item,
 };
 
 #[gpui::test]
@@ -4402,6 +4404,129 @@ async fn test_unique_lines_single_selection(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_wrap_in_tag_single_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let js_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "JavaScript".into(),
+            wrap_characters: Some(language::WrapCharactersConfig {
+                start_prefix: "<".into(),
+                start_suffix: ">".into(),
+                end_prefix: "</".into(),
+                end_suffix: ">".into(),
+            }),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(js_language), cx));
+
+    cx.set_state(indoc! {"
+        «testˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.wrap_selections_in_tag(&WrapSelectionsInTag, window, cx));
+    cx.assert_editor_state(indoc! {"
+        <«ˇ»>test</«ˇ»>
+    "});
+
+    cx.set_state(indoc! {"
+        «test
+         testˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.wrap_selections_in_tag(&WrapSelectionsInTag, window, cx));
+    cx.assert_editor_state(indoc! {"
+        <«ˇ»>test
+         test</«ˇ»>
+    "});
+
+    cx.set_state(indoc! {"
+        teˇst
+    "});
+    cx.update_editor(|e, window, cx| e.wrap_selections_in_tag(&WrapSelectionsInTag, window, cx));
+    cx.assert_editor_state(indoc! {"
+        te<«ˇ»></«ˇ»>st
+    "});
+}
+
+#[gpui::test]
+async fn test_wrap_in_tag_multi_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let js_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "JavaScript".into(),
+            wrap_characters: Some(language::WrapCharactersConfig {
+                start_prefix: "<".into(),
+                start_suffix: ">".into(),
+                end_prefix: "</".into(),
+                end_suffix: ">".into(),
+            }),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(js_language), cx));
+
+    cx.set_state(indoc! {"
+        «testˇ»
+        «testˇ» «testˇ»
+        «testˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.wrap_selections_in_tag(&WrapSelectionsInTag, window, cx));
+    cx.assert_editor_state(indoc! {"
+        <«ˇ»>test</«ˇ»>
+        <«ˇ»>test</«ˇ»> <«ˇ»>test</«ˇ»>
+        <«ˇ»>test</«ˇ»>
+    "});
+
+    cx.set_state(indoc! {"
+        «test
+         testˇ»
+        «test
+         testˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.wrap_selections_in_tag(&WrapSelectionsInTag, window, cx));
+    cx.assert_editor_state(indoc! {"
+        <«ˇ»>test
+         test</«ˇ»>
+        <«ˇ»>test
+         test</«ˇ»>
+    "});
+}
+
+#[gpui::test]
+async fn test_wrap_in_tag_does_nothing_in_unsupported_languages(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let plaintext_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Plain Text".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(plaintext_language), cx));
+
+    cx.set_state(indoc! {"
+        «testˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.wrap_selections_in_tag(&WrapSelectionsInTag, window, cx));
+    cx.assert_editor_state(indoc! {"
+      «testˇ»
+    "});
+}
+
+#[gpui::test]
 async fn test_manipulate_immutable_lines_with_multi_selection(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -5436,14 +5561,18 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         },
         None,
     ));
-    let rust_language = Arc::new(Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            line_comments: vec!["// ".into(), "/// ".into()],
-            ..LanguageConfig::default()
-        },
-        Some(tree_sitter_rust::LANGUAGE.into()),
-    ));
+    let rust_language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                line_comments: vec!["// ".into(), "/// ".into()],
+                ..LanguageConfig::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_override_query("[(line_comment)(block_comment)] @comment.inclusive")
+        .unwrap(),
+    );
 
     let plaintext_language = Arc::new(Language::new(
         LanguageConfig {
@@ -5742,6 +5871,411 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             // will also be wrapped.ˇ
          "},
         cpp_language,
+        &mut cx,
+    );
+
+    #[track_caller]
+    fn assert_rewrap(
+        unwrapped_text: &str,
+        wrapped_text: &str,
+        language: Arc<Language>,
+        cx: &mut EditorTestContext,
+    ) {
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+        cx.set_state(unwrapped_text);
+        cx.update_editor(|e, window, cx| e.rewrap(&Rewrap, window, cx));
+        cx.assert_editor_state(wrapped_text);
+    }
+}
+
+#[gpui::test]
+async fn test_rewrap_block_comments(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.languages.0.extend([(
+            "Rust".into(),
+            LanguageSettingsContent {
+                allow_rewrap: Some(language_settings::RewrapBehavior::InComments),
+                preferred_line_length: Some(40),
+                ..Default::default()
+            },
+        )])
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let rust_lang = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                line_comments: vec!["// ".into()],
+                block_comment: Some(BlockCommentConfig {
+                    start: "/*".into(),
+                    end: "*/".into(),
+                    prefix: "* ".into(),
+                    tab_size: 1,
+                }),
+                documentation_comment: Some(BlockCommentConfig {
+                    start: "/**".into(),
+                    end: "*/".into(),
+                    prefix: "* ".into(),
+                    tab_size: 1,
+                }),
+
+                ..LanguageConfig::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_override_query("[(line_comment) (block_comment)] @comment.inclusive")
+        .unwrap(),
+    );
+
+    // regular block comment
+    assert_rewrap(
+        indoc! {"
+            /*
+             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+             */
+            /*ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. */
+        "},
+        indoc! {"
+            /*
+             *ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
+             */
+            /*
+             *ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
+             */
+        "},
+        rust_lang.clone(),
+        &mut cx,
+    );
+
+    // indent is respected
+    assert_rewrap(
+        indoc! {"
+            {}
+                /*ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. */
+        "},
+        indoc! {"
+            {}
+                /*
+                 *ˇ Lorem ipsum dolor sit amet,
+                 * consectetur adipiscing elit.
+                 */
+        "},
+        rust_lang.clone(),
+        &mut cx,
+    );
+
+    // short block comments with inline delimiters
+    assert_rewrap(
+        indoc! {"
+            /*ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. */
+            /*ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+             */
+            /*
+             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. */
+        "},
+        indoc! {"
+            /*
+             *ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
+             */
+            /*
+             *ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
+             */
+            /*
+             *ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
+             */
+        "},
+        rust_lang.clone(),
+        &mut cx,
+    );
+
+    // multiline block comment with inline start/end delimiters
+    assert_rewrap(
+        indoc! {"
+            /*ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit. */
+        "},
+        indoc! {"
+            /*
+             *ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
+             */
+        "},
+        rust_lang.clone(),
+        &mut cx,
+    );
+
+    // block comment rewrap still respects paragraph bounds
+    assert_rewrap(
+        indoc! {"
+            /*
+             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+             *
+             * Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+             */
+        "},
+        indoc! {"
+            /*
+             *ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
+             *
+             * Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+             */
+        "},
+        rust_lang.clone(),
+        &mut cx,
+    );
+
+    // documentation comments
+    assert_rewrap(
+        indoc! {"
+            /**ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. */
+            /**
+             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+             */
+        "},
+        indoc! {"
+            /**
+             *ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
+             */
+            /**
+             *ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
+             */
+        "},
+        rust_lang.clone(),
+        &mut cx,
+    );
+
+    // different, adjacent comments
+    assert_rewrap(
+        indoc! {"
+            /**
+             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+             */
+            /*ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. */
+            //ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+        "},
+        indoc! {"
+            /**
+             *ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
+             */
+            /*
+             *ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
+             */
+            //ˇ Lorem ipsum dolor sit amet,
+            // consectetur adipiscing elit.
+        "},
+        rust_lang.clone(),
+        &mut cx,
+    );
+
+    // selection w/ single short block comment
+    assert_rewrap(
+        indoc! {"
+            «/* Lorem ipsum dolor sit amet, consectetur adipiscing elit. */ˇ»
+        "},
+        indoc! {"
+            «/*
+             * Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
+             */ˇ»
+        "},
+        rust_lang.clone(),
+        &mut cx,
+    );
+
+    // rewrapping a single comment w/ abutting comments
+    assert_rewrap(
+        indoc! {"
+            /* ˇLorem ipsum dolor sit amet, consectetur adipiscing elit. */
+            /* Lorem ipsum dolor sit amet, consectetur adipiscing elit. */
+        "},
+        indoc! {"
+            /*
+             * ˇLorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
+             */
+            /* Lorem ipsum dolor sit amet, consectetur adipiscing elit. */
+        "},
+        rust_lang.clone(),
+        &mut cx,
+    );
+
+    // selection w/ non-abutting short block comments
+    assert_rewrap(
+        indoc! {"
+            «/* Lorem ipsum dolor sit amet, consectetur adipiscing elit. */
+
+            /* Lorem ipsum dolor sit amet, consectetur adipiscing elit. */ˇ»
+        "},
+        indoc! {"
+            «/*
+             * Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
+             */
+
+            /*
+             * Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
+             */ˇ»
+        "},
+        rust_lang.clone(),
+        &mut cx,
+    );
+
+    // selection of multiline block comments
+    assert_rewrap(
+        indoc! {"
+            «/* Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit. */ˇ»
+        "},
+        indoc! {"
+            «/*
+             * Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
+             */ˇ»
+        "},
+        rust_lang.clone(),
+        &mut cx,
+    );
+
+    // partial selection of multiline block comments
+    assert_rewrap(
+        indoc! {"
+            «/* Lorem ipsum dolor sit amet,ˇ»
+             * consectetur adipiscing elit. */
+            /* Lorem ipsum dolor sit amet,
+             «* consectetur adipiscing elit. */ˇ»
+        "},
+        indoc! {"
+            «/*
+             * Lorem ipsum dolor sit amet,ˇ»
+             * consectetur adipiscing elit. */
+            /* Lorem ipsum dolor sit amet,
+             «* consectetur adipiscing elit.
+             */ˇ»
+        "},
+        rust_lang.clone(),
+        &mut cx,
+    );
+
+    // selection w/ abutting short block comments
+    // TODO: should not be combined; should rewrap as 2 comments
+    assert_rewrap(
+        indoc! {"
+            «/* Lorem ipsum dolor sit amet, consectetur adipiscing elit. */
+            /* Lorem ipsum dolor sit amet, consectetur adipiscing elit. */ˇ»
+        "},
+        // desired behavior:
+        // indoc! {"
+        //     «/*
+        //      * Lorem ipsum dolor sit amet,
+        //      * consectetur adipiscing elit.
+        //      */
+        //     /*
+        //      * Lorem ipsum dolor sit amet,
+        //      * consectetur adipiscing elit.
+        //      */ˇ»
+        // "},
+        // actual behaviour:
+        indoc! {"
+            «/*
+             * Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit. Lorem
+             * ipsum dolor sit amet, consectetur
+             * adipiscing elit.
+             */ˇ»
+        "},
+        rust_lang.clone(),
+        &mut cx,
+    );
+
+    // TODO: same as above, but with delimiters on separate line
+    // assert_rewrap(
+    //     indoc! {"
+    //         «/* Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+    //          */
+    //         /*
+    //          * Lorem ipsum dolor sit amet, consectetur adipiscing elit. */ˇ»
+    //     "},
+    //     // desired:
+    //     // indoc! {"
+    //     //     «/*
+    //     //      * Lorem ipsum dolor sit amet,
+    //     //      * consectetur adipiscing elit.
+    //     //      */
+    //     //     /*
+    //     //      * Lorem ipsum dolor sit amet,
+    //     //      * consectetur adipiscing elit.
+    //     //      */ˇ»
+    //     // "},
+    //     // actual: (but with trailing w/s on the empty lines)
+    //     indoc! {"
+    //         «/*
+    //          * Lorem ipsum dolor sit amet,
+    //          * consectetur adipiscing elit.
+    //          *
+    //          */
+    //         /*
+    //          *
+    //          * Lorem ipsum dolor sit amet,
+    //          * consectetur adipiscing elit.
+    //          */ˇ»
+    //     "},
+    //     rust_lang.clone(),
+    //     &mut cx,
+    // );
+
+    // TODO these are unhandled edge cases; not correct, just documenting known issues
+    assert_rewrap(
+        indoc! {"
+            /*
+             //ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+             */
+            /*
+             //ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. */
+            /*ˇ Lorem ipsum dolor sit amet */ /* consectetur adipiscing elit. */
+        "},
+        // desired:
+        // indoc! {"
+        //     /*
+        //      *ˇ Lorem ipsum dolor sit amet,
+        //      * consectetur adipiscing elit.
+        //      */
+        //     /*
+        //      *ˇ Lorem ipsum dolor sit amet,
+        //      * consectetur adipiscing elit.
+        //      */
+        //     /*
+        //      *ˇ Lorem ipsum dolor sit amet
+        //      */ /* consectetur adipiscing elit. */
+        // "},
+        // actual:
+        indoc! {"
+            /*
+             //ˇ Lorem ipsum dolor sit amet,
+             // consectetur adipiscing elit.
+             */
+            /*
+             * //ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
+             */
+            /*
+             *ˇ Lorem ipsum dolor sit amet */ /*
+             * consectetur adipiscing elit.
+             */
+        "},
+        rust_lang,
         &mut cx,
     );
 
@@ -9784,7 +10318,7 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
             move |params, _| async move {
                 assert_eq!(
                     params.text_document.uri,
-                    lsp::Url::from_file_path(path!("/file.rs")).unwrap()
+                    lsp::Uri::from_file_path(path!("/file.rs")).unwrap()
                 );
                 assert_eq!(params.options.tab_size, 4);
                 Ok(Some(vec![lsp::TextEdit::new(
@@ -9827,7 +10361,7 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
             move |params, _| async move {
                 assert_eq!(
                     params.text_document.uri,
-                    lsp::Url::from_file_path(path!("/file.rs")).unwrap()
+                    lsp::Uri::from_file_path(path!("/file.rs")).unwrap()
                 );
                 futures::future::pending::<()>().await;
                 unreachable!()
@@ -9875,7 +10409,7 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
             .set_request_handler::<lsp::request::Formatting, _, _>(move |params, _| async move {
                 assert_eq!(
                     params.text_document.uri,
-                    lsp::Url::from_file_path(path!("/file.rs")).unwrap()
+                    lsp::Uri::from_file_path(path!("/file.rs")).unwrap()
                 );
                 assert_eq!(params.options.tab_size, 8);
                 Ok(Some(vec![]))
@@ -10423,7 +10957,7 @@ async fn test_range_format_on_save_success(cx: &mut TestAppContext) {
         .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path(path!("/file.rs")).unwrap()
+                lsp::Uri::from_file_path(path!("/file.rs")).unwrap()
             );
             assert_eq!(params.options.tab_size, 4);
             Ok(Some(vec![lsp::TextEdit::new(
@@ -10456,7 +10990,7 @@ async fn test_range_format_on_save_timeout(cx: &mut TestAppContext) {
         move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path(path!("/file.rs")).unwrap()
+                lsp::Uri::from_file_path(path!("/file.rs")).unwrap()
             );
             futures::future::pending::<()>().await;
             unreachable!()
@@ -10549,7 +11083,7 @@ async fn test_range_format_respects_language_tab_size_override(cx: &mut TestAppC
         .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path(path!("/file.rs")).unwrap()
+                lsp::Uri::from_file_path(path!("/file.rs")).unwrap()
             );
             assert_eq!(params.options.tab_size, 8);
             Ok(Some(Vec::new()))
@@ -10636,7 +11170,7 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
         .set_request_handler::<lsp::request::Formatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path(path!("/file.rs")).unwrap()
+                lsp::Uri::from_file_path(path!("/file.rs")).unwrap()
             );
             assert_eq!(params.options.tab_size, 4);
             Ok(Some(vec![lsp::TextEdit::new(
@@ -10661,7 +11195,7 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
         move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path(path!("/file.rs")).unwrap()
+                lsp::Uri::from_file_path(path!("/file.rs")).unwrap()
             );
             futures::future::pending::<()>().await;
             unreachable!()
@@ -10757,7 +11291,7 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
                 params.context.only,
                 Some(vec!["code-action-1".into(), "code-action-2".into()])
             );
-            let uri = lsp::Url::from_file_path(path!("/file.rs")).unwrap();
+            let uri = lsp::Uri::from_file_path(path!("/file.rs")).unwrap();
             Ok(Some(vec![
                 lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
                     kind: Some("code-action-1".into()),
@@ -10817,7 +11351,7 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
                         edit: lsp::WorkspaceEdit {
                             changes: Some(
                                 [(
-                                    lsp::Url::from_file_path(path!("/file.rs")).unwrap(),
+                                    lsp::Uri::from_file_path(path!("/file.rs")).unwrap(),
                                     vec![lsp::TextEdit {
                                         range: lsp::Range::new(
                                             lsp::Position::new(0, 0),
@@ -11028,7 +11562,7 @@ async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
         .set_request_handler::<lsp::request::CodeActionRequest, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path(path!("/file.ts")).unwrap()
+                lsp::Uri::from_file_path(path!("/file.ts")).unwrap()
             );
             Ok(Some(vec![lsp::CodeActionOrCommand::CodeAction(
                 lsp::CodeAction {
@@ -11076,7 +11610,7 @@ async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
         move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path(path!("/file.ts")).unwrap()
+                lsp::Uri::from_file_path(path!("/file.ts")).unwrap()
             );
             futures::future::pending::<()>().await;
             unreachable!()
@@ -12237,6 +12771,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
                 settings.defaults.completions = Some(CompletionSettings {
                     lsp_insert_mode,
                     words: WordsCompletionMode::Disabled,
+                    words_min_length: 0,
                     lsp: true,
                     lsp_fetch_timeout_ms: 0,
                 });
@@ -12295,6 +12830,7 @@ async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) 
     update_test_language_settings(&mut cx, |settings| {
         settings.defaults.completions = Some(CompletionSettings {
             words: WordsCompletionMode::Disabled,
+            words_min_length: 0,
             // set the opposite here to ensure that the action is overriding the default behavior
             lsp_insert_mode: LspInsertMode::Insert,
             lsp: true,
@@ -12331,6 +12867,7 @@ async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) 
     update_test_language_settings(&mut cx, |settings| {
         settings.defaults.completions = Some(CompletionSettings {
             words: WordsCompletionMode::Disabled,
+            words_min_length: 0,
             // set the opposite here to ensure that the action is overriding the default behavior
             lsp_insert_mode: LspInsertMode::Replace,
             lsp: true,
@@ -13072,6 +13609,7 @@ async fn test_word_completion(cx: &mut TestAppContext) {
     init_test(cx, |language_settings| {
         language_settings.defaults.completions = Some(CompletionSettings {
             words: WordsCompletionMode::Fallback,
+            words_min_length: 0,
             lsp: true,
             lsp_fetch_timeout_ms: 10,
             lsp_insert_mode: LspInsertMode::Insert,
@@ -13168,6 +13706,7 @@ async fn test_word_completions_do_not_duplicate_lsp_ones(cx: &mut TestAppContext
     init_test(cx, |language_settings| {
         language_settings.defaults.completions = Some(CompletionSettings {
             words: WordsCompletionMode::Enabled,
+            words_min_length: 0,
             lsp: true,
             lsp_fetch_timeout_ms: 0,
             lsp_insert_mode: LspInsertMode::Insert,
@@ -13231,6 +13770,7 @@ async fn test_word_completions_continue_on_typing(cx: &mut TestAppContext) {
     init_test(cx, |language_settings| {
         language_settings.defaults.completions = Some(CompletionSettings {
             words: WordsCompletionMode::Disabled,
+            words_min_length: 0,
             lsp: true,
             lsp_fetch_timeout_ms: 0,
             lsp_insert_mode: LspInsertMode::Insert,
@@ -13304,6 +13844,7 @@ async fn test_word_completions_usually_skip_digits(cx: &mut TestAppContext) {
     init_test(cx, |language_settings| {
         language_settings.defaults.completions = Some(CompletionSettings {
             words: WordsCompletionMode::Fallback,
+            words_min_length: 0,
             lsp: false,
             lsp_fetch_timeout_ms: 0,
             lsp_insert_mode: LspInsertMode::Insert,
@@ -13357,6 +13898,56 @@ async fn test_word_completions_usually_skip_digits(cx: &mut TestAppContext) {
                 return matching words with digits (`33`, `35f32`) but exclude query duplicates (`3`)");
         } else {
             panic!("expected completion menu to be open");
+        }
+    });
+}
+
+#[gpui::test]
+async fn test_word_completions_do_not_show_before_threshold(cx: &mut TestAppContext) {
+    init_test(cx, |language_settings| {
+        language_settings.defaults.completions = Some(CompletionSettings {
+            words: WordsCompletionMode::Enabled,
+            words_min_length: 3,
+            lsp: true,
+            lsp_fetch_timeout_ms: 0,
+            lsp_insert_mode: LspInsertMode::Insert,
+        });
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+    cx.set_state(indoc! {"ˇ
+        wow
+        wowen
+        wowser
+    "});
+    cx.simulate_keystroke("w");
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, _, _| {
+        if editor.context_menu.borrow_mut().is_some() {
+            panic!(
+                "expected completion menu to be hidden, as words completion threshold is not met"
+            );
+        }
+    });
+
+    cx.simulate_keystroke("o");
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, _, _| {
+        if editor.context_menu.borrow_mut().is_some() {
+            panic!(
+                "expected completion menu to be hidden, as words completion threshold is not met still"
+            );
+        }
+    });
+
+    cx.simulate_keystroke("w");
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, _, _| {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
+            assert_eq!(completion_menu_entries(menu), &["wowen", "wowser"], "After word completion threshold is met, matching words should be shown, excluding the already typed word");
+        } else {
+            panic!("expected completion menu to be open after the word completions threshold is met");
         }
     });
 }
@@ -15296,7 +15887,7 @@ async fn go_to_prev_overlapping_diagnostic(executor: BackgroundExecutor, cx: &mu
                 .update_diagnostics(
                     LanguageServerId(0),
                     lsp::PublishDiagnosticsParams {
-                        uri: lsp::Url::from_file_path(path!("/root/file")).unwrap(),
+                        uri: lsp::Uri::from_file_path(path!("/root/file")).unwrap(),
                         version: None,
                         diagnostics: vec![
                             lsp::Diagnostic {
@@ -15692,7 +16283,7 @@ async fn test_on_type_formatting_not_triggered(cx: &mut TestAppContext) {
         |params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri,
-                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
             );
             assert_eq!(
                 params.text_document_position.position,
@@ -16217,7 +16808,7 @@ async fn test_context_menus_hide_hover_popover(cx: &mut gpui::TestAppContext) {
                     edit: Some(lsp::WorkspaceEdit {
                         changes: Some(
                             [(
-                                lsp::Url::from_file_path(path!("/file.rs")).unwrap(),
+                                lsp::Uri::from_file_path(path!("/file.rs")).unwrap(),
                                 vec![lsp::TextEdit {
                                     range: lsp::Range::new(
                                         lsp::Position::new(5, 4),
@@ -19685,7 +20276,7 @@ async fn test_display_diff_hunks(cx: &mut TestAppContext) {
                 PathKey::namespaced(0, buffer.read(cx).file().unwrap().path().clone()),
                 buffer.clone(),
                 vec![text::Anchor::MIN.to_point(&snapshot)..text::Anchor::MAX.to_point(&snapshot)],
-                DEFAULT_MULTIBUFFER_CONTEXT,
+                2,
                 cx,
             );
         }
@@ -21885,7 +22476,7 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
                                 edit: lsp::WorkspaceEdit {
                                     changes: Some(
                                         [(
-                                            lsp::Url::from_file_path(path!("/dir/a.ts")).unwrap(),
+                                            lsp::Uri::from_file_path(path!("/dir/a.ts")).unwrap(),
                                             vec![lsp::TextEdit {
                                                 range: lsp::Range::new(
                                                     lsp::Position::new(0, 0),
@@ -22656,7 +23247,7 @@ async fn test_invisible_worktree_servers(cx: &mut TestAppContext) {
     .await
     .unwrap();
     pane.update_in(cx, |pane, window, cx| {
-        pane.navigate_backward(window, cx);
+        pane.navigate_backward(&Default::default(), window, cx);
     });
     cx.run_until_parked();
     pane.update(cx, |pane, cx| {
@@ -23857,7 +24448,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
             let result_id = Some(new_result_id.to_string());
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path(path!("/a/first.rs")).unwrap()
+                lsp::Uri::from_file_path(path!("/a/first.rs")).unwrap()
             );
             async move {
                 Ok(lsp::DocumentDiagnosticReportResult::Report(
@@ -24072,7 +24663,7 @@ async fn test_document_colors(cx: &mut TestAppContext) {
             async move {
                 assert_eq!(
                     params.text_document.uri,
-                    lsp::Url::from_file_path(path!("/a/first.rs")).unwrap()
+                    lsp::Uri::from_file_path(path!("/a/first.rs")).unwrap()
                 );
                 requests_made.fetch_add(1, atomic::Ordering::Release);
                 Ok(vec![
@@ -24243,7 +24834,7 @@ async fn test_document_colors(cx: &mut TestAppContext) {
     workspace
         .update(cx, |workspace, window, cx| {
             workspace.active_pane().update(cx, |pane, cx| {
-                pane.navigate_backward(window, cx);
+                pane.navigate_backward(&Default::default(), window, cx);
             })
         })
         .unwrap();
@@ -24289,6 +24880,41 @@ async fn test_newline_replacement_in_single_line(cx: &mut TestAppContext) {
     editor.update(cx, |editor, cx| {
         assert_eq!(editor.display_text(cx), "oop⋯wow⋯");
     });
+}
+
+#[gpui::test]
+async fn test_non_utf_8_opens(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    cx.update(|cx| {
+        register_project_item::<Editor>(cx);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root1", json!({})).await;
+    fs.insert_file("/root1/one.pdf", vec![0xff, 0xfe, 0xfd])
+        .await;
+
+    let project = Project::test(fs, ["/root1".as_ref()], cx).await;
+    let (workspace, cx) =
+        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+    let worktree_id = project.update(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+
+    let handle = workspace
+        .update_in(cx, |workspace, window, cx| {
+            let project_path = (worktree_id, "one.pdf");
+            workspace.open_path(project_path, None, true, window, cx)
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(
+        handle.to_any().entity_type(),
+        TypeId::of::<InvalidBufferView>()
+    );
 }
 
 #[track_caller]

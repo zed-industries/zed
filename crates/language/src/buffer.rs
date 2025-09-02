@@ -32,7 +32,7 @@ use parking_lot::Mutex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use settings::WorktreeId;
+use settings::{SettingsUi, WorktreeId};
 use smallvec::SmallVec;
 use smol::future::yield_now;
 use std::{
@@ -173,7 +173,9 @@ pub enum IndentKind {
 }
 
 /// The shape of a selection cursor.
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(
+    Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CursorShape {
     /// A vertical bar
@@ -202,7 +204,7 @@ pub struct Diagnostic {
     pub source: Option<String>,
     /// A machine-readable code that identifies this diagnostic.
     pub code: Option<NumberOrString>,
-    pub code_description: Option<lsp::Url>,
+    pub code_description: Option<lsp::Uri>,
     /// Whether this diagnostic is a hint, warning, or error.
     pub severity: DiagnosticSeverity,
     /// The human-readable message associated with this diagnostic.
@@ -1569,11 +1571,21 @@ impl Buffer {
         self.send_operation(op, true, cx);
     }
 
-    pub fn get_diagnostics(&self, server_id: LanguageServerId) -> Option<&DiagnosticSet> {
-        let Ok(idx) = self.diagnostics.binary_search_by_key(&server_id, |v| v.0) else {
-            return None;
-        };
-        Some(&self.diagnostics[idx].1)
+    pub fn buffer_diagnostics(
+        &self,
+        for_server: Option<LanguageServerId>,
+    ) -> Vec<&DiagnosticEntry<Anchor>> {
+        match for_server {
+            Some(server_id) => match self.diagnostics.binary_search_by_key(&server_id, |v| v.0) {
+                Ok(idx) => self.diagnostics[idx].1.iter().collect(),
+                Err(_) => Vec::new(),
+            },
+            None => self
+                .diagnostics
+                .iter()
+                .flat_map(|(_, diagnostic_set)| diagnostic_set.iter())
+                .collect(),
+        }
     }
 
     fn request_autoindent(&mut self, cx: &mut Context<Self>) {

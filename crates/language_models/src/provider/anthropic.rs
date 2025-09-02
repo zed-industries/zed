@@ -197,7 +197,7 @@ impl AnthropicLanguageModelProvider {
         })
     }
 
-    pub fn api_key(cx: &mut App) -> Task<Result<ApiKey>> {
+    pub fn api_key(cx: &mut App) -> Task<Result<ApiKey, AuthenticateError>> {
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
         let api_url = AllLanguageModelSettings::get_global(cx)
             .anthropic
@@ -1041,9 +1041,9 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new(format!("To use {}, you need to add an API key. Follow these steps:", match self.target_agent {
-                    ConfigurationViewTargetAgent::ZedAgent => "Zed's agent with Anthropic",
-                    ConfigurationViewTargetAgent::Other(agent) => agent,
+                .child(Label::new(format!("To use {}, you need to add an API key. Follow these steps:", match &self.target_agent {
+                    ConfigurationViewTargetAgent::ZedAgent => "Zed's agent with Anthropic".into(),
+                    ConfigurationViewTargetAgent::Other(agent) => agent.clone(),
                 })))
                 .child(
                     List::new()

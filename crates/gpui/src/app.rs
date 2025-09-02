@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
     rc::{Rc, Weak},
     sync::{Arc, atomic::Ordering::SeqCst},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context as _, Result, anyhow};
@@ -17,6 +17,7 @@ use futures::{
     channel::oneshot,
     future::{LocalBoxFuture, Shared},
 };
+use itertools::Itertools;
 use parking_lot::RwLock;
 use slotmap::SlotMap;
 
@@ -37,10 +38,10 @@ use crate::{
     AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId,
     EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext,
     Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, Point, PromptBuilder, PromptButton, PromptHandle,
-    PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
-    SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance,
-    WindowHandle, WindowId, WindowInvalidator,
+    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, PromptBuilder,
+    PromptButton, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle,
+    Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
+    TextSystem, Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
     current_platform, hash, init_app_menus,
 };
@@ -237,6 +238,303 @@ type WindowClosedHandler = Box<dyn FnMut(&mut App)>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut App) + 'static>;
 type NewEntityListener = Box<dyn FnMut(AnyEntity, &mut Option<&mut Window>, &mut App) + 'static>;
 
+#[doc(hidden)]
+#[derive(Clone, PartialEq, Eq)]
+pub struct SystemWindowTab {
+    pub id: WindowId,
+    pub title: SharedString,
+    pub handle: AnyWindowHandle,
+    pub last_active_at: Instant,
+}
+
+impl SystemWindowTab {
+    /// Create a new instance of the window tab.
+    pub fn new(title: SharedString, handle: AnyWindowHandle) -> Self {
+        Self {
+            id: handle.id,
+            title,
+            handle,
+            last_active_at: Instant::now(),
+        }
+    }
+}
+
+/// A controller for managing window tabs.
+#[derive(Default)]
+pub struct SystemWindowTabController {
+    visible: Option<bool>,
+    tab_groups: FxHashMap<usize, Vec<SystemWindowTab>>,
+}
+
+impl Global for SystemWindowTabController {}
+
+impl SystemWindowTabController {
+    /// Create a new instance of the window tab controller.
+    pub fn new() -> Self {
+        Self {
+            visible: None,
+            tab_groups: FxHashMap::default(),
+        }
+    }
+
+    /// Initialize the global window tab controller.
+    pub fn init(cx: &mut App) {
+        cx.set_global(SystemWindowTabController::new());
+    }
+
+    /// Get all tab groups.
+    pub fn tab_groups(&self) -> &FxHashMap<usize, Vec<SystemWindowTab>> {
+        &self.tab_groups
+    }
+
+    /// Get the next tab group window handle.
+    pub fn get_next_tab_group_window(cx: &mut App, id: WindowId) -> Option<&AnyWindowHandle> {
+        let controller = cx.global::<SystemWindowTabController>();
+        let current_group = controller
+            .tab_groups
+            .iter()
+            .find_map(|(group, tabs)| tabs.iter().find(|tab| tab.id == id).map(|_| group));
+
+        let current_group = current_group?;
+        let mut group_ids: Vec<_> = controller.tab_groups.keys().collect();
+        let idx = group_ids.iter().position(|g| *g == current_group)?;
+        let next_idx = (idx + 1) % group_ids.len();
+
+        controller
+            .tab_groups
+            .get(group_ids[next_idx])
+            .and_then(|tabs| {
+                tabs.iter()
+                    .max_by_key(|tab| tab.last_active_at)
+                    .or_else(|| tabs.first())
+                    .map(|tab| &tab.handle)
+            })
+    }
+
+    /// Get the previous tab group window handle.
+    pub fn get_prev_tab_group_window(cx: &mut App, id: WindowId) -> Option<&AnyWindowHandle> {
+        let controller = cx.global::<SystemWindowTabController>();
+        let current_group = controller
+            .tab_groups
+            .iter()
+            .find_map(|(group, tabs)| tabs.iter().find(|tab| tab.id == id).map(|_| group));
+
+        let current_group = current_group?;
+        let mut group_ids: Vec<_> = controller.tab_groups.keys().collect();
+        let idx = group_ids.iter().position(|g| *g == current_group)?;
+        let prev_idx = if idx == 0 {
+            group_ids.len() - 1
+        } else {
+            idx - 1
+        };
+
+        controller
+            .tab_groups
+            .get(group_ids[prev_idx])
+            .and_then(|tabs| {
+                tabs.iter()
+                    .max_by_key(|tab| tab.last_active_at)
+                    .or_else(|| tabs.first())
+                    .map(|tab| &tab.handle)
+            })
+    }
+
+    /// Get all tabs in the same window.
+    pub fn tabs(&self, id: WindowId) -> Option<&Vec<SystemWindowTab>> {
+        let tab_group = self
+            .tab_groups
+            .iter()
+            .find_map(|(group, tabs)| tabs.iter().find(|tab| tab.id == id).map(|_| *group));
+
+        if let Some(tab_group) = tab_group {
+            self.tab_groups.get(&tab_group)
+        } else {
+            None
+        }
+    }
+
+    /// Initialize the visibility of the system window tab controller.
+    pub fn init_visible(cx: &mut App, visible: bool) {
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        if controller.visible.is_none() {
+            controller.visible = Some(visible);
+        }
+    }
+
+    /// Get the visibility of the system window tab controller.
+    pub fn is_visible(&self) -> bool {
+        self.visible.unwrap_or(false)
+    }
+
+    /// Set the visibility of the system window tab controller.
+    pub fn set_visible(cx: &mut App, visible: bool) {
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        controller.visible = Some(visible);
+    }
+
+    /// Update the last active of a window.
+    pub fn update_last_active(cx: &mut App, id: WindowId) {
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        for windows in controller.tab_groups.values_mut() {
+            for tab in windows.iter_mut() {
+                if tab.id == id {
+                    tab.last_active_at = Instant::now();
+                }
+            }
+        }
+    }
+
+    /// Update the position of a tab within its group.
+    pub fn update_tab_position(cx: &mut App, id: WindowId, ix: usize) {
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        for (_, windows) in controller.tab_groups.iter_mut() {
+            if let Some(current_pos) = windows.iter().position(|tab| tab.id == id) {
+                if ix < windows.len() && current_pos != ix {
+                    let window_tab = windows.remove(current_pos);
+                    windows.insert(ix, window_tab);
+                }
+                break;
+            }
+        }
+    }
+
+    /// Update the title of a tab.
+    pub fn update_tab_title(cx: &mut App, id: WindowId, title: SharedString) {
+        let controller = cx.global::<SystemWindowTabController>();
+        let tab = controller
+            .tab_groups
+            .values()
+            .flat_map(|windows| windows.iter())
+            .find(|tab| tab.id == id);
+
+        if tab.map_or(true, |t| t.title == title) {
+            return;
+        }
+
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        for windows in controller.tab_groups.values_mut() {
+            for tab in windows.iter_mut() {
+                if tab.id == id {
+                    tab.title = title.clone();
+                }
+            }
+        }
+    }
+
+    /// Insert a tab into a tab group.
+    pub fn add_tab(cx: &mut App, id: WindowId, tabs: Vec<SystemWindowTab>) {
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        let Some(tab) = tabs.clone().into_iter().find(|tab| tab.id == id) else {
+            return;
+        };
+
+        let mut expected_tab_ids: Vec<_> = tabs
+            .iter()
+            .filter(|tab| tab.id != id)
+            .map(|tab| tab.id)
+            .sorted()
+            .collect();
+
+        let mut tab_group_id = None;
+        for (group_id, group_tabs) in &controller.tab_groups {
+            let tab_ids: Vec<_> = group_tabs.iter().map(|tab| tab.id).sorted().collect();
+            if tab_ids == expected_tab_ids {
+                tab_group_id = Some(*group_id);
+                break;
+            }
+        }
+
+        if let Some(tab_group_id) = tab_group_id {
+            if let Some(tabs) = controller.tab_groups.get_mut(&tab_group_id) {
+                tabs.push(tab);
+            }
+        } else {
+            let new_group_id = controller.tab_groups.len();
+            controller.tab_groups.insert(new_group_id, tabs);
+        }
+    }
+
+    /// Remove a tab from a tab group.
+    pub fn remove_tab(cx: &mut App, id: WindowId) -> Option<SystemWindowTab> {
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        let mut removed_tab = None;
+
+        controller.tab_groups.retain(|_, tabs| {
+            if let Some(pos) = tabs.iter().position(|tab| tab.id == id) {
+                removed_tab = Some(tabs.remove(pos));
+            }
+            !tabs.is_empty()
+        });
+
+        removed_tab
+    }
+
+    /// Move a tab to a new tab group.
+    pub fn move_tab_to_new_window(cx: &mut App, id: WindowId) {
+        let mut removed_tab = Self::remove_tab(cx, id);
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+
+        if let Some(tab) = removed_tab {
+            let new_group_id = controller.tab_groups.keys().max().map_or(0, |k| k + 1);
+            controller.tab_groups.insert(new_group_id, vec![tab]);
+        }
+    }
+
+    /// Merge all tab groups into a single group.
+    pub fn merge_all_windows(cx: &mut App, id: WindowId) {
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        let Some(initial_tabs) = controller.tabs(id) else {
+            return;
+        };
+
+        let mut all_tabs = initial_tabs.clone();
+        for tabs in controller.tab_groups.values() {
+            all_tabs.extend(
+                tabs.iter()
+                    .filter(|tab| !initial_tabs.contains(tab))
+                    .cloned(),
+            );
+        }
+
+        controller.tab_groups.clear();
+        controller.tab_groups.insert(0, all_tabs);
+    }
+
+    /// Selects the next tab in the tab group in the trailing direction.
+    pub fn select_next_tab(cx: &mut App, id: WindowId) {
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        let Some(tabs) = controller.tabs(id) else {
+            return;
+        };
+
+        let current_index = tabs.iter().position(|tab| tab.id == id).unwrap();
+        let next_index = (current_index + 1) % tabs.len();
+
+        let _ = &tabs[next_index].handle.update(cx, |_, window, _| {
+            window.activate_window();
+        });
+    }
+
+    /// Selects the previous tab in the tab group in the leading direction.
+    pub fn select_previous_tab(cx: &mut App, id: WindowId) {
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        let Some(tabs) = controller.tabs(id) else {
+            return;
+        };
+
+        let current_index = tabs.iter().position(|tab| tab.id == id).unwrap();
+        let previous_index = if current_index == 0 {
+            tabs.len() - 1
+        } else {
+            current_index - 1
+        };
+
+        let _ = &tabs[previous_index].handle.update(cx, |_, window, _| {
+            window.activate_window();
+        });
+    }
+}
+
 /// Contains the state of the full application, and passed as a reference to a variety of callbacks.
 /// Other [Context] derefs to this type.
 /// You need a reference to an `App` to access the state of a [Entity].
@@ -263,6 +561,7 @@ pub struct App {
     pub(crate) focus_handles: Arc<FocusMap>,
     pub(crate) keymap: Rc<RefCell<Keymap>>,
     pub(crate) keyboard_layout: Box<dyn PlatformKeyboardLayout>,
+    pub(crate) keyboard_mapper: Rc<dyn PlatformKeyboardMapper>,
     pub(crate) global_action_listeners:
         FxHashMap<TypeId, Vec<Rc<dyn Fn(&dyn Any, DispatchPhase, &mut Self)>>>,
     pending_effects: VecDeque<Effect>,
@@ -312,6 +611,7 @@ impl App {
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
         let entities = EntityMap::new();
         let keyboard_layout = platform.keyboard_layout();
+        let keyboard_mapper = platform.keyboard_mapper();
 
         let app = Rc::new_cyclic(|this| AppCell {
             app: RefCell::new(App {
@@ -337,6 +637,7 @@ impl App {
                 focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
                 keymap: Rc::new(RefCell::new(Keymap::default())),
                 keyboard_layout,
+                keyboard_mapper,
                 global_action_listeners: FxHashMap::default(),
                 pending_effects: VecDeque::new(),
                 pending_notifications: FxHashSet::default(),
@@ -369,6 +670,7 @@ impl App {
         });
 
         init_app_menus(platform.as_ref(), &app.borrow());
+        SystemWindowTabController::init(&mut app.borrow_mut());
 
         platform.on_keyboard_layout_change(Box::new({
             let app = Rc::downgrade(&app);
@@ -376,6 +678,7 @@ impl App {
                 if let Some(app) = app.upgrade() {
                     let cx = &mut app.borrow_mut();
                     cx.keyboard_layout = cx.platform.keyboard_layout();
+                    cx.keyboard_mapper = cx.platform.keyboard_mapper();
                     cx.keyboard_layout_observers
                         .clone()
                         .retain(&(), move |callback| (callback)(cx));
@@ -422,6 +725,11 @@ impl App {
     /// Get the id of the current keyboard layout
     pub fn keyboard_layout(&self) -> &dyn PlatformKeyboardLayout {
         self.keyboard_layout.as_ref()
+    }
+
+    /// Get the current keyboard mapper.
+    pub fn keyboard_mapper(&self) -> &Rc<dyn PlatformKeyboardMapper> {
+        &self.keyboard_mapper
     }
 
     /// Invokes a handler when the current keyboard layout changes
