@@ -6,10 +6,10 @@ use acp_thread::{
 use acp_thread::{AgentConnection, Plan};
 use action_log::ActionLog;
 use agent_client_protocol::{self as acp, PromptCapabilities};
-use agent_servers::{AgentServer, ClaudeCode};
+use agent_servers::{AgentServer, AgentServerDelegate, ClaudeCode};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode, NotifyWhenAgentWaiting};
 use agent2::{DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore};
-use anyhow::bail;
+use anyhow::{Context as _, Result, anyhow, bail};
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
 use client::zed_urls;
@@ -18,13 +18,14 @@ use editor::scroll::Autoscroll;
 use editor::{Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects};
 use file_icons::FileIcons;
 use fs::Fs;
+use futures::FutureExt as _;
 use gpui::{
     Action, Animation, AnimationExt, AnyView, App, BorderStyle, ClickEvent, ClipboardItem,
     CursorStyle, EdgesRefinement, ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, Length,
     ListOffset, ListState, MouseButton, PlatformDisplay, SharedString, Stateful, StyleRefinement,
-    Subscription, Task, TextStyle, TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity,
-    Window, WindowHandle, div, ease_in_out, linear_color_stop, linear_gradient, list, percentage,
-    point, prelude::*, pulsating_between,
+    Subscription, Task, TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, Window,
+    WindowHandle, div, ease_in_out, linear_color_stop, linear_gradient, list, point, prelude::*,
+    pulsating_between,
 };
 use language::Buffer;
 
@@ -34,16 +35,18 @@ use project::{Project, ProjectEntryId};
 use prompt_store::{PromptId, PromptStore};
 use rope::Point;
 use settings::{Settings as _, SettingsStore};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 use std::{collections::BTreeMap, rc::Rc, time::Duration};
+use task::SpawnInTerminal;
+use terminal_view::terminal_panel::TerminalPanel;
 use text::Anchor;
 use theme::ThemeSettings;
 use ui::{
-    Callout, Disclosure, Divider, DividerColor, ElevationIndex, KeyBinding, PopoverMenuHandle,
-    Scrollbar, ScrollbarState, SpinnerLabel, TintColor, Tooltip, prelude::*,
+    Callout, CommonAnimationExt, Disclosure, Divider, DividerColor, ElevationIndex, KeyBinding,
+    PopoverMenuHandle, Scrollbar, ScrollbarState, SpinnerLabel, Tooltip, prelude::*,
 };
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use workspace::{CollaboratorId, Workspace};
@@ -95,6 +98,10 @@ impl ThreadError {
             error.downcast_ref::<language_model::ModelRequestLimitReachedError>()
         {
             Self::ModelRequestLimitReached(error.plan)
+        } else if let Some(acp_error) = error.downcast_ref::<acp::Error>()
+            && acp_error.code == acp::ErrorCode::AUTH_REQUIRED.code
+        {
+            Self::AuthenticationRequired(acp_error.message.clone().into())
         } else {
             let string = error.to_string();
             // TODO: we should have Gemini return better errors here.
@@ -279,16 +286,14 @@ pub struct AcpThreadView {
     should_be_following: bool,
     editing_message: Option<usize>,
     prompt_capabilities: Rc<Cell<PromptCapabilities>>,
+    available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
     is_loading_contents: bool,
-    install_command_markdown: Entity<Markdown>,
     _cancel_task: Option<Task<()>>,
     _subscriptions: [Subscription; 3],
 }
 
 enum ThreadState {
-    Loading {
-        _task: Task<()>,
-    },
+    Loading(Entity<LoadingView>),
     Ready {
         thread: Entity<AcpThread>,
         title_editor: Option<Entity<Editor>>,
@@ -304,6 +309,12 @@ enum ThreadState {
     },
 }
 
+struct LoadingView {
+    title: SharedString,
+    _load_task: Task<()>,
+    _update_title_task: Task<anyhow::Result<()>>,
+}
+
 impl AcpThreadView {
     pub fn new(
         agent: Rc<dyn AgentServer>,
@@ -317,7 +328,7 @@ impl AcpThreadView {
         cx: &mut Context<Self>,
     ) -> Self {
         let prompt_capabilities = Rc::new(Cell::new(acp::PromptCapabilities::default()));
-        let prevent_slash_commands = agent.clone().downcast::<ClaudeCode>().is_some();
+        let available_commands = Rc::new(RefCell::new(vec![]));
 
         let placeholder = if agent.name() == "Zed Agent" {
             format!("Message the {} — @ to include context", agent.name())
@@ -332,8 +343,8 @@ impl AcpThreadView {
                 history_store.clone(),
                 prompt_store.clone(),
                 prompt_capabilities.clone(),
+                available_commands.clone(),
                 placeholder,
-                prevent_slash_commands,
                 editor::EditorMode::AutoHeight {
                     min_lines: MIN_EDITOR_LINES,
                     max_lines: Some(MAX_EDITOR_LINES),
@@ -356,7 +367,7 @@ impl AcpThreadView {
                 history_store.clone(),
                 prompt_store.clone(),
                 prompt_capabilities.clone(),
-                prevent_slash_commands,
+                available_commands.clone(),
             )
         });
 
@@ -388,13 +399,13 @@ impl AcpThreadView {
             editing_message: None,
             edits_expanded: false,
             plan_expanded: false,
+            prompt_capabilities,
+            available_commands,
             editor_expanded: false,
             should_be_following: false,
             history_store,
             hovered_recent_history_item: None,
-            prompt_capabilities,
             is_loading_contents: false,
-            install_command_markdown: cx.new(|cx| Markdown::new("".into(), None, None, cx)),
             _subscriptions: subscriptions,
             _cancel_task: None,
             focus_handle: cx.focus_handle(),
@@ -415,8 +426,10 @@ impl AcpThreadView {
             .next()
             .map(|worktree| worktree.read(cx).abs_path())
             .unwrap_or_else(|| paths::home_dir().as_path().into());
+        let (tx, mut rx) = watch::channel("Loading…".into());
+        let delegate = AgentServerDelegate::new(project.clone(), Some(tx));
 
-        let connect_task = agent.connect(&root_dir, &project, cx);
+        let connect_task = agent.connect(&root_dir, delegate, cx);
         let load_task = cx.spawn_in(window, async move |this, cx| {
             let connection = match connect_task.await {
                 Ok(connection) => connection,
@@ -476,6 +489,9 @@ impl AcpThreadView {
                 match result {
                     Ok(thread) => {
                         let action_log = thread.read(cx).action_log().clone();
+
+                        this.available_commands
+                            .replace(thread.read(cx).available_commands());
 
                         this.prompt_capabilities
                             .set(thread.read(cx).prompt_capabilities());
@@ -569,7 +585,25 @@ impl AcpThreadView {
             .log_err();
         });
 
-        ThreadState::Loading { _task: load_task }
+        let loading_view = cx.new(|cx| {
+            let update_title_task = cx.spawn(async move |this, cx| {
+                loop {
+                    let status = rx.recv().await?;
+                    this.update(cx, |this: &mut LoadingView, cx| {
+                        this.title = status;
+                        cx.notify();
+                    })?;
+                }
+            });
+
+            LoadingView {
+                title: "Loading…".into(),
+                _load_task: load_task,
+                _update_title_task: update_title_task,
+            }
+        });
+
+        ThreadState::Loading(loading_view)
     }
 
     fn handle_auth_required(
@@ -669,13 +703,15 @@ impl AcpThreadView {
         }
     }
 
-    pub fn title(&self) -> SharedString {
+    pub fn title(&self, cx: &App) -> SharedString {
         match &self.thread_state {
             ThreadState::Ready { .. } | ThreadState::Unauthenticated { .. } => "New Thread".into(),
-            ThreadState::Loading { .. } => "Loading…".into(),
+            ThreadState::Loading(loading_view) => loading_view.read(cx).title.clone(),
             ThreadState::LoadError(error) => match error {
-                LoadError::NotInstalled { .. } => format!("Install {}", self.agent.name()).into(),
                 LoadError::Unsupported { .. } => format!("Upgrade {}", self.agent.name()).into(),
+                LoadError::FailedToInstall(_) => {
+                    format!("Failed to Install {}", self.agent.name()).into()
+                }
                 LoadError::Exited { .. } => format!("{} Exited", self.agent.name()).into(),
                 LoadError::Other(_) => format!("Error Loading {}", self.agent.name()).into(),
             },
@@ -798,6 +834,9 @@ impl AcpThreadView {
                     self.expanded_tool_calls.insert(tool_call_id.clone());
                 }
             }
+            ViewEvent::TerminalMovedToBackground(tool_call_id) => {
+                self.expanded_tool_calls.remove(tool_call_id);
+            }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Focus) => {
                 if let Some(thread) = self.thread()
                     && let Some(AgentThreadEntry::UserMessage(user_message)) =
@@ -900,7 +939,7 @@ impl AcpThreadView {
 
     fn send_impl(
         &mut self,
-        contents: Task<anyhow::Result<(Vec<acp::ContentBlock>, Vec<Entity<Buffer>>)>>,
+        contents: Task<Result<(Vec<acp::ContentBlock>, Vec<Entity<Buffer>>)>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1246,6 +1285,31 @@ impl AcpThreadView {
                 });
                 return;
             }
+        } else if method.0.as_ref() == "anthropic-api-key" {
+            let registry = LanguageModelRegistry::global(cx);
+            let provider = registry
+                .read(cx)
+                .provider(&language_model::ANTHROPIC_PROVIDER_ID)
+                .unwrap();
+            if !provider.is_authenticated(cx) {
+                let this = cx.weak_entity();
+                let agent = self.agent.clone();
+                let connection = connection.clone();
+                window.defer(cx, |window, cx| {
+                    Self::handle_auth_required(
+                        this,
+                        AuthRequired {
+                            description: Some("ANTHROPIC_API_KEY must be set".to_owned()),
+                            provider_id: Some(language_model::ANTHROPIC_PROVIDER_ID),
+                        },
+                        agent,
+                        connection,
+                        window,
+                        cx,
+                    );
+                });
+                return;
+            }
         } else if method.0.as_ref() == "vertex-ai"
             && std::env::var("GOOGLE_API_KEY").is_err()
             && (std::env::var("GOOGLE_CLOUD_PROJECT").is_err()
@@ -1277,7 +1341,15 @@ impl AcpThreadView {
         self.thread_error.take();
         configuration_view.take();
         pending_auth_method.replace(method.clone());
-        let authenticate = connection.authenticate(method, cx);
+        let authenticate = if method.0.as_ref() == "claude-login" {
+            if let Some(workspace) = self.workspace.upgrade() {
+                Self::spawn_claude_login(&workspace, window, cx)
+            } else {
+                Task::ready(Ok(()))
+            }
+        } else {
+            connection.authenticate(method, cx)
+        };
         cx.notify();
         self.auth_task =
             Some(cx.spawn_in(window, {
@@ -1301,6 +1373,13 @@ impl AcpThreadView {
 
                     this.update_in(cx, |this, window, cx| {
                         if let Err(err) = result {
+                            if let ThreadState::Unauthenticated {
+                                pending_auth_method,
+                                ..
+                            } = &mut this.thread_state
+                            {
+                                pending_auth_method.take();
+                            }
                             this.handle_thread_error(err, cx);
                         } else {
                             this.thread_state = Self::initial_state(
@@ -1317,6 +1396,97 @@ impl AcpThreadView {
                     .ok();
                 }
             }));
+    }
+
+    fn spawn_claude_login(
+        workspace: &Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
+            return Task::ready(Ok(()));
+        };
+        let project_entity = workspace.read(cx).project();
+        let project = project_entity.read(cx);
+        let cwd = project.first_project_directory(cx);
+        let shell = project.terminal_settings(&cwd, cx).shell.clone();
+
+        let delegate = AgentServerDelegate::new(project_entity.clone(), None);
+        let command = ClaudeCode::login_command(delegate, cx);
+
+        window.spawn(cx, async move |cx| {
+            let login_command = command.await?;
+            let command = login_command
+                .path
+                .to_str()
+                .with_context(|| format!("invalid login command: {:?}", login_command.path))?;
+            let command = shlex::try_quote(command)?;
+            let args = login_command
+                .arguments
+                .iter()
+                .map(|arg| {
+                    Ok(shlex::try_quote(arg)
+                        .context("Failed to quote argument")?
+                        .to_string())
+                })
+                .collect::<Result<Vec<_>>>()?;
+
+            let terminal = terminal_panel.update_in(cx, |terminal_panel, window, cx| {
+                terminal_panel.spawn_task(
+                    &SpawnInTerminal {
+                        id: task::TaskId("claude-login".into()),
+                        full_label: "claude /login".to_owned(),
+                        label: "claude /login".to_owned(),
+                        command: Some(command.into()),
+                        args,
+                        command_label: "claude /login".to_owned(),
+                        cwd,
+                        use_new_terminal: true,
+                        allow_concurrent_runs: true,
+                        hide: task::HideStrategy::Always,
+                        shell,
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                )
+            })?;
+
+            let terminal = terminal.await?;
+            let mut exit_status = terminal
+                .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
+                .fuse();
+
+            let logged_in = cx
+                .spawn({
+                    let terminal = terminal.clone();
+                    async move |cx| {
+                        loop {
+                            cx.background_executor().timer(Duration::from_secs(1)).await;
+                            let content =
+                                terminal.update(cx, |terminal, _cx| terminal.get_content())?;
+                            if content.contains("Login successful") {
+                                return anyhow::Ok(());
+                            }
+                        }
+                    }
+                })
+                .fuse();
+            futures::pin_mut!(logged_in);
+            futures::select_biased! {
+                result = logged_in => {
+                    if let Err(e) = result {
+                        log::error!("{e}");
+                        return Err(anyhow!("exited before logging in"));
+                    }
+                }
+                _ = exit_status => {
+                    return Err(anyhow!("exited before logging in"));
+                }
+            }
+            terminal.update(cx, |terminal, _| terminal.kill_active_task())?;
+            Ok(())
+        })
     }
 
     fn authorize_tool_call(
@@ -2268,7 +2438,8 @@ impl AcpThreadView {
 
         let output = terminal_data.output();
         let command_finished = output.is_some();
-        let truncated_output = output.is_some_and(|output| output.was_content_truncated);
+        let truncated_output =
+            output.is_some_and(|output| output.original_content_len > output.content.len());
         let output_line_count = output.map(|output| output.content_line_count).unwrap_or(0);
 
         let command_failed = command_finished
@@ -2356,13 +2527,7 @@ impl AcpThreadView {
                         Icon::new(IconName::ArrowCircle)
                             .size(IconSize::XSmall)
                             .color(Color::Info)
-                            .with_animation(
-                                "arrow-circle",
-                                Animation::new(Duration::from_secs(2)).repeat(),
-                                |icon, delta| {
-                                    icon.transform(Transformation::rotate(percentage(delta)))
-                                },
-                            ),
+                            .with_rotate_animation(2)
                     )
             })
             .child(
@@ -2390,14 +2555,14 @@ impl AcpThreadView {
             .when(truncated_output, |header| {
                 let tooltip = if let Some(output) = output {
                     if output_line_count + 10 > terminal::MAX_SCROLL_HISTORY_LINES {
-                        "Output exceeded terminal max lines and was \
-                            truncated, the model received the first 16 KB."
-                            .to_string()
+                       format!("Output exceeded terminal max lines and was \
+                            truncated, the model received the first {}.", format_file_size(output.content.len() as u64, true))
                     } else {
                         format!(
                             "Output is {} long, and to avoid unexpected token usage, \
-                                only 16 KB was sent back to the model.",
+                                only {} was sent back to the agent.",
                             format_file_size(output.original_content_len as u64, true),
+                             format_file_size(output.content.len() as u64, true)
                         )
                     }
                 } else {
@@ -2496,7 +2661,18 @@ impl AcpThreadView {
                         .bg(cx.theme().colors().editor_background)
                         .rounded_b_md()
                         .text_ui_sm(cx)
-                        .children(terminal_view.clone()),
+                        .h_full()
+                        .children(terminal_view.map(|terminal_view| {
+                            if terminal_view
+                                .read(cx)
+                                .content_mode(window, cx)
+                                .is_scrollable()
+                            {
+                                div().h_72().child(terminal_view).into_any_element()
+                            } else {
+                                terminal_view.into_any_element()
+                            }
+                        })),
                 )
             })
             .into_any()
@@ -2778,16 +2954,7 @@ impl AcpThreadView {
                                 Icon::new(IconName::ArrowCircle)
                                     .size(IconSize::Small)
                                     .color(Color::Muted)
-                                    .with_animation(
-                                        "arrow-circle",
-                                        Animation::new(Duration::from_secs(2)).repeat(),
-                                        |icon, delta| {
-                                            icon.transform(Transformation::rotate(percentage(
-                                                delta,
-                                            )))
-                                        },
-                                    )
-                                    .into_any_element(),
+                                    .with_rotate_animation(2)
                             )
                             .child(Label::new("Authenticating…").size(LabelSize::Small)),
                     )
@@ -2845,18 +3012,26 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let (message, action_slot): (SharedString, _) = match e {
-            LoadError::NotInstalled => {
-                return self.render_not_installed(None, window, cx);
-            }
+        let (title, message, action_slot): (_, SharedString, _) = match e {
             LoadError::Unsupported {
                 command: path,
                 current_version,
+                minimum_version,
             } => {
-                return self.render_not_installed(Some((path, current_version)), window, cx);
+                return self.render_unsupported(path, current_version, minimum_version, window, cx);
             }
-            LoadError::Exited { .. } => ("Server exited with status {status}".into(), None),
+            LoadError::FailedToInstall(msg) => (
+                "Failed to Install",
+                msg.into(),
+                Some(self.create_copy_button(msg.to_string()).into_any_element()),
+            ),
+            LoadError::Exited { status } => (
+                "Failed to Launch",
+                format!("Server exited with status {status}").into(),
+                None,
+            ),
             LoadError::Other(msg) => (
+                "Failed to Launch",
                 msg.into(),
                 Some(self.create_copy_button(msg.to_string()).into_any_element()),
             ),
@@ -2865,95 +3040,34 @@ impl AcpThreadView {
         Callout::new()
             .severity(Severity::Error)
             .icon(IconName::XCircleFilled)
-            .title("Failed to Launch")
+            .title(title)
             .description(message)
             .actions_slot(div().children(action_slot))
             .into_any_element()
     }
 
-    fn install_agent(&self, window: &mut Window, cx: &mut Context<Self>) {
-        telemetry::event!("Agent Install CLI", agent = self.agent.telemetry_id());
-        let Some(install_command) = self.agent.install_command().map(|s| s.to_owned()) else {
-            return;
-        };
-        let task = self
-            .workspace
-            .update(cx, |workspace, cx| {
-                let project = workspace.project().read(cx);
-                let cwd = project.first_project_directory(cx);
-                let shell = project.terminal_settings(&cwd, cx).shell.clone();
-                let spawn_in_terminal = task::SpawnInTerminal {
-                    id: task::TaskId(install_command.clone()),
-                    full_label: install_command.clone(),
-                    label: install_command.clone(),
-                    command: Some(install_command.clone()),
-                    args: Vec::new(),
-                    command_label: install_command.clone(),
-                    cwd,
-                    env: Default::default(),
-                    use_new_terminal: true,
-                    allow_concurrent_runs: true,
-                    reveal: Default::default(),
-                    reveal_target: Default::default(),
-                    hide: Default::default(),
-                    shell,
-                    show_summary: true,
-                    show_command: true,
-                    show_rerun: false,
-                };
-                workspace.spawn_in_terminal(spawn_in_terminal, window, cx)
-            })
-            .ok();
-        let Some(task) = task else { return };
-        cx.spawn_in(window, async move |this, cx| {
-            if let Some(Ok(_)) = task.await {
-                this.update_in(cx, |this, window, cx| {
-                    this.reset(window, cx);
-                })
-                .ok();
-            }
-        })
-        .detach()
-    }
-
-    fn render_not_installed(
+    fn render_unsupported(
         &self,
-        existing_version: Option<(&SharedString, &SharedString)>,
-        window: &mut Window,
+        path: &SharedString,
+        version: &SharedString,
+        minimum_version: &SharedString,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let install_command = self.agent.install_command().unwrap_or_default();
-
-        self.install_command_markdown.update(cx, |markdown, cx| {
-            if !markdown.source().contains(&install_command) {
-                markdown.replace(format!("```\n{}\n```", install_command), cx);
-            }
-        });
-
-        let (heading_label, description_label, button_label) =
-            if let Some((path, version)) = existing_version {
-                (
-                    format!("Upgrade {} to work with Zed", self.agent.name()),
-                    if version.is_empty() {
-                        format!(
-                            "Currently using {}, which does not report a valid --version",
-                            path,
-                        )
-                    } else {
-                        format!(
-                            "Currently using {}, which is only version {}",
-                            path, version
-                        )
-                    },
-                    format!("Upgrade {}", self.agent.name()),
+        let (heading_label, description_label) = (
+            format!("Upgrade {} to work with Zed", self.agent.name()),
+            if version.is_empty() {
+                format!(
+                    "Currently using {}, which does not report a valid --version",
+                    path,
                 )
             } else {
-                (
-                    format!("Get Started with {} in Zed", self.agent.name()),
-                    "Use Google's new coding agent directly in Zed.".to_string(),
-                    format!("Install {}", self.agent.name()),
+                format!(
+                    "Currently using {}, which is only version {} (need at least {minimum_version})",
+                    path, version
                 )
-            };
+            },
+        );
 
         v_flex()
             .w_full()
@@ -2973,34 +3087,6 @@ impl AcpThreadView {
                         .color(Color::Muted),
                 ),
             )
-            .child(
-                Button::new("install_gemini", button_label)
-                    .full_width()
-                    .size(ButtonSize::Medium)
-                    .style(ButtonStyle::Tinted(TintColor::Accent))
-                    .label_size(LabelSize::Small)
-                    .icon(IconName::TerminalGhost)
-                    .icon_color(Color::Muted)
-                    .icon_size(IconSize::Small)
-                    .icon_position(IconPosition::Start)
-                    .on_click(cx.listener(|this, _, window, cx| this.install_agent(window, cx))),
-            )
-            .child(
-                Label::new("Or, run the following command in your terminal:")
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-            )
-            .child(MarkdownElement::new(
-                self.install_command_markdown.clone(),
-                default_markdown_style(false, false, window, cx),
-            ))
-            .when_some(existing_version, |el, (path, _)| {
-                el.child(
-                    Label::new(format!("If this does not work you will need to upgrade manually, or uninstall your existing version from {}", path))
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                )
-            })
             .into_any_element()
     }
 
@@ -3023,7 +3109,12 @@ impl AcpThreadView {
         let active_color = cx.theme().colors().element_selected;
         let bg_edit_files_disclosure = editor_bg_color.blend(active_color.opacity(0.3));
 
-        let pending_edits = thread.has_pending_edit_tool_calls();
+        // Temporarily always enable ACP edit controls. This is temporary, to lessen the
+        // impact of a nasty bug that causes them to sometimes be disabled when they shouldn't
+        // be, which blocks you from being able to accept or reject edits. This switches the
+        // bug to be that sometimes it's enabled when it shouldn't be, which at least doesn't
+        // block you from using the panel.
+        let pending_edits = false;
 
         v_flex()
             .mt_1()
@@ -3176,13 +3267,7 @@ impl AcpThreadView {
                             acp::PlanEntryStatus::InProgress => Icon::new(IconName::TodoProgress)
                                 .size(IconSize::Small)
                                 .color(Color::Accent)
-                                .with_animation(
-                                    "running",
-                                    Animation::new(Duration::from_secs(2)).repeat(),
-                                    |icon, delta| {
-                                        icon.transform(Transformation::rotate(percentage(delta)))
-                                    },
-                                )
+                                .with_rotate_animation(2)
                                 .into_any_element(),
                             acp::PlanEntryStatus::Completed => Icon::new(IconName::TodoComplete)
                                 .size(IconSize::Small)
@@ -4036,7 +4121,7 @@ impl AcpThreadView {
         workspace: Entity<Workspace>,
         window: &mut Window,
         cx: &mut App,
-    ) -> Task<anyhow::Result<()>> {
+    ) -> Task<Result<()>> {
         let markdown_language_task = workspace
             .read(cx)
             .app_state()
@@ -4922,18 +5007,6 @@ impl AcpThreadView {
             }))
     }
 
-    fn reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.thread_state = Self::initial_state(
-            self.agent.clone(),
-            None,
-            self.workspace.clone(),
-            self.project.clone(),
-            window,
-            cx,
-        );
-        cx.notify();
-    }
-
     pub fn delete_history_entry(&mut self, entry: HistoryEntry, cx: &mut Context<Self>) {
         let task = match entry {
             HistoryEntry::AcpThread(thread) => self.history_store.update(cx, |history, cx| {
@@ -4951,11 +5024,7 @@ fn loading_contents_spinner(size: IconSize) -> AnyElement {
     Icon::new(IconName::LoadCircle)
         .size(size)
         .color(Color::Accent)
-        .with_animation(
-            "load_context_circle",
-            Animation::new(Duration::from_secs(3)).repeat(),
-            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-        )
+        .with_rotate_animation(3)
         .into_any_element()
 }
 
@@ -5489,22 +5558,10 @@ pub(crate) mod tests {
             "Test".into()
         }
 
-        fn empty_state_headline(&self) -> SharedString {
-            "Test".into()
-        }
-
-        fn empty_state_message(&self) -> SharedString {
-            "Test".into()
-        }
-
-        fn install_command(&self) -> Option<&'static str> {
-            None
-        }
-
         fn connect(
             &self,
             _root_dir: &Path,
-            _project: &Entity<Project>,
+            _delegate: AgentServerDelegate,
             _cx: &mut App,
         ) -> Task<gpui::Result<Rc<dyn AgentConnection>>> {
             Task::ready(Ok(Rc::new(self.connection.clone())))
@@ -5538,6 +5595,7 @@ pub(crate) mod tests {
                         audio: true,
                         embedded_context: true,
                     }),
+                    vec![],
                     cx,
                 )
             })))

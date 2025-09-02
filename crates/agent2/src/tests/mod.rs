@@ -950,6 +950,7 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
         paths::settings_file(),
         json!({
             "agent": {
+                "always_allow_tool_actions": true,
                 "profiles": {
                     "test": {
                         "name": "Test Profile",
@@ -1451,13 +1452,12 @@ async fn test_refusal(cx: &mut TestAppContext) {
         );
     });
 
-    // If the model refuses to continue, the thread should truncate back to before the user message.
+    // If the model refuses to continue, the thread should remove all the messages after the last user message.
     fake_model
         .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::Refusal));
     let events = events.collect::<Vec<_>>().await;
     assert_eq!(stop_events(events), vec![acp::StopReason::Refusal]);
     thread.read_with(cx, |thread, _| {
-        // The thread should be empty after truncating the refused message
         assert_eq!(thread.to_markdown(), "");
     });
 }

@@ -42,7 +42,7 @@ rpc.workspace = true
 schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
-settings_ui.workspace = true
+keymap_editor.workspace = true
 smallvec.workspace = true
 story = { workspace = true, optional = true }
 telemetry.workspace = true
