@@ -12854,6 +12854,21 @@ pub enum CompletionDocumentation {
     },
 }
 
+impl CompletionDocumentation {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn text(&self) -> SharedString {
+        match self {
+            CompletionDocumentation::Undocumented => "".into(),
+            CompletionDocumentation::SingleLine(s) => s.clone(),
+            CompletionDocumentation::MultiLinePlainText(s) => s.clone(),
+            CompletionDocumentation::MultiLineMarkdown(s) => s.clone(),
+            CompletionDocumentation::SingleLineAndMultiLinePlainText { single_line, .. } => {
+                single_line.clone()
+            }
+        }
+    }
+}
+
 impl From<lsp::Documentation> for CompletionDocumentation {
     fn from(docs: lsp::Documentation) -> Self {
         match docs {
