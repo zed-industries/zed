@@ -1,3 +1,4 @@
+use heck::{ToSnakeCase as _, ToTitleCase as _};
 use proc_macro2::TokenStream;
 use quote::{ToTokens, quote};
 use syn::{Data, DeriveInput, LitStr, Token, parse_macro_input};
@@ -59,9 +60,8 @@ pub fn derive_settings_ui(input: proc_macro::TokenStream) -> proc_macro::TokenSt
 
     let ui_item_fn_body = generate_ui_item_body(group_name.as_ref(), path_name.as_ref(), &input);
 
-    // todo(settings_ui): Reformat title to be title case with spaces if group name not present,
-    // and make group name optional, repurpose group as tag indicating item is group
-    let title = group_name.unwrap_or(input.ident.to_string());
+    // todo(settings_ui): make group name optional, repurpose group as tag indicating item is group, and have "title" tag for custom title
+    let title = group_name.unwrap_or(input.ident.to_string().to_title_case());
 
     let ui_entry_fn_body = map_ui_item_to_entry(path_name.as_deref(), &title, quote! { Self });
 
@@ -154,7 +154,7 @@ fn generate_ui_item_body(
                     )
                 })
                 // todo(settings_ui): Re-format field name as nice title, and support setting different title with attr
-                .map(|(name, ty)| map_ui_item_to_entry(Some(&name), &name, ty));
+                .map(|(name, ty)| map_ui_item_to_entry(Some(&name), &name.to_title_case(), ty));
 
             quote! {
                 settings::SettingsUiItem::Group(settings::SettingsUiItemGroup{ items: vec![#(#fields),*] })
@@ -162,14 +162,15 @@ fn generate_ui_item_body(
         }
         (None, _, Data::Enum(data_enum)) => {
             let mut lowercase = false;
+            let mut snake_case = false;
             for attr in &input.attrs {
                 if attr.path().is_ident("serde") {
                     attr.parse_nested_meta(|meta| {
                         if meta.path.is_ident("rename_all") {
                             meta.input.parse::<Token![=]>()?;
                             let lit = meta.input.parse::<LitStr>()?.value();
-                            // todo(settings_ui) snake case
-                            lowercase = lit == "lowercase" || lit == "snake_case";
+                            lowercase = lit == "lowercase";
+                            snake_case = lit == "snake_case";
                         }
                         Ok(())
                     })
@@ -181,20 +182,27 @@ fn generate_ui_item_body(
             let variants = data_enum.variants.iter().map(|variant| {
                 let string = variant.ident.clone().to_string();
 
-                if lowercase {
+                let title = string.to_title_case();
+                let string = if lowercase {
                     string.to_lowercase()
+                } else if snake_case {
+                    string.to_snake_case()
                 } else {
                     string
-                }
+                };
+
+                (string, title)
             });
+
+            let (variants, labels): (Vec<_>, Vec<_>) = variants.unzip();
 
             if length > 6 {
                 quote! {
-                    settings::SettingsUiItem::Single(settings::SettingsUiItemSingle::DropDown(&[#(#variants),*]))
+                    settings::SettingsUiItem::Single(settings::SettingsUiItemSingle::DropDown{ variants: &[#(#variants),*], labels: &[#(#labels),*] })
                 }
             } else {
                 quote! {
-                    settings::SettingsUiItem::Single(settings::SettingsUiItemSingle::ToggleGroup(&[#(#variants),*]))
+                    settings::SettingsUiItem::Single(settings::SettingsUiItemSingle::ToggleGroup{ variants: &[#(#variants),*], labels: &[#(#labels),*] })
                 }
             }
         }

@@ -24,7 +24,6 @@ pub trait SettingsUi {
 }
 
 pub struct SettingsUiEntry {
-    // todo(settings_ui): move this back here once there isn't a None variant
     /// The path in the settings JSON file for this setting. Relative to parent
     /// None implies `#[serde(flatten)]` or `Settings::KEY.is_none()` for top level settings
     pub path: Option<&'static str>,
@@ -36,9 +35,19 @@ pub enum SettingsUiItemSingle {
     SwitchField,
     /// A numeric stepper for a specific type of number
     NumericStepper(NumType),
-    ToggleGroup(&'static [&'static str]),
+    ToggleGroup {
+        /// Must be the same length as `labels`
+        variants: &'static [&'static str],
+        /// Must be the same length as `variants`
+        labels: &'static [&'static str],
+    },
     /// This should be used when toggle group size > 6
-    DropDown(&'static [&'static str]),
+    DropDown {
+        /// Must be the same length as `labels`
+        variants: &'static [&'static str],
+        /// Must be the same length as `variants`
+        labels: &'static [&'static str],
+    },
     Custom(Box<dyn Fn(SettingsValue<serde_json::Value>, &mut Window, &mut App) -> AnyElement>),
 }
 
