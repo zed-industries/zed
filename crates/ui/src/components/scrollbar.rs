@@ -46,7 +46,7 @@ pub mod scrollbars {
 
     impl ShowScrollbar {
         pub(super) fn show(&self) -> bool {
-            !matches!(self, Self::Never)
+            *self != Self::Never
         }
 
         pub(super) fn should_auto_hide(&self, cx: &mut App) -> bool {
@@ -297,7 +297,6 @@ impl WithScrollbar for UniformList {
     }
 }
 
-#[derive(PartialEq, Eq)]
 pub enum ScrollAxes {
     Horizontal,
     Vertical,
@@ -327,11 +326,11 @@ enum ReservedSpace {
 
 impl ReservedSpace {
     fn is_visible(&self) -> bool {
-        !matches!(self, ReservedSpace::None)
+        *self != ReservedSpace::None
     }
 
     fn needs_scroll_track(&self) -> bool {
-        matches!(self, ReservedSpace::Track)
+        *self == ReservedSpace::Track
     }
 }
 
@@ -479,12 +478,12 @@ impl VisibilityState {
     }
 
     fn is_visible(&self) -> bool {
-        matches!(self, VisibilityState::Visible)
+        *self == VisibilityState::Visible
     }
 
     #[inline]
     fn is_disabled(&self) -> bool {
-        matches!(self, VisibilityState::Disabled)
+        *self == VisibilityState::Disabled
     }
 }
 
