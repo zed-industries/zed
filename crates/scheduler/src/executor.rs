@@ -1,7 +1,15 @@
 use crate::{Scheduler, SessionId, Timer};
-use async_task::Task;
-use std::{future::Future, marker::PhantomData, rc::Rc, sync::Arc, time::Duration};
+use std::{
+    future::Future,
+    marker::PhantomData,
+    pin::Pin,
+    rc::Rc,
+    sync::Arc,
+    task::{Context, Poll},
+    time::Duration,
+};
 
+#[derive(Clone)]
 pub struct ForegroundExecutor {
     session_id: SessionId,
     scheduler: Arc<dyn Scheduler>,
@@ -20,7 +28,7 @@ impl ForegroundExecutor {
             scheduler.schedule_foreground(session_id, runnable);
         });
         runnable.schedule();
-        task
+        Task(TaskState::Spawned(task))
     }
 }
 
@@ -59,7 +67,7 @@ impl BackgroundExecutor {
             scheduler.schedule_background(runnable);
         });
         runnable.schedule();
-        task
+        Task(TaskState::Spawned(task))
     }
 
     pub fn block_on<Fut: Future>(&self, future: Fut) -> Fut::Output {
@@ -76,5 +84,50 @@ impl BackgroundExecutor {
 
     pub fn timer(&self, duration: Duration) -> Timer {
         self.scheduler.timer(duration)
+    }
+}
+
+/// Task is a primitive that allows work to happen in the background.
+///
+/// It implements [`Future`] so you can `.await` on it.
+///
+/// If you drop a task it will be cancelled immediately. Calling [`Task::detach`] allows
+/// the task to continue running, but with no way to return a value.
+#[must_use]
+#[derive(Debug)]
+pub struct Task<T>(TaskState<T>);
+
+#[derive(Debug)]
+enum TaskState<T> {
+    /// A task that is ready to return a value
+    Ready(Option<T>),
+
+    /// A task that is currently running.
+    Spawned(async_task::Task<T>),
+}
+
+impl<T> Task<T> {
+    /// Creates a new task that will resolve with the value
+    pub fn ready(val: T) -> Self {
+        Task(TaskState::Ready(Some(val)))
+    }
+
+    /// Detaching a task runs it to completion in the background
+    pub fn detach(self) {
+        match self {
+            Task(TaskState::Ready(_)) => {}
+            Task(TaskState::Spawned(task)) => task.detach(),
+        }
+    }
+}
+
+impl<T> Future for Task<T> {
+    type Output = T;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        match unsafe { self.get_unchecked_mut() } {
+            Task(TaskState::Ready(val)) => Poll::Ready(val.take().unwrap()),
+            Task(TaskState::Spawned(task)) => Pin::new(task).poll(cx),
+        }
     }
 }
