@@ -190,10 +190,10 @@ impl ErrorExt for RpcError {
     fn error_tag(&self, k: &str) -> Option<&str> {
         for tag in &self.tags {
             let mut parts = tag.split('=');
-            if let Some(key) = parts.next() {
-                if key == k {
-                    return parts.next();
-                }
+            if let Some(key) = parts.next()
+                && key == k
+            {
+                return parts.next();
             }
         }
         None

@@ -71,6 +71,7 @@ message RejoinedProject {
     repeated WorktreeMetadata worktrees = 2;
     repeated Collaborator collaborators = 3;
     repeated LanguageServer language_servers = 4;
+    repeated string language_server_capabilities = 5;
 }
 
 message LeaveRoom {}
@@ -199,6 +200,7 @@ message JoinProjectResponse {
     repeated WorktreeMetadata worktrees = 2;
     repeated Collaborator collaborators = 3;
     repeated LanguageServer language_servers = 4;
+    repeated string language_server_capabilities = 8;
     ChannelRole role = 6;
     reserved 7;
 }

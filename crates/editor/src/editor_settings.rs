@@ -6,7 +6,7 @@ use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, VsCodeSettings};
+use settings::{Settings, SettingsSources, SettingsUi, VsCodeSettings};
 use util::serde::default_true;
 
 /// Imports from the VSCode settings at
@@ -17,9 +17,11 @@ pub struct EditorSettings {
     pub cursor_shape: Option<CursorShape>,
     pub current_line_highlight: CurrentLineHighlight,
     pub selection_highlight: bool,
+    pub rounded_selection: bool,
     pub lsp_highlight_debounce: u64,
     pub hover_popover_enabled: bool,
     pub hover_popover_delay: u64,
+    pub status_bar: StatusBar,
     pub toolbar: Toolbar,
     pub scrollbar: Scrollbar,
     pub minimap: Minimap,
@@ -36,6 +38,7 @@ pub struct EditorSettings {
     pub multi_cursor_modifier: MultiCursorModifier,
     pub redact_private_values: bool,
     pub expand_excerpt_lines: u32,
+    pub excerpt_context_lines: u32,
     pub middle_click_paste: bool,
     #[serde(default)]
     pub double_click_in_multibuffer: DoubleClickInMultibuffer,
@@ -54,6 +57,7 @@ pub struct EditorSettings {
     pub inline_code_actions: bool,
     pub drag_and_drop_selection: DragAndDropSelection,
     pub lsp_document_colors: DocumentColorsRenderMode,
+    pub minimum_contrast_for_highlights: f32,
 }
 
 /// How to render LSP `textDocument/documentColor` colors in the editor.
@@ -123,6 +127,18 @@ pub struct JupyterContent {
     ///
     /// Default: true
     pub enabled: Option<bool>,
+}
+
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct StatusBar {
+    /// Whether to display the active language button in the status bar.
+    ///
+    /// Default: true
+    pub active_language_button: bool,
+    /// Whether to show the cursor position button in the status bar.
+    ///
+    /// Default: true
+    pub cursor_position_button: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -399,7 +415,7 @@ pub enum SnippetSortOrder {
     None,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
 pub struct EditorSettingsContent {
     /// Whether the cursor blinks in the editor.
     ///
@@ -426,6 +442,10 @@ pub struct EditorSettingsContent {
     ///
     /// Default: true
     pub selection_highlight: Option<bool>,
+    /// Whether the text selection should have rounded corners.
+    ///
+    /// Default: true
+    pub rounded_selection: Option<bool>,
     /// The debounce delay before querying highlights from the language
     /// server based on the current cursor location.
     ///
@@ -440,6 +460,8 @@ pub struct EditorSettingsContent {
     ///
     /// Default: 300
     pub hover_popover_delay: Option<u64>,
+    /// Status bar related settings
+    pub status_bar: Option<StatusBarContent>,
     /// Toolbar related settings
     pub toolbar: Option<ToolbarContent>,
     /// Scrollbar related settings
@@ -500,6 +522,11 @@ pub struct EditorSettingsContent {
     /// Default: 3
     pub expand_excerpt_lines: Option<u32>,
 
+    /// How many lines of context to provide in multibuffer excerpts by default
+    ///
+    /// Default: 2
+    pub excerpt_context_lines: Option<u32>,
+
     /// Whether to enable middle-click paste on Linux
     ///
     /// Default: true
@@ -529,6 +556,12 @@ pub struct EditorSettingsContent {
     ///
     /// Default: false
     pub show_signature_help_after_edits: Option<bool>,
+    /// The minimum APCA perceptual contrast to maintain when
+    /// rendering text over highlight backgrounds in the editor.
+    ///
+    /// Values range from 0 to 106. Set to 0 to disable adjustments.
+    /// Default: 45
+    pub minimum_contrast_for_highlights: Option<f32>,
 
     /// Whether to follow-up empty go to definition responses from the language server or not.
     /// `FindAllReferences` allows to look up references of the same symbol instead.
@@ -565,6 +598,19 @@ pub struct EditorSettingsContent {
     ///
     /// Default: [`DocumentColorsRenderMode::Inlay`]
     pub lsp_document_colors: Option<DocumentColorsRenderMode>,
+}
+
+// Status bar related settings
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct StatusBarContent {
+    /// Whether to display the active language button in the status bar.
+    ///
+    /// Default: true
+    pub active_language_button: Option<bool>,
+    /// Whether to show the cursor position button in the status bar.
+    ///
+    /// Default: true
+    pub cursor_position_button: Option<bool>,
 }
 
 // Toolbar related settings
@@ -753,6 +799,7 @@ impl Settings for EditorSettings {
             "editor.selectionHighlight",
             &mut current.selection_highlight,
         );
+        vscode.bool_setting("editor.roundedSelection", &mut current.rounded_selection);
         vscode.bool_setting("editor.hover.enabled", &mut current.hover_popover_enabled);
         vscode.u64_setting("editor.hover.delay", &mut current.hover_popover_delay);
 
@@ -782,10 +829,8 @@ impl Settings for EditorSettings {
             if gutter.line_numbers.is_some() {
                 old_gutter.line_numbers = gutter.line_numbers
             }
-        } else {
-            if gutter != GutterContent::default() {
-                current.gutter = Some(gutter)
-            }
+        } else if gutter != GutterContent::default() {
+            current.gutter = Some(gutter)
         }
         if let Some(b) = vscode.read_bool("editor.scrollBeyondLastLine") {
             current.scroll_beyond_last_line = Some(if b {

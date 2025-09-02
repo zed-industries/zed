@@ -65,7 +65,7 @@ impl TextSystem {
             font_runs_pool: Mutex::default(),
             fallback_font_stack: smallvec![
                 // TODO: Remove this when Linux have implemented setting fallbacks.
-                font("Zed Plex Mono"),
+                font(".ZedMono"),
                 font("Helvetica"),
                 font("Segoe UI"),  // Windows
                 font("Cantarell"), // Gnome
@@ -96,7 +96,7 @@ impl TextSystem {
     }
 
     /// Get the FontId for the configure font family and style.
-    pub fn font_id(&self, font: &Font) -> Result<FontId> {
+    fn font_id(&self, font: &Font) -> Result<FontId> {
         fn clone_font_id_result(font_id: &Result<FontId>) -> Result<FontId> {
             match font_id {
                 Ok(font_id) => Ok(*font_id),
@@ -366,15 +366,14 @@ impl WindowTextSystem {
 
         let mut decoration_runs = SmallVec::<[DecorationRun; 32]>::new();
         for run in runs {
-            if let Some(last_run) = decoration_runs.last_mut() {
-                if last_run.color == run.color
-                    && last_run.underline == run.underline
-                    && last_run.strikethrough == run.strikethrough
-                    && last_run.background_color == run.background_color
-                {
-                    last_run.len += run.len as u32;
-                    continue;
-                }
+            if let Some(last_run) = decoration_runs.last_mut()
+                && last_run.color == run.color
+                && last_run.underline == run.underline
+                && last_run.strikethrough == run.strikethrough
+                && last_run.background_color == run.background_color
+            {
+                last_run.len += run.len as u32;
+                continue;
             }
             decoration_runs.push(DecorationRun {
                 len: run.len as u32,
@@ -414,9 +413,10 @@ impl WindowTextSystem {
         let mut wrapped_lines = 0;
 
         let mut process_line = |line_text: SharedString| {
+            font_runs.clear();
             let line_end = line_start + line_text.len();
 
-            let mut last_font: Option<Font> = None;
+            let mut last_font: Option<FontId> = None;
             let mut decoration_runs = SmallVec::<[DecorationRun; 32]>::new();
             let mut run_start = line_start;
             while run_start < line_end {
@@ -426,23 +426,14 @@ impl WindowTextSystem {
 
                 let run_len_within_line = cmp::min(line_end, run_start + run.len) - run_start;
 
-                if last_font == Some(run.font.clone()) {
-                    font_runs.last_mut().unwrap().len += run_len_within_line;
-                } else {
-                    last_font = Some(run.font.clone());
-                    font_runs.push(FontRun {
-                        len: run_len_within_line,
-                        font_id: self.resolve_font(&run.font),
-                    });
-                }
-
-                if decoration_runs.last().map_or(false, |last_run| {
-                    last_run.color == run.color
-                        && last_run.underline == run.underline
-                        && last_run.strikethrough == run.strikethrough
-                        && last_run.background_color == run.background_color
-                }) {
-                    decoration_runs.last_mut().unwrap().len += run_len_within_line as u32;
+                let decoration_changed = if let Some(last_run) = decoration_runs.last_mut()
+                    && last_run.color == run.color
+                    && last_run.underline == run.underline
+                    && last_run.strikethrough == run.strikethrough
+                    && last_run.background_color == run.background_color
+                {
+                    last_run.len += run_len_within_line as u32;
+                    false
                 } else {
                     decoration_runs.push(DecorationRun {
                         len: run_len_within_line as u32,
@@ -450,6 +441,21 @@ impl WindowTextSystem {
                         background_color: run.background_color,
                         underline: run.underline,
                         strikethrough: run.strikethrough,
+                    });
+                    true
+                };
+
+                if let Some(font_run) = font_runs.last_mut()
+                    && Some(font_run.font_id) == last_font
+                    && !decoration_changed
+                {
+                    font_run.len += run_len_within_line;
+                } else {
+                    let font_id = self.resolve_font(&run.font);
+                    last_font = Some(font_id);
+                    font_runs.push(FontRun {
+                        len: run_len_within_line,
+                        font_id,
                     });
                 }
 
@@ -485,21 +491,19 @@ impl WindowTextSystem {
                     runs.next();
                 }
             }
-
-            font_runs.clear();
         };
 
         let mut split_lines = text.split('\n');
         let mut processed = false;
 
-        if let Some(first_line) = split_lines.next() {
-            if let Some(second_line) = split_lines.next() {
-                processed = true;
-                process_line(first_line.to_string().into());
-                process_line(second_line.to_string().into());
-                for line_text in split_lines {
-                    process_line(line_text.to_string().into());
-                }
+        if let Some(first_line) = split_lines.next()
+            && let Some(second_line) = split_lines.next()
+        {
+            processed = true;
+            process_line(first_line.to_string().into());
+            process_line(second_line.to_string().into());
+            for line_text in split_lines {
+                process_line(line_text.to_string().into());
             }
         }
 
@@ -520,37 +524,54 @@ impl WindowTextSystem {
     /// Subsets of the line can be styled independently with the `runs` parameter.
     /// Generally, you should prefer to use `TextLayout::shape_line` instead, which
     /// can be painted directly.
-    pub fn layout_line<Text>(
+    pub fn layout_line(
         &self,
-        text: Text,
+        text: &str,
         font_size: Pixels,
         runs: &[TextRun],
         force_width: Option<Pixels>,
-    ) -> Arc<LineLayout>
-    where
-        Text: AsRef<str>,
-        SharedString: From<Text>,
-    {
+    ) -> Arc<LineLayout> {
+        let mut last_run = None::<&TextRun>;
+        let mut last_font: Option<FontId> = None;
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
+        font_runs.clear();
+
         for run in runs.iter() {
-            let font_id = self.resolve_font(&run.font);
-            if let Some(last_run) = font_runs.last_mut() {
-                if last_run.font_id == font_id {
-                    last_run.len += run.len;
-                    continue;
-                }
+            let decoration_changed = if let Some(last_run) = last_run
+                && last_run.color == run.color
+                && last_run.underline == run.underline
+                && last_run.strikethrough == run.strikethrough
+            // we do not consider differing background color relevant, as it does not affect glyphs
+            // && last_run.background_color == run.background_color
+            {
+                false
+            } else {
+                last_run = Some(run);
+                true
+            };
+
+            if let Some(font_run) = font_runs.last_mut()
+                && Some(font_run.font_id) == last_font
+                && !decoration_changed
+            {
+                font_run.len += run.len;
+            } else {
+                let font_id = self.resolve_font(&run.font);
+                last_font = Some(font_id);
+                font_runs.push(FontRun {
+                    len: run.len,
+                    font_id,
+                });
             }
-            font_runs.push(FontRun {
-                len: run.len,
-                font_id,
-            });
         }
 
-        let layout =
-            self.line_layout_cache
-                .layout_line_internal(text, font_size, &font_runs, force_width);
+        let layout = self.line_layout_cache.layout_line(
+            &SharedString::new(text),
+            font_size,
+            &font_runs,
+            force_width,
+        );
 
-        font_runs.clear();
         self.font_runs_pool.lock().push(font_runs);
 
         layout
@@ -842,5 +863,18 @@ impl FontMetrics {
     /// Returns the outer limits of the area that the font covers in pixels.
     pub fn bounding_box(&self, font_size: Pixels) -> Bounds<Pixels> {
         (self.bounding_box / self.units_per_em as f32 * font_size.0).map(px)
+    }
+}
+
+#[allow(unused)]
+pub(crate) fn font_name_with_fallbacks<'a>(name: &'a str, system: &'a str) -> &'a str {
+    // Note: the "Zed Plex" fonts were deprecated as we are not allowed to use "Plex"
+    // in a derived font name. They are essentially indistinguishable from IBM Plex/Lilex,
+    // and so retained here for backward compatibility.
+    match name {
+        ".SystemUIFont" => system,
+        ".ZedSans" | "Zed Plex Sans" => "IBM Plex Sans",
+        ".ZedMono" | "Zed Plex Mono" => "Lilex",
+        _ => name,
     }
 }

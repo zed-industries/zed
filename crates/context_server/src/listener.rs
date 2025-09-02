@@ -14,6 +14,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{json, value::RawValue};
 use smol::stream::StreamExt;
 use std::{
+    any::TypeId,
     cell::RefCell,
     path::{Path, PathBuf},
     rc::Rc,
@@ -77,29 +78,40 @@ impl McpServer {
                 socket_path,
                 _server_task: server_task,
                 tools,
-                handlers: handlers,
+                handlers,
             })
         })
     }
 
     pub fn add_tool<T: McpServerTool + Clone + 'static>(&mut self, tool: T) {
-        let output_schema = schemars::schema_for!(T::Output);
-        let unit_schema = schemars::schema_for!(());
+        let mut settings = schemars::generate::SchemaSettings::draft07();
+        settings.inline_subschemas = true;
+        let mut generator = settings.into_generator();
+
+        let input_schema = generator.root_schema_for::<T::Input>();
+
+        let description = input_schema
+            .get("description")
+            .and_then(|desc| desc.as_str())
+            .map(|desc| desc.to_string());
+        debug_assert!(
+            description.is_some(),
+            "Input schema struct must include a doc comment for the tool description"
+        );
 
         let registered_tool = RegisteredTool {
             tool: Tool {
                 name: T::NAME.into(),
-                description: Some(tool.description().into()),
-                input_schema: schemars::schema_for!(T::Input).into(),
-                output_schema: if output_schema == unit_schema {
+                description,
+                input_schema: input_schema.into(),
+                output_schema: if TypeId::of::<T::Output>() == TypeId::of::<()>() {
                     None
                 } else {
-                    Some(output_schema.into())
+                    Some(generator.root_schema_for::<T::Output>().into())
                 },
                 annotations: Some(tool.annotations()),
             },
             handler: Box::new({
-                let tool = tool.clone();
                 move |input_value, cx| {
                     let input = match input_value {
                         Some(input) => serde_json::from_value(input),
@@ -311,12 +323,12 @@ impl McpServer {
                     Self::send_err(
                         request_id,
                         format!("Tool not found: {}", params.name),
-                        &outgoing_tx,
+                        outgoing_tx,
                     );
                 }
             }
             Err(err) => {
-                Self::send_err(request_id, err.to_string(), &outgoing_tx);
+                Self::send_err(request_id, err.to_string(), outgoing_tx);
             }
         }
     }
@@ -395,8 +407,6 @@ pub trait McpServerTool {
 
     const NAME: &'static str;
 
-    fn description(&self) -> &'static str;
-
     fn annotations(&self) -> ToolAnnotations {
         ToolAnnotations {
             title: None,
@@ -414,6 +424,7 @@ pub trait McpServerTool {
     ) -> impl Future<Output = Result<ToolResponse<Self::Output>>>;
 }
 
+#[derive(Debug)]
 pub struct ToolResponse<T> {
     pub content: Vec<ToolResponseContent>,
     pub structured_content: T,

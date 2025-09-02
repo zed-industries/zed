@@ -77,7 +77,7 @@ impl Render for IconButtonStory {
 
         let with_tooltip_button = StoryItem::new(
             "With `tooltip`",
-            IconButton::new("with_tooltip_button", IconName::MessageBubbles)
+            IconButton::new("with_tooltip_button", IconName::Chat)
                 .tooltip(Tooltip::text("Open messages")),
         )
         .description("Displays an icon button that has a tooltip when hovered.")
@@ -90,7 +90,7 @@ impl Render for IconButtonStory {
 
         let selected_with_tooltip_button = StoryItem::new(
             "Selected with `tooltip`",
-            IconButton::new("selected_with_tooltip_button", IconName::InlayHint)
+            IconButton::new("selected_with_tooltip_button", IconName::CaseSensitive)
                 .toggle_state(true)
                 .tooltip(Tooltip::text("Toggle inlay hints")),
         )

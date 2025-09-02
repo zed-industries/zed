@@ -1,13 +1,11 @@
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering::SeqCst;
-#[cfg(any(test, feature = "test-support"))]
-use std::time::Duration;
-
-#[cfg(any(test, feature = "test-support"))]
-use futures::Future;
-
-#[cfg(any(test, feature = "test-support"))]
-use smol::future::FutureExt;
+use crate::{BackgroundExecutor, Task};
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::atomic::{AtomicUsize, Ordering::SeqCst},
+    task,
+    time::Duration,
+};
 
 pub use util::*;
 
@@ -60,18 +58,63 @@ pub trait FluentBuilder {
     where
         Self: Sized,
     {
-        self.map(|this| {
-            if let Some(_) = option {
-                this
-            } else {
-                then(this)
-            }
-        })
+        self.map(|this| if option.is_some() { this } else { then(this) })
+    }
+}
+
+/// Extensions for Future types that provide additional combinators and utilities.
+pub trait FutureExt {
+    /// Requires a Future to complete before the specified duration has elapsed.
+    /// Similar to tokio::timeout.
+    fn with_timeout(self, timeout: Duration, executor: &BackgroundExecutor) -> WithTimeout<Self>
+    where
+        Self: Sized;
+}
+
+impl<T: Future> FutureExt for T {
+    fn with_timeout(self, timeout: Duration, executor: &BackgroundExecutor) -> WithTimeout<Self>
+    where
+        Self: Sized,
+    {
+        WithTimeout {
+            future: self,
+            timer: executor.timer(timeout),
+        }
+    }
+}
+
+pub struct WithTimeout<T> {
+    future: T,
+    timer: Task<()>,
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("Timed out before future resolved")]
+/// Error returned by with_timeout when the timeout duration elapsed before the future resolved
+pub struct Timeout;
+
+impl<T: Future> Future for WithTimeout<T> {
+    type Output = Result<T::Output, Timeout>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut task::Context) -> task::Poll<Self::Output> {
+        // SAFETY: the fields of Timeout are private and we never move the future ourselves
+        // And its already pinned since we are being polled (all futures need to be pinned to be polled)
+        let this = unsafe { self.get_unchecked_mut() };
+        let future = unsafe { Pin::new_unchecked(&mut this.future) };
+        let timer = unsafe { Pin::new_unchecked(&mut this.timer) };
+
+        if let task::Poll::Ready(output) = future.poll(cx) {
+            task::Poll::Ready(Ok(output))
+        } else if timer.poll(cx).is_ready() {
+            task::Poll::Ready(Err(Timeout))
+        } else {
+            task::Poll::Pending
+        }
     }
 }
 
 #[cfg(any(test, feature = "test-support"))]
-pub async fn timeout<F, T>(timeout: Duration, f: F) -> Result<T, ()>
+pub async fn smol_timeout<F, T>(timeout: Duration, f: F) -> Result<T, ()>
 where
     F: Future<Output = T>,
 {
@@ -80,7 +123,7 @@ where
         Err(())
     };
     let future = async move { Ok(f.await) };
-    timer.race(future).await
+    smol::future::FutureExt::race(timer, future).await
 }
 
 /// Increment the given atomic counter if it is not zero.

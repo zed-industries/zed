@@ -1,9 +1,12 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/acp_tools",
     "crates/acp_thread",
+    "crates/action_log",
     "crates/activity_indicator",
     "crates/agent",
+    "crates/agent2",
     "crates/agent_servers",
     "crates/agent_settings",
     "crates/agent_ui",
@@ -40,6 +43,7 @@ members = [
     "crates/component",
     "crates/context_server",
     "crates/copilot",
+    "crates/crashes",
     "crates/credentials_provider",
     "crates/dap",
     "crates/dap_adapters",
@@ -50,6 +54,8 @@ members = [
     "crates/deepseek",
     "crates/diagnostics",
     "crates/docs_preprocessor",
+    "crates/edit_prediction",
+    "crates/edit_prediction_button",
     "crates/editor",
     "crates/eval",
     "crates/explorer_command_injector",
@@ -78,14 +84,12 @@ members = [
     "crates/http_client_tls",
     "crates/icons",
     "crates/image_viewer",
-    "crates/indexed_docs",
-    "crates/inline_completion",
-    "crates/inline_completion_button",
     "crates/inspector_ui",
     "crates/install_cli",
     "crates/jj",
     "crates/jj_ui",
     "crates/journal",
+    "crates/keymap_editor",
     "crates/language",
     "crates/language_extension",
     "crates/language_model",
@@ -143,6 +147,7 @@ members = [
     "crates/settings",
     "crates/settings_profile_selector",
     "crates/settings_ui",
+    "crates/settings_ui_macros",
     "crates/snippet",
     "crates/snippet_provider",
     "crates/snippets_ui",
@@ -155,6 +160,7 @@ members = [
     "crates/supermaven",
     "crates/supermaven_api",
     "crates/svg_preview",
+    "crates/system_specs",
     "crates/tab_switcher",
     "crates/task",
     "crates/tasks_ui",
@@ -182,7 +188,6 @@ members = [
     "crates/watch",
     "crates/web_search",
     "crates/web_search_providers",
-    "crates/welcome",
     "crates/workspace",
     "crates/worktree",
     "crates/x_ai",
@@ -197,7 +202,6 @@ members = [
     # Extensions
     #
 
-    "extensions/emmet",
     "extensions/glsl",
     "extensions/html",
     "extensions/proto",
@@ -226,8 +230,11 @@ edition = "2024"
 # Workspace member crates
 #
 
+acp_tools = { path = "crates/acp_tools" }
 acp_thread = { path = "crates/acp_thread" }
+action_log = { path = "crates/action_log" }
 agent = { path = "crates/agent" }
+agent2 = { path = "crates/agent2" }
 activity_indicator = { path = "crates/activity_indicator" }
 agent_ui = { path = "crates/agent_ui" }
 agent_settings = { path = "crates/agent_settings" }
@@ -266,6 +273,7 @@ command_palette_hooks = { path = "crates/command_palette_hooks" }
 component = { path = "crates/component" }
 context_server = { path = "crates/context_server" }
 copilot = { path = "crates/copilot" }
+crashes = { path = "crates/crashes" }
 credentials_provider = { path = "crates/credentials_provider" }
 dap = { path = "crates/dap" }
 dap_adapters = { path = "crates/dap_adapters" }
@@ -301,14 +309,14 @@ http_client = { path = "crates/http_client" }
 http_client_tls = { path = "crates/http_client_tls" }
 icons = { path = "crates/icons" }
 image_viewer = { path = "crates/image_viewer" }
-indexed_docs = { path = "crates/indexed_docs" }
-inline_completion = { path = "crates/inline_completion" }
-inline_completion_button = { path = "crates/inline_completion_button" }
+edit_prediction = { path = "crates/edit_prediction" }
+edit_prediction_button = { path = "crates/edit_prediction_button" }
 inspector_ui = { path = "crates/inspector_ui" }
 install_cli = { path = "crates/install_cli" }
 jj = { path = "crates/jj" }
 jj_ui = { path = "crates/jj_ui" }
 journal = { path = "crates/journal" }
+keymap_editor = { path = "crates/keymap_editor" }
 language = { path = "crates/language" }
 language_extension = { path = "crates/language_extension" }
 language_model = { path = "crates/language_model" }
@@ -358,6 +366,7 @@ remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
 reqwest_client = { path = "crates/reqwest_client" }
 rich_text = { path = "crates/rich_text" }
+rodio = { version = "0.21.1", default-features = false }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 rules_library = { path = "crates/rules_library" }
@@ -367,6 +376,7 @@ semantic_version = { path = "crates/semantic_version" }
 session = { path = "crates/session" }
 settings = { path = "crates/settings" }
 settings_ui = { path = "crates/settings_ui" }
+settings_ui_macros = { path = "crates/settings_ui_macros" }
 snippet = { path = "crates/snippet" }
 snippet_provider = { path = "crates/snippet_provider" }
 snippets_ui = { path = "crates/snippets_ui" }
@@ -378,6 +388,7 @@ streaming_diff = { path = "crates/streaming_diff" }
 sum_tree = { path = "crates/sum_tree" }
 supermaven = { path = "crates/supermaven" }
 supermaven_api = { path = "crates/supermaven_api" }
+system_specs = { path = "crates/system_specs" }
 tab_switcher = { path = "crates/tab_switcher" }
 task = { path = "crates/task" }
 tasks_ui = { path = "crates/tasks_ui" }
@@ -406,7 +417,6 @@ vim_mode_setting = { path = "crates/vim_mode_setting" }
 watch = { path = "crates/watch" }
 web_search = { path = "crates/web_search" }
 web_search_providers = { path = "crates/web_search_providers" }
-welcome = { path = "crates/welcome" }
 workspace = { path = "crates/workspace" }
 worktree = { path = "crates/worktree" }
 x_ai = { path = "crates/x_ai" }
@@ -420,8 +430,7 @@ zlog_settings = { path = "crates/zlog_settings" }
 # External crates
 #
 
-agentic-coding-protocol = "0.0.10"
-agent-client-protocol = "0.0.11"
+agent-client-protocol = { version = "0.2.0-alpha.3", features = ["unstable"] }
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", branch = "add-hush-login-flag" }
 any_vec = "0.14"
@@ -448,6 +457,7 @@ aws-sdk-bedrockruntime = { version = "1.80.0", features = [
 aws-smithy-runtime-api = { version = "1.7.4", features = ["http-1x", "client"] }
 aws-smithy-types = { version = "1.3.0", features = ["http-body-1-x"] }
 base64 = "0.22"
+bincode = "1.2.1"
 bitflags = "2.6.0"
 blade-graphics = { git = "https://github.com/kvark/blade", rev = "e0ec4e720957edd51b945b64dd85605ea54bcfe5" }
 blade-macros = { git = "https://github.com/kvark/blade", rev = "e0ec4e720957edd51b945b64dd85605ea54bcfe5" }
@@ -457,6 +467,7 @@ bytes = "1.0"
 cargo_metadata = "0.19"
 cargo_toml = "0.21"
 chrono = { version = "0.4", features = ["serde"] }
+ciborium = "0.2"
 circular-buffer = "1.0"
 clap = { version = "4.4", features = ["derive"] }
 cocoa = "0.26"
@@ -466,6 +477,7 @@ core-foundation = "0.10.0"
 core-foundation-sys = "0.8.6"
 core-video = { version = "0.4.3", features = ["metal"] }
 cpal = "0.16"
+crash-handler = "0.6"
 criterion = { version = "0.5", features = ["html_reports"] }
 ctor = "0.4.0"
 dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "1b461b310481d01e02b2603c16d7144b926339f8" }
@@ -489,6 +501,7 @@ handlebars = "4.3"
 heck = "0.5"
 heed = { version = "0.21.0", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
+human_bytes = "0.4.1"
 html5ever = "0.27.0"
 http = "1.1"
 http-body = "1.0"
@@ -510,9 +523,11 @@ libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
-lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "39f629bdd03d59abd786ed9fc27e8bca02c0c0ec" }
+lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "0874f8742fe55b4dc94308c1e3c0069710d8eeaf" }
+mach2 = "0.5"
 markup5ever_rcdom = "0.3.0"
 metal = "0.29"
+minidumper = "0.8"
 moka = { version = "0.12.10", features = ["sync"] }
 naga = { version = "25.0", features = ["wgsl-in"] }
 nanoid = "0.4"
@@ -526,6 +541,7 @@ palette = { version = "0.7.5", default-features = false, features = ["std"] }
 parking_lot = "0.12.1"
 partial-json-fixer = "0.5.3"
 parse_int = "0.9"
+pciid-parser = "0.8.0"
 pathdiff = "0.2"
 pet = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
 pet-conda = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
@@ -552,6 +568,7 @@ reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "951c77
     "charset",
     "http2",
     "macos-system-configuration",
+    "multipart",
     "rustls-tls-native-roots",
     "socks",
     "stream",
@@ -575,7 +592,9 @@ serde_json_lenient = { version = "0.2", features = [
     "preserve_order",
     "raw_value",
 ] }
+serde_path_to_error = "0.1.17"
 serde_repr = "0.1"
+serde_urlencoded = "0.7"
 sha2 = "0.10"
 shellexpand = "2.1.0"
 shlex = "1.3.0"
@@ -583,6 +602,7 @@ simplelog = "0.12.2"
 smallvec = { version = "1.6", features = ["union"] }
 smol = "2.0"
 sqlformat = "0.2"
+stacksafe = "0.1"
 streaming-iterator = "0.1"
 strsim = "0.11"
 strum = { version = "0.27.0", features = ["derive"] }
@@ -593,7 +613,7 @@ sysinfo = "0.31.0"
 take-until = "0.2.0"
 tempfile = "3.20.0"
 thiserror = "2.0.12"
-tiktoken-rs = "0.7.0"
+tiktoken-rs = { git = "https://github.com/zed-industries/tiktoken-rs", rev = "30c32a4522751699adeda0d5840c71c3b75ae73d" }
 time = { version = "0.3", features = [
     "macros",
     "parsing",
@@ -609,7 +629,7 @@ tower-http = "0.4.4"
 tree-sitter = { version = "0.25.6", features = ["wasm"] }
 tree-sitter-bash = "0.25.0"
 tree-sitter-c = "0.23"
-tree-sitter-cpp = "0.23"
+tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev = "5cb9b693cfd7bfacab1d9ff4acac1a4150700609" }
 tree-sitter-css = "0.23"
 tree-sitter-diff = "0.1.0"
 tree-sitter-elixir = "0.3"
@@ -653,21 +673,8 @@ which = "6.0.0"
 windows-core = "0.61"
 wit-component = "0.221"
 workspace-hack = "0.1.0"
+yawc = "0.2.5"
 zstd = "0.11"
-
-[workspace.dependencies.async-stripe]
-git = "https://github.com/zed-industries/async-stripe"
-rev = "3672dd4efb7181aa597bf580bf5a2f5d23db6735"
-default-features = false
-features = [
-    "runtime-tokio-hyper-rustls",
-    "billing",
-    "checkout",
-    "events",
-    # The features below are only enabled to get the `events` feature to build.
-    "chrono",
-    "connect",
-]
 
 [workspace.dependencies.windows]
 version = "0.61"
@@ -689,6 +696,7 @@ features = [
     "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Gdi",
     "Win32_Graphics_Imaging",
+    "Win32_Graphics_Hlsl",
     "Win32_Networking_WinSock",
     "Win32_Security",
     "Win32_Security_Credentials",
@@ -701,6 +709,7 @@ features = [
     "Win32_System_LibraryLoader",
     "Win32_System_Memory",
     "Win32_System_Ole",
+    "Win32_System_Performance",
     "Win32_System_Pipes",
     "Win32_System_SystemInformation",
     "Win32_System_SystemServices",
@@ -756,7 +765,7 @@ feature_flags = { codegen-units = 1 }
 file_icons = { codegen-units = 1 }
 fsevent = { codegen-units = 1 }
 image_viewer = { codegen-units = 1 }
-inline_completion_button = { codegen-units = 1 }
+edit_prediction_button = { codegen-units = 1 }
 install_cli = { codegen-units = 1 }
 journal = { codegen-units = 1 }
 lmstudio = { codegen-units = 1 }
@@ -805,37 +814,32 @@ unexpected_cfgs = { level = "allow" }
 dbg_macro = "deny"
 todo = "deny"
 
+# This is not a style lint, see https://github.com/rust-lang/rust-clippy/pull/15454
+# Remove when the lint gets promoted to `suspicious`.
+declare_interior_mutable_const = "deny"
+
+redundant_clone = "deny"
+
+# We currently do not restrict any style rules
+# as it slows down shipping code to Zed.
+#
+# Running ./script/clippy can take several minutes, and so it's
+# common to skip that step and let CI do it. Any unexpected failures
+# (which also take minutes to discover) thus require switching back
+# to an old branch, manual fixing, and re-pushing.
+#
+# In the future we could improve this by either making sure
+# Zed can surface clippy errors in diagnostics (in addition to the
+# rust-analyzer errors), or by having CI fix style nits automatically.
+style = { level = "allow", priority = -1 }
+
+# Individual rules that have violations in the codebase:
+type_complexity = "allow"
+let_underscore_future = "allow"
+
 # Motivation: We use `vec![a..b]` a lot when dealing with ranges in text, so
 # warning on this rule produces a lot of noise.
 single_range_in_vec_init = "allow"
-
-# These are all of the rules that currently have violations in the Zed
-# codebase.
-#
-# We'll want to drive this list down by either:
-# 1. fixing violations of the rule and begin enforcing it
-# 2. deciding we want to allow the rule permanently, at which point
-#    we should codify that separately above.
-#
-# This list shouldn't be added to; it should only get shorter.
-# =============================================================================
-
-# There are a bunch of rules currently failing in the `style` group, so
-# allow all of those, for now.
-style = { level = "allow", priority = -1 }
-
-# Temporary list of style lints that we've fixed so far.
-module_inception = { level = "deny" }
-question_mark = { level = "deny" }
-redundant_closure = { level = "deny" }
-# Individual rules that have violations in the codebase:
-type_complexity = "allow"
-# We often return trait objects from `new` functions.
-new_ret_no_self = { level = "allow" }
-# We have a few `next` functions that differ in lifetimes
-# compared to Iterator::next. Yet, clippy complains about those.
-should_implement_trait = { level = "allow" }
-let_underscore_future = "allow"
 
 # in Rust it can be very tedious to reduce argument count without
 # running afoul of the borrow checker.

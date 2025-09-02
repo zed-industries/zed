@@ -58,10 +58,9 @@ impl RenderOnce for FeatureUpsell {
                     el.child(
                         Button::new("open_docs", "View Documentation")
                             .icon(IconName::ArrowUpRight)
-                            .icon_size(IconSize::XSmall)
+                            .icon_size(IconSize::Small)
                             .icon_position(IconPosition::End)
                             .on_click({
-                                let docs_url = docs_url.clone();
                                 move |_event, _window, cx| {
                                     telemetry::event!(
                                         "Documentation Viewed",

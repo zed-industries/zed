@@ -162,10 +162,10 @@ impl RichText {
                     }
                 }
                 for range in &custom_tooltip_ranges {
-                    if range.contains(&idx) {
-                        if let Some(f) = &custom_tooltip_fn {
-                            return f(idx, range.clone(), window, cx);
-                        }
+                    if range.contains(&idx)
+                        && let Some(f) = &custom_tooltip_fn
+                    {
+                        return f(idx, range.clone(), window, cx);
                     }
                 }
                 None
@@ -281,13 +281,12 @@ pub fn render_markdown_mut(
 
                     if style != HighlightStyle::default() && last_run_len < text.len() {
                         let mut new_highlight = true;
-                        if let Some((last_range, last_style)) = highlights.last_mut() {
-                            if last_range.end == last_run_len
-                                && last_style == &Highlight::Highlight(style)
-                            {
-                                last_range.end = text.len();
-                                new_highlight = false;
-                            }
+                        if let Some((last_range, last_style)) = highlights.last_mut()
+                            && last_range.end == last_run_len
+                            && last_style == &Highlight::Highlight(style)
+                        {
+                            last_range.end = text.len();
+                            new_highlight = false;
                         }
                         if new_highlight {
                             highlights

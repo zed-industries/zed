@@ -12,8 +12,10 @@ We’re working hard to expand the models supported by Zed’s subscription offe
 | Claude Sonnet 4   | Anthropic | ✅        | 200k           | N/A              | $0.05             |
 | Claude Opus 4     | Anthropic | ❌        | 120k           | $0.20            | N/A               |
 | Claude Opus 4     | Anthropic | ✅        | 200k           | N/A              | $0.25             |
+| Claude Opus 4.1   | Anthropic | ❌        | 120k           | $0.20            | N/A               |
+| Claude Opus 4.1   | Anthropic | ✅        | 200k           | N/A              | $0.25             |
 
-> Note: Because of the 5x token cost for [Opus relative to Sonnet](https://www.anthropic.com/pricing#api), each Opus prompt consumes 5 prompts against your billing meter
+> Note: Because of the 5x token cost for [Opus relative to Sonnet](https://www.anthropic.com/pricing#api), each Opus 4 and 4.1 prompt consumes 5 prompts against your billing meter
 
 ## Usage {#usage}
 

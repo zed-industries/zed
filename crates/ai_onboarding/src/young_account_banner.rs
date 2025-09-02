@@ -15,7 +15,8 @@ impl RenderOnce for YoungAccountBanner {
             .child(YOUNG_ACCOUNT_DISCLAIMER);
 
         div()
+            .max_w_full()
             .my_1()
-            .child(Banner::new().severity(ui::Severity::Warning).child(label))
+            .child(Banner::new().severity(Severity::Warning).child(label))
     }
 }

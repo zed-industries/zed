@@ -16,12 +16,18 @@ use crate::{
 use collections::VecDeque;
 use refineable::Refineable as _;
 use std::{cell::RefCell, ops::Range, rc::Rc};
-use sum_tree::{Bias, SumTree};
+use sum_tree::{Bias, Dimensions, SumTree};
+
+type RenderItemFn = dyn FnMut(usize, &mut Window, &mut App) -> AnyElement + 'static;
 
 /// Construct a new list element
-pub fn list(state: ListState) -> List {
+pub fn list(
+    state: ListState,
+    render_item: impl FnMut(usize, &mut Window, &mut App) -> AnyElement + 'static,
+) -> List {
     List {
         state,
+        render_item: Box::new(render_item),
         style: StyleRefinement::default(),
         sizing_behavior: ListSizingBehavior::default(),
     }
@@ -30,6 +36,7 @@ pub fn list(state: ListState) -> List {
 /// A list element
 pub struct List {
     state: ListState,
+    render_item: Box<RenderItemFn>,
     style: StyleRefinement,
     sizing_behavior: ListSizingBehavior,
 }
@@ -55,7 +62,6 @@ impl std::fmt::Debug for ListState {
 struct StateInner {
     last_layout_bounds: Option<Bounds<Pixels>>,
     last_padding: Option<Edges<Pixels>>,
-    render_item: Box<dyn FnMut(usize, &mut Window, &mut App) -> AnyElement>,
     items: SumTree<ListItem>,
     logical_scroll_top: Option<ListOffset>,
     alignment: ListAlignment,
@@ -186,19 +192,10 @@ impl ListState {
     /// above and below the visible area. Elements within this area will
     /// be measured even though they are not visible. This can help ensure
     /// that the list doesn't flicker or pop in when scrolling.
-    pub fn new<R>(
-        item_count: usize,
-        alignment: ListAlignment,
-        overdraw: Pixels,
-        render_item: R,
-    ) -> Self
-    where
-        R: 'static + FnMut(usize, &mut Window, &mut App) -> AnyElement,
-    {
+    pub fn new(item_count: usize, alignment: ListAlignment, overdraw: Pixels) -> Self {
         let this = Self(Rc::new(RefCell::new(StateInner {
             last_layout_bounds: None,
             last_padding: None,
-            render_item: Box::new(render_item),
             items: SumTree::default(),
             logical_scroll_top: None,
             alignment,
@@ -371,14 +368,14 @@ impl ListState {
             return None;
         }
 
-        let mut cursor = state.items.cursor::<(Count, Height)>(&());
+        let mut cursor = state.items.cursor::<Dimensions<Count, Height>>(&());
         cursor.seek(&Count(scroll_top.item_ix), Bias::Right);
 
         let scroll_top = cursor.start().1.0 + scroll_top.offset_in_item;
 
         cursor.seek_forward(&Count(ix), Bias::Right);
         if let Some(&ListItem::Measured { size, .. }) = cursor.item() {
-            let &(Count(count), Height(top)) = cursor.start();
+            let &Dimensions(Count(count), Height(top), _) = cursor.start();
             if count == ix {
                 let top = bounds.top() + top - scroll_top;
                 return Some(Bounds::from_corners(
@@ -532,6 +529,7 @@ impl StateInner {
         available_width: Option<Pixels>,
         available_height: Pixels,
         padding: &Edges<Pixels>,
+        render_item: &mut RenderItemFn,
         window: &mut Window,
         cx: &mut App,
     ) -> LayoutItemsResponse {
@@ -566,7 +564,7 @@ impl StateInner {
             // If we're within the visible area or the height wasn't cached, render and measure the item's element
             if visible_height < available_height || size.is_none() {
                 let item_index = scroll_top.item_ix + ix;
-                let mut element = (self.render_item)(item_index, window, cx);
+                let mut element = render_item(item_index, window, cx);
                 let element_size = element.layout_as_root(available_item_space, window, cx);
                 size = Some(element_size);
                 if visible_height < available_height {
@@ -601,7 +599,7 @@ impl StateInner {
                 cursor.prev();
                 if let Some(item) = cursor.item() {
                     let item_index = cursor.start().0;
-                    let mut element = (self.render_item)(item_index, window, cx);
+                    let mut element = render_item(item_index, window, cx);
                     let element_size = element.layout_as_root(available_item_space, window, cx);
                     let focus_handle = item.focus_handle();
                     rendered_height += element_size.height;
@@ -650,7 +648,7 @@ impl StateInner {
                 let size = if let ListItem::Measured { size, .. } = item {
                     *size
                 } else {
-                    let mut element = (self.render_item)(cursor.start().0, window, cx);
+                    let mut element = render_item(cursor.start().0, window, cx);
                     element.layout_as_root(available_item_space, window, cx)
                 };
 
@@ -683,7 +681,7 @@ impl StateInner {
             while let Some(item) = cursor.item() {
                 if item.contains_focused(window, cx) {
                     let item_index = cursor.start().0;
-                    let mut element = (self.render_item)(cursor.start().0, window, cx);
+                    let mut element = render_item(cursor.start().0, window, cx);
                     let size = element.layout_as_root(available_item_space, window, cx);
                     item_layouts.push_back(ItemLayout {
                         index: item_index,
@@ -708,6 +706,7 @@ impl StateInner {
         bounds: Bounds<Pixels>,
         padding: Edges<Pixels>,
         autoscroll: bool,
+        render_item: &mut RenderItemFn,
         window: &mut Window,
         cx: &mut App,
     ) -> Result<LayoutItemsResponse, ListOffset> {
@@ -716,6 +715,7 @@ impl StateInner {
                 Some(bounds.size.width),
                 bounds.size.height,
                 &padding,
+                render_item,
                 window,
                 cx,
             );
@@ -732,47 +732,44 @@ impl StateInner {
                         item.element.prepaint_at(item_origin, window, cx);
                     });
 
-                    if let Some(autoscroll_bounds) = window.take_autoscroll() {
-                        if autoscroll {
-                            if autoscroll_bounds.top() < bounds.top() {
-                                return Err(ListOffset {
-                                    item_ix: item.index,
-                                    offset_in_item: autoscroll_bounds.top() - item_origin.y,
+                    if let Some(autoscroll_bounds) = window.take_autoscroll()
+                        && autoscroll
+                    {
+                        if autoscroll_bounds.top() < bounds.top() {
+                            return Err(ListOffset {
+                                item_ix: item.index,
+                                offset_in_item: autoscroll_bounds.top() - item_origin.y,
+                            });
+                        } else if autoscroll_bounds.bottom() > bounds.bottom() {
+                            let mut cursor = self.items.cursor::<Count>(&());
+                            cursor.seek(&Count(item.index), Bias::Right);
+                            let mut height = bounds.size.height - padding.top - padding.bottom;
+
+                            // Account for the height of the element down until the autoscroll bottom.
+                            height -= autoscroll_bounds.bottom() - item_origin.y;
+
+                            // Keep decreasing the scroll top until we fill all the available space.
+                            while height > Pixels::ZERO {
+                                cursor.prev();
+                                let Some(item) = cursor.item() else { break };
+
+                                let size = item.size().unwrap_or_else(|| {
+                                    let mut item = render_item(cursor.start().0, window, cx);
+                                    let item_available_size =
+                                        size(bounds.size.width.into(), AvailableSpace::MinContent);
+                                    item.layout_as_root(item_available_size, window, cx)
                                 });
-                            } else if autoscroll_bounds.bottom() > bounds.bottom() {
-                                let mut cursor = self.items.cursor::<Count>(&());
-                                cursor.seek(&Count(item.index), Bias::Right);
-                                let mut height = bounds.size.height - padding.top - padding.bottom;
-
-                                // Account for the height of the element down until the autoscroll bottom.
-                                height -= autoscroll_bounds.bottom() - item_origin.y;
-
-                                // Keep decreasing the scroll top until we fill all the available space.
-                                while height > Pixels::ZERO {
-                                    cursor.prev();
-                                    let Some(item) = cursor.item() else { break };
-
-                                    let size = item.size().unwrap_or_else(|| {
-                                        let mut item =
-                                            (self.render_item)(cursor.start().0, window, cx);
-                                        let item_available_size = size(
-                                            bounds.size.width.into(),
-                                            AvailableSpace::MinContent,
-                                        );
-                                        item.layout_as_root(item_available_size, window, cx)
-                                    });
-                                    height -= size.height;
-                                }
-
-                                return Err(ListOffset {
-                                    item_ix: cursor.start().0,
-                                    offset_in_item: if height < Pixels::ZERO {
-                                        -height
-                                    } else {
-                                        Pixels::ZERO
-                                    },
-                                });
+                                height -= size.height;
                             }
+
+                            return Err(ListOffset {
+                                item_ix: cursor.start().0,
+                                offset_in_item: if height < Pixels::ZERO {
+                                    -height
+                                } else {
+                                    Pixels::ZERO
+                                },
+                            });
                         }
                     }
 
@@ -876,8 +873,14 @@ impl Element for List {
                         window.rem_size(),
                     );
 
-                    let layout_response =
-                        state.layout_items(None, available_height, &padding, window, cx);
+                    let layout_response = state.layout_items(
+                        None,
+                        available_height,
+                        &padding,
+                        &mut self.render_item,
+                        window,
+                        cx,
+                    );
                     let max_element_width = layout_response.max_item_width;
 
                     let summary = state.items.summary();
@@ -935,9 +938,10 @@ impl Element for List {
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
 
         // If the width of the list has changed, invalidate all cached item heights
-        if state.last_layout_bounds.map_or(true, |last_bounds| {
-            last_bounds.size.width != bounds.size.width
-        }) {
+        if state
+            .last_layout_bounds
+            .is_none_or(|last_bounds| last_bounds.size.width != bounds.size.width)
+        {
             let new_items = SumTree::from_iter(
                 state.items.iter().map(|item| ListItem::Unmeasured {
                     focus_handle: item.focus_handle(),
@@ -951,15 +955,16 @@ impl Element for List {
         let padding = style
             .padding
             .to_pixels(bounds.size.into(), window.rem_size());
-        let layout = match state.prepaint_items(bounds, padding, true, window, cx) {
-            Ok(layout) => layout,
-            Err(autoscroll_request) => {
-                state.logical_scroll_top = Some(autoscroll_request);
-                state
-                    .prepaint_items(bounds, padding, false, window, cx)
-                    .unwrap()
-            }
-        };
+        let layout =
+            match state.prepaint_items(bounds, padding, true, &mut self.render_item, window, cx) {
+                Ok(layout) => layout,
+                Err(autoscroll_request) => {
+                    state.logical_scroll_top = Some(autoscroll_request);
+                    state
+                        .prepaint_items(bounds, padding, false, &mut self.render_item, window, cx)
+                        .unwrap()
+                }
+            };
 
         state.last_layout_bounds = Some(bounds);
         state.last_padding = Some(padding);
@@ -1108,9 +1113,7 @@ mod test {
 
         let cx = cx.add_empty_window();
 
-        let state = ListState::new(5, crate::ListAlignment::Top, px(10.), |_, _, _| {
-            div().h(px(10.)).w_full().into_any()
-        });
+        let state = ListState::new(5, crate::ListAlignment::Top, px(10.));
 
         // Ensure that the list is scrolled to the top
         state.scroll_to(gpui::ListOffset {
@@ -1121,7 +1124,11 @@ mod test {
         struct TestView(ListState);
         impl Render for TestView {
             fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                list(self.0.clone()).w_full().h_full()
+                list(self.0.clone(), |_, _, _| {
+                    div().h(px(10.)).w_full().into_any()
+                })
+                .w_full()
+                .h_full()
             }
         }
 
@@ -1154,14 +1161,16 @@ mod test {
 
         let cx = cx.add_empty_window();
 
-        let state = ListState::new(5, crate::ListAlignment::Top, px(10.), |_, _, _| {
-            div().h(px(20.)).w_full().into_any()
-        });
+        let state = ListState::new(5, crate::ListAlignment::Top, px(10.));
 
         struct TestView(ListState);
         impl Render for TestView {
             fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                list(self.0.clone()).w_full().h_full()
+                list(self.0.clone(), |_, _, _| {
+                    div().h(px(20.)).w_full().into_any()
+                })
+                .w_full()
+                .h_full()
             }
         }
 
