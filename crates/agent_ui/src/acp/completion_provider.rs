@@ -15,7 +15,8 @@ use language::{Buffer, CodeLabel, HighlightId};
 use lsp::CompletionContext;
 use project::lsp_store::CompletionDocumentation;
 use project::{
-    Completion, CompletionIntent, CompletionResponse, Project, ProjectPath, Symbol, WorktreeId,
+    Completion, CompletionDisplayOptions, CompletionIntent, CompletionResponse, Project,
+    ProjectPath, Symbol, WorktreeId,
 };
 use prompt_store::PromptStore;
 use rope::Point;
@@ -771,6 +772,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
 
                     Ok(vec![CompletionResponse {
                         completions,
+                        display_options: CompletionDisplayOptions::default(),
                         // Since this does its own filtering (see `filter_completions()` returns false),
                         // there is no benefit to computing whether this set of completions is incomplete.
                         is_incomplete: true,
@@ -862,6 +864,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
 
                     Ok(vec![CompletionResponse {
                         completions,
+                        display_options: CompletionDisplayOptions::default(),
                         // Since this does its own filtering (see `filter_completions()` returns false),
                         // there is no benefit to computing whether this set of completions is incomplete.
                         is_incomplete: true,
