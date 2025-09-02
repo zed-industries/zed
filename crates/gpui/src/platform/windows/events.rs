@@ -24,6 +24,7 @@ pub(crate) const WM_GPUI_CLOSE_ONE_WINDOW: u32 = WM_USER + 2;
 pub(crate) const WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD: u32 = WM_USER + 3;
 pub(crate) const WM_GPUI_DOCK_MENU_ACTION: u32 = WM_USER + 4;
 pub(crate) const WM_GPUI_FORCE_UPDATE_WINDOW: u32 = WM_USER + 5;
+pub(crate) const WM_GPUI_KEYBOARD_LAYOUT_CHANGED: u32 = WM_USER + 6;
 
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 const AUTO_HIDE_TASKBAR_THICKNESS_PX: i32 = 1;
@@ -99,7 +100,7 @@ impl WindowsWindowInner {
             WM_IME_COMPOSITION => self.handle_ime_composition(handle, lparam),
             WM_SETCURSOR => self.handle_set_cursor(handle, lparam),
             WM_SETTINGCHANGE => self.handle_system_settings_changed(handle, wparam, lparam),
-            WM_INPUTLANGCHANGE => self.handle_input_language_changed(lparam),
+            WM_INPUTLANGCHANGE => self.handle_input_language_changed(),
             WM_SHOWWINDOW => self.handle_window_visibility_changed(handle, wparam),
             WM_GPUI_CURSOR_STYLE_CHANGED => self.handle_cursor_changed(lparam),
             WM_GPUI_FORCE_UPDATE_WINDOW => self.draw_window(handle, true),
@@ -264,8 +265,8 @@ impl WindowsWindowInner {
             callback();
         }
         unsafe {
-            PostThreadMessageW(
-                self.main_thread_id_win32,
+            PostMessageW(
+                Some(self.platform_window_handle),
                 WM_GPUI_CLOSE_ONE_WINDOW,
                 WPARAM(self.validation_number),
                 LPARAM(handle.0 as isize),
@@ -1146,11 +1147,15 @@ impl WindowsWindowInner {
         Some(0)
     }
 
-    fn handle_input_language_changed(&self, lparam: LPARAM) -> Option<isize> {
-        let thread = self.main_thread_id_win32;
-        let validation = self.validation_number;
+    fn handle_input_language_changed(&self) -> Option<isize> {
         unsafe {
-            PostThreadMessageW(thread, WM_INPUTLANGCHANGE, WPARAM(validation), lparam).log_err();
+            PostMessageW(
+                Some(self.platform_window_handle),
+                WM_GPUI_KEYBOARD_LAYOUT_CHANGED,
+                WPARAM(self.validation_number),
+                LPARAM(0),
+            )
+            .log_err();
         }
         Some(0)
     }
