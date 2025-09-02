@@ -29,7 +29,7 @@ pub fn init_settings(cx: &mut App) {
     AllLanguageModelSettings::register(cx);
 }
 
-#[derive(Default, SettingsUi)]
+#[derive(Default)]
 pub struct AllLanguageModelSettings {
     pub anthropic: AnthropicSettings,
     pub bedrock: AmazonBedrockSettings,
@@ -46,7 +46,7 @@ pub struct AllLanguageModelSettings {
     pub zed_dot_dev: ZedDotDevSettings,
 }
 
-#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, SettingsUi)]
 pub struct AllLanguageModelSettingsContent {
     pub anthropic: Option<AnthropicSettingsContent>,
     pub bedrock: Option<AmazonBedrockSettingsContent>,

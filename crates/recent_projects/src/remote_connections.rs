@@ -30,7 +30,7 @@ use ui::{
 use util::serde::default_true;
 use workspace::{AppState, ModalView, Workspace};
 
-#[derive(Deserialize, SettingsUi)]
+#[derive(Deserialize)]
 pub struct SshSettings {
     pub ssh_connections: Option<Vec<SshConnection>>,
     /// Whether to read ~/.ssh/config for ssh connection sources.
@@ -121,7 +121,7 @@ pub struct SshProject {
     pub paths: Vec<String>,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
 pub struct RemoteSettingsContent {
     pub ssh_connections: Option<Vec<SshConnection>>,
     pub read_ssh_config: Option<bool>,
