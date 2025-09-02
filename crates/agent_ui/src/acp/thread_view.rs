@@ -5640,6 +5640,7 @@ pub(crate) mod tests {
         }
     }
 
+    /// Simulates a model which always returns a refusal response
     #[derive(Clone)]
     struct RefusalAgentConnection;
 
