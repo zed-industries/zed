@@ -1722,16 +1722,28 @@ impl GitBinary {
     async fn resolve_git_dir(&self) -> Result<PathBuf> {
         let dot_git = self.working_directory.join(".git");
 
+        eprintln!(
+            "resolve_git_dir: working_directory = {:?}",
+            self.working_directory
+        );
+        eprintln!("resolve_git_dir: dot_git = {:?}", dot_git);
+        eprintln!("resolve_git_dir: dot_git.exists() = {}", dot_git.exists());
+        eprintln!("resolve_git_dir: dot_git.is_dir() = {}", dot_git.is_dir());
+        eprintln!("resolve_git_dir: dot_git.is_file() = {}", dot_git.is_file());
+
         if dot_git.is_dir() {
             // Regular repository - .git is a directory
+            eprintln!("resolve_git_dir: Regular repo, returning {:?}", dot_git);
             Ok(dot_git)
         } else if dot_git.is_file() {
             // Worktree - .git is a file containing the path to the actual git directory
             let contents = smol::fs::read_to_string(&dot_git).await?;
+            eprintln!("resolve_git_dir: .git file contents: {:?}", contents);
 
             // The file contains a line like: "gitdir: /path/to/actual/.git/worktrees/name"
             if let Some(gitdir_line) = contents.lines().find(|line| line.starts_with("gitdir:")) {
                 let gitdir_path = gitdir_line.trim_start_matches("gitdir:").trim();
+                eprintln!("resolve_git_dir: gitdir_path from file: {:?}", gitdir_path);
 
                 // The path may be relative or absolute
                 let git_dir = if Path::new(gitdir_path).is_absolute() {
@@ -1745,8 +1757,17 @@ impl GitBinary {
                         .join(gitdir_path)
                 };
 
+                eprintln!(
+                    "resolve_git_dir: git_dir before canonicalize: {:?}",
+                    git_dir
+                );
+
                 // Canonicalize the path to resolve any .. or . components
                 let git_dir = smol::fs::canonicalize(&git_dir).await.map_err(|e| {
+                    eprintln!(
+                        "resolve_git_dir: Failed to canonicalize {:?}: {}",
+                        git_dir, e
+                    );
                     anyhow!(
                         "Failed to canonicalize git directory path {:?}: {}",
                         git_dir,
@@ -1754,7 +1775,11 @@ impl GitBinary {
                     )
                 })?;
 
+                eprintln!("resolve_git_dir: git_dir after canonicalize: {:?}", git_dir);
+                eprintln!("resolve_git_dir: git_dir.exists() = {}", git_dir.exists());
+
                 if git_dir.exists() {
+                    eprintln!("resolve_git_dir: Returning worktree git_dir: {:?}", git_dir);
                     Ok(git_dir)
                 } else {
                     Err(anyhow!(
@@ -1811,6 +1836,7 @@ impl GitBinary {
         F: for<'a> FnOnce(&'a Self) -> BoxFuture<'a, Result<R>>,
     {
         let index_file_path = self.path_for_index_id(Uuid::new_v4()).await?;
+        eprintln!("with_temp_index: index_file_path = {:?}", index_file_path);
 
         let delete_temp_index = util::defer({
             let index_file_path = index_file_path.clone();
@@ -1824,12 +1850,18 @@ impl GitBinary {
             }
         });
 
+        // Ensure the parent directory exists for the temp index file
+        if let Some(parent) = index_file_path.parent() {
+            smol::fs::create_dir_all(parent).await?;
+        }
+
         // Copy the default index file so that Git doesn't have to rebuild the
-        // whole index from scratch. This might fail if this is an empty repository.
+        // whole index from scratch. This might fail if this is an empty repository
+        // or a worktree (where the index is not in the worktree's git dir).
+        // We just ignore the error and let git create a fresh index if needed.
         let git_dir = self.resolve_git_dir().await?;
-        smol::fs::copy(git_dir.join("index"), &index_file_path)
-            .await
-            .ok();
+        let index_source = git_dir.join("index");
+        smol::fs::copy(&index_source, &index_file_path).await.ok();
 
         self.index_file_path = Some(index_file_path.clone());
         let result = f(self).await;
@@ -1869,15 +1901,32 @@ impl GitBinary {
     where
         S: AsRef<OsStr>,
     {
-        let mut command = self.build_command(args);
+        let args_vec: Vec<_> = args
+            .into_iter()
+            .map(|s| s.as_ref().to_string_lossy().to_string())
+            .collect();
+        let mut command = self.build_command(args_vec.iter().map(|s| s.as_str()));
         let output = command.output().await?;
-        anyhow::ensure!(
-            output.status.success(),
-            GitBinaryCommandError {
-                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-                status: output.status,
-            }
-        );
+        if !output.status.success() {
+            let working_dir = self.working_directory.display().to_string();
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let git_binary = self.git_binary_path.display().to_string();
+            let index_file = self
+                .index_file_path
+                .as_ref()
+                .map(|p| p.display().to_string());
+            return Err(GitBinaryCommandError::new(
+                &git_binary,
+                &working_dir,
+                &args_vec.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+                stdout,
+                stderr,
+                output.status,
+                index_file,
+            )
+            .into());
+        }
         Ok(String::from_utf8(output.stdout)?)
     }
 
@@ -1901,6 +1950,30 @@ impl GitBinary {
 struct GitBinaryCommandError {
     stdout: String,
     status: ExitStatus,
+}
+
+impl GitBinaryCommandError {
+    fn new(
+        git_binary: &str,
+        working_dir: &str,
+        args: &[&str],
+        stdout: String,
+        stderr: String,
+        status: ExitStatus,
+        index_file: Option<String>,
+    ) -> Self {
+        eprintln!("Git command failed:");
+        eprintln!("  Binary: {}", git_binary);
+        eprintln!("  Command: {} {}", git_binary, args.join(" "));
+        eprintln!("  Working dir: {}", working_dir);
+        if let Some(index) = &index_file {
+            eprintln!("  GIT_INDEX_FILE: {}", index);
+        }
+        eprintln!("  Exit status: {:?}", status);
+        eprintln!("  Stdout: {}", stdout);
+        eprintln!("  Stderr: {}", stderr);
+        Self { stdout, status }
+    }
 }
 
 async fn run_git_command(
