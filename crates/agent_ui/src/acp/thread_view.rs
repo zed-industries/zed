@@ -417,7 +417,7 @@ impl AcpThreadView {
         cx: &mut Context<Self>,
     ) -> ThreadState {
         if project.read(cx).is_via_collab()
-            && !agent.clone().downcast::<NativeAgentServer>().is_some()
+            && agent.clone().downcast::<NativeAgentServer>().is_none()
         {
             return ThreadState::LoadError(LoadError::Other(
                 "External agents are not yet supported for remote projects.".into(),

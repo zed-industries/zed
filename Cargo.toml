@@ -842,6 +842,9 @@ too_many_arguments = "allow"
 # We often have large enum variants yet we rarely actually bother with splitting them up.
 large_enum_variant = "allow"
 
+# Boolean expressions can be hard to read, requiring only the minimal form gets in the way
+nonminimal_bol = "allow"
+
 [workspace.metadata.cargo-machete]
 ignored = [
     "bindgen",
