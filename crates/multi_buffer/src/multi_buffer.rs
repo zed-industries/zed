@@ -735,7 +735,7 @@ impl MultiBuffer {
 
     pub fn as_singleton(&self) -> Option<Entity<Buffer>> {
         if self.singleton {
-            return Some(
+            Some(
                 self.buffers
                     .borrow()
                     .values()
@@ -743,7 +743,7 @@ impl MultiBuffer {
                     .unwrap()
                     .buffer
                     .clone(),
-            );
+            )
         } else {
             None
         }
@@ -2550,6 +2550,10 @@ impl MultiBuffer {
             .values()
             .map(|state| state.buffer.clone())
             .collect()
+    }
+
+    pub fn all_buffer_ids(&self) -> Vec<BufferId> {
+        self.buffers.borrow().keys().copied().collect()
     }
 
     pub fn buffer(&self, buffer_id: BufferId) -> Option<Entity<Buffer>> {

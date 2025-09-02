@@ -1384,6 +1384,9 @@ impl ProjectSearchView {
         let match_ranges = self.entity.read(cx).match_ranges.clone();
         if match_ranges.is_empty() {
             self.active_match_index = None;
+            self.results_editor.update(cx, |editor, cx| {
+                editor.clear_background_highlights::<Self>(cx);
+            });
         } else {
             self.active_match_index = Some(0);
             self.update_match_index(cx);
