@@ -90,8 +90,6 @@ And to give it context, you can @-mention files, recent threads, symbols, or fet
 > Note that some first-party agent features don't yet work with Claude Code: editing past messages, resuming threads from history, checkpointing, and using the agent in SSH projects.
 > We hope to add these features in the near future.
 
-> Some Claude Code features, such as slash commands, are not currently supported.
-
 ## Add Custom Agents {#add-custom-agents}
 
 You can run any agent speaking ACP in Zed by changing your settings as follows:
