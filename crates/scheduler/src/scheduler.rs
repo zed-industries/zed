@@ -8,7 +8,7 @@ pub use executor::*;
 
 use async_task::Runnable;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
-use futures::{FutureExt as _, channel::oneshot};
+use futures::{FutureExt as _, channel::oneshot, future::LocalBoxFuture};
 use parking::{Parker, Unparker};
 use parking_lot::Mutex;
 use rand::prelude::*;
@@ -18,8 +18,11 @@ use std::{
     future::Future,
     panic::{self, AssertUnwindSafe},
     pin::Pin,
-    sync::Arc,
-    task::{Context, Poll},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering::SeqCst},
+    },
+    task::{Context, Poll, Wake, Waker},
     thread,
     time::Duration,
 };
@@ -93,14 +96,11 @@ struct SchedulerState {
 }
 
 pub trait Scheduler: Send + Sync {
-    fn block(&self, runnable: Runnable);
+    fn block(&self, future: futures::future::LocalBoxFuture<()>);
     fn schedule_foreground(&self, session_id: SessionId, runnable: Runnable);
     fn schedule_background(&self, runnable: Runnable);
-
-    fn is_main_thread(&self) -> bool;
     fn timer(&self, timeout: Duration) -> Timer;
-    fn park(&self, timeout: Option<Duration>) -> bool;
-    fn unparker(&self) -> Unparker;
+    fn is_main_thread(&self) -> bool;
 }
 
 pub struct TestScheduler {
@@ -224,6 +224,17 @@ impl TestScheduler {
             false
         }
     }
+
+    fn park(&self) {
+        {
+            let state = self.state.lock();
+            if !state.allow_parking {
+                drop(state);
+                panic!("Parking forbidden");
+            }
+        }
+        self.parker.lock().park();
+    }
 }
 
 impl Scheduler for TestScheduler {
@@ -291,50 +302,53 @@ impl Scheduler for TestScheduler {
         Timer { rx }
     }
 
-    fn park(&self, timeout: Option<Duration>) -> bool {
-        {
-            let state = self.state.lock();
-            if !state.allow_parking {
-                drop(state);
-                panic!("Parking forbidden");
+    fn block(&self, mut future: LocalBoxFuture<()>) {
+        let awoken = Arc::new(AtomicBool::new(false));
+        let waker = Waker::from(Arc::new(WakerFn::new({
+            let unparker = self.unparker.clone();
+            let awoken = awoken.clone();
+            move || {
+                awoken.store(true, SeqCst);
+                unparker.unpark();
+            }
+        })));
+        let mut cx = Context::from_waker(&waker);
+        while let Poll::Pending = future.poll_unpin(&mut cx) {
+            let awoken = awoken.swap(false, SeqCst);
+            let mut stepped = false;
+            while self.rng.lock().random() {
+                if self.rng.lock().random_bool(0.3) {
+                    stepped |= self.advance_clock();
+                }
+                stepped |= self.step();
+
+                if !stepped {
+                    if !awoken {
+                        self.park();
+                    }
+                    break;
+                }
             }
         }
+    }
+}
 
-        if let Some(duration) = timeout {
-            self.parker.lock().park_timeout(duration);
-        } else {
-            self.parker.lock().park();
-        }
-        true
+struct WakerFn<F> {
+    f: F,
+}
+
+impl<F: Fn()> WakerFn<F> {
+    fn new(f: F) -> Self {
+        Self { f }
+    }
+}
+
+impl<F: Fn()> Wake for WakerFn<F> {
+    fn wake(self: Arc<Self>) {
+        (self.f)();
     }
 
-    fn unparker(&self) -> Unparker {
-        self.unparker.clone()
-    }
-
-    fn block(&self, runnable: Runnable) {
-        let waker = runnable.waker();
-
-        while self.rng.lock().random() {
-            if self.rng.lock().random_bool(0.3) {
-                self.advance_clock();
-            }
-
-            self.step();
-        }
-
-        runnable.run();
-
-        while self.rng.lock().random() {
-            if self.rng.lock().random_bool(0.3) {
-                self.advance_clock();
-            }
-
-            if !self.step() {
-                return;
-            }
-        }
-
-        waker.wake_by_ref();
+    fn wake_by_ref(self: &Arc<Self>) {
+        (self.f)();
     }
 }

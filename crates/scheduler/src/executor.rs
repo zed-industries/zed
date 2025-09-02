@@ -1,15 +1,7 @@
 use crate::{Scheduler, SessionId, Timer};
 use async_task::Task;
 use futures::FutureExt as _;
-use std::{
-    future::Future,
-    marker::PhantomData,
-    pin::pin,
-    rc::Rc,
-    sync::Arc,
-    task::{Context, Poll, Wake, Waker},
-    time::Duration,
-};
+use std::{future::Future, marker::PhantomData, pin::pin, rc::Rc, sync::Arc, time::Duration};
 
 pub struct ForegroundExecutor {
     session_id: SessionId,
@@ -72,31 +64,10 @@ impl BackgroundExecutor {
     }
 
     pub fn block<Fut: Future>(&self, future: Fut) -> Fut::Output {
-        let (sender, receiver) = std::sync::mpsc::channel();
-        let (runnable, mut task) = unsafe {
-            async_task::spawn_unchecked(future, move |runnable| {
-                sender.send(runnable).unwrap();
-            })
-        };
-
-        self.scheduler.block(runnable);
-        loop {
-            while let Ok(runnable) = receiver.try_recv() {
-                self.scheduler.block(runnable);
-            }
-
-            let unparker = self.scheduler.unparker();
-            let waker = Waker::from(Arc::new(WakerFn::new(move || {
-                unparker.unpark();
-            })));
-            let mut cx = Context::from_waker(&waker);
-            match task.poll_unpin(&mut cx) {
-                Poll::Ready(result) => return result,
-                Poll::Pending => {
-                    self.scheduler.park(None);
-                }
-            }
-        }
+        let mut output = None;
+        self.scheduler
+            .block(async { output = Some(future.await) }.boxed_local());
+        output.unwrap()
     }
 
     pub fn block_with_timeout<Fut: Unpin + Future>(
@@ -116,25 +87,5 @@ impl BackgroundExecutor {
 
     pub fn timer(&self, duration: Duration) -> Timer {
         self.scheduler.timer(duration)
-    }
-}
-
-struct WakerFn<F> {
-    f: F,
-}
-
-impl<F: Fn()> WakerFn<F> {
-    fn new(f: F) -> Self {
-        Self { f }
-    }
-}
-
-impl<F: Fn()> Wake for WakerFn<F> {
-    fn wake(self: Arc<Self>) {
-        (self.f)();
-    }
-
-    fn wake_by_ref(self: &Arc<Self>) {
-        (self.f)();
     }
 }
