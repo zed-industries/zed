@@ -109,7 +109,7 @@ impl TerminalPanel {
 
     pub fn set_assistant_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.assistant_enabled = enabled;
-        if enabled && !DisableAiSettings::get_global(cx).disable_ai {
+        if enabled {
             let focus_handle = self
                 .active_pane
                 .read(cx)
