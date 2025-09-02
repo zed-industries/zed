@@ -147,21 +147,22 @@ use multi_buffer::{
 use parking_lot::Mutex;
 use persistence::DB;
 use project::{
-    BreakpointWithPosition, CodeAction, Completion, CompletionIntent, CompletionResponse,
-    CompletionSource, DisableAiSettings, DocumentHighlight, InlayHint, Location, LocationLink,
-    PrepareRenameResponse, Project, ProjectItem, ProjectPath, ProjectTransaction, TaskSourceKind,
-    debugger::breakpoint_store::Breakpoint,
+    BreakpointWithPosition, CodeAction, Completion, CompletionDisplayOptions, CompletionIntent,
+    CompletionResponse, CompletionSource, DisableAiSettings, DocumentHighlight, InlayHint,
+    Location, LocationLink, PrepareRenameResponse, Project, ProjectItem, ProjectPath,
+    ProjectTransaction, TaskSourceKind,
     debugger::{
         breakpoint_store::{
-            BreakpointEditAction, BreakpointSessionState, BreakpointState, BreakpointStore,
-            BreakpointStoreEvent,
+            Breakpoint, BreakpointEditAction, BreakpointSessionState, BreakpointState,
+            BreakpointStore, BreakpointStoreEvent,
         },
         session::{Session, SessionEvent},
     },
     git_store::{GitStoreEvent, RepositoryEvent},
     lsp_store::{CompletionDocumentation, FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
-    project_settings::{DiagnosticSeverity, GoToDiagnosticSeverityFilter},
-    project_settings::{GitGutterSetting, ProjectSettings},
+    project_settings::{
+        DiagnosticSeverity, GitGutterSetting, GoToDiagnosticSeverityFilter, ProjectSettings,
+    },
 };
 use rand::{seq::SliceRandom, thread_rng};
 use rpc::{ErrorCode, ErrorExt, proto::PeerId};
@@ -5636,17 +5637,25 @@ impl Editor {
             // that having one source with `is_incomplete: true` doesn't cause all to be re-queried.
             let mut completions = Vec::new();
             let mut is_incomplete = false;
+            let mut display_options: Option<CompletionDisplayOptions> = None;
             if let Some(provider_responses) = provider_responses.await.log_err()
                 && !provider_responses.is_empty()
             {
                 for response in provider_responses {
                     completions.extend(response.completions);
                     is_incomplete = is_incomplete || response.is_incomplete;
+                    match display_options.as_mut() {
+                        None => {
+                            display_options = Some(response.display_options);
+                        }
+                        Some(options) => options.merge(&response.display_options),
+                    }
                 }
                 if completion_settings.words == WordsCompletionMode::Fallback {
                     words = Task::ready(BTreeMap::default());
                 }
             }
+            let display_options = display_options.unwrap_or_default();
 
             let mut words = words.await;
             if let Some(word_to_exclude) = &word_to_exclude {
@@ -5688,6 +5697,7 @@ impl Editor {
                         is_incomplete,
                         buffer.clone(),
                         completions.into(),
+                        display_options,
                         snippet_sort_order,
                         languages,
                         language,
@@ -22063,6 +22073,7 @@ fn snippet_completions(
     if scopes.is_empty() {
         return Task::ready(Ok(CompletionResponse {
             completions: vec![],
+            display_options: CompletionDisplayOptions::default(),
             is_incomplete: false,
         }));
     }
@@ -22087,6 +22098,7 @@ fn snippet_completions(
             if last_word.is_empty() {
                 return Ok(CompletionResponse {
                     completions: vec![],
+                    display_options: CompletionDisplayOptions::default(),
                     is_incomplete: true,
                 });
             }
@@ -22208,6 +22220,7 @@ fn snippet_completions(
 
         Ok(CompletionResponse {
             completions,
+            display_options: CompletionDisplayOptions::default(),
             is_incomplete,
         })
     })

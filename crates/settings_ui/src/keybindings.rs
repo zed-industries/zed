@@ -20,7 +20,7 @@ use gpui::{
 };
 use language::{Language, LanguageConfig, ToOffset as _};
 use notifications::status_toast::{StatusToast, ToastIcon};
-use project::Project;
+use project::{CompletionDisplayOptions, Project};
 use settings::{BaseKeymap, KeybindSource, KeymapFile, Settings as _, SettingsAssets};
 use ui::{
     ActiveTheme as _, App, Banner, BorrowAppContext, ContextMenu, IconButtonShape, Indicator,
@@ -2927,6 +2927,7 @@ impl CompletionProvider for KeyContextCompletionProvider {
                     confirm: None,
                 })
                 .collect(),
+            display_options: CompletionDisplayOptions::default(),
             is_incomplete: false,
         }]))
     }
