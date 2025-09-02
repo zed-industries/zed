@@ -1710,7 +1710,7 @@ mod tests {
                 name: "say-hello".to_string(),
                 description: "Say hello to whoever you want".to_string(),
                 input: Some(acp::AvailableCommandInput::Unstructured {
-                    hint: "Who do you want to say hello to?".to_string(),
+                    hint: "<name>".to_string(),
                 }),
             },
         ]));
@@ -1785,7 +1785,7 @@ mod tests {
         cx.run_until_parked();
 
         editor.update_in(&mut cx, |editor, window, cx| {
-            assert_eq!(editor.text(cx), "/quick-math ");
+            assert_eq!(editor.display_text(cx), "/quick-math ");
             assert!(!editor.has_visible_completions_menu());
             editor.set_text("", window, cx);
         });
@@ -1793,7 +1793,7 @@ mod tests {
         cx.simulate_input("/say");
 
         editor.update_in(&mut cx, |editor, _window, cx| {
-            assert_eq!(editor.text(cx), "/say");
+            assert_eq!(editor.display_text(cx), "/say");
             assert!(editor.has_visible_completions_menu());
 
             assert_eq!(
@@ -1811,6 +1811,7 @@ mod tests {
 
         editor.update_in(&mut cx, |editor, _window, cx| {
             assert_eq!(editor.text(cx), "/say-hello ");
+            assert_eq!(editor.display_text(cx), "/say-hello <name>");
             assert!(editor.has_visible_completions_menu());
 
             assert_eq!(
@@ -1828,8 +1829,35 @@ mod tests {
 
         cx.run_until_parked();
 
-        editor.update_in(&mut cx, |editor, _window, cx| {
+        editor.update_in(&mut cx, |editor, window, cx| {
             assert_eq!(editor.text(cx), "/say-hello GPT5");
+            assert_eq!(editor.display_text(cx), "/say-hello GPT5");
+            assert!(!editor.has_visible_completions_menu());
+
+            // Delete argument
+            for _ in 0..4 {
+                editor.backspace(&editor::actions::Backspace, window, cx);
+            }
+        });
+
+        cx.run_until_parked();
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            assert_eq!(editor.text(cx), "/say-hello ");
+            // Hint is visible because argument was deleted
+            assert_eq!(editor.display_text(cx), "/say-hello <name>");
+
+            // Delete last command letter
+            editor.backspace(&editor::actions::Backspace, window, cx);
+            editor.backspace(&editor::actions::Backspace, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        editor.update_in(&mut cx, |editor, _window, cx| {
+            // Hint goes away once command no longer matches an available one
+            assert_eq!(editor.text(cx), "/say-hell");
+            assert_eq!(editor.display_text(cx), "/say-hell");
             assert!(!editor.has_visible_completions_menu());
         });
     }
