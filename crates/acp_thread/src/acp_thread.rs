@@ -2790,9 +2790,7 @@ mod tests {
                 cx,
             )
         });
-        cx.background_executor
-            .spawn(async move { send_task.await })
-            .detach();
+        cx.background_executor.spawn(send_task).detach();
         cx.run_until_parked();
 
         // Verify that:
