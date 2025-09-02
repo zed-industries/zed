@@ -16,7 +16,7 @@ use gpui::{
     Task, WeakEntity, Window, actions,
 };
 use itertools::Itertools;
-use project::{DisableAiSettings, Fs, Project, ProjectEntryId};
+use project::{Fs, Project, ProjectEntryId};
 use search::{BufferSearchBar, buffer_search::DivRegistrar};
 use settings::Settings;
 use task::{RevealStrategy, RevealTarget, ShellBuilder, SpawnInTerminal, TaskId};
