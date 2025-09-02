@@ -23578,6 +23578,21 @@ impl SemanticsProvider for Entity<Project> {
         }))
     }
 
+    fn inlay_hints_2(
+        &self,
+        buffer: Entity<Buffer>,
+        range: Range<text::Anchor>,
+        cx: &mut App,
+    ) -> Option<(
+        Range<BufferRow>,
+        Shared<Task<Result<Vec<InlayHint>, Arc<anyhow::Error>>>>,
+    )> {
+        // self.read(cx).lsp_store().update(cx, |lsp_store, cx| {
+        //     lsp_store.inlay_hints_2(buffer, range, cx)
+        // })
+        todo!("TODO kb")
+    }
+
     fn resolve_inlay_hint(
         &self,
         hint: InlayHint,

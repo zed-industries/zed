@@ -361,6 +361,9 @@ impl AnyProtoClient {
                             Response::GetImplementationResponse(response) => {
                                 to_any_envelope(&envelope, response)
                             }
+                            Response::InlayHintsResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
                         };
                         Some(proto::ProtoLspResponse {
                             server_id,
