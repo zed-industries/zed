@@ -2366,6 +2366,168 @@ mod tests {
         )
     }
 
+    #[gpui::test]
+    async fn test_checkpoint_with_worktree(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        // Create main repository
+        let main_repo_dir = tempfile::tempdir().unwrap();
+        let main_repo_path = main_repo_dir.path();
+
+        git2::Repository::init(main_repo_path).unwrap();
+
+        // Create initial commit in main repo
+        let file_path = main_repo_path.join("test.txt");
+        smol::fs::write(&file_path, "initial content")
+            .await
+            .unwrap();
+
+        let git_repo = git2::Repository::open(main_repo_path).unwrap();
+        let mut index = git_repo.index().unwrap();
+        index.add_path(std::path::Path::new("test.txt")).unwrap();
+        index.write().unwrap();
+
+        let tree_id = index.write_tree().unwrap();
+        let tree = git_repo.find_tree(tree_id).unwrap();
+        let sig = git2::Signature::now("Test", "test@example.com").unwrap();
+        let commit = git_repo
+            .commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[])
+            .unwrap();
+
+        // Create a branch for the worktree
+        let commit_obj = git_repo.find_commit(commit).unwrap();
+        git_repo
+            .branch("worktree-branch", &commit_obj, false)
+            .unwrap();
+
+        // Create a worktree subdirectory in the main repo's parent
+        let worktree_name = format!("worktree-{}", uuid::Uuid::new_v4());
+        let worktree_path = main_repo_dir.path().parent().unwrap().join(&worktree_name);
+        std::fs::create_dir_all(&worktree_path).unwrap();
+
+        // Use git command line to create the worktree (more reliable than git2 API)
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(main_repo_path)
+            .arg("worktree")
+            .arg("add")
+            .arg(&worktree_path)
+            .arg("worktree-branch")
+            .output()
+            .expect("Failed to execute git worktree add");
+
+        if !output.status.success() {
+            panic!(
+                "Failed to create worktree: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        // Verify that .git is a file in the worktree (not a directory)
+        let git_file = worktree_path.join(".git");
+        assert!(git_file.exists(), ".git should exist in worktree");
+        assert!(
+            git_file.is_file(),
+            ".git should be a file in worktree, not a directory"
+        );
+
+        // Try to create a RealGitRepository with the worktree
+        // This should work but currently fails because .git is a file
+        let repo = RealGitRepository::new(&git_file, None, cx.executor());
+
+        if let Some(repo) = repo {
+            // Test checkpoint functionality
+            smol::fs::write(worktree_path.join("new_file.txt"), "new content")
+                .await
+                .unwrap();
+
+            // This should fail with the current implementation because
+            // with_exclude_overrides() and path_for_index_id() assume .git is a directory
+            let checkpoint_result = repo.checkpoint().await;
+
+            // In a working implementation, this should succeed
+            assert!(
+                checkpoint_result.is_ok(),
+                "Checkpoint should work in worktrees but currently fails with: {:?}",
+                checkpoint_result.err()
+            );
+
+            if let Ok(checkpoint) = checkpoint_result {
+                // Test restore
+                smol::fs::write(worktree_path.join("another_file.txt"), "more content")
+                    .await
+                    .unwrap();
+
+                let restore_result = repo.restore_checkpoint(checkpoint).await;
+                assert!(restore_result.is_ok(), "Restore should work in worktrees");
+            }
+        } else {
+            // This might fail to even create the repository with worktrees
+            panic!("Failed to create RealGitRepository with worktree - this is part of the bug");
+        }
+    }
+
+    #[gpui::test]
+    async fn test_checkpoint_with_regular_repo(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        // Create a regular repository (not a worktree)
+        let repo_dir = tempfile::tempdir().unwrap();
+        let repo_path = repo_dir.path();
+
+        git2::Repository::init(repo_path).unwrap();
+
+        // Create initial commit
+        let file_path = repo_path.join("test.txt");
+        smol::fs::write(&file_path, "initial content")
+            .await
+            .unwrap();
+
+        let git_repo = git2::Repository::open(repo_path).unwrap();
+        let mut index = git_repo.index().unwrap();
+        index.add_path(std::path::Path::new("test.txt")).unwrap();
+        index.write().unwrap();
+
+        let tree_id = index.write_tree().unwrap();
+        let tree = git_repo.find_tree(tree_id).unwrap();
+        let sig = git2::Signature::now("Test", "test@example.com").unwrap();
+        git_repo
+            .commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[])
+            .unwrap();
+
+        // Verify that .git is a directory in regular repo
+        let git_dir = repo_path.join(".git");
+        assert!(git_dir.exists(), ".git should exist");
+        assert!(
+            git_dir.is_dir(),
+            ".git should be a directory in regular repo"
+        );
+
+        // Create a RealGitRepository with the regular repo
+        let repo = RealGitRepository::new(&git_dir, None, cx.executor()).unwrap();
+
+        // Test checkpoint functionality - this should work fine
+        smol::fs::write(repo_path.join("new_file.txt"), "new content")
+            .await
+            .unwrap();
+
+        // The main point is that checkpoint creation succeeds in regular repos
+        let checkpoint = repo.checkpoint().await;
+        assert!(
+            checkpoint.is_ok(),
+            "Checkpoint should work in regular repos"
+        );
+
+        // Test that we can also restore (even if it doesn't fully restore the worktree state)
+        if let Ok(checkpoint) = checkpoint {
+            let restore_result = repo.restore_checkpoint(checkpoint).await;
+            assert!(
+                restore_result.is_ok(),
+                "Restore should not fail in regular repos"
+            );
+        }
+    }
+
     impl RealGitRepository {
         /// Force a Git garbage collection on the repository.
         fn gc(&self) -> BoxFuture<'_, Result<()>> {
