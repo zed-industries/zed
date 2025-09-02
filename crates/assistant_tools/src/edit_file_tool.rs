@@ -17,7 +17,7 @@ use editor::{
 use futures::StreamExt;
 use gpui::{
     Animation, AnimationExt, AnyWindowHandle, App, AppContext, AsyncApp, Entity, Task,
-    TextStyleRefinement, Transformation, WeakEntity, percentage, pulsating_between, px,
+    TextStyleRefinement, WeakEntity, pulsating_between, px,
 };
 use indoc::formatdoc;
 use language::{
@@ -44,7 +44,7 @@ use std::{
     time::Duration,
 };
 use theme::ThemeSettings;
-use ui::{Disclosure, Tooltip, prelude::*};
+use ui::{CommonAnimationExt, Disclosure, Tooltip, prelude::*};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -939,11 +939,7 @@ impl ToolCard for EditFileToolCard {
                     Icon::new(IconName::ArrowCircle)
                         .size(IconSize::XSmall)
                         .color(Color::Info)
-                        .with_animation(
-                            "arrow-circle",
-                            Animation::new(Duration::from_secs(2)).repeat(),
-                            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                        ),
+                        .with_rotate_animation(2),
                 )
             })
             .when_some(error_message, |header, error_message| {

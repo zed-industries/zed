@@ -14,6 +14,8 @@ pub enum DebugPanelDockPosition {
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, SettingsUi)]
 #[serde(default)]
+// todo(settings_ui) @ben: I'm pretty sure not having the fields be optional here is a bug,
+// it means the defaults will override previously set values if a single key is missing
 #[settings_ui(group = "Debugger", path = "debugger")]
 pub struct DebuggerSettings {
     /// Determines the stepping granularity.

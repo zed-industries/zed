@@ -1,11 +1,10 @@
 use auto_update::{AutoUpdateStatus, AutoUpdater, DismissErrorMessage, VersionCheckType};
 use editor::Editor;
-use extension_host::ExtensionStore;
+use extension_host::{ExtensionOperation, ExtensionStore};
 use futures::StreamExt;
 use gpui::{
-    Animation, AnimationExt as _, App, Context, CursorStyle, Entity, EventEmitter,
-    InteractiveElement as _, ParentElement as _, Render, SharedString, StatefulInteractiveElement,
-    Styled, Transformation, Window, actions, percentage,
+    App, Context, CursorStyle, Entity, EventEmitter, InteractiveElement as _, ParentElement as _,
+    Render, SharedString, StatefulInteractiveElement, Styled, Window, actions,
 };
 use language::{
     BinaryStatus, LanguageRegistry, LanguageServerId, LanguageServerName,
@@ -25,7 +24,10 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use ui::{ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
+use ui::{
+    ButtonLike, CommonAnimationExt, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip,
+    prelude::*,
+};
 use util::truncate_and_trailoff;
 use workspace::{StatusItemView, Workspace, item::ItemHandle};
 
@@ -405,13 +407,7 @@ impl ActivityIndicator {
                     icon: Some(
                         Icon::new(IconName::ArrowCircle)
                             .size(IconSize::Small)
-                            .with_animation(
-                                "arrow-circle",
-                                Animation::new(Duration::from_secs(2)).repeat(),
-                                |icon, delta| {
-                                    icon.transform(Transformation::rotate(percentage(delta)))
-                                },
-                            )
+                            .with_rotate_animation(2)
                             .into_any_element(),
                     ),
                     message,
@@ -433,11 +429,7 @@ impl ActivityIndicator {
                 icon: Some(
                     Icon::new(IconName::ArrowCircle)
                         .size(IconSize::Small)
-                        .with_animation(
-                            "arrow-circle",
-                            Animation::new(Duration::from_secs(2)).repeat(),
-                            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                        )
+                        .with_rotate_animation(2)
                         .into_any_element(),
                 ),
                 message: format!("Debug: {}", session.read(cx).adapter()),
@@ -460,11 +452,7 @@ impl ActivityIndicator {
                 icon: Some(
                     Icon::new(IconName::ArrowCircle)
                         .size(IconSize::Small)
-                        .with_animation(
-                            "arrow-circle",
-                            Animation::new(Duration::from_secs(2)).repeat(),
-                            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                        )
+                        .with_rotate_animation(2)
                         .into_any_element(),
                 ),
                 message: job_info.message.into(),
@@ -671,8 +659,9 @@ impl ActivityIndicator {
         }
 
         // Show any application auto-update info.
-        if let Some(updater) = &self.auto_updater {
-            return match &updater.read(cx).status() {
+        self.auto_updater
+            .as_ref()
+            .and_then(|updater| match &updater.read(cx).status() {
                 AutoUpdateStatus::Checking => Some(Content {
                     icon: Some(
                         Icon::new(IconName::Download)
@@ -728,28 +717,49 @@ impl ActivityIndicator {
                     tooltip_message: None,
                 }),
                 AutoUpdateStatus::Idle => None,
-            };
-        }
+            })
+            .or_else(|| {
+                if let Some(extension_store) =
+                    ExtensionStore::try_global(cx).map(|extension_store| extension_store.read(cx))
+                    && let Some((extension_id, operation)) =
+                        extension_store.outstanding_operations().iter().next()
+                {
+                    let (message, icon, rotate) = match operation {
+                        ExtensionOperation::Install => (
+                            format!("Installing {extension_id} extension…"),
+                            IconName::LoadCircle,
+                            true,
+                        ),
+                        ExtensionOperation::Upgrade => (
+                            format!("Updating {extension_id} extension…"),
+                            IconName::Download,
+                            false,
+                        ),
+                        ExtensionOperation::Remove => (
+                            format!("Removing {extension_id} extension…"),
+                            IconName::LoadCircle,
+                            true,
+                        ),
+                    };
 
-        if let Some(extension_store) =
-            ExtensionStore::try_global(cx).map(|extension_store| extension_store.read(cx))
-            && let Some(extension_id) = extension_store.outstanding_operations().keys().next()
-        {
-            return Some(Content {
-                icon: Some(
-                    Icon::new(IconName::Download)
-                        .size(IconSize::Small)
-                        .into_any_element(),
-                ),
-                message: format!("Updating {extension_id} extension…"),
-                on_click: Some(Arc::new(|this, window, cx| {
-                    this.dismiss_error_message(&DismissErrorMessage, window, cx)
-                })),
-                tooltip_message: None,
-            });
-        }
-
-        None
+                    Some(Content {
+                        icon: Some(Icon::new(icon).size(IconSize::Small).map(|this| {
+                            if rotate {
+                                this.with_rotate_animation(3).into_any_element()
+                            } else {
+                                this.into_any_element()
+                            }
+                        })),
+                        message,
+                        on_click: Some(Arc::new(|this, window, cx| {
+                            this.dismiss_error_message(&Default::default(), window, cx)
+                        })),
+                        tooltip_message: None,
+                    })
+                } else {
+                    None
+                }
+            })
     }
 
     fn version_tooltip_message(version: &VersionCheckType) -> String {
