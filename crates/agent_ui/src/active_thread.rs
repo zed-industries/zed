@@ -1002,6 +1002,10 @@ impl ActiveThread {
                         // Don't notify for intermediate tool use
                     }
                     Ok(StopReason::Refusal) => {
+                        self.last_error = Some(ThreadError::Message {
+                            header: "Request Refused".into(),
+                            message: "The model refused to respond to this request. This may occur when the request violates the model's content policy or safety guidelines. Please try rephrasing your request.".into(),
+                        });
                         self.notify_with_sound(
                             "Language model refused to respond",
                             IconName::Warning,

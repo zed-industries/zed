@@ -776,6 +776,7 @@ pub enum AcpThreadEvent {
     Error,
     LoadError(LoadError),
     PromptCapabilitiesUpdated,
+    Refusal,
 }
 
 impl EventEmitter<AcpThreadEvent> for AcpThread {}
@@ -1459,15 +1460,20 @@ impl AcpThread {
                             this.send_task.take();
                         }
 
-                        // Truncate entries if the last prompt was refused.
+                        // Handle refusal - emit event but don't truncate entries immediately
                         if let Ok(Ok(acp::PromptResponse {
                             stop_reason: acp::StopReason::Refusal,
                         })) = result
-                            && let Some((ix, _)) = this.last_user_message()
                         {
-                            let range = ix..this.entries.len();
-                            this.entries.truncate(ix);
-                            cx.emit(AcpThreadEvent::EntriesRemoved(range));
+                            cx.emit(AcpThreadEvent::Refusal);
+                            // Only truncate if we have entries after the last user message
+                            if let Some((ix, _)) = this.last_user_message() {
+                                let range = ix..this.entries.len();
+                                if range.start < range.end {
+                                    this.entries.truncate(ix);
+                                    cx.emit(AcpThreadEvent::EntriesRemoved(range));
+                                }
+                            }
                         }
 
                         cx.emit(AcpThreadEvent::Stopped);
