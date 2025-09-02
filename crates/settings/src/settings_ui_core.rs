@@ -119,14 +119,14 @@ pub enum NumType {
     U32 = 1,
     F32 = 2,
 }
+pub static NUM_TYPE_NAMES: std::sync::LazyLock<[&'static str; NumType::COUNT]> =
+    std::sync::LazyLock::new(|| NumType::ALL.map(NumType::type_name));
+pub static NUM_TYPE_IDS: std::sync::LazyLock<[TypeId; NumType::COUNT]> =
+    std::sync::LazyLock::new(|| NumType::ALL.map(NumType::type_id));
 
 impl NumType {
     const COUNT: usize = 3;
     const ALL: [NumType; Self::COUNT] = [NumType::U64, NumType::U32, NumType::F32];
-    pub const TYPE_NAMES: std::sync::LazyLock<[&'static str; Self::COUNT]> =
-        std::sync::LazyLock::new(|| Self::ALL.map(Self::type_name));
-    pub const TYPE_IDS: std::sync::LazyLock<[TypeId; Self::COUNT]> =
-        std::sync::LazyLock::new(|| Self::ALL.map(Self::type_id));
 
     pub fn type_id(self) -> TypeId {
         match self {
