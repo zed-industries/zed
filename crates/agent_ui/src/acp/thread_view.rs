@@ -490,8 +490,25 @@ impl AcpThreadView {
                     Ok(thread) => {
                         let action_log = thread.read(cx).action_log().clone();
 
-                        this.available_commands
-                            .replace(thread.read(cx).available_commands());
+                        let mut available_commands = thread.read(cx).available_commands();
+
+                        if connection
+                            .auth_methods()
+                            .iter()
+                            .any(|method| method.id.0.as_ref() == "claude-login")
+                        {
+                            available_commands.push(acp::AvailableCommand {
+                                name: "login".to_owned(),
+                                description: "Authenticate".to_owned(),
+                                input: None,
+                            });
+                            available_commands.push(acp::AvailableCommand {
+                                name: "logout".to_owned(),
+                                description: "Authenticate".to_owned(),
+                                input: None,
+                            });
+                        }
+                        this.available_commands.replace(available_commands);
 
                         this.prompt_capabilities
                             .set(thread.read(cx).prompt_capabilities());
@@ -906,6 +923,40 @@ impl AcpThreadView {
 
         if thread.read(cx).status() != ThreadStatus::Idle {
             self.stop_current_and_send_new_message(window, cx);
+            return;
+        }
+
+        let text = self.message_editor.read(cx).text(cx);
+        let text = text.trim();
+        if text == "/login" || text == "/logout" {
+            let ThreadState::Ready { thread, .. } = &self.thread_state else {
+                return;
+            };
+
+            let connection = thread.read(cx).connection().clone();
+            if !connection
+                .auth_methods()
+                .iter()
+                .any(|method| method.id.0.as_ref() == "claude-login")
+            {
+                return;
+            };
+            let this = cx.weak_entity();
+            let agent = self.agent.clone();
+            window.defer(cx, |window, cx| {
+                Self::handle_auth_required(
+                    this,
+                    AuthRequired {
+                        description: None,
+                        provider_id: Some(language_model::ANTHROPIC_PROVIDER_ID),
+                    },
+                    agent,
+                    connection,
+                    window,
+                    cx,
+                );
+            });
+            cx.notify();
             return;
         }
 
