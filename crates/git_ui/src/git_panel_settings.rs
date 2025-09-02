@@ -36,7 +36,7 @@ pub enum StatusStyle {
     LabelColor,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi)]
 pub struct GitPanelSettingsContent {
     /// Whether to show the panel button in the status bar.
     ///
@@ -77,7 +77,7 @@ pub struct GitPanelSettingsContent {
     pub collapse_untracked_diff: Option<bool>,
 }
 
-#[derive(Deserialize, Debug, Clone, PartialEq, SettingsUi)]
+#[derive(Deserialize, Debug, Clone, PartialEq)]
 pub struct GitPanelSettings {
     pub button: bool,
     pub dock: DockPosition,

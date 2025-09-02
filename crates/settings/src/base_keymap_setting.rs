@@ -100,25 +100,36 @@ impl BaseKeymap {
     }
 }
 
-impl Settings for BaseKeymap {
-    const KEY: Option<&'static str> = Some("base_keymap");
+#[derive(
+    Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default, SettingsUi,
+)]
+// extracted so that it can be an option, and still work with derive(SettingsUi)
+pub struct BaseKeymapSetting {
+    pub base_keymap: Option<BaseKeymap>,
+}
 
-    type FileContent = Option<Self>;
+impl Settings for BaseKeymap {
+    const KEY: Option<&'static str> = None;
+
+    type FileContent = BaseKeymapSetting;
 
     fn load(
         sources: SettingsSources<Self::FileContent>,
         _: &mut gpui::App,
     ) -> anyhow::Result<Self> {
-        if let Some(Some(user_value)) = sources.user.copied() {
+        if let Some(Some(user_value)) = sources.user.map(|setting| setting.base_keymap) {
             return Ok(user_value);
         }
-        if let Some(Some(server_value)) = sources.server.copied() {
+        if let Some(Some(server_value)) = sources.server.map(|setting| setting.base_keymap) {
             return Ok(server_value);
         }
-        sources.default.ok_or_else(Self::missing_default)
+        sources
+            .default
+            .base_keymap
+            .ok_or_else(Self::missing_default)
     }
 
     fn import_from_vscode(_vscode: &VsCodeSettings, current: &mut Self::FileContent) {
-        *current = Some(BaseKeymap::VSCode);
+        current.base_keymap = Some(BaseKeymap::VSCode);
     }
 }

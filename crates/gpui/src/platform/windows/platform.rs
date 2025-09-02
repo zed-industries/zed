@@ -1,7 +1,6 @@
 use std::{
     cell::RefCell,
     ffi::OsStr,
-    mem::ManuallyDrop,
     path::{Path, PathBuf},
     rc::{Rc, Weak},
     sync::Arc,
@@ -18,10 +17,7 @@ use windows::{
     UI::ViewManagement::UISettings,
     Win32::{
         Foundation::*,
-        Graphics::{
-            Gdi::*,
-            Imaging::{CLSID_WICImagingFactory, IWICImagingFactory},
-        },
+        Graphics::Gdi::*,
         Security::Credentials::*,
         System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*},
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
@@ -40,7 +36,6 @@ pub(crate) struct WindowsPlatform {
     foreground_executor: ForegroundExecutor,
     text_system: Arc<DirectWriteTextSystem>,
     windows_version: WindowsVersion,
-    bitmap_factory: ManuallyDrop<IWICImagingFactory>,
     drop_target_helper: IDropTargetHelper,
     handle: HWND,
     disable_direct_composition: bool,
@@ -132,12 +127,8 @@ impl WindowsPlatform {
         let foreground_executor = ForegroundExecutor::new(dispatcher);
         let directx_devices = DirectXDevices::new(disable_direct_composition)
             .context("Unable to init directx devices.")?;
-        let bitmap_factory = ManuallyDrop::new(unsafe {
-            CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)
-                .context("Error creating bitmap factory.")?
-        });
         let text_system = Arc::new(
-            DirectWriteTextSystem::new(&directx_devices, &bitmap_factory)
+            DirectWriteTextSystem::new(&directx_devices)
                 .context("Error creating DirectWriteTextSystem")?,
         );
         let drop_target_helper: IDropTargetHelper = unsafe {
@@ -157,7 +148,6 @@ impl WindowsPlatform {
             text_system,
             disable_direct_composition,
             windows_version,
-            bitmap_factory,
             drop_target_helper,
         })
     }
@@ -764,7 +754,6 @@ impl WindowsPlatformInner {
 impl Drop for WindowsPlatform {
     fn drop(&mut self) {
         unsafe {
-            ManuallyDrop::drop(&mut self.bitmap_factory);
             DestroyWindow(self.handle)
                 .context("Destroying platform window")
                 .log_err();

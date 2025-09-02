@@ -35,7 +35,7 @@ use project::{Project, ProjectEntryId};
 use prompt_store::{PromptId, PromptStore};
 use rope::Point;
 use settings::{Settings as _, SettingsStore};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
@@ -284,6 +284,7 @@ pub struct AcpThreadView {
     should_be_following: bool,
     editing_message: Option<usize>,
     prompt_capabilities: Rc<Cell<PromptCapabilities>>,
+    available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
     is_loading_contents: bool,
     _cancel_task: Option<Task<()>>,
     _subscriptions: [Subscription; 3],
@@ -325,7 +326,7 @@ impl AcpThreadView {
         cx: &mut Context<Self>,
     ) -> Self {
         let prompt_capabilities = Rc::new(Cell::new(acp::PromptCapabilities::default()));
-        let prevent_slash_commands = agent.clone().downcast::<ClaudeCode>().is_some();
+        let available_commands = Rc::new(RefCell::new(vec![]));
 
         let placeholder = if agent.name() == "Zed Agent" {
             format!("Message the {} — @ to include context", agent.name())
@@ -340,8 +341,8 @@ impl AcpThreadView {
                 history_store.clone(),
                 prompt_store.clone(),
                 prompt_capabilities.clone(),
+                available_commands.clone(),
                 placeholder,
-                prevent_slash_commands,
                 editor::EditorMode::AutoHeight {
                     min_lines: MIN_EDITOR_LINES,
                     max_lines: Some(MAX_EDITOR_LINES),
@@ -364,7 +365,7 @@ impl AcpThreadView {
                 history_store.clone(),
                 prompt_store.clone(),
                 prompt_capabilities.clone(),
-                prevent_slash_commands,
+                available_commands.clone(),
             )
         });
 
@@ -396,11 +397,12 @@ impl AcpThreadView {
             editing_message: None,
             edits_expanded: false,
             plan_expanded: false,
+            prompt_capabilities,
+            available_commands,
             editor_expanded: false,
             should_be_following: false,
             history_store,
             hovered_recent_history_item: None,
-            prompt_capabilities,
             is_loading_contents: false,
             _subscriptions: subscriptions,
             _cancel_task: None,
@@ -485,6 +487,9 @@ impl AcpThreadView {
                 match result {
                     Ok(thread) => {
                         let action_log = thread.read(cx).action_log().clone();
+
+                        this.available_commands
+                            .replace(thread.read(cx).available_commands());
 
                         this.prompt_capabilities
                             .set(thread.read(cx).prompt_capabilities());
@@ -826,6 +831,9 @@ impl AcpThreadView {
                 if AgentSettings::get_global(cx).expand_terminal_card {
                     self.expanded_tool_calls.insert(tool_call_id.clone());
                 }
+            }
+            ViewEvent::TerminalMovedToBackground(tool_call_id) => {
+                self.expanded_tool_calls.remove(tool_call_id);
             }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Focus) => {
                 if let Some(thread) = self.thread()
@@ -2418,7 +2426,8 @@ impl AcpThreadView {
 
         let output = terminal_data.output();
         let command_finished = output.is_some();
-        let truncated_output = output.is_some_and(|output| output.was_content_truncated);
+        let truncated_output =
+            output.is_some_and(|output| output.original_content_len > output.content.len());
         let output_line_count = output.map(|output| output.content_line_count).unwrap_or(0);
 
         let command_failed = command_finished
@@ -2540,14 +2549,14 @@ impl AcpThreadView {
             .when(truncated_output, |header| {
                 let tooltip = if let Some(output) = output {
                     if output_line_count + 10 > terminal::MAX_SCROLL_HISTORY_LINES {
-                        "Output exceeded terminal max lines and was \
-                            truncated, the model received the first 16 KB."
-                            .to_string()
+                       format!("Output exceeded terminal max lines and was \
+                            truncated, the model received the first {}.", format_file_size(output.content.len() as u64, true))
                     } else {
                         format!(
                             "Output is {} long, and to avoid unexpected token usage, \
-                                only 16 KB was sent back to the model.",
+                                only {} was sent back to the agent.",
                             format_file_size(output.original_content_len as u64, true),
+                             format_file_size(output.content.len() as u64, true)
                         )
                     }
                 } else {
@@ -2646,7 +2655,18 @@ impl AcpThreadView {
                         .bg(cx.theme().colors().editor_background)
                         .rounded_b_md()
                         .text_ui_sm(cx)
-                        .children(terminal_view.clone()),
+                        .h_full()
+                        .children(terminal_view.map(|terminal_view| {
+                            if terminal_view
+                                .read(cx)
+                                .content_mode(window, cx)
+                                .is_scrollable()
+                            {
+                                div().h_72().child(terminal_view).into_any_element()
+                            } else {
+                                terminal_view.into_any_element()
+                            }
+                        })),
                 )
             })
             .into_any()
@@ -5528,6 +5548,7 @@ pub(crate) mod tests {
                         audio: true,
                         embedded_context: true,
                     }),
+                    vec![],
                     cx,
                 )
             })))
