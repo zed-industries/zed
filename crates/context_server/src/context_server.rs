@@ -35,7 +35,7 @@ pub struct ContextServerCommand {
     pub args: Vec<String>,
     pub env: Option<HashMap<String, String>>,
     /// Timeout for tool calls in milliseconds. Defaults to 60000 (60 seconds) if not specified.
-    pub tool_call_timeout_millis: Option<u64>,
+    pub timeout: Option<u64>,
 }
 
 impl std::fmt::Debug for ContextServerCommand {
@@ -125,7 +125,7 @@ impl ContextServer {
                     executable: Path::new(&command.path).to_path_buf(),
                     args: command.args.clone(),
                     env: command.env.clone(),
-                    tool_call_timeout_millis: command.tool_call_timeout_millis,
+                    timeout: command.timeout,
                 },
                 working_directory,
                 cx.clone(),

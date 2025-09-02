@@ -144,7 +144,7 @@ pub struct ModelContextServerBinary {
     pub executable: PathBuf,
     pub args: Vec<String>,
     pub env: Option<HashMap<String, String>>,
-    pub tool_call_timeout_millis: Option<u64>,
+    pub timeout: Option<u64>,
 }
 
 impl Client {
@@ -171,7 +171,7 @@ impl Client {
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_else(String::new);
 
-        let timeout = binary.tool_call_timeout_millis.map(Duration::from_millis);
+        let timeout = binary.timeout.map(Duration::from_millis);
         let transport = Arc::new(StdioTransport::new(binary, working_directory, &cx)?);
         Self::new(server_id, server_name.into(), transport, timeout, cx)
     }

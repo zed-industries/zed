@@ -2475,7 +2475,7 @@ fn setup_context_server(
                     path: "somebinary".into(),
                     args: Vec::new(),
                     env: None,
-                    tool_call_timeout_millis: None,
+                    timeout: None,
                 },
             },
         );

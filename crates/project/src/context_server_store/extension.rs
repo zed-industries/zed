@@ -69,7 +69,7 @@ impl registry::ContextServerDescriptor for ContextServerDescriptor {
                 path: command.command,
                 args: command.args,
                 env: Some(command.env.into_iter().collect()),
-                tool_call_timeout_millis: None,
+                timeout: None,
             })
         })
     }
