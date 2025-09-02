@@ -1,7 +1,6 @@
 use crate::{Scheduler, SessionId, Timer};
 use async_task::Task;
-use futures::FutureExt as _;
-use std::{future::Future, marker::PhantomData, pin::pin, rc::Rc, sync::Arc, time::Duration};
+use std::{future::Future, marker::PhantomData, rc::Rc, sync::Arc, time::Duration};
 
 pub struct ForegroundExecutor {
     session_id: SessionId,
@@ -63,11 +62,8 @@ impl BackgroundExecutor {
         task
     }
 
-    pub fn block<Fut: Future>(&self, future: Fut) -> Fut::Output {
-        let mut output = None;
-        self.scheduler
-            .block(async { output = Some(future.await) }.boxed_local());
-        output.unwrap()
+    pub fn block_on<Fut: Future>(&self, future: Fut) -> Fut::Output {
+        self.scheduler.block_on(future)
     }
 
     pub fn block_with_timeout<Fut: Unpin + Future>(
@@ -75,14 +71,7 @@ impl BackgroundExecutor {
         future: &mut Fut,
         timeout: Duration,
     ) -> Option<Fut::Output> {
-        let mut timer = self.timer(timeout).fuse();
-        let mut future = pin!(async { future.await }.fuse());
-        self.block(async {
-            futures::select_biased! {
-                output = future => Some(output),
-                _ = timer => None,
-            }
-        })
+        self.scheduler.block_with_timeout(future, timeout)
     }
 
     pub fn timer(&self, duration: Duration) -> Timer {

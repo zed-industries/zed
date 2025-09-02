@@ -240,7 +240,7 @@ fn test_block() {
         .detach();
 
     // Block on receiving the value
-    let result = executor.block(async { rx.await.unwrap() });
+    let result = executor.block_on(async { rx.await.unwrap() });
     assert_eq!(result, 42);
 }
 
@@ -252,7 +252,7 @@ fn test_parking_panics() {
         SchedulerConfig::default(),
     ));
     let executor = BackgroundExecutor::new(scheduler);
-    executor.block(future::pending::<()>());
+    executor.block_on(future::pending::<()>());
 }
 
 #[test]
@@ -276,7 +276,7 @@ fn test_block_with_parking() {
         .detach();
 
     // Block on receiving the value (will park if needed)
-    let result = executor.block(async { rx.await.unwrap() });
+    let result = executor.block_on(async { rx.await.unwrap() });
     assert_eq!(result, 42);
 }
 
