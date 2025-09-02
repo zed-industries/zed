@@ -18,6 +18,7 @@ use node_runtime::{NodeRuntime, VersionStrategy};
 use pet_core::Configuration;
 use pet_core::os_environment::Environment;
 use pet_core::python_environment::{PythonEnvironment, PythonEnvironmentKind};
+use pet_virtualenv::is_virtualenv_dir;
 use project::Fs;
 use project::lsp_store::language_server_settings;
 use serde_json::{Value, json};
@@ -666,6 +667,21 @@ fn python_module_name_from_relative_path(relative_path: &str) -> String {
         .to_string()
 }
 
+fn is_python_env_global(k: &PythonEnvironmentKind) -> bool {
+    matches!(
+        k,
+        PythonEnvironmentKind::Homebrew
+            | PythonEnvironmentKind::Pyenv
+            | PythonEnvironmentKind::GlobalPaths
+            | PythonEnvironmentKind::MacPythonOrg
+            | PythonEnvironmentKind::MacCommandLineTools
+            | PythonEnvironmentKind::LinuxGlobal
+            | PythonEnvironmentKind::MacXCode
+            | PythonEnvironmentKind::WindowsStore
+            | PythonEnvironmentKind::WindowsRegistry
+    )
+}
+
 fn python_env_kind_display(k: &PythonEnvironmentKind) -> &'static str {
     match k {
         PythonEnvironmentKind::Conda => "Conda",
@@ -732,6 +748,31 @@ async fn get_worktree_venv_declaration(worktree_root: &Path) -> Option<String> {
     Some(venv_name.trim().to_string())
 }
 
+fn get_venv_parent_dir(env: &PythonEnvironment) -> Option<PathBuf> {
+    // If global, we aren't a virtual environment
+    if let Some(kind) = env.kind
+        && is_python_env_global(&kind)
+    {
+        return None;
+    }
+
+    let venv = env
+        .executable
+        .as_ref()
+        .and_then(|p| p.parent())
+        .and_then(|p| p.parent());
+
+    // Check to be sure we are a virtual environment using pet's most generic
+    // virtual environment type, VirtualEnv
+    if let Some(venv) = venv
+        && is_virtualenv_dir(venv)
+    {
+        venv.parent().map(|parent| parent.to_path_buf())
+    } else {
+        None
+    }
+}
+
 #[async_trait]
 impl ToolchainLister for PythonToolchainProvider {
     async fn list(
@@ -791,11 +832,23 @@ impl ToolchainLister for PythonToolchainProvider {
                     });
 
             // Compare project paths against worktree root
-            let proj_ordering = || match (&lhs.project, &rhs.project) {
-                (Some(l), Some(r)) => (r == &wr).cmp(&(l == &wr)),
-                (Some(l), None) if l == &wr => Ordering::Less,
-                (None, Some(r)) if r == &wr => Ordering::Greater,
-                _ => Ordering::Equal,
+            let proj_ordering = || {
+                let lhs_project = lhs
+                    .project
+                    .as_ref()
+                    .or(get_venv_parent_dir(lhs).as_ref())
+                    .map(|p| p.to_path_buf());
+                let rhs_project = rhs
+                    .project
+                    .as_ref()
+                    .or(get_venv_parent_dir(rhs).as_ref())
+                    .map(|p| p.to_path_buf());
+                match (&lhs_project, &rhs_project) {
+                    (Some(l), Some(r)) => (r == &wr).cmp(&(l == &wr)),
+                    (Some(l), None) if l == &wr => Ordering::Less,
+                    (None, Some(r)) if r == &wr => Ordering::Greater,
+                    _ => Ordering::Equal,
+                }
             };
 
             // Compare environment priorities
