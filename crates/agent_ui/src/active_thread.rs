@@ -1015,9 +1015,8 @@ impl ActiveThread {
                             header: SharedString::from("Request Refused"),
                             message: SharedString::from(refusal_message),
                         });
-                        let notification_message = format!("{} refused to respond", model_name);
                         self.notify_with_sound(
-                            &notification_message,
+                            format!("{} refused to respond", model_name),
                             IconName::Warning,
                             window,
                             cx,
