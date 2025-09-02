@@ -1,5 +1,4 @@
 use chrono::{DateTime, Duration, Utc};
-
 use parking_lot::Mutex;
 
 pub trait Clock {
