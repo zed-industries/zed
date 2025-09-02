@@ -31,7 +31,6 @@ pub struct FindPathToolInput {
     /// You can get back the first two paths by providing a glob of "*thing*.txt"
     /// </example>
     pub glob: String,
-
     /// Optional starting position for paginated results (0-based).
     /// When not provided, starts from the beginning.
     #[serde(default)]
@@ -86,11 +85,11 @@ impl AgentTool for FindPathTool {
     type Input = FindPathToolInput;
     type Output = FindPathToolOutput;
 
-    fn name(&self) -> SharedString {
-        "find_path".into()
+    fn name() -> &'static str {
+        "find_path"
     }
 
-    fn kind(&self) -> acp::ToolKind {
+    fn kind() -> acp::ToolKind {
         acp::ToolKind::Search
     }
 
@@ -116,7 +115,7 @@ impl AgentTool for FindPathTool {
                 ..cmp::min(input.offset + RESULTS_PER_PAGE, matches.len())];
 
             event_stream.update_fields(acp::ToolCallUpdateFields {
-                title: Some(if paginated_matches.len() == 0 {
+                title: Some(if paginated_matches.is_empty() {
                     "No matches".into()
                 } else if paginated_matches.len() == 1 {
                     "1 match".into()
@@ -139,9 +138,6 @@ impl AgentTool for FindPathTool {
                         })
                         .collect(),
                 ),
-                raw_output: Some(serde_json::json!({
-                    "paths": &matches,
-                })),
                 ..Default::default()
             });
 
@@ -169,16 +165,17 @@ fn search_paths(glob: &str, project: Entity<Project>, cx: &mut App) -> Task<Resu
         .collect();
 
     cx.background_spawn(async move {
-        Ok(snapshots
-            .iter()
-            .flat_map(|snapshot| {
+        let mut results = Vec::new();
+        for snapshot in snapshots {
+            for entry in snapshot.entries(false, 0) {
                 let root_name = PathBuf::from(snapshot.root_name());
-                snapshot
-                    .entries(false, 0)
-                    .map(move |entry| root_name.join(&entry.path))
-                    .filter(|path| path_matcher.is_match(&path))
-            })
-            .collect())
+                if path_matcher.is_match(root_name.join(&entry.path)) {
+                    results.push(snapshot.abs_path().join(entry.path.as_ref()));
+                }
+            }
+        }
+
+        Ok(results)
     })
 }
 
@@ -219,8 +216,8 @@ mod test {
         assert_eq!(
             matches,
             &[
-                PathBuf::from("root/apple/banana/carrot"),
-                PathBuf::from("root/apple/bandana/carbonara")
+                PathBuf::from(path!("/root/apple/banana/carrot")),
+                PathBuf::from(path!("/root/apple/bandana/carbonara"))
             ]
         );
 
@@ -231,8 +228,8 @@ mod test {
         assert_eq!(
             matches,
             &[
-                PathBuf::from("root/apple/banana/carrot"),
-                PathBuf::from("root/apple/bandana/carbonara")
+                PathBuf::from(path!("/root/apple/banana/carrot")),
+                PathBuf::from(path!("/root/apple/bandana/carbonara"))
             ]
         );
     }

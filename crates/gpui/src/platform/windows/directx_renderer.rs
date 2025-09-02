@@ -1,19 +1,22 @@
-use std::{mem::ManuallyDrop, sync::Arc};
+use std::{
+    mem::ManuallyDrop,
+    sync::{Arc, OnceLock},
+};
 
 use ::util::ResultExt;
 use anyhow::{Context, Result};
 use windows::{
     Win32::{
-        Foundation::{FreeLibrary, HMODULE, HWND},
+        Foundation::{HMODULE, HWND},
         Graphics::{
             Direct3D::*,
             Direct3D11::*,
             DirectComposition::*,
+            DirectWrite::*,
             Dxgi::{Common::*, *},
         },
-        System::LibraryLoader::LoadLibraryA,
     },
-    core::{Interface, PCSTR},
+    core::Interface,
 };
 
 use crate::{
@@ -28,6 +31,11 @@ const RENDER_TARGET_FORMAT: DXGI_FORMAT = DXGI_FORMAT_B8G8R8A8_UNORM;
 // This configuration is used for MSAA rendering on paths only, and it's guaranteed to be supported by DirectX 11.
 const PATH_MULTISAMPLE_COUNT: u32 = 4;
 
+pub(crate) struct FontInfo {
+    pub gamma_ratios: [f32; 4],
+    pub grayscale_enhanced_contrast: f32,
+}
+
 pub(crate) struct DirectXRenderer {
     hwnd: HWND,
     atlas: Arc<DirectXAtlas>,
@@ -36,6 +44,7 @@ pub(crate) struct DirectXRenderer {
     globals: DirectXGlobalElements,
     pipelines: DirectXRenderPipelines,
     direct_composition: Option<DirectComposition>,
+    font_info: &'static FontInfo,
 }
 
 /// Direct3D objects
@@ -172,6 +181,7 @@ impl DirectXRenderer {
             globals,
             pipelines,
             direct_composition,
+            font_info: Self::get_font_info(),
         })
     }
 
@@ -184,10 +194,12 @@ impl DirectXRenderer {
             &self.devices.device_context,
             self.globals.global_params_buffer[0].as_ref().unwrap(),
             &[GlobalParams {
+                gamma_ratios: self.font_info.gamma_ratios,
                 viewport_size: [
                     self.resources.viewport[0].Width,
                     self.resources.viewport[0].Height,
                 ],
+                grayscale_enhanced_contrast: self.font_info.grayscale_enhanced_contrast,
                 _pad: 0,
             }],
         )?;
@@ -208,7 +220,7 @@ impl DirectXRenderer {
 
     fn present(&mut self) -> Result<()> {
         unsafe {
-            let result = self.resources.swap_chain.Present(1, DXGI_PRESENT(0));
+            let result = self.resources.swap_chain.Present(0, DXGI_PRESENT(0));
             // Presenting the swap chain can fail if the DirectX device was removed or reset.
             if result == DXGI_ERROR_DEVICE_REMOVED || result == DXGI_ERROR_DEVICE_RESET {
                 let reason = self.devices.device.GetDeviceRemovedReason();
@@ -618,6 +630,52 @@ impl DirectXRenderer {
             driver_info: driver_version,
         })
     }
+
+    pub(crate) fn get_font_info() -> &'static FontInfo {
+        static CACHED_FONT_INFO: OnceLock<FontInfo> = OnceLock::new();
+        CACHED_FONT_INFO.get_or_init(|| unsafe {
+            let factory: IDWriteFactory5 = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED).unwrap();
+            let render_params: IDWriteRenderingParams1 =
+                factory.CreateRenderingParams().unwrap().cast().unwrap();
+            FontInfo {
+                gamma_ratios: Self::get_gamma_ratios(render_params.GetGamma()),
+                grayscale_enhanced_contrast: render_params.GetGrayscaleEnhancedContrast(),
+            }
+        })
+    }
+
+    // Gamma ratios for brightening/darkening edges for better contrast
+    // https://github.com/microsoft/terminal/blob/1283c0f5b99a2961673249fa77c6b986efb5086c/src/renderer/atlas/dwrite.cpp#L50
+    fn get_gamma_ratios(gamma: f32) -> [f32; 4] {
+        const GAMMA_INCORRECT_TARGET_RATIOS: [[f32; 4]; 13] = [
+            [0.0000 / 4.0, 0.0000 / 4.0, 0.0000 / 4.0, 0.0000 / 4.0], // gamma = 1.0
+            [0.0166 / 4.0, -0.0807 / 4.0, 0.2227 / 4.0, -0.0751 / 4.0], // gamma = 1.1
+            [0.0350 / 4.0, -0.1760 / 4.0, 0.4325 / 4.0, -0.1370 / 4.0], // gamma = 1.2
+            [0.0543 / 4.0, -0.2821 / 4.0, 0.6302 / 4.0, -0.1876 / 4.0], // gamma = 1.3
+            [0.0739 / 4.0, -0.3963 / 4.0, 0.8167 / 4.0, -0.2287 / 4.0], // gamma = 1.4
+            [0.0933 / 4.0, -0.5161 / 4.0, 0.9926 / 4.0, -0.2616 / 4.0], // gamma = 1.5
+            [0.1121 / 4.0, -0.6395 / 4.0, 1.1588 / 4.0, -0.2877 / 4.0], // gamma = 1.6
+            [0.1300 / 4.0, -0.7649 / 4.0, 1.3159 / 4.0, -0.3080 / 4.0], // gamma = 1.7
+            [0.1469 / 4.0, -0.8911 / 4.0, 1.4644 / 4.0, -0.3234 / 4.0], // gamma = 1.8
+            [0.1627 / 4.0, -1.0170 / 4.0, 1.6051 / 4.0, -0.3347 / 4.0], // gamma = 1.9
+            [0.1773 / 4.0, -1.1420 / 4.0, 1.7385 / 4.0, -0.3426 / 4.0], // gamma = 2.0
+            [0.1908 / 4.0, -1.2652 / 4.0, 1.8650 / 4.0, -0.3476 / 4.0], // gamma = 2.1
+            [0.2031 / 4.0, -1.3864 / 4.0, 1.9851 / 4.0, -0.3501 / 4.0], // gamma = 2.2
+        ];
+
+        const NORM13: f32 = ((0x10000 as f64) / (255.0 * 255.0) * 4.0) as f32;
+        const NORM24: f32 = ((0x100 as f64) / (255.0) * 4.0) as f32;
+
+        let index = ((gamma * 10.0).round() as usize).clamp(10, 22) - 10;
+        let ratios = GAMMA_INCORRECT_TARGET_RATIOS[index];
+
+        [
+            ratios[0] * NORM13,
+            ratios[1] * NORM24,
+            ratios[2] * NORM13,
+            ratios[3] * NORM24,
+        ]
+    }
 }
 
 impl DirectXResources {
@@ -759,7 +817,7 @@ impl DirectXRenderPipelines {
 
 impl DirectComposition {
     pub fn new(dxgi_device: &IDXGIDevice, hwnd: HWND) -> Result<Self> {
-        let comp_device = get_comp_device(&dxgi_device)?;
+        let comp_device = get_comp_device(dxgi_device)?;
         let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
         let comp_visual = unsafe { comp_device.CreateVisual() }?;
 
@@ -823,8 +881,10 @@ impl DirectXGlobalElements {
 #[derive(Debug, Default)]
 #[repr(C)]
 struct GlobalParams {
+    gamma_ratios: [f32; 4],
     viewport_size: [f32; 2],
-    _pad: u64,
+    grayscale_enhanced_contrast: f32,
+    _pad: u32,
 }
 
 struct PipelineState<T> {
@@ -1145,7 +1205,7 @@ fn create_resources(
     [D3D11_VIEWPORT; 1],
 )> {
     let (render_target, render_target_view) =
-        create_render_target_and_its_view(&swap_chain, &devices.device)?;
+        create_render_target_and_its_view(swap_chain, &devices.device)?;
     let (path_intermediate_texture, path_intermediate_srv) =
         create_path_intermediate_texture(&devices.device, width, height)?;
     let (path_intermediate_msaa_texture, path_intermediate_msaa_view) =
@@ -1545,6 +1605,10 @@ pub(crate) mod shader_resources {
     #[cfg(debug_assertions)]
     pub(super) fn build_shader_blob(entry: ShaderModule, target: ShaderTarget) -> Result<ID3DBlob> {
         unsafe {
+            use windows::Win32::Graphics::{
+                Direct3D::ID3DInclude, Hlsl::D3D_COMPILE_STANDARD_FILE_INCLUDE,
+            };
+
             let shader_name = if matches!(entry, ShaderModule::EmojiRasterization) {
                 "color_text_raster.hlsl"
             } else {
@@ -1573,10 +1637,15 @@ pub(crate) mod shader_resources {
             let entry_point = PCSTR::from_raw(entry.as_ptr());
             let target_cstr = PCSTR::from_raw(target.as_ptr());
 
+            // really dirty trick because winapi bindings are unhappy otherwise
+            let include_handler = &std::mem::transmute::<usize, ID3DInclude>(
+                D3D_COMPILE_STANDARD_FILE_INCLUDE as usize,
+            );
+
             let ret = D3DCompileFromFile(
                 &HSTRING::from(shader_path.to_str().unwrap()),
                 None,
-                None,
+                include_handler,
                 entry_point,
                 target_cstr,
                 D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION,
@@ -1619,22 +1688,6 @@ pub(crate) mod shader_resources {
     }
 }
 
-fn with_dll_library<R, F>(dll_name: PCSTR, f: F) -> Result<R>
-where
-    F: FnOnce(HMODULE) -> Result<R>,
-{
-    let library = unsafe {
-        LoadLibraryA(dll_name).with_context(|| format!("Loading dll: {}", dll_name.display()))?
-    };
-    let result = f(library);
-    unsafe {
-        FreeLibrary(library)
-            .with_context(|| format!("Freeing dll: {}", dll_name.display()))
-            .log_err();
-    }
-    result
-}
-
 mod nvidia {
     use std::{
         ffi::CStr,
@@ -1644,7 +1697,7 @@ mod nvidia {
     use anyhow::Result;
     use windows::{Win32::System::LibraryLoader::GetProcAddress, core::s};
 
-    use crate::platform::windows::directx_renderer::with_dll_library;
+    use crate::with_dll_library;
 
     // https://github.com/NVIDIA/nvapi/blob/7cb76fce2f52de818b3da497af646af1ec16ce27/nvapi_lite_common.h#L180
     const NVAPI_SHORT_STRING_MAX: usize = 64;
@@ -1711,7 +1764,7 @@ mod amd {
     use anyhow::Result;
     use windows::{Win32::System::LibraryLoader::GetProcAddress, core::s};
 
-    use crate::platform::windows::directx_renderer::with_dll_library;
+    use crate::with_dll_library;
 
     // https://github.com/GPUOpen-LibrariesAndSDKs/AGS_SDK/blob/5d8812d703d0335741b6f7ffc37838eeb8b967f7/ags_lib/inc/amd_ags.h#L145
     const AGS_CURRENT_VERSION: i32 = (6 << 22) | (3 << 12);
@@ -1777,7 +1830,7 @@ mod amd {
                 anyhow::bail!("Failed to initialize AMD AGS, error code: {}", result);
             }
 
-            // Vulkan acctually returns this as the driver version
+            // Vulkan actually returns this as the driver version
             let software_version = if !gpu_info.radeon_software_version.is_null() {
                 std::ffi::CStr::from_ptr(gpu_info.radeon_software_version)
                     .to_string_lossy()

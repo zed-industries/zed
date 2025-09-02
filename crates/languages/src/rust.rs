@@ -106,17 +106,13 @@ impl ManifestProvider for CargoManifestProvider {
 #[async_trait(?Send)]
 impl LspAdapter for RustLspAdapter {
     fn name(&self) -> LanguageServerName {
-        SERVER_NAME.clone()
-    }
-
-    fn manifest_name(&self) -> Option<ManifestName> {
-        Some(SharedString::new_static("Cargo.toml").into())
+        SERVER_NAME
     }
 
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         let path = delegate.which("rust-analyzer".as_ref()).await?;
@@ -238,7 +234,7 @@ impl LspAdapter for RustLspAdapter {
         )
         .await?;
         make_file_executable(&server_path).await?;
-        remove_matching(&container_dir, |path| server_path != path).await;
+        remove_matching(&container_dir, |path| path != destination_path).await;
         GithubBinaryMetadata::write_to_file(
             &GithubBinaryMetadata {
                 metadata_version: 1,
@@ -407,7 +403,7 @@ impl LspAdapter for RustLspAdapter {
                 } else if completion
                     .detail
                     .as_ref()
-                    .map_or(false, |detail| detail.starts_with("macro_rules! "))
+                    .is_some_and(|detail| detail.starts_with("macro_rules! "))
                 {
                     let text = completion.label.clone();
                     let len = text.len();
@@ -500,7 +496,7 @@ impl LspAdapter for RustLspAdapter {
         let enable_lsp_tasks = ProjectSettings::get_global(cx)
             .lsp
             .get(&SERVER_NAME)
-            .map_or(false, |s| s.enable_lsp_tasks);
+            .is_some_and(|s| s.enable_lsp_tasks);
         if enable_lsp_tasks {
             let experimental = json!({
                 "runnables": {
@@ -511,20 +507,6 @@ impl LspAdapter for RustLspAdapter {
                 merge_json_value_into(experimental, original_experimental);
             } else {
                 original.capabilities.experimental = Some(experimental);
-            }
-        }
-
-        let cargo_diagnostics_fetched_separately = ProjectSettings::get_global(cx)
-            .diagnostics
-            .fetch_cargo_diagnostics();
-        if cargo_diagnostics_fetched_separately {
-            let disable_check_on_save = json!({
-                "checkOnSave": false,
-            });
-            if let Some(initialization_options) = &mut original.initialization_options {
-                merge_json_value_into(disable_check_on_save, initialization_options);
-            } else {
-                original.initialization_options = Some(disable_check_on_save);
             }
         }
 
@@ -585,7 +567,7 @@ impl ContextProvider for RustContextProvider {
 
         if let (Some(path), Some(stem)) = (&local_abs_path, task_variables.get(&VariableName::Stem))
         {
-            let fragment = test_fragment(&variables, &path, stem);
+            let fragment = test_fragment(&variables, path, stem);
             variables.insert(RUST_TEST_FRAGMENT_TASK_VARIABLE, fragment);
         };
         if let Some(test_name) =
@@ -602,16 +584,14 @@ impl ContextProvider for RustContextProvider {
             if let Some(path) = local_abs_path
                 .as_deref()
                 .and_then(|local_abs_path| local_abs_path.parent())
-            {
-                if let Some(package_name) =
+                && let Some(package_name) =
                     human_readable_package_name(path, project_env.as_ref()).await
-                {
-                    variables.insert(RUST_PACKAGE_TASK_VARIABLE.clone(), package_name);
-                }
+            {
+                variables.insert(RUST_PACKAGE_TASK_VARIABLE.clone(), package_name);
             }
             if let Some(path) = local_abs_path.as_ref()
                 && let Some((target, manifest_path)) =
-                    target_info_from_abs_path(&path, project_env.as_ref()).await
+                    target_info_from_abs_path(path, project_env.as_ref()).await
             {
                 if let Some(target) = target {
                     variables.extend(TaskVariables::from_iter([
@@ -665,7 +645,7 @@ impl ContextProvider for RustContextProvider {
             .variables
             .get(CUSTOM_TARGET_DIR)
             .cloned();
-        let run_task_args = if let Some(package_to_run) = package_to_run.clone() {
+        let run_task_args = if let Some(package_to_run) = package_to_run {
             vec!["run".into(), "-p".into(), package_to_run]
         } else {
             vec!["run".into()]
@@ -1023,8 +1003,14 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
             last = Some(path);
         }
 
+        let path = last.context("no cached binary")?;
+        let path = match RustLspAdapter::GITHUB_ASSET_KIND {
+            AssetKind::TarGz | AssetKind::Gz => path, // Tar and gzip extract in place.
+            AssetKind::Zip => path.join("rust-analyzer.exe"), // zip contains a .exe
+        };
+
         anyhow::Ok(LanguageServerBinary {
-            path: last.context("no cached binary")?,
+            path,
             env: None,
             arguments: Default::default(),
         })
@@ -1072,7 +1058,7 @@ mod tests {
     #[gpui::test]
     async fn test_process_rust_diagnostics() {
         let mut params = lsp::PublishDiagnosticsParams {
-            uri: lsp::Url::from_file_path(path!("/a")).unwrap(),
+            uri: lsp::Uri::from_file_path(path!("/a")).unwrap(),
             version: None,
             diagnostics: vec![
                 // no newlines
@@ -1568,7 +1554,7 @@ mod tests {
             let found = test_fragment(
                 &TaskVariables::from_iter(variables.into_iter().map(|(k, v)| (k, v.to_owned()))),
                 path,
-                &path.file_stem().unwrap().to_str().unwrap(),
+                path.file_stem().unwrap().to_str().unwrap(),
             );
             assert_eq!(expected, found);
         }

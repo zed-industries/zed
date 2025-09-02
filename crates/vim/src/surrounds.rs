@@ -174,12 +174,11 @@ impl Vim {
                             if ch.to_string() == pair.start {
                                 let start = offset;
                                 let mut end = start + 1;
-                                if surround {
-                                    if let Some((next_ch, _)) = chars_and_offset.peek() {
-                                        if next_ch.eq(&' ') {
-                                            end += 1;
-                                        }
-                                    }
+                                if surround
+                                    && let Some((next_ch, _)) = chars_and_offset.peek()
+                                    && next_ch.eq(&' ')
+                                {
+                                    end += 1;
                                 }
                                 edits.push((start..end, ""));
                                 anchors.push(start..start);
@@ -193,12 +192,11 @@ impl Vim {
                             if ch.to_string() == pair.end {
                                 let mut start = offset;
                                 let end = start + 1;
-                                if surround {
-                                    if let Some((next_ch, _)) = reverse_chars_and_offsets.peek() {
-                                        if next_ch.eq(&' ') {
-                                            start -= 1;
-                                        }
-                                    }
+                                if surround
+                                    && let Some((next_ch, _)) = reverse_chars_and_offsets.peek()
+                                    && next_ch.eq(&' ')
+                                {
+                                    start -= 1;
                                 }
                                 edits.push((start..end, ""));
                                 break;
@@ -242,7 +240,24 @@ impl Vim {
                             newline: false,
                         },
                     };
-                    let surround = pair.end != surround_alias((*text).as_ref());
+
+                    // Determines whether space should be added/removed after
+                    // and before the surround pairs.
+                    // For example, using `cs{[` will add a space before and
+                    // after the pair, while using `cs{]` will not, notice the
+                    // use of the closing bracket instead of the opening bracket
+                    // on the target object.
+                    // In the case of quotes, the opening and closing is the
+                    // same, so no space will ever be added or removed.
+                    let surround = match target {
+                        Object::Quotes
+                        | Object::BackQuotes
+                        | Object::AnyQuotes
+                        | Object::MiniQuotes
+                        | Object::DoubleQuotes => true,
+                        _ => pair.end != surround_alias((*text).as_ref()),
+                    };
+
                     let (display_map, selections) = editor.selections.all_adjusted_display(cx);
                     let mut edits = Vec::new();
                     let mut anchors = Vec::new();
@@ -1128,6 +1143,30 @@ mod test {
                     println!(\"it is fine\");
                 ]
             ];"},
+            Mode::Normal,
+        );
+
+        // test change quotes.
+        cx.set_state(indoc! {"'  ˇstr  '"}, Mode::Normal);
+        cx.simulate_keystrokes("c s ' \"");
+        cx.assert_state(indoc! {"ˇ\"  str  \""}, Mode::Normal);
+
+        // test multi cursor change quotes
+        cx.set_state(
+            indoc! {"
+            '  ˇstr  '
+            some example text here
+            ˇ'  str  '
+        "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("c s ' \"");
+        cx.assert_state(
+            indoc! {"
+            ˇ\"  str  \"
+            some example text here
+            ˇ\"  str  \"
+        "},
             Mode::Normal,
         );
     }

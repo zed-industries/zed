@@ -63,11 +63,11 @@ impl AgentTool for DiagnosticsTool {
     type Input = DiagnosticsToolInput;
     type Output = String;
 
-    fn name(&self) -> SharedString {
-        "diagnostics".into()
+    fn name() -> &'static str {
+        "diagnostics"
     }
 
-    fn kind(&self) -> acp::ToolKind {
+    fn kind() -> acp::ToolKind {
         acp::ToolKind::Read
     }
 
@@ -85,7 +85,7 @@ impl AgentTool for DiagnosticsTool {
     fn run(
         self: Arc<Self>,
         input: Self::Input,
-        event_stream: ToolCallEventStream,
+        _event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
         match input.path {
@@ -119,11 +119,6 @@ impl AgentTool for DiagnosticsTool {
                             range.start.row + 1,
                             entry.diagnostic.message
                         )?;
-
-                        event_stream.update_fields(acp::ToolCallUpdateFields {
-                            content: Some(vec![output.clone().into()]),
-                            ..Default::default()
-                        });
                     }
 
                     if output.is_empty() {
@@ -158,18 +153,9 @@ impl AgentTool for DiagnosticsTool {
                 }
 
                 if has_diagnostics {
-                    event_stream.update_fields(acp::ToolCallUpdateFields {
-                        content: Some(vec![output.clone().into()]),
-                        ..Default::default()
-                    });
                     Task::ready(Ok(output))
                 } else {
-                    let text = "No errors or warnings found in the project.";
-                    event_stream.update_fields(acp::ToolCallUpdateFields {
-                        content: Some(vec![text.into()]),
-                        ..Default::default()
-                    });
-                    Task::ready(Ok(text.into()))
+                    Task::ready(Ok("No errors or warnings found in the project.".into()))
                 }
             }
         }

@@ -65,7 +65,7 @@ impl TextSystem {
             font_runs_pool: Mutex::default(),
             fallback_font_stack: smallvec![
                 // TODO: Remove this when Linux have implemented setting fallbacks.
-                font("Zed Plex Mono"),
+                font(".ZedMono"),
                 font("Helvetica"),
                 font("Segoe UI"),  // Windows
                 font("Cantarell"), // Gnome
@@ -96,7 +96,7 @@ impl TextSystem {
     }
 
     /// Get the FontId for the configure font family and style.
-    pub fn font_id(&self, font: &Font) -> Result<FontId> {
+    fn font_id(&self, font: &Font) -> Result<FontId> {
         fn clone_font_id_result(font_id: &Result<FontId>) -> Result<FontId> {
             match font_id {
                 Ok(font_id) => Ok(*font_id),
@@ -366,15 +366,14 @@ impl WindowTextSystem {
 
         let mut decoration_runs = SmallVec::<[DecorationRun; 32]>::new();
         for run in runs {
-            if let Some(last_run) = decoration_runs.last_mut() {
-                if last_run.color == run.color
-                    && last_run.underline == run.underline
-                    && last_run.strikethrough == run.strikethrough
-                    && last_run.background_color == run.background_color
-                {
-                    last_run.len += run.len as u32;
-                    continue;
-                }
+            if let Some(last_run) = decoration_runs.last_mut()
+                && last_run.color == run.color
+                && last_run.underline == run.underline
+                && last_run.strikethrough == run.strikethrough
+                && last_run.background_color == run.background_color
+            {
+                last_run.len += run.len as u32;
+                continue;
             }
             decoration_runs.push(DecorationRun {
                 len: run.len as u32,
@@ -436,7 +435,7 @@ impl WindowTextSystem {
                     });
                 }
 
-                if decoration_runs.last().map_or(false, |last_run| {
+                if decoration_runs.last().is_some_and(|last_run| {
                     last_run.color == run.color
                         && last_run.underline == run.underline
                         && last_run.strikethrough == run.strikethrough
@@ -492,14 +491,14 @@ impl WindowTextSystem {
         let mut split_lines = text.split('\n');
         let mut processed = false;
 
-        if let Some(first_line) = split_lines.next() {
-            if let Some(second_line) = split_lines.next() {
-                processed = true;
-                process_line(first_line.to_string().into());
-                process_line(second_line.to_string().into());
-                for line_text in split_lines {
-                    process_line(line_text.to_string().into());
-                }
+        if let Some(first_line) = split_lines.next()
+            && let Some(second_line) = split_lines.next()
+        {
+            processed = true;
+            process_line(first_line.to_string().into());
+            process_line(second_line.to_string().into());
+            for line_text in split_lines {
+                process_line(line_text.to_string().into());
             }
         }
 
@@ -534,11 +533,11 @@ impl WindowTextSystem {
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
         for run in runs.iter() {
             let font_id = self.resolve_font(&run.font);
-            if let Some(last_run) = font_runs.last_mut() {
-                if last_run.font_id == font_id {
-                    last_run.len += run.len;
-                    continue;
-                }
+            if let Some(last_run) = font_runs.last_mut()
+                && last_run.font_id == font_id
+            {
+                last_run.len += run.len;
+                continue;
             }
             font_runs.push(FontRun {
                 len: run.len,
@@ -842,5 +841,18 @@ impl FontMetrics {
     /// Returns the outer limits of the area that the font covers in pixels.
     pub fn bounding_box(&self, font_size: Pixels) -> Bounds<Pixels> {
         (self.bounding_box / self.units_per_em as f32 * font_size.0).map(px)
+    }
+}
+
+#[allow(unused)]
+pub(crate) fn font_name_with_fallbacks<'a>(name: &'a str, system: &'a str) -> &'a str {
+    // Note: the "Zed Plex" fonts were deprecated as we are not allowed to use "Plex"
+    // in a derived font name. They are essentially indistinguishable from IBM Plex/Lilex,
+    // and so retained here for backward compatibility.
+    match name {
+        ".SystemUIFont" => system,
+        ".ZedSans" | "Zed Plex Sans" => "IBM Plex Sans",
+        ".ZedMono" | "Zed Plex Mono" => "Lilex",
+        _ => name,
     }
 }

@@ -58,6 +58,8 @@
       "[ space": "vim::InsertEmptyLineAbove",
       "[ e": "editor::MoveLineUp",
       "] e": "editor::MoveLineDown",
+      "[ f": "workspace::FollowNextCollaborator",
+      "] f": "workspace::FollowNextCollaborator",
 
       // Word motions
       "w": "vim::NextWordStart",
@@ -353,6 +355,15 @@
     }
   },
   {
+    "context": "showing_completions",
+    "bindings": {
+      "ctrl-d": "vim::ScrollDown",
+      "ctrl-u": "vim::ScrollUp",
+      "ctrl-e": "vim::LineDown",
+      "ctrl-y": "vim::LineUp"
+    }
+  },
+  {
     "context": "(vim_mode == normal || vim_mode == helix_normal) && !menu",
     "bindings": {
       "escape": "editor::Cancel",
@@ -390,7 +401,7 @@
       "right": "vim::WrappingRight",
       "h": "vim::WrappingLeft",
       "l": "vim::WrappingRight",
-      "y": "editor::Copy",
+      "y": "vim::HelixYank",
       "alt-;": "vim::OtherEnd",
       "ctrl-r": "vim::Redo",
       "f": ["vim::PushFindForward", { "before": false, "multiline": true }],
@@ -407,6 +418,7 @@
       "g w": "vim::PushRewrap",
       "insert": "vim::InsertBefore",
       "alt-.": "vim::RepeatFind",
+      "alt-s": ["editor::SplitSelectionIntoLines", { "keep_selections": true }],
       // tree-sitter related commands
       "[ x": "editor::SelectLargerSyntaxNode",
       "] x": "editor::SelectSmallerSyntaxNode",
@@ -425,12 +437,14 @@
       "g h": "vim::StartOfLine",
       "g s": "vim::FirstNonWhitespace", // "g s" default behavior is "space s"
       "g e": "vim::EndOfDocument",
+      "g .": "vim::HelixGotoLastModification", // go to last modification
       "g r": "editor::FindAllReferences", // zed specific
       "g t": "vim::WindowTop",
       "g c": "vim::WindowMiddle",
       "g b": "vim::WindowBottom",
 
-      "x": "editor::SelectLine",
+      "shift-r": "editor::Paste",
+      "x": "vim::HelixSelectLine",
       "shift-x": "editor::SelectLine",
       "%": "editor::SelectAll",
       // Window mode
@@ -816,7 +830,7 @@
       "v": "project_panel::OpenPermanent",
       "p": "project_panel::Open",
       "x": "project_panel::RevealInFileManager",
-      "s": "project_panel::OpenWithSystem",
+      "s": "workspace::OpenWithSystem",
       "z d": "project_panel::CompareMarkedFiles",
       "] c": "project_panel::SelectNextGitEntry",
       "[ c": "project_panel::SelectPrevGitEntry",

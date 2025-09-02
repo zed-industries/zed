@@ -1,15 +1,6 @@
 use crate::prelude::*;
 use gpui::{AnyElement, IntoElement, ParentElement, Styled};
 
-/// Severity levels that determine the style of the banner.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Severity {
-    Info,
-    Success,
-    Warning,
-    Error,
-}
-
 /// Banners provide informative and brief messages without interrupting the user.
 /// This component offers four severity levels that can be used depending on the message.
 ///

@@ -36,7 +36,6 @@ use module_list::ModuleList;
 use project::{
     DebugScenarioContext, Project, WorktreeId,
     debugger::session::{self, Session, SessionEvent, SessionStateEvent, ThreadId, ThreadStatus},
-    terminals::TerminalKind,
 };
 use rpc::proto::ViewId;
 use serde_json::Value;
@@ -102,7 +101,7 @@ impl Render for RunningState {
             .find(|pane| pane.read(cx).is_zoomed());
 
         let active = self.panes.panes().into_iter().next();
-        let pane = if let Some(ref zoomed_pane) = zoomed_pane {
+        let pane = if let Some(zoomed_pane) = zoomed_pane {
             zoomed_pane.update(cx, |pane, cx| pane.render(window, cx).into_any_element())
         } else if let Some(active) = active {
             self.panes
@@ -158,6 +157,29 @@ impl SubView {
         })
     }
 
+    pub(crate) fn stack_frame_list(
+        stack_frame_list: Entity<StackFrameList>,
+        cx: &mut App,
+    ) -> Entity<Self> {
+        let weak_list = stack_frame_list.downgrade();
+        let this = Self::new(
+            stack_frame_list.focus_handle(cx),
+            stack_frame_list.into(),
+            DebuggerPaneItem::Frames,
+            cx,
+        );
+
+        this.update(cx, |this, _| {
+            this.with_actions(Box::new(move |_, cx| {
+                weak_list
+                    .update(cx, |this, _| this.render_control_strip())
+                    .unwrap_or_else(|_| div().into_any_element())
+            }));
+        });
+
+        this
+    }
+
     pub(crate) fn console(console: Entity<Console>, cx: &mut App) -> Entity<Self> {
         let weak_console = console.downgrade();
         let this = Self::new(
@@ -180,7 +202,7 @@ impl SubView {
         let weak_list = list.downgrade();
         let focus_handle = list.focus_handle(cx);
         let this = Self::new(
-            focus_handle.clone(),
+            focus_handle,
             list.into(),
             DebuggerPaneItem::BreakpointList,
             cx,
@@ -291,7 +313,7 @@ pub(crate) fn new_debugger_pane(
             let Some(project) = project.upgrade() else {
                 return ControlFlow::Break(());
             };
-            let this_pane = cx.entity().clone();
+            let this_pane = cx.entity();
             let item = if tab.pane == this_pane {
                 pane.item_for_index(tab.ix)
             } else {
@@ -358,7 +380,7 @@ pub(crate) fn new_debugger_pane(
         }
     };
 
-    let ret = cx.new(move |cx| {
+    cx.new(move |cx| {
         let mut pane = Pane::new(
             workspace.clone(),
             project.clone(),
@@ -414,7 +436,7 @@ pub(crate) fn new_debugger_pane(
                     .and_then(|item| item.downcast::<SubView>());
                 let is_hovered = as_subview
                     .as_ref()
-                    .map_or(false, |item| item.read(cx).hovered);
+                    .is_some_and(|item| item.read(cx).hovered);
 
                 h_flex()
                     .track_focus(&focus_handle)
@@ -427,7 +449,6 @@ pub(crate) fn new_debugger_pane(
                     .bg(cx.theme().colors().tab_bar_background)
                     .on_action(|_: &menu::Cancel, window, cx| {
                         if cx.stop_active_drag(window) {
-                            return;
                         } else {
                             cx.propagate();
                         }
@@ -449,7 +470,7 @@ pub(crate) fn new_debugger_pane(
                             .children(pane.items().enumerate().map(|(ix, item)| {
                                 let selected = active_pane_item
                                     .as_ref()
-                                    .map_or(false, |active| active.item_id() == item.item_id());
+                                    .is_some_and(|active| active.item_id() == item.item_id());
                                 let deemphasized = !pane.has_focus(window, cx);
                                 let item_ = item.boxed_clone();
                                 div()
@@ -502,7 +523,7 @@ pub(crate) fn new_debugger_pane(
                                     .on_drag(
                                         DraggedTab {
                                             item: item.boxed_clone(),
-                                            pane: cx.entity().clone(),
+                                            pane: cx.entity(),
                                             detail: 0,
                                             is_active: selected,
                                             ix,
@@ -563,9 +584,7 @@ pub(crate) fn new_debugger_pane(
             }
         });
         pane
-    });
-
-    ret
+    })
 }
 
 pub struct DebugTerminal {
@@ -627,7 +646,7 @@ impl RunningState {
                 if s.starts_with("\"$ZED_") && s.ends_with('"') {
                     *s = s[1..s.len() - 1].to_string();
                 }
-                if let Some(substituted) = substitute_variables_in_str(&s, context) {
+                if let Some(substituted) = substitute_variables_in_str(s, context) {
                     *s = substituted;
                 }
             }
@@ -657,7 +676,7 @@ impl RunningState {
                 }
                 resolve_path(s);
 
-                if let Some(substituted) = substitute_variables_in_str(&s, context) {
+                if let Some(substituted) = substitute_variables_in_str(s, context) {
                     *s = substituted;
                 }
             }
@@ -919,7 +938,11 @@ impl RunningState {
         let task_store = project.read(cx).task_store().downgrade();
         let weak_project = project.downgrade();
         let weak_workspace = workspace.downgrade();
-        let is_local = project.read(cx).is_local();
+        let remote_shell = project
+            .read(cx)
+            .remote_client()
+            .as_ref()
+            .and_then(|remote| remote.read(cx).shell());
 
         cx.spawn_in(window, async move |this, cx| {
             let DebugScenario {
@@ -954,7 +977,7 @@ impl RunningState {
                                 inventory.read(cx).task_template_by_label(
                                     buffer,
                                     worktree_id,
-                                    &label,
+                                    label,
                                     cx,
                                 )
                             })
@@ -1003,7 +1026,7 @@ impl RunningState {
                     None
                 };
 
-                let builder = ShellBuilder::new(is_local, &task.resolved.shell);
+                let builder = ShellBuilder::new(remote_shell.as_deref(), &task.resolved.shell);
                 let command_label = builder.command_label(&task.resolved.command_label);
                 let (command, args) =
                     builder.build(task.resolved.command.clone(), &task.resolved.args);
@@ -1016,12 +1039,11 @@ impl RunningState {
                 };
                 let terminal = project
                     .update(cx, |project, cx| {
-                        project.create_terminal(
-                            TerminalKind::Task(task_with_shell.clone()),
+                        project.create_terminal_task(
+                            task_with_shell.clone(),
                             cx,
                         )
-                    })?
-                    .await?;
+                    })?.await?;
 
                 let terminal_view = cx.new_window_entity(|window, cx| {
                     TerminalView::new(
@@ -1116,9 +1138,8 @@ impl RunningState {
         };
         let session = self.session.read(cx);
 
-        let cwd = Some(&request.cwd)
-            .filter(|cwd| cwd.len() > 0)
-            .map(PathBuf::from)
+        let cwd = (!request.cwd.is_empty())
+            .then(|| PathBuf::from(&request.cwd))
             .or_else(|| session.binary().unwrap().cwd.clone());
 
         let mut envs: HashMap<String, String> =
@@ -1153,7 +1174,7 @@ impl RunningState {
             } else {
                 None
             }
-        } else if args.len() > 0 {
+        } else if !args.is_empty() {
             Some(args.remove(0))
         } else {
             None
@@ -1166,13 +1187,13 @@ impl RunningState {
             .filter(|title| !title.is_empty())
             .or_else(|| command.clone())
             .unwrap_or_else(|| "Debug terminal".to_string());
-        let kind = TerminalKind::Task(task::SpawnInTerminal {
+        let kind = task::SpawnInTerminal {
             id: task::TaskId("debug".to_string()),
             full_label: title.clone(),
             label: title.clone(),
-            command: command.clone(),
+            command,
             args,
-            command_label: title.clone(),
+            command_label: title,
             cwd,
             env: envs,
             use_new_terminal: true,
@@ -1184,12 +1205,13 @@ impl RunningState {
             show_summary: false,
             show_command: false,
             show_rerun: false,
-        });
+        };
 
         let workspace = self.workspace.clone();
         let weak_project = project.downgrade();
 
-        let terminal_task = project.update(cx, |project, cx| project.create_terminal(kind, cx));
+        let terminal_task =
+            project.update(cx, |project, cx| project.create_terminal_task(kind, cx));
         let terminal_task = cx.spawn_in(window, async move |_, cx| {
             let terminal = terminal_task.await?;
 
@@ -1310,7 +1332,7 @@ impl RunningState {
         let mut pane_item_status = IndexMap::from_iter(
             DebuggerPaneItem::all()
                 .iter()
-                .filter(|kind| kind.is_supported(&caps))
+                .filter(|kind| kind.is_supported(caps))
                 .map(|kind| (*kind, false)),
         );
         self.panes.panes().iter().for_each(|pane| {
@@ -1371,7 +1393,7 @@ impl RunningState {
         this.serialize_layout(window, cx);
         match event {
             Event::Remove { .. } => {
-                let _did_find_pane = this.panes.remove(&source_pane).is_ok();
+                let _did_find_pane = this.panes.remove(source_pane).is_ok();
                 debug_assert!(_did_find_pane);
                 cx.notify();
             }
@@ -1759,7 +1781,7 @@ impl RunningState {
             this.activate_item(0, false, false, window, cx);
         });
 
-        let rightmost_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
+        let rightmost_pane = new_debugger_pane(workspace.clone(), project, window, cx);
         rightmost_pane.update(cx, |this, cx| {
             this.add_item(
                 Box::new(SubView::new(

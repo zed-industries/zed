@@ -44,7 +44,7 @@ use parking_lot::Mutex;
 use postage::stream::Stream as _;
 use rpc::{
     AnyProtoClient, TypedEnvelope,
-    proto::{self, FromProto, SSH_PROJECT_ID, ToProto, git_reset, split_repository_update},
+    proto::{self, FromProto, ToProto, git_reset, split_repository_update},
 };
 use serde::Deserialize;
 use std::{
@@ -62,7 +62,7 @@ use std::{
 };
 use sum_tree::{Edit, SumTree, TreeSet};
 use text::{Bias, BufferId};
-use util::{ResultExt, debug_panic, post_inc};
+use util::{ResultExt, debug_panic, paths::SanitizedPath, post_inc};
 use worktree::{
     File, PathChange, PathKey, PathProgress, PathSummary, PathTarget, ProjectEntryId,
     UpdatedGitRepositoriesSet, UpdatedGitRepository, Worktree,
@@ -141,14 +141,10 @@ enum GitStoreState {
         project_environment: Entity<ProjectEnvironment>,
         fs: Arc<dyn Fs>,
     },
-    Ssh {
-        upstream_client: AnyProtoClient,
-        upstream_project_id: ProjectId,
-        downstream: Option<(AnyProtoClient, ProjectId)>,
-    },
     Remote {
         upstream_client: AnyProtoClient,
-        upstream_project_id: ProjectId,
+        upstream_project_id: u64,
+        downstream: Option<(AnyProtoClient, ProjectId)>,
     },
 }
 
@@ -355,7 +351,7 @@ impl GitStore {
         worktree_store: &Entity<WorktreeStore>,
         buffer_store: Entity<BufferStore>,
         upstream_client: AnyProtoClient,
-        project_id: ProjectId,
+        project_id: u64,
         cx: &mut Context<Self>,
     ) -> Self {
         Self::new(
@@ -364,23 +360,6 @@ impl GitStore {
             GitStoreState::Remote {
                 upstream_client,
                 upstream_project_id: project_id,
-            },
-            cx,
-        )
-    }
-
-    pub fn ssh(
-        worktree_store: &Entity<WorktreeStore>,
-        buffer_store: Entity<BufferStore>,
-        upstream_client: AnyProtoClient,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        Self::new(
-            worktree_store.clone(),
-            buffer_store,
-            GitStoreState::Ssh {
-                upstream_client,
-                upstream_project_id: ProjectId(SSH_PROJECT_ID),
                 downstream: None,
             },
             cx,
@@ -414,6 +393,7 @@ impl GitStore {
     pub fn init(client: &AnyProtoClient) {
         client.add_entity_request_handler(Self::handle_get_remotes);
         client.add_entity_request_handler(Self::handle_get_branches);
+        client.add_entity_request_handler(Self::handle_get_default_branch);
         client.add_entity_request_handler(Self::handle_change_branch);
         client.add_entity_request_handler(Self::handle_create_branch);
         client.add_entity_request_handler(Self::handle_git_init);
@@ -450,7 +430,7 @@ impl GitStore {
 
     pub fn shared(&mut self, project_id: u64, client: AnyProtoClient, cx: &mut Context<Self>) {
         match &mut self.state {
-            GitStoreState::Ssh {
+            GitStoreState::Remote {
                 downstream: downstream_client,
                 ..
             } => {
@@ -526,9 +506,6 @@ impl GitStore {
                     }),
                 });
             }
-            GitStoreState::Remote { .. } => {
-                debug_panic!("shared called on remote store");
-            }
         }
     }
 
@@ -540,14 +517,11 @@ impl GitStore {
             } => {
                 downstream_client.take();
             }
-            GitStoreState::Ssh {
+            GitStoreState::Remote {
                 downstream: downstream_client,
                 ..
             } => {
                 downstream_client.take();
-            }
-            GitStoreState::Remote { .. } => {
-                debug_panic!("unshared called on remote store");
             }
         }
         self.shared_diffs.clear();
@@ -560,7 +534,7 @@ impl GitStore {
     pub fn active_repository(&self) -> Option<Entity<Repository>> {
         self.active_repo_id
             .as_ref()
-            .map(|id| self.repositories[&id].clone())
+            .map(|id| self.repositories[id].clone())
     }
 
     pub fn open_unstaged_diff(
@@ -569,23 +543,22 @@ impl GitStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<BufferDiff>>> {
         let buffer_id = buffer.read(cx).remote_id();
-        if let Some(diff_state) = self.diffs.get(&buffer_id) {
-            if let Some(unstaged_diff) = diff_state
+        if let Some(diff_state) = self.diffs.get(&buffer_id)
+            && let Some(unstaged_diff) = diff_state
                 .read(cx)
                 .unstaged_diff
                 .as_ref()
                 .and_then(|weak| weak.upgrade())
+        {
+            if let Some(task) =
+                diff_state.update(cx, |diff_state, _| diff_state.wait_for_recalculation())
             {
-                if let Some(task) =
-                    diff_state.update(cx, |diff_state, _| diff_state.wait_for_recalculation())
-                {
-                    return cx.background_executor().spawn(async move {
-                        task.await;
-                        Ok(unstaged_diff)
-                    });
-                }
-                return Task::ready(Ok(unstaged_diff));
+                return cx.background_executor().spawn(async move {
+                    task.await;
+                    Ok(unstaged_diff)
+                });
             }
+            return Task::ready(Ok(unstaged_diff));
         }
 
         let Some((repo, repo_path)) =
@@ -626,23 +599,22 @@ impl GitStore {
     ) -> Task<Result<Entity<BufferDiff>>> {
         let buffer_id = buffer.read(cx).remote_id();
 
-        if let Some(diff_state) = self.diffs.get(&buffer_id) {
-            if let Some(uncommitted_diff) = diff_state
+        if let Some(diff_state) = self.diffs.get(&buffer_id)
+            && let Some(uncommitted_diff) = diff_state
                 .read(cx)
                 .uncommitted_diff
                 .as_ref()
                 .and_then(|weak| weak.upgrade())
+        {
+            if let Some(task) =
+                diff_state.update(cx, |diff_state, _| diff_state.wait_for_recalculation())
             {
-                if let Some(task) =
-                    diff_state.update(cx, |diff_state, _| diff_state.wait_for_recalculation())
-                {
-                    return cx.background_executor().spawn(async move {
-                        task.await;
-                        Ok(uncommitted_diff)
-                    });
-                }
-                return Task::ready(Ok(uncommitted_diff));
+                return cx.background_executor().spawn(async move {
+                    task.await;
+                    Ok(uncommitted_diff)
+                });
             }
+            return Task::ready(Ok(uncommitted_diff));
         }
 
         let Some((repo, repo_path)) =
@@ -763,29 +735,26 @@ impl GitStore {
         log::debug!("open conflict set");
         let buffer_id = buffer.read(cx).remote_id();
 
-        if let Some(git_state) = self.diffs.get(&buffer_id) {
-            if let Some(conflict_set) = git_state
+        if let Some(git_state) = self.diffs.get(&buffer_id)
+            && let Some(conflict_set) = git_state
                 .read(cx)
                 .conflict_set
                 .as_ref()
                 .and_then(|weak| weak.upgrade())
-            {
-                let conflict_set = conflict_set.clone();
-                let buffer_snapshot = buffer.read(cx).text_snapshot();
+        {
+            let conflict_set = conflict_set;
+            let buffer_snapshot = buffer.read(cx).text_snapshot();
 
-                git_state.update(cx, |state, cx| {
-                    let _ = state.reparse_conflict_markers(buffer_snapshot, cx);
-                });
+            git_state.update(cx, |state, cx| {
+                let _ = state.reparse_conflict_markers(buffer_snapshot, cx);
+            });
 
-                return conflict_set;
-            }
+            return conflict_set;
         }
 
         let is_unmerged = self
             .repository_and_path_for_buffer_id(buffer_id, cx)
-            .map_or(false, |(repo, path)| {
-                repo.read(cx).snapshot.has_conflict(&path)
-            });
+            .is_some_and(|(repo, path)| repo.read(cx).snapshot.has_conflict(&path));
         let git_store = cx.weak_entity();
         let buffer_git_state = self
             .diffs
@@ -916,7 +885,7 @@ impl GitStore {
             return Task::ready(Err(anyhow!("failed to find a git repository for buffer")));
         };
         let content = match &version {
-            Some(version) => buffer.rope_for_version(version).clone(),
+            Some(version) => buffer.rope_for_version(version),
             None => buffer.as_rope().clone(),
         };
         let version = version.unwrap_or(buffer.version());
@@ -1051,21 +1020,17 @@ impl GitStore {
             } => downstream_client
                 .as_ref()
                 .map(|state| (state.client.clone(), state.project_id)),
-            GitStoreState::Ssh {
+            GitStoreState::Remote {
                 downstream: downstream_client,
                 ..
             } => downstream_client.clone(),
-            GitStoreState::Remote { .. } => None,
         }
     }
 
     fn upstream_client(&self) -> Option<AnyProtoClient> {
         match &self.state {
             GitStoreState::Local { .. } => None,
-            GitStoreState::Ssh {
-                upstream_client, ..
-            }
-            | GitStoreState::Remote {
+            GitStoreState::Remote {
                 upstream_client, ..
             } => Some(upstream_client.clone()),
         }
@@ -1150,29 +1115,26 @@ impl GitStore {
         for (buffer_id, diff) in self.diffs.iter() {
             if let Some((buffer_repo, repo_path)) =
                 self.repository_and_path_for_buffer_id(*buffer_id, cx)
+                && buffer_repo == repo
             {
-                if buffer_repo == repo {
-                    diff.update(cx, |diff, cx| {
-                        if let Some(conflict_set) = &diff.conflict_set {
-                            let conflict_status_changed =
-                                conflict_set.update(cx, |conflict_set, cx| {
-                                    let has_conflict = repo_snapshot.has_conflict(&repo_path);
-                                    conflict_set.set_has_conflict(has_conflict, cx)
-                                })?;
-                            if conflict_status_changed {
-                                let buffer_store = self.buffer_store.read(cx);
-                                if let Some(buffer) = buffer_store.get(*buffer_id) {
-                                    let _ = diff.reparse_conflict_markers(
-                                        buffer.read(cx).text_snapshot(),
-                                        cx,
-                                    );
-                                }
+                diff.update(cx, |diff, cx| {
+                    if let Some(conflict_set) = &diff.conflict_set {
+                        let conflict_status_changed =
+                            conflict_set.update(cx, |conflict_set, cx| {
+                                let has_conflict = repo_snapshot.has_conflict(&repo_path);
+                                conflict_set.set_has_conflict(has_conflict, cx)
+                            })?;
+                        if conflict_status_changed {
+                            let buffer_store = self.buffer_store.read(cx);
+                            if let Some(buffer) = buffer_store.get(*buffer_id) {
+                                let _ = diff
+                                    .reparse_conflict_markers(buffer.read(cx).text_snapshot(), cx);
                             }
                         }
-                        anyhow::Ok(())
-                    })
-                    .ok();
-                }
+                    }
+                    anyhow::Ok(())
+                })
+                .ok();
             }
         }
         cx.emit(GitStoreEvent::RepositoryUpdated(
@@ -1276,7 +1238,7 @@ impl GitStore {
     ) {
         match event {
             BufferStoreEvent::BufferAdded(buffer) => {
-                cx.subscribe(&buffer, |this, buffer, event, cx| {
+                cx.subscribe(buffer, |this, buffer, event, cx| {
                     if let BufferEvent::LanguageChanged = event {
                         let buffer_id = buffer.read(cx).remote_id();
                         if let Some(diff_state) = this.diffs.get(&buffer_id) {
@@ -1294,7 +1256,7 @@ impl GitStore {
                 }
             }
             BufferStoreEvent::BufferDropped(buffer_id) => {
-                self.diffs.remove(&buffer_id);
+                self.diffs.remove(buffer_id);
                 for diffs in self.shared_diffs.values_mut() {
                     diffs.remove(buffer_id);
                 }
@@ -1383,8 +1345,8 @@ impl GitStore {
             repository.update(cx, |repository, cx| {
                 let repo_abs_path = &repository.work_directory_abs_path;
                 if changed_repos.iter().any(|update| {
-                    update.old_work_directory_abs_path.as_ref() == Some(&repo_abs_path)
-                        || update.new_work_directory_abs_path.as_ref() == Some(&repo_abs_path)
+                    update.old_work_directory_abs_path.as_ref() == Some(repo_abs_path)
+                        || update.new_work_directory_abs_path.as_ref() == Some(repo_abs_path)
                 }) {
                     repository.reload_buffer_diff_bases(cx);
                 }
@@ -1439,12 +1401,7 @@ impl GitStore {
                 cx.background_executor()
                     .spawn(async move { fs.git_init(&path, fallback_branch_name) })
             }
-            GitStoreState::Ssh {
-                upstream_client,
-                upstream_project_id: project_id,
-                ..
-            }
-            | GitStoreState::Remote {
+            GitStoreState::Remote {
                 upstream_client,
                 upstream_project_id: project_id,
                 ..
@@ -1454,7 +1411,7 @@ impl GitStore {
                 cx.background_executor().spawn(async move {
                     client
                         .request(proto::GitInit {
-                            project_id: project_id.0,
+                            project_id: project_id,
                             abs_path: path.to_string_lossy().to_string(),
                             fallback_branch_name,
                         })
@@ -1478,13 +1435,18 @@ impl GitStore {
                 cx.background_executor()
                     .spawn(async move { fs.git_clone(&repo, &path).await })
             }
-            GitStoreState::Ssh {
+            GitStoreState::Remote {
                 upstream_client,
                 upstream_project_id,
                 ..
             } => {
+                if upstream_client.is_via_collab() {
+                    return Task::ready(Err(anyhow!(
+                        "Git Clone isn't supported for project guests"
+                    )));
+                }
                 let request = upstream_client.request(proto::GitClone {
-                    project_id: upstream_project_id.0,
+                    project_id: *upstream_project_id,
                     abs_path: path.to_string_lossy().to_string(),
                     remote_repo: repo,
                 });
@@ -1498,9 +1460,6 @@ impl GitStore {
                     }
                 })
             }
-            GitStoreState::Remote { .. } => {
-                Task::ready(Err(anyhow!("Git Clone isn't supported for remote users")))
-            }
         }
     }
 
@@ -1513,10 +1472,7 @@ impl GitStore {
             let mut update = envelope.payload;
 
             let id = RepositoryId::from_proto(update.id);
-            let client = this
-                .upstream_client()
-                .context("no upstream client")?
-                .clone();
+            let client = this.upstream_client().context("no upstream client")?;
 
             let mut is_new = false;
             let repo = this.repositories.entry(id).or_insert_with(|| {
@@ -1535,7 +1491,7 @@ impl GitStore {
             });
             if is_new {
                 this._subscriptions
-                    .push(cx.subscribe(&repo, Self::on_repository_event))
+                    .push(cx.subscribe(repo, Self::on_repository_event))
             }
 
             repo.update(cx, {
@@ -1894,6 +1850,23 @@ impl GitStore {
                 .collect::<Vec<_>>(),
         })
     }
+    async fn handle_get_default_branch(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GetDefaultBranch>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GetDefaultBranchResponse> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+
+        let branch = repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.default_branch()
+            })?
+            .await??
+            .map(Into::into);
+
+        Ok(proto::GetDefaultBranchResponse { branch })
+    }
     async fn handle_create_branch(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GitCreateBranch>,
@@ -2213,13 +2186,13 @@ impl GitStore {
     ) -> Result<()> {
         let buffer_id = BufferId::new(request.payload.buffer_id)?;
         this.update(&mut cx, |this, cx| {
-            if let Some(diff_state) = this.diffs.get_mut(&buffer_id) {
-                if let Some(buffer) = this.buffer_store.read(cx).get(buffer_id) {
-                    let buffer = buffer.read(cx).text_snapshot();
-                    diff_state.update(cx, |diff_state, cx| {
-                        diff_state.handle_base_texts_updated(buffer, request.payload, cx);
-                    })
-                }
+            if let Some(diff_state) = this.diffs.get_mut(&buffer_id)
+                && let Some(buffer) = this.buffer_store.read(cx).get(buffer_id)
+            {
+                let buffer = buffer.read(cx).text_snapshot();
+                diff_state.update(cx, |diff_state, cx| {
+                    diff_state.handle_base_texts_updated(buffer, request.payload, cx);
+                })
             }
         })
     }
@@ -2331,16 +2304,20 @@ impl GitStore {
                         return None;
                     };
 
-                    let mut paths = vec![];
+                    let mut paths = Vec::new();
                     // All paths prefixed by a given repo will constitute a continuous range.
                     while let Some(path) = entries.get(ix)
                         && let Some(repo_path) =
-                            RepositorySnapshot::abs_path_to_repo_path_inner(&repo_path, &path)
+                            RepositorySnapshot::abs_path_to_repo_path_inner(&repo_path, path)
                     {
                         paths.push((repo_path, ix));
                         ix += 1;
                     }
-                    Some((repo, paths))
+                    if paths.is_empty() {
+                        None
+                    } else {
+                        Some((repo, paths))
+                    }
                 });
                 tasks.push_back(task);
             }
@@ -2485,14 +2462,14 @@ impl BufferGitState {
     pub fn wait_for_recalculation(&mut self) -> Option<impl Future<Output = ()> + use<>> {
         if *self.recalculating_tx.borrow() {
             let mut rx = self.recalculating_tx.subscribe();
-            return Some(async move {
+            Some(async move {
                 loop {
                     let is_recalculating = rx.recv().await;
                     if is_recalculating != Some(true) {
                         break;
                     }
                 }
-            });
+            })
         } else {
             None
         }
@@ -2752,6 +2729,7 @@ impl RepositorySnapshot {
                 .iter()
                 .map(|repo_path| repo_path.to_proto())
                 .collect(),
+            merge_message: self.merge.message.as_ref().map(|msg| msg.to_string()),
             project_id,
             id: self.id.to_proto(),
             abs_path: self.work_directory_abs_path.to_proto(),
@@ -2814,6 +2792,7 @@ impl RepositorySnapshot {
                 .iter()
                 .map(|path| path.as_ref().to_proto())
                 .collect(),
+            merge_message: self.merge.message.as_ref().map(|msg| msg.to_string()),
             project_id,
             id: self.id.to_proto(),
             abs_path: self.work_directory_abs_path.to_proto(),
@@ -2853,15 +2832,15 @@ impl RepositorySnapshot {
     }
 
     pub fn had_conflict_on_last_merge_head_change(&self, repo_path: &RepoPath) -> bool {
-        self.merge.conflicted_paths.contains(&repo_path)
+        self.merge.conflicted_paths.contains(repo_path)
     }
 
     pub fn has_conflict(&self, repo_path: &RepoPath) -> bool {
         let had_conflict_on_last_merge_head_change =
-            self.merge.conflicted_paths.contains(&repo_path);
+            self.merge.conflicted_paths.contains(repo_path);
         let has_conflict_currently = self
-            .status_for_path(&repo_path)
-            .map_or(false, |entry| entry.status.is_conflicted());
+            .status_for_path(repo_path)
+            .is_some_and(|entry| entry.status.is_conflicted());
         had_conflict_on_last_merge_head_change || has_conflict_currently
     }
 
@@ -3255,6 +3234,7 @@ impl Repository {
         let git_store = self.git_store.upgrade()?;
         let worktree_store = git_store.read(cx).worktree_store.read(cx);
         let abs_path = self.snapshot.work_directory_abs_path.join(&path.0);
+        let abs_path = SanitizedPath::new(&abs_path);
         let (worktree, relative_path) = worktree_store.find_worktree(abs_path, cx)?;
         Some(ProjectPath {
             worktree_id: worktree.read(cx).id(),
@@ -3402,7 +3382,6 @@ impl Repository {
         reset_mode: ResetMode,
         _cx: &mut App,
     ) -> oneshot::Receiver<Result<()>> {
-        let commit = commit.to_string();
         let id = self.id;
 
         self.send_job(None, move |git_repo, _| async move {
@@ -3509,14 +3488,13 @@ impl Repository {
                     let Some(project_path) = self.repo_path_to_project_path(path, cx) else {
                         continue;
                     };
-                    if let Some(buffer) = buffer_store.get_by_path(&project_path) {
-                        if buffer
+                    if let Some(buffer) = buffer_store.get_by_path(&project_path)
+                        && buffer
                             .read(cx)
                             .file()
-                            .map_or(false, |file| file.disk_state().exists())
-                        {
-                            save_futures.push(buffer_store.save_buffer(buffer, cx));
-                        }
+                            .is_some_and(|file| file.disk_state().exists())
+                    {
+                        save_futures.push(buffer_store.save_buffer(buffer, cx));
                     }
                 }
             })
@@ -3576,14 +3554,13 @@ impl Repository {
                     let Some(project_path) = self.repo_path_to_project_path(path, cx) else {
                         continue;
                     };
-                    if let Some(buffer) = buffer_store.get_by_path(&project_path) {
-                        if buffer
+                    if let Some(buffer) = buffer_store.get_by_path(&project_path)
+                        && buffer
                             .read(cx)
                             .file()
-                            .map_or(false, |file| file.disk_state().exists())
-                        {
-                            save_futures.push(buffer_store.save_buffer(buffer, cx));
-                        }
+                            .is_some_and(|file| file.disk_state().exists())
+                    {
+                        save_futures.push(buffer_store.save_buffer(buffer, cx));
                     }
                 }
             })
@@ -3630,7 +3607,7 @@ impl Repository {
         let to_stage = self
             .cached_status()
             .filter(|entry| !entry.status.staging().is_fully_staged())
-            .map(|entry| entry.repo_path.clone())
+            .map(|entry| entry.repo_path)
             .collect();
         self.stage_entries(to_stage, cx)
     }
@@ -3639,16 +3616,13 @@ impl Repository {
         let to_unstage = self
             .cached_status()
             .filter(|entry| entry.status.staging().has_staged())
-            .map(|entry| entry.repo_path.clone())
+            .map(|entry| entry.repo_path)
             .collect();
         self.unstage_entries(to_unstage, cx)
     }
 
     pub fn stash_all(&mut self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
-        let to_stash = self
-            .cached_status()
-            .map(|entry| entry.repo_path.clone())
-            .collect();
+        let to_stash = self.cached_status().map(|entry| entry.repo_path).collect();
 
         self.stash_entries(to_stash, cx)
     }
@@ -4244,6 +4218,7 @@ impl Repository {
             .map(proto_to_commit_details);
 
         self.snapshot.merge.conflicted_paths = conflicted_paths;
+        self.snapshot.merge.message = update.merge_message.map(SharedString::from);
 
         let edits = update
             .removed_statuses
@@ -4320,7 +4295,8 @@ impl Repository {
                     bail!("not a local repository")
                 };
                 let (snapshot, events) = this
-                    .read_with(&mut cx, |this, _| {
+                    .update(&mut cx, |this, _| {
+                        this.paths_needing_status_update.clear();
                         compute_snapshot(
                             this.id,
                             this.work_directory_abs_path.clone(),
@@ -4395,14 +4371,13 @@ impl Repository {
                 }
 
                 if let Some(job) = jobs.pop_front() {
-                    if let Some(current_key) = &job.key {
-                        if jobs
+                    if let Some(current_key) = &job.key
+                        && jobs
                             .iter()
                             .any(|other_job| other_job.key.as_ref() == Some(current_key))
                         {
                             continue;
                         }
-                    }
                     (job.job)(state.clone(), cx).await;
                 } else if let Some(job) = job_rx.next().await {
                     jobs.push_back(job);
@@ -4433,13 +4408,12 @@ impl Repository {
                 }
 
                 if let Some(job) = jobs.pop_front() {
-                    if let Some(current_key) = &job.key {
-                        if jobs
+                    if let Some(current_key) = &job.key
+                        && jobs
                             .iter()
                             .any(|other_job| other_job.key.as_ref() == Some(current_key))
-                        {
-                            continue;
-                        }
+                    {
+                        continue;
                     }
                     (job.job)(state.clone(), cx).await;
                 } else if let Some(job) = job_rx.next().await {
@@ -4550,6 +4524,9 @@ impl Repository {
                 };
 
                 let paths = changed_paths.iter().cloned().collect::<Vec<_>>();
+                if paths.is_empty() {
+                    return Ok(());
+                }
                 let statuses = backend.status(&paths).await?;
 
                 let changed_path_statuses = cx
@@ -4560,10 +4537,10 @@ impl Repository {
 
                         for (repo_path, status) in &*statuses.entries {
                             changed_paths.remove(repo_path);
-                            if cursor.seek_forward(&PathTarget::Path(repo_path), Bias::Left) {
-                                if cursor.item().is_some_and(|entry| entry.status == *status) {
-                                    continue;
-                                }
+                            if cursor.seek_forward(&PathTarget::Path(repo_path), Bias::Left)
+                                && cursor.item().is_some_and(|entry| entry.status == *status)
+                            {
+                                continue;
                             }
 
                             changed_path_statuses.push(Edit::Insert(StatusEntry {

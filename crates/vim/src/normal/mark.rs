@@ -120,7 +120,6 @@ impl Vim {
                 });
             })
         });
-        return;
     }
 
     fn open_path_mark(
@@ -256,10 +255,8 @@ impl Vim {
                 }
             });
 
-            if should_jump {
-                if let Some(anchor) = anchor {
-                    self.motion(Motion::Jump { anchor, line }, window, cx)
-                }
+            if should_jump && let Some(anchor) = anchor {
+                self.motion(Motion::Jump { anchor, line }, window, cx)
             }
         }
     }

@@ -116,6 +116,7 @@ pub fn init(cx: &mut App) {
                         files: false,
                         directories: true,
                         multiple: false,
+                        prompt: None,
                     },
                     DirectoryLister::Local(
                         workspace.project().clone(),
@@ -693,7 +694,7 @@ impl ExtensionsPage {
                                 cx.open_url(&repository_url);
                             }
                         }))
-                        .tooltip(Tooltip::text(repository_url.clone()))
+                        .tooltip(Tooltip::text(repository_url))
                     })),
             )
     }
@@ -703,7 +704,7 @@ impl ExtensionsPage {
         extension: &ExtensionMetadata,
         cx: &mut Context<Self>,
     ) -> ExtensionCard {
-        let this = cx.entity().clone();
+        let this = cx.entity();
         let status = Self::extension_status(&extension.id, cx);
         let has_dev_extension = Self::dev_extension_exists(&extension.id, cx);
 
@@ -826,7 +827,7 @@ impl ExtensionsPage {
                                         cx.open_url(&repository_url);
                                     }
                                 }))
-                                .tooltip(Tooltip::text(repository_url.clone())),
+                                .tooltip(Tooltip::text(repository_url)),
                             )
                             .child(
                                 PopoverMenu::new(SharedString::from(format!(
@@ -862,7 +863,7 @@ impl ExtensionsPage {
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<ContextMenu> {
-        let context_menu = ContextMenu::build(window, cx, |context_menu, window, _| {
+        ContextMenu::build(window, cx, |context_menu, window, _| {
             context_menu
                 .entry(
                     "Install Another Version...",
@@ -886,9 +887,7 @@ impl ExtensionsPage {
                         cx.write_to_clipboard(ClipboardItem::new_string(authors.join(", ")));
                     }
                 })
-        });
-
-        context_menu
+        })
     }
 
     fn show_extension_version_list(
@@ -1030,15 +1029,14 @@ impl ExtensionsPage {
                                 .read(cx)
                                 .extension_manifest_for_id(&extension_id)
                                 .cloned()
+                                && let Some(events) = extension::ExtensionEvents::try_global(cx)
                             {
-                                if let Some(events) = extension::ExtensionEvents::try_global(cx) {
-                                    events.update(cx, |this, cx| {
-                                        this.emit(
-                                            extension::Event::ConfigureExtensionRequested(manifest),
-                                            cx,
-                                        )
-                                    });
-                                }
+                                events.update(cx, |this, cx| {
+                                    this.emit(
+                                        extension::Event::ConfigureExtensionRequested(manifest),
+                                        cx,
+                                    )
+                                });
                             }
                         }
                     })

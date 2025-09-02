@@ -56,7 +56,6 @@ runs:
         $env:COMPlus_CreateDumpDiagnostics = "1"
 
         cargo nextest run --workspace --no-fail-fast
-      continue-on-error: true
 
     - name: Analyze crash dumps
       if: always()

@@ -1,13 +1,17 @@
 use std::fmt::{Display, Formatter};
 
-use crate::{Settings, SettingsSources, VsCodeSettings};
+use crate as settings;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::{Settings, SettingsSources, VsCodeSettings};
+use settings_ui_macros::SettingsUi;
 
 /// Base key bindings scheme. Base keymaps can be overridden with user keymaps.
 ///
 /// Default: VSCode
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
+#[derive(
+    Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default, SettingsUi,
+)]
 pub enum BaseKeymap {
     #[default]
     VSCode,
@@ -44,7 +48,7 @@ impl BaseKeymap {
         ("Sublime Text", Self::SublimeText),
         ("Emacs (beta)", Self::Emacs),
         ("TextMate", Self::TextMate),
-        ("Cursor (beta)", Self::Cursor),
+        ("Cursor", Self::Cursor),
     ];
 
     #[cfg(not(target_os = "macos"))]
@@ -54,7 +58,7 @@ impl BaseKeymap {
         ("JetBrains", Self::JetBrains),
         ("Sublime Text", Self::SublimeText),
         ("Emacs (beta)", Self::Emacs),
-        ("Cursor (beta)", Self::Cursor),
+        ("Cursor", Self::Cursor),
     ];
 
     pub fn asset_path(&self) -> Option<&'static str> {
@@ -96,25 +100,36 @@ impl BaseKeymap {
     }
 }
 
-impl Settings for BaseKeymap {
-    const KEY: Option<&'static str> = Some("base_keymap");
+#[derive(
+    Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default, SettingsUi,
+)]
+// extracted so that it can be an option, and still work with derive(SettingsUi)
+pub struct BaseKeymapSetting {
+    pub base_keymap: Option<BaseKeymap>,
+}
 
-    type FileContent = Option<Self>;
+impl Settings for BaseKeymap {
+    const KEY: Option<&'static str> = None;
+
+    type FileContent = BaseKeymapSetting;
 
     fn load(
         sources: SettingsSources<Self::FileContent>,
         _: &mut gpui::App,
     ) -> anyhow::Result<Self> {
-        if let Some(Some(user_value)) = sources.user.copied() {
+        if let Some(Some(user_value)) = sources.user.map(|setting| setting.base_keymap) {
             return Ok(user_value);
         }
-        if let Some(Some(server_value)) = sources.server.copied() {
+        if let Some(Some(server_value)) = sources.server.map(|setting| setting.base_keymap) {
             return Ok(server_value);
         }
-        sources.default.ok_or_else(Self::missing_default)
+        sources
+            .default
+            .base_keymap
+            .ok_or_else(Self::missing_default)
     }
 
     fn import_from_vscode(_vscode: &VsCodeSettings, current: &mut Self::FileContent) {
-        *current = Some(BaseKeymap::VSCode);
+        current.base_keymap = Some(BaseKeymap::VSCode);
     }
 }

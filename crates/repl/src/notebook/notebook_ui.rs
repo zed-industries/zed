@@ -295,7 +295,7 @@ impl NotebookEditor {
         _cx: &mut Context<Self>,
     ) -> IconButton {
         let id: ElementId = ElementId::Name(id.into());
-        IconButton::new(id, icon).width(px(CONTROL_SIZE).into())
+        IconButton::new(id, icon).width(px(CONTROL_SIZE))
     }
 
     fn render_notebook_controls(
@@ -575,7 +575,7 @@ impl project::ProjectItem for NotebookItem {
                     .with_context(|| format!("finding the absolute path of {path:?}"))?;
 
                 // todo: watch for changes to the file
-                let file_content = fs.load(&abs_path.as_path()).await?;
+                let file_content = fs.load(abs_path.as_path()).await?;
                 let notebook = nbformat::parse_notebook(&file_content);
 
                 let notebook = match notebook {
@@ -584,8 +584,8 @@ impl project::ProjectItem for NotebookItem {
                     Ok(nbformat::Notebook::Legacy(legacy_notebook)) => {
                         // TODO: Decide if we want to mutate the notebook by including Cell IDs
                         // and any other conversions
-                        let notebook = nbformat::upgrade_legacy_notebook(legacy_notebook)?;
-                        notebook
+
+                        nbformat::upgrade_legacy_notebook(legacy_notebook)?
                     }
                     // Bad notebooks and notebooks v4.0 and below are not supported
                     Err(e) => {

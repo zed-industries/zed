@@ -2,7 +2,7 @@ use anyhow::Result;
 use gpui::App;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsSources, SettingsUi};
 
 #[derive(Deserialize, Debug)]
 pub struct CallSettings {
@@ -11,7 +11,7 @@ pub struct CallSettings {
 }
 
 /// Configuration of voice calls in Zed.
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi)]
 pub struct CallSettingsContent {
     /// Whether the microphone should be muted when joining a channel or a call.
     ///

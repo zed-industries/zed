@@ -1,13 +1,13 @@
-use std::path::Path;
 use std::rc::Rc;
+use std::{any::Any, path::Path};
 
-use crate::{AgentServer, AgentServerCommand};
+use crate::acp::AcpConnection;
+use crate::{AgentServer, AgentServerDelegate};
 use acp_thread::{AgentConnection, LoadError};
 use anyhow::Result;
-use gpui::{Entity, Task};
-use project::Project;
+use gpui::{App, AppContext as _, SharedString, Task};
+use language_models::provider::google::GoogleLanguageModelProvider;
 use settings::SettingsStore;
-use ui::App;
 
 use crate::AllAgentServersSettings;
 
@@ -17,16 +17,12 @@ pub struct Gemini;
 const ACP_ARG: &str = "--experimental-acp";
 
 impl AgentServer for Gemini {
-    fn name(&self) -> &'static str {
-        "Gemini"
+    fn telemetry_id(&self) -> &'static str {
+        "gemini-cli"
     }
 
-    fn empty_state_headline(&self) -> &'static str {
-        "Welcome to Gemini"
-    }
-
-    fn empty_state_message(&self) -> &'static str {
-        "Ask questions, edit files, run commands.\nBe specific for the best results."
+    fn name(&self) -> SharedString {
+        "Gemini CLI".into()
     }
 
     fn logo(&self) -> ui::IconName {
@@ -36,56 +32,125 @@ impl AgentServer for Gemini {
     fn connect(
         &self,
         root_dir: &Path,
-        project: &Entity<Project>,
+        delegate: AgentServerDelegate,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn AgentConnection>>> {
-        let project = project.clone();
         let root_dir = root_dir.to_path_buf();
         let server_name = self.name();
-        cx.spawn(async move |cx| {
-            let settings = cx.read_global(|settings: &SettingsStore, _| {
-                settings.get::<AllAgentServersSettings>(None).gemini.clone()
-            })?;
+        let settings = cx.read_global(|settings: &SettingsStore, _| {
+            settings.get::<AllAgentServersSettings>(None).gemini.clone()
+        });
 
-            let Some(command) =
-                AgentServerCommand::resolve("gemini", &[ACP_ARG], None, settings, &project, cx).await
-            else {
-                anyhow::bail!("Failed to find gemini binary");
+        cx.spawn(async move |cx| {
+            let ignore_system_version = settings
+                .as_ref()
+                .and_then(|settings| settings.ignore_system_version)
+                .unwrap_or(true);
+            let mut command = if let Some(settings) = settings
+                && let Some(command) = settings.custom_command()
+            {
+                command
+            } else {
+                cx.update(|cx| {
+                    delegate.get_or_npm_install_builtin_agent(
+                        Self::BINARY_NAME.into(),
+                        Self::PACKAGE_NAME.into(),
+                        format!("node_modules/{}/dist/index.js", Self::PACKAGE_NAME).into(),
+                        ignore_system_version,
+                        Some(Self::MINIMUM_VERSION.parse().unwrap()),
+                        cx,
+                    )
+                })?
+                .await?
             };
+            if !command.args.contains(&ACP_ARG.into()) {
+                command.args.push(ACP_ARG.into());
+            }
+
+            if let Some(api_key) = cx.update(GoogleLanguageModelProvider::api_key)?.await.ok() {
+                command
+                    .env
+                    .get_or_insert_default()
+                    .insert("GEMINI_API_KEY".to_owned(), api_key.key);
+            }
 
             let result = crate::acp::connect(server_name, command.clone(), &root_dir, cx).await;
-            if result.is_err() {
-                let version_fut = util::command::new_smol_command(&command.path)
-                    .args(command.args.iter())
-                    .arg("--version")
-                    .kill_on_drop(true)
-                    .output();
+            match &result {
+                Ok(connection) => {
+                    if let Some(connection) = connection.clone().downcast::<AcpConnection>()
+                        && !connection.prompt_capabilities().image
+                    {
+                        let version_output = util::command::new_smol_command(&command.path)
+                            .args(command.args.iter())
+                            .arg("--version")
+                            .kill_on_drop(true)
+                            .output()
+                            .await;
+                        let current_version =
+                            String::from_utf8(version_output?.stdout)?.trim().to_owned();
 
-                let help_fut = util::command::new_smol_command(&command.path)
-                    .args(command.args.iter())
-                    .arg("--help")
-                    .kill_on_drop(true)
-                    .output();
+                        log::error!("connected to gemini, but missing prompt_capabilities.image (version is {current_version})");
+                        return Err(LoadError::Unsupported {
+                            current_version: current_version.into(),
+                            command: command.path.to_string_lossy().to_string().into(),
+                            minimum_version: Self::MINIMUM_VERSION.into(),
+                        }
+                        .into());
+                    }
+                }
+                Err(e) => {
+                    let version_fut = util::command::new_smol_command(&command.path)
+                        .args(command.args.iter())
+                        .arg("--version")
+                        .kill_on_drop(true)
+                        .output();
 
-                let (version_output, help_output) = futures::future::join(version_fut, help_fut).await;
+                    let help_fut = util::command::new_smol_command(&command.path)
+                        .args(command.args.iter())
+                        .arg("--help")
+                        .kill_on_drop(true)
+                        .output();
 
-                let current_version = String::from_utf8(version_output?.stdout)?;
-                let supported = String::from_utf8(help_output?.stdout)?.contains(ACP_ARG);
+                    let (version_output, help_output) =
+                        futures::future::join(version_fut, help_fut).await;
+                    let Some(version_output) = version_output.ok().and_then(|output| String::from_utf8(output.stdout).ok()) else {
+                        return result;
+                    };
+                    let Some((help_stdout, help_stderr)) = help_output.ok().and_then(|output| String::from_utf8(output.stdout).ok().zip(String::from_utf8(output.stderr).ok())) else  {
+                        return result;
+                    };
 
-                if !supported {
-                    return Err(LoadError::Unsupported {
-                        error_message: format!(
-                            "Your installed version of Gemini {} doesn't support the Agentic Coding Protocol (ACP).",
-                            current_version
-                        ).into(),
-                        upgrade_message: "Upgrade Gemini to Latest".into(),
-                        upgrade_command: "npm install -g @google/gemini-cli@latest".into(),
-                    }.into())
+                    let current_version = version_output.trim().to_string();
+                    let supported = help_stdout.contains(ACP_ARG) || current_version.parse::<semver::Version>().is_ok_and(|version| version >= Self::MINIMUM_VERSION.parse::<semver::Version>().unwrap());
+
+                    log::error!("failed to create ACP connection to gemini (version is {current_version}, supported: {supported}): {e}");
+                    log::debug!("gemini --help stdout: {help_stdout:?}");
+                    log::debug!("gemini --help stderr: {help_stderr:?}");
+                    if !supported {
+                        return Err(LoadError::Unsupported {
+                            current_version: current_version.into(),
+                            command: command.path.to_string_lossy().to_string().into(),
+                            minimum_version: Self::MINIMUM_VERSION.into(),
+                        }
+                        .into());
+                    }
                 }
             }
             result
         })
     }
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+        self
+    }
+}
+
+impl Gemini {
+    const PACKAGE_NAME: &str = "@google/gemini-cli";
+
+    const MINIMUM_VERSION: &str = "0.2.1";
+
+    const BINARY_NAME: &str = "gemini";
 }
 
 #[cfg(test)]
@@ -94,7 +159,7 @@ pub(crate) mod tests {
     use crate::AgentServerCommand;
     use std::path::Path;
 
-    crate::common_e2e_tests!(Gemini, allow_option_id = "proceed_once");
+    crate::common_e2e_tests!(async |_, _, _| Gemini, allow_option_id = "proceed_once");
 
     pub fn local_command() -> AgentServerCommand {
         let cli_path = Path::new(env!("CARGO_MANIFEST_DIR"))

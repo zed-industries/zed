@@ -40,7 +40,6 @@ Ensure your credentials have the following permissions set up:
 
 - `bedrock:InvokeModelWithResponseStream`
 - `bedrock:InvokeModel`
-- `bedrock:ConverseStream`
 
 Your IAM policy should look similar to:
 
@@ -52,8 +51,7 @@ Your IAM policy should look similar to:
       "Effect": "Allow",
       "Action": [
         "bedrock:InvokeModel",
-        "bedrock:InvokeModelWithResponseStream",
-        "bedrock:ConverseStream"
+        "bedrock:InvokeModelWithResponseStream"
       ],
       "Resource": "*"
     }
@@ -391,8 +389,8 @@ Zed will also use the `OPENAI_API_KEY` environment variable if it's defined.
 
 #### Custom Models {#openai-custom-models}
 
-The Zed agent comes pre-configured to use the latest version for common models (GPT-3.5 Turbo, GPT-4, GPT-4 Turbo, GPT-4o, GPT-4o mini).
-To use alternate models, perhaps a preview release or a dated model release, or if you wish to control the request parameters, you can do so by adding the following to your Zed `settings.json`:
+The Zed agent comes pre-configured to use the latest version for common models (GPT-5, GPT-5 mini, o4-mini, GPT-4.1, and others).
+To use alternate models, perhaps a preview release, or if you wish to control the request parameters, you can do so by adding the following to your Zed `settings.json`:
 
 ```json
 {
@@ -400,18 +398,18 @@ To use alternate models, perhaps a preview release or a dated model release, or 
     "openai": {
       "available_models": [
         {
+          "name": "gpt-5",
+          "display_name": "gpt-5 high",
+          "reasoning_effort": "high",
+          "max_tokens": 272000,
+          "max_completion_tokens": 20000
+        },
+        {
           "name": "gpt-4o-2024-08-06",
           "display_name": "GPT 4o Summer 2024",
           "max_tokens": 128000
-        },
-        {
-          "name": "o1-mini",
-          "display_name": "o1-mini",
-          "max_tokens": 128000,
-          "max_completion_tokens": 20000
         }
-      ],
-      "version": "1"
+      ]
     }
   }
 }
@@ -427,7 +425,7 @@ Custom models will be listed in the model dropdown in the Agent Panel.
 Zed supports using [OpenAI compatible APIs](https://platform.openai.com/docs/api-reference/chat) by specifying a custom `api_url` and `available_models` for the OpenAI provider.
 This is useful for connecting to other hosted services (like Together AI, Anyscale, etc.) or local models.
 
-You can add a custom, OpenAI-compatible model via either via the UI or by editing your `settings.json`.
+You can add a custom, OpenAI-compatible model either via the UI or by editing your `settings.json`.
 
 To do it via the UI, go to the Agent Panel settings (`agent: open settings`) and look for the "Add Provider" button to the right of the "LLM Providers" section title.
 Then, fill up the input fields available in the modal.
@@ -443,13 +441,26 @@ To do it via your `settings.json`, add the following snippet under `language_mod
         {
           "name": "mistralai/Mixtral-8x7B-Instruct-v0.1",
           "display_name": "Together Mixtral 8x7B",
-          "max_tokens": 32768
+          "max_tokens": 32768,
+          "capabilities": {
+            "tools": true,
+            "images": false,
+            "parallel_tool_calls": false,
+            "prompt_cache_key": false
+          }
         }
       ]
     }
   }
 }
 ```
+
+By default, OpenAI-compatible models inherit the following capabilities:
+
+- `tools`: true (supports tool/function calling)
+- `images`: false (does not support image inputs)
+- `parallel_tool_calls`: false (does not support `parallel_tool_calls` parameter)
+- `prompt_cache_key`: false (does not support `prompt_cache_key` parameter)
 
 Note that LLM API keys aren't stored in your settings file.
 So, ensure you have it set in your environment variables (`OPENAI_API_KEY=<your api key>`) so your settings can pick it up.

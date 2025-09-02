@@ -16,7 +16,7 @@ use crate::windows_impl::WM_JOB_UPDATED;
 type Job = fn(&Path) -> Result<()>;
 
 #[cfg(not(test))]
-pub(crate) const JOBS: [Job; 6] = [
+pub(crate) const JOBS: &[Job] = &[
     // Delete old files
     |app_dir| {
         let zed_executable = app_dir.join("Zed.exe");
@@ -31,6 +31,12 @@ pub(crate) const JOBS: [Job; 6] = [
         log::info!("Removing old file: {}", zed_cli.display());
         std::fs::remove_file(&zed_cli)
             .context(format!("Failed to remove old file {}", zed_cli.display()))
+    },
+    |app_dir| {
+        let zed_wsl = app_dir.join("bin\\zed");
+        log::info!("Removing old file: {}", zed_wsl.display());
+        std::fs::remove_file(&zed_wsl)
+            .context(format!("Failed to remove old file {}", zed_wsl.display()))
     },
     // Copy new files
     |app_dir| {
@@ -65,6 +71,22 @@ pub(crate) const JOBS: [Job; 6] = [
                 zed_cli_dest.display()
             ))
     },
+    |app_dir| {
+        let zed_wsl_source = app_dir.join("install\\bin\\zed");
+        let zed_wsl_dest = app_dir.join("bin\\zed");
+        log::info!(
+            "Copying new file {} to {}",
+            zed_wsl_source.display(),
+            zed_wsl_dest.display()
+        );
+        std::fs::copy(&zed_wsl_source, &zed_wsl_dest)
+            .map(|_| ())
+            .context(format!(
+                "Failed to copy new file {} to {}",
+                zed_wsl_source.display(),
+                zed_wsl_dest.display()
+            ))
+    },
     // Clean up installer folder and updates folder
     |app_dir| {
         let updates_folder = app_dir.join("updates");
@@ -85,16 +107,12 @@ pub(crate) const JOBS: [Job; 6] = [
 ];
 
 #[cfg(test)]
-pub(crate) const JOBS: [Job; 2] = [
+pub(crate) const JOBS: &[Job] = &[
     |_| {
         std::thread::sleep(Duration::from_millis(1000));
         if let Ok(config) = std::env::var("ZED_AUTO_UPDATE") {
             match config.as_str() {
-                "err" => Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "Simulated error",
-                ))
-                .context("Anyhow!"),
+                "err" => Err(std::io::Error::other("Simulated error")).context("Anyhow!"),
                 _ => panic!("Unknown ZED_AUTO_UPDATE value: {}", config),
             }
         } else {
@@ -105,11 +123,7 @@ pub(crate) const JOBS: [Job; 2] = [
         std::thread::sleep(Duration::from_millis(1000));
         if let Ok(config) = std::env::var("ZED_AUTO_UPDATE") {
             match config.as_str() {
-                "err" => Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "Simulated error",
-                ))
-                .context("Anyhow!"),
+                "err" => Err(std::io::Error::other("Simulated error")).context("Anyhow!"),
                 _ => panic!("Unknown ZED_AUTO_UPDATE value: {}", config),
             }
         } else {
@@ -118,7 +132,7 @@ pub(crate) const JOBS: [Job; 2] = [
     },
 ];
 
-pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>) -> Result<()> {
+pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>, launch: bool) -> Result<()> {
     let hwnd = hwnd.map(|ptr| HWND(ptr as _));
 
     for job in JOBS.iter() {
@@ -145,9 +159,11 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>) -> Result<()> 
             }
         }
     }
-    let _ = std::process::Command::new(app_dir.join("Zed.exe"))
-        .creation_flags(CREATE_NEW_PROCESS_GROUP.0)
-        .spawn();
+    if launch {
+        let _ = std::process::Command::new(app_dir.join("Zed.exe"))
+            .creation_flags(CREATE_NEW_PROCESS_GROUP.0)
+            .spawn();
+    }
     log::info!("Update completed successfully");
     Ok(())
 }
@@ -159,11 +175,11 @@ mod test {
     #[test]
     fn test_perform_update() {
         let app_dir = std::path::Path::new("C:/");
-        assert!(perform_update(app_dir, None).is_ok());
+        assert!(perform_update(app_dir, None, false).is_ok());
 
         // Simulate a timeout
         unsafe { std::env::set_var("ZED_AUTO_UPDATE", "err") };
-        let ret = perform_update(app_dir, None);
+        let ret = perform_update(app_dir, None, false);
         assert!(ret.is_err_and(|e| e.to_string().as_str() == "Timed out"));
     }
 }

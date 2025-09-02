@@ -163,13 +163,12 @@ impl ScopeSelectorDelegate {
             for entry in read_dir {
                 if let Some(entry) = entry.log_err() {
                     let path = entry.path();
-                    if let (Some(stem), Some(extension)) = (path.file_stem(), path.extension()) {
-                        if extension.to_os_string().to_str() == Some("json") {
-                            if let Ok(file_name) = stem.to_os_string().into_string() {
-                                existing_scopes
-                                    .insert(ScopeName::from(ScopeFileName(Cow::Owned(file_name))));
-                            }
-                        }
+                    if let (Some(stem), Some(extension)) = (path.file_stem(), path.extension())
+                        && extension.to_os_string().to_str() == Some("json")
+                        && let Ok(file_name) = stem.to_os_string().into_string()
+                    {
+                        existing_scopes
+                            .insert(ScopeName::from(ScopeFileName(Cow::Owned(file_name))));
                     }
                 }
             }

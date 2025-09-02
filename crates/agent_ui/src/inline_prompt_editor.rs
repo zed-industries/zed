@@ -75,7 +75,7 @@ impl<T: 'static> Render for PromptEditor<T> {
                 let codegen = codegen.read(cx);
 
                 if codegen.alternative_count(cx) > 1 {
-                    buttons.push(self.render_cycle_controls(&codegen, cx));
+                    buttons.push(self.render_cycle_controls(codegen, cx));
                 }
 
                 let editor_margins = editor_margins.lock();
@@ -93,8 +93,8 @@ impl<T: 'static> Render for PromptEditor<T> {
         };
 
         let bottom_padding = match &self.mode {
-            PromptEditorMode::Buffer { .. } => Pixels::from(0.),
-            PromptEditorMode::Terminal { .. } => Pixels::from(8.0),
+            PromptEditorMode::Buffer { .. } => rems_from_px(2.0),
+            PromptEditorMode::Terminal { .. } => rems_from_px(8.0),
         };
 
         buttons.extend(self.render_buttons(window, cx));
@@ -334,7 +334,7 @@ impl<T: 'static> PromptEditor<T> {
             EditorEvent::Edited { .. } => {
                 if let Some(workspace) = window.root::<Workspace>().flatten() {
                     workspace.update(cx, |workspace, cx| {
-                        let is_via_ssh = workspace.project().read(cx).is_via_ssh();
+                        let is_via_ssh = workspace.project().read(cx).is_via_remote_server();
 
                         workspace
                             .client()
@@ -345,7 +345,7 @@ impl<T: 'static> PromptEditor<T> {
                 let prompt = self.editor.read(cx).text(cx);
                 if self
                     .prompt_history_ix
-                    .map_or(true, |ix| self.prompt_history[ix] != prompt)
+                    .is_none_or(|ix| self.prompt_history[ix] != prompt)
                 {
                     self.prompt_history_ix.take();
                     self.pending_prompt = prompt;
@@ -762,20 +762,22 @@ impl<T: 'static> PromptEditor<T> {
         )
     }
 
-    fn render_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let font_size = TextSize::Default.rems(cx);
-        let line_height = font_size.to_pixels(window.rem_size()) * 1.3;
+    fn render_editor(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let colors = cx.theme().colors();
 
         div()
             .key_context("InlineAssistEditor")
             .size_full()
             .p_2()
             .pl_1()
-            .bg(cx.theme().colors().editor_background)
+            .bg(colors.editor_background)
             .child({
                 let settings = ThemeSettings::get_global(cx);
+                let font_size = settings.buffer_font_size(cx);
+                let line_height = font_size * 1.2;
+
                 let text_style = TextStyle {
-                    color: cx.theme().colors().editor_foreground,
+                    color: colors.editor_foreground,
                     font_family: settings.buffer_font.family.clone(),
                     font_features: settings.buffer_font.features.clone(),
                     font_size: font_size.into(),
@@ -786,7 +788,7 @@ impl<T: 'static> PromptEditor<T> {
                 EditorElement::new(
                     &self.editor,
                     EditorStyle {
-                        background: cx.theme().colors().editor_background,
+                        background: colors.editor_background,
                         local_player: cx.theme().players().local(),
                         text: text_style,
                         ..Default::default()
@@ -1229,27 +1231,27 @@ pub enum GenerationMode {
 impl GenerationMode {
     fn start_label(self) -> &'static str {
         match self {
-            GenerationMode::Generate { .. } => "Generate",
+            GenerationMode::Generate => "Generate",
             GenerationMode::Transform => "Transform",
         }
     }
     fn tooltip_interrupt(self) -> &'static str {
         match self {
-            GenerationMode::Generate { .. } => "Interrupt Generation",
+            GenerationMode::Generate => "Interrupt Generation",
             GenerationMode::Transform => "Interrupt Transform",
         }
     }
 
     fn tooltip_restart(self) -> &'static str {
         match self {
-            GenerationMode::Generate { .. } => "Restart Generation",
+            GenerationMode::Generate => "Restart Generation",
             GenerationMode::Transform => "Restart Transform",
         }
     }
 
     fn tooltip_accept(self) -> &'static str {
         match self {
-            GenerationMode::Generate { .. } => "Accept Generation",
+            GenerationMode::Generate => "Accept Generation",
             GenerationMode::Transform => "Accept Transform",
         }
     }

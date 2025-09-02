@@ -475,10 +475,7 @@ impl InlayHintCache {
             let excerpt_cached_hints = excerpt_cached_hints.read();
             let mut excerpt_cache = excerpt_cached_hints.ordered_hints.iter().fuse().peekable();
             shown_excerpt_hints_to_remove.retain(|(shown_anchor, shown_hint_id)| {
-                let Some(buffer) = shown_anchor
-                    .buffer_id
-                    .and_then(|buffer_id| multi_buffer.buffer(buffer_id))
-                else {
+                let Some(buffer) = multi_buffer.buffer_for_anchor(*shown_anchor, cx) else {
                     return false;
                 };
                 let buffer_snapshot = buffer.read(cx).snapshot();
@@ -498,16 +495,14 @@ impl InlayHintCache {
                                 cmp::Ordering::Less | cmp::Ordering::Equal => {
                                     if !old_kinds.contains(&cached_hint.kind)
                                         && new_kinds.contains(&cached_hint.kind)
-                                    {
-                                        if let Some(anchor) = multi_buffer_snapshot
+                                        && let Some(anchor) = multi_buffer_snapshot
                                             .anchor_in_excerpt(*excerpt_id, cached_hint.position)
-                                        {
-                                            to_insert.push(Inlay::hint(
-                                                cached_hint_id.id(),
-                                                anchor,
-                                                cached_hint,
-                                            ));
-                                        }
+                                    {
+                                        to_insert.push(Inlay::hint(
+                                            cached_hint_id.id(),
+                                            anchor,
+                                            cached_hint,
+                                        ));
                                     }
                                     excerpt_cache.next();
                                 }
@@ -522,16 +517,16 @@ impl InlayHintCache {
             for cached_hint_id in excerpt_cache {
                 let maybe_missed_cached_hint = &excerpt_cached_hints.hints_by_id[cached_hint_id];
                 let cached_hint_kind = maybe_missed_cached_hint.kind;
-                if !old_kinds.contains(&cached_hint_kind) && new_kinds.contains(&cached_hint_kind) {
-                    if let Some(anchor) = multi_buffer_snapshot
+                if !old_kinds.contains(&cached_hint_kind)
+                    && new_kinds.contains(&cached_hint_kind)
+                    && let Some(anchor) = multi_buffer_snapshot
                         .anchor_in_excerpt(*excerpt_id, maybe_missed_cached_hint.position)
-                    {
-                        to_insert.push(Inlay::hint(
-                            cached_hint_id.id(),
-                            anchor,
-                            maybe_missed_cached_hint,
-                        ));
-                    }
+                {
+                    to_insert.push(Inlay::hint(
+                        cached_hint_id.id(),
+                        anchor,
+                        maybe_missed_cached_hint,
+                    ));
                 }
             }
         }
@@ -620,44 +615,44 @@ impl InlayHintCache {
     ) {
         if let Some(excerpt_hints) = self.hints.get(&excerpt_id) {
             let mut guard = excerpt_hints.write();
-            if let Some(cached_hint) = guard.hints_by_id.get_mut(&id) {
-                if let ResolveState::CanResolve(server_id, _) = &cached_hint.resolve_state {
-                    let hint_to_resolve = cached_hint.clone();
-                    let server_id = *server_id;
-                    cached_hint.resolve_state = ResolveState::Resolving;
-                    drop(guard);
-                    cx.spawn_in(window, async move |editor, cx| {
-                        let resolved_hint_task = editor.update(cx, |editor, cx| {
-                            let buffer = editor.buffer().read(cx).buffer(buffer_id)?;
-                            editor.semantics_provider.as_ref()?.resolve_inlay_hint(
-                                hint_to_resolve,
-                                buffer,
-                                server_id,
-                                cx,
-                            )
-                        })?;
-                        if let Some(resolved_hint_task) = resolved_hint_task {
-                            let mut resolved_hint =
-                                resolved_hint_task.await.context("hint resolve task")?;
-                            editor.read_with(cx, |editor, _| {
-                                if let Some(excerpt_hints) =
-                                    editor.inlay_hint_cache.hints.get(&excerpt_id)
+            if let Some(cached_hint) = guard.hints_by_id.get_mut(&id)
+                && let ResolveState::CanResolve(server_id, _) = &cached_hint.resolve_state
+            {
+                let hint_to_resolve = cached_hint.clone();
+                let server_id = *server_id;
+                cached_hint.resolve_state = ResolveState::Resolving;
+                drop(guard);
+                cx.spawn_in(window, async move |editor, cx| {
+                    let resolved_hint_task = editor.update(cx, |editor, cx| {
+                        let buffer = editor.buffer().read(cx).buffer(buffer_id)?;
+                        editor.semantics_provider.as_ref()?.resolve_inlay_hint(
+                            hint_to_resolve,
+                            buffer,
+                            server_id,
+                            cx,
+                        )
+                    })?;
+                    if let Some(resolved_hint_task) = resolved_hint_task {
+                        let mut resolved_hint =
+                            resolved_hint_task.await.context("hint resolve task")?;
+                        editor.read_with(cx, |editor, _| {
+                            if let Some(excerpt_hints) =
+                                editor.inlay_hint_cache.hints.get(&excerpt_id)
+                            {
+                                let mut guard = excerpt_hints.write();
+                                if let Some(cached_hint) = guard.hints_by_id.get_mut(&id)
+                                    && cached_hint.resolve_state == ResolveState::Resolving
                                 {
-                                    let mut guard = excerpt_hints.write();
-                                    if let Some(cached_hint) = guard.hints_by_id.get_mut(&id) {
-                                        if cached_hint.resolve_state == ResolveState::Resolving {
-                                            resolved_hint.resolve_state = ResolveState::Resolved;
-                                            *cached_hint = resolved_hint;
-                                        }
-                                    }
+                                    resolved_hint.resolve_state = ResolveState::Resolved;
+                                    *cached_hint = resolved_hint;
                                 }
-                            })?;
-                        }
+                            }
+                        })?;
+                    }
 
-                        anyhow::Ok(())
-                    })
-                    .detach_and_log_err(cx);
-                }
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
             }
         }
     }
@@ -990,8 +985,8 @@ fn fetch_and_update_hints(
 
                 let buffer = editor.buffer().read(cx).buffer(query.buffer_id)?;
 
-                if !editor.registered_buffers.contains_key(&query.buffer_id) {
-                    if let Some(project) = editor.project.as_ref() {
+                if !editor.registered_buffers.contains_key(&query.buffer_id)
+                    && let Some(project) = editor.project.as_ref() {
                         project.update(cx, |project, cx| {
                             editor.registered_buffers.insert(
                                 query.buffer_id,
@@ -999,7 +994,6 @@ fn fetch_and_update_hints(
                             );
                         })
                     }
-                }
 
                 editor
                     .semantics_provider
@@ -1240,14 +1234,12 @@ fn apply_hint_update(
             .inlay_hint_cache
             .allowed_hint_kinds
             .contains(&new_hint.kind)
-        {
-            if let Some(new_hint_position) =
+            && let Some(new_hint_position) =
                 multi_buffer_snapshot.anchor_in_excerpt(query.excerpt_id, new_hint.position)
-            {
-                splice
-                    .to_insert
-                    .push(Inlay::hint(new_inlay_id, new_hint_position, &new_hint));
-            }
+        {
+            splice
+                .to_insert
+                .push(Inlay::hint(new_inlay_id, new_hint_position, &new_hint));
         }
         let new_id = InlayId::Hint(new_inlay_id);
         cached_excerpt_hints.hints_by_id.insert(new_id, new_hint);
@@ -1347,7 +1339,7 @@ pub mod tests {
                         let i = task_lsp_request_count.fetch_add(1, Ordering::Release) + 1;
                         assert_eq!(
                             params.text_document.uri,
-                            lsp::Url::from_file_path(file_with_hints).unwrap(),
+                            lsp::Uri::from_file_path(file_with_hints).unwrap(),
                         );
                         Ok(Some(vec![lsp::InlayHint {
                             position: lsp::Position::new(0, i),
@@ -1457,7 +1449,7 @@ pub mod tests {
                     async move {
                         assert_eq!(
                             params.text_document.uri,
-                            lsp::Url::from_file_path(file_with_hints).unwrap(),
+                            lsp::Uri::from_file_path(file_with_hints).unwrap(),
                         );
                         let current_call_id =
                             Arc::clone(&task_lsp_request_count).fetch_add(1, Ordering::SeqCst);
@@ -1602,7 +1594,7 @@ pub mod tests {
                                             "Rust" => {
                                                 assert_eq!(
                                                     params.text_document.uri,
-                                                    lsp::Url::from_file_path(path!("/a/main.rs"))
+                                                    lsp::Uri::from_file_path(path!("/a/main.rs"))
                                                         .unwrap(),
                                                 );
                                                 rs_lsp_request_count.fetch_add(1, Ordering::Release)
@@ -1611,7 +1603,7 @@ pub mod tests {
                                             "Markdown" => {
                                                 assert_eq!(
                                                     params.text_document.uri,
-                                                    lsp::Url::from_file_path(path!("/a/other.md"))
+                                                    lsp::Uri::from_file_path(path!("/a/other.md"))
                                                         .unwrap(),
                                                 );
                                                 md_lsp_request_count.fetch_add(1, Ordering::Release)
@@ -1797,7 +1789,7 @@ pub mod tests {
                         async move {
                             assert_eq!(
                                 params.text_document.uri,
-                                lsp::Url::from_file_path(file_with_hints).unwrap(),
+                                lsp::Uri::from_file_path(file_with_hints).unwrap(),
                             );
                             Ok(Some(vec![
                                 lsp::InlayHint {
@@ -2135,7 +2127,7 @@ pub mod tests {
                             let i = lsp_request_count.fetch_add(1, Ordering::SeqCst) + 1;
                             assert_eq!(
                                 params.text_document.uri,
-                                lsp::Url::from_file_path(file_with_hints).unwrap(),
+                                lsp::Uri::from_file_path(file_with_hints).unwrap(),
                             );
                             Ok(Some(vec![lsp::InlayHint {
                                 position: lsp::Position::new(0, i),
@@ -2298,7 +2290,7 @@ pub mod tests {
                                 async move {
                                     assert_eq!(
                                         params.text_document.uri,
-                                        lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                                        lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
                                     );
 
                                     task_lsp_request_ranges.lock().push(params.range);
@@ -2641,11 +2633,11 @@ pub mod tests {
                 let task_editor_edited = Arc::clone(&closure_editor_edited);
                 async move {
                     let hint_text = if params.text_document.uri
-                        == lsp::Url::from_file_path(path!("/a/main.rs")).unwrap()
+                        == lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap()
                     {
                         "main hint"
                     } else if params.text_document.uri
-                        == lsp::Url::from_file_path(path!("/a/other.rs")).unwrap()
+                        == lsp::Uri::from_file_path(path!("/a/other.rs")).unwrap()
                     {
                         "other hint"
                     } else {
@@ -2952,11 +2944,11 @@ pub mod tests {
                 let task_editor_edited = Arc::clone(&closure_editor_edited);
                 async move {
                     let hint_text = if params.text_document.uri
-                        == lsp::Url::from_file_path(path!("/a/main.rs")).unwrap()
+                        == lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap()
                     {
                         "main hint"
                     } else if params.text_document.uri
-                        == lsp::Url::from_file_path(path!("/a/other.rs")).unwrap()
+                        == lsp::Uri::from_file_path(path!("/a/other.rs")).unwrap()
                     {
                         "other hint"
                     } else {
@@ -3124,7 +3116,7 @@ pub mod tests {
                             async move {
                                 assert_eq!(
                                     params.text_document.uri,
-                                    lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                                    lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
                                 );
                                 let query_start = params.range.start;
                                 Ok(Some(vec![lsp::InlayHint {
@@ -3196,7 +3188,7 @@ pub mod tests {
                     async move {
                         assert_eq!(
                             params.text_document.uri,
-                            lsp::Url::from_file_path(file_with_hints).unwrap(),
+                            lsp::Uri::from_file_path(file_with_hints).unwrap(),
                         );
 
                         let i = lsp_request_count.fetch_add(1, Ordering::SeqCst) + 1;
@@ -3359,7 +3351,7 @@ pub mod tests {
                         move |params, _| async move {
                             assert_eq!(
                                 params.text_document.uri,
-                                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
                             );
                             Ok(Some(
                                 serde_json::from_value(json!([

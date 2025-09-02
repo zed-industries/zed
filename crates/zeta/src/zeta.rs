@@ -24,7 +24,7 @@ use collections::{HashMap, HashSet, VecDeque};
 use futures::AsyncReadExt;
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EntityId, Global, SemanticVersion,
-    Subscription, Task, WeakEntity, actions,
+    SharedString, Subscription, Task, actions,
 };
 use http_client::{AsyncBody, HttpClient, Method, Request, Response};
 use input_excerpt::excerpt_for_cursor_position;
@@ -51,14 +51,13 @@ use telemetry_events::EditPredictionRating;
 use thiserror::Error;
 use util::ResultExt;
 use uuid::Uuid;
-use workspace::Workspace;
-use workspace::notifications::{ErrorMessagePrompt, NotificationId};
+use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
 use worktree::Worktree;
 
-const CURSOR_MARKER: &'static str = "<|user_cursor_is_here|>";
-const START_OF_FILE_MARKER: &'static str = "<|start_of_file|>";
-const EDITABLE_REGION_START_MARKER: &'static str = "<|editable_region_start|>";
-const EDITABLE_REGION_END_MARKER: &'static str = "<|editable_region_end|>";
+const CURSOR_MARKER: &str = "<|user_cursor_is_here|>";
+const START_OF_FILE_MARKER: &str = "<|start_of_file|>";
+const EDITABLE_REGION_START_MARKER: &str = "<|editable_region_start|>";
+const EDITABLE_REGION_END_MARKER: &str = "<|editable_region_end|>";
 const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
 const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_choice";
 
@@ -106,7 +105,7 @@ impl Dismissable for ZedPredictUpsell {
         if KEY_VALUE_STORE
             .read_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE)
             .log_err()
-            .map_or(false, |s| s.is_some())
+            .is_some_and(|s| s.is_some())
         {
             return true;
         }
@@ -114,16 +113,12 @@ impl Dismissable for ZedPredictUpsell {
         KEY_VALUE_STORE
             .read_kvp(Self::KEY)
             .log_err()
-            .map_or(false, |s| s.is_some())
+            .is_some_and(|s| s.is_some())
     }
 }
 
-pub fn should_show_upsell_modal(user_store: &Entity<UserStore>, cx: &App) -> bool {
-    if user_store.read(cx).has_accepted_terms_of_service() {
-        !ZedPredictUpsell::dismissed()
-    } else {
-        true
-    }
+pub fn should_show_upsell_modal() -> bool {
+    !ZedPredictUpsell::dismissed()
 }
 
 #[derive(Clone)]
@@ -166,7 +161,7 @@ fn interpolate(
 ) -> Option<Vec<(Range<Anchor>, String)>> {
     let mut edits = Vec::new();
 
-    let mut model_edits = current_edits.into_iter().peekable();
+    let mut model_edits = current_edits.iter().peekable();
     for user_edit in new_snapshot.edits_since::<usize>(&old_snapshot.version) {
         while let Some((model_old_range, _)) = model_edits.peek() {
             let model_old_range = model_old_range.to_offset(old_snapshot);
@@ -216,7 +211,6 @@ impl std::fmt::Debug for EditPrediction {
 }
 
 pub struct Zeta {
-    workspace: Option<WeakEntity<Workspace>>,
     client: Arc<Client>,
     events: VecDeque<Event>,
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
@@ -237,14 +231,13 @@ impl Zeta {
     }
 
     pub fn register(
-        workspace: Option<WeakEntity<Workspace>>,
         worktree: Option<Entity<Worktree>>,
         client: Arc<Client>,
         user_store: Entity<UserStore>,
         cx: &mut App,
     ) -> Entity<Self> {
         let this = Self::global(cx).unwrap_or_else(|| {
-            let entity = cx.new(|cx| Self::new(workspace, client, user_store, cx));
+            let entity = cx.new(|cx| Self::new(client, user_store, cx));
             cx.set_global(ZetaGlobal(entity.clone()));
             entity
         });
@@ -269,19 +262,13 @@ impl Zeta {
         self.user_store.read(cx).edit_prediction_usage()
     }
 
-    fn new(
-        workspace: Option<WeakEntity<Workspace>>,
-        client: Arc<Client>,
-        user_store: Entity<UserStore>,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
         let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
 
         let data_collection_choice = Self::load_data_collection_choices();
         let data_collection_choice = cx.new(|_| data_collection_choice);
 
         Self {
-            workspace,
             client,
             events: VecDeque::new(),
             shown_completions: VecDeque::new(),
@@ -374,7 +361,6 @@ impl Zeta {
 
     fn request_completion_impl<F, R>(
         &mut self,
-        workspace: Option<Entity<Workspace>>,
         project: Option<&Entity<Project>>,
         buffer: &Entity<Buffer>,
         cursor: language::Anchor,
@@ -457,23 +443,20 @@ impl Zeta {
                                 zeta.update_required = true;
                             });
 
-                            if let Some(workspace) = workspace {
-                                workspace.update(cx, |workspace, cx| {
-                                    workspace.show_notification(
-                                        NotificationId::unique::<ZedUpdateRequiredError>(),
-                                        cx,
-                                        |cx| {
-                                            cx.new(|cx| {
-                                                ErrorMessagePrompt::new(err.to_string(), cx)
-                                                    .with_link_button(
-                                                        "Update Zed",
-                                                        "https://zed.dev/releases",
-                                                    )
-                                            })
-                                        },
-                                    );
-                                });
-                            }
+                            let error_message: SharedString = err.to_string().into();
+                            show_app_notification(
+                                NotificationId::unique::<ZedUpdateRequiredError>(),
+                                cx,
+                                move |cx| {
+                                    cx.new(|cx| {
+                                        ErrorMessagePrompt::new(error_message.clone(), cx)
+                                            .with_link_button(
+                                                "Update Zed",
+                                                "https://zed.dev/releases",
+                                            )
+                                    })
+                                },
+                            );
                         })
                         .ok();
                     }
@@ -505,7 +488,7 @@ impl Zeta {
                 input_events,
                 input_excerpt,
                 buffer_snapshotted_at,
-                &cx,
+                cx,
             )
             .await;
 
@@ -693,7 +676,7 @@ and then another
     ) -> Task<Result<Option<EditPrediction>>> {
         use std::future::ready;
 
-        self.request_completion_impl(None, project, buffer, position, false, cx, |_params| {
+        self.request_completion_impl(project, buffer, position, false, cx, |_params| {
             ready(Ok((response, None)))
         })
     }
@@ -706,12 +689,7 @@ and then another
         can_collect_data: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<EditPrediction>>> {
-        let workspace = self
-            .workspace
-            .as_ref()
-            .and_then(|workspace| workspace.upgrade());
         self.request_completion_impl(
-            workspace,
             project,
             buffer,
             position,
@@ -836,12 +814,11 @@ and then another
                 .headers()
                 .get(MINIMUM_REQUIRED_VERSION_HEADER_NAME)
                 .and_then(|version| SemanticVersion::from_str(version.to_str().ok()?).ok())
+                && app_version < minimum_required_version
             {
-                if app_version < minimum_required_version {
-                    return Err(anyhow!(ZedUpdateRequiredError {
-                        minimum_version: minimum_required_version
-                    }));
-                }
+                return Err(anyhow!(ZedUpdateRequiredError {
+                    minimum_version: minimum_required_version
+                }));
             }
 
             if response.status().is_success() {
@@ -981,7 +958,7 @@ and then another
             old_text,
             new_text,
             editable_range.start,
-            &snapshot,
+            snapshot,
         ))
     }
 
@@ -991,7 +968,7 @@ and then another
         offset: usize,
         snapshot: &BufferSnapshot,
     ) -> Vec<(Range<Anchor>, String)> {
-        text_diff(&old_text, &new_text)
+        text_diff(&old_text, new_text)
             .into_iter()
             .map(|(mut old_range, new_text)| {
                 old_range.start += offset;
@@ -1182,7 +1159,7 @@ pub fn gather_context(
                 .filter_map(|(language_server_id, diagnostic_group)| {
                     let language_server =
                         local_lsp_store.running_language_server_for_id(language_server_id)?;
-                    let diagnostic_group = diagnostic_group.resolve::<usize>(&snapshot);
+                    let diagnostic_group = diagnostic_group.resolve::<usize>(snapshot);
                     let language_server_name = language_server.name().to_string();
                     let serialized = serde_json::to_value(diagnostic_group).unwrap();
                     Some((language_server_name, serialized))
@@ -1313,10 +1290,10 @@ impl CurrentEditPrediction {
             return true;
         }
 
-        let Some(old_edits) = old_completion.completion.interpolate(&snapshot) else {
+        let Some(old_edits) = old_completion.completion.interpolate(snapshot) else {
             return true;
         };
-        let Some(new_edits) = self.completion.interpolate(&snapshot) else {
+        let Some(new_edits) = self.completion.interpolate(snapshot) else {
             return false;
         };
 
@@ -1548,16 +1525,6 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
     ) -> bool {
         true
     }
-
-    fn needs_terms_acceptance(&self, cx: &App) -> bool {
-        !self
-            .zeta
-            .read(cx)
-            .user_store
-            .read(cx)
-            .has_accepted_terms_of_service()
-    }
-
     fn is_refreshing(&self) -> bool {
         !self.pending_completions.is_empty()
     }
@@ -1570,10 +1537,6 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
         _debounce: bool,
         cx: &mut Context<Self>,
     ) {
-        if self.needs_terms_acceptance(cx) {
-            return;
-        }
-
         if self.zeta.read(cx).update_required {
             return;
         }
@@ -1664,7 +1627,7 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
 
                 if let Some(old_completion) = this.current_completion.as_ref() {
                     let snapshot = buffer.read(cx).snapshot();
-                    if new_completion.should_replace_completion(&old_completion, &snapshot) {
+                    if new_completion.should_replace_completion(old_completion, &snapshot) {
                         this.zeta.update(cx, |zeta, cx| {
                             zeta.completion_shown(&new_completion.completion, cx);
                         });
@@ -2048,7 +2011,7 @@ mod tests {
         // Construct the fake server to authenticate.
         let _server = FakeServer::for_client(42, &client, cx).await;
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        let zeta = cx.new(|cx| Zeta::new(None, client, user_store.clone(), cx));
+        let zeta = cx.new(|cx| Zeta::new(client, user_store.clone(), cx));
 
         let buffer = cx.new(|cx| Buffer::local(buffer_content, cx));
         let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 0)));
@@ -2112,7 +2075,7 @@ mod tests {
         // Construct the fake server to authenticate.
         let _server = FakeServer::for_client(42, &client, cx).await;
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        let zeta = cx.new(|cx| Zeta::new(None, client, user_store.clone(), cx));
+        let zeta = cx.new(|cx| Zeta::new(client, user_store.clone(), cx));
 
         let buffer = cx.new(|cx| Buffer::local(buffer_content, cx));
         let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
@@ -2124,7 +2087,7 @@ mod tests {
         let completion = completion_task.await.unwrap().unwrap();
         completion
             .edits
-            .into_iter()
+            .iter()
             .map(|(old_range, new_text)| (old_range.to_point(&snapshot), new_text.clone()))
             .collect::<Vec<_>>()
     }

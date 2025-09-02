@@ -145,7 +145,7 @@ impl ContextStrip {
         }
 
         let file_name = active_buffer.file()?.file_name(cx);
-        let icon_path = FileIcons::get_icon(&Path::new(&file_name), cx);
+        let icon_path = FileIcons::get_icon(Path::new(&file_name), cx);
         Some(SuggestedContext::File {
             name: file_name.to_string_lossy().into_owned().into(),
             buffer: active_buffer_entity.downgrade(),
@@ -368,16 +368,16 @@ impl ContextStrip {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(suggested) = self.suggested_context(cx) {
-            if self.is_suggested_focused(&self.added_contexts(cx)) {
-                self.add_suggested_context(&suggested, cx);
-            }
+        if let Some(suggested) = self.suggested_context(cx)
+            && self.is_suggested_focused(&self.added_contexts(cx))
+        {
+            self.add_suggested_context(&suggested, cx);
         }
     }
 
     fn add_suggested_context(&mut self, suggested: &SuggestedContext, cx: &mut Context<Self>) {
         self.context_store.update(cx, |context_store, cx| {
-            context_store.add_suggested_context(&suggested, cx)
+            context_store.add_suggested_context(suggested, cx)
         });
         cx.notify();
     }

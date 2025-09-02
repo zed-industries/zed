@@ -10,6 +10,7 @@ mod keyboard;
 mod platform;
 mod system_settings;
 mod util;
+mod vsync;
 mod window;
 mod wrapper;
 
@@ -25,6 +26,7 @@ pub(crate) use keyboard::*;
 pub(crate) use platform::*;
 pub(crate) use system_settings::*;
 pub(crate) use util::*;
+pub(crate) use vsync::*;
 pub(crate) use window::*;
 pub(crate) use wrapper::*;
 

@@ -90,7 +90,7 @@ fn expand_range(
     range: Range<Point>,
     mut remaining_tokens: usize,
 ) -> Range<Point> {
-    let mut expanded_range = range.clone();
+    let mut expanded_range = range;
     expanded_range.start.column = 0;
     expanded_range.end.column = snapshot.line_len(expanded_range.end.row);
     loop {

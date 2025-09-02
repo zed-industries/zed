@@ -121,13 +121,12 @@ impl NotificationPanel {
             let notification_list = ListState::new(0, ListAlignment::Top, px(1000.));
             notification_list.set_scroll_handler(cx.listener(
                 |this, event: &ListScrollEvent, _, cx| {
-                    if event.count.saturating_sub(event.visible_range.end) < LOADING_THRESHOLD {
-                        if let Some(task) = this
+                    if event.count.saturating_sub(event.visible_range.end) < LOADING_THRESHOLD
+                        && let Some(task) = this
                             .notification_store
                             .update(cx, |store, cx| store.load_more_notifications(false, cx))
-                        {
-                            task.detach();
-                        }
+                    {
+                        task.detach();
                     }
                 },
             ));
@@ -290,7 +289,7 @@ impl NotificationPanel {
                         .gap_1()
                         .size_full()
                         .overflow_hidden()
-                        .child(Label::new(text.clone()))
+                        .child(Label::new(text))
                         .child(
                             h_flex()
                                 .child(
@@ -321,7 +320,7 @@ impl NotificationPanel {
                                             .justify_end()
                                             .child(Button::new("decline", "Decline").on_click({
                                                 let notification = notification.clone();
-                                                let entity = cx.entity().clone();
+                                                let entity = cx.entity();
                                                 move |_, _, cx| {
                                                     entity.update(cx, |this, cx| {
                                                         this.respond_to_notification(
@@ -334,7 +333,7 @@ impl NotificationPanel {
                                             }))
                                             .child(Button::new("accept", "Accept").on_click({
                                                 let notification = notification.clone();
-                                                let entity = cx.entity().clone();
+                                                let entity = cx.entity();
                                                 move |_, _, cx| {
                                                     entity.update(cx, |this, cx| {
                                                         this.respond_to_notification(
@@ -469,20 +468,19 @@ impl NotificationPanel {
             channel_id,
             ..
         } = notification.clone()
+            && let Some(workspace) = self.workspace.upgrade()
         {
-            if let Some(workspace) = self.workspace.upgrade() {
-                window.defer(cx, move |window, cx| {
-                    workspace.update(cx, |workspace, cx| {
-                        if let Some(panel) = workspace.focus_panel::<ChatPanel>(window, cx) {
-                            panel.update(cx, |panel, cx| {
-                                panel
-                                    .select_channel(ChannelId(channel_id), Some(message_id), cx)
-                                    .detach_and_log_err(cx);
-                            });
-                        }
-                    });
+            window.defer(cx, move |window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    if let Some(panel) = workspace.focus_panel::<ChatPanel>(window, cx) {
+                        panel.update(cx, |panel, cx| {
+                            panel
+                                .select_channel(ChannelId(channel_id), Some(message_id), cx)
+                                .detach_and_log_err(cx);
+                        });
+                    }
                 });
-            }
+            });
         }
     }
 
@@ -491,18 +489,18 @@ impl NotificationPanel {
             return false;
         }
 
-        if let Notification::ChannelMessageMention { channel_id, .. } = &notification {
-            if let Some(workspace) = self.workspace.upgrade() {
-                return if let Some(panel) = workspace.read(cx).panel::<ChatPanel>(cx) {
-                    let panel = panel.read(cx);
-                    panel.is_scrolled_to_bottom()
-                        && panel
-                            .active_chat()
-                            .map_or(false, |chat| chat.read(cx).channel_id.0 == *channel_id)
-                } else {
-                    false
-                };
-            }
+        if let Notification::ChannelMessageMention { channel_id, .. } = &notification
+            && let Some(workspace) = self.workspace.upgrade()
+        {
+            return if let Some(panel) = workspace.read(cx).panel::<ChatPanel>(cx) {
+                let panel = panel.read(cx);
+                panel.is_scrolled_to_bottom()
+                    && panel
+                        .active_chat()
+                        .is_some_and(|chat| chat.read(cx).channel_id.0 == *channel_id)
+            } else {
+                false
+            };
         }
 
         false
@@ -582,16 +580,16 @@ impl NotificationPanel {
     }
 
     fn remove_toast(&mut self, notification_id: u64, cx: &mut Context<Self>) {
-        if let Some((current_id, _)) = &self.current_notification_toast {
-            if *current_id == notification_id {
-                self.current_notification_toast.take();
-                self.workspace
-                    .update(cx, |workspace, cx| {
-                        let id = NotificationId::unique::<NotificationToast>();
-                        workspace.dismiss_notification(&id, cx)
-                    })
-                    .ok();
-            }
+        if let Some((current_id, _)) = &self.current_notification_toast
+            && *current_id == notification_id
+        {
+            self.current_notification_toast.take();
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    let id = NotificationId::unique::<NotificationToast>();
+                    workspace.dismiss_notification(&id, cx)
+                })
+                .ok();
         }
     }
 
@@ -643,7 +641,7 @@ impl Render for NotificationPanel {
                                             let client = client.clone();
                                             window
                                                 .spawn(cx, async move |cx| {
-                                                    match client.connect(true, &cx).await {
+                                                    match client.connect(true, cx).await {
                                                         util::ConnectionResult::Timeout => {
                                                             log::error!("Connection timeout");
                                                         }

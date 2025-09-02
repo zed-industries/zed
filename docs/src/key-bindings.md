@@ -14,7 +14,7 @@ If you're used to a specific editor's defaults you can set a `base_keymap` in yo
 - TextMate
 - None (disables _all_ key bindings)
 
-You can also enable `vim_mode`, which adds vim bindings too.
+You can also enable `vim_mode` or `helix_mode`, which add modal bindings. For more information, see the documentation for [Vim mode](./vim.md) and [Helix mode](./helix.md).
 
 ## User keymaps
 
@@ -119,7 +119,7 @@ It's worth noting that attributes are only available on the node they are define
 
 Note: Before Zed v0.197.x, the ! operator only looked at one node at a time, and `>` meant "parent" not "ancestor". This meant that `!Editor` would match the context `Workspace > Pane > Editor`, because (confusingly) the Pane matches `!Editor`, and that `os=macos > Editor` did not match the context `Workspace > Pane > Editor` because of the intermediate `Pane` node.
 
-If you're using Vim mode, we have information on how [vim modes influence the context](./vim.md#contexts)
+If you're using Vim mode, we have information on how [vim modes influence the context](./vim.md#contexts). Helix mode is built on top of Vim mode and uses the same contexts.
 
 ### Actions
 
@@ -225,12 +225,14 @@ A common request is to be able to map from a single keystroke to a sequence. You
 [
   {
     "bindings": {
+      // Move down four times
       "alt-down": ["workspace::SendKeystrokes", "down down down down"],
+      // Expand the selection (editor::SelectLargerSyntaxNode);
+      // copy to the clipboard; and then undo the selection expansion.
       "cmd-alt-c": [
         "workspace::SendKeystrokes",
-        "cmd-shift-p copy relative path enter"
-      ],
-      "cmd-alt-r": ["workspace::SendKeystrokes", "cmd-p README enter"]
+        "ctrl-shift-right ctrl-shift-right ctrl-shift-right cmd-c ctrl-shift-left ctrl-shift-left ctrl-shift-left"
+      ]
     }
   },
   {

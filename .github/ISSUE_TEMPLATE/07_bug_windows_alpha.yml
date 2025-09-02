@@ -1,15 +1,15 @@
-name: Bug Report (Windows)
-description: Zed Windows-Related Bugs
+name: Bug Report (Windows Alpha)
+description: Zed Windows Alpha Related Bugs
 type: "Bug"
 labels: ["windows"]
-title: "Windows: <a short description of the Windows bug>"
+title: "Windows Alpha: <a short description of the Windows bug>"
 body:
   - type: textarea
     attributes:
       label: Summary
-      description: Describe the bug with a one line summary, and provide detailed reproduction steps
+      description: Describe the bug with a one-line summary, and provide detailed reproduction steps
       value: |
-        <!-- Please insert a one line summary of the issue below -->
+        <!-- Please insert a one-line summary of the issue below -->
         SUMMARY_SENTENCE_HERE
 
         ### Description

@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use gpui::{AnyView, ClickEvent};
+use gpui::{AnyView, ClickEvent, relative};
 
 use crate::{ButtonLike, ButtonLikeRounding, ElevationIndex, TintColor, Tooltip, prelude::*};
 
@@ -73,8 +73,8 @@ impl SelectableButton for ToggleButton {
 }
 
 impl FixedWidth for ToggleButton {
-    fn width(mut self, width: DefiniteLength) -> Self {
-        self.base.width = Some(width);
+    fn width(mut self, width: impl Into<DefiniteLength>) -> Self {
+        self.base.width = Some(width.into());
         self
     }
 
@@ -429,7 +429,7 @@ where
     rows: [[T; COLS]; ROWS],
     style: ToggleButtonGroupStyle,
     size: ToggleButtonGroupSize,
-    button_width: Rems,
+    group_width: Option<DefiniteLength>,
     selected_index: usize,
     tab_index: Option<isize>,
 }
@@ -441,7 +441,7 @@ impl<T: ButtonBuilder, const COLS: usize> ToggleButtonGroup<T, COLS> {
             rows: [buttons],
             style: ToggleButtonGroupStyle::Transparent,
             size: ToggleButtonGroupSize::Default,
-            button_width: rems_from_px(100.),
+            group_width: None,
             selected_index: 0,
             tab_index: None,
         }
@@ -455,7 +455,7 @@ impl<T: ButtonBuilder, const COLS: usize> ToggleButtonGroup<T, COLS, 2> {
             rows: [first_row, second_row],
             style: ToggleButtonGroupStyle::Transparent,
             size: ToggleButtonGroupSize::Default,
-            button_width: rems_from_px(100.),
+            group_width: None,
             selected_index: 0,
             tab_index: None,
         }
@@ -473,11 +473,6 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> ToggleButtonGroup<T
         self
     }
 
-    pub fn button_width(mut self, button_width: Rems) -> Self {
-        self.button_width = button_width;
-        self
-    }
-
     pub fn selected_index(mut self, index: usize) -> Self {
         self.selected_index = index;
         self
@@ -489,6 +484,24 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> ToggleButtonGroup<T
     pub fn tab_index(mut self, tab_index: &mut isize) -> Self {
         self.tab_index = Some(*tab_index);
         *tab_index += (COLS * ROWS) as isize;
+        self
+    }
+
+    const fn button_width() -> DefiniteLength {
+        relative(1. / COLS as f32)
+    }
+}
+
+impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> FixedWidth
+    for ToggleButtonGroup<T, COLS, ROWS>
+{
+    fn width(mut self, width: impl Into<DefiniteLength>) -> Self {
+        self.group_width = Some(width.into());
+        self
+    }
+
+    fn full_width(mut self) -> Self {
+        self.group_width = Some(relative(1.));
         self
     }
 }
@@ -511,6 +524,7 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> RenderOnce
                     let entry_index = row_index * COLS + col_index;
 
                     ButtonLike::new((self.group_name, entry_index))
+                        .full_width()
                         .rounding(None)
                         .when_some(self.tab_index, |this, tab_index| {
                             this.tab_index(tab_index + entry_index as isize)
@@ -527,7 +541,7 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> RenderOnce
                         })
                         .child(
                             h_flex()
-                                .min_w(self.button_width)
+                                .w_full()
                                 .gap_1p5()
                                 .px_3()
                                 .py_1()
@@ -561,6 +575,13 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> RenderOnce
         let is_transparent = self.style == ToggleButtonGroupStyle::Transparent;
 
         v_flex()
+            .map(|this| {
+                if let Some(width) = self.group_width {
+                    this.w(width)
+                } else {
+                    this.w_full()
+                }
+            })
             .rounded_md()
             .overflow_hidden()
             .map(|this| {
@@ -583,6 +604,8 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> RenderOnce
                             .when(is_outlined_or_filled && !last_item, |this| {
                                 this.border_r_1().border_color(border_color)
                             })
+                            .w(Self::button_width())
+                            .overflow_hidden()
                             .child(item)
                     }))
             }))
@@ -630,7 +653,6 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> Component
                                 ],
                             )
                             .selected_index(1)
-                            .button_width(rems_from_px(100.))
                             .into_any_element(),
                         ),
                         single_example(
@@ -656,7 +678,6 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> Component
                                 ],
                             )
                             .selected_index(1)
-                            .button_width(rems_from_px(100.))
                             .into_any_element(),
                         ),
                         single_example(
@@ -675,7 +696,6 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> Component
                                 ],
                             )
                             .selected_index(3)
-                            .button_width(rems_from_px(100.))
                             .into_any_element(),
                         ),
                         single_example(
@@ -718,7 +738,6 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> Component
                                 ],
                             )
                             .selected_index(3)
-                            .button_width(rems_from_px(100.))
                             .into_any_element(),
                         ),
                     ],
@@ -763,7 +782,6 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> Component
                                 ],
                             )
                             .selected_index(1)
-                            .button_width(rems_from_px(100.))
                             .style(ToggleButtonGroupStyle::Outlined)
                             .into_any_element(),
                         ),
@@ -783,7 +801,6 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> Component
                                 ],
                             )
                             .selected_index(3)
-                            .button_width(rems_from_px(100.))
                             .style(ToggleButtonGroupStyle::Outlined)
                             .into_any_element(),
                         ),
@@ -827,7 +844,6 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> Component
                                 ],
                             )
                             .selected_index(3)
-                            .button_width(rems_from_px(100.))
                             .style(ToggleButtonGroupStyle::Outlined)
                             .into_any_element(),
                         ),
@@ -873,7 +889,6 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> Component
                                 ],
                             )
                             .selected_index(1)
-                            .button_width(rems_from_px(100.))
                             .style(ToggleButtonGroupStyle::Filled)
                             .into_any_element(),
                         ),
@@ -893,7 +908,7 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> Component
                                 ],
                             )
                             .selected_index(3)
-                            .button_width(rems_from_px(100.))
+                            .width(rems_from_px(100.))
                             .style(ToggleButtonGroupStyle::Filled)
                             .into_any_element(),
                         ),
@@ -937,7 +952,7 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> Component
                                 ],
                             )
                             .selected_index(3)
-                            .button_width(rems_from_px(100.))
+                            .width(rems_from_px(100.))
                             .style(ToggleButtonGroupStyle::Filled)
                             .into_any_element(),
                         ),
@@ -957,7 +972,6 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> Component
                         ],
                     )
                     .selected_index(1)
-                    .button_width(rems_from_px(100.))
                     .into_any_element(),
                 )])
                 .into_any_element(),
