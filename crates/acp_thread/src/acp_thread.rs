@@ -2509,6 +2509,7 @@ mod tests {
                         audio: true,
                         embedded_context: true,
                     }),
+                    Vec::new(),
                     cx,
                 )
             })
@@ -2884,6 +2885,7 @@ mod tests {
                         audio: true,
                         embedded_context: true,
                     }),
+                    Vec::new(),
                     cx,
                 )
             });
