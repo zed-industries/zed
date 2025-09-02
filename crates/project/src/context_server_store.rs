@@ -1153,6 +1153,7 @@ mod tests {
                             path: "somebinary".into(),
                             args: vec!["arg".to_string()],
                             env: None,
+                            tool_call_timeout_millis: None,
                         },
                     },
                 )],
@@ -1180,6 +1181,7 @@ mod tests {
                         command: ContextServerCommand {
                             path: "somebinary".into(),
                             args: vec!["arg".to_string()],
+                            tool_call_timeout_millis: None,
                             env: None,
                         },
                     },
