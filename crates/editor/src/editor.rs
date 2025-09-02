@@ -7755,6 +7755,11 @@ impl Editor {
             return None;
         }
 
+        if self.ime_transaction.is_some() {
+            self.discard_edit_prediction(false, cx);
+            return None;
+        }
+
         let selection = self.selections.newest_anchor();
         let cursor = selection.head();
         let multibuffer = self.buffer.read(cx).snapshot(cx);
