@@ -2488,7 +2488,7 @@ async fn test_delete_to_word_boundary(cx: &mut TestAppContext) {
         editor.delete_to_previous_word_start(
             &DeleteToPreviousWordStart {
                 ignore_newlines: false,
-                greedy: false,
+                ignore_brackets: false,
             },
             window,
             cx,
@@ -2501,7 +2501,7 @@ async fn test_delete_to_word_boundary(cx: &mut TestAppContext) {
         editor.delete_to_next_word_end(
             &DeleteToNextWordEnd {
                 ignore_newlines: false,
-                greedy: false,
+                ignore_brackets: false,
             },
             window,
             cx,
@@ -2521,34 +2521,7 @@ async fn test_delete_whitespaces(cx: &mut TestAppContext) {
         editor.delete_to_previous_word_start(
             &DeleteToPreviousWordStart {
                 ignore_newlines: false,
-                greedy: true,
-            },
-            window,
-            cx,
-        );
-    });
-    // TODO kb
-    cx.assert_editor_state("here is someˇwith a space");
-
-    cx.set_state("here is some text    ˇwith a space");
-    cx.update_editor(|editor, window, cx| {
-        editor.delete_to_previous_word_start(
-            &DeleteToPreviousWordStart {
-                ignore_newlines: true,
-                greedy: true,
-            },
-            window,
-            cx,
-        );
-    });
-    cx.assert_editor_state("here is someˇwith a space");
-
-    cx.set_state("here is some text    ˇwith a space");
-    cx.update_editor(|editor, window, cx| {
-        editor.delete_to_previous_word_start(
-            &DeleteToPreviousWordStart {
-                ignore_newlines: false,
-                greedy: false,
+                ignore_brackets: true,
             },
             window,
             cx,
@@ -2561,7 +2534,33 @@ async fn test_delete_whitespaces(cx: &mut TestAppContext) {
         editor.delete_to_previous_word_start(
             &DeleteToPreviousWordStart {
                 ignore_newlines: true,
-                greedy: false,
+                ignore_brackets: true,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("here is some textˇwith a space");
+
+    cx.set_state("here is some text    ˇwith a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: false,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("here is some textˇwith a space");
+
+    cx.set_state("here is some text    ˇwith a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                ignore_brackets: false,
             },
             window,
             cx,
@@ -2574,7 +2573,7 @@ async fn test_delete_whitespaces(cx: &mut TestAppContext) {
         editor.delete_to_next_word_end(
             &DeleteToNextWordEnd {
                 ignore_newlines: false,
-                greedy: true,
+                ignore_brackets: true,
             },
             window,
             cx,
@@ -2587,7 +2586,7 @@ async fn test_delete_whitespaces(cx: &mut TestAppContext) {
         editor.delete_to_next_word_end(
             &DeleteToNextWordEnd {
                 ignore_newlines: true,
-                greedy: true,
+                ignore_brackets: true,
             },
             window,
             cx,
@@ -2600,7 +2599,7 @@ async fn test_delete_whitespaces(cx: &mut TestAppContext) {
         editor.delete_to_next_word_end(
             &DeleteToNextWordEnd {
                 ignore_newlines: false,
-                greedy: false,
+                ignore_brackets: false,
             },
             window,
             cx,
@@ -2613,7 +2612,7 @@ async fn test_delete_whitespaces(cx: &mut TestAppContext) {
         editor.delete_to_next_word_end(
             &DeleteToNextWordEnd {
                 ignore_newlines: true,
-                greedy: false,
+                ignore_brackets: false,
             },
             window,
             cx,
@@ -2624,7 +2623,7 @@ async fn test_delete_whitespaces(cx: &mut TestAppContext) {
         editor.delete_to_previous_word_start(
             &DeleteToPreviousWordStart {
                 ignore_newlines: true,
-                greedy: false,
+                ignore_brackets: false,
             },
             window,
             cx,
@@ -2635,7 +2634,7 @@ async fn test_delete_whitespaces(cx: &mut TestAppContext) {
         editor.delete_to_previous_word_start(
             &DeleteToPreviousWordStart {
                 ignore_newlines: true,
-                greedy: false,
+                ignore_brackets: false,
             },
             window,
             cx,
@@ -2646,7 +2645,7 @@ async fn test_delete_whitespaces(cx: &mut TestAppContext) {
         editor.delete_to_previous_word_start(
             &DeleteToPreviousWordStart {
                 ignore_newlines: true,
-                greedy: false,
+                ignore_brackets: false,
             },
             window,
             cx,
@@ -2657,7 +2656,7 @@ async fn test_delete_whitespaces(cx: &mut TestAppContext) {
         editor.delete_to_previous_word_start(
             &DeleteToPreviousWordStart {
                 ignore_newlines: true,
-                greedy: false,
+                ignore_brackets: false,
             },
             window,
             cx,
@@ -2668,7 +2667,7 @@ async fn test_delete_whitespaces(cx: &mut TestAppContext) {
         editor.delete_to_previous_word_start(
             &DeleteToPreviousWordStart {
                 ignore_newlines: true,
-                greedy: false,
+                ignore_brackets: false,
             },
             window,
             cx,
@@ -2679,7 +2678,7 @@ async fn test_delete_whitespaces(cx: &mut TestAppContext) {
         editor.delete_to_next_word_end(
             &DeleteToNextWordEnd {
                 ignore_newlines: true,
-                greedy: false,
+                ignore_brackets: false,
             },
             window,
             cx,
@@ -2690,7 +2689,7 @@ async fn test_delete_whitespaces(cx: &mut TestAppContext) {
         editor.delete_to_next_word_end(
             &DeleteToNextWordEnd {
                 ignore_newlines: true,
-                greedy: false,
+                ignore_brackets: false,
             },
             window,
             cx,
@@ -2701,7 +2700,7 @@ async fn test_delete_whitespaces(cx: &mut TestAppContext) {
         editor.delete_to_next_word_end(
             &DeleteToNextWordEnd {
                 ignore_newlines: true,
-                greedy: false,
+                ignore_brackets: false,
             },
             window,
             cx,
@@ -2712,7 +2711,7 @@ async fn test_delete_whitespaces(cx: &mut TestAppContext) {
         editor.delete_to_next_word_end(
             &DeleteToNextWordEnd {
                 ignore_newlines: true,
-                greedy: false,
+                ignore_brackets: false,
             },
             window,
             cx,
@@ -2723,7 +2722,7 @@ async fn test_delete_whitespaces(cx: &mut TestAppContext) {
         editor.delete_to_previous_word_start(
             &DeleteToPreviousWordStart {
                 ignore_newlines: true,
-                greedy: false,
+                ignore_brackets: false,
             },
             window,
             cx,
@@ -2773,24 +2772,24 @@ async fn test_delete_to_bracket(cx: &mut TestAppContext) {
 
     let mut cx = EditorTestContext::new(cx).await;
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
     cx.set_state(r#"todo!("// ˇTODO");"#);
     cx.update_editor(|editor, window, cx| {
         editor.delete_to_previous_word_start(
             &DeleteToPreviousWordStart {
                 ignore_newlines: true,
-                greedy: false,
+                ignore_brackets: false,
             },
             window,
             cx,
         );
     });
     cx.assert_editor_state(r#"todo!("ˇTODO");"#);
-
     cx.update_editor(|editor, window, cx| {
         editor.delete_to_previous_word_start(
             &DeleteToPreviousWordStart {
                 ignore_newlines: true,
-                greedy: false,
+                ignore_brackets: false,
             },
             window,
             cx,
@@ -2802,7 +2801,7 @@ async fn test_delete_to_bracket(cx: &mut TestAppContext) {
         editor.delete_to_previous_word_start(
             &DeleteToPreviousWordStart {
                 ignore_newlines: true,
-                greedy: false,
+                ignore_brackets: false,
             },
             window,
             cx,
@@ -2814,18 +2813,19 @@ async fn test_delete_to_bracket(cx: &mut TestAppContext) {
         editor.delete_to_previous_word_start(
             &DeleteToPreviousWordStart {
                 ignore_newlines: true,
-                greedy: false,
+                ignore_brackets: false,
             },
             window,
             cx,
         );
     });
     cx.assert_editor_state(r#"ˇTODO");"#);
+
     cx.update_editor(|editor, window, cx| {
         editor.delete_to_previous_word_start(
             &DeleteToPreviousWordStart {
                 ignore_newlines: true,
-                greedy: false,
+                ignore_brackets: false,
             },
             window,
             cx,
@@ -2837,7 +2837,7 @@ async fn test_delete_to_bracket(cx: &mut TestAppContext) {
         editor.delete_to_next_word_end(
             &DeleteToNextWordEnd {
                 ignore_newlines: true,
-                greedy: false,
+                ignore_brackets: false,
             },
             window,
             cx,
@@ -2845,28 +2845,43 @@ async fn test_delete_to_bracket(cx: &mut TestAppContext) {
     });
     // Brackets on the right are not paired, hence deletion does not stop at them
     cx.assert_editor_state(r#"ˇ");"#);
+
     cx.update_editor(|editor, window, cx| {
         editor.delete_to_next_word_end(
             &DeleteToNextWordEnd {
                 ignore_newlines: true,
-                greedy: false,
+                ignore_brackets: false,
             },
             window,
             cx,
         );
     });
     cx.assert_editor_state(r#"ˇ"#);
+
     cx.update_editor(|editor, window, cx| {
         editor.delete_to_next_word_end(
             &DeleteToNextWordEnd {
                 ignore_newlines: true,
-                greedy: false,
+                ignore_brackets: false,
             },
             window,
             cx,
         );
     });
     cx.assert_editor_state(r#"ˇ"#);
+
+    cx.set_state(r#"todo!("// ˇTODO");"#);
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                ignore_brackets: true,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state(r#"todoˇTODO");"#);
 }
 
 #[gpui::test]
@@ -2879,11 +2894,11 @@ fn test_delete_to_previous_word_start_or_newline(cx: &mut TestAppContext) {
     });
     let del_to_prev_word_start = DeleteToPreviousWordStart {
         ignore_newlines: false,
-        greedy: false,
+        ignore_brackets: false,
     };
     let del_to_prev_word_start_ignore_newlines = DeleteToPreviousWordStart {
         ignore_newlines: true,
-        greedy: false,
+        ignore_brackets: false,
     };
 
     _ = editor.update(cx, |editor, window, cx| {
@@ -2917,11 +2932,11 @@ fn test_delete_to_next_word_end_or_newline(cx: &mut TestAppContext) {
     });
     let del_to_next_word_end = DeleteToNextWordEnd {
         ignore_newlines: false,
-        greedy: false,
+        ignore_brackets: false,
     };
     let del_to_next_word_end_ignore_newlines = DeleteToNextWordEnd {
         ignore_newlines: true,
-        greedy: false,
+        ignore_brackets: false,
     };
 
     _ = editor.update(cx, |editor, window, cx| {

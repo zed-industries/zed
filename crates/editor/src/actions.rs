@@ -236,7 +236,7 @@ pub struct DeleteToNextWordEnd {
     pub ignore_newlines: bool,
     // TODO kb show in default keymaps + docs
     #[serde(default)]
-    pub greedy: bool,
+    pub ignore_brackets: bool,
 }
 
 /// Deletes from the cursor to the start of the previous word.
@@ -248,7 +248,7 @@ pub struct DeleteToPreviousWordStart {
     pub ignore_newlines: bool,
     // TODO kb show in default keymaps + docs
     #[serde(default)]
-    pub greedy: bool,
+    pub ignore_brackets: bool,
 }
 
 /// Folds all code blocks at the specified indentation level.
