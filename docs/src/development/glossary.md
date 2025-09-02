@@ -1,9 +1,17 @@
-These are some terms and structures frequently used throughout the zed codebase. This is a best effort list.
+# Zed Development: Glossary
+
+These are some terms and structures frequently used throughout the zed codebase.
+
+This is a best effort list and a work in progress.
+
+<!--
+TBD: Glossary Improvement
 
 Questions:
 
 - Can we generate this list from doc comments throughout zed?
 - We should have a section that shows the various UI parts and their names. (Can't do that in the channel.)
+-->
 
 ## Naming conventions
 
