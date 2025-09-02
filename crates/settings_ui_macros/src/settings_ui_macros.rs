@@ -163,14 +163,15 @@ fn generate_ui_item_body(
         }
         (None, _, Data::Enum(data_enum)) => {
             let mut lowercase = false;
+            let mut snake_case = false;
             for attr in &input.attrs {
                 if attr.path().is_ident("serde") {
                     attr.parse_nested_meta(|meta| {
                         if meta.path.is_ident("rename_all") {
                             meta.input.parse::<Token![=]>()?;
                             let lit = meta.input.parse::<LitStr>()?.value();
-                            // todo(settings_ui) snake case
-                            lowercase = lit == "lowercase" || lit == "snake_case";
+                            lowercase = lit == "lowercase";
+                            snake_case = lit == "snake_case";
                         }
                         Ok(())
                     })
@@ -185,9 +186,12 @@ fn generate_ui_item_body(
                 let title = string.to_title_case();
                 let string = if lowercase {
                     string.to_lowercase()
+                } else if snake_case {
+                    string.to_snake_case()
                 } else {
                     string
                 };
+
                 (string, title)
             });
 
