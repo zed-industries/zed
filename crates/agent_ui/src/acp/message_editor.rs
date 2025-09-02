@@ -747,22 +747,18 @@ impl MessageEditor {
                     .any(|cmd| cmd.name == command_name);
 
                 if !is_supported {
-                  if available_commands.is_empty() {
                     return Err(anyhow!(
-                        "The /{} command is not supported by {}{}",
+                        "The /{} command is not supported by {}.\n\nAvailable commands: {}",
                         command_name,
                         agent_name,
                         if available_commands.is_empty() {
-                            ", because it does not support any commands.".to_string()
+                            "none".to_string()
                         } else {
-                            format!(
-                                ".\n\nAvailable commands: {}",
-                                available_commands
-                                    .iter()
-                                    .map(|cmd| format!("/{}", cmd.name))
-                                    .collect::<Vec<_>>()
-                                    .join(", ")
-                            )
+                            available_commands
+                                .iter()
+                                .map(|cmd| format!("/{}", cmd.name))
+                                .collect::<Vec<_>>()
+                                .join(", ")
                         }
                     ));
                 }
@@ -1749,7 +1745,7 @@ mod tests {
         });
         let editor = message_editor.update(cx, |message_editor, _| message_editor.editor.clone());
 
-        // Test that slash commands work when no available_commands are set (empty list means we don't know what's supported)
+        // Test that slash commands fail when no available_commands are set (empty list means no commands supported)
         editor.update_in(cx, |editor, window, cx| {
             editor.set_text("/file test.txt", window, cx);
         });
@@ -1758,8 +1754,11 @@ mod tests {
             .update(cx, |message_editor, cx| message_editor.contents(cx))
             .await;
 
-        // Should succeed because available_commands is empty (we don't know what's supported)
-        assert!(contents_result.is_ok());
+        // Should fail because available_commands is empty (no commands supported)
+        assert!(contents_result.is_err());
+        let error_message = contents_result.unwrap_err().to_string();
+        assert!(error_message.contains("not supported by Claude Code"));
+        assert!(error_message.contains("Available commands: none"));
 
         // Now simulate Claude providing its list of available commands (which doesn't include file)
         available_commands.replace(vec![acp::AvailableCommand {
