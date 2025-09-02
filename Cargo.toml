@@ -843,7 +843,7 @@ too_many_arguments = "allow"
 large_enum_variant = "allow"
 
 # Boolean expressions can be hard to read, requiring only the minimal form gets in the way
-nonminimal_bol = "allow"
+nonminimal_bool = "allow"
 
 [workspace.metadata.cargo-machete]
 ignored = [
