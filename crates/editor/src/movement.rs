@@ -295,7 +295,10 @@ pub fn previous_word_start_or_newline(map: &DisplaySnapshot, point: DisplayPoint
     })
 }
 
-/// TODO kb docs
+/// Text movements are too greedy, making deletions too greedy too.
+/// Makes deletions more ergonomic by potentially reducing the deletion range based on its text contents:
+/// * whitespace sequences with length >= 2 stop the deletion after removal (despite movement jumping over the word behind the whitespaces)
+/// * brackets stop the deletion after removal (despite movement currently not accounting for these and jumping over)
 pub fn adjust_greedy_deletion(
     map: &DisplaySnapshot,
     delete_from: DisplayPoint,
@@ -343,12 +346,11 @@ pub fn adjust_greedy_deletion(
             brackets_in_delete_range.min()
         };
 
-        let trimmed_delete_range = if is_backward {
+        if is_backward {
             closest_bracket.unwrap_or(delete_range.start)..delete_range.end
         } else {
             delete_range.start..closest_bracket.unwrap_or(delete_range.end)
-        };
-        trimmed_delete_range
+        }
     };
 
     let mut whitespace_sequences = Vec::new();

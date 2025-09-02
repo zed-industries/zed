@@ -42,7 +42,7 @@
       "alt-,": "pane::GoBack", // xref-pop-marker-stack
       "ctrl-x h": "editor::SelectAll", // mark-whole-buffer
       "ctrl-d": "editor::Delete", // delete-char
-      "alt-d": "editor::DeleteToNextWordEnd", // kill-word
+      "alt-d": ["editor::DeleteToNextWordEnd", { "ignore_newlines": false, "ignore_brackets": false }], // kill-word
       "ctrl-k": "editor::KillRingCut", // kill-line
       "ctrl-w": "editor::Cut", // kill-region
       "alt-w": "editor::Copy", // kill-ring-save
