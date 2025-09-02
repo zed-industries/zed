@@ -806,6 +806,15 @@ impl MessageEditor {
 
                         let crease_range = crease.range().to_offset(&snapshot.buffer_snapshot);
                         if crease_range.start > ix {
+                            //todo(): Custom slash command ContentBlock?
+                            // let chunk = if prevent_slash_commands
+                            //     && ix == 0
+                            //     && parse_slash_command(&text[ix..]).is_some()
+                            // {
+                            //     format!(" {}", &text[ix..crease_range.start]).into()
+                            // } else {
+                            //     text[ix..crease_range.start].into()
+                            // };
                             let chunk = text[ix..crease_range.start].into();
                             chunks.push(chunk);
                         }
@@ -862,6 +871,15 @@ impl MessageEditor {
                     }
 
                     if ix < text.len() {
+                        //todo(): Custom slash command ContentBlock?
+                        // let last_chunk = if prevent_slash_commands
+                        //     && ix == 0
+                        //     && parse_slash_command(&text[ix..]).is_some()
+                        // {
+                        //     format!(" {}", text[ix..].trim_end())
+                        // } else {
+                        //     text[ix..].trim_end().to_owned()
+                        // };
                         let last_chunk = text[ix..].trim_end().to_owned();
                         if !last_chunk.is_empty() {
                             chunks.push(last_chunk.into());
