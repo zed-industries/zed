@@ -1902,12 +1902,12 @@ impl AgentPanel {
                 window.dispatch_action(NewTextThread.boxed_clone(), cx);
             }
             AgentType::NativeAgent => self.external_thread(
-                    Some(crate::ExternalAgent::NativeAgent),
-                    None,
-                    None,
-                    window,
-                    cx,
-                ),
+                Some(crate::ExternalAgent::NativeAgent),
+                None,
+                None,
+                window,
+                cx,
+            ),
             AgentType::Gemini => {
                 self.external_thread(Some(crate::ExternalAgent::Gemini), None, None, window, cx)
             }
@@ -1923,12 +1923,12 @@ impl AgentPanel {
                 )
             }
             AgentType::Custom { name, command } => self.external_thread(
-                    Some(crate::ExternalAgent::Custom { name, command }),
-                    None,
-                    None,
-                    window,
-                    cx,
-                ),
+                Some(crate::ExternalAgent::Custom { name, command }),
+                None,
+                None,
+                window,
+                cx,
+            ),
         }
     }
 
@@ -3800,94 +3800,91 @@ impl Render for AgentPanel {
             .child(self.render_toolbar(window, cx))
             .children(self.render_onboarding(window, cx))
             .map(|parent| match &self.active_view {
-                    ActiveView::Thread {
-                        thread,
-                        message_editor,
-                        ..
-                    } => parent
-                        .child(
-                            if thread.read(cx).is_empty() && !self.should_render_onboarding(cx) {
-                                self.render_thread_empty_state(window, cx)
-                                    .into_any_element()
-                            } else {
-                                thread.clone().into_any_element()
-                            },
-                        )
-                        .children(self.render_tool_use_limit_reached(window, cx))
-                        .when_some(thread.read(cx).last_error(), |this, last_error| {
-                            this.child(
-                                div()
-                                    .child(match last_error {
-                                        ThreadError::PaymentRequired => {
-                                            self.render_payment_required_error(thread, cx)
-                                        }
-                                        ThreadError::ModelRequestLimitReached { plan } => self
-                                            .render_model_request_limit_reached_error(
-                                                plan, thread, cx,
-                                            ),
-                                        ThreadError::Message { header, message } => {
-                                            self.render_error_message(header, message, thread, cx)
-                                        }
-                                        ThreadError::RetryableError {
-                                            message,
-                                            can_enable_burn_mode,
-                                        } => self.render_retryable_error(
-                                            message,
-                                            can_enable_burn_mode,
-                                            thread,
-                                        ),
-                                    })
-                                    .into_any(),
-                            )
-                        })
-                        .child(h_flex().relative().child(message_editor.clone()).when(
-                            !LanguageModelRegistry::read_global(cx).has_authenticated_provider(cx),
-                            |this| this.child(self.render_backdrop(cx)),
-                        ))
-                        .child(self.render_drag_target(cx)),
-                    ActiveView::ExternalAgentThread { thread_view, .. } => parent
-                        .child(thread_view.clone())
-                        .child(self.render_drag_target(cx)),
-                    ActiveView::History => {
-                        if cx.has_flag::<feature_flags::GeminiAndNativeFeatureFlag>() {
-                            parent.child(self.acp_history.clone())
+                ActiveView::Thread {
+                    thread,
+                    message_editor,
+                    ..
+                } => parent
+                    .child(
+                        if thread.read(cx).is_empty() && !self.should_render_onboarding(cx) {
+                            self.render_thread_empty_state(window, cx)
+                                .into_any_element()
                         } else {
-                            parent.child(self.history.clone())
-                        }
+                            thread.clone().into_any_element()
+                        },
+                    )
+                    .children(self.render_tool_use_limit_reached(window, cx))
+                    .when_some(thread.read(cx).last_error(), |this, last_error| {
+                        this.child(
+                            div()
+                                .child(match last_error {
+                                    ThreadError::PaymentRequired => {
+                                        self.render_payment_required_error(thread, cx)
+                                    }
+                                    ThreadError::ModelRequestLimitReached { plan } => self
+                                        .render_model_request_limit_reached_error(plan, thread, cx),
+                                    ThreadError::Message { header, message } => {
+                                        self.render_error_message(header, message, thread, cx)
+                                    }
+                                    ThreadError::RetryableError {
+                                        message,
+                                        can_enable_burn_mode,
+                                    } => self.render_retryable_error(
+                                        message,
+                                        can_enable_burn_mode,
+                                        thread,
+                                    ),
+                                })
+                                .into_any(),
+                        )
+                    })
+                    .child(h_flex().relative().child(message_editor.clone()).when(
+                        !LanguageModelRegistry::read_global(cx).has_authenticated_provider(cx),
+                        |this| this.child(self.render_backdrop(cx)),
+                    ))
+                    .child(self.render_drag_target(cx)),
+                ActiveView::ExternalAgentThread { thread_view, .. } => parent
+                    .child(thread_view.clone())
+                    .child(self.render_drag_target(cx)),
+                ActiveView::History => {
+                    if cx.has_flag::<feature_flags::GeminiAndNativeFeatureFlag>() {
+                        parent.child(self.acp_history.clone())
+                    } else {
+                        parent.child(self.history.clone())
                     }
-                    ActiveView::TextThread {
-                        context_editor,
-                        buffer_search_bar,
-                        ..
-                    } => {
-                        let model_registry = LanguageModelRegistry::read_global(cx);
-                        let configuration_error =
-                            model_registry.configuration_error(model_registry.default_model(), cx);
-                        parent
-                            .map(|this| {
-                                if !self.should_render_onboarding(cx)
-                                    && let Some(err) = configuration_error.as_ref()
-                                {
-                                    this.child(self.render_configuration_error(
-                                        true,
-                                        err,
-                                        &self.focus_handle(cx),
-                                        window,
-                                        cx,
-                                    ))
-                                } else {
-                                    this
-                                }
-                            })
-                            .child(self.render_prompt_editor(
-                                context_editor,
-                                buffer_search_bar,
-                                window,
-                                cx,
-                            ))
-                    }
-                    ActiveView::Configuration => parent.children(self.configuration.clone()),
                 }
+                ActiveView::TextThread {
+                    context_editor,
+                    buffer_search_bar,
+                    ..
+                } => {
+                    let model_registry = LanguageModelRegistry::read_global(cx);
+                    let configuration_error =
+                        model_registry.configuration_error(model_registry.default_model(), cx);
+                    parent
+                        .map(|this| {
+                            if !self.should_render_onboarding(cx)
+                                && let Some(err) = configuration_error.as_ref()
+                            {
+                                this.child(self.render_configuration_error(
+                                    true,
+                                    err,
+                                    &self.focus_handle(cx),
+                                    window,
+                                    cx,
+                                ))
+                            } else {
+                                this
+                            }
+                        })
+                        .child(self.render_prompt_editor(
+                            context_editor,
+                            buffer_search_bar,
+                            window,
+                            cx,
+                        ))
+                }
+                ActiveView::Configuration => parent.children(self.configuration.clone()),
             })
             .children(self.render_trial_end_upsell(window, cx));
 
