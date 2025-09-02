@@ -21,8 +21,8 @@ use std::{
     time::Duration,
 };
 use ui::{
-    ContextMenu, ContextMenuEntry, ContextMenuItem, Divider, DocumentationAside, DocumentationSide,
-    DropdownMenu, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*,
+    ContextMenu, Divider, DropdownMenu, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing,
+    Tooltip, prelude::*,
 };
 use util::{ResultExt, maybe, paths::PathStyle};
 use workspace::{ModalView, Workspace};
