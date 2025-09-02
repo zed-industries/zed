@@ -87,7 +87,6 @@ impl Future for Timer {
 struct SchedulerState {
     runnables: VecDeque<ScheduledRunnable>,
     timers: Vec<ScheduledTimer>,
-    rng: ChaCha8Rng,
     randomize_order: bool,
     allow_parking: bool,
     next_session_id: SessionId,
@@ -106,6 +105,7 @@ pub trait Scheduler: Send + Sync {
 
 pub struct TestScheduler {
     clock: Arc<TestClock>,
+    rng: Arc<Mutex<ChaCha8Rng>>,
     state: Mutex<SchedulerState>,
     pub thread_id: thread::ThreadId,
     pub config: SchedulerConfig,
@@ -149,10 +149,10 @@ impl TestScheduler {
     pub fn new(clock: Arc<TestClock>, config: SchedulerConfig) -> Self {
         let (parker, unparker) = parking::pair();
         Self {
+            rng: Arc::new(Mutex::new(ChaCha8Rng::seed_from_u64(config.seed))),
             state: Mutex::new(SchedulerState {
                 runnables: VecDeque::new(),
                 timers: Vec::new(),
-                rng: ChaCha8Rng::seed_from_u64(config.seed),
                 randomize_order: config.randomize_order,
                 allow_parking: config.allow_parking,
                 next_session_id: SessionId(0),
@@ -163,6 +163,10 @@ impl TestScheduler {
             parker: Arc::new(Mutex::new(parker)),
             unparker,
         }
+    }
+
+    pub fn rng(&self) -> Arc<Mutex<ChaCha8Rng>> {
+        self.rng.clone()
     }
 
     /// Create a foreground executor for this scheduler
@@ -187,17 +191,13 @@ impl TestScheduler {
     }
 
     fn step(&self) -> bool {
-        let mut elapsed_timers = Vec::new();
-        {
+        let elapsed_timers = {
             let mut state = self.state.lock();
-            while let Some(timer) = state.timers.first() {
-                if timer.expiration <= self.clock.now() {
-                    elapsed_timers.push(state.timers.remove(0));
-                } else {
-                    break;
-                }
-            }
-        }
+            let end_ix = state
+                .timers
+                .partition_point(|timer| timer.expiration <= self.clock.now());
+            state.timers.drain(..end_ix).collect::<Vec<_>>()
+        };
 
         if !elapsed_timers.is_empty() {
             return true;
@@ -217,8 +217,7 @@ impl TestScheduler {
     }
 
     fn advance_clock(&self) -> bool {
-        let state = &mut *self.state.lock();
-        if let Some(timer) = state.timers.choose(&mut state.rng) {
+        if let Some(timer) = self.state.lock().timers.choose(&mut *self.rng.lock()) {
             self.clock.set_now(timer.expiration);
             true
         } else {
@@ -234,14 +233,16 @@ impl Scheduler for TestScheduler {
 
     fn schedule_foreground(&self, session_id: SessionId, runnable: Runnable) {
         {
-            let state = &mut *self.state.lock();
+            let mut state = self.state.lock();
             let ix = if state.randomize_order {
                 let start_ix = state
                     .runnables
                     .iter()
                     .rposition(|task| task.session_id == Some(session_id))
                     .map_or(0, |ix| ix + 1);
-                state.rng.gen_range(start_ix..=state.runnables.len())
+                self.rng
+                    .lock()
+                    .random_range(start_ix..=state.runnables.len())
             } else {
                 state.runnables.len()
             };
@@ -258,9 +259,9 @@ impl Scheduler for TestScheduler {
 
     fn schedule_background(&self, runnable: Runnable) {
         {
-            let state = &mut *self.state.lock();
+            let mut state = self.state.lock();
             let ix = if state.randomize_order {
-                state.rng.gen_range(0..=state.runnables.len())
+                self.rng.lock().random_range(0..=state.runnables.len())
             } else {
                 state.runnables.len()
             };
@@ -314,8 +315,8 @@ impl Scheduler for TestScheduler {
     fn block(&self, runnable: Runnable) {
         let waker = runnable.waker();
 
-        while self.state.lock().rng.gen_bool(0.5) {
-            if self.state.lock().rng.gen_bool(0.3) {
+        while self.rng.lock().random() {
+            if self.rng.lock().random_bool(0.3) {
                 self.advance_clock();
             }
 
@@ -324,8 +325,8 @@ impl Scheduler for TestScheduler {
 
         runnable.run();
 
-        while self.state.lock().rng.gen_bool(0.5) {
-            if self.state.lock().rng.gen_bool(0.3) {
+        while self.rng.lock().random() {
+            if self.rng.lock().random_bool(0.3) {
                 self.advance_clock();
             }
 

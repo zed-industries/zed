@@ -14358,8 +14358,8 @@ dependencies = [
  "futures 0.3.31",
  "parking",
  "parking_lot",
- "rand 0.8.5",
- "rand_chacha 0.3.1",
+ "rand 0.9.1",
+ "rand_chacha 0.9.0",
  "workspace-hack",
 ]
 
@@ -19962,7 +19962,7 @@ dependencies = [
  "quote",
  "rand 0.8.5",
  "rand 0.9.1",
- "rand_chacha 0.3.1",
+ "rand_chacha 0.9.0",
  "rand_core 0.6.4",
  "regalloc2",
  "regex",
