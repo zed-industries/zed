@@ -2738,7 +2738,7 @@ async fn test_delete_to_bracket(cx: &mut TestAppContext) {
     let mut cx = EditorTestContext::new(cx).await;
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
 
-    cx.set_state(r#"todo!("// ˇTODO");"#);
+    cx.set_state(r#"macro!("// ˇCOMMENT");"#);
     cx.update_editor(|editor, window, cx| {
         editor.delete_to_previous_word_start(
             &DeleteToPreviousWordStart {
@@ -2750,7 +2750,7 @@ async fn test_delete_to_bracket(cx: &mut TestAppContext) {
         );
     });
     // Deletion stops before brackets if asked to not ignore them.
-    cx.assert_editor_state(r#"todo!("ˇTODO");"#);
+    cx.assert_editor_state(r#"macro!("ˇCOMMENT");"#);
     cx.update_editor(|editor, window, cx| {
         editor.delete_to_previous_word_start(
             &DeleteToPreviousWordStart {
@@ -2762,7 +2762,7 @@ async fn test_delete_to_bracket(cx: &mut TestAppContext) {
         );
     });
     // Deletion has to remove a single bracket and then stop again.
-    cx.assert_editor_state(r#"todo!(ˇTODO");"#);
+    cx.assert_editor_state(r#"macro!(ˇCOMMENT");"#);
 
     cx.update_editor(|editor, window, cx| {
         editor.delete_to_previous_word_start(
@@ -2774,7 +2774,7 @@ async fn test_delete_to_bracket(cx: &mut TestAppContext) {
             cx,
         );
     });
-    cx.assert_editor_state(r#"todo!ˇTODO");"#);
+    cx.assert_editor_state(r#"macro!ˇCOMMENT");"#);
 
     cx.update_editor(|editor, window, cx| {
         editor.delete_to_previous_word_start(
@@ -2786,7 +2786,7 @@ async fn test_delete_to_bracket(cx: &mut TestAppContext) {
             cx,
         );
     });
-    cx.assert_editor_state(r#"ˇTODO");"#);
+    cx.assert_editor_state(r#"ˇCOMMENT");"#);
 
     cx.update_editor(|editor, window, cx| {
         editor.delete_to_previous_word_start(
@@ -2798,7 +2798,7 @@ async fn test_delete_to_bracket(cx: &mut TestAppContext) {
             cx,
         );
     });
-    cx.assert_editor_state(r#"ˇTODO");"#);
+    cx.assert_editor_state(r#"ˇCOMMENT");"#);
 
     cx.update_editor(|editor, window, cx| {
         editor.delete_to_next_word_end(
@@ -2837,7 +2837,7 @@ async fn test_delete_to_bracket(cx: &mut TestAppContext) {
     });
     cx.assert_editor_state(r#"ˇ"#);
 
-    cx.set_state(r#"todo!("// ˇTODO");"#);
+    cx.set_state(r#"macro!("// ˇCOMMENT");"#);
     cx.update_editor(|editor, window, cx| {
         editor.delete_to_previous_word_start(
             &DeleteToPreviousWordStart {
@@ -2848,7 +2848,7 @@ async fn test_delete_to_bracket(cx: &mut TestAppContext) {
             cx,
         );
     });
-    cx.assert_editor_state(r#"todoˇTODO");"#);
+    cx.assert_editor_state(r#"macroˇCOMMENT");"#);
 }
 
 #[gpui::test]
