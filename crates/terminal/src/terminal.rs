@@ -1141,13 +1141,6 @@ impl Terminal {
         }
     }
 
-    pub fn clear_matches(&mut self) {
-        if !self.matches.is_empty() {
-            self.matches.clear();
-            self.set_selection(None);
-        }
-    }
-
     pub fn select_matches(&mut self, matches: &[RangeInclusive<AlacPoint>]) {
         let matches_to_select = self
             .matches
