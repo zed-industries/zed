@@ -249,6 +249,7 @@ where
                 if tasks.is_empty() { None } else { Some(()) }
             })?
             .is_some();
+
         if !did_spawn {
             workspace
                 .update_in(cx, |workspace, window, cx| {

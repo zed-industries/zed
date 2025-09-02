@@ -905,11 +905,18 @@ impl TerminalPanel {
                 RevealStrategy::Always => match reveal_target {
                     RevealTarget::Center => {
                         task_workspace.update_in(cx, |workspace, window, cx| {
-                            workspace
-                                .active_item(cx)
-                                .context("retrieving active terminal item in the workspace")?
-                                .item_focus_handle(cx)
-                                .focus(window);
+                            let did_activate = workspace.activate_item(
+                                &terminal_to_replace,
+                                true,
+                                true,
+                                window,
+                                cx,
+                            );
+
+                            if !did_activate {
+                                anyhow::bail!("Failed retrieve terminal pane")
+                            }
+
                             anyhow::Ok(())
                         })??;
                     }
