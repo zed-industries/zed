@@ -13,9 +13,9 @@ This means that you're running the real Gemini CLI, with all of the advantages o
 
 ### Getting Started
 
-As of Zed Stable v0.201.5 you should be able to use Gemini CLI directly from Zed. First open the agent panel with {#kb agent::ToggleFocus}, and then use the `+` button in the top right to start a new Gemini CLI thread.
+As of [Zed Stable v0.201.5](https://zed.dev/releases/stable/0.201.5) you should be able to use Gemini CLI directly from Zed. First open the agent panel with {#kb agent::ToggleFocus}, and then use the `+` button in the top right to start a new Gemini CLI thread.
 
-If you'd like to bind this to a keyboard shortcut, you can do so by editing your keybindings file to include:
+If you'd like to bind this to a keyboard shortcut, you can do so by editing your `keymap.json` file via the `zed: open keymap` command to include:
 
 ```json
 [
@@ -40,11 +40,11 @@ The instructions to upgrade Gemini depend on how you originally installed it, bu
 
 After you have Gemini CLI running, you'll be prompted to choose your authentication method.
 
-Most users should click the "Log in with Google". This will cause a browser window to pop-up and auth directly with Gemini CLI. Zed does not see your oauth or access tokens in this case.
+Most users should click the "Log in with Google". This will cause a browser window to pop-up and auth directly with Gemini CLI. Zed does not see your OAuth or access tokens in this case.
 
 You can also use the "Gemini API Key". If you select this, and have the `GEMINI_API_KEY` set, then we will use that. Otherwise Zed will prompt you for an API key which will be stored securely in your keychain, and used to start Gemini CLI from within Zed.
 
-The "Vertex AI" option is for those who are using Vertex AI, and have already configured their environment correctly.
+The "Vertex AI" option is for those who are using [Vertex AI](https://cloud.google.com/vertex-ai), and have already configured their environment correctly.
 
 For more information, see the [Gemini CLI docs](https://github.com/google-gemini/gemini-cli/blob/main/docs/index.md).
 
@@ -65,13 +65,13 @@ Under the hood, Zed runs Claude Code and communicate to it over ACP.
 
 Open the agent panel with {#kb agent::ToggleFocus}, and then use the `+` button in the top right to start a new Claude Code thread.
 
-If you'd like to bind this to a keyboard shortcut, you can do so by editing your keybindings file to include:
+If you'd like to bind this to a keyboard shortcut, you can do so by editing your `keymap.json` file via the `zed: open keymap` command to include:
 
 ```json
 [
   {
     "bindings": {
-      "cmd-alt-g": ["agent::NewExternalAgentThread", { "agent": "claude_code" }]
+      "cmd-alt-c": ["agent::NewExternalAgentThread", { "agent": "claude_code" }]
     }
   }
 ]
