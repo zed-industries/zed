@@ -1,7 +1,11 @@
-use std::{cell::Cell, ops::Range, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    ops::Range,
+    rc::Rc,
+};
 
 use acp_thread::{AcpThread, AgentThreadEntry};
-use agent_client_protocol::{PromptCapabilities, ToolCallId};
+use agent_client_protocol::{self as acp, ToolCallId};
 use agent2::HistoryStore;
 use collections::HashMap;
 use editor::{Editor, EditorMode, MinimapVisibility};
@@ -26,8 +30,8 @@ pub struct EntryViewState {
     history_store: Entity<HistoryStore>,
     prompt_store: Option<Entity<PromptStore>>,
     entries: Vec<Entry>,
-    prevent_slash_commands: bool,
-    prompt_capabilities: Rc<Cell<PromptCapabilities>>,
+    prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
+    available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
 }
 
 impl EntryViewState {
@@ -36,8 +40,8 @@ impl EntryViewState {
         project: Entity<Project>,
         history_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
-        prompt_capabilities: Rc<Cell<PromptCapabilities>>,
-        prevent_slash_commands: bool,
+        prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
+        available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
     ) -> Self {
         Self {
             workspace,
@@ -45,8 +49,8 @@ impl EntryViewState {
             history_store,
             prompt_store,
             entries: Vec::new(),
-            prevent_slash_commands,
             prompt_capabilities,
+            available_commands,
         }
     }
 
@@ -85,8 +89,8 @@ impl EntryViewState {
                             self.history_store.clone(),
                             self.prompt_store.clone(),
                             self.prompt_capabilities.clone(),
+                            self.available_commands.clone(),
                             "Edit message － @ to include context",
-                            self.prevent_slash_commands,
                             editor::EditorMode::AutoHeight {
                                 min_lines: 1,
                                 max_lines: None,
@@ -471,7 +475,7 @@ mod tests {
                 history_store,
                 None,
                 Default::default(),
-                false,
+                Default::default(),
             )
         });
 
