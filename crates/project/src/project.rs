@@ -660,7 +660,6 @@ pub enum ResolveState {
     CanResolve(LanguageServerId, Option<lsp::LSPAny>),
     Resolving,
 }
-
 impl InlayHint {
     pub fn text(&self) -> Rope {
         match &self.label {

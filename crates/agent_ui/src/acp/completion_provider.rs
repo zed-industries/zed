@@ -1005,14 +1005,14 @@ impl ContextCompletion {
 }
 
 #[derive(Debug, Default, PartialEq)]
-struct SlashCommandCompletion {
-    source_range: Range<usize>,
-    command: Option<String>,
-    argument: Option<String>,
+pub struct SlashCommandCompletion {
+    pub source_range: Range<usize>,
+    pub command: Option<String>,
+    pub argument: Option<String>,
 }
 
 impl SlashCommandCompletion {
-    fn try_parse(line: &str, offset_to_line: usize) -> Option<Self> {
+    pub fn try_parse(line: &str, offset_to_line: usize) -> Option<Self> {
         // If we decide to support commands that are not at the beginning of the prompt, we can remove this check
         if !line.starts_with('/') || offset_to_line != 0 {
             return None;
