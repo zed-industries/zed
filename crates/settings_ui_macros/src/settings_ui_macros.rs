@@ -1,3 +1,4 @@
+use heck::ToTitleCase as _;
 use proc_macro2::TokenStream;
 use quote::{ToTokens, quote};
 use syn::{Data, DeriveInput, LitStr, Token, parse_macro_input};
@@ -61,7 +62,7 @@ pub fn derive_settings_ui(input: proc_macro::TokenStream) -> proc_macro::TokenSt
 
     // todo(settings_ui): Reformat title to be title case with spaces if group name not present,
     // and make group name optional, repurpose group as tag indicating item is group
-    let title = group_name.unwrap_or(input.ident.to_string());
+    let title = group_name.unwrap_or(input.ident.to_string().to_title_case());
 
     let ui_entry_fn_body = map_ui_item_to_entry(path_name.as_deref(), &title, quote! { Self });
 
@@ -154,7 +155,7 @@ fn generate_ui_item_body(
                     )
                 })
                 // todo(settings_ui): Re-format field name as nice title, and support setting different title with attr
-                .map(|(name, ty)| map_ui_item_to_entry(Some(&name), &name, ty));
+                .map(|(name, ty)| map_ui_item_to_entry(Some(&name), &name.to_title_case(), ty));
 
             quote! {
                 settings::SettingsUiItem::Group(settings::SettingsUiItemGroup{ items: vec![#(#fields),*] })
