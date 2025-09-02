@@ -1,5 +1,5 @@
 use crate::{
-    acp::completion_provider::ContextPickerCompletionProvider,
+    acp::completion_provider::{ContextPickerCompletionProvider, SlashCommandCompletion},
     context_picker::{ContextPickerAction, fetch_context_picker::fetch_url_content},
 };
 use acp_thread::{MentionUri, selection_name};
@@ -11,10 +11,10 @@ use assistant_slash_commands::codeblock_fence_for_path;
 use collections::{HashMap, HashSet};
 use editor::{
     Addon, Anchor, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement,
-    EditorEvent, EditorMode, EditorSnapshot, EditorStyle, ExcerptId, FoldPlaceholder, MultiBuffer,
-    ToOffset,
+    EditorEvent, EditorMode, EditorSnapshot, EditorStyle, ExcerptId, FoldPlaceholder, InlayId,
+    MultiBuffer, ToOffset,
     actions::Paste,
-    display_map::{Crease, CreaseId, FoldId},
+    display_map::{Crease, CreaseId, FoldId, Inlay},
 };
 use futures::{
     FutureExt as _,
@@ -25,10 +25,12 @@ use gpui::{
     EventEmitter, FocusHandle, Focusable, Image, ImageFormat, Img, KeyContext, Subscription, Task,
     TextStyle, WeakEntity, pulsating_between,
 };
-use language::{Buffer, Language};
+use language::{Buffer, Language, language_settings::InlayHintKind};
 use language_model::LanguageModelImage;
 use postage::stream::Stream as _;
-use project::{CompletionIntent, Project, ProjectItem, ProjectPath, Worktree};
+use project::{
+    CompletionIntent, InlayHint, InlayHintLabel, Project, ProjectItem, ProjectPath, Worktree,
+};
 use prompt_store::{PromptId, PromptStore};
 use rope::Point;
 use settings::Settings;
@@ -62,6 +64,7 @@ pub struct MessageEditor {
     history_store: Entity<HistoryStore>,
     prompt_store: Option<Entity<PromptStore>>,
     prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
+    available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
     _subscriptions: Vec<Subscription>,
     _parse_slash_command_task: Task<()>,
 }
@@ -75,6 +78,8 @@ pub enum MessageEditorEvent {
 }
 
 impl EventEmitter<MessageEditorEvent> for MessageEditor {}
+
+const COMMAND_HINT_INLAY_ID: usize = 0;
 
 impl MessageEditor {
     pub fn new(
@@ -102,7 +107,7 @@ impl MessageEditor {
             history_store.clone(),
             prompt_store.clone(),
             prompt_capabilities.clone(),
-            available_commands,
+            available_commands.clone(),
         ));
         let mention_set = MentionSet::default();
         let editor = cx.new(|cx| {
@@ -133,12 +138,33 @@ impl MessageEditor {
         })
         .detach();
 
+        let mut has_hint = false;
         let mut subscriptions = Vec::new();
+
         subscriptions.push(cx.subscribe_in(&editor, window, {
             move |this, editor, event, window, cx| {
                 if let EditorEvent::Edited { .. } = event {
-                    let snapshot = editor.update(cx, |editor, cx| editor.snapshot(window, cx));
+                    let snapshot = editor.update(cx, |editor, cx| {
+                        let new_hints = this
+                            .command_hint(editor.buffer(), cx)
+                            .into_iter()
+                            .collect::<Vec<_>>();
+                        let has_new_hint = !new_hints.is_empty();
+                        editor.splice_inlays(
+                            if has_hint {
+                                &[InlayId::Hint(COMMAND_HINT_INLAY_ID)]
+                            } else {
+                                &[]
+                            },
+                            new_hints,
+                            cx,
+                        );
+                        has_hint = has_new_hint;
+
+                        editor.snapshot(window, cx)
+                    });
                     this.mention_set.remove_invalid(snapshot);
+
                     cx.notify();
                 }
             }
@@ -152,9 +178,53 @@ impl MessageEditor {
             history_store,
             prompt_store,
             prompt_capabilities,
+            available_commands,
             _subscriptions: subscriptions,
             _parse_slash_command_task: Task::ready(()),
         }
+    }
+
+    fn command_hint(&self, buffer: &Entity<MultiBuffer>, cx: &App) -> Option<Inlay> {
+        let available_commands = self.available_commands.borrow();
+        if available_commands.is_empty() {
+            return None;
+        }
+
+        let snapshot = buffer.read(cx).snapshot(cx);
+        let parsed_command = SlashCommandCompletion::try_parse(&snapshot.text(), 0)?;
+        if parsed_command.argument.is_some() {
+            return None;
+        }
+
+        let command_name = parsed_command.command?;
+        let available_command = available_commands
+            .iter()
+            .find(|command| command.name == command_name)?;
+
+        let acp::AvailableCommandInput::Unstructured { mut hint } =
+            available_command.input.clone()?;
+
+        let mut hint_pos = parsed_command.source_range.end + 1;
+        if hint_pos > snapshot.len() {
+            hint_pos = snapshot.len();
+            hint.insert(0, ' ');
+        }
+
+        let hint_pos = snapshot.anchor_after(hint_pos);
+
+        Some(Inlay::hint(
+            COMMAND_HINT_INLAY_ID,
+            hint_pos,
+            &InlayHint {
+                position: hint_pos.text_anchor,
+                label: InlayHintLabel::String(hint),
+                kind: Some(InlayHintKind::Parameter),
+                padding_left: false,
+                padding_right: false,
+                tooltip: None,
+                resolve_state: project::ResolveState::Resolved,
+            },
+        ))
     }
 
     pub fn insert_thread_summary(
@@ -1184,6 +1254,7 @@ impl Render for MessageEditor {
                         local_player: cx.theme().players().local(),
                         text: text_style,
                         syntax: cx.theme().syntax().clone(),
+                        inlay_hints_style: editor::make_inlay_hints_style(cx),
                         ..Default::default()
                     },
                 )
