@@ -794,6 +794,7 @@ message LspQuery {
         GetDeclaration get_declaration = 11;
         GetTypeDefinition get_type_definition = 12;
         GetImplementation get_implementation = 13;
+        InlayHints inlay_hints = 14;
     }
 }
 
@@ -816,6 +817,7 @@ message LspResponse {
         GetTypeDefinitionResponse get_type_definition_response = 10;
         GetImplementationResponse get_implementation_response = 11;
         GetReferencesResponse get_references_response = 12;
+        InlayHintsResponse inlay_hints_response = 13;
     }
     uint64 server_id = 7;
 }
