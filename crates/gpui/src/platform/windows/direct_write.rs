@@ -1140,9 +1140,9 @@ impl DirectWriteState {
             let a = chunk[3] as f32;
             if a > 0.0 {
                 let inv_a = 255.0 / a;
-                chunk[0] = (b * inv_a).min(255.0).max(0.0) as u8;
-                chunk[1] = (g * inv_a).min(255.0).max(0.0) as u8;
-                chunk[2] = (r * inv_a).min(255.0).max(0.0) as u8;
+                chunk[0] = (b * inv_a).clamp(0.0, 255.0) as u8;
+                chunk[1] = (g * inv_a).clamp(0.0, 255.0) as u8;
+                chunk[2] = (r * inv_a).clamp(0.0, 255.0) as u8;
             }
         }
 
