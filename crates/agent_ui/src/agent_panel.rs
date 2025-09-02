@@ -3845,7 +3845,7 @@ impl Render for AgentPanel {
                             |this| this.child(self.render_backdrop(cx)),
                         ))
                         .child(self.render_drag_target(cx)),
-                    ActiveView::ExternalAgentThread { thread_view } => parent
+                    ActiveView::ExternalAgentThread { thread_view, .. } => parent
                         .child(thread_view.clone())
                         .child(self.render_drag_target(cx)),
                     ActiveView::History => {
