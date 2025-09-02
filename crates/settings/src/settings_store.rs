@@ -33,7 +33,7 @@ pub type EditorconfigProperties = ec4rs::Properties;
 use crate::{
     ActiveSettingsProfileName, ParameterizedJsonSchema, SettingsJsonSchemaParams, SettingsUiEntry,
     VsCodeSettings, WorktreeId, parse_json_with_comments, replace_value_in_json_text,
-    settings_ui::SettingsUi, update_value_in_json_text,
+    settings_ui_core::SettingsUi, update_value_in_json_text,
 };
 
 /// A value that can be defined as a user setting.

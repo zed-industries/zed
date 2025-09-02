@@ -57,30 +57,22 @@ pub fn derive_settings_ui(input: proc_macro::TokenStream) -> proc_macro::TokenSt
         }
     }
 
-    if path_name.is_none() && group_name.is_some() {
-        // todo(settings_ui) derive path from settings
-        panic!("path is required when group is specified");
-    }
+    let ui_item_fn_body = generate_ui_item_body(group_name.as_ref(), path_name.as_ref(), &input);
 
-    let ui_render_fn_body = generate_ui_item_body(group_name.as_ref(), path_name.as_ref(), &input);
+    // todo(settings_ui): Reformat title to be title case with spaces if group name not present,
+    // and make group name optional, repurpose group as tag indicating item is group
+    let title = group_name.unwrap_or(input.ident.to_string());
 
-    let settings_ui_item_fn_body = path_name
-        .as_ref()
-        .map(|path_name| map_ui_item_to_render(path_name, quote! { Self }))
-        .unwrap_or(quote! {
-            settings::SettingsUiEntry {
-                item: settings::SettingsUiEntryVariant::None
-            }
-        });
+    let ui_entry_fn_body = map_ui_item_to_entry(path_name.as_deref(), &title, quote! { Self });
 
     let expanded = quote! {
         impl #impl_generics settings::SettingsUi for #name #ty_generics #where_clause {
             fn settings_ui_item() -> settings::SettingsUiItem {
-                #ui_render_fn_body
+                #ui_item_fn_body
             }
 
             fn settings_ui_entry() -> settings::SettingsUiEntry {
-                #settings_ui_item_fn_body
+                #ui_entry_fn_body
             }
         }
     };
@@ -114,27 +106,14 @@ fn option_inner_type(ty: TokenStream) -> Option<TokenStream> {
     return Some(ty.to_token_stream());
 }
 
-fn map_ui_item_to_render(path: &str, ty: TokenStream) -> TokenStream {
+fn map_ui_item_to_entry(path: Option<&str>, title: &str, ty: TokenStream) -> TokenStream {
     let ty = extract_type_from_option(ty);
+    let path = path.map_or_else(|| quote! {None}, |path| quote! {Some(#path)});
     quote! {
         settings::SettingsUiEntry {
-            item: match #ty::settings_ui_item() {
-                settings::SettingsUiItem::Group{title, items} => settings::SettingsUiEntryVariant::Group {
-                    title,
-                    path: #path,
-                    items,
-                },
-                settings::SettingsUiItem::Single(item) => settings::SettingsUiEntryVariant::Item {
-                    path: #path,
-                    item,
-                },
-                settings::SettingsUiItem::Dynamic{ options, determine_option } => settings::SettingsUiEntryVariant::Dynamic {
-                    path: #path,
-                    options,
-                    determine_option,
-                },
-                settings::SettingsUiItem::None => settings::SettingsUiEntryVariant::None,
-            }
+            title: #title,
+            path: #path,
+            item: #ty::settings_ui_item(),
         }
     }
 }
@@ -146,16 +125,10 @@ fn generate_ui_item_body(
 ) -> TokenStream {
     match (group_name, path_name, &input.data) {
         (_, _, Data::Union(_)) => unimplemented!("Derive SettingsUi for Unions"),
-        (None, None, Data::Struct(_)) => quote! {
+        (None, _, Data::Struct(_)) => quote! {
             settings::SettingsUiItem::None
         },
-        (Some(_), None, Data::Struct(_)) => quote! {
-            settings::SettingsUiItem::None
-        },
-        (None, Some(_), Data::Struct(_)) => quote! {
-            settings::SettingsUiItem::None
-        },
-        (Some(group_name), _, Data::Struct(data_struct)) => {
+        (Some(_), _, Data::Struct(data_struct)) => {
             let fields = data_struct
                 .fields
                 .iter()
@@ -180,10 +153,11 @@ fn generate_ui_item_body(
                         field.ty.to_token_stream(),
                     )
                 })
-                .map(|(name, ty)| map_ui_item_to_render(&name, ty));
+                // todo(settings_ui): Re-format field name as nice title, and support setting different title with attr
+                .map(|(name, ty)| map_ui_item_to_entry(Some(&name), &name, ty));
 
             quote! {
-                settings::SettingsUiItem::Group{ title: #group_name, items: vec![#(#fields),*] }
+                settings::SettingsUiItem::Group(settings::SettingsUiItemGroup{ items: vec![#(#fields),*] })
             }
         }
         (None, _, Data::Enum(data_enum)) => {
