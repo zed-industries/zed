@@ -70,7 +70,7 @@ struct FontIdentifier {
 }
 
 impl DirectWriteComponent {
-    pub fn new(gpu_context: &DirectXDevices) -> Result<Self> {
+    pub fn new(gpu_context: &DirectXRendererDevices) -> Result<Self> {
         // todo: ideally this would not be a large unsafe block but smaller isolated ones for easier auditing
         unsafe {
             let factory: IDWriteFactory5 = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
@@ -100,7 +100,7 @@ impl DirectWriteComponent {
 }
 
 impl GPUState {
-    fn new(gpu_context: &DirectXDevices) -> Result<Self> {
+    fn new(gpu_context: &DirectXRendererDevices) -> Result<Self> {
         let device = gpu_context.device.clone();
         let device_context = gpu_context.device_context.clone();
 
@@ -183,7 +183,7 @@ impl GPUState {
 }
 
 impl DirectWriteTextSystem {
-    pub(crate) fn new(gpu_context: &DirectXDevices) -> Result<Self> {
+    pub(crate) fn new(gpu_context: &DirectXRendererDevices) -> Result<Self> {
         let components = DirectWriteComponent::new(gpu_context)?;
         let system_font_collection = unsafe {
             let mut result = std::mem::zeroed();

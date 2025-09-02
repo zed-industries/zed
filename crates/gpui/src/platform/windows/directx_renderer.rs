@@ -39,7 +39,7 @@ pub(crate) struct FontInfo {
 pub(crate) struct DirectXRenderer {
     hwnd: HWND,
     atlas: Arc<DirectXAtlas>,
-    devices: ManuallyDrop<DirectXDevices>,
+    devices: ManuallyDrop<DirectXRendererDevices>,
     resources: ManuallyDrop<DirectXResources>,
     globals: DirectXGlobalElements,
     pipelines: DirectXRenderPipelines,
@@ -49,7 +49,7 @@ pub(crate) struct DirectXRenderer {
 
 /// Direct3D objects
 #[derive(Clone)]
-pub(crate) struct DirectXDevices {
+pub(crate) struct DirectXRendererDevices {
     adapter: IDXGIAdapter1,
     dxgi_factory: IDXGIFactory6,
     pub(crate) device: ID3D11Device,
@@ -96,7 +96,7 @@ struct DirectComposition {
     comp_visual: IDCompositionVisual,
 }
 
-impl DirectXDevices {
+impl DirectXRendererDevices {
     pub(crate) fn new(disable_direct_composition: bool) -> Result<ManuallyDrop<Self>> {
         let debug_layer_available = check_debug_layer_available();
         let dxgi_factory =
@@ -151,8 +151,8 @@ impl DirectXRenderer {
             log::info!("Direct Composition is disabled.");
         }
 
-        let devices =
-            DirectXDevices::new(disable_direct_composition).context("Creating DirectX devices")?;
+        let devices = DirectXRendererDevices::new(disable_direct_composition)
+            .context("Creating DirectX devices")?;
         let atlas = Arc::new(DirectXAtlas::new(&devices.device, &devices.device_context));
 
         let resources = DirectXResources::new(&devices, 1, 1, hwnd, disable_direct_composition)
@@ -262,7 +262,7 @@ impl DirectXRenderer {
             ManuallyDrop::drop(&mut self.devices);
         }
 
-        let devices = DirectXDevices::new(disable_direct_composition)
+        let devices = DirectXRendererDevices::new(disable_direct_composition)
             .context("Recreating DirectX devices")?;
         let resources = DirectXResources::new(
             &devices,
@@ -680,7 +680,7 @@ impl DirectXRenderer {
 
 impl DirectXResources {
     pub fn new(
-        devices: &DirectXDevices,
+        devices: &DirectXRendererDevices,
         width: u32,
         height: u32,
         hwnd: HWND,
@@ -725,7 +725,7 @@ impl DirectXResources {
     #[inline]
     fn recreate_resources(
         &mut self,
-        devices: &DirectXDevices,
+        devices: &DirectXRendererDevices,
         width: u32,
         height: u32,
     ) -> Result<()> {
@@ -1191,7 +1191,7 @@ fn create_swap_chain(
 
 #[inline]
 fn create_resources(
-    devices: &DirectXDevices,
+    devices: &DirectXRendererDevices,
     swap_chain: &IDXGISwapChain1,
     width: u32,
     height: u32,

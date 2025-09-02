@@ -125,7 +125,7 @@ impl WindowsPlatform {
             .is_ok_and(|value| value == "true" || value == "1");
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
-        let directx_devices = DirectXDevices::new(disable_direct_composition)
+        let directx_devices = DirectXRendererDevices::new(disable_direct_composition)
             .context("Unable to init directx devices.")?;
         let text_system = Arc::new(
             DirectWriteTextSystem::new(&directx_devices)
