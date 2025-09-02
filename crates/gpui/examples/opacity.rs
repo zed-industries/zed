@@ -1,10 +1,9 @@
-use std::{fs, path::PathBuf, time::Duration};
+use std::{fs, path::PathBuf};
 
 use anyhow::Result;
 use gpui::{
     App, Application, AssetSource, Bounds, BoxShadow, ClickEvent, Context, SharedString, Task,
-    Timer, Window, WindowBounds, WindowOptions, div, hsla, img, point, prelude::*, px, rgb, size,
-    svg,
+    Window, WindowBounds, WindowOptions, div, hsla, img, point, prelude::*, px, rgb, size, svg,
 };
 
 struct Assets {
@@ -37,6 +36,7 @@ impl AssetSource for Assets {
 struct HelloWorld {
     _task: Option<Task<()>>,
     opacity: f32,
+    animating: bool,
 }
 
 impl HelloWorld {
@@ -44,39 +44,29 @@ impl HelloWorld {
         Self {
             _task: None,
             opacity: 0.5,
+            animating: false,
         }
     }
 
-    fn change_opacity(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn start_animation(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.opacity = 0.0;
+        self.animating = true;
         cx.notify();
-
-        self._task = Some(cx.spawn_in(window, async move |view, cx| {
-            loop {
-                Timer::after(Duration::from_secs_f32(0.05)).await;
-                let mut stop = false;
-                let _ = cx.update(|_, cx| {
-                    view.update(cx, |view, cx| {
-                        if view.opacity >= 1.0 {
-                            stop = true;
-                            return;
-                        }
-
-                        view.opacity += 0.1;
-                        cx.notify();
-                    })
-                });
-
-                if stop {
-                    break;
-                }
-            }
-        }));
     }
 }
 
 impl Render for HelloWorld {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.animating {
+            self.opacity += 0.005;
+            if self.opacity >= 1.0 {
+                self.animating = false;
+                self.opacity = 1.0;
+            } else {
+                window.request_animation_frame();
+            }
+        }
+
         div()
             .flex()
             .flex_row()
@@ -96,7 +86,7 @@ impl Render for HelloWorld {
             .child(
                 div()
                     .id("panel")
-                    .on_click(cx.listener(Self::change_opacity))
+                    .on_click(cx.listener(Self::start_animation))
                     .absolute()
                     .top_8()
                     .left_8()
@@ -150,7 +140,15 @@ impl Render for HelloWorld {
                                     .text_2xl()
                                     .size_8(),
                             )
-                            .child("🎊✈️🎉🎈🎁🎂")
+                            .child(
+                                div()
+                                    .flex()
+                                    .children(["🎊", "✈️", "🎉", "🎈", "🎁", "🎂"].map(|emoji| {
+                                        div()
+                                            .child(emoji.to_string())
+                                            .hover(|style| style.opacity(0.5))
+                                    })),
+                            )
                             .child(img("image/black-cat-typing.gif").size_12()),
                     ),
             )
