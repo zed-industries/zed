@@ -1473,7 +1473,7 @@ impl AcpThread {
                                     .any(|entry| matches!(entry, AgentThreadEntry::ToolCall(_)));
 
                                 if has_tool_call_after_user_msg {
-                                    // Tool call was refused - mark the last tool call as failed
+                                    // Tool call was refused - mark the last tool call as failed but don't truncate
                                     let language_registry = this.project.read(cx).languages().clone();
                                     for entry in this.entries.iter_mut().rev() {
                                         if let AgentThreadEntry::ToolCall(tool_call) = entry {
@@ -1497,7 +1497,12 @@ impl AcpThread {
                                     // Don't truncate for tool call refusals - let the model continue
                                     cx.emit(AcpThreadEvent::EntryUpdated(this.entries.len() - 1));
                                 } else {
-                                    // User prompt was refused - show inline message and don't truncate
+                                    // User prompt was refused - truncate back to before the user message
+                                    let range = user_msg_ix..this.entries.len();
+                                    if range.start < range.end {
+                                        this.entries.truncate(user_msg_ix);
+                                        cx.emit(AcpThreadEvent::EntriesRemoved(range));
+                                    }
                                     cx.emit(AcpThreadEvent::Refusal);
                                 }
                             } else {
@@ -2682,9 +2687,9 @@ mod tests {
             "Refusal event should be emitted for user prompt refusals"
         );
 
-        // Verify the message is still in the thread (not truncated)
+        // Verify the message was truncated (user prompt refusal)
         thread.read_with(cx, |thread, cx| {
-            assert_eq!(thread.to_markdown(cx), "## User\n\nhello\n\n");
+            assert_eq!(thread.to_markdown(cx), "");
         });
     }
 
@@ -2751,14 +2756,14 @@ mod tests {
             );
         });
 
-        // Simulate refusing the second message. The message should still be in the thread
-        // but the refusal should be handled appropriately (no truncation).
+        // Simulate refusing the second message. The message should be truncated
+        // when a user prompt is refused.
         refuse_next.store(true, SeqCst);
         cx.update(|cx| thread.update(cx, |thread, cx| thread.send(vec!["world".into()], cx)))
             .await
             .unwrap();
         thread.read_with(cx, |thread, cx| {
-            // The conversation should still contain both messages since we don't truncate on refusal
+            // The conversation should be truncated back to before the refused message
             assert_eq!(
                 thread.to_markdown(cx),
                 indoc! {"
@@ -2769,10 +2774,6 @@ mod tests {
                     ## Assistant
 
                     HELLO
-
-                    ## User
-
-                    world
 
                 "}
             );

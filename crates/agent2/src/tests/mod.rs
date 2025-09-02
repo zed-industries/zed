@@ -1451,17 +1451,14 @@ async fn test_refusal(cx: &mut TestAppContext) {
         );
     });
 
-    // If the model refuses to continue, the messages should still be present (no truncation on refusal).
+    // If the model refuses to continue, the thread should truncate back to before the user message.
     fake_model
         .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::Refusal));
     let events = events.collect::<Vec<_>>().await;
     assert_eq!(stop_events(events), vec![acp::StopReason::Refusal]);
     thread.read_with(cx, |thread, _| {
-        // The user message and assistant response should still be in the thread since we don't truncate on refusal
-        assert_eq!(
-            thread.to_markdown(),
-            "## User\n\nHello\n\n## Assistant\n\nHey!\n"
-        );
+        // The thread should be empty after truncating the refused message
+        assert_eq!(thread.to_markdown(), "");
     });
 }
 
