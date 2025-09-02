@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources, SettingsUi};
 use workspace::dock::DockPosition;
 
-#[derive(Deserialize, Debug, SettingsUi)]
+#[derive(Deserialize, Debug)]
 pub struct CollaborationPanelSettings {
     pub button: bool,
     pub dock: DockPosition,
@@ -20,14 +20,14 @@ pub enum ChatPanelButton {
     WhenInCall,
 }
 
-#[derive(Deserialize, Debug, SettingsUi)]
+#[derive(Deserialize, Debug)]
 pub struct ChatPanelSettings {
     pub button: ChatPanelButton,
     pub dock: DockPosition,
     pub default_width: Pixels,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi)]
 pub struct ChatPanelSettingsContent {
     /// When to show the panel button in the status bar.
     ///
@@ -43,14 +43,14 @@ pub struct ChatPanelSettingsContent {
     pub default_width: Option<f32>,
 }
 
-#[derive(Deserialize, Debug, SettingsUi)]
+#[derive(Deserialize, Debug)]
 pub struct NotificationPanelSettings {
     pub button: bool,
     pub dock: DockPosition,
     pub default_width: Pixels,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi)]
 pub struct PanelSettingsContent {
     /// Whether to show the panel button in the status bar.
     ///

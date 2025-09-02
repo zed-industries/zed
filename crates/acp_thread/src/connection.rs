@@ -75,7 +75,6 @@ pub trait AgentConnection {
     fn telemetry(&self) -> Option<Rc<dyn AgentTelemetry>> {
         None
     }
-
     fn into_any(self: Rc<Self>) -> Rc<dyn Any>;
 }
 
@@ -339,6 +338,7 @@ mod test_support {
                         audio: true,
                         embedded_context: true,
                     }),
+                    vec![],
                     cx,
                 )
             });

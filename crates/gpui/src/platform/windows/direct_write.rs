@@ -112,10 +112,10 @@ impl GPUState {
                 RenderTarget: [
                     D3D11_RENDER_TARGET_BLEND_DESC {
                         BlendEnable: true.into(),
-                        SrcBlend: D3D11_BLEND_SRC_ALPHA,
+                        SrcBlend: D3D11_BLEND_ONE,
                         DestBlend: D3D11_BLEND_INV_SRC_ALPHA,
                         BlendOp: D3D11_BLEND_OP_ADD,
-                        SrcBlendAlpha: D3D11_BLEND_SRC_ALPHA,
+                        SrcBlendAlpha: D3D11_BLEND_ONE,
                         DestBlendAlpha: D3D11_BLEND_INV_SRC_ALPHA,
                         BlendOpAlpha: D3D11_BLEND_OP_ADD,
                         RenderTargetWriteMask: D3D11_COLOR_WRITE_ENABLE_ALL.0 as u8,
@@ -1130,6 +1130,20 @@ impl DirectWriteState {
                     width * std::mem::size_of::<u32>(),
                 )
             };
+        }
+
+        // Convert from premultiplied to straight alpha
+        for chunk in rasterized.chunks_exact_mut(4) {
+            let b = chunk[0] as f32;
+            let g = chunk[1] as f32;
+            let r = chunk[2] as f32;
+            let a = chunk[3] as f32;
+            if a > 0.0 {
+                let inv_a = 255.0 / a;
+                chunk[0] = (b * inv_a).clamp(0.0, 255.0) as u8;
+                chunk[1] = (g * inv_a).clamp(0.0, 255.0) as u8;
+                chunk[2] = (r * inv_a).clamp(0.0, 255.0) as u8;
+            }
         }
 
         Ok(rasterized)
