@@ -11,7 +11,6 @@ pub trait CommonAnimationExt: AnimationExt {
     /// NOTE: This method uses the location of the caller to generate an ID for this state.
     ///       If this is not sufficient to identify your state (e.g. you're rendering a list item),
     ///       you can provide a custom ElementID using the `use_keyed_rotate_animation` method.
-
     #[track_caller]
     fn with_rotate_animation(self, duration: u64) -> AnimationElement<Self>
     where
