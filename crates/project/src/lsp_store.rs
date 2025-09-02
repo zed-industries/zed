@@ -59,7 +59,7 @@ use gpui::{
 use http_client::HttpClient;
 use itertools::Itertools as _;
 use language::{
-    Bias, BinaryStatus, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel, Diagnostic,
+    Bias, BinaryStatus, Buffer, BufferRow, BufferSnapshot, CachedLspAdapter, CodeLabel, Diagnostic,
     DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff, File as _, Language, LanguageName,
     LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, LspInstaller, ManifestDelegate,
     ManifestName, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Toolchain,
@@ -112,7 +112,7 @@ use std::{
     time::{Duration, Instant},
 };
 use sum_tree::Dimensions;
-use text::{Anchor, BufferId, LineEnding, OffsetRangeExt, ToPoint as _};
+use text::{Anchor, BufferId, LineEnding, OffsetRangeExt, Point, ToPoint as _};
 
 use util::{
     ConnectionResult, ResultExt as _, debug_panic, defer, maybe, merge_json_value_into,
@@ -4276,7 +4276,7 @@ impl LspStore {
         &self,
         buffer: &Entity<Buffer>,
         request: &R,
-        cx: &Context<Self>,
+        cx: &App,
     ) -> bool
     where
         R: LspCommand,
@@ -4297,7 +4297,7 @@ impl LspStore {
         &self,
         buffer: &Entity<Buffer>,
         check: F,
-        cx: &Context<Self>,
+        cx: &App,
     ) -> bool
     where
         F: Fn(&lsp::ServerCapabilities) -> bool,
@@ -6408,6 +6408,138 @@ impl LspStore {
         }
     }
 
+    pub fn inlay_hints_2(
+        &mut self,
+        buffer: Entity<Buffer>,
+        range: Range<text::Anchor>,
+        cx: &mut Context<Self>,
+    ) -> HashMap<
+        // TODO kb type alias
+        Range<BufferRow>,
+        HashMap<LanguageServerId, Shared<Task<Result<Vec<InlayHint>, Arc<anyhow::Error>>>>>,
+    > {
+        let buffer_version = buffer.read(cx).version();
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        let buffer_id = buffer.read(cx).remote_id();
+
+        let existing_inlay_hints = self
+            .inlay_hint_data
+            .entry(buffer_id)
+            .or_insert_with(|| BufferInlayHints::new(&buffer, cx));
+        if buffer_version.changed_since(&existing_inlay_hints.chunks_for_version) {
+            *existing_inlay_hints = BufferInlayHints::new(&buffer, cx);
+        }
+
+        let mut resulting_hints = HashMap::<
+            Range<BufferRow>,
+            HashMap<LanguageServerId, Shared<Task<Result<Vec<InlayHint>, Arc<anyhow::Error>>>>>,
+        >::default();
+        let applicable_chunks = existing_inlay_hints.applicable_chunks(&range);
+        let cached_hints = existing_inlay_hints.hints.clone();
+        for row_chunk in &applicable_chunks {
+            let hints_entry = resulting_hints.entry(row_chunk.clone()).or_default();
+            match cached_hints.get(row_chunk) {
+                Some(hints) => {
+                    hints_entry.extend(hints.clone());
+                }
+                None => {
+                    let new_hints = self.fetch_inlay_hints(
+                        &buffer,
+                        buffer_snapshot.anchor_before(Point::new(row_chunk.start, 0))
+                            ..buffer_snapshot.anchor_after(Point::new(row_chunk.end, 0)),
+                        cx,
+                    );
+                    let new_task = cx
+                        .spawn(async move |lsp_store, cx| {
+                            // TODO kb: how to unpack the Task<Result<Option<HashMap<LangServerId, Vec<Inlays>>> into the return type?
+                            todo!("TODO kb")
+                        })
+                        .shared();
+                    hints_entry.insert(row_chunk.clone(), new_task.clone());
+                    if let Some(cached_hints) = self.inlay_hint_data.get_mut(&buffer_id) {
+                        cached_hints
+                            .hints
+                            .entry(server_id)
+                            .or_default()
+                            .insert(row_chunk.clone(), new_task);
+                    }
+                }
+            }
+        }
+
+        resulting_hints
+    }
+
+    // TODO kb this is identical to code_lens_actions, consider deduplication
+    fn fetch_inlay_hints(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        range: Range<Anchor>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<HashMap<LanguageServerId, Vec<InlayHint>>>>> {
+        let request = InlayHints { range };
+        if let Some((upstream_client, project_id)) = self.upstream_client() {
+            if !self.is_capable_for_proto_request(buffer, &request, cx) {
+                return Task::ready(Ok(None));
+            }
+            let request_task = upstream_client.request_lsp(
+                project_id,
+                LSP_REQUEST_TIMEOUT,
+                cx.background_executor().clone(),
+                request.to_proto(project_id, buffer.read(cx)),
+            );
+            let buffer = buffer.clone();
+            cx.spawn(async move |weak_lsp_store, cx| {
+                let Some(lsp_store) = weak_lsp_store.upgrade() else {
+                    return Ok(None);
+                };
+                let Some(responses) = request_task.await? else {
+                    return Ok(None);
+                };
+
+                let inlay_hints = join_all(responses.payload.into_iter().map(|response| {
+                    let lsp_store = lsp_store.clone();
+                    let buffer = buffer.clone();
+                    let cx = cx.clone();
+                    let request = request.clone();
+                    async move {
+                        (
+                            LanguageServerId::from_proto(response.server_id),
+                            request
+                                .response_from_proto(response.response, lsp_store, buffer, cx)
+                                .await,
+                        )
+                    }
+                }))
+                .await;
+
+                let mut has_errors = false;
+                let inlay_hints = inlay_hints
+                    .into_iter()
+                    .filter_map(|(server_id, inlay_hints)| match inlay_hints {
+                        Ok(inlay_hints) => Some((server_id, inlay_hints)),
+                        Err(e) => {
+                            has_errors = true;
+                            log::error!("{e:#}");
+                            None
+                        }
+                    })
+                    .collect::<HashMap<_, _>>();
+                anyhow::ensure!(
+                    !has_errors || !inlay_hints.is_empty(),
+                    "Failed to fetch inlay hints"
+                );
+                Ok(Some(inlay_hints))
+            })
+        } else {
+            let inlay_hints_task =
+                self.request_multiple_lsp_locally(buffer, None::<usize>, request, cx);
+            cx.background_spawn(
+                async move { Ok(Some(inlay_hints_task.await.into_iter().collect())) },
+            )
+        }
+    }
+
     pub fn pull_diagnostics_for_buffer(
         &mut self,
         buffer: Entity<Buffer>,
@@ -8084,7 +8216,6 @@ impl LspStore {
                 )
                 .await?;
             }
-            // Diagnostics pull synchronizes internally via the buffer state, and cannot be handled generically as the other requests.
             Request::GetDocumentDiagnostics(get_document_diagnostics) => {
                 let buffer_id = BufferId::new(get_document_diagnostics.buffer_id())?;
                 let version = deserialize_version(get_document_diagnostics.buffer_version());
@@ -8124,6 +8255,9 @@ impl LspStore {
                     );
                 })?;
             }
+            // TODO kb: `query_lsp_locally` ALMOST works except that there's no position for inlays, there's a RANGE
+            // and we have to deduplicate by those ranges somehow
+            Request::InlayHints(inlay_hints) => todo!("TODO kb"),
         }
         Ok(proto::Ack {})
     }
