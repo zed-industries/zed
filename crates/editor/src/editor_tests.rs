@@ -2527,19 +2527,7 @@ async fn test_delete_whitespaces(cx: &mut TestAppContext) {
             cx,
         );
     });
-    cx.assert_editor_state("here is some textˇwith a space");
-
-    cx.set_state("here is some text    ˇwith a space");
-    cx.update_editor(|editor, window, cx| {
-        editor.delete_to_previous_word_start(
-            &DeleteToPreviousWordStart {
-                ignore_newlines: true,
-                ignore_brackets: true,
-            },
-            window,
-            cx,
-        );
-    });
+    // Continuous whitespace sequences are removed entirely, words behind them are not affected by the deletion action.
     cx.assert_editor_state("here is some textˇwith a space");
 
     cx.set_state("here is some text    ˇwith a space");
@@ -2547,19 +2535,6 @@ async fn test_delete_whitespaces(cx: &mut TestAppContext) {
         editor.delete_to_previous_word_start(
             &DeleteToPreviousWordStart {
                 ignore_newlines: false,
-                ignore_brackets: false,
-            },
-            window,
-            cx,
-        );
-    });
-    cx.assert_editor_state("here is some textˇwith a space");
-
-    cx.set_state("here is some text    ˇwith a space");
-    cx.update_editor(|editor, window, cx| {
-        editor.delete_to_previous_word_start(
-            &DeleteToPreviousWordStart {
-                ignore_newlines: true,
                 ignore_brackets: false,
             },
             window,
@@ -2579,19 +2554,7 @@ async fn test_delete_whitespaces(cx: &mut TestAppContext) {
             cx,
         );
     });
-    cx.assert_editor_state("here is some textˇwith a space");
-
-    cx.set_state("here is some textˇ    with a space");
-    cx.update_editor(|editor, window, cx| {
-        editor.delete_to_next_word_end(
-            &DeleteToNextWordEnd {
-                ignore_newlines: true,
-                ignore_brackets: true,
-            },
-            window,
-            cx,
-        );
-    });
+    // Same happens in the other direction.
     cx.assert_editor_state("here is some textˇwith a space");
 
     cx.set_state("here is some textˇ    with a space");
@@ -2640,6 +2603,7 @@ async fn test_delete_whitespaces(cx: &mut TestAppContext) {
             cx,
         );
     });
+    // Single whitespaces are removed with the word behind them.
     cx.assert_editor_state("here is ˇwith a space");
     cx.update_editor(|editor, window, cx| {
         editor.delete_to_previous_word_start(
@@ -2684,6 +2648,7 @@ async fn test_delete_whitespaces(cx: &mut TestAppContext) {
             cx,
         );
     });
+    // Same happens in the other direction.
     cx.assert_editor_state("ˇ a space");
     cx.update_editor(|editor, window, cx| {
         editor.delete_to_next_word_end(
@@ -2784,6 +2749,7 @@ async fn test_delete_to_bracket(cx: &mut TestAppContext) {
             cx,
         );
     });
+    // Deletion stops before brackets if asked to not ignore them.
     cx.assert_editor_state(r#"todo!("ˇTODO");"#);
     cx.update_editor(|editor, window, cx| {
         editor.delete_to_previous_word_start(
@@ -2795,6 +2761,7 @@ async fn test_delete_to_bracket(cx: &mut TestAppContext) {
             cx,
         );
     });
+    // Deletion has to remove a single bracket and then stop again.
     cx.assert_editor_state(r#"todo!(ˇTODO");"#);
 
     cx.update_editor(|editor, window, cx| {
@@ -2843,7 +2810,7 @@ async fn test_delete_to_bracket(cx: &mut TestAppContext) {
             cx,
         );
     });
-    // Brackets on the right are not paired, hence deletion does not stop at them
+    // Brackets on the right are not paired anymore, hence deletion does not stop at them
     cx.assert_editor_state(r#"ˇ");"#);
 
     cx.update_editor(|editor, window, cx| {
