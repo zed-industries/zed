@@ -433,10 +433,11 @@ fn render_item_single(
         SettingsUiItemSingle::NumericStepper(num_type) => {
             render_any_numeric_stepper(settings_value, *num_type, window, cx)
         }
-        SettingsUiItemSingle::ToggleGroup(variants) => {
-            render_toggle_button_group(settings_value, variants, window, cx)
-        }
-        SettingsUiItemSingle::DropDown(_) => {
+        SettingsUiItemSingle::ToggleGroup {
+            variants: values,
+            labels: titles,
+        } => render_toggle_button_group(settings_value, values, titles, window, cx),
+        SettingsUiItemSingle::DropDown { .. } => {
             unimplemented!("This")
         }
     }
@@ -603,6 +604,7 @@ fn render_switch_field(
 fn render_toggle_button_group(
     value: SettingsValue<serde_json::Value>,
     variants: &'static [&'static str],
+    labels: &'static [&'static str],
     _: &mut Window,
     _: &mut App,
 ) -> AnyElement {
@@ -612,15 +614,18 @@ fn render_toggle_button_group(
         group_name: &'static str,
         value: SettingsValue<String>,
         variants: &'static [&'static str],
+        labels: &'static [&'static str],
     ) -> AnyElement {
-        let mut variants_array: [&'static str; LEN] = ["default"; LEN];
-        variants_array.copy_from_slice(variants);
+        let mut variants_array: [(&'static str, &'static str); LEN] = [("unused", "unused"); LEN];
+        for i in 0..LEN {
+            variants_array[i] = (variants[i], labels[i]);
+        }
         let active_value = value.read();
 
         let selected_idx = variants_array
             .iter()
             .enumerate()
-            .find_map(|(idx, variant)| {
+            .find_map(|(idx, (variant, _))| {
                 if variant == &active_value {
                     Some(idx)
                 } else {
@@ -628,11 +633,13 @@ fn render_toggle_button_group(
                 }
             });
 
+        let mut idx = 0;
         ToggleButtonGroup::single_row(
             group_name,
-            variants_array.map(|variant| {
+            variants_array.map(|(variant, label)| {
                 let path = value.path.clone();
-                ToggleButtonSimple::new(variant, move |_, _, cx| {
+                idx += 1;
+                ToggleButtonSimple::new(label, move |_, _, cx| {
                     SettingsValue::write_value(
                         &path,
                         serde_json::Value::String(variant.to_string()),
@@ -649,7 +656,7 @@ fn render_toggle_button_group(
     macro_rules! templ_toggl_with_const_param {
         ($len:expr) => {
             if variants.len() == $len {
-                return make_toggle_group::<$len>(value.title, value, variants);
+                return make_toggle_group::<$len>(value.title, value, variants, labels);
             }
         };
     }

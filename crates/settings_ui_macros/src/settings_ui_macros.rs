@@ -1,4 +1,4 @@
-use heck::ToTitleCase as _;
+use heck::{ToSnakeCase as _, ToTitleCase as _};
 use proc_macro2::TokenStream;
 use quote::{ToTokens, quote};
 use syn::{Data, DeriveInput, LitStr, Token, parse_macro_input};
@@ -182,20 +182,24 @@ fn generate_ui_item_body(
             let variants = data_enum.variants.iter().map(|variant| {
                 let string = variant.ident.clone().to_string();
 
-                if lowercase {
+                let title = string.to_title_case();
+                let string = if lowercase {
                     string.to_lowercase()
                 } else {
                     string
-                }
+                };
+                (string, title)
             });
+
+            let (variants, labels): (Vec<_>, Vec<_>) = variants.unzip();
 
             if length > 6 {
                 quote! {
-                    settings::SettingsUiItem::Single(settings::SettingsUiItemSingle::DropDown(&[#(#variants),*]))
+                    settings::SettingsUiItem::Single(settings::SettingsUiItemSingle::DropDown{ variants: &[#(#variants),*], labels: &[#(#labels),*] })
                 }
             } else {
                 quote! {
-                    settings::SettingsUiItem::Single(settings::SettingsUiItemSingle::ToggleGroup(&[#(#variants),*]))
+                    settings::SettingsUiItem::Single(settings::SettingsUiItemSingle::ToggleGroup{ variants: &[#(#variants),*], labels: &[#(#labels),*] })
                 }
             }
         }
