@@ -119,7 +119,7 @@ impl AddToolchainState {
         let weak = cx.weak_entity();
         let lister = OpenPathDelegate::new(
             tx,
-            DirectoryLister::Project(project.clone()),
+            DirectoryLister::Project(project),
             false,
             PathStyle::current(),
         )
@@ -170,7 +170,7 @@ impl AddToolchainState {
                                     }
                                 },
                             ))
-                            .when_some(error.clone(), |this, error| {
+                            .when_some(error, |this, error| {
                                 this.child(Label::new(error).color(Color::Error))
                             }),
                     )
@@ -188,7 +188,6 @@ impl AddToolchainState {
         cx: &mut Context<Self>,
     ) -> PathInputState {
         PathInputState::Resolving(cx.spawn_in(window, async move |this, cx| {
-            dbg!(&path);
             _ = maybe!(async move {
                 let toolchain = project
                     .update(cx, |this, cx| {
