@@ -907,6 +907,39 @@ impl AcpThreadView {
             return;
         }
 
+        let text = self.message_editor.read(cx).text(cx);
+        if text == "/login" || text == "/logout" {
+            let ThreadState::Ready { thread, .. } = &self.thread_state else {
+                return;
+            };
+
+            let connection = thread.read(cx).connection().clone();
+            if !connection
+                .auth_methods()
+                .iter()
+                .any(|method| method.id.0.as_ref() == "claude-login")
+            {
+                return;
+            };
+            let this = cx.weak_entity();
+            let agent = self.agent.clone();
+            window.defer(cx, |window, cx| {
+                Self::handle_auth_required(
+                    this,
+                    AuthRequired {
+                        description: None,
+                        provider_id: Some(language_model::ANTHROPIC_PROVIDER_ID),
+                    },
+                    agent,
+                    connection,
+                    window,
+                    cx,
+                );
+            });
+            cx.notify();
+            return;
+        }
+
         let contents = self
             .message_editor
             .update(cx, |message_editor, cx| message_editor.contents(cx));
