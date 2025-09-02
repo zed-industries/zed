@@ -20,14 +20,14 @@ use windows::Win32::{
     },
 };
 
-pub(crate) struct DirectxDevices {
+pub(crate) struct DirectXDevices {
     pub(crate) adapter: IDXGIAdapter1,
     pub(crate) dxgi_factory: IDXGIFactory6,
     pub(crate) device: ID3D11Device,
     pub(crate) device_context: ID3D11DeviceContext,
 }
 
-impl DirectxDevices {
+impl DirectXDevices {
     pub(crate) fn new() -> Result<ManuallyDrop<Self>> {
         let debug_layer_available = check_debug_layer_available();
         let dxgi_factory =

@@ -1,6 +1,7 @@
 use std::{
     cell::RefCell,
     ffi::OsStr,
+    mem::ManuallyDrop,
     path::{Path, PathBuf},
     rc::{Rc, Weak},
     sync::Arc,
@@ -17,7 +18,7 @@ use windows::{
     UI::ViewManagement::UISettings,
     Win32::{
         Foundation::*,
-        Graphics::Gdi::*,
+        Graphics::{Direct3D11::ID3D11Device, Gdi::*},
         Security::Credentials::*,
         System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*},
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
@@ -55,6 +56,7 @@ pub(crate) struct WindowsPlatformState {
     jump_list: JumpList,
     // NOTE: standard cursor handles don't need to close.
     pub(crate) current_cursor: Option<HCURSOR>,
+    directx_devices: ManuallyDrop<DirectXDevices>,
 }
 
 #[derive(Default)]
@@ -69,17 +71,19 @@ struct PlatformCallbacks {
 }
 
 impl WindowsPlatformState {
-    fn new() -> Self {
+    fn new() -> Result<Self> {
         let callbacks = PlatformCallbacks::default();
         let jump_list = JumpList::new();
         let current_cursor = load_cursor(CursorStyle::Arrow);
+        let directx_devices = DirectXDevices::new().context("Creating DirectX devices")?;
 
-        Self {
+        Ok(Self {
             callbacks,
             jump_list,
             current_cursor,
+            directx_devices,
             menus: Vec::new(),
-        }
+        })
     }
 }
 
@@ -136,6 +140,7 @@ impl WindowsPlatform {
                 .context("Error creating drop target helper.")?
         };
         let icon = load_icon().unwrap_or_default();
+        let state = RefCell::new(WindowsPlatformState::new().context("Creating platform state")?);
         let windows_version = WindowsVersion::new().context("Error retrieve windows version")?;
 
         Ok(Self {
@@ -228,11 +233,15 @@ impl WindowsPlatform {
     }
 
     fn begin_vsync_thread(&self) {
+        let mut directx_device = self.state.borrow().directx_devices.device.clone();
         let all_windows = Arc::downgrade(&self.raw_window_handles);
         std::thread::spawn(move || {
             let vsync_provider = VSyncProvider::new();
             loop {
                 vsync_provider.wait_for_vsync();
+                if check_device_lost(&directx_device) {
+
+                }
                 let Some(all_windows) = all_windows.upgrade() else {
                     break;
                 };
@@ -949,6 +958,24 @@ fn load_icon() -> Result<HICON> {
 fn should_auto_hide_scrollbars() -> Result<bool> {
     let ui_settings = UISettings::new()?;
     Ok(ui_settings.AutoHideScrollBars()?)
+}
+
+fn check_device_lost(device: &ID3D11Device) -> bool {
+    let device_state = unsafe { device.GetDeviceRemovedReason() };
+    match device_state {
+        Ok(_) => false,
+        Err(err) => {
+            log::error!("DirectX device lost detected: {:?}", err);
+            true
+        }
+    }
+}
+
+fn handle_device_list(device: &mut ID3D11Device, validation_number: usize) {
+    unsafe {
+        PostT
+        SendMessageW(platform_window, WM_GPUI_DEVICE_LOST, WPARAM(validation_number), LPARAM(0));
+    }
 }
 
 const PLATFORM_WINDOW_CLASS_NAME: PCWSTR = w!("Zed::PlatformWindow");
