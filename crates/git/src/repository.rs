@@ -262,6 +262,13 @@ impl GitExcludeOverride {
         content.push_str(self.added_excludes.as_ref().unwrap());
         content.push('\n');
 
+        // Ensure the parent directory exists before writing
+        if let Some(parent) = self.git_exclude_path.parent() {
+            if !parent.exists() {
+                smol::fs::create_dir_all(parent).await?;
+            }
+        }
+
         smol::fs::write(&self.git_exclude_path, content).await?;
         Ok(())
     }
@@ -1838,14 +1845,6 @@ impl GitBinary {
     pub async fn with_exclude_overrides(&self) -> Result<GitExcludeOverride> {
         let git_dir = self.resolve_git_dir().await?;
         let path = git_dir.join("info").join("exclude");
-        if !path.exists() {
-            // Create the info directory and exclude file if they don't exist
-            let info_dir = git_dir.join("info");
-            if !info_dir.exists() {
-                smol::fs::create_dir_all(&info_dir).await?;
-            }
-            smol::fs::write(&path, "").await?;
-        }
         GitExcludeOverride::new(path).await
     }
 
