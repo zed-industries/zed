@@ -1008,7 +1008,7 @@ impl ActiveThread {
                             .map(|configured| configured.model.name().0.to_string())
                             .unwrap_or_else(|| "The model".to_string());
                         let refusal_message = format!(
-                            "{} refused to respond to this request. This may occur when the request violates the model's content policy or safety guidelines. Please try rephrasing your request.",
+                            "{} refused to respond to this prompt. This can happen when a model believes the prompt violates its content policy or safety guidelines, so rephrasing it can sometimes address the issue.",
                             model_name
                         );
                         self.last_error = Some(ThreadError::Message {

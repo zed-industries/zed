@@ -4732,7 +4732,7 @@ impl AcpThreadView {
     fn render_refusal_error(&self, cx: &mut Context<'_, Self>) -> Callout {
         let model_or_agent_name = self.get_current_model_name(cx);
         let refusal_message = format!(
-            "{} refused to respond to this request. This may occur when the request violates the model's content policy or safety guidelines. Please try rephrasing your request.",
+            "{} refused to respond to this prompt. This can happen when a model believes the prompt violates its content policy or safety guidelines, so rephrasing it can sometimes address the issue.",
             model_or_agent_name
         );
 
