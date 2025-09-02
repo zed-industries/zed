@@ -228,7 +228,7 @@ impl Scheduler for TestScheduler {
             state.timers.sort_by_key(|timer| timer.expiration);
         }
         self.unparker.unpark();
-        Timer { rx }
+        Timer(rx)
     }
 
     fn block(&self, mut future: LocalBoxFuture<()>) {

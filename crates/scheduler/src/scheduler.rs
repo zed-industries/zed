@@ -51,15 +51,13 @@ impl dyn Scheduler {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct SessionId(u16);
 
-pub struct Timer {
-    rx: oneshot::Receiver<()>,
-}
+pub struct Timer(oneshot::Receiver<()>);
 
 impl Future for Timer {
     type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<()> {
-        match self.rx.poll_unpin(cx) {
+        match self.0.poll_unpin(cx) {
             Poll::Ready(_) => Poll::Ready(()),
             Poll::Pending => Poll::Pending,
         }
