@@ -15,10 +15,6 @@ test-support = []
 path = "src/reqwest_client.rs"
 doctest = true
 
-[[example]]
-name = "client"
-path = "examples/client.rs"
-
 [dependencies]
 anyhow.workspace = true
 bytes.workspace = true
