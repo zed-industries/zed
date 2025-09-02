@@ -275,6 +275,7 @@ impl ToTaffy<taffy::style::Style> for Style {
         }
 
         taffy::style::Style {
+            box_sizing: self.box_sizing.into(),
             display: self.display.into(),
             overflow: self.overflow.into(),
             scrollbar_width: self.scrollbar_width,

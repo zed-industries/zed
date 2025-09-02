@@ -251,6 +251,9 @@ pub struct Style {
     /// Box shadow of the element
     pub box_shadow: Vec<BoxShadow>,
 
+    /// Box Sizing of the element
+    pub box_sizing: BoxSizing,
+
     /// The text style of this element
     pub text: TextStyleRefinement,
 
@@ -314,6 +317,18 @@ pub struct BoxShadow {
     pub blur_radius: Pixels,
     /// How much should the shadow spread?
     pub spread_radius: Pixels,
+}
+
+/// The box-sizing property, similar to the CSS property `box-sizing`, defaults to `ContentBox`
+///
+/// https://developer.mozilla.org/en-US/docs/Web/CSS/box-sizing
+#[derive(Default, Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum BoxSizing {
+    /// Excluding borders and paddings.
+    #[default]
+    ContentBox,
+    /// Including borders and paddings.
+    BorderBox,
 }
 
 /// How to handle whitespace in text
@@ -737,6 +752,7 @@ impl Style {
 impl Default for Style {
     fn default() -> Self {
         Style {
+            box_sizing: BoxSizing::default(),
             display: Display::Block,
             visibility: Visibility::Visible,
             overflow: Point {
@@ -1300,6 +1316,15 @@ impl From<Position> for taffy::style::Position {
         match value {
             Position::Relative => Self::Relative,
             Position::Absolute => Self::Absolute,
+        }
+    }
+}
+
+impl From<BoxSizing> for taffy::style::BoxSizing {
+    fn from(value: BoxSizing) -> Self {
+        match value {
+            BoxSizing::ContentBox => Self::ContentBox,
+            BoxSizing::BorderBox => Self::BorderBox,
         }
     }
 }

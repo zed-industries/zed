@@ -1,5 +1,5 @@
 use crate::{
-    self as gpui, AbsoluteLength, AlignContent, AlignItems, BorderStyle, CursorStyle,
+    self as gpui, AbsoluteLength, AlignContent, AlignItems, BorderStyle, BoxSizing, CursorStyle,
     DefiniteLength, Display, Fill, FlexDirection, FlexWrap, Font, FontStyle, FontWeight,
     GridPlacement, Hsla, JustifyContent, Length, SharedString, StrikethroughStyle, StyleRefinement,
     TextAlign, TextOverflow, TextStyleRefinement, UnderlineStyle, WhiteSpace, px, relative, rems,
@@ -740,6 +740,32 @@ pub trait Styled: Sized {
     fn row_span_full(mut self) -> Self {
         let grid_location = self.style().grid_location_mut();
         grid_location.row = GridPlacement::Line(1)..GridPlacement::Line(-1);
+        self
+    }
+
+    /// Set the box-sizing of the element.
+    fn box_sizing(mut self, box_sizing: BoxSizing) -> Self {
+        self.style().box_sizing = Some(box_sizing);
+        self
+    }
+
+    /// Set use `content-box` for box-sizing of the element.
+    ///
+    /// Excluding borders and paddings.
+    ///
+    /// See also: https://tailwindcss.com/docs/box-sizing#excluding-borders-and-padding
+    fn box_content(mut self) -> Self {
+        self.style().box_sizing = Some(BoxSizing::ContentBox);
+        self
+    }
+
+    /// Set use `border-box` for box-sizing of the element.
+    ///
+    /// Including borders and paddings.
+    ///
+    /// See also: https://tailwindcss.com/docs/box-sizing#including-borders-and-padding
+    fn box_border(mut self) -> Self {
+        self.style().box_sizing = Some(BoxSizing::BorderBox);
         self
     }
 
