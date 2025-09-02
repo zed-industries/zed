@@ -23,9 +23,8 @@ use gpui::{
     AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent, ClipboardEntry,
     ClipboardItem, DefiniteLength, EdgesRefinement, Empty, Entity, EventEmitter, Focusable, Hsla,
     ListAlignment, ListOffset, ListState, MouseButton, PlatformDisplay, ScrollHandle, Stateful,
-    StyleRefinement, Subscription, Task, TextStyle, TextStyleRefinement, Transformation,
-    UnderlineStyle, WeakEntity, WindowHandle, linear_color_stop, linear_gradient, list, percentage,
-    pulsating_between,
+    StyleRefinement, Subscription, Task, TextStyle, TextStyleRefinement, UnderlineStyle,
+    WeakEntity, WindowHandle, linear_color_stop, linear_gradient, list, pulsating_between,
 };
 use language::{Buffer, Language, LanguageRegistry};
 use language_model::{
@@ -46,8 +45,8 @@ use std::time::Duration;
 use text::ToPoint;
 use theme::ThemeSettings;
 use ui::{
-    Banner, Disclosure, KeyBinding, PopoverMenuHandle, Scrollbar, ScrollbarState, TextSize,
-    Tooltip, prelude::*,
+    Banner, CommonAnimationExt, Disclosure, KeyBinding, PopoverMenuHandle, Scrollbar,
+    ScrollbarState, TextSize, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 use util::markdown::MarkdownCodeBlock;
@@ -2647,15 +2646,7 @@ impl ActiveThread {
                                         Icon::new(IconName::ArrowCircle)
                                             .color(Color::Accent)
                                             .size(IconSize::Small)
-                                            .with_animation(
-                                                "arrow-circle",
-                                                Animation::new(Duration::from_secs(2)).repeat(),
-                                                |icon, delta| {
-                                                    icon.transform(Transformation::rotate(
-                                                        percentage(delta),
-                                                    ))
-                                                },
-                                            )
+                                            .with_rotate_animation(2)
                                     }),
                             ),
                     )
@@ -2831,17 +2822,11 @@ impl ActiveThread {
             }
             ToolUseStatus::Pending
             | ToolUseStatus::InputStillStreaming
-            | ToolUseStatus::Running => {
-                let icon = Icon::new(IconName::ArrowCircle)
-                    .color(Color::Accent)
-                    .size(IconSize::Small);
-                icon.with_animation(
-                    "arrow-circle",
-                    Animation::new(Duration::from_secs(2)).repeat(),
-                    |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                )
-                .into_any_element()
-            }
+            | ToolUseStatus::Running => Icon::new(IconName::ArrowCircle)
+                .color(Color::Accent)
+                .size(IconSize::Small)
+                .with_rotate_animation(2)
+                .into_any_element(),
             ToolUseStatus::Finished(_) => div().w_0().into_any_element(),
             ToolUseStatus::Error(_) => {
                 let icon = Icon::new(IconName::Close)
@@ -2930,15 +2915,7 @@ impl ActiveThread {
                                     Icon::new(IconName::ArrowCircle)
                                         .size(IconSize::Small)
                                         .color(Color::Accent)
-                                        .with_animation(
-                                            "arrow-circle",
-                                            Animation::new(Duration::from_secs(2)).repeat(),
-                                            |icon, delta| {
-                                                icon.transform(Transformation::rotate(percentage(
-                                                    delta,
-                                                )))
-                                            },
-                                        ),
+                                        .with_rotate_animation(2),
                                 )
                                 .child(
                                     Label::new("Running…")

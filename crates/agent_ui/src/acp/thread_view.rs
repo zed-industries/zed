@@ -23,9 +23,9 @@ use gpui::{
     Action, Animation, AnimationExt, AnyView, App, BorderStyle, ClickEvent, ClipboardItem,
     CursorStyle, EdgesRefinement, ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, Length,
     ListOffset, ListState, MouseButton, PlatformDisplay, SharedString, Stateful, StyleRefinement,
-    Subscription, Task, TextStyle, TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity,
-    Window, WindowHandle, div, ease_in_out, linear_color_stop, linear_gradient, list, percentage,
-    point, prelude::*, pulsating_between,
+    Subscription, Task, TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, Window,
+    WindowHandle, div, ease_in_out, linear_color_stop, linear_gradient, list, point, prelude::*,
+    pulsating_between,
 };
 use language::Buffer;
 
@@ -45,8 +45,8 @@ use terminal_view::terminal_panel::TerminalPanel;
 use text::Anchor;
 use theme::ThemeSettings;
 use ui::{
-    Callout, Disclosure, Divider, DividerColor, ElevationIndex, KeyBinding, PopoverMenuHandle,
-    Scrollbar, ScrollbarState, SpinnerLabel, Tooltip, prelude::*,
+    Callout, CommonAnimationExt, Disclosure, Divider, DividerColor, ElevationIndex, KeyBinding,
+    PopoverMenuHandle, Scrollbar, ScrollbarState, SpinnerLabel, Tooltip, prelude::*,
 };
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use workspace::{CollaboratorId, Workspace};
@@ -2510,13 +2510,7 @@ impl AcpThreadView {
                         Icon::new(IconName::ArrowCircle)
                             .size(IconSize::XSmall)
                             .color(Color::Info)
-                            .with_animation(
-                                "arrow-circle",
-                                Animation::new(Duration::from_secs(2)).repeat(),
-                                |icon, delta| {
-                                    icon.transform(Transformation::rotate(percentage(delta)))
-                                },
-                            ),
+                            .with_rotate_animation(2)
                     )
             })
             .child(
@@ -2932,16 +2926,7 @@ impl AcpThreadView {
                                 Icon::new(IconName::ArrowCircle)
                                     .size(IconSize::Small)
                                     .color(Color::Muted)
-                                    .with_animation(
-                                        "arrow-circle",
-                                        Animation::new(Duration::from_secs(2)).repeat(),
-                                        |icon, delta| {
-                                            icon.transform(Transformation::rotate(percentage(
-                                                delta,
-                                            )))
-                                        },
-                                    )
-                                    .into_any_element(),
+                                    .with_rotate_animation(2)
                             )
                             .child(Label::new("Authenticating…").size(LabelSize::Small)),
                     )
@@ -3254,13 +3239,7 @@ impl AcpThreadView {
                             acp::PlanEntryStatus::InProgress => Icon::new(IconName::TodoProgress)
                                 .size(IconSize::Small)
                                 .color(Color::Accent)
-                                .with_animation(
-                                    "running",
-                                    Animation::new(Duration::from_secs(2)).repeat(),
-                                    |icon, delta| {
-                                        icon.transform(Transformation::rotate(percentage(delta)))
-                                    },
-                                )
+                                .with_rotate_animation(2)
                                 .into_any_element(),
                             acp::PlanEntryStatus::Completed => Icon::new(IconName::TodoComplete)
                                 .size(IconSize::Small)
@@ -4984,11 +4963,7 @@ fn loading_contents_spinner(size: IconSize) -> AnyElement {
     Icon::new(IconName::LoadCircle)
         .size(size)
         .color(Color::Accent)
-        .with_animation(
-            "load_context_circle",
-            Animation::new(Duration::from_secs(3)).repeat(),
-            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-        )
+        .with_rotate_animation(2)
         .into_any_element()
 }
 

@@ -3,9 +3,8 @@ use editor::Editor;
 use extension_host::{ExtensionOperation, ExtensionStore};
 use futures::StreamExt;
 use gpui::{
-    Animation, AnimationExt as _, App, Context, CursorStyle, Entity, EventEmitter,
-    InteractiveElement as _, ParentElement as _, Render, SharedString, StatefulInteractiveElement,
-    Styled, Transformation, Window, actions, percentage,
+    App, Context, CursorStyle, Entity, EventEmitter, InteractiveElement as _, ParentElement as _,
+    Render, SharedString, StatefulInteractiveElement, Styled, Window, actions,
 };
 use language::{
     BinaryStatus, LanguageRegistry, LanguageServerId, LanguageServerName,
@@ -25,7 +24,10 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use ui::{ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
+use ui::{
+    ButtonLike, CommonAnimationExt, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip,
+    prelude::*,
+};
 use util::truncate_and_trailoff;
 use workspace::{StatusItemView, Workspace, item::ItemHandle};
 
@@ -405,13 +407,7 @@ impl ActivityIndicator {
                     icon: Some(
                         Icon::new(IconName::ArrowCircle)
                             .size(IconSize::Small)
-                            .with_animation(
-                                "arrow-circle",
-                                Animation::new(Duration::from_secs(2)).repeat(),
-                                |icon, delta| {
-                                    icon.transform(Transformation::rotate(percentage(delta)))
-                                },
-                            )
+                            .with_rotate_animation(2)
                             .into_any_element(),
                     ),
                     message,
@@ -433,11 +429,7 @@ impl ActivityIndicator {
                 icon: Some(
                     Icon::new(IconName::ArrowCircle)
                         .size(IconSize::Small)
-                        .with_animation(
-                            "arrow-circle",
-                            Animation::new(Duration::from_secs(2)).repeat(),
-                            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                        )
+                        .with_rotate_animation(2)
                         .into_any_element(),
                 ),
                 message: format!("Debug: {}", session.read(cx).adapter()),
@@ -460,11 +452,7 @@ impl ActivityIndicator {
                 icon: Some(
                     Icon::new(IconName::ArrowCircle)
                         .size(IconSize::Small)
-                        .with_animation(
-                            "arrow-circle",
-                            Animation::new(Duration::from_secs(2)).repeat(),
-                            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                        )
+                        .with_rotate_animation(2)
                         .into_any_element(),
                 ),
                 message: job_info.message.into(),
@@ -757,14 +745,7 @@ impl ActivityIndicator {
                     Some(Content {
                         icon: Some(Icon::new(icon).size(IconSize::Small).map(|this| {
                             if rotate {
-                                this.with_animation(
-                                    "activity_indicator_animation",
-                                    Animation::new(Duration::from_secs(3)).repeat(),
-                                    |icon, delta| {
-                                        icon.transform(Transformation::rotate(percentage(delta)))
-                                    },
-                                )
-                                .into_any_element()
+                                this.with_rotate_animation(3).into_any_element()
                             } else {
                                 this.into_any_element()
                             }
