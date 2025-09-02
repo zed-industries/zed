@@ -1576,36 +1576,23 @@ impl AcpThread {
                         })) = result
                         {
                             if let Some((user_msg_ix, _)) = this.last_user_message() {
-                                // Check if there's a tool call after the last user message
-                                let has_tool_call_after_user_msg = this.entries
-                                    .iter()
-                                    .skip(user_msg_ix + 1)
-                                    .any(|entry| matches!(entry, AgentThreadEntry::ToolCall(_)));
-
-                                if has_tool_call_after_user_msg {
-                                    // Tool call was refused - mark the last tool call as failed but don't truncate
-                                    let language_registry = this.project.read(cx).languages().clone();
-                                    for entry in this.entries.iter_mut().rev() {
+                                // Check if there's a completed tool call with results after the last user message
+                                // This indicates the refusal is in response to tool output, not the user's prompt
+                                let has_completed_tool_call_after_user_msg =
+                                    this.entries.iter().skip(user_msg_ix + 1).any(|entry| {
                                         if let AgentThreadEntry::ToolCall(tool_call) = entry {
-                                            tool_call.status = ToolCallStatus::Failed;
-                                            // Add a failure message to the tool call
-                                            tool_call.content.push(ToolCallContent::ContentBlock(
-                                                ContentBlock::Markdown {
-                                                    markdown: cx.new(|cx| {
-                                                        Markdown::new(
-                                                            "Tool call refused by the model. The model will try a different approach.".into(),
-                                                            Some(language_registry.clone()),
-                                                            None,
-                                                            cx,
-                                                        )
-                                                    }),
-                                                }
-                                            ));
-                                            break;
+                                            // Check if the tool call has completed and has output
+                                            matches!(tool_call.status, ToolCallStatus::Completed)
+                                                && tool_call.raw_output.is_some()
+                                        } else {
+                                            false
                                         }
-                                    }
-                                    // Don't truncate for tool call refusals - let the model continue
-                                    cx.emit(AcpThreadEvent::EntryUpdated(this.entries.len() - 1));
+                                    });
+
+                                if has_completed_tool_call_after_user_msg {
+                                    // Refusal is due to tool output - don't truncate, just notify
+                                    // The model refused based on what the tool returned
+                                    cx.emit(AcpThreadEvent::Refusal);
                                 } else {
                                     // User prompt was refused - truncate back to before the user message
                                     let range = user_msg_ix..this.entries.len();
@@ -2723,34 +2710,60 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_tool_call_refusal(cx: &mut TestAppContext) {
+    async fn test_tool_result_refusal(cx: &mut TestAppContext) {
+        use std::sync::atomic::AtomicUsize;
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, None, cx).await;
 
-        let action_log = cx.update(|cx| cx.new(|_| ActionLog::new(project.clone())));
+        // Create a connection that simulates refusal after tool result
+        let prompt_count = Arc::new(AtomicUsize::new(0));
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message({
+            let prompt_count = prompt_count.clone();
+            move |_request, thread, mut cx| {
+                let count = prompt_count.fetch_add(1, SeqCst);
+                async move {
+                    if count == 0 {
+                        // First prompt: Generate a tool call with result
+                        thread.update(&mut cx, |thread, cx| {
+                            thread
+                                .handle_session_update(
+                                    acp::SessionUpdate::ToolCall(acp::ToolCall {
+                                        id: acp::ToolCallId("tool1".into()),
+                                        title: "Test Tool".into(),
+                                        kind: acp::ToolKind::Fetch,
+                                        status: acp::ToolCallStatus::Completed,
+                                        content: vec![],
+                                        locations: vec![],
+                                        raw_input: Some(serde_json::json!({"query": "test"})),
+                                        raw_output: Some(
+                                            serde_json::json!({"result": "inappropriate content"}),
+                                        ),
+                                    }),
+                                    cx,
+                                )
+                                .unwrap();
+                        })?;
 
-        // Create a thread manually to control the flow
-        let connection = FakeAgentConnection::new();
-        let thread = cx.update(|cx| {
-            cx.new(|cx| {
-                AcpThread::new(
-                    "Test",
-                    Rc::new(connection.clone()),
-                    project.clone(),
-                    action_log,
-                    acp::SessionId("test".into()),
-                    watch::Receiver::constant(acp::PromptCapabilities {
-                        image: true,
-                        audio: true,
-                        embedded_context: true,
-                    }),
-                    Vec::new(),
-                    cx,
-                )
-            })
-        });
+                        // Now return refusal because of the tool result
+                        Ok(acp::PromptResponse {
+                            stop_reason: acp::StopReason::Refusal,
+                        })
+                    } else {
+                        Ok(acp::PromptResponse {
+                            stop_reason: acp::StopReason::EndTurn,
+                        })
+                    }
+                }
+                .boxed_local()
+            }
+        }));
+
+        let thread = cx
+            .update(|cx| connection.new_thread(project, Path::new("/test"), cx))
+            .await
+            .unwrap();
 
         // Track if we see a Refusal event
         let saw_refusal_event = Arc::new(std::sync::Mutex::new(false));
@@ -2767,101 +2780,49 @@ mod tests {
             .detach();
         });
 
-        // Add a user message
-        thread.update(cx, |thread, cx| {
-            thread.push_user_content_block(
-                None,
-                acp::ContentBlock::Text(acp::TextContent {
+        // Send a user message - this will trigger tool call and then refusal
+        let send_task = thread.update(cx, |thread, cx| {
+            thread.send(
+                vec![acp::ContentBlock::Text(acp::TextContent {
                     text: "Hello".into(),
                     annotations: None,
-                }),
+                })],
                 cx,
-            );
+            )
         });
+        cx.background_executor
+            .spawn(async move { send_task.await })
+            .detach();
+        cx.run_until_parked();
 
-        // Add a tool call after the user message
-        thread.update(cx, |thread, cx| {
-            thread
-                .handle_session_update(
-                    acp::SessionUpdate::ToolCall(acp::ToolCall {
-                        id: acp::ToolCallId("tool1".into()),
-                        title: "Test Tool".into(),
-                        kind: acp::ToolKind::Fetch,
-                        status: acp::ToolCallStatus::InProgress,
-                        content: vec![],
-                        locations: vec![],
-                        raw_input: None,
-                        raw_output: None,
-                    }),
-                    cx,
-                )
-                .unwrap();
-        });
+        // Verify that:
+        // 1. A Refusal event WAS emitted (because it's a tool result refusal, not user prompt)
+        // 2. The user message was NOT truncated
+        assert!(
+            *saw_refusal_event.lock().unwrap(),
+            "Refusal event should be emitted for tool result refusals"
+        );
 
-        // Now simulate a refusal response directly
-        thread.update(cx, |thread, cx| {
-            // Get the last user message index
-            if let Some((user_msg_ix, _)) = thread.last_user_message() {
-                // Check if there's a tool call after the last user message
-                let has_tool_call_after_user_msg = thread.entries
-                    .iter()
-                    .skip(user_msg_ix + 1)
-                    .any(|entry| matches!(entry, AgentThreadEntry::ToolCall(_)));
-
-                assert!(has_tool_call_after_user_msg, "Should have tool call after user message");
-
-                // Mark the last tool call as failed (simulating refusal handling)
-                let language_registry = thread.project.read(cx).languages().clone();
-                for entry in thread.entries.iter_mut().rev() {
-                    if let AgentThreadEntry::ToolCall(tool_call) = entry {
-                        tool_call.status = ToolCallStatus::Failed;
-                        tool_call.content.push(ToolCallContent::ContentBlock(
-                            ContentBlock::Markdown {
-                                markdown: cx.new(|cx| {
-                                    Markdown::new(
-                                        "Tool call refused by the model. The model will try a different approach.".into(),
-                                        Some(language_registry.clone()),
-                                        None,
-                                        cx,
-                                    )
-                                }),
-                            }
-                        ));
-                        break;
-                    }
-                }
-            }
-        });
-
-        // Verify the tool call was marked as failed with a message
         thread.read_with(cx, |thread, _| {
             let entries = thread.entries();
-            assert_eq!(entries.len(), 2, "Should have user message and tool call");
+            assert!(entries.len() >= 2, "Should have user message and tool call");
 
+            // Verify user message is still there
+            assert!(
+                matches!(entries[0], AgentThreadEntry::UserMessage(_)),
+                "User message should not be truncated"
+            );
+
+            // Verify tool call is there with result
             if let AgentThreadEntry::ToolCall(tool_call) = &entries[1] {
                 assert!(
-                    matches!(tool_call.status, ToolCallStatus::Failed),
-                    "Tool call should be marked as failed"
-                );
-
-                let has_refusal_message = tool_call
-                    .content
-                    .iter()
-                    .any(|content| matches!(content, ToolCallContent::ContentBlock(_)));
-                assert!(
-                    has_refusal_message,
-                    "Tool call should have a refusal message"
+                    tool_call.raw_output.is_some(),
+                    "Tool call should have output"
                 );
             } else {
-                panic!("Expected tool call entry");
+                panic!("Expected tool call at index 1");
             }
         });
-
-        // Verify that no Refusal event was emitted (only for user prompt refusals)
-        assert!(
-            !*saw_refusal_event.lock().unwrap(),
-            "No Refusal event should be emitted for tool call refusals"
-        );
     }
 
     #[gpui::test]
