@@ -746,21 +746,23 @@ impl MessageEditor {
                     .iter()
                     .any(|cmd| cmd.name == command_name);
 
-                if !is_supported && !available_commands.is_empty() {
-                    // Only show error if we have a list of available commands and this isn't one of them
+                if !is_supported {
+                  if available_commands.is_empty() {
                     return Err(anyhow!(
-                        "The /{} command is not supported by {}.\n\n\
-                        Available commands: {}",
+                        "The /{} command is not supported by {}{}",
                         command_name,
                         agent_name,
                         if available_commands.is_empty() {
-                            "none".to_string()
+                            ", because it does not support any commands.".to_string()
                         } else {
-                            available_commands
-                                .iter()
-                                .map(|cmd| format!("/{}", cmd.name))
-                                .collect::<Vec<_>>()
-                                .join(", ")
+                            format!(
+                                ".\n\nAvailable commands: {}",
+                                available_commands
+                                    .iter()
+                                    .map(|cmd| format!("/{}", cmd.name))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            )
                         }
                     ));
                 }
