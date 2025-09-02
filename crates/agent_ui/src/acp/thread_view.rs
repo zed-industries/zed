@@ -4711,11 +4711,11 @@ impl AcpThreadView {
     }
 
     fn render_refusal_error(&self, cx: &mut Context<'_, Self>) -> Callout {
+        const REFUSAL_MESSAGE: &str = "The model refused to respond to this request. This may occur when the request violates the model's content policy or safety guidelines. Please try rephrasing your request.";
+
         let can_resume = self
             .thread()
             .map_or(false, |thread| thread.read(cx).can_resume(cx));
-
-        const REFUSAL_MESSAGE: &str = "The model refused to respond to this request. This may occur when the request violates the model's content policy or safety guidelines. Please try rephrasing your request.";
 
         Callout::new()
             .severity(Severity::Error)
@@ -5654,6 +5654,7 @@ pub(crate) mod tests {
                         audio: true,
                         embedded_context: true,
                     }),
+                    Vec::new(),
                     cx,
                 )
             })))
