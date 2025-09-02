@@ -24,7 +24,6 @@ pub trait SettingsUi {
 }
 
 pub struct SettingsUiEntry {
-    // todo(settings_ui): move this back here once there isn't a None variant
     /// The path in the settings JSON file for this setting. Relative to parent
     /// None implies `#[serde(flatten)]` or `Settings::KEY.is_none()` for top level settings
     pub path: Option<&'static str>,

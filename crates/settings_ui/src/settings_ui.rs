@@ -329,6 +329,7 @@ fn render_content(
         }
         let settings_value = settings_value_from_settings_and_path(
             path.clone(),
+            child.title,
             // PERF: how to structure this better? There feels like there's a way to avoid the clone
             // and every value lookup
             SettingsStore::global(cx).raw_user_settings(),
@@ -671,6 +672,7 @@ fn render_toggle_button_group(
 
 fn settings_value_from_settings_and_path(
     path: SmallVec<[&'static str; 1]>,
+    title: &'static str,
     user_settings: &serde_json::Value,
     default_settings: &serde_json::Value,
 ) -> SettingsValue<serde_json::Value> {
@@ -684,8 +686,8 @@ fn settings_value_from_settings_and_path(
         default_value,
         value,
         path: path.clone(),
-        // todo(settings_ui) title for items
-        title: path.last().expect("path non empty"),
+        // todo(settings_ui) is title required inside SettingsValue?
+        title,
     };
     return settings_value;
 }
