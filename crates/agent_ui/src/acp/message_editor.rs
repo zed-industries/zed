@@ -1714,7 +1714,7 @@ mod tests {
         cx.run_until_parked();
 
         editor.update_in(&mut cx, |editor, window, cx| {
-            assert_eq!(editor.text(cx), "/quick-math");
+            assert_eq!(editor.text(cx), "/quick-math ");
             assert!(!editor.has_visible_completions_menu());
             editor.set_text("", window, cx);
         });
