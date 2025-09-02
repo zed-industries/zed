@@ -16,7 +16,7 @@ use gpui::{
     Task, WeakEntity, Window, actions,
 };
 use itertools::Itertools;
-use project::{Fs, Project, ProjectEntryId};
+use project::{DisableAiSettings, Fs, Project, ProjectEntryId};
 use search::{BufferSearchBar, buffer_search::DivRegistrar};
 use settings::Settings;
 use task::{RevealStrategy, RevealTarget, ShellBuilder, SpawnInTerminal, TaskId};
@@ -109,7 +109,7 @@ impl TerminalPanel {
 
     pub fn set_assistant_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.assistant_enabled = enabled;
-        if enabled {
+        if enabled && !DisableAiSettings::get_global(cx).disable_ai {
             let focus_handle = self
                 .active_pane
                 .read(cx)
