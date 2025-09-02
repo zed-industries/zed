@@ -1001,13 +1001,23 @@ impl ActiveThread {
                         // Don't notify for intermediate tool use
                     }
                     Ok(StopReason::Refusal) => {
-                        const REFUSAL_MESSAGE: &str = "The model refused to respond to this request. This may occur when the request violates the model's content policy or safety guidelines. Please try rephrasing your request.";
+                        let model_name = self
+                            .thread
+                            .read(cx)
+                            .configured_model()
+                            .map(|configured| configured.model.name().0.to_string())
+                            .unwrap_or_else(|| "The model".to_string());
+                        let refusal_message = format!(
+                            "{} refused to respond to this request. This may occur when the request violates the model's content policy or safety guidelines. Please try rephrasing your request.",
+                            model_name
+                        );
                         self.last_error = Some(ThreadError::Message {
-                            header: "Request Refused".into(),
-                            message: REFUSAL_MESSAGE.into(),
+                            header: SharedString::from("Request Refused"),
+                            message: SharedString::from(refusal_message),
                         });
+                        let notification_message = format!("{} refused to respond", model_name);
                         self.notify_with_sound(
-                            "Language model refused to respond",
+                            &notification_message,
                             IconName::Warning,
                             window,
                             cx,

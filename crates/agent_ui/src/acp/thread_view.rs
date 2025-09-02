@@ -1202,12 +1202,10 @@ impl AcpThreadView {
             AcpThreadEvent::Refusal => {
                 self.thread_retry_status.take();
                 self.thread_error = Some(ThreadError::Refusal);
-                self.notify_with_sound(
-                    "The model refused to respond to this request",
-                    IconName::Warning,
-                    window,
-                    cx,
-                );
+                let model_name = self.get_current_model_name(cx);
+                let notification_message =
+                    format!("{} refused to respond to this request", model_name);
+                self.notify_with_sound(&notification_message, IconName::Warning, window, cx);
             }
             AcpThreadEvent::Error => {
                 self.thread_retry_status.take();
@@ -4710,8 +4708,19 @@ impl AcpThreadView {
         Some(div().child(content))
     }
 
+    fn get_current_model_name(&self, cx: &App) -> SharedString {
+        self.model_selector
+            .as_ref()
+            .and_then(|selector| selector.read(cx).active_model_name(cx))
+            .unwrap_or_else(|| SharedString::from("The model"))
+    }
+
     fn render_refusal_error(&self, cx: &mut Context<'_, Self>) -> Callout {
-        const REFUSAL_MESSAGE: &str = "The model refused to respond to this request. This may occur when the request violates the model's content policy or safety guidelines. Please try rephrasing your request.";
+        let model_name = self.get_current_model_name(cx);
+        let refusal_message = format!(
+            "{} refused to respond to this request. This may occur when the request violates the model's content policy or safety guidelines. Please try rephrasing your request.",
+            model_name
+        );
 
         let can_resume = self
             .thread()
@@ -4721,7 +4730,7 @@ impl AcpThreadView {
             .severity(Severity::Error)
             .title("Request Refused")
             .icon(IconName::XCircle)
-            .description(REFUSAL_MESSAGE)
+            .description(refusal_message.clone())
             .actions_slot(
                 h_flex()
                     .gap_0p5()
@@ -4737,7 +4746,7 @@ impl AcpThreadView {
                                 })),
                         )
                     })
-                    .child(self.create_copy_button(REFUSAL_MESSAGE)),
+                    .child(self.create_copy_button(&refusal_message)),
             )
             .dismiss_action(self.dismiss_error_button(cx))
     }
