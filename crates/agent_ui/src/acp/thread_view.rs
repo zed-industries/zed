@@ -8,7 +8,7 @@ use action_log::ActionLog;
 use agent_client_protocol::{self as acp, PromptCapabilities};
 use agent_servers::{AgentServer, AgentServerDelegate, ClaudeCode};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode, NotifyWhenAgentWaiting};
-use agent2::{DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore};
+use agent2::{DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore, NativeAgentServer};
 use anyhow::{Context as _, Result, anyhow, bail};
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
@@ -416,6 +416,13 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ThreadState {
+        if project.read(cx).is_via_collab()
+            && !agent.clone().downcast::<NativeAgentServer>().is_some()
+        {
+            return ThreadState::LoadError(LoadError::Other(
+                "External agents are not yet supported for remote projects.".into(),
+            ));
+        }
         let root_dir = project
             .read(cx)
             .visible_worktrees(cx)
