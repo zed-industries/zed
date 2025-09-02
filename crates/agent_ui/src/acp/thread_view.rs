@@ -1202,9 +1202,9 @@ impl AcpThreadView {
             AcpThreadEvent::Refusal => {
                 self.thread_retry_status.take();
                 self.thread_error = Some(ThreadError::Refusal);
-                let model_name = self.get_current_model_name(cx);
+                let model_or_agent_name = self.get_current_model_name(cx);
                 let notification_message =
-                    format!("{} refused to respond to this request", model_name);
+                    format!("{} refused to respond to this request", model_or_agent_name);
                 self.notify_with_sound(&notification_message, IconName::Warning, window, cx);
             }
             AcpThreadEvent::Error => {
@@ -4709,45 +4709,39 @@ impl AcpThreadView {
     }
 
     fn get_current_model_name(&self, cx: &App) -> SharedString {
-        self.model_selector
-            .as_ref()
-            .and_then(|selector| selector.read(cx).active_model_name(cx))
-            .unwrap_or_else(|| SharedString::from("The model"))
+        // For native agent (Zed Agent), use the specific model name (e.g., "Claude 3.5 Sonnet")
+        // For ACP agents, use the agent name (e.g., "Claude Code", "Gemini CLI")
+        // This provides better clarity about what refused the request
+        if self
+            .agent
+            .clone()
+            .downcast::<agent2::NativeAgentServer>()
+            .is_some()
+        {
+            // Native agent - use the model name
+            self.model_selector
+                .as_ref()
+                .and_then(|selector| selector.read(cx).active_model_name(cx))
+                .unwrap_or_else(|| SharedString::from("The model"))
+        } else {
+            // ACP agent - use the agent name (e.g., "Claude Code", "Gemini CLI")
+            self.agent.name()
+        }
     }
 
     fn render_refusal_error(&self, cx: &mut Context<'_, Self>) -> Callout {
-        let model_name = self.get_current_model_name(cx);
+        let model_or_agent_name = self.get_current_model_name(cx);
         let refusal_message = format!(
             "{} refused to respond to this request. This may occur when the request violates the model's content policy or safety guidelines. Please try rephrasing your request.",
-            model_name
+            model_or_agent_name
         );
-
-        let can_resume = self
-            .thread()
-            .map_or(false, |thread| thread.read(cx).can_resume(cx));
 
         Callout::new()
             .severity(Severity::Error)
             .title("Request Refused")
             .icon(IconName::XCircle)
             .description(refusal_message.clone())
-            .actions_slot(
-                h_flex()
-                    .gap_0p5()
-                    .when(can_resume, |this| {
-                        this.child(
-                            Button::new("retry", "Retry")
-                                .icon(IconName::RotateCw)
-                                .icon_position(IconPosition::Start)
-                                .icon_size(IconSize::Small)
-                                .label_size(LabelSize::Small)
-                                .on_click(cx.listener(|this, _, _window, cx| {
-                                    this.resume_chat(cx);
-                                })),
-                        )
-                    })
-                    .child(self.create_copy_button(&refusal_message)),
-            )
+            .actions_slot(self.create_copy_button(&refusal_message))
             .dismiss_action(self.dismiss_error_button(cx))
     }
 
