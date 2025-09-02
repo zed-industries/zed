@@ -1486,24 +1486,27 @@ impl GitRepository for RealGitRepository {
                 let working_directory = working_directory?;
                 let mut git = GitBinary::new(git_binary_path, working_directory.clone(), executor)
                     .envs(checkpoint_author_envs());
-                git.with_temp_index(async |git| {
-                    let head_sha = git.run(&["rev-parse", "HEAD"]).await.ok();
-                    let mut excludes = exclude_files(git).await?;
+                git.with_temp_index(|git| {
+                    async move {
+                        let head_sha = git.run(&["rev-parse", "HEAD"]).await.ok();
+                        let mut excludes = exclude_files(git).await?;
 
-                    git.run(&["add", "--all"]).await?;
-                    let tree = git.run(&["write-tree"]).await?;
-                    let checkpoint_sha = if let Some(head_sha) = head_sha.as_deref() {
-                        git.run(&["commit-tree", &tree, "-p", head_sha, "-m", "Checkpoint"])
-                            .await?
-                    } else {
-                        git.run(&["commit-tree", &tree, "-m", "Checkpoint"]).await?
-                    };
+                        git.run(&["add", "--all"]).await?;
+                        let tree = git.run(&["write-tree"]).await?;
+                        let checkpoint_sha = if let Some(head_sha) = head_sha.as_deref() {
+                            git.run(&["commit-tree", &tree, "-p", head_sha, "-m", "Checkpoint"])
+                                .await?
+                        } else {
+                            git.run(&["commit-tree", &tree, "-m", "Checkpoint"]).await?
+                        };
 
-                    excludes.restore_original().await?;
+                        excludes.restore_original().await?;
 
-                    Ok(GitRepositoryCheckpoint {
-                        commit_sha: checkpoint_sha.parse()?,
-                    })
+                        Ok(GitRepositoryCheckpoint {
+                            commit_sha: checkpoint_sha.parse()?,
+                        })
+                    }
+                    .boxed()
                 })
                 .await
             })
@@ -1706,6 +1709,64 @@ struct GitBinary {
 }
 
 impl GitBinary {
+    /// Resolves the actual .git directory path, handling both regular repos and worktrees.
+    /// In regular repos, .git is a directory.
+    /// In worktrees, .git is a file containing the path to the actual git directory.
+    async fn resolve_git_dir(&self) -> Result<PathBuf> {
+        let dot_git = self.working_directory.join(".git");
+
+        if dot_git.is_dir() {
+            // Regular repository - .git is a directory
+            Ok(dot_git)
+        } else if dot_git.is_file() {
+            // Worktree - .git is a file containing the path to the actual git directory
+            let contents = smol::fs::read_to_string(&dot_git).await?;
+
+            // The file contains a line like: "gitdir: /path/to/actual/.git/worktrees/name"
+            if let Some(gitdir_line) = contents.lines().find(|line| line.starts_with("gitdir:")) {
+                let gitdir_path = gitdir_line.trim_start_matches("gitdir:").trim();
+
+                // The path may be relative or absolute
+                let git_dir = if Path::new(gitdir_path).is_absolute() {
+                    PathBuf::from(gitdir_path)
+                } else {
+                    // Relative path - resolve it relative to the .git file's location
+                    // (not the working directory)
+                    dot_git
+                        .parent()
+                        .ok_or_else(|| anyhow!(".git file has no parent directory"))?
+                        .join(gitdir_path)
+                };
+
+                // Canonicalize the path to resolve any .. or . components
+                let git_dir = smol::fs::canonicalize(&git_dir).await.map_err(|e| {
+                    anyhow!(
+                        "Failed to canonicalize git directory path {:?}: {}",
+                        git_dir,
+                        e
+                    )
+                })?;
+
+                if git_dir.exists() {
+                    Ok(git_dir)
+                } else {
+                    Err(anyhow!(
+                        "Git directory specified in .git file does not exist: {:?}",
+                        git_dir
+                    ))
+                }
+            } else {
+                Err(anyhow!(
+                    ".git file does not contain a valid gitdir reference"
+                ))
+            }
+        } else {
+            Err(anyhow!(
+                ".git path does not exist or is neither a file nor directory"
+            ))
+        }
+    }
+
     fn new(
         git_binary_path: PathBuf,
         working_directory: PathBuf,
@@ -1738,11 +1799,11 @@ impl GitBinary {
         self
     }
 
-    pub async fn with_temp_index<R>(
-        &mut self,
-        f: impl AsyncFnOnce(&Self) -> Result<R>,
-    ) -> Result<R> {
-        let index_file_path = self.path_for_index_id(Uuid::new_v4());
+    pub async fn with_temp_index<R, F>(&mut self, f: F) -> Result<R>
+    where
+        F: for<'a> FnOnce(&'a Self) -> BoxFuture<'a, Result<R>>,
+    {
+        let index_file_path = self.path_for_index_id(Uuid::new_v4()).await?;
 
         let delete_temp_index = util::defer({
             let index_file_path = index_file_path.clone();
@@ -1758,12 +1819,10 @@ impl GitBinary {
 
         // Copy the default index file so that Git doesn't have to rebuild the
         // whole index from scratch. This might fail if this is an empty repository.
-        smol::fs::copy(
-            self.working_directory.join(".git").join("index"),
-            &index_file_path,
-        )
-        .await
-        .ok();
+        let git_dir = self.resolve_git_dir().await?;
+        smol::fs::copy(git_dir.join("index"), &index_file_path)
+            .await
+            .ok();
 
         self.index_file_path = Some(index_file_path.clone());
         let result = f(self).await;
@@ -1777,19 +1836,22 @@ impl GitBinary {
     }
 
     pub async fn with_exclude_overrides(&self) -> Result<GitExcludeOverride> {
-        let path = self
-            .working_directory
-            .join(".git")
-            .join("info")
-            .join("exclude");
-
+        let git_dir = self.resolve_git_dir().await?;
+        let path = git_dir.join("info").join("exclude");
+        if !path.exists() {
+            // Create the info directory and exclude file if they don't exist
+            let info_dir = git_dir.join("info");
+            if !info_dir.exists() {
+                smol::fs::create_dir_all(&info_dir).await?;
+            }
+            smol::fs::write(&path, "").await?;
+        }
         GitExcludeOverride::new(path).await
     }
 
-    fn path_for_index_id(&self, id: Uuid) -> PathBuf {
-        self.working_directory
-            .join(".git")
-            .join(format!("index-{}.tmp", id))
+    async fn path_for_index_id(&self, id: Uuid) -> Result<PathBuf> {
+        let git_dir = self.resolve_git_dir().await?;
+        Ok(git_dir.join(format!("index-{}.tmp", id)))
     }
 
     pub async fn run<S>(&self, args: impl IntoIterator<Item = S>) -> Result<String>
