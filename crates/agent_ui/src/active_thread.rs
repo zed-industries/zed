@@ -1185,7 +1185,7 @@ impl ActiveThread {
 
     fn handle_rules_loading_error(
         &mut self,
-        _thread_store: Entity<ThreadStore>,
+        _: Entity<ThreadStore>,
         error: &RulesLoadingError,
         cx: &mut Context<Self>,
     ) {

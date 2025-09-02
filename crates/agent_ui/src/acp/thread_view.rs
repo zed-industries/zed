@@ -5318,12 +5318,11 @@ pub(crate) mod tests {
 
         cx.run_until_parked();
 
-        // Check that the refusal error is shown
+        // Check that the refusal error is set
         thread_view.read_with(cx, |thread_view, _cx| {
             assert!(
                 matches!(thread_view.thread_error, Some(ThreadError::Refusal)),
-                "Expected refusal error, got {:?}",
-                thread_view.thread_error
+                "Expected refusal error to be set"
             );
         });
     }
