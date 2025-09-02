@@ -54,6 +54,7 @@ struct AddToolchainState {
     state: AddState,
     project: Entity<Project>,
     language_name: LanguageName,
+    root_path: ProjectPath,
     weak: WeakEntity<ToolchainSelector>,
 }
 
@@ -84,6 +85,7 @@ impl AddToolchainState {
     fn new(
         project: Entity<Project>,
         language_name: LanguageName,
+        root_path: ProjectPath,
         window: &mut Window,
         cx: &mut Context<ToolchainSelector>,
     ) -> Entity<Self> {
@@ -103,6 +105,7 @@ impl AddToolchainState {
                 },
                 project,
                 language_name,
+                root_path,
                 weak,
             }
         })
@@ -284,7 +287,9 @@ impl AddToolchainState {
         cx: &mut Context<Self>,
     ) {
         let AddState::Name {
-            toolchain, editor, ..
+            toolchain,
+            editor,
+            scope,
         } = &mut self.state
         else {
             return;
@@ -297,7 +302,7 @@ impl AddToolchainState {
 
         toolchain.name = SharedString::from(text);
         self.project.update(cx, |this, cx| {
-            this.add_toolchain(toolchain.clone(), cx);
+            this.add_toolchain(toolchain.clone(), scope.clone(), cx);
         });
         _ = self.weak.update(cx, |this, cx| {
             this.state = State::Search((this.create_search_state)(window, cx));
@@ -373,7 +378,6 @@ impl Render for AddToolchainState {
                             .p_2()
                             .justify_between()
                             .child({
-                                let current_scope = *scope;
                                 let weak = cx.weak_entity();
                                 let menu = DropdownMenu::new(
                                     "toolchain-creator-scope-picker",
@@ -382,12 +386,16 @@ impl Render for AddToolchainState {
                                         for s in [
                                             ToolchainScope::Global,
                                             ToolchainScope::Project,
-                                            ToolchainScope::Subproject,
+                                            ToolchainScope::Subproject(
+                                                self.root_path.worktree_id,
+                                                self.root_path.path.clone(),
+                                            ),
                                         ] {
                                             let weak = weak.clone();
                                             let description = s.description();
                                             let label = s.label();
 
+                                            let is_selected = s == *scope;
                                             menu = menu.custom_entry(
                                                 move |_, _| {
                                                     h_flex()
@@ -409,14 +417,14 @@ impl Render for AddToolchainState {
                                                         if let AddState::Name { scope, .. } =
                                                             &mut this.state
                                                         {
-                                                            *scope = s;
+                                                            *scope = s.clone();
                                                             cx.notify();
                                                         };
                                                     })
                                                     .ok();
                                                 },
                                             );
-                                            if s == current_scope {
+                                            if is_selected {
                                                 menu.select_last(window, cx);
                                             }
                                         }
@@ -904,6 +912,10 @@ impl PickerDelegate for ToolchainSelectorDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
+        let path = ProjectPath {
+            worktree_id: self.worktree_id,
+            path: self.relative_path.clone(),
+        };
         Some(
             v_flex()
                 // .bg(cx.theme().colors().background.clone())
@@ -928,6 +940,7 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                                                     State::AddToolchain(AddToolchainState::new(
                                                         project.clone(),
                                                         language.clone(),
+                                                        path.clone(),
                                                         window,
                                                         cx,
                                                     ));

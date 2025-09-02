@@ -74,7 +74,7 @@ use gpui::{
 use language::{
     Buffer, BufferEvent, Capability, CodeLabel, CursorShape, Language, LanguageName,
     LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList,
-    ToolchainMetadata, Transaction, Unclipped, language_settings::InlayHintKind,
+    ToolchainMetadata, ToolchainScope, Transaction, Unclipped, language_settings::InlayHintKind,
     proto::split_operations,
 };
 use lsp::{
@@ -3358,10 +3358,15 @@ impl Project {
             .map(|lister| lister.meta())
     }
 
-    pub fn add_toolchain(&self, toolchain: Toolchain, cx: &mut Context<Self>) {
+    pub fn add_toolchain(
+        &self,
+        toolchain: Toolchain,
+        scope: ToolchainScope,
+        cx: &mut Context<Self>,
+    ) {
         maybe!({
             self.toolchain_store.as_ref()?.update(cx, |this, _| {
-                this.add_toolchain(toolchain);
+                this.add_toolchain(toolchain, scope);
             });
             Some(())
         });

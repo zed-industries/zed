@@ -13,7 +13,7 @@ use gpui::{
 };
 use language::{
     LanguageName, LanguageRegistry, LanguageToolchainStore, ManifestDelegate, Toolchain,
-    ToolchainList,
+    ToolchainList, ToolchainScope,
 };
 use rpc::{
     AnyProtoClient, TypedEnvelope,
@@ -33,7 +33,7 @@ use crate::{
 
 pub struct ToolchainStore {
     mode: ToolchainStoreInner,
-    user_toolchains: IndexSet<Toolchain>,
+    user_toolchains: BTreeMap<ToolchainScope, IndexSet<Toolchain>>,
     _sub: Subscription,
 }
 
@@ -102,8 +102,11 @@ impl ToolchainStore {
         }
     }
 
-    pub(crate) fn add_toolchain(&mut self, toolchain: Toolchain) {
-        self.user_toolchains.insert(toolchain);
+    pub(crate) fn add_toolchain(&mut self, toolchain: Toolchain, scope: ToolchainScope) {
+        self.user_toolchains
+            .entry(scope)
+            .or_default()
+            .insert(toolchain);
     }
 
     pub(crate) fn resolve_toolchain(
@@ -128,7 +131,24 @@ impl ToolchainStore {
         language_name: LanguageName,
         cx: &mut Context<Self>,
     ) -> Task<Option<(ToolchainList, Arc<Path>)>> {
-        let mut user_toolchains = self.user_toolchains.iter().cloned().collect::<Vec<_>>();
+        let mut user_toolchains = self
+            .user_toolchains
+            .iter()
+            .filter_map(|(scope, toolchains)| {
+                if let ToolchainScope::Subproject(worktree_id, relative_path) = scope {
+                    if path.worktree_id != *worktree_id || relative_path.starts_with(&path.path) {
+                        Some(toolchains)
+                    } else {
+                        None
+                    }
+                } else {
+                    Some(toolchains)
+                }
+            })
+            .flatten()
+            .filter(|toolchain| toolchain.language_name == language_name)
+            .cloned()
+            .collect::<Vec<_>>();
         let task = match &self.mode {
             ToolchainStoreInner::Local(local) => {
                 local.update(cx, |this, cx| this.list_toolchains(path, language_name, cx))

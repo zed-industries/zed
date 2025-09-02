@@ -35,9 +35,9 @@ pub struct Toolchain {
 /// - All of their projects
 /// - A project they're currently in.
 /// - Only in the subproject they're currently in.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum ToolchainScope {
-    Subproject,
+    Subproject(WorktreeId, Arc<Path>),
     Project,
     Global,
 }
@@ -45,7 +45,7 @@ pub enum ToolchainScope {
 impl ToolchainScope {
     pub fn label(&self) -> &'static str {
         match self {
-            ToolchainScope::Subproject => "Subproject",
+            ToolchainScope::Subproject(_, _) => "Subproject",
             ToolchainScope::Project => "Project",
             ToolchainScope::Global => "Global",
         }
@@ -53,7 +53,7 @@ impl ToolchainScope {
 
     pub fn description(&self) -> &'static str {
         match self {
-            ToolchainScope::Subproject => {
+            ToolchainScope::Subproject(_, _) => {
                 "This toolchain will be available only in the subproject you're currently in."
             }
             ToolchainScope::Project => {
