@@ -2,7 +2,7 @@ use editor::EditorSettings;
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsSources, SettingsUi};
 use ui::scrollbars::{ScrollbarVisibilitySetting, ShowScrollbar};
 use workspace::dock::DockPosition;
 
@@ -78,7 +78,7 @@ pub struct GitPanelSettingsContent {
     pub collapse_untracked_diff: Option<bool>,
 }
 
-#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[derive(Deserialize, Debug, Clone, PartialEq, SettingsUi)]
 pub struct GitPanelSettings {
     pub button: bool,
     pub dock: DockPosition,

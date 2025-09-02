@@ -389,12 +389,7 @@ impl LocalToolchainStore {
             cx.background_spawn(async move {
                 Some((
                     toolchains
-                        .list(
-                            worktree_root,
-                            Some(relative_path.path.clone())
-                                .filter(|_| *relative_path.path != *Path::new("")),
-                            project_env,
-                        )
+                        .list(worktree_root, relative_path.path.clone(), project_env)
                         .await,
                     relative_path.path,
                 ))

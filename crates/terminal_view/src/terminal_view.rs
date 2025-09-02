@@ -14,7 +14,7 @@ use gpui::{
     ScrollWheelEvent, Styled, Subscription, Task, WeakEntity, actions, anchored, deferred, div,
 };
 use persistence::TERMINAL_DB;
-use project::{Project, search::SearchQuery, terminals::TerminalKind};
+use project::{Project, search::SearchQuery};
 use schemars::JsonSchema;
 use task::TaskId;
 use terminal::{
@@ -201,12 +201,9 @@ impl TerminalView {
         cx: &mut Context<Workspace>,
     ) {
         let working_directory = default_working_directory(workspace, cx);
-        TerminalPanel::add_center_terminal(
-            workspace,
-            TerminalKind::Shell(working_directory),
-            window,
-            cx,
-        )
+        TerminalPanel::add_center_terminal(workspace, window, cx, |project, cx| {
+            project.create_terminal_shell(working_directory, cx)
+        })
         .detach_and_log_err(cx);
     }
 
@@ -1221,16 +1218,10 @@ impl Item for TerminalView {
         let terminal = self
             .project
             .update(cx, |project, cx| {
-                let terminal = self.terminal().read(cx);
-                let working_directory = terminal
-                    .working_directory()
-                    .or_else(|| Some(project.active_project_directory(cx)?.to_path_buf()));
-                let python_venv_directory = terminal.python_venv_directory.clone();
-                project.create_terminal_with_venv(
-                    TerminalKind::Shell(working_directory),
-                    python_venv_directory,
-                    cx,
-                )
+                let cwd = project
+                    .active_project_directory(cx)
+                    .map(|it| it.to_path_buf());
+                project.clone_terminal(self.terminal(), cx, || cwd)
             })
             .ok()?
             .log_err()?;
@@ -1386,9 +1377,7 @@ impl SerializableItem for TerminalView {
                 .flatten();
 
             let terminal = project
-                .update(cx, |project, cx| {
-                    project.create_terminal(TerminalKind::Shell(cwd), cx)
-                })?
+                .update(cx, |project, cx| project.create_terminal_shell(cwd, cx))?
                 .await?;
             cx.update(|window, cx| {
                 cx.new(|cx| {

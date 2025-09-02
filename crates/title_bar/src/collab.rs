@@ -337,7 +337,7 @@ impl TitleBar {
 
         let room = room.read(cx);
         let project = self.project.read(cx);
-        let is_local = project.is_local() || project.is_via_ssh();
+        let is_local = project.is_local() || project.is_via_remote_server();
         let is_shared = is_local && project.is_shared();
         let is_muted = room.is_muted();
         let muted_by_user = room.muted_by_user();

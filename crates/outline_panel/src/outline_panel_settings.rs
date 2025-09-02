@@ -2,7 +2,7 @@ use editor::EditorSettings;
 use gpui::{App, Pixels};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsSources, SettingsUi};
 use ui::scrollbars::{ScrollbarVisibilitySetting, ShowScrollbar};
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Copy, PartialEq)]
@@ -19,7 +19,7 @@ pub enum ShowIndentGuides {
     Never,
 }
 
-#[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, SettingsUi)]
 pub struct OutlinePanelSettings {
     pub button: bool,
     pub default_width: Pixels,

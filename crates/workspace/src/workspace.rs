@@ -42,9 +42,9 @@ use gpui::{
     Action, AnyEntity, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Bounds, Context,
     CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke, ManagedView, MouseButton,
-    PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription, Task,
-    Tiling, WeakEntity, WindowBounds, WindowHandle, WindowId, WindowOptions, actions, canvas,
-    point, relative, size, transparent_black,
+    PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription,
+    SystemWindowTabController, Task, Tiling, WeakEntity, WindowBounds, WindowHandle, WindowId,
+    WindowOptions, actions, canvas, point, relative, size, transparent_black,
 };
 pub use history_manager::*;
 pub use item::{
@@ -67,14 +67,14 @@ pub use pane_group::*;
 use persistence::{DB, SerializedWindowBounds, model::SerializedWorkspace};
 pub use persistence::{
     DB as WORKSPACE_DB, WorkspaceDb, delete_unloaded_items,
-    model::{ItemId, SerializedSshConnection, SerializedWorkspaceLocation},
+    model::{ItemId, SerializedWorkspaceLocation},
 };
 use postage::stream::Stream;
 use project::{
     DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
 };
-use remote::{SshClientDelegate, SshConnectionOptions, ssh_session::ConnectionIdentifier};
+use remote::{RemoteClientDelegate, RemoteConnectionOptions, remote_client::ConnectionIdentifier};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
@@ -613,48 +613,66 @@ impl ProjectItemRegistry {
         self.build_project_item_for_path_fns
             .push(|project, project_path, window, cx| {
                 let project_path = project_path.clone();
-                let abs_path = project.read(cx).absolute_path(&project_path, cx);
+                let is_file = project
+                    .read(cx)
+                    .entry_for_path(&project_path, cx)
+                    .is_some_and(|entry| entry.is_file());
+                let entry_abs_path = project.read(cx).absolute_path(&project_path, cx);
                 let is_local = project.read(cx).is_local();
                 let project_item =
                     <T::Item as project::ProjectItem>::try_open(project, &project_path, cx)?;
                 let project = project.clone();
-                Some(window.spawn(cx, async move |cx| match project_item.await {
-                    Ok(project_item) => {
-                        let project_item = project_item;
-                        let project_entry_id: Option<ProjectEntryId> =
-                            project_item.read_with(cx, project::ProjectItem::entry_id)?;
-                        let build_workspace_item = Box::new(
-                            |pane: &mut Pane, window: &mut Window, cx: &mut Context<Pane>| {
-                                Box::new(cx.new(|cx| {
-                                    T::for_project_item(
-                                        project,
-                                        Some(pane),
-                                        project_item,
-                                        window,
-                                        cx,
-                                    )
-                                })) as Box<dyn ItemHandle>
-                            },
-                        ) as Box<_>;
-                        Ok((project_entry_id, build_workspace_item))
-                    }
-                    Err(e) => match abs_path {
-                        Some(abs_path) => match cx.update(|window, cx| {
-                            T::for_broken_project_item(abs_path, is_local, &e, window, cx)
-                        })? {
-                            Some(broken_project_item_view) => {
-                                let build_workspace_item = Box::new(
-                                    move |_: &mut Pane, _: &mut Window, cx: &mut Context<Pane>| {
-                                        cx.new(|_| broken_project_item_view).boxed_clone()
-                                    },
-                                )
-                                    as Box<_>;
-                                Ok((None, build_workspace_item))
+                Some(window.spawn(cx, async move |cx| {
+                    match project_item.await.with_context(|| {
+                        format!(
+                            "opening project path {:?}",
+                            entry_abs_path.as_deref().unwrap_or(&project_path.path)
+                        )
+                    }) {
+                        Ok(project_item) => {
+                            let project_item = project_item;
+                            let project_entry_id: Option<ProjectEntryId> =
+                                project_item.read_with(cx, project::ProjectItem::entry_id)?;
+                            let build_workspace_item = Box::new(
+                                |pane: &mut Pane, window: &mut Window, cx: &mut Context<Pane>| {
+                                    Box::new(cx.new(|cx| {
+                                        T::for_project_item(
+                                            project,
+                                            Some(pane),
+                                            project_item,
+                                            window,
+                                            cx,
+                                        )
+                                    })) as Box<dyn ItemHandle>
+                                },
+                            ) as Box<_>;
+                            Ok((project_entry_id, build_workspace_item))
+                        }
+                        Err(e) => {
+                            if e.error_code() == ErrorCode::Internal {
+                                if let Some(abs_path) =
+                                    entry_abs_path.as_deref().filter(|_| is_file)
+                                {
+                                    if let Some(broken_project_item_view) =
+                                        cx.update(|window, cx| {
+                                            T::for_broken_project_item(
+                                                abs_path, is_local, &e, window, cx,
+                                            )
+                                        })?
+                                    {
+                                        let build_workspace_item = Box::new(
+                                            move |_: &mut Pane, _: &mut Window, cx: &mut Context<Pane>| {
+                                                cx.new(|_| broken_project_item_view).boxed_clone()
+                                            },
+                                        )
+                                        as Box<_>;
+                                        return Ok((None, build_workspace_item));
+                                    }
+                                }
                             }
-                            None => Err(e)?,
-                        },
-                        None => Err(e)?,
-                    },
+                            Err(e)
+                        }
+                    }
                 }))
             });
     }
@@ -2073,7 +2091,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
         if self.project.read(cx).is_via_collab()
-            || self.project.read(cx).is_via_ssh()
+            || self.project.read(cx).is_via_remote_server()
             || !WorkspaceSettings::get_global(cx).use_system_path_prompts
         {
             let prompt = self.on_prompt_for_new_path.take().unwrap();
@@ -2565,7 +2583,7 @@ impl Workspace {
                 };
 
                 let this = this.clone();
-                let abs_path: Arc<Path> = SanitizedPath::from(abs_path.clone()).into();
+                let abs_path: Arc<Path> = SanitizedPath::new(&abs_path).as_path().into();
                 let fs = fs.clone();
                 let pane = pane.clone();
                 let task = cx.spawn(async move |cx| {
@@ -4011,52 +4029,6 @@ impl Workspace {
         maybe_pane_handle
     }
 
-    pub fn split_pane_with_item(
-        &mut self,
-        pane_to_split: WeakEntity<Pane>,
-        split_direction: SplitDirection,
-        from: WeakEntity<Pane>,
-        item_id_to_move: EntityId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(pane_to_split) = pane_to_split.upgrade() else {
-            return;
-        };
-        let Some(from) = from.upgrade() else {
-            return;
-        };
-
-        let new_pane = self.add_pane(window, cx);
-        move_item(&from, &new_pane, item_id_to_move, 0, true, window, cx);
-        self.center
-            .split(&pane_to_split, &new_pane, split_direction)
-            .unwrap();
-        cx.notify();
-    }
-
-    pub fn split_pane_with_project_entry(
-        &mut self,
-        pane_to_split: WeakEntity<Pane>,
-        split_direction: SplitDirection,
-        project_entry: ProjectEntryId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<Task<Result<()>>> {
-        let pane_to_split = pane_to_split.upgrade()?;
-        let new_pane = self.add_pane(window, cx);
-        self.center
-            .split(&pane_to_split, &new_pane, split_direction)
-            .unwrap();
-
-        let path = self.project.read(cx).path_for_entry(project_entry, cx)?;
-        let task = self.open_path(path, Some(new_pane.downgrade()), true, window, cx);
-        Some(cx.foreground_executor().spawn(async move {
-            task.await?;
-            Ok(())
-        }))
-    }
-
     pub fn join_all_panes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let active_item = self.active_pane.read(cx).active_item();
         for pane in &self.panes {
@@ -4410,6 +4382,11 @@ impl Workspace {
             return;
         }
         window.set_window_title(&title);
+        SystemWindowTabController::update_tab_title(
+            cx,
+            window.window_handle().window_id(),
+            SharedString::from(&title),
+        );
         self.last_window_title = Some(title);
     }
 
@@ -5284,15 +5261,8 @@ impl Workspace {
 
     fn serialize_workspace_location(&self, cx: &App) -> WorkspaceLocation {
         let paths = PathList::new(&self.root_paths(cx));
-        if let Some(connection) = self.project.read(cx).ssh_connection_options(cx) {
-            WorkspaceLocation::Location(
-                SerializedWorkspaceLocation::Ssh(SerializedSshConnection {
-                    host: connection.host,
-                    port: connection.port,
-                    user: connection.username,
-                }),
-                paths,
-            )
+        if let Some(connection) = self.project.read(cx).remote_connection_options(cx) {
+            WorkspaceLocation::Location(SerializedWorkspaceLocation::Remote(connection), paths)
         } else if self.project.read(cx).is_local() {
             if !paths.is_empty() {
                 WorkspaceLocation::Location(SerializedWorkspaceLocation::Local, paths)
@@ -5832,17 +5802,22 @@ impl Workspace {
             return;
         };
         let windows = cx.windows();
-        let Some(next_window) = windows
-            .iter()
-            .cycle()
-            .skip_while(|window| window.window_id() != current_window_id)
-            .nth(1)
-        else {
-            return;
-        };
-        next_window
-            .update(cx, |_, window, _| window.activate_window())
-            .ok();
+        let next_window =
+            SystemWindowTabController::get_next_tab_group_window(cx, current_window_id).or_else(
+                || {
+                    windows
+                        .iter()
+                        .cycle()
+                        .skip_while(|window| window.window_id() != current_window_id)
+                        .nth(1)
+                },
+            );
+
+        if let Some(window) = next_window {
+            window
+                .update(cx, |_, window, _| window.activate_window())
+                .ok();
+        }
     }
 
     pub fn activate_previous_window(&mut self, cx: &mut Context<Self>) {
@@ -5850,18 +5825,23 @@ impl Workspace {
             return;
         };
         let windows = cx.windows();
-        let Some(prev_window) = windows
-            .iter()
-            .rev()
-            .cycle()
-            .skip_while(|window| window.window_id() != current_window_id)
-            .nth(1)
-        else {
-            return;
-        };
-        prev_window
-            .update(cx, |_, window, _| window.activate_window())
-            .ok();
+        let prev_window =
+            SystemWindowTabController::get_prev_tab_group_window(cx, current_window_id).or_else(
+                || {
+                    windows
+                        .iter()
+                        .rev()
+                        .cycle()
+                        .skip_while(|window| window.window_id() != current_window_id)
+                        .nth(1)
+                },
+            );
+
+        if let Some(window) = prev_window {
+            window
+                .update(cx, |_, window, _| window.activate_window())
+                .ok();
+        }
     }
 
     pub fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
@@ -6910,7 +6890,8 @@ async fn join_channel_internal(
             | Status::Authenticating
             | Status::Authenticated
             | Status::Reconnecting
-            | Status::Reauthenticating => continue,
+            | Status::Reauthenticating
+            | Status::Reauthenticated => continue,
             Status::Connected { .. } => break 'outer,
             Status::SignedOut | Status::AuthenticationError => {
                 return Err(ErrorCode::SignedOut.into());
@@ -6952,7 +6933,7 @@ async fn join_channel_internal(
                     return None;
                 }
 
-                if (project.is_local() || project.is_via_ssh())
+                if (project.is_local() || project.is_via_remote_server())
                     && project.visible_worktrees(cx).any(|tree| {
                         tree.read(cx)
                             .root_entry()
@@ -7294,22 +7275,22 @@ pub fn create_and_open_local_file(
     })
 }
 
-pub fn open_ssh_project_with_new_connection(
+pub fn open_remote_project_with_new_connection(
     window: WindowHandle<Workspace>,
-    connection_options: SshConnectionOptions,
+    connection_options: RemoteConnectionOptions,
     cancel_rx: oneshot::Receiver<()>,
-    delegate: Arc<dyn SshClientDelegate>,
+    delegate: Arc<dyn RemoteClientDelegate>,
     app_state: Arc<AppState>,
     paths: Vec<PathBuf>,
     cx: &mut App,
 ) -> Task<Result<()>> {
     cx.spawn(async move |cx| {
         let (workspace_id, serialized_workspace) =
-            serialize_ssh_project(connection_options.clone(), paths.clone(), cx).await?;
+            serialize_remote_project(connection_options.clone(), paths.clone(), cx).await?;
 
         let session = match cx
             .update(|cx| {
-                remote::SshRemoteClient::new(
+                remote::RemoteClient::new(
                     ConnectionIdentifier::Workspace(workspace_id.0),
                     connection_options,
                     cancel_rx,
@@ -7324,7 +7305,7 @@ pub fn open_ssh_project_with_new_connection(
         };
 
         let project = cx.update(|cx| {
-            project::Project::ssh(
+            project::Project::remote(
                 session,
                 app_state.client.clone(),
                 app_state.node_runtime.clone(),
@@ -7335,7 +7316,7 @@ pub fn open_ssh_project_with_new_connection(
             )
         })?;
 
-        open_ssh_project_inner(
+        open_remote_project_inner(
             project,
             paths,
             workspace_id,
@@ -7348,8 +7329,8 @@ pub fn open_ssh_project_with_new_connection(
     })
 }
 
-pub fn open_ssh_project_with_existing_connection(
-    connection_options: SshConnectionOptions,
+pub fn open_remote_project_with_existing_connection(
+    connection_options: RemoteConnectionOptions,
     project: Entity<Project>,
     paths: Vec<PathBuf>,
     app_state: Arc<AppState>,
@@ -7358,9 +7339,9 @@ pub fn open_ssh_project_with_existing_connection(
 ) -> Task<Result<()>> {
     cx.spawn(async move |cx| {
         let (workspace_id, serialized_workspace) =
-            serialize_ssh_project(connection_options.clone(), paths.clone(), cx).await?;
+            serialize_remote_project(connection_options.clone(), paths.clone(), cx).await?;
 
-        open_ssh_project_inner(
+        open_remote_project_inner(
             project,
             paths,
             workspace_id,
@@ -7373,7 +7354,7 @@ pub fn open_ssh_project_with_existing_connection(
     })
 }
 
-async fn open_ssh_project_inner(
+async fn open_remote_project_inner(
     project: Entity<Project>,
     paths: Vec<PathBuf>,
     workspace_id: WorkspaceId,
@@ -7460,22 +7441,18 @@ async fn open_ssh_project_inner(
     Ok(())
 }
 
-fn serialize_ssh_project(
-    connection_options: SshConnectionOptions,
+fn serialize_remote_project(
+    connection_options: RemoteConnectionOptions,
     paths: Vec<PathBuf>,
     cx: &AsyncApp,
 ) -> Task<Result<(WorkspaceId, Option<SerializedWorkspace>)>> {
     cx.background_spawn(async move {
-        let ssh_connection_id = persistence::DB
-            .get_or_create_ssh_connection(
-                connection_options.host.clone(),
-                connection_options.port,
-                connection_options.username.clone(),
-            )
+        let remote_connection_id = persistence::DB
+            .get_or_create_remote_connection(connection_options)
             .await?;
 
         let serialized_workspace =
-            persistence::DB.ssh_workspace_for_roots(&paths, ssh_connection_id);
+            persistence::DB.remote_workspace_for_roots(&paths, remote_connection_id);
 
         let workspace_id = if let Some(workspace_id) =
             serialized_workspace.as_ref().map(|workspace| workspace.id)
@@ -8025,22 +8002,20 @@ pub struct WorkspacePosition {
     pub centered_layout: bool,
 }
 
-pub fn ssh_workspace_position_from_db(
-    host: String,
-    port: Option<u16>,
-    user: Option<String>,
+pub fn remote_workspace_position_from_db(
+    connection_options: RemoteConnectionOptions,
     paths_to_open: &[PathBuf],
     cx: &App,
 ) -> Task<Result<WorkspacePosition>> {
     let paths = paths_to_open.to_vec();
 
     cx.background_spawn(async move {
-        let ssh_connection_id = persistence::DB
-            .get_or_create_ssh_connection(host, port, user)
+        let remote_connection_id = persistence::DB
+            .get_or_create_remote_connection(connection_options)
             .await
             .context("fetching serialized ssh project")?;
         let serialized_workspace =
-            persistence::DB.ssh_workspace_for_roots(&paths, ssh_connection_id);
+            persistence::DB.remote_workspace_for_roots(&paths, remote_connection_id);
 
         let (window_bounds, display) = if let Some(bounds) = window_bounds_env_override() {
             (Some(WindowBounds::Windowed(bounds)), None)

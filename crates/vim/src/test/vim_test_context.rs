@@ -49,6 +49,10 @@ impl VimTestContext {
         Self::new_with_lsp(
             EditorLspTestContext::new_typescript(
                 lsp::ServerCapabilities {
+                    completion_provider: Some(lsp::CompletionOptions {
+                        trigger_characters: Some(vec![".".to_string()]),
+                        ..Default::default()
+                    }),
                     rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
                         prepare_provider: Some(true),
                         work_done_progress_options: Default::default(),

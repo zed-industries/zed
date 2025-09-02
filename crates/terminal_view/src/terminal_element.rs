@@ -1,4 +1,4 @@
-use editor::{CursorLayout, HighlightedRange, HighlightedRangeLine};
+use editor::{CursorLayout, EditorSettings, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     AbsoluteLength, AnyElement, App, AvailableSpace, Bounds, ContentMask, Context, DispatchPhase,
     Element, ElementId, Entity, FocusHandle, Font, FontFeatures, FontStyle, FontWeight,
@@ -1257,12 +1257,17 @@ impl Element for TerminalElement {
                         if let Some((start_y, highlighted_range_lines)) =
                             to_highlighted_range_lines(relative_highlighted_range, layout, origin)
                         {
+                            let corner_radius = if EditorSettings::get_global(cx).rounded_selection {
+                                0.15 * layout.dimensions.line_height
+                            } else {
+                                Pixels::ZERO
+                            };
                             let hr = HighlightedRange {
                                 start_y,
                                 line_height: layout.dimensions.line_height,
                                 lines: highlighted_range_lines,
                                 color: *color,
-                                corner_radius: 0.15 * layout.dimensions.line_height,
+                                corner_radius: corner_radius,
                             };
                             hr.paint(true, bounds, window);
                         }
@@ -1403,7 +1408,7 @@ impl InputHandler for TerminalInputHandler {
                 window.invalidate_character_coordinates();
                 let project = this.project().read(cx);
                 let telemetry = project.client().telemetry().clone();
-                telemetry.log_edit_event("terminal", project.is_via_ssh());
+                telemetry.log_edit_event("terminal", project.is_via_remote_server());
             })
             .ok();
     }

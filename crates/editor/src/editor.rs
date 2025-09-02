@@ -219,7 +219,6 @@ use crate::{
 
 pub const FILE_HEADER_HEIGHT: u32 = 2;
 pub const MULTI_BUFFER_EXCERPT_HEADER_HEIGHT: u32 = 1;
-pub const DEFAULT_MULTIBUFFER_CONTEXT: u32 = 2;
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
@@ -2588,7 +2587,7 @@ impl Editor {
                 || binding
                     .keystrokes()
                     .first()
-                    .is_some_and(|keystroke| keystroke.modifiers.modified())
+                    .is_some_and(|keystroke| keystroke.modifiers().modified())
         }))
     }
 
@@ -6402,7 +6401,7 @@ impl Editor {
                     PathKey::for_buffer(buffer_handle, cx),
                     buffer_handle.clone(),
                     edited_ranges,
-                    DEFAULT_MULTIBUFFER_CONTEXT,
+                    multibuffer_context_lines(cx),
                     cx,
                 );
 
@@ -7686,16 +7685,16 @@ impl Editor {
             .keystroke()
         {
             modifiers_held = modifiers_held
-                || (&accept_keystroke.modifiers == modifiers
-                    && accept_keystroke.modifiers.modified());
+                || (accept_keystroke.modifiers() == modifiers
+                    && accept_keystroke.modifiers().modified());
         };
         if let Some(accept_partial_keystroke) = self
             .accept_edit_prediction_keybind(true, window, cx)
             .keystroke()
         {
             modifiers_held = modifiers_held
-                || (&accept_partial_keystroke.modifiers == modifiers
-                    && accept_partial_keystroke.modifiers.modified());
+                || (accept_partial_keystroke.modifiers() == modifiers
+                    && accept_partial_keystroke.modifiers().modified());
         }
 
         if modifiers_held {
@@ -9044,7 +9043,7 @@ impl Editor {
 
         let is_platform_style_mac = PlatformStyle::platform() == PlatformStyle::Mac;
 
-        let modifiers_color = if accept_keystroke.modifiers == window.modifiers() {
+        let modifiers_color = if *accept_keystroke.modifiers() == window.modifiers() {
             Color::Accent
         } else {
             Color::Muted
@@ -9056,19 +9055,19 @@ impl Editor {
             .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
             .text_size(TextSize::XSmall.rems(cx))
             .child(h_flex().children(ui::render_modifiers(
-                &accept_keystroke.modifiers,
+                accept_keystroke.modifiers(),
                 PlatformStyle::platform(),
                 Some(modifiers_color),
                 Some(IconSize::XSmall.rems().into()),
                 true,
             )))
             .when(is_platform_style_mac, |parent| {
-                parent.child(accept_keystroke.key.clone())
+                parent.child(accept_keystroke.key().to_string())
             })
             .when(!is_platform_style_mac, |parent| {
                 parent.child(
                     Key::new(
-                        util::capitalize(&accept_keystroke.key),
+                        util::capitalize(accept_keystroke.key()),
                         Some(Color::Default),
                     )
                     .size(Some(IconSize::XSmall.rems().into())),
@@ -9171,7 +9170,7 @@ impl Editor {
         max_width: Pixels,
         cursor_point: Point,
         style: &EditorStyle,
-        accept_keystroke: Option<&gpui::Keystroke>,
+        accept_keystroke: Option<&gpui::KeybindingKeystroke>,
         _window: &Window,
         cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {
@@ -9249,7 +9248,7 @@ impl Editor {
                                         accept_keystroke.as_ref(),
                                         |el, accept_keystroke| {
                                             el.child(h_flex().children(ui::render_modifiers(
-                                                &accept_keystroke.modifiers,
+                                                accept_keystroke.modifiers(),
                                                 PlatformStyle::platform(),
                                                 Some(Color::Default),
                                                 Some(IconSize::XSmall.rems().into()),
@@ -9319,7 +9318,7 @@ impl Editor {
                         .child(completion),
                 )
                 .when_some(accept_keystroke, |el, accept_keystroke| {
-                    if !accept_keystroke.modifiers.modified() {
+                    if !accept_keystroke.modifiers().modified() {
                         return el;
                     }
 
@@ -9338,7 +9337,7 @@ impl Editor {
                                     .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
                                     .when(is_platform_style_mac, |parent| parent.gap_1())
                                     .child(h_flex().children(ui::render_modifiers(
-                                        &accept_keystroke.modifiers,
+                                        accept_keystroke.modifiers(),
                                         PlatformStyle::platform(),
                                         Some(if !has_completion {
                                             Color::Muted
@@ -10445,6 +10444,86 @@ impl Editor {
             let mut seen = HashSet::default();
             lines.retain(|line| seen.insert(*line));
         })
+    }
+
+    fn enable_wrap_selections_in_tag(&self, cx: &App) -> bool {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        for selection in self.selections.disjoint_anchors().iter() {
+            if snapshot
+                .language_at(selection.start)
+                .and_then(|lang| lang.config().wrap_characters.as_ref())
+                .is_some()
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn wrap_selections_in_tag(
+        &mut self,
+        _: &WrapSelectionsInTag,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
+
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+
+        let mut edits = Vec::new();
+        let mut boundaries = Vec::new();
+
+        for selection in self.selections.all::<Point>(cx).iter() {
+            let Some(wrap_config) = snapshot
+                .language_at(selection.start)
+                .and_then(|lang| lang.config().wrap_characters.clone())
+            else {
+                continue;
+            };
+
+            let open_tag = format!("{}{}", wrap_config.start_prefix, wrap_config.start_suffix);
+            let close_tag = format!("{}{}", wrap_config.end_prefix, wrap_config.end_suffix);
+
+            let start_before = snapshot.anchor_before(selection.start);
+            let end_after = snapshot.anchor_after(selection.end);
+
+            edits.push((start_before..start_before, open_tag));
+            edits.push((end_after..end_after, close_tag));
+
+            boundaries.push((
+                start_before,
+                end_after,
+                wrap_config.start_prefix.len(),
+                wrap_config.end_suffix.len(),
+            ));
+        }
+
+        if edits.is_empty() {
+            return;
+        }
+
+        self.transact(window, cx, |this, window, cx| {
+            let buffer = this.buffer.update(cx, |buffer, cx| {
+                buffer.edit(edits, None, cx);
+                buffer.snapshot(cx)
+            });
+
+            let mut new_selections = Vec::with_capacity(boundaries.len() * 2);
+            for (start_before, end_after, start_prefix_len, end_suffix_len) in
+                boundaries.into_iter()
+            {
+                let open_offset = start_before.to_offset(&buffer) + start_prefix_len;
+                let close_offset = end_after.to_offset(&buffer).saturating_sub(end_suffix_len);
+                new_selections.push(open_offset..open_offset);
+                new_selections.push(close_offset..close_offset);
+            }
+
+            this.change_selections(Default::default(), window, cx, |s| {
+                s.select_ranges(new_selections);
+            });
+
+            this.request_autoscroll(Autoscroll::fit(), cx);
+        });
     }
 
     pub fn reload_file(&mut self, _: &ReloadFile, window: &mut Window, cx: &mut Context<Self>) {
@@ -11737,6 +11816,18 @@ impl Editor {
         let buffer = self.buffer.read(cx).snapshot(cx);
         let selections = self.selections.all::<Point>(cx);
 
+        #[derive(Clone, Debug, PartialEq)]
+        enum CommentFormat {
+            /// single line comment, with prefix for line
+            Line(String),
+            /// single line within a block comment, with prefix for line
+            BlockLine(String),
+            /// a single line of a block comment that includes the initial delimiter
+            BlockCommentWithStart(BlockCommentConfig),
+            /// a single line of a block comment that includes the ending delimiter
+            BlockCommentWithEnd(BlockCommentConfig),
+        }
+
         // Split selections to respect paragraph, indent, and comment prefix boundaries.
         let wrap_ranges = selections.into_iter().flat_map(|selection| {
             let mut non_blank_rows_iter = (selection.start.row..=selection.end.row)
@@ -11753,37 +11844,75 @@ impl Editor {
             let language_scope = buffer.language_scope_at(selection.head());
 
             let indent_and_prefix_for_row =
-                |row: u32| -> (IndentSize, Option<String>, Option<String>) {
+                |row: u32| -> (IndentSize, Option<CommentFormat>, Option<String>) {
                     let indent = buffer.indent_size_for_line(MultiBufferRow(row));
-                    let (comment_prefix, rewrap_prefix) =
-                        if let Some(language_scope) = &language_scope {
-                            let indent_end = Point::new(row, indent.len);
-                            let comment_prefix = language_scope
+                    let (comment_prefix, rewrap_prefix) = if let Some(language_scope) =
+                        &language_scope
+                    {
+                        let indent_end = Point::new(row, indent.len);
+                        let line_end = Point::new(row, buffer.line_len(MultiBufferRow(row)));
+                        let line_text_after_indent = buffer
+                            .text_for_range(indent_end..line_end)
+                            .collect::<String>();
+
+                        let is_within_comment_override = buffer
+                            .language_scope_at(indent_end)
+                            .is_some_and(|scope| scope.override_name() == Some("comment"));
+                        let comment_delimiters = if is_within_comment_override {
+                            // we are within a comment syntax node, but we don't
+                            // yet know what kind of comment: block, doc or line
+                            match (
+                                language_scope.documentation_comment(),
+                                language_scope.block_comment(),
+                            ) {
+                                (Some(config), _) | (_, Some(config))
+                                    if buffer.contains_str_at(indent_end, &config.start) =>
+                                {
+                                    Some(CommentFormat::BlockCommentWithStart(config.clone()))
+                                }
+                                (Some(config), _) | (_, Some(config))
+                                    if line_text_after_indent.ends_with(config.end.as_ref()) =>
+                                {
+                                    Some(CommentFormat::BlockCommentWithEnd(config.clone()))
+                                }
+                                (Some(config), _) | (_, Some(config))
+                                    if buffer.contains_str_at(indent_end, &config.prefix) =>
+                                {
+                                    Some(CommentFormat::BlockLine(config.prefix.to_string()))
+                                }
+                                (_, _) => language_scope
+                                    .line_comment_prefixes()
+                                    .iter()
+                                    .find(|prefix| buffer.contains_str_at(indent_end, prefix))
+                                    .map(|prefix| CommentFormat::Line(prefix.to_string())),
+                            }
+                        } else {
+                            // we not in an overridden comment node, but we may
+                            // be within a non-overridden line comment node
+                            language_scope
                                 .line_comment_prefixes()
                                 .iter()
                                 .find(|prefix| buffer.contains_str_at(indent_end, prefix))
-                                .map(|prefix| prefix.to_string());
-                            let line_end = Point::new(row, buffer.line_len(MultiBufferRow(row)));
-                            let line_text_after_indent = buffer
-                                .text_for_range(indent_end..line_end)
-                                .collect::<String>();
-                            let rewrap_prefix = language_scope
-                                .rewrap_prefixes()
-                                .iter()
-                                .find_map(|prefix_regex| {
-                                    prefix_regex.find(&line_text_after_indent).map(|mat| {
-                                        if mat.start() == 0 {
-                                            Some(mat.as_str().to_string())
-                                        } else {
-                                            None
-                                        }
-                                    })
-                                })
-                                .flatten();
-                            (comment_prefix, rewrap_prefix)
-                        } else {
-                            (None, None)
+                                .map(|prefix| CommentFormat::Line(prefix.to_string()))
                         };
+
+                        let rewrap_prefix = language_scope
+                            .rewrap_prefixes()
+                            .iter()
+                            .find_map(|prefix_regex| {
+                                prefix_regex.find(&line_text_after_indent).map(|mat| {
+                                    if mat.start() == 0 {
+                                        Some(mat.as_str().to_string())
+                                    } else {
+                                        None
+                                    }
+                                })
+                            })
+                            .flatten();
+                        (comment_delimiters, rewrap_prefix)
+                    } else {
+                        (None, None)
+                    };
                     (indent, comment_prefix, rewrap_prefix)
                 };
 
@@ -11794,22 +11923,22 @@ impl Editor {
             let mut prev_row = first_row;
             let (
                 mut current_range_indent,
-                mut current_range_comment_prefix,
+                mut current_range_comment_delimiters,
                 mut current_range_rewrap_prefix,
             ) = indent_and_prefix_for_row(first_row);
 
             for row in non_blank_rows_iter.skip(1) {
                 let has_paragraph_break = row > prev_row + 1;
 
-                let (row_indent, row_comment_prefix, row_rewrap_prefix) =
+                let (row_indent, row_comment_delimiters, row_rewrap_prefix) =
                     indent_and_prefix_for_row(row);
 
                 let has_indent_change = row_indent != current_range_indent;
-                let has_comment_change = row_comment_prefix != current_range_comment_prefix;
+                let has_comment_change = row_comment_delimiters != current_range_comment_delimiters;
 
                 let has_boundary_change = has_comment_change
                     || row_rewrap_prefix.is_some()
-                    || (has_indent_change && current_range_comment_prefix.is_some());
+                    || (has_indent_change && current_range_comment_delimiters.is_some());
 
                 if has_paragraph_break || has_boundary_change {
                     ranges.push((
@@ -11817,13 +11946,13 @@ impl Editor {
                         Point::new(current_range_start, 0)
                             ..Point::new(prev_row, buffer.line_len(MultiBufferRow(prev_row))),
                         current_range_indent,
-                        current_range_comment_prefix.clone(),
+                        current_range_comment_delimiters.clone(),
                         current_range_rewrap_prefix.clone(),
                         from_empty_selection,
                     ));
                     current_range_start = row;
                     current_range_indent = row_indent;
-                    current_range_comment_prefix = row_comment_prefix;
+                    current_range_comment_delimiters = row_comment_delimiters;
                     current_range_rewrap_prefix = row_rewrap_prefix;
                 }
                 prev_row = row;
@@ -11834,7 +11963,7 @@ impl Editor {
                 Point::new(current_range_start, 0)
                     ..Point::new(prev_row, buffer.line_len(MultiBufferRow(prev_row))),
                 current_range_indent,
-                current_range_comment_prefix,
+                current_range_comment_delimiters,
                 current_range_rewrap_prefix,
                 from_empty_selection,
             ));
@@ -11848,7 +11977,7 @@ impl Editor {
         for (
             language_settings,
             wrap_range,
-            indent_size,
+            mut indent_size,
             comment_prefix,
             rewrap_prefix,
             from_empty_selection,
@@ -11868,16 +11997,26 @@ impl Editor {
 
             let tab_size = language_settings.tab_size;
 
+            let (line_prefix, inside_comment) = match &comment_prefix {
+                Some(CommentFormat::Line(prefix) | CommentFormat::BlockLine(prefix)) => {
+                    (Some(prefix.as_str()), true)
+                }
+                Some(CommentFormat::BlockCommentWithEnd(BlockCommentConfig { prefix, .. })) => {
+                    (Some(prefix.as_ref()), true)
+                }
+                Some(CommentFormat::BlockCommentWithStart(BlockCommentConfig {
+                    start: _,
+                    end: _,
+                    prefix,
+                    tab_size,
+                })) => {
+                    indent_size.len += tab_size;
+                    (Some(prefix.as_ref()), true)
+                }
+                None => (None, false),
+            };
             let indent_prefix = indent_size.chars().collect::<String>();
-            let mut line_prefix = indent_prefix.clone();
-            let mut inside_comment = false;
-            if let Some(prefix) = &comment_prefix {
-                line_prefix.push_str(prefix);
-                inside_comment = true;
-            }
-            if let Some(prefix) = &rewrap_prefix {
-                line_prefix.push_str(prefix);
-            }
+            let line_prefix = format!("{indent_prefix}{}", line_prefix.unwrap_or(""));
 
             let allow_rewrap_based_on_language = match language_settings.allow_rewrap {
                 RewrapBehavior::InComments => inside_comment,
@@ -11922,6 +12061,8 @@ impl Editor {
             let start_offset = start.to_offset(&buffer);
             let end = Point::new(end_row, buffer.line_len(MultiBufferRow(end_row)));
             let selection_text = buffer.text_for_range(start..end).collect::<String>();
+            let mut first_line_delimiter = None;
+            let mut last_line_delimiter = None;
             let Some(lines_without_prefixes) = selection_text
                 .lines()
                 .enumerate()
@@ -11929,6 +12070,46 @@ impl Editor {
                     let line_trimmed = line.trim_start();
                     if rewrap_prefix.is_some() && ix > 0 {
                         Ok(line_trimmed)
+                    } else if let Some(
+                        CommentFormat::BlockCommentWithStart(BlockCommentConfig {
+                            start,
+                            prefix,
+                            end,
+                            tab_size,
+                        })
+                        | CommentFormat::BlockCommentWithEnd(BlockCommentConfig {
+                            start,
+                            prefix,
+                            end,
+                            tab_size,
+                        }),
+                    ) = &comment_prefix
+                    {
+                        let line_trimmed = line_trimmed
+                            .strip_prefix(start.as_ref())
+                            .map(|s| {
+                                let mut indent_size = indent_size;
+                                indent_size.len -= tab_size;
+                                let indent_prefix: String = indent_size.chars().collect();
+                                first_line_delimiter = Some((indent_prefix, start));
+                                s.trim_start()
+                            })
+                            .unwrap_or(line_trimmed);
+                        let line_trimmed = line_trimmed
+                            .strip_suffix(end.as_ref())
+                            .map(|s| {
+                                last_line_delimiter = Some(end);
+                                s.trim_end()
+                            })
+                            .unwrap_or(line_trimmed);
+                        let line_trimmed = line_trimmed
+                            .strip_prefix(prefix.as_ref())
+                            .unwrap_or(line_trimmed);
+                        Ok(line_trimmed)
+                    } else if let Some(CommentFormat::BlockLine(prefix)) = &comment_prefix {
+                        line_trimmed.strip_prefix(prefix).with_context(|| {
+                            format!("line did not start with prefix {prefix:?}: {line:?}")
+                        })
                     } else {
                         line_trimmed
                             .strip_prefix(&line_prefix.trim_start())
@@ -11955,14 +12136,25 @@ impl Editor {
                 line_prefix.clone()
             };
 
-            let wrapped_text = wrap_with_prefix(
-                line_prefix,
-                subsequent_lines_prefix,
-                lines_without_prefixes.join("\n"),
-                wrap_column,
-                tab_size,
-                options.preserve_existing_whitespace,
-            );
+            let wrapped_text = {
+                let mut wrapped_text = wrap_with_prefix(
+                    line_prefix,
+                    subsequent_lines_prefix,
+                    lines_without_prefixes.join("\n"),
+                    wrap_column,
+                    tab_size,
+                    options.preserve_existing_whitespace,
+                );
+
+                if let Some((indent, delimiter)) = first_line_delimiter {
+                    wrapped_text = format!("{indent}{delimiter}\n{wrapped_text}");
+                }
+                if let Some(last_line) = last_line_delimiter {
+                    wrapped_text = format!("{wrapped_text}\n{indent_prefix}{last_line}");
+                }
+
+                wrapped_text
+            };
 
             // TODO: should always use char-based diff while still supporting cursor behavior that
             // matches vim.
@@ -16157,7 +16349,7 @@ impl Editor {
                     PathKey::for_buffer(&location.buffer, cx),
                     location.buffer.clone(),
                     ranges_for_buffer,
-                    DEFAULT_MULTIBUFFER_CONTEXT,
+                    multibuffer_context_lines(cx),
                     cx,
                 );
                 ranges.extend(new_ranges)
@@ -20074,7 +20266,7 @@ impl Editor {
                 let (telemetry, is_via_ssh) = {
                     let project = project.read(cx);
                     let telemetry = project.client().telemetry().clone();
-                    let is_via_ssh = project.is_via_ssh();
+                    let is_via_ssh = project.is_via_remote_server();
                     (telemetry, is_via_ssh)
                 };
                 refresh_linked_ranges(self, window, cx);
@@ -20642,7 +20834,7 @@ impl Editor {
                 copilot_enabled,
                 copilot_enabled_for_language,
                 edit_predictions_provider,
-                is_via_ssh = project.is_via_ssh(),
+                is_via_ssh = project.is_via_remote_server(),
             );
         } else {
             telemetry::event!(
@@ -20652,7 +20844,7 @@ impl Editor {
                 copilot_enabled,
                 copilot_enabled_for_language,
                 edit_predictions_provider,
-                is_via_ssh = project.is_via_ssh(),
+                is_via_ssh = project.is_via_remote_server(),
             );
         };
     }
@@ -23997,4 +24189,11 @@ fn render_diff_hunk_controls(
             },
         )
         .into_any_element()
+}
+
+pub fn multibuffer_context_lines(cx: &App) -> u32 {
+    EditorSettings::try_get(cx)
+        .map(|settings| settings.excerpt_context_lines)
+        .unwrap_or(2)
+        .clamp(1, 32)
 }
