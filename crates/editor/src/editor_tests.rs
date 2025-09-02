@@ -2476,7 +2476,7 @@ async fn test_delete_to_beginning_of_line(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_delete_whitespaces(cx: &mut TestAppContext) {
+async fn test_delete_to_word_boundary(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
@@ -2508,6 +2508,13 @@ async fn test_delete_whitespaces(cx: &mut TestAppContext) {
         );
     });
     cx.assert_editor_state("e tˇ te ˇour");
+}
+
+#[gpui::test]
+async fn test_delete_whitespaces(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
 
     cx.set_state("here is some text    ˇwith a space");
     cx.update_editor(|editor, window, cx| {
@@ -2520,7 +2527,8 @@ async fn test_delete_whitespaces(cx: &mut TestAppContext) {
             cx,
         );
     });
-    cx.assert_editor_state("here is some ˇwith a space");
+    // TODO kb
+    cx.assert_editor_state("here is someˇwith a space");
 
     cx.set_state("here is some text    ˇwith a space");
     cx.update_editor(|editor, window, cx| {
@@ -2533,7 +2541,7 @@ async fn test_delete_whitespaces(cx: &mut TestAppContext) {
             cx,
         );
     });
-    cx.assert_editor_state("here is some ˇwith a space");
+    cx.assert_editor_state("here is someˇwith a space");
 
     cx.set_state("here is some text    ˇwith a space");
     cx.update_editor(|editor, window, cx| {
@@ -2572,7 +2580,7 @@ async fn test_delete_whitespaces(cx: &mut TestAppContext) {
             cx,
         );
     });
-    cx.assert_editor_state("here is some textˇ a space");
+    cx.assert_editor_state("here is some textˇwith a space");
 
     cx.set_state("here is some textˇ    with a space");
     cx.update_editor(|editor, window, cx| {
@@ -2585,7 +2593,7 @@ async fn test_delete_whitespaces(cx: &mut TestAppContext) {
             cx,
         );
     });
-    cx.assert_editor_state("here is some textˇ a space");
+    cx.assert_editor_state("here is some textˇwith a space");
 
     cx.set_state("here is some textˇ    with a space");
     cx.update_editor(|editor, window, cx| {
@@ -2612,7 +2620,6 @@ async fn test_delete_whitespaces(cx: &mut TestAppContext) {
         );
     });
     cx.assert_editor_state("here is some textˇwith a space");
-    // TODO kb split off into a separate test
     cx.update_editor(|editor, window, cx| {
         editor.delete_to_previous_word_start(
             &DeleteToPreviousWordStart {
@@ -2836,6 +2843,7 @@ async fn test_delete_to_bracket(cx: &mut TestAppContext) {
             cx,
         );
     });
+    // Brackets on the right are not paired, hence deletion does not stop at them
     cx.assert_editor_state(r#"ˇ");"#);
     cx.update_editor(|editor, window, cx| {
         editor.delete_to_next_word_end(
@@ -2941,6 +2949,8 @@ fn test_delete_to_next_word_end_or_newline(cx: &mut TestAppContext) {
         assert_eq!(editor.buffer.read(cx).read(cx).text(), "\nthree\n   four");
         editor.delete_to_next_word_end(&del_to_next_word_end_ignore_newlines, window, cx);
         assert_eq!(editor.buffer.read(cx).read(cx).text(), "\n   four");
+        editor.delete_to_next_word_end(&del_to_next_word_end_ignore_newlines, window, cx);
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "four");
         editor.delete_to_next_word_end(&del_to_next_word_end_ignore_newlines, window, cx);
         assert_eq!(editor.buffer.read(cx).read(cx).text(), "");
     });
