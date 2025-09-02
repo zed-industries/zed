@@ -23,7 +23,7 @@ impl SessionId {
         Self(client_id as u32)
     }
 
-    pub fn to_proto(&self) -> u64 {
+    pub fn to_proto(self) -> u64 {
         self.0 as u64
     }
 }

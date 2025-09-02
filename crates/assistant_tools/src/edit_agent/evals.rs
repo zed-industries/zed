@@ -1153,8 +1153,7 @@ impl EvalInput {
             .expect("Conversation must end with an edit_file tool use")
             .clone();
 
-        let edit_file_input: EditFileToolInput =
-            serde_json::from_value(tool_use.input.clone()).unwrap();
+        let edit_file_input: EditFileToolInput = serde_json::from_value(tool_use.input).unwrap();
 
         EvalInput {
             conversation,
@@ -1283,14 +1282,14 @@ impl EvalAssertion {
 
             // Parse the score from the response
             let re = regex::Regex::new(r"<score>(\d+)</score>").unwrap();
-            if let Some(captures) = re.captures(&output) {
-                if let Some(score_match) = captures.get(1) {
-                    let score = score_match.as_str().parse().unwrap_or(0);
-                    return Ok(EvalAssertionOutcome {
-                        score,
-                        message: Some(output),
-                    });
-                }
+            if let Some(captures) = re.captures(&output)
+                && let Some(score_match) = captures.get(1)
+            {
+                let score = score_match.as_str().parse().unwrap_or(0);
+                return Ok(EvalAssertionOutcome {
+                    score,
+                    message: Some(output),
+                });
             }
 
             anyhow::bail!("No score found in response. Raw output: {output}");
@@ -1460,7 +1459,7 @@ impl EditAgentTest {
     async fn new(cx: &mut TestAppContext) -> Self {
         cx.executor().allow_parking();
 
-        let fs = FakeFs::new(cx.executor().clone());
+        let fs = FakeFs::new(cx.executor());
         cx.update(|cx| {
             settings::init(cx);
             gpui_tokio::init(cx);
@@ -1475,7 +1474,7 @@ impl EditAgentTest {
             Project::init_settings(cx);
             language::init(cx);
             language_model::init(client.clone(), cx);
-            language_models::init(user_store.clone(), client.clone(), cx);
+            language_models::init(user_store, client.clone(), cx);
             crate::init(client.http_client(), cx);
         });
 
@@ -1586,7 +1585,7 @@ impl EditAgentTest {
         let has_system_prompt = eval
             .conversation
             .first()
-            .map_or(false, |msg| msg.role == Role::System);
+            .is_some_and(|msg| msg.role == Role::System);
         let messages = if has_system_prompt {
             eval.conversation
         } else {
@@ -1658,23 +1657,24 @@ impl EditAgentTest {
 }
 
 async fn retry_on_rate_limit<R>(mut request: impl AsyncFnMut() -> Result<R>) -> Result<R> {
+    const MAX_RETRIES: usize = 20;
     let mut attempt = 0;
+
     loop {
         attempt += 1;
-        match request().await {
-            Ok(result) => return Ok(result),
-            Err(err) => match err.downcast::<LanguageModelCompletionError>() {
-                Ok(err) => match &err {
+        let response = request().await;
+
+        if attempt >= MAX_RETRIES {
+            return response;
+        }
+
+        let retry_delay = match &response {
+            Ok(_) => None,
+            Err(err) => match err.downcast_ref::<LanguageModelCompletionError>() {
+                Some(err) => match &err {
                     LanguageModelCompletionError::RateLimitExceeded { retry_after, .. }
                     | LanguageModelCompletionError::ServerOverloaded { retry_after, .. } => {
-                        let retry_after = retry_after.unwrap_or(Duration::from_secs(5));
-                        // Wait for the duration supplied, with some jitter to avoid all requests being made at the same time.
-                        let jitter = retry_after.mul_f64(rand::thread_rng().gen_range(0.0..1.0));
-                        eprintln!(
-                            "Attempt #{attempt}: {err}. Retry after {retry_after:?} + jitter of {jitter:?}"
-                        );
-                        Timer::after(retry_after + jitter).await;
-                        continue;
+                        Some(retry_after.unwrap_or(Duration::from_secs(5)))
                     }
                     LanguageModelCompletionError::UpstreamProviderError {
                         status,
@@ -1687,23 +1687,31 @@ async fn retry_on_rate_limit<R>(mut request: impl AsyncFnMut() -> Result<R>) -> 
                             StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE
                         ) || status.as_u16() == 529;
 
-                        if !should_retry {
-                            return Err(err.into());
+                        if should_retry {
+                            // Use server-provided retry_after if available, otherwise use default
+                            Some(retry_after.unwrap_or(Duration::from_secs(5)))
+                        } else {
+                            None
                         }
-
-                        // Use server-provided retry_after if available, otherwise use default
-                        let retry_after = retry_after.unwrap_or(Duration::from_secs(5));
-                        let jitter = retry_after.mul_f64(rand::thread_rng().gen_range(0.0..1.0));
-                        eprintln!(
-                            "Attempt #{attempt}: {err}. Retry after {retry_after:?} + jitter of {jitter:?}"
-                        );
-                        Timer::after(retry_after + jitter).await;
-                        continue;
                     }
-                    _ => return Err(err.into()),
+                    LanguageModelCompletionError::ApiReadResponseError { .. }
+                    | LanguageModelCompletionError::ApiInternalServerError { .. }
+                    | LanguageModelCompletionError::HttpSend { .. } => {
+                        // Exponential backoff for transient I/O and internal server errors
+                        Some(Duration::from_secs(2_u64.pow((attempt - 1) as u32).min(30)))
+                    }
+                    _ => None,
                 },
-                Err(err) => return Err(err),
+                _ => None,
             },
+        };
+
+        if let Some(retry_after) = retry_delay {
+            let jitter = retry_after.mul_f64(rand::thread_rng().gen_range(0.0..1.0));
+            eprintln!("Attempt #{attempt}: Retry after {retry_after:?} + jitter of {jitter:?}");
+            Timer::after(retry_after + jitter).await;
+        } else {
+            return response;
         }
     }
 }

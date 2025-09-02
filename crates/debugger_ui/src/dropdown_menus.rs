@@ -1,9 +1,9 @@
-use std::{rc::Rc, time::Duration};
+use std::rc::Rc;
 
 use collections::HashMap;
-use gpui::{Animation, AnimationExt as _, Entity, Transformation, WeakEntity, percentage};
+use gpui::{Entity, WeakEntity};
 use project::debugger::session::{ThreadId, ThreadStatus};
-use ui::{ContextMenu, DropdownMenu, DropdownStyle, Indicator, prelude::*};
+use ui::{CommonAnimationExt, ContextMenu, DropdownMenu, DropdownStyle, Indicator, prelude::*};
 use util::{maybe, truncate_and_trailoff};
 
 use crate::{
@@ -152,11 +152,7 @@ impl DebugPanel {
             Icon::new(IconName::ArrowCircle)
                 .size(IconSize::Small)
                 .color(Color::Muted)
-                .with_animation(
-                    "arrow-circle",
-                    Animation::new(Duration::from_secs(2)).repeat(),
-                    |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                )
+                .with_rotate_animation(2)
                 .into_any_element()
         } else {
             match running_state.thread_status(cx).unwrap_or_default() {
@@ -272,10 +268,9 @@ impl DebugPanel {
             .child(session_entry.label_element(self_depth, cx))
             .child(
                 IconButton::new("close-debug-session", IconName::Close)
-                    .visible_on_hover(id.clone())
+                    .visible_on_hover(id)
                     .icon_size(IconSize::Small)
                     .on_click({
-                        let weak = weak.clone();
                         move |_, window, cx| {
                             weak.update(cx, |panel, cx| {
                                 panel.close_session(session_entity_id, window, cx);

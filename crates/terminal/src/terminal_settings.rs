@@ -6,7 +6,7 @@ use gpui::{AbsoluteLength, App, FontFallbacks, FontFeatures, FontWeight, Pixels,
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 
-use settings::SettingsSources;
+use settings::{SettingsSources, SettingsUi};
 use std::path::PathBuf;
 use task::Shell;
 use theme::FontFamilyName;
@@ -135,7 +135,7 @@ pub enum ActivateScript {
     Pyenv,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
 pub struct TerminalSettingsContent {
     /// What shell to use when opening a terminal.
     ///
@@ -325,10 +325,10 @@ impl settings::Settings for TerminalSettings {
             .and_then(|v| v.as_object())
         {
             for (k, v) in env {
-                if v.is_null() {
-                    if let Some(zed_env) = current.env.as_mut() {
-                        zed_env.remove(k);
-                    }
+                if v.is_null()
+                    && let Some(zed_env) = current.env.as_mut()
+                {
+                    zed_env.remove(k);
                 }
                 let Some(v) = v.as_str() else { continue };
                 if let Some(zed_env) = current.env.as_mut() {

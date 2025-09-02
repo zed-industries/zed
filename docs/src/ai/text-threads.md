@@ -16,7 +16,7 @@ To begin, type a message in a `You` block.
 
 As you type, the remaining tokens count for the selected model is updated.
 
-Inserting text from an editor is as simple as highlighting the text and running `assistant: quote selection` ({#kb assistant::QuoteSelection}); Zed will wrap it in a fenced code block if it is code.
+Inserting text from an editor is as simple as highlighting the text and running `agent: quote selection` ({#kb agent::QuoteSelection}); Zed will wrap it in a fenced code block if it is code.
 
 ![Quoting a selection](https://zed.dev/img/assistant/quoting-a-selection.png)
 
@@ -148,7 +148,7 @@ Usage: `/terminal [<number>]`
 
 The `/selection` command inserts the selected text in the editor into the context. This is useful for referencing specific parts of your code.
 
-This is equivalent to the `assistant: quote selection` command ({#kb assistant::QuoteSelection}).
+This is equivalent to the `agent: quote selection` command ({#kb agent::QuoteSelection}).
 
 Usage: `/selection`
 

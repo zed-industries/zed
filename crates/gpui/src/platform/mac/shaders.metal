@@ -567,15 +567,20 @@ vertex UnderlineVertexOutput underline_vertex(
 fragment float4 underline_fragment(UnderlineFragmentInput input [[stage_in]],
                                    constant Underline *underlines
                                    [[buffer(UnderlineInputIndex_Underlines)]]) {
+  const float WAVE_FREQUENCY = 2.0;
+  const float WAVE_HEIGHT_RATIO = 0.8;
+
   Underline underline = underlines[input.underline_id];
   if (underline.wavy) {
     float half_thickness = underline.thickness * 0.5;
     float2 origin =
         float2(underline.bounds.origin.x, underline.bounds.origin.y);
+
     float2 st = ((input.position.xy - origin) / underline.bounds.size.height) -
                 float2(0., 0.5);
-    float frequency = (M_PI_F * (3. * underline.thickness)) / 8.;
-    float amplitude = 1. / (2. * underline.thickness);
+    float frequency = (M_PI_F * WAVE_FREQUENCY * underline.thickness) / underline.bounds.size.height;
+    float amplitude = (underline.thickness * WAVE_HEIGHT_RATIO) / underline.bounds.size.height;
+
     float sine = sin(st.x * frequency) * amplitude;
     float dSine = cos(st.x * frequency) * amplitude * frequency;
     float distance = (st.y - sine) / sqrt(1. + dSine * dSine);

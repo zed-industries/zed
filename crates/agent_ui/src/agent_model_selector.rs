@@ -66,10 +66,8 @@ impl AgentModelSelector {
                                     fs.clone(),
                                     cx,
                                     move |settings, _cx| {
-                                        settings.set_inline_assistant_model(
-                                            provider.clone(),
-                                            model_id.clone(),
-                                        );
+                                        settings
+                                            .set_inline_assistant_model(provider.clone(), model_id);
                                     },
                                 );
                             }

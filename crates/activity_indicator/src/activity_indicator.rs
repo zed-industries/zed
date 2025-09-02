@@ -1,11 +1,10 @@
 use auto_update::{AutoUpdateStatus, AutoUpdater, DismissErrorMessage, VersionCheckType};
 use editor::Editor;
-use extension_host::ExtensionStore;
+use extension_host::{ExtensionOperation, ExtensionStore};
 use futures::StreamExt;
 use gpui::{
-    Animation, AnimationExt as _, App, Context, CursorStyle, Entity, EventEmitter,
-    InteractiveElement as _, ParentElement as _, Render, SharedString, StatefulInteractiveElement,
-    Styled, Transformation, Window, actions, percentage,
+    App, Context, CursorStyle, Entity, EventEmitter, InteractiveElement as _, ParentElement as _,
+    Render, SharedString, StatefulInteractiveElement, Styled, Window, actions,
 };
 use language::{
     BinaryStatus, LanguageRegistry, LanguageServerId, LanguageServerName,
@@ -25,7 +24,10 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use ui::{ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
+use ui::{
+    ButtonLike, CommonAnimationExt, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip,
+    prelude::*,
+};
 use util::truncate_and_trailoff;
 use workspace::{StatusItemView, Workspace, item::ItemHandle};
 
@@ -103,26 +105,21 @@ impl ActivityIndicator {
             cx.subscribe_in(
                 &workspace_handle,
                 window,
-                |activity_indicator, _, event, window, cx| match event {
-                    workspace::Event::ClearActivityIndicator { .. } => {
-                        if activity_indicator.statuses.pop().is_some() {
-                            activity_indicator.dismiss_error_message(
-                                &DismissErrorMessage,
-                                window,
-                                cx,
-                            );
-                            cx.notify();
-                        }
+                |activity_indicator, _, event, window, cx| {
+                    if let workspace::Event::ClearActivityIndicator = event
+                        && activity_indicator.statuses.pop().is_some()
+                    {
+                        activity_indicator.dismiss_error_message(&DismissErrorMessage, window, cx);
+                        cx.notify();
                     }
-                    _ => {}
                 },
             )
             .detach();
 
             cx.subscribe(
                 &project.read(cx).lsp_store(),
-                |activity_indicator, _, event, cx| match event {
-                    LspStoreEvent::LanguageServerUpdate { name, message, .. } => {
+                |activity_indicator, _, event, cx| {
+                    if let LspStoreEvent::LanguageServerUpdate { name, message, .. } = event {
                         if let proto::update_language_server::Variant::StatusUpdate(status_update) =
                             message
                         {
@@ -191,7 +188,6 @@ impl ActivityIndicator {
                         }
                         cx.notify()
                     }
-                    _ => {}
                 },
             )
             .detach();
@@ -206,9 +202,10 @@ impl ActivityIndicator {
 
             cx.subscribe(
                 &project.read(cx).git_store().clone(),
-                |_, _, event: &GitStoreEvent, cx| match event {
-                    project::git_store::GitStoreEvent::JobsUpdated => cx.notify(),
-                    _ => {}
+                |_, _, event: &GitStoreEvent, cx| {
+                    if let project::git_store::GitStoreEvent::JobsUpdated = event {
+                        cx.notify()
+                    }
                 },
             )
             .detach();
@@ -410,13 +407,7 @@ impl ActivityIndicator {
                     icon: Some(
                         Icon::new(IconName::ArrowCircle)
                             .size(IconSize::Small)
-                            .with_animation(
-                                "arrow-circle",
-                                Animation::new(Duration::from_secs(2)).repeat(),
-                                |icon, delta| {
-                                    icon.transform(Transformation::rotate(percentage(delta)))
-                                },
-                            )
+                            .with_rotate_animation(2)
                             .into_any_element(),
                     ),
                     message,
@@ -438,11 +429,7 @@ impl ActivityIndicator {
                 icon: Some(
                     Icon::new(IconName::ArrowCircle)
                         .size(IconSize::Small)
-                        .with_animation(
-                            "arrow-circle",
-                            Animation::new(Duration::from_secs(2)).repeat(),
-                            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                        )
+                        .with_rotate_animation(2)
                         .into_any_element(),
                 ),
                 message: format!("Debug: {}", session.read(cx).adapter()),
@@ -458,26 +445,20 @@ impl ActivityIndicator {
             .map(|r| r.read(cx))
             .and_then(Repository::current_job);
         // Show any long-running git command
-        if let Some(job_info) = current_job {
-            if Instant::now() - job_info.start >= GIT_OPERATION_DELAY {
-                return Some(Content {
-                    icon: Some(
-                        Icon::new(IconName::ArrowCircle)
-                            .size(IconSize::Small)
-                            .with_animation(
-                                "arrow-circle",
-                                Animation::new(Duration::from_secs(2)).repeat(),
-                                |icon, delta| {
-                                    icon.transform(Transformation::rotate(percentage(delta)))
-                                },
-                            )
-                            .into_any_element(),
-                    ),
-                    message: job_info.message.into(),
-                    on_click: None,
-                    tooltip_message: None,
-                });
-            }
+        if let Some(job_info) = current_job
+            && Instant::now() - job_info.start >= GIT_OPERATION_DELAY
+        {
+            return Some(Content {
+                icon: Some(
+                    Icon::new(IconName::ArrowCircle)
+                        .size(IconSize::Small)
+                        .with_rotate_animation(2)
+                        .into_any_element(),
+                ),
+                message: job_info.message.into(),
+                on_click: None,
+                tooltip_message: None,
+            });
         }
 
         // Show any language server installation info.
@@ -678,8 +659,9 @@ impl ActivityIndicator {
         }
 
         // Show any application auto-update info.
-        if let Some(updater) = &self.auto_updater {
-            return match &updater.read(cx).status() {
+        self.auto_updater
+            .as_ref()
+            .and_then(|updater| match &updater.read(cx).status() {
                 AutoUpdateStatus::Checking => Some(Content {
                     icon: Some(
                         Icon::new(IconName::Download)
@@ -702,7 +684,7 @@ impl ActivityIndicator {
                     on_click: Some(Arc::new(|this, window, cx| {
                         this.dismiss_error_message(&DismissErrorMessage, window, cx)
                     })),
-                    tooltip_message: Some(Self::version_tooltip_message(&version)),
+                    tooltip_message: Some(Self::version_tooltip_message(version)),
                 }),
                 AutoUpdateStatus::Installing { version } => Some(Content {
                     icon: Some(
@@ -714,21 +696,13 @@ impl ActivityIndicator {
                     on_click: Some(Arc::new(|this, window, cx| {
                         this.dismiss_error_message(&DismissErrorMessage, window, cx)
                     })),
-                    tooltip_message: Some(Self::version_tooltip_message(&version)),
+                    tooltip_message: Some(Self::version_tooltip_message(version)),
                 }),
-                AutoUpdateStatus::Updated {
-                    binary_path,
-                    version,
-                } => Some(Content {
+                AutoUpdateStatus::Updated { version } => Some(Content {
                     icon: None,
                     message: "Click to restart and update Zed".to_string(),
-                    on_click: Some(Arc::new({
-                        let reload = workspace::Reload {
-                            binary_path: Some(binary_path.clone()),
-                        };
-                        move |_, _, cx| workspace::reload(&reload, cx)
-                    })),
-                    tooltip_message: Some(Self::version_tooltip_message(&version)),
+                    on_click: Some(Arc::new(move |_, _, cx| workspace::reload(cx))),
+                    tooltip_message: Some(Self::version_tooltip_message(version)),
                 }),
                 AutoUpdateStatus::Errored => Some(Content {
                     icon: Some(
@@ -743,29 +717,49 @@ impl ActivityIndicator {
                     tooltip_message: None,
                 }),
                 AutoUpdateStatus::Idle => None,
-            };
-        }
+            })
+            .or_else(|| {
+                if let Some(extension_store) =
+                    ExtensionStore::try_global(cx).map(|extension_store| extension_store.read(cx))
+                    && let Some((extension_id, operation)) =
+                        extension_store.outstanding_operations().iter().next()
+                {
+                    let (message, icon, rotate) = match operation {
+                        ExtensionOperation::Install => (
+                            format!("Installing {extension_id} extension…"),
+                            IconName::LoadCircle,
+                            true,
+                        ),
+                        ExtensionOperation::Upgrade => (
+                            format!("Updating {extension_id} extension…"),
+                            IconName::Download,
+                            false,
+                        ),
+                        ExtensionOperation::Remove => (
+                            format!("Removing {extension_id} extension…"),
+                            IconName::LoadCircle,
+                            true,
+                        ),
+                    };
 
-        if let Some(extension_store) =
-            ExtensionStore::try_global(cx).map(|extension_store| extension_store.read(cx))
-        {
-            if let Some(extension_id) = extension_store.outstanding_operations().keys().next() {
-                return Some(Content {
-                    icon: Some(
-                        Icon::new(IconName::Download)
-                            .size(IconSize::Small)
-                            .into_any_element(),
-                    ),
-                    message: format!("Updating {extension_id} extension…"),
-                    on_click: Some(Arc::new(|this, window, cx| {
-                        this.dismiss_error_message(&DismissErrorMessage, window, cx)
-                    })),
-                    tooltip_message: None,
-                });
-            }
-        }
-
-        None
+                    Some(Content {
+                        icon: Some(Icon::new(icon).size(IconSize::Small).map(|this| {
+                            if rotate {
+                                this.with_rotate_animation(3).into_any_element()
+                            } else {
+                                this.into_any_element()
+                            }
+                        })),
+                        message,
+                        on_click: Some(Arc::new(|this, window, cx| {
+                            this.dismiss_error_message(&Default::default(), window, cx)
+                        })),
+                        tooltip_message: None,
+                    })
+                } else {
+                    None
+                }
+            })
     }
 
     fn version_tooltip_message(version: &VersionCheckType) -> String {

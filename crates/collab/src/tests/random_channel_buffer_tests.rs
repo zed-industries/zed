@@ -266,7 +266,7 @@ impl RandomizedTest for RandomChannelBufferTest {
                                 "client {user_id} has different text than client {prev_user_id} for channel {channel_name}",
                             );
                         } else {
-                            prev_text = Some((user_id, text.clone()));
+                            prev_text = Some((user_id, text));
                         }
 
                         // Assert that all clients and the server agree about who is present in the

@@ -16,7 +16,7 @@ jobs:
   bump_patch_version:
     if: github.repository_owner == 'zed-industries'
     runs-on:
-      - buildjet-16vcpu-ubuntu-2204
+      - namespace-profile-16x32-ubuntu-2204
     steps:
       - name: Checkout code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
