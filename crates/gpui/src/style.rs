@@ -319,16 +319,16 @@ pub struct BoxShadow {
     pub spread_radius: Pixels,
 }
 
-/// The box-sizing property, similar to the CSS property `box-sizing`, defaults to `ContentBox`
+/// The box-sizing property, similar to the CSS property `box-sizing`, defaults to `BorderBox`
 ///
 /// https://developer.mozilla.org/en-US/docs/Web/CSS/box-sizing
 #[derive(Default, Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum BoxSizing {
-    /// Excluding borders and paddings.
-    #[default]
-    ContentBox,
     /// Including borders and paddings.
+    #[default]
     BorderBox,
+    /// Excluding borders and paddings.
+    ContentBox,
 }
 
 /// How to handle whitespace in text
