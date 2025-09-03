@@ -5551,6 +5551,9 @@ mod disable_ai_settings_tests {
 
     #[gpui::test]
     async fn test_disable_ai_settings_security(cx: &mut TestAppContext) {
+        fn disable_setting(value: Option<bool>) -> DisableAiSettingContent {
+            DisableAiSettingContent { disable_ai: value }
+        }
         cx.update(|cx| {
             // Test 1: Default is false (AI enabled)
             let sources = SettingsSources {
