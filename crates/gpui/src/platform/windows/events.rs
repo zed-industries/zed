@@ -25,7 +25,7 @@ pub(crate) const WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD: u32 = WM_USER + 3;
 pub(crate) const WM_GPUI_DOCK_MENU_ACTION: u32 = WM_USER + 4;
 pub(crate) const WM_GPUI_FORCE_UPDATE_WINDOW: u32 = WM_USER + 5;
 pub(crate) const WM_GPUI_KEYBOARD_LAYOUT_CHANGED: u32 = WM_USER + 6;
-pub(crate) const WM_GPUI_DEVICE_LOST: u32 = WM_USER + 7;
+pub(crate) const WM_GPUI_GPU_DEVICE_LOST: u32 = WM_USER + 7;
 
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 const AUTO_HIDE_TASKBAR_THICKNESS_PX: i32 = 1;
@@ -104,7 +104,7 @@ impl WindowsWindowInner {
             WM_SHOWWINDOW => self.handle_window_visibility_changed(handle, wparam),
             WM_GPUI_CURSOR_STYLE_CHANGED => self.handle_cursor_changed(lparam),
             WM_GPUI_FORCE_UPDATE_WINDOW => self.draw_window(handle, true),
-            WM_GPUI_DEVICE_LOST => self.handle_device_lost(lparam),
+            WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(lparam),
             _ => None,
         };
         if let Some(n) = handled {

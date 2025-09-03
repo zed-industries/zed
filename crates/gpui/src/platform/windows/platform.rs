@@ -687,7 +687,7 @@ impl WindowsPlatformInner {
             | WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD
             | WM_GPUI_DOCK_MENU_ACTION
             | WM_GPUI_KEYBOARD_LAYOUT_CHANGED
-            | WM_GPUI_DEVICE_LOST => self.handle_gpui_events(msg, wparam, lparam),
+            | WM_GPUI_GPU_DEVICE_LOST => self.handle_gpui_events(msg, wparam, lparam),
             _ => None,
         };
         if let Some(result) = handled {
@@ -712,7 +712,7 @@ impl WindowsPlatformInner {
             WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD => self.run_foreground_task(),
             WM_GPUI_DOCK_MENU_ACTION => self.handle_dock_action_event(lparam.0 as _),
             WM_GPUI_KEYBOARD_LAYOUT_CHANGED => self.handle_keyboard_layout_change(),
-            WM_GPUI_DEVICE_LOST => self.handle_device_lost(lparam),
+            WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(lparam),
             _ => unreachable!(),
         }
     }
@@ -1028,7 +1028,7 @@ fn handle_device_lost(
     unsafe {
         SendMessageW(
             platform_window,
-            WM_GPUI_DEVICE_LOST,
+            WM_GPUI_GPU_DEVICE_LOST,
             Some(WPARAM(validation_number)),
             Some(LPARAM(devices as *const _ as _)),
         );
@@ -1042,7 +1042,7 @@ fn handle_device_lost(
             unsafe {
                 SendMessageW(
                     window.as_raw(),
-                    WM_GPUI_DEVICE_LOST,
+                    WM_GPUI_GPU_DEVICE_LOST,
                     Some(WPARAM(validation_number)),
                     Some(LPARAM(devices as *const _ as _)),
                 );
