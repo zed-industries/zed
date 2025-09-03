@@ -501,10 +501,11 @@ handlebars = "4.3"
 heck = "0.5"
 heed = { version = "0.21.0", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
-human_bytes = "0.4.1"
 html5ever = "0.27.0"
+html5minify = { git = "https://github.com/RemcoSmitsDev/html5minify", rev = "71b82efed5e3118342e92d91623c41817bb01e7d" }
 http = "1.1"
 http-body = "1.0"
+human_bytes = "0.4.1"
 hyper = "0.14"
 ignore = "0.4.22"
 image = "0.25.1"
