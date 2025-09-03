@@ -13,7 +13,7 @@ pub fn init(cx: &mut App) {
 }
 
 #[derive(Default, Deserialize, Serialize, Clone, JsonSchema, Debug, SettingsUi, SettingsKey)]
-#[settings_key(None)]
+#[settings_key(key = "agent_servers")]
 pub struct AllAgentServersSettings {
     pub gemini: Option<BuiltinAgentServerSettings>,
     pub claude: Option<CustomAgentServerSettings>,
