@@ -79,7 +79,7 @@ pub(crate) struct WindowsWindowInner {
 impl WindowsWindowState {
     fn new(
         hwnd: HWND,
-        devices: DirectXDevices,
+        devices: &DirectXDevices,
         window_params: &CREATESTRUCTW,
         current_cursor: Option<HCURSOR>,
         display: WindowsDisplay,
@@ -209,7 +209,7 @@ impl WindowsWindowInner {
     fn new(context: &mut WindowCreateContext, hwnd: HWND, cs: &CREATESTRUCTW) -> Result<Rc<Self>> {
         let state = RefCell::new(WindowsWindowState::new(
             hwnd,
-            context.devices.take().unwrap(),
+            &context.devices,
             cs,
             context.current_cursor,
             context.display,
@@ -347,7 +347,7 @@ struct WindowCreateContext {
     platform_window_handle: HWND,
     appearance: WindowAppearance,
     disable_direct_composition: bool,
-    devices: Option<DirectXDevices>,
+    devices: DirectXDevices,
 }
 
 impl WindowsWindow {
@@ -426,7 +426,7 @@ impl WindowsWindow {
             platform_window_handle,
             appearance,
             disable_direct_composition,
-            devices: Some(devices),
+            devices,
         };
         let creation_result = unsafe {
             CreateWindowExW(

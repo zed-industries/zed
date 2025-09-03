@@ -98,7 +98,7 @@ struct DirectComposition {
 
 impl DirectXRendererDevices {
     pub(crate) fn new(
-        devices: DirectXDevices,
+        devices: &DirectXDevices,
         disable_direct_composition: bool,
     ) -> Result<ManuallyDrop<Self>> {
         let DirectXDevices {
@@ -114,10 +114,10 @@ impl DirectXRendererDevices {
         };
 
         Ok(ManuallyDrop::new(Self {
-            adapter,
-            dxgi_factory,
-            device,
-            device_context,
+            adapter: adapter.clone(),
+            dxgi_factory: dxgi_factory.clone(),
+            device: device.clone(),
+            device_context: device_context.clone(),
             dxgi_device,
         }))
     }
@@ -126,7 +126,7 @@ impl DirectXRendererDevices {
 impl DirectXRenderer {
     pub(crate) fn new(
         hwnd: HWND,
-        devices: DirectXDevices,
+        devices: &DirectXDevices,
         disable_direct_composition: bool,
     ) -> Result<Self> {
         if disable_direct_composition {
@@ -206,7 +206,7 @@ impl DirectXRenderer {
         result.ok().context("Presenting swap chain failed")
     }
 
-    pub(crate) fn handle_device_lost(&mut self, devices: DirectXDevices) -> Result<()> {
+    pub(crate) fn handle_device_lost(&mut self, devices: &DirectXDevices) -> Result<()> {
         let disable_direct_composition = self.direct_composition.is_none();
 
         unsafe {

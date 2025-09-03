@@ -45,7 +45,6 @@ pub(crate) struct WindowsPlatform {
 struct WindowsPlatformInner {
     state: RefCell<WindowsPlatformState>,
     raw_window_handles: std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
-    text_system: std::sync::Weak<DirectWriteTextSystem>,
     // The below members will never change throughout the entire lifecycle of the app.
     validation_number: usize,
     main_receiver: flume::Receiver<Runnable>,
@@ -105,7 +104,6 @@ impl WindowsPlatform {
         let mut context = PlatformWindowCreateContext {
             inner: None,
             raw_window_handles: Arc::downgrade(&raw_window_handles),
-            text_system: Arc::downgrade(&text_system),
             validation_number,
             main_receiver: Some(main_receiver),
             devices: Some(devices),
@@ -240,6 +238,7 @@ impl WindowsPlatform {
         let platform_window: SafeHwnd = self.handle.into();
         let validation_number = self.inner.validation_number;
         let all_windows = Arc::downgrade(&self.raw_window_handles);
+        let text_system = Arc::downgrade(&self.text_system);
         std::thread::spawn(move || {
             let vsync_provider = VSyncProvider::new();
             loop {
@@ -250,6 +249,7 @@ impl WindowsPlatform {
                         platform_window.as_raw(),
                         validation_number,
                         &all_windows,
+                        &text_system,
                     );
                 }
                 let Some(all_windows) = all_windows.upgrade() else {
@@ -670,7 +670,6 @@ impl WindowsPlatformInner {
         Ok(Rc::new(Self {
             state,
             raw_window_handles: context.raw_window_handles.clone(),
-            text_system: context.text_system.clone(),
             validation_number: context.validation_number,
             main_receiver: context.main_receiver.take().unwrap(),
         }))
@@ -813,7 +812,6 @@ pub(crate) struct WindowCreationInfo {
 struct PlatformWindowCreateContext {
     inner: Option<Result<Rc<WindowsPlatformInner>>>,
     raw_window_handles: std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
-    text_system: std::sync::Weak<DirectWriteTextSystem>,
     validation_number: usize,
     main_receiver: Option<flume::Receiver<Runnable>>,
     devices: Option<DirectXDevices>,
@@ -1005,30 +1003,30 @@ fn handle_device_lost(
     platform_window: HWND,
     validation_number: usize,
     all_windows: &std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
+    text_system: &std::sync::Weak<DirectWriteTextSystem>,
 ) {
     // Here we wait a bit to ensure the the system has time to recover from the device lost state.
     // If we don't wait, the final drawing result will be blank.
     std::thread::sleep(std::time::Duration::from_millis(350));
-    let mut success = false;
-    for _ in 0..5 {
-        match DirectXDevices::new() {
-            Ok(new_devices) => {
-                *devices = new_devices;
-                success = true;
-                break;
-            }
-            Err(err) => {
-                log::error!("Failed to create new DirectX devices: {:?}", err);
-                std::thread::sleep(std::time::Duration::from_millis(200));
-                continue;
-            }
+
+    let new_device = (0..5).find_map(|i| {
+        if i > 0 {
+            // Add a small delay before retrying
+            std::thread::sleep(std::time::Duration::from_millis(200));
         }
-    }
-    if !success {
+        DirectXDevices::new()
+            .context("Failed to recreate new DirectX devices after device lost")
+            .log_err()
+    });
+    if let Some(new_devices) = new_device {
+        *devices = new_devices;
+    } else {
         log::error!("Failed to recover DirectX devices after multiple attempts.");
-        std::process::exit(1);
+        // Do something here?
+        // std::process::exit(1);
     }
     log::info!("DirectX devices successfully recreated.");
+
     unsafe {
         SendMessageW(
             platform_window,
@@ -1036,6 +1034,10 @@ fn handle_device_lost(
             Some(WPARAM(validation_number)),
             Some(LPARAM(devices as *const _ as _)),
         );
+    }
+
+    if let Some(text_system) = text_system.upgrade() {
+        text_system.handle_gpu_lost(&devices.device, &devices.device_context);
     }
     if let Some(all_windows) = all_windows.upgrade() {
         for window in all_windows.read().iter() {
