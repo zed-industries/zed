@@ -12,31 +12,31 @@ use which_key::{WhichKeyLocation, WhichKeySettings};
 
 // Hard-coded list of keystrokes to filter out from which-key display
 static FILTERED_KEYSTROKES: &[&str] = &[
-    // // Modifiers on normal vim commands
-    // "g h",
-    // "g j",
-    // "g k",
-    // "g l",
-    // "g $",
-    // "g ^",
-    // // Duplicate keys with "ctrl" held, e.g. "ctrl-w ctrl-a" is duplicate of "ctrl-w a"
-    // "ctrl-w ctrl-a",
-    // "ctrl-w ctrl-c",
-    // "ctrl-w ctrl-h",
-    // "ctrl-w ctrl-j",
-    // "ctrl-w ctrl-k",
-    // "ctrl-w ctrl-l",
-    // "ctrl-w ctrl-n",
-    // "ctrl-w ctrl-o",
-    // "ctrl-w ctrl-p",
-    // "ctrl-w ctrl-q",
-    // "ctrl-w ctrl-s",
-    // "ctrl-w ctrl-v",
-    // "ctrl-w ctrl-w",
-    // "ctrl-w ctrl-]",
-    // "ctrl-w ctrl-shift-w",
-    // "ctrl-w ctrl-g t",
-    // "ctrl-w ctrl-g shift-t",
+    // Modifiers on normal vim commands
+    "g h",
+    "g j",
+    "g k",
+    "g l",
+    "g $",
+    "g ^",
+    // Duplicate keys with "ctrl" held, e.g. "ctrl-w ctrl-a" is duplicate of "ctrl-w a"
+    "ctrl-w ctrl-a",
+    "ctrl-w ctrl-c",
+    "ctrl-w ctrl-h",
+    "ctrl-w ctrl-j",
+    "ctrl-w ctrl-k",
+    "ctrl-w ctrl-l",
+    "ctrl-w ctrl-n",
+    "ctrl-w ctrl-o",
+    "ctrl-w ctrl-p",
+    "ctrl-w ctrl-q",
+    "ctrl-w ctrl-s",
+    "ctrl-w ctrl-v",
+    "ctrl-w ctrl-w",
+    "ctrl-w ctrl-]",
+    "ctrl-w ctrl-shift-w",
+    "ctrl-w ctrl-g t",
+    "ctrl-w ctrl-g shift-t",
 ];
 
 pub struct WhichKeyLayer {

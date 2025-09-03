@@ -14,17 +14,14 @@ pub enum WhichKeyLocation {
 
 #[derive(Deserialize, SettingsUi)]
 pub struct WhichKeySettings {
-    #[serde(default = "default_enabled")]
+    #[serde(default)]
     pub enabled: bool,
     #[serde(default = "default_delay_ms")]
     pub delay_ms: u64,
     #[serde(default = "default_group")]
     pub group: bool,
+    #[serde(default)]
     pub location: WhichKeyLocation,
-}
-
-fn default_enabled() -> bool {
-    true
 }
 
 fn default_delay_ms() -> u64 {
