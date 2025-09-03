@@ -100,8 +100,9 @@ However, the SDK doesn't yet expose everything needed to fully support all of th
 
 #### CLAUDE.md
 
-If you already have a `CLAUDE.md` file in your project (either at the root of it or in subdirectories) or at your root `.claude` directory, Claude Code in Zed will use it.
-If you don't have one, you can make Claude Code create one for you through through the `init` slash command.
+Claude Code in Zed will automatically use any `CLAUDE.md` file found in your project root, project subdirectories, or root `.claude` directory.
+
+If you don't have a `CLAUDE.md` file, you can ask Claude Code to create one for you through the `init` slash command.
 
 ## Add Custom Agents {#add-custom-agents}
 
