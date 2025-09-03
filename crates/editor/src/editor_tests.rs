@@ -15453,37 +15453,34 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
         );
 
         let snapshot = editor.snapshot(window, cx);
-        let mut highlighted_ranges = editor.background_highlights_in_range(
+        let highlighted_ranges = editor.sorted_background_highlights_in_range(
             anchor_range(Point::new(3, 4)..Point::new(7, 4)),
             &snapshot,
             cx.theme(),
         );
-        // Enforce a consistent ordering based on color without relying on the ordering of the
-        // highlight's `TypeId` which is non-executor.
-        highlighted_ranges.sort_unstable_by_key(|(_, color)| *color);
         assert_eq!(
             highlighted_ranges,
             &[
-                (
-                    DisplayPoint::new(DisplayRow(4), 2)..DisplayPoint::new(DisplayRow(4), 4),
-                    Hsla::red(),
-                ),
-                (
-                    DisplayPoint::new(DisplayRow(6), 3)..DisplayPoint::new(DisplayRow(6), 5),
-                    Hsla::red(),
-                ),
                 (
                     DisplayPoint::new(DisplayRow(3), 2)..DisplayPoint::new(DisplayRow(3), 5),
                     Hsla::green(),
                 ),
                 (
+                    DisplayPoint::new(DisplayRow(4), 2)..DisplayPoint::new(DisplayRow(4), 4),
+                    Hsla::red(),
+                ),
+                (
                     DisplayPoint::new(DisplayRow(5), 3)..DisplayPoint::new(DisplayRow(5), 6),
                     Hsla::green(),
+                ),
+                (
+                    DisplayPoint::new(DisplayRow(6), 3)..DisplayPoint::new(DisplayRow(6), 5),
+                    Hsla::red(),
                 ),
             ]
         );
         assert_eq!(
-            editor.background_highlights_in_range(
+            editor.sorted_background_highlights_in_range(
                 anchor_range(Point::new(5, 6)..Point::new(6, 4)),
                 &snapshot,
                 cx.theme(),
