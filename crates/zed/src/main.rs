@@ -707,11 +707,16 @@ pub fn main() {
             .map(|chunk| [chunk[0].clone(), chunk[1].clone()])
             .collect();
 
+        #[cfg(target_os = "windows")]
+        let wsl = args.wsl;
+        #[cfg(not(target_os = "windows"))]
+        let wsl = None;
+
         if !urls.is_empty() || !diff_paths.is_empty() {
             open_listener.open(RawOpenRequest {
                 urls,
                 diff_paths,
-                wsl: args.wsl,
+                wsl,
             })
         }
 
@@ -1192,6 +1197,7 @@ struct Args {
     /// Example: `me@Ubuntu` or `Ubuntu`.
     ///
     /// WARN: You should not fill in this field by hand.
+    #[cfg(target_os = "windows")]
     #[arg(long, value_name = "USER@DISTRO")]
     wsl: Option<String>,
 
