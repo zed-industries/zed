@@ -280,8 +280,8 @@ impl TitleBar {
         let banner = cx.new(|cx| {
             OnboardingBanner::new(
                 "ACP Claude Code Onboarding",
-                IconName::Sparkle,
-                "Claude Code Support",
+                IconName::AiClaude,
+                "Claude Code",
                 Some("Introducing:".into()),
                 zed_actions::agent::OpenClaudeCodeOnboardingModal.boxed_clone(),
                 cx,
