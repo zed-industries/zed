@@ -8,21 +8,21 @@ use workspace::{ModalView, Workspace};
 
 use crate::agent_panel::{AgentPanel, AgentType};
 
-macro_rules! acp_onboarding_event {
+macro_rules! claude_code_onboarding_event {
     ($name:expr) => {
-        telemetry::event!($name, source = "ACP Onboarding");
+        telemetry::event!($name, source = "ACP Claude Code Onboarding");
     };
     ($name:expr, $($key:ident $(= $value:expr)?),+ $(,)?) => {
-        telemetry::event!($name, source = "ACP Onboarding", $($key $(= $value)?),+);
+        telemetry::event!($name, source = "ACP Claude Code Onboarding", $($key $(= $value)?),+);
     };
 }
 
-pub struct AcpOnboardingModal {
+pub struct ClaudeCodeOnboardingModal {
     focus_handle: FocusHandle,
     workspace: Entity<Workspace>,
 }
 
-impl AcpOnboardingModal {
+impl ClaudeCodeOnboardingModal {
     pub fn toggle(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
         let workspace_entity = cx.entity();
         workspace.toggle_modal(window, cx, |_window, cx| Self {
@@ -37,21 +37,21 @@ impl AcpOnboardingModal {
 
             if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                 panel.update(cx, |panel, cx| {
-                    panel.new_agent_thread(AgentType::Gemini, window, cx);
+                    panel.new_agent_thread(AgentType::ClaudeCode, window, cx);
                 });
             }
         });
 
         cx.emit(DismissEvent);
 
-        acp_onboarding_event!("Open Panel Clicked");
+        claude_code_onboarding_event!("Open Panel Clicked");
     }
 
     fn view_docs(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         cx.open_url(&zed_urls::external_agents_docs(cx));
         cx.notify();
 
-        acp_onboarding_event!("Documentation Link Clicked");
+        claude_code_onboarding_event!("Documentation Link Clicked");
     }
 
     fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
@@ -59,19 +59,19 @@ impl AcpOnboardingModal {
     }
 }
 
-impl EventEmitter<DismissEvent> for AcpOnboardingModal {}
+impl EventEmitter<DismissEvent> for ClaudeCodeOnboardingModal {}
 
-impl Focusable for AcpOnboardingModal {
+impl Focusable for ClaudeCodeOnboardingModal {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-impl ModalView for AcpOnboardingModal {}
+impl ModalView for ClaudeCodeOnboardingModal {}
 
-impl Render for AcpOnboardingModal {
+impl Render for ClaudeCodeOnboardingModal {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let illustration_element = |label: bool, opacity: f32| {
+        let illustration_element = |icon: IconName, label: Option<SharedString>, opacity: f32| {
             h_flex()
                 .px_1()
                 .py_0p5()
@@ -82,14 +82,14 @@ impl Render for AcpOnboardingModal {
                 .border_color(cx.theme().colors().border)
                 .border_dashed()
                 .child(
-                    Icon::new(IconName::Stop)
+                    Icon::new(icon)
                         .size(IconSize::Small)
                         .color(Color::Custom(cx.theme().colors().text_muted.opacity(0.15))),
                 )
                 .map(|this| {
-                    if label {
+                    if let Some(label_text) = label {
                         this.child(
-                            Label::new("Your Agent Here")
+                            Label::new(label_text)
                                 .size(LabelSize::Small)
                                 .color(Color::Muted),
                         )
@@ -151,8 +151,12 @@ impl Render for AcpOnboardingModal {
             .child(
                 v_flex()
                     .gap_1p5()
-                    .child(illustration_element(false, 0.15))
-                    .child(illustration_element(true, 0.3))
+                    .child(illustration_element(IconName::Stop, None, 0.15))
+                    .child(illustration_element(
+                        IconName::AiGemini,
+                        Some("New Gemini CLI Thread".into()),
+                        0.3,
+                    ))
                     .child(
                         h_flex()
                             .pl_1()
@@ -164,29 +168,33 @@ impl Render for AcpOnboardingModal {
                             .border_1()
                             .border_color(cx.theme().colors().border)
                             .child(
-                                Icon::new(IconName::AiGemini)
+                                Icon::new(IconName::AiClaude)
                                     .size(IconSize::Small)
                                     .color(Color::Muted),
                             )
-                            .child(Label::new("New Gemini CLI Thread").size(LabelSize::Small)),
+                            .child(Label::new("New Claude Code Thread").size(LabelSize::Small)),
                     )
-                    .child(illustration_element(true, 0.3))
-                    .child(illustration_element(false, 0.15)),
+                    .child(illustration_element(
+                        IconName::Stop,
+                        Some("Your Agent Here".into()),
+                        0.3,
+                    ))
+                    .child(illustration_element(IconName::Stop, None, 0.15)),
             );
 
         let heading = v_flex()
             .w_full()
             .gap_1()
             .child(
-                Label::new("Now Available")
+                Label::new("Beta Release")
                     .size(LabelSize::Small)
                     .color(Color::Muted),
             )
-            .child(Headline::new("Bring Your Own Agent to Zed").size(HeadlineSize::Large));
+            .child(Headline::new("Claude Code: Natively in Zed").size(HeadlineSize::Large));
 
-        let copy = "Bring the agent of your choice to Zed via our new Agent Client Protocol (ACP), starting with Google's Gemini CLI integration.";
+        let copy = "Powered by the Agent Client Protocol, you can now run Claude Code as\na first-class citizen in Zed's agent panel.";
 
-        let open_panel_button = Button::new("open-panel", "Start with Gemini CLI")
+        let open_panel_button = Button::new("open-panel", "Start with Claude Code")
             .icon_size(IconSize::Indicator)
             .style(ButtonStyle::Tinted(TintColor::Accent))
             .full_width()
@@ -202,7 +210,7 @@ impl Render for AcpOnboardingModal {
         let close_button = h_flex().absolute().top_2().right_2().child(
             IconButton::new("cancel", IconName::Close).on_click(cx.listener(
                 |_, _: &ClickEvent, _window, cx| {
-                    acp_onboarding_event!("Canceled", trigger = "X click");
+                    claude_code_onboarding_event!("Canceled", trigger = "X click");
                     cx.emit(DismissEvent);
                 },
             )),
@@ -219,7 +227,7 @@ impl Render for AcpOnboardingModal {
             .overflow_hidden()
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(|_, _: &menu::Cancel, _window, cx| {
-                acp_onboarding_event!("Canceled", trigger = "Action");
+                claude_code_onboarding_event!("Canceled", trigger = "Action");
                 cx.emit(DismissEvent);
             }))
             .on_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, window, _cx| {
