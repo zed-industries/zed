@@ -1,5 +1,4 @@
 use crate::Workspace;
-use crate::{BottomDockLayout, WorkspaceSettings};
 use gpui::{
     AvailableSpace, FontWeight, KeyBinding, Keystroke, Task, WeakEntity, humanize_action_name,
 };
@@ -8,7 +7,7 @@ use std::time::Duration;
 use theme::ThemeSettings;
 use ui::{DynamicSpacing, prelude::*, text_for_keystrokes};
 use util::ResultExt;
-use which_key::{WhichKeyLocation, WhichKeySettings};
+use which_key::WhichKeySettings;
 
 // Hard-coded list of keystrokes to filter out from which-key display
 static FILTERED_KEYSTROKES: &[&str] = &[
@@ -226,24 +225,6 @@ impl Render for WhichKeyLayer {
         // Remove duplicates
         binding_data.dedup();
 
-        // Check if we should show in left panel
-        if which_key_settings.location == WhichKeyLocation::LeftPanel
-            && left_margin >= ui_font_size * 20.0
-            && !is_zoomed
-        {
-            return self
-                .render_in_left_panel(
-                    pending_keys,
-                    &binding_data,
-                    left_margin,
-                    bottom_margin,
-                    status_bar_height,
-                    window,
-                    cx,
-                )
-                .into_any_element();
-        }
-
         let column_gap = DynamicSpacing::Base32.px(cx); // Gap between columns
         let row_gap = DynamicSpacing::Base04.px(cx); // Gap between rows
         let content_gap = DynamicSpacing::Base08.px(cx); // Gap between current pending keystroke and grid of keys+actions
@@ -455,74 +436,4 @@ fn create_aligned_binding_element(
             .truncate()
             .into_any_element(),
     ])
-}
-
-impl WhichKeyLayer {
-    fn render_in_left_panel(
-        &self,
-        pending_keys: &[Keystroke],
-        binding_data: &[(Vec<Keystroke>, String)],
-        left_margin: Pixels,
-        bottom_margin: Pixels,
-        status_bar_height: Pixels,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let workspace_settings = WorkspaceSettings::get_global(cx);
-        let margin = DynamicSpacing::Base12.px(&cx);
-        let padding = DynamicSpacing::Base16.px(&cx);
-        let bottom_offset = if workspace_settings.bottom_dock_layout == BottomDockLayout::Contained
-        {
-            margin + status_bar_height
-        } else {
-            margin + status_bar_height + bottom_margin
-        };
-
-        // For left panel, we use a single column layout
-        let available_width = left_margin - (padding * 2.0);
-
-        // Find the longest keystroke text width for alignment
-        let longest_keystroke_width = binding_data
-            .iter()
-            .map(|(remaining_keystrokes, _)| {
-                Label::new(text_for_keystrokes(remaining_keystrokes, cx))
-                    .weight(FontWeight::BOLD)
-                    .into_any_element()
-                    .layout_as_root(AvailableSpace::min_size(), window, cx)
-                    .width
-            })
-            .max_by(|x, y| x.0.partial_cmp(&y.0).unwrap());
-
-        let items = binding_data
-            .iter()
-            .map(|(remaining_keystrokes, action_name)| {
-                create_aligned_binding_element(
-                    remaining_keystrokes,
-                    action_name,
-                    longest_keystroke_width,
-                    cx,
-                )
-            });
-
-        div()
-            .id("which-key-left-panel-scroll")
-            .occlude()
-            .absolute()
-            .top(margin)
-            .left(margin)
-            .bottom(bottom_offset)
-            .w(available_width)
-            .elevation_3(cx)
-            .p(padding)
-            .overflow_y_scroll()
-            .child(
-                v_flex()
-                    .max_h_full()
-                    .gap_2p5()
-                    .child(
-                        Label::new(text_for_keystrokes(pending_keys, cx)).weight(FontWeight::BOLD),
-                    )
-                    .child(div().flex_grow().child(v_flex().gap_1().children(items))),
-            )
-    }
 }

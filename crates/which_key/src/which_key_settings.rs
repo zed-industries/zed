@@ -4,22 +4,12 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources, SettingsUi};
 
-#[derive(Clone, Default, Deserialize, Serialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum WhichKeyLocation {
-    #[default]
-    Buffer,
-    LeftPanel,
-}
-
 #[derive(Deserialize)]
 pub struct WhichKeySettings {
     #[serde(default)]
     pub enabled: bool,
     #[serde(default = "default_delay_ms")]
     pub delay_ms: u64,
-    #[serde(default)]
-    pub location: WhichKeyLocation,
 }
 
 fn default_delay_ms() -> u64 {
@@ -30,20 +20,12 @@ fn default_delay_ms() -> u64 {
 pub struct WhichKeySettingsContent {
     /// Whether to show the which-key popup when holding down key combinations.
     ///
-    /// Default: true
+    /// Default: false
     pub enabled: Option<bool>,
     /// Delay in milliseconds before showing the which-key popup.
     ///
-    /// Default: 600
+    /// Default: 700
     pub delay_ms: Option<u64>,
-    /// Whether to group key bindings with the same first keystroke.
-    ///
-    /// Default: true
-    pub group: Option<bool>,
-    /// Where to show the which-key popup.
-    ///
-    /// Default: buffer
-    pub location: Option<WhichKeyLocation>,
 }
 
 impl Settings for WhichKeySettings {

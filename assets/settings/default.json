@@ -1851,12 +1851,9 @@
   // Which-key popup settings
   "which_key": {
     // Whether to show the which-key popup when holding down key combinations.
-    "enabled": true,
+    "enabled": false,
     // Delay in milliseconds before showing the which-key popup.
-    "delay_ms": 700,
-    // Where to show the which-key popup.
-    // Options: "buffer" (default), "left_panel"
-    "location": "buffer"
+    "delay_ms": 700
   },
   // The server to connect to. If the environment variable
   // ZED_SERVER_URL is set, it will override this setting.
