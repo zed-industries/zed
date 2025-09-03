@@ -105,6 +105,7 @@ impl WindowsWindowInner {
             WM_SHOWWINDOW => self.handle_window_visibility_changed(handle, wparam),
             WM_GPUI_CURSOR_STYLE_CHANGED => self.handle_cursor_changed(lparam),
             WM_GPUI_FORCE_UPDATE_WINDOW => self.draw_window(handle, true),
+            WM_GPUI_DEVICE_LOST => self.handle_device_lost(handle, lparam),
             _ => None,
         };
         if let Some(n) = handled {
@@ -1188,6 +1189,12 @@ impl WindowsWindowInner {
             // Other device change messages are not handled.
             None
         }
+    }
+
+    fn handle_device_lost(&self, handle: HWND, lparam: LPARAM) -> Option<isize> {
+        let mut lock = self.state.borrow_mut();
+        println!("Window {:?} handling device lost", handle.0);
+        Some(0)
     }
 
     #[inline]

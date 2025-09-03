@@ -246,6 +246,7 @@ impl WindowsPlatform {
                         &mut directx_device,
                         platform_window.as_raw(),
                         validation_number,
+                        &all_windows,
                     );
                 }
                 let Some(all_windows) = all_windows.upgrade() else {
@@ -708,7 +709,7 @@ impl WindowsPlatformInner {
             WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD => self.run_foreground_task(),
             WM_GPUI_DOCK_MENU_ACTION => self.handle_dock_action_event(lparam.0 as _),
             WM_GPUI_KEYBOARD_LAYOUT_CHANGED => self.handle_keyboard_layout_change(),
-            WM_GPUI_DEVICE_LOST => self.handle_device_lost(),
+            WM_GPUI_DEVICE_LOST => self.handle_device_lost(lparam),
             _ => unreachable!(),
         }
     }
@@ -767,8 +768,15 @@ impl WindowsPlatformInner {
         Some(0)
     }
 
-    fn handle_device_lost(&self) -> Option<isize> {
+    fn handle_device_lost(&self, lparam: LPARAM) -> Option<isize> {
         println!("Platform handling device lost");
+        let mut lock = self.state.borrow_mut();
+        let devices = unsafe { lparam.0 as *const DirectXDevices };
+        let devices = unsafe { &*devices };
+        unsafe {
+            ManuallyDrop::drop(&mut lock.directx_devices);
+        }
+        lock.directx_devices = ManuallyDrop::new(devices.clone());
 
         Some(0)
     }
@@ -989,6 +997,7 @@ fn handle_device_lost(
     devices: &mut DirectXDevices,
     platform_window: HWND,
     validation_number: usize,
+    all_windows: &std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
 ) {
     let mut success = false;
     for _ in 0..5 {
@@ -1010,14 +1019,29 @@ fn handle_device_lost(
         std::process::exit(1);
     }
     log::info!("DirectX devices successfully recreated.");
-    let ptr = Box::new(devices.clone());
+    // let ptr = Box::new(devices.clone());
     unsafe {
         SendMessageW(
             platform_window,
             WM_GPUI_DEVICE_LOST,
             Some(WPARAM(validation_number)),
-            Some(LPARAM(Box::into_raw(ptr) as _)),
+            // Some(LPARAM(Box::into_raw(ptr) as _)),
+            Some(LPARAM(devices as *const _ as _)),
         );
+    }
+    if let Some(all_windows) = all_windows.upgrade() {
+        for window in all_windows.read().iter() {
+            println!("Sending device lost message to window {:?}", window.0);
+            unsafe {
+                SendMessageW(
+                    window.as_raw(),
+                    WM_GPUI_DEVICE_LOST,
+                    Some(WPARAM(validation_number)),
+                    Some(LPARAM(devices as *const _ as _)),
+                );
+            }
+            println!("Sent device lost message to window {:?}", window.0);
+        }
     }
     println!("Sent device lost message to platform window.");
 }
