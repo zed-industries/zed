@@ -64,6 +64,9 @@ pub fn run_test(
                     if attempt < max_retries {
                         println!("attempt {} failed, retrying", attempt);
                         attempt += 1;
+                        // The panic payload might itself trigger an unwind on drop:
+                        // https://doc.rust-lang.org/std/panic/fn.catch_unwind.html#notes
+                        std::mem::forget(error);
                     } else {
                         if is_multiple_runs {
                             eprintln!("failing seed: {}", seed);
