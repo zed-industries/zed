@@ -111,9 +111,11 @@ impl AgentServerDelegate {
                         continue;
                     };
 
-                    if let Some(version) = file_name
-                        .to_str()
-                        .and_then(|name| semver::Version::from_str(&name).ok())
+                    if let Some(name) = file_name.to_str()
+                        && let Some(version) = semver::Version::from_str(name).ok()
+                        && fs
+                            .is_file(&dir.join(file_name).join(&entrypoint_path))
+                            .await
                     {
                         versions.push((version, file_name.to_owned()));
                     } else {
@@ -156,6 +158,7 @@ impl AgentServerDelegate {
                     cx.background_spawn({
                         let file_name = file_name.clone();
                         let dir = dir.clone();
+                        let fs = fs.clone();
                         async move {
                             let latest_version =
                                 node_runtime.npm_package_latest_version(&package_name).await;
@@ -184,7 +187,7 @@ impl AgentServerDelegate {
                     }
                     let dir = dir.clone();
                     cx.background_spawn(Self::download_latest_version(
-                        fs,
+                        fs.clone(),
                         dir.clone(),
                         node_runtime,
                         package_name,
@@ -192,14 +195,18 @@ impl AgentServerDelegate {
                     .await?
                     .into()
                 };
+
+                let agent_server_path = dir.join(version).join(entrypoint_path);
+                let agent_server_path_exists = fs.is_file(&agent_server_path).await;
+                anyhow::ensure!(
+                    agent_server_path_exists,
+                    "Missing entrypoint path {} after installation",
+                    agent_server_path.to_string_lossy()
+                );
+
                 anyhow::Ok(AgentServerCommand {
                     path: node_path,
-                    args: vec![
-                        dir.join(version)
-                            .join(entrypoint_path)
-                            .to_string_lossy()
-                            .to_string(),
-                    ],
+                    args: vec![agent_server_path.to_string_lossy().to_string()],
                     env: Default::default(),
                 })
             })
