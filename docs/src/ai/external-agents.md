@@ -2,7 +2,8 @@
 
 Zed supports terminal-based agents through the [Agent Client Protocol (ACP)](https://agentclientprotocol.com).
 
-Currently, [Gemini CLI](https://github.com/google-gemini/gemini-cli) serves as the reference implementation, [Claude Code](https://www.anthropic.com/claude-code) is also included by default, and you can [add custom ACP-compatible agents](#add-custom-agents) as well.
+Currently, [Gemini CLI](https://github.com/google-gemini/gemini-cli) serves as the reference implementation.
+[Claude Code](https://www.anthropic.com/claude-code) is also included by default, and you can [add custom ACP-compatible agents](#add-custom-agents) as well.
 
 ## Gemini CLI {#gemini-cli}
 
