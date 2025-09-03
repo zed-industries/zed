@@ -5,7 +5,7 @@ use gpui::{
     AsyncWindowContext, Context, Entity, IntoElement, ParentElement, Render, Subscription, Task,
     WeakEntity, Window, div,
 };
-use language::{Buffer, BufferEvent, LanguageName, Toolchain};
+use language::{Buffer, BufferEvent, LanguageName, Toolchain, ToolchainScope};
 use project::{Project, ProjectPath, Toolchains, WorktreeId, toolchain_store::ToolchainStoreEvent};
 use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, SharedString, Tooltip};
 use util::maybe;
@@ -173,6 +173,7 @@ impl ActiveToolchain {
                 let Toolchains {
                     toolchains,
                     root_path: relative_path,
+                    user_toolchains,
                 } = cx
                     .update(|_, cx| {
                         project.read(cx).available_toolchains(
@@ -186,8 +187,20 @@ impl ActiveToolchain {
                     })
                     .ok()?
                     .await?;
-                if let Some(toolchain) = toolchains.toolchains.first() {
-                    // Since we don't have a selected toolchain, pick one for user here.
+                // Since we don't have a selected toolchain, pick one for user here.
+                let default_choice = user_toolchains
+                    .iter()
+                    .find_map(|(scope, toolchains)| {
+                        if scope == &ToolchainScope::Global {
+                            // Ignore global toolchains when making a default choice. They're unlikely to be the right choice.
+                            None
+                        } else {
+                            toolchains.first()
+                        }
+                    })
+                    .or_else(|| toolchains.toolchains.first())
+                    .cloned();
+                if let Some(toolchain) = &default_choice {
                     workspace::WORKSPACE_DB
                         .set_toolchain(
                             workspace_id,
@@ -212,7 +225,7 @@ impl ActiveToolchain {
                         .await;
                 }
 
-                toolchains.toolchains.first().cloned()
+                default_choice
             }
         })
     }

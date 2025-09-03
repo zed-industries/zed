@@ -47,6 +47,7 @@ pub struct Toolchains {
     pub toolchains: ToolchainList,
     /// Path of the project root at which we ran the automatic toolchain detection.
     pub root_path: Arc<Path>,
+    pub user_toolchains: BTreeMap<ToolchainScope, IndexSet<Toolchain>>,
 }
 impl EventEmitter<ToolchainStoreEvent> for ToolchainStore {}
 impl ToolchainStore {
@@ -161,24 +162,27 @@ impl ToolchainStore {
         language_name: LanguageName,
         cx: &mut Context<Self>,
     ) -> Task<Option<Toolchains>> {
-        let mut user_toolchains = self
+        let user_toolchains = self
             .user_toolchains
             .iter()
-            .filter_map(|(scope, toolchains)| {
+            .filter(|(scope, _)| {
                 if let ToolchainScope::Subproject(worktree_id, relative_path) = scope {
-                    if path.worktree_id != *worktree_id || relative_path.starts_with(&path.path) {
-                        Some(toolchains)
-                    } else {
-                        None
-                    }
+                    path.worktree_id == *worktree_id && relative_path.starts_with(&path.path)
                 } else {
-                    Some(toolchains)
+                    true
                 }
             })
-            .flatten()
-            .filter(|toolchain| toolchain.language_name == language_name)
-            .cloned()
-            .collect::<Vec<_>>();
+            .map(|(scope, toolchains)| {
+                (
+                    scope.clone(),
+                    toolchains
+                        .iter()
+                        .filter(|toolchain| toolchain.language_name == language_name)
+                        .cloned()
+                        .collect::<IndexSet<_>>(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
         let task = match &self.mode {
             ToolchainStoreInner::Local(local) => {
                 local.update(cx, |this, cx| this.list_toolchains(path, language_name, cx))
@@ -188,12 +192,17 @@ impl ToolchainStore {
             }
         };
         cx.spawn(async move |_, _| {
-            let (mut toolchains, path) = task.await?;
-            user_toolchains.append(&mut toolchains.toolchains);
-            toolchains.toolchains = user_toolchains;
+            let (mut toolchains, root_path) = task.await?;
+            toolchains.toolchains.retain(|toolchain| {
+                !user_toolchains
+                    .values()
+                    .any(|toolchains| toolchains.contains(toolchain))
+            });
+
             Some(Toolchains {
                 toolchains,
-                root_path: path,
+                root_path,
+                user_toolchains,
             })
         })
     }
@@ -290,11 +299,7 @@ impl ToolchainStore {
             })?
             .await;
         let has_values = toolchains.is_some();
-        let groups = if let Some(Toolchains {
-            toolchains,
-            root_path: _,
-        }) = &toolchains
-        {
+        let groups = if let Some(Toolchains { toolchains, .. }) = &toolchains {
             toolchains
                 .groups
                 .iter()
@@ -311,6 +316,7 @@ impl ToolchainStore {
         let (toolchains, relative_path) = if let Some(Toolchains {
             toolchains,
             root_path: relative_path,
+            ..
         }) = toolchains
         {
             let toolchains = toolchains

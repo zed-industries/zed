@@ -672,6 +672,7 @@ impl ToolchainSelectorDelegate {
                 let Toolchains {
                     toolchains: available_toolchains,
                     root_path: relative_path,
+                    ..
                 } = _project
                     .update(cx, |this, cx| {
                         this.available_toolchains(
