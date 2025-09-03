@@ -1,5 +1,3 @@
-use std::mem::ManuallyDrop;
-
 use anyhow::{Context, Result};
 use util::ResultExt;
 use windows::Win32::{
@@ -20,6 +18,7 @@ use windows::Win32::{
     },
 };
 
+#[derive(Clone)]
 pub(crate) struct DirectXDevices {
     pub(crate) adapter: IDXGIAdapter1,
     pub(crate) dxgi_factory: IDXGIFactory6,
@@ -28,7 +27,7 @@ pub(crate) struct DirectXDevices {
 }
 
 impl DirectXDevices {
-    pub(crate) fn new() -> Result<ManuallyDrop<Self>> {
+    pub(crate) fn new() -> Result<Self> {
         let debug_layer_available = check_debug_layer_available();
         let dxgi_factory =
             get_dxgi_factory(debug_layer_available).context("Creating DXGI factory")?;
@@ -61,12 +60,12 @@ impl DirectXDevices {
             (device.unwrap(), context.unwrap())
         };
 
-        Ok(ManuallyDrop::new(Self {
+        Ok(Self {
             adapter,
             dxgi_factory,
             device,
             device_context,
-        }))
+        })
     }
 }
 

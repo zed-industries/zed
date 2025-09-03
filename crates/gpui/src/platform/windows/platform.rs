@@ -75,7 +75,8 @@ impl WindowsPlatformState {
         let callbacks = PlatformCallbacks::default();
         let jump_list = JumpList::new();
         let current_cursor = load_cursor(CursorStyle::Arrow);
-        let directx_devices = DirectXDevices::new().context("Creating DirectX devices")?;
+        let directx_devices =
+            ManuallyDrop::new(DirectXDevices::new().context("Creating DirectX devices")?);
 
         Ok(Self {
             callbacks,
@@ -140,7 +141,6 @@ impl WindowsPlatform {
                 .context("Error creating drop target helper.")?
         };
         let icon = load_icon().unwrap_or_default();
-        let state = RefCell::new(WindowsPlatformState::new().context("Creating platform state")?);
         let windows_version = WindowsVersion::new().context("Error retrieve windows version")?;
 
         Ok(Self {
@@ -233,14 +233,20 @@ impl WindowsPlatform {
     }
 
     fn begin_vsync_thread(&self) {
-        let mut directx_device = self.state.borrow().directx_devices.device.clone();
+        let mut directx_device = (*self.inner.state.borrow().directx_devices).clone();
+        let platform_window: SafeHwnd = self.handle.into();
+        let validation_number = self.inner.validation_number;
         let all_windows = Arc::downgrade(&self.raw_window_handles);
         std::thread::spawn(move || {
             let vsync_provider = VSyncProvider::new();
             loop {
                 vsync_provider.wait_for_vsync();
-                if check_device_lost(&directx_device) {
-
+                if check_device_lost(&directx_device.device) {
+                    handle_device_lost(
+                        &mut directx_device,
+                        platform_window.as_raw(),
+                        validation_number,
+                    );
                 }
                 let Some(all_windows) = all_windows.upgrade() else {
                     break;
@@ -656,7 +662,7 @@ impl Platform for WindowsPlatform {
 
 impl WindowsPlatformInner {
     fn new(context: &mut PlatformWindowCreateContext) -> Result<Rc<Self>> {
-        let state = RefCell::new(WindowsPlatformState::new());
+        let state = RefCell::new(WindowsPlatformState::new().context("Creating platform state")?);
         Ok(Rc::new(Self {
             state,
             raw_window_handles: context.raw_window_handles.clone(),
@@ -676,7 +682,8 @@ impl WindowsPlatformInner {
             WM_GPUI_CLOSE_ONE_WINDOW
             | WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD
             | WM_GPUI_DOCK_MENU_ACTION
-            | WM_GPUI_KEYBOARD_LAYOUT_CHANGED => self.handle_gpui_events(msg, wparam, lparam),
+            | WM_GPUI_KEYBOARD_LAYOUT_CHANGED
+            | WM_GPUI_DEVICE_LOST => self.handle_gpui_events(msg, wparam, lparam),
             _ => None,
         };
         if let Some(result) = handled {
@@ -701,6 +708,7 @@ impl WindowsPlatformInner {
             WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD => self.run_foreground_task(),
             WM_GPUI_DOCK_MENU_ACTION => self.handle_dock_action_event(lparam.0 as _),
             WM_GPUI_KEYBOARD_LAYOUT_CHANGED => self.handle_keyboard_layout_change(),
+            WM_GPUI_DEVICE_LOST => self.handle_device_lost(),
             _ => unreachable!(),
         }
     }
@@ -756,6 +764,12 @@ impl WindowsPlatformInner {
             .take()?;
         callback();
         self.state.borrow_mut().callbacks.keyboard_layout_change = Some(callback);
+        Some(0)
+    }
+
+    fn handle_device_lost(&self) -> Option<isize> {
+        println!("Platform handling device lost");
+
         Some(0)
     }
 }
@@ -971,11 +985,41 @@ fn check_device_lost(device: &ID3D11Device) -> bool {
     }
 }
 
-fn handle_device_list(device: &mut ID3D11Device, validation_number: usize) {
-    unsafe {
-        PostT
-        SendMessageW(platform_window, WM_GPUI_DEVICE_LOST, WPARAM(validation_number), LPARAM(0));
+fn handle_device_lost(
+    devices: &mut DirectXDevices,
+    platform_window: HWND,
+    validation_number: usize,
+) {
+    let mut success = false;
+    for _ in 0..5 {
+        match DirectXDevices::new() {
+            Ok(new_devices) => {
+                *devices = new_devices;
+                success = true;
+                break;
+            }
+            Err(err) => {
+                log::error!("Failed to create new DirectX devices: {:?}", err);
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                continue;
+            }
+        }
     }
+    if !success {
+        log::error!("Failed to recover DirectX devices after multiple attempts.");
+        std::process::exit(1);
+    }
+    log::info!("DirectX devices successfully recreated.");
+    let ptr = Box::new(devices.clone());
+    unsafe {
+        SendMessageW(
+            platform_window,
+            WM_GPUI_DEVICE_LOST,
+            Some(WPARAM(validation_number)),
+            Some(LPARAM(Box::into_raw(ptr) as _)),
+        );
+    }
+    println!("Sent device lost message to platform window.");
 }
 
 const PLATFORM_WINDOW_CLASS_NAME: PCWSTR = w!("Zed::PlatformWindow");
