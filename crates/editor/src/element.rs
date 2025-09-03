@@ -6039,7 +6039,6 @@ impl EditorElement {
         window.with_content_mask(
             Some(ContentMask {
                 bounds: layout.position_map.text_hitbox.bounds,
-                ..Default::default()
             }),
             |window| {
                 let editor = self.editor.read(cx);
@@ -6982,15 +6981,9 @@ impl EditorElement {
             } else {
                 let mut bounds = layout.hitbox.bounds;
                 bounds.origin.x += layout.gutter_hitbox.bounds.size.width;
-                window.with_content_mask(
-                    Some(ContentMask {
-                        bounds,
-                        ..Default::default()
-                    }),
-                    |window| {
-                        block.element.paint(window, cx);
-                    },
-                )
+                window.with_content_mask(Some(ContentMask { bounds }), |window| {
+                    block.element.paint(window, cx);
+                })
             }
         }
     }
@@ -8293,13 +8286,9 @@ impl Element for EditorElement {
         }
 
         let rem_size = self.rem_size(cx);
-        let content_mask = ContentMask {
-            bounds,
-            ..Default::default()
-        };
         window.with_rem_size(rem_size, |window| {
             window.with_text_style(Some(text_style), |window| {
-                window.with_content_mask(Some(content_mask), |window| {
+                window.with_content_mask(Some(ContentMask { bounds }), |window| {
                     let (mut snapshot, is_read_only) = self.editor.update(cx, |editor, cx| {
                         (editor.snapshot(window, cx), editor.read_only(cx))
                     });
@@ -9407,13 +9396,9 @@ impl Element for EditorElement {
             ..Default::default()
         };
         let rem_size = self.rem_size(cx);
-        let content_mask = ContentMask {
-            bounds,
-            ..Default::default()
-        };
         window.with_rem_size(rem_size, |window| {
             window.with_text_style(Some(text_style), |window| {
-                window.with_content_mask(Some(content_mask), |window| {
+                window.with_content_mask(Some(ContentMask { bounds }), |window| {
                     self.paint_mouse_listeners(layout, window, cx);
                     self.paint_background(layout, window, cx);
                     self.paint_indent_guides(layout, window, cx);
