@@ -3270,7 +3270,8 @@ impl EditorElement {
         if rows.start >= rows.end {
             return Vec::new();
         }
-        if base_background.is_transparent() {
+        if !base_background.is_opaque() {
+            // We don't actually know what color is behind this editor.
             return Vec::new();
         }
         let highlight_iter = highlight_ranges.iter().cloned();
