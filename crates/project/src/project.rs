@@ -5573,10 +5573,10 @@ mod disable_ai_settings_tests {
             assert!(!settings.disable_ai, "Default should allow AI");
 
             // Test 2: Global true, local false -> still disabled (local cannot re-enable)
-            let global_true = Some(true);
-            let local_false = Some(false);
+            let global_true = disable_setting(Some(true));
+            let local_false = disable_setting(Some(false));
             let sources = SettingsSources {
-                default: &Some(false),
+                default: &disable_setting(Some(false)),
                 global: None,
                 extensions: None,
                 user: Some(&global_true),
@@ -5593,10 +5593,10 @@ mod disable_ai_settings_tests {
             );
 
             // Test 3: Global false, local true -> disabled (local can make more restrictive)
-            let global_false = Some(false);
-            let local_true = Some(true);
+            let global_false = disable_setting(Some(false));
+            let local_true = disable_setting(Some(true));
             let sources = SettingsSources {
-                default: &Some(false),
+                default: &disable_setting(Some(false)),
                 global: None,
                 extensions: None,
                 user: Some(&global_false),
@@ -5610,10 +5610,10 @@ mod disable_ai_settings_tests {
             assert!(settings.disable_ai, "Local true can override global false");
 
             // Test 4: Server can only make more restrictive (set to true)
-            let user_false = Some(false);
-            let server_true = Some(true);
+            let user_false = disable_setting(Some(false));
+            let server_true = disable_setting(Some(true));
             let sources = SettingsSources {
-                default: &Some(false),
+                default: &disable_setting(Some(false)),
                 global: None,
                 extensions: None,
                 user: Some(&user_false),
@@ -5630,10 +5630,10 @@ mod disable_ai_settings_tests {
             );
 
             // Test 5: Server false cannot override user true
-            let user_true = Some(true);
-            let server_false = Some(false);
+            let user_true = disable_setting(Some(true));
+            let server_false = disable_setting(Some(false));
             let sources = SettingsSources {
-                default: &Some(false),
+                default: &disable_setting(Some(false)),
                 global: None,
                 extensions: None,
                 user: Some(&user_true),
@@ -5650,12 +5650,12 @@ mod disable_ai_settings_tests {
             );
 
             // Test 6: Multiple local settings, any true disables AI
-            let global_false = Some(false);
-            let local_false3 = Some(false);
-            let local_true2 = Some(true);
-            let local_false4 = Some(false);
+            let global_false = disable_setting(Some(false));
+            let local_false3 = disable_setting(Some(false));
+            let local_true2 = disable_setting(Some(true));
+            let local_false4 = disable_setting(Some(false));
             let sources = SettingsSources {
-                default: &Some(false),
+                default: &disable_setting(Some(false)),
                 global: None,
                 extensions: None,
                 user: Some(&global_false),
@@ -5669,11 +5669,11 @@ mod disable_ai_settings_tests {
             assert!(settings.disable_ai, "Any local true should disable AI");
 
             // Test 7: All three sources can independently disable AI
-            let user_false2 = Some(false);
-            let server_false2 = Some(false);
-            let local_true3 = Some(true);
+            let user_false2 = disable_setting(Some(false));
+            let server_false2 = disable_setting(Some(false));
+            let local_true3 = disable_setting(Some(true));
             let sources = SettingsSources {
-                default: &Some(false),
+                default: &disable_setting(Some(false)),
                 global: None,
                 extensions: None,
                 user: Some(&user_false2),
