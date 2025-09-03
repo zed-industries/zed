@@ -218,6 +218,8 @@ impl DirectXRenderer {
                 log::error!(
                     "DirectXRenderer failed to recover from device lost after multiple attempts"
                 );
+                // Do something here?
+                // At this point, the device loss is considered unrecoverable.
             },
         );
     }

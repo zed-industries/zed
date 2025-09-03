@@ -1226,6 +1226,8 @@ impl DirectWriteState {
                 log::error!(
                     "Failed to recreate GPU state for DirectWrite after multiple attempts."
                 );
+                // Do something here?
+                // At this point, the device loss is considered unrecoverable.
             },
         );
     }

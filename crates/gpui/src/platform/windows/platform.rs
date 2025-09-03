@@ -1020,6 +1020,7 @@ fn handle_device_lost(
         || {
             log::error!("Failed to recover DirectX devices after multiple attempts.");
             // Do something here?
+            // At this point, the device loss is considered unrecoverable.
             // std::process::exit(1);
         },
     );
