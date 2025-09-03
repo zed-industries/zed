@@ -797,6 +797,14 @@ impl Drop for WindowsPlatform {
     }
 }
 
+impl Drop for WindowsPlatformState {
+    fn drop(&mut self) {
+        unsafe {
+            ManuallyDrop::drop(&mut self.directx_devices);
+        }
+    }
+}
+
 pub(crate) struct WindowCreationInfo {
     pub(crate) icon: HICON,
     pub(crate) executor: ForegroundExecutor,
