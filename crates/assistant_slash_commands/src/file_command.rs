@@ -492,7 +492,7 @@ mod custom_path_matcher {
         pub fn new(globs: &[String]) -> Result<Self, globset::Error> {
             let globs = globs
                 .iter()
-                .map(|glob| Glob::new(&SanitizedPath::from(glob).to_glob_string()))
+                .map(|glob| Glob::new(&SanitizedPath::new(glob).to_glob_string()))
                 .collect::<Result<Vec<_>, _>>()?;
             let sources = globs.iter().map(|glob| glob.glob().to_owned()).collect();
             let sources_with_trailing_slash = globs

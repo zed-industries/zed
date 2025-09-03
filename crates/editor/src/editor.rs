@@ -147,21 +147,22 @@ use multi_buffer::{
 use parking_lot::Mutex;
 use persistence::DB;
 use project::{
-    BreakpointWithPosition, CodeAction, Completion, CompletionIntent, CompletionResponse,
-    CompletionSource, DisableAiSettings, DocumentHighlight, InlayHint, Location, LocationLink,
-    PrepareRenameResponse, Project, ProjectItem, ProjectPath, ProjectTransaction, TaskSourceKind,
-    debugger::breakpoint_store::Breakpoint,
+    BreakpointWithPosition, CodeAction, Completion, CompletionDisplayOptions, CompletionIntent,
+    CompletionResponse, CompletionSource, DisableAiSettings, DocumentHighlight, InlayHint,
+    Location, LocationLink, PrepareRenameResponse, Project, ProjectItem, ProjectPath,
+    ProjectTransaction, TaskSourceKind,
     debugger::{
         breakpoint_store::{
-            BreakpointEditAction, BreakpointSessionState, BreakpointState, BreakpointStore,
-            BreakpointStoreEvent,
+            Breakpoint, BreakpointEditAction, BreakpointSessionState, BreakpointState,
+            BreakpointStore, BreakpointStoreEvent,
         },
         session::{Session, SessionEvent},
     },
     git_store::{GitStoreEvent, RepositoryEvent},
     lsp_store::{CompletionDocumentation, FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
-    project_settings::{DiagnosticSeverity, GoToDiagnosticSeverityFilter},
-    project_settings::{GitGutterSetting, ProjectSettings},
+    project_settings::{
+        DiagnosticSeverity, GitGutterSetting, GoToDiagnosticSeverityFilter, ProjectSettings,
+    },
 };
 use rand::{seq::SliceRandom, thread_rng};
 use rpc::{ErrorCode, ErrorExt, proto::PeerId};
@@ -219,7 +220,6 @@ use crate::{
 
 pub const FILE_HEADER_HEIGHT: u32 = 2;
 pub const MULTI_BUFFER_EXCERPT_HEADER_HEIGHT: u32 = 1;
-pub const DEFAULT_MULTIBUFFER_CONTEXT: u32 = 2;
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
@@ -5636,17 +5636,25 @@ impl Editor {
             // that having one source with `is_incomplete: true` doesn't cause all to be re-queried.
             let mut completions = Vec::new();
             let mut is_incomplete = false;
+            let mut display_options: Option<CompletionDisplayOptions> = None;
             if let Some(provider_responses) = provider_responses.await.log_err()
                 && !provider_responses.is_empty()
             {
                 for response in provider_responses {
                     completions.extend(response.completions);
                     is_incomplete = is_incomplete || response.is_incomplete;
+                    match display_options.as_mut() {
+                        None => {
+                            display_options = Some(response.display_options);
+                        }
+                        Some(options) => options.merge(&response.display_options),
+                    }
                 }
                 if completion_settings.words == WordsCompletionMode::Fallback {
                     words = Task::ready(BTreeMap::default());
                 }
             }
+            let display_options = display_options.unwrap_or_default();
 
             let mut words = words.await;
             if let Some(word_to_exclude) = &word_to_exclude {
@@ -5688,6 +5696,7 @@ impl Editor {
                         is_incomplete,
                         buffer.clone(),
                         completions.into(),
+                        display_options,
                         snippet_sort_order,
                         languages,
                         language,
@@ -6402,7 +6411,7 @@ impl Editor {
                     PathKey::for_buffer(buffer_handle, cx),
                     buffer_handle.clone(),
                     edited_ranges,
-                    DEFAULT_MULTIBUFFER_CONTEXT,
+                    multibuffer_context_lines(cx),
                     cx,
                 );
 
@@ -7742,6 +7751,11 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Option<()> {
         if DisableAiSettings::get_global(cx).disable_ai {
+            return None;
+        }
+
+        if self.ime_transaction.is_some() {
+            self.discard_edit_prediction(false, cx);
             return None;
         }
 
@@ -11819,6 +11833,18 @@ impl Editor {
         let buffer = self.buffer.read(cx).snapshot(cx);
         let selections = self.selections.all::<Point>(cx);
 
+        #[derive(Clone, Debug, PartialEq)]
+        enum CommentFormat {
+            /// single line comment, with prefix for line
+            Line(String),
+            /// single line within a block comment, with prefix for line
+            BlockLine(String),
+            /// a single line of a block comment that includes the initial delimiter
+            BlockCommentWithStart(BlockCommentConfig),
+            /// a single line of a block comment that includes the ending delimiter
+            BlockCommentWithEnd(BlockCommentConfig),
+        }
+
         // Split selections to respect paragraph, indent, and comment prefix boundaries.
         let wrap_ranges = selections.into_iter().flat_map(|selection| {
             let mut non_blank_rows_iter = (selection.start.row..=selection.end.row)
@@ -11835,37 +11861,75 @@ impl Editor {
             let language_scope = buffer.language_scope_at(selection.head());
 
             let indent_and_prefix_for_row =
-                |row: u32| -> (IndentSize, Option<String>, Option<String>) {
+                |row: u32| -> (IndentSize, Option<CommentFormat>, Option<String>) {
                     let indent = buffer.indent_size_for_line(MultiBufferRow(row));
-                    let (comment_prefix, rewrap_prefix) =
-                        if let Some(language_scope) = &language_scope {
-                            let indent_end = Point::new(row, indent.len);
-                            let comment_prefix = language_scope
+                    let (comment_prefix, rewrap_prefix) = if let Some(language_scope) =
+                        &language_scope
+                    {
+                        let indent_end = Point::new(row, indent.len);
+                        let line_end = Point::new(row, buffer.line_len(MultiBufferRow(row)));
+                        let line_text_after_indent = buffer
+                            .text_for_range(indent_end..line_end)
+                            .collect::<String>();
+
+                        let is_within_comment_override = buffer
+                            .language_scope_at(indent_end)
+                            .is_some_and(|scope| scope.override_name() == Some("comment"));
+                        let comment_delimiters = if is_within_comment_override {
+                            // we are within a comment syntax node, but we don't
+                            // yet know what kind of comment: block, doc or line
+                            match (
+                                language_scope.documentation_comment(),
+                                language_scope.block_comment(),
+                            ) {
+                                (Some(config), _) | (_, Some(config))
+                                    if buffer.contains_str_at(indent_end, &config.start) =>
+                                {
+                                    Some(CommentFormat::BlockCommentWithStart(config.clone()))
+                                }
+                                (Some(config), _) | (_, Some(config))
+                                    if line_text_after_indent.ends_with(config.end.as_ref()) =>
+                                {
+                                    Some(CommentFormat::BlockCommentWithEnd(config.clone()))
+                                }
+                                (Some(config), _) | (_, Some(config))
+                                    if buffer.contains_str_at(indent_end, &config.prefix) =>
+                                {
+                                    Some(CommentFormat::BlockLine(config.prefix.to_string()))
+                                }
+                                (_, _) => language_scope
+                                    .line_comment_prefixes()
+                                    .iter()
+                                    .find(|prefix| buffer.contains_str_at(indent_end, prefix))
+                                    .map(|prefix| CommentFormat::Line(prefix.to_string())),
+                            }
+                        } else {
+                            // we not in an overridden comment node, but we may
+                            // be within a non-overridden line comment node
+                            language_scope
                                 .line_comment_prefixes()
                                 .iter()
                                 .find(|prefix| buffer.contains_str_at(indent_end, prefix))
-                                .map(|prefix| prefix.to_string());
-                            let line_end = Point::new(row, buffer.line_len(MultiBufferRow(row)));
-                            let line_text_after_indent = buffer
-                                .text_for_range(indent_end..line_end)
-                                .collect::<String>();
-                            let rewrap_prefix = language_scope
-                                .rewrap_prefixes()
-                                .iter()
-                                .find_map(|prefix_regex| {
-                                    prefix_regex.find(&line_text_after_indent).map(|mat| {
-                                        if mat.start() == 0 {
-                                            Some(mat.as_str().to_string())
-                                        } else {
-                                            None
-                                        }
-                                    })
-                                })
-                                .flatten();
-                            (comment_prefix, rewrap_prefix)
-                        } else {
-                            (None, None)
+                                .map(|prefix| CommentFormat::Line(prefix.to_string()))
                         };
+
+                        let rewrap_prefix = language_scope
+                            .rewrap_prefixes()
+                            .iter()
+                            .find_map(|prefix_regex| {
+                                prefix_regex.find(&line_text_after_indent).map(|mat| {
+                                    if mat.start() == 0 {
+                                        Some(mat.as_str().to_string())
+                                    } else {
+                                        None
+                                    }
+                                })
+                            })
+                            .flatten();
+                        (comment_delimiters, rewrap_prefix)
+                    } else {
+                        (None, None)
+                    };
                     (indent, comment_prefix, rewrap_prefix)
                 };
 
@@ -11876,22 +11940,22 @@ impl Editor {
             let mut prev_row = first_row;
             let (
                 mut current_range_indent,
-                mut current_range_comment_prefix,
+                mut current_range_comment_delimiters,
                 mut current_range_rewrap_prefix,
             ) = indent_and_prefix_for_row(first_row);
 
             for row in non_blank_rows_iter.skip(1) {
                 let has_paragraph_break = row > prev_row + 1;
 
-                let (row_indent, row_comment_prefix, row_rewrap_prefix) =
+                let (row_indent, row_comment_delimiters, row_rewrap_prefix) =
                     indent_and_prefix_for_row(row);
 
                 let has_indent_change = row_indent != current_range_indent;
-                let has_comment_change = row_comment_prefix != current_range_comment_prefix;
+                let has_comment_change = row_comment_delimiters != current_range_comment_delimiters;
 
                 let has_boundary_change = has_comment_change
                     || row_rewrap_prefix.is_some()
-                    || (has_indent_change && current_range_comment_prefix.is_some());
+                    || (has_indent_change && current_range_comment_delimiters.is_some());
 
                 if has_paragraph_break || has_boundary_change {
                     ranges.push((
@@ -11899,13 +11963,13 @@ impl Editor {
                         Point::new(current_range_start, 0)
                             ..Point::new(prev_row, buffer.line_len(MultiBufferRow(prev_row))),
                         current_range_indent,
-                        current_range_comment_prefix.clone(),
+                        current_range_comment_delimiters.clone(),
                         current_range_rewrap_prefix.clone(),
                         from_empty_selection,
                     ));
                     current_range_start = row;
                     current_range_indent = row_indent;
-                    current_range_comment_prefix = row_comment_prefix;
+                    current_range_comment_delimiters = row_comment_delimiters;
                     current_range_rewrap_prefix = row_rewrap_prefix;
                 }
                 prev_row = row;
@@ -11916,7 +11980,7 @@ impl Editor {
                 Point::new(current_range_start, 0)
                     ..Point::new(prev_row, buffer.line_len(MultiBufferRow(prev_row))),
                 current_range_indent,
-                current_range_comment_prefix,
+                current_range_comment_delimiters,
                 current_range_rewrap_prefix,
                 from_empty_selection,
             ));
@@ -11930,7 +11994,7 @@ impl Editor {
         for (
             language_settings,
             wrap_range,
-            indent_size,
+            mut indent_size,
             comment_prefix,
             rewrap_prefix,
             from_empty_selection,
@@ -11950,16 +12014,26 @@ impl Editor {
 
             let tab_size = language_settings.tab_size;
 
+            let (line_prefix, inside_comment) = match &comment_prefix {
+                Some(CommentFormat::Line(prefix) | CommentFormat::BlockLine(prefix)) => {
+                    (Some(prefix.as_str()), true)
+                }
+                Some(CommentFormat::BlockCommentWithEnd(BlockCommentConfig { prefix, .. })) => {
+                    (Some(prefix.as_ref()), true)
+                }
+                Some(CommentFormat::BlockCommentWithStart(BlockCommentConfig {
+                    start: _,
+                    end: _,
+                    prefix,
+                    tab_size,
+                })) => {
+                    indent_size.len += tab_size;
+                    (Some(prefix.as_ref()), true)
+                }
+                None => (None, false),
+            };
             let indent_prefix = indent_size.chars().collect::<String>();
-            let mut line_prefix = indent_prefix.clone();
-            let mut inside_comment = false;
-            if let Some(prefix) = &comment_prefix {
-                line_prefix.push_str(prefix);
-                inside_comment = true;
-            }
-            if let Some(prefix) = &rewrap_prefix {
-                line_prefix.push_str(prefix);
-            }
+            let line_prefix = format!("{indent_prefix}{}", line_prefix.unwrap_or(""));
 
             let allow_rewrap_based_on_language = match language_settings.allow_rewrap {
                 RewrapBehavior::InComments => inside_comment,
@@ -12004,6 +12078,8 @@ impl Editor {
             let start_offset = start.to_offset(&buffer);
             let end = Point::new(end_row, buffer.line_len(MultiBufferRow(end_row)));
             let selection_text = buffer.text_for_range(start..end).collect::<String>();
+            let mut first_line_delimiter = None;
+            let mut last_line_delimiter = None;
             let Some(lines_without_prefixes) = selection_text
                 .lines()
                 .enumerate()
@@ -12011,6 +12087,46 @@ impl Editor {
                     let line_trimmed = line.trim_start();
                     if rewrap_prefix.is_some() && ix > 0 {
                         Ok(line_trimmed)
+                    } else if let Some(
+                        CommentFormat::BlockCommentWithStart(BlockCommentConfig {
+                            start,
+                            prefix,
+                            end,
+                            tab_size,
+                        })
+                        | CommentFormat::BlockCommentWithEnd(BlockCommentConfig {
+                            start,
+                            prefix,
+                            end,
+                            tab_size,
+                        }),
+                    ) = &comment_prefix
+                    {
+                        let line_trimmed = line_trimmed
+                            .strip_prefix(start.as_ref())
+                            .map(|s| {
+                                let mut indent_size = indent_size;
+                                indent_size.len -= tab_size;
+                                let indent_prefix: String = indent_size.chars().collect();
+                                first_line_delimiter = Some((indent_prefix, start));
+                                s.trim_start()
+                            })
+                            .unwrap_or(line_trimmed);
+                        let line_trimmed = line_trimmed
+                            .strip_suffix(end.as_ref())
+                            .map(|s| {
+                                last_line_delimiter = Some(end);
+                                s.trim_end()
+                            })
+                            .unwrap_or(line_trimmed);
+                        let line_trimmed = line_trimmed
+                            .strip_prefix(prefix.as_ref())
+                            .unwrap_or(line_trimmed);
+                        Ok(line_trimmed)
+                    } else if let Some(CommentFormat::BlockLine(prefix)) = &comment_prefix {
+                        line_trimmed.strip_prefix(prefix).with_context(|| {
+                            format!("line did not start with prefix {prefix:?}: {line:?}")
+                        })
                     } else {
                         line_trimmed
                             .strip_prefix(&line_prefix.trim_start())
@@ -12037,14 +12153,25 @@ impl Editor {
                 line_prefix.clone()
             };
 
-            let wrapped_text = wrap_with_prefix(
-                line_prefix,
-                subsequent_lines_prefix,
-                lines_without_prefixes.join("\n"),
-                wrap_column,
-                tab_size,
-                options.preserve_existing_whitespace,
-            );
+            let wrapped_text = {
+                let mut wrapped_text = wrap_with_prefix(
+                    line_prefix,
+                    subsequent_lines_prefix,
+                    lines_without_prefixes.join("\n"),
+                    wrap_column,
+                    tab_size,
+                    options.preserve_existing_whitespace,
+                );
+
+                if let Some((indent, delimiter)) = first_line_delimiter {
+                    wrapped_text = format!("{indent}{delimiter}\n{wrapped_text}");
+                }
+                if let Some(last_line) = last_line_delimiter {
+                    wrapped_text = format!("{wrapped_text}\n{indent_prefix}{last_line}");
+                }
+
+                wrapped_text
+            };
 
             // TODO: should always use char-based diff while still supporting cursor behavior that
             // matches vim.
@@ -16239,7 +16366,7 @@ impl Editor {
                     PathKey::for_buffer(&location.buffer, cx),
                     location.buffer.clone(),
                     ranges_for_buffer,
-                    DEFAULT_MULTIBUFFER_CONTEXT,
+                    multibuffer_context_lines(cx),
                     cx,
                 );
                 ranges.extend(new_ranges)
@@ -22145,6 +22272,7 @@ fn snippet_completions(
     if scopes.is_empty() {
         return Task::ready(Ok(CompletionResponse {
             completions: vec![],
+            display_options: CompletionDisplayOptions::default(),
             is_incomplete: false,
         }));
     }
@@ -22169,6 +22297,7 @@ fn snippet_completions(
             if last_word.is_empty() {
                 return Ok(CompletionResponse {
                     completions: vec![],
+                    display_options: CompletionDisplayOptions::default(),
                     is_incomplete: true,
                 });
             }
@@ -22290,6 +22419,7 @@ fn snippet_completions(
 
         Ok(CompletionResponse {
             completions,
+            display_options: CompletionDisplayOptions::default(),
             is_incomplete,
         })
     })
@@ -24079,4 +24209,11 @@ fn render_diff_hunk_controls(
             },
         )
         .into_any_element()
+}
+
+pub fn multibuffer_context_lines(cx: &App) -> u32 {
+    EditorSettings::try_get(cx)
+        .map(|settings| settings.excerpt_context_lines)
+        .unwrap_or(2)
+        .clamp(1, 32)
 }

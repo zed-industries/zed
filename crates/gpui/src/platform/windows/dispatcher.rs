@@ -14,34 +14,37 @@ use windows::{
     },
     Win32::{
         Foundation::{LPARAM, WPARAM},
-        UI::WindowsAndMessaging::PostThreadMessageW,
+        UI::WindowsAndMessaging::PostMessageW,
     },
 };
 
-use crate::{PlatformDispatcher, TaskLabel, WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD};
+use crate::{
+    HWND, PlatformDispatcher, SafeHwnd, TaskLabel, WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD,
+};
 
 pub(crate) struct WindowsDispatcher {
     main_sender: Sender<Runnable>,
     parker: Mutex<Parker>,
     main_thread_id: ThreadId,
-    main_thread_id_win32: u32,
+    platform_window_handle: SafeHwnd,
     validation_number: usize,
 }
 
 impl WindowsDispatcher {
     pub(crate) fn new(
         main_sender: Sender<Runnable>,
-        main_thread_id_win32: u32,
+        platform_window_handle: HWND,
         validation_number: usize,
     ) -> Self {
         let parker = Mutex::new(Parker::new());
         let main_thread_id = current().id();
+        let platform_window_handle = platform_window_handle.into();
 
         WindowsDispatcher {
             main_sender,
             parker,
             main_thread_id,
-            main_thread_id_win32,
+            platform_window_handle,
             validation_number,
         }
     }
@@ -84,8 +87,8 @@ impl PlatformDispatcher for WindowsDispatcher {
     fn dispatch_on_main_thread(&self, runnable: Runnable) {
         match self.main_sender.send(runnable) {
             Ok(_) => unsafe {
-                PostThreadMessageW(
-                    self.main_thread_id_win32,
+                PostMessageW(
+                    Some(self.platform_window_handle.as_raw()),
                     WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD,
                     WPARAM(self.validation_number),
                     LPARAM(0),

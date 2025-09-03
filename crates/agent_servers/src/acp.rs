@@ -6,10 +6,10 @@ use agent_client_protocol::{self as acp, Agent as _, ErrorCode};
 use anyhow::anyhow;
 use collections::HashMap;
 use futures::AsyncBufReadExt as _;
-use futures::channel::oneshot;
 use futures::io::BufReader;
 use project::Project;
 use serde::Deserialize;
+
 use std::{any::Any, cell::RefCell};
 use std::{path::Path, rc::Rc};
 use thiserror::Error;
@@ -28,7 +28,7 @@ pub struct AcpConnection {
     connection: Rc<acp::ClientSideConnection>,
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
     auth_methods: Vec<acp::AuthMethod>,
-    prompt_capabilities: acp::PromptCapabilities,
+    agent_capabilities: acp::AgentCapabilities,
     _io_task: Task<Result<()>>,
     _wait_task: Task<Result<()>>,
     _stderr_task: Task<Result<()>>,
@@ -134,6 +134,7 @@ impl AcpConnection {
                         read_text_file: true,
                         write_text_file: true,
                     },
+                    terminal: true,
                 },
             })
             .await?;
@@ -147,7 +148,7 @@ impl AcpConnection {
             connection,
             server_name,
             sessions,
-            prompt_capabilities: response.agent_capabilities.prompt_capabilities,
+            agent_capabilities: response.agent_capabilities,
             _io_task: io_task,
             _wait_task: wait_task,
             _stderr_task: stderr_task,
@@ -155,7 +156,7 @@ impl AcpConnection {
     }
 
     pub fn prompt_capabilities(&self) -> &acp::PromptCapabilities {
-        &self.prompt_capabilities
+        &self.agent_capabilities.prompt_capabilities
     }
 }
 
@@ -222,7 +223,8 @@ impl AgentConnection for AcpConnection {
                     action_log,
                     session_id.clone(),
                     // ACP doesn't currently support per-session prompt capabilities or changing capabilities dynamically.
-                    watch::Receiver::constant(self.prompt_capabilities),
+                    watch::Receiver::constant(self.agent_capabilities.prompt_capabilities),
+                    response.available_commands,
                     cx,
                 )
             })?;
@@ -342,22 +344,14 @@ impl acp::Client for ClientDelegate {
         arguments: acp::RequestPermissionRequest,
     ) -> Result<acp::RequestPermissionResponse, acp::Error> {
         let cx = &mut self.cx.clone();
-        let rx = self
-            .sessions
-            .borrow()
-            .get(&arguments.session_id)
-            .context("Failed to get session")?
-            .thread
+
+        let task = self
+            .session_thread(&arguments.session_id)?
             .update(cx, |thread, cx| {
                 thread.request_tool_call_authorization(arguments.tool_call, arguments.options, cx)
-            })?;
+            })??;
 
-        let result = rx?.await;
-
-        let outcome = match result {
-            Ok(option) => acp::RequestPermissionOutcome::Selected { option_id: option },
-            Err(oneshot::Canceled) => acp::RequestPermissionOutcome::Cancelled,
-        };
+        let outcome = task.await;
 
         Ok(acp::RequestPermissionResponse { outcome })
     }
@@ -368,11 +362,7 @@ impl acp::Client for ClientDelegate {
     ) -> Result<(), acp::Error> {
         let cx = &mut self.cx.clone();
         let task = self
-            .sessions
-            .borrow()
-            .get(&arguments.session_id)
-            .context("Failed to get session")?
-            .thread
+            .session_thread(&arguments.session_id)?
             .update(cx, |thread, cx| {
                 thread.write_text_file(arguments.path, arguments.content, cx)
             })?;
@@ -386,16 +376,12 @@ impl acp::Client for ClientDelegate {
         &self,
         arguments: acp::ReadTextFileRequest,
     ) -> Result<acp::ReadTextFileResponse, acp::Error> {
-        let cx = &mut self.cx.clone();
-        let task = self
-            .sessions
-            .borrow()
-            .get(&arguments.session_id)
-            .context("Failed to get session")?
-            .thread
-            .update(cx, |thread, cx| {
+        let task = self.session_thread(&arguments.session_id)?.update(
+            &mut self.cx.clone(),
+            |thread, cx| {
                 thread.read_text_file(arguments.path, arguments.line, arguments.limit, false, cx)
-            })?;
+            },
+        )?;
 
         let content = task.await?;
 
@@ -406,16 +392,92 @@ impl acp::Client for ClientDelegate {
         &self,
         notification: acp::SessionNotification,
     ) -> Result<(), acp::Error> {
-        let cx = &mut self.cx.clone();
-        let sessions = self.sessions.borrow();
-        let session = sessions
-            .get(&notification.session_id)
-            .context("Failed to get session")?;
-
-        session.thread.update(cx, |thread, cx| {
-            thread.handle_session_update(notification.update, cx)
-        })??;
+        self.session_thread(&notification.session_id)?
+            .update(&mut self.cx.clone(), |thread, cx| {
+                thread.handle_session_update(notification.update, cx)
+            })??;
 
         Ok(())
+    }
+
+    async fn create_terminal(
+        &self,
+        args: acp::CreateTerminalRequest,
+    ) -> Result<acp::CreateTerminalResponse, acp::Error> {
+        let terminal = self
+            .session_thread(&args.session_id)?
+            .update(&mut self.cx.clone(), |thread, cx| {
+                thread.create_terminal(
+                    args.command,
+                    args.args,
+                    args.env,
+                    args.cwd,
+                    args.output_byte_limit,
+                    cx,
+                )
+            })?
+            .await?;
+        Ok(
+            terminal.read_with(&self.cx, |terminal, _| acp::CreateTerminalResponse {
+                terminal_id: terminal.id().clone(),
+            })?,
+        )
+    }
+
+    async fn kill_terminal(&self, args: acp::KillTerminalRequest) -> Result<(), acp::Error> {
+        self.session_thread(&args.session_id)?
+            .update(&mut self.cx.clone(), |thread, cx| {
+                thread.kill_terminal(args.terminal_id, cx)
+            })??;
+
+        Ok(())
+    }
+
+    async fn release_terminal(&self, args: acp::ReleaseTerminalRequest) -> Result<(), acp::Error> {
+        self.session_thread(&args.session_id)?
+            .update(&mut self.cx.clone(), |thread, cx| {
+                thread.release_terminal(args.terminal_id, cx)
+            })??;
+
+        Ok(())
+    }
+
+    async fn terminal_output(
+        &self,
+        args: acp::TerminalOutputRequest,
+    ) -> Result<acp::TerminalOutputResponse, acp::Error> {
+        self.session_thread(&args.session_id)?
+            .read_with(&mut self.cx.clone(), |thread, cx| {
+                let out = thread
+                    .terminal(args.terminal_id)?
+                    .read(cx)
+                    .current_output(cx);
+
+                Ok(out)
+            })?
+    }
+
+    async fn wait_for_terminal_exit(
+        &self,
+        args: acp::WaitForTerminalExitRequest,
+    ) -> Result<acp::WaitForTerminalExitResponse, acp::Error> {
+        let exit_status = self
+            .session_thread(&args.session_id)?
+            .update(&mut self.cx.clone(), |thread, cx| {
+                anyhow::Ok(thread.terminal(args.terminal_id)?.read(cx).wait_for_exit())
+            })??
+            .await;
+
+        Ok(acp::WaitForTerminalExitResponse { exit_status })
+    }
+}
+
+impl ClientDelegate {
+    fn session_thread(&self, session_id: &acp::SessionId) -> Result<WeakEntity<AcpThread>> {
+        let sessions = self.sessions.borrow();
+        sessions
+            .get(session_id)
+            .context("Failed to get session")
+            .map(|session| session.thread.clone())
     }
 }

@@ -33,7 +33,7 @@ mod yarn;
 
 use dap::inline_value::{InlineValueLocation, VariableLookupKind, VariableScope};
 
-use crate::git_store::GitStore;
+use crate::{git_store::GitStore, lsp_store::log_store::LogKind};
 pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
@@ -87,7 +87,7 @@ use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 pub use prettier_store::PrettierStore;
 use project_settings::{ProjectSettings, SettingsObserver, SettingsObserverEvent};
-use remote::{RemoteClient, SshConnectionOptions};
+use remote::{RemoteClient, RemoteConnectionOptions};
 use rpc::{
     AnyProtoClient, ErrorCode,
     proto::{FromProto, LanguageServerPromptResponse, REMOTE_SERVER_PROJECT_ID, ToProto},
@@ -285,6 +285,7 @@ pub enum Event {
     ToggleLspLogs {
         server_id: LanguageServerId,
         enabled: bool,
+        toggled_log_kind: LogKind,
     },
     Toast {
         notification_id: SharedString,
@@ -573,9 +574,21 @@ impl std::fmt::Debug for Completion {
 /// Response from a source of completions.
 pub struct CompletionResponse {
     pub completions: Vec<Completion>,
+    pub display_options: CompletionDisplayOptions,
     /// When false, indicates that the list is complete and so does not need to be re-queried if it
     /// can be filtered instead.
     pub is_incomplete: bool,
+}
+
+#[derive(Default)]
+pub struct CompletionDisplayOptions {
+    pub dynamic_width: bool,
+}
+
+impl CompletionDisplayOptions {
+    pub fn merge(&mut self, other: &CompletionDisplayOptions) {
+        self.dynamic_width = self.dynamic_width && other.dynamic_width;
+    }
 }
 
 /// Response from language server completion request.
@@ -665,7 +678,6 @@ pub enum ResolveState {
     CanResolve(LanguageServerId, Option<lsp::LSPAny>),
     Resolving,
 }
-
 impl InlayHint {
     pub fn text(&self) -> Rope {
         match &self.label {
@@ -929,7 +941,7 @@ pub enum LspPullDiagnostics {
         /// The id of the language server that produced diagnostics.
         server_id: LanguageServerId,
         /// URI of the resource,
-        uri: lsp::Url,
+        uri: lsp::Uri,
         /// The diagnostics produced by this language server.
         diagnostics: PulledDiagnostics,
     },
@@ -951,7 +963,7 @@ pub enum PulledDiagnostics {
 /// Whether to disable all AI features in Zed.
 ///
 /// Default: false
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, settings::SettingsUi)]
 pub struct DisableAiSettings {
     pub disable_ai: bool,
 }
@@ -1915,7 +1927,7 @@ impl Project {
             .map(|remote| remote.read(cx).connection_state())
     }
 
-    pub fn remote_connection_options(&self, cx: &App) -> Option<SshConnectionOptions> {
+    pub fn remote_connection_options(&self, cx: &App) -> Option<RemoteConnectionOptions> {
         self.remote_client
             .as_ref()
             .map(|remote| remote.read(cx).connection_options())
@@ -2061,13 +2073,12 @@ impl Project {
         exclude_sub_dirs: bool,
         cx: &App,
     ) -> Option<bool> {
-        let sanitized_path = SanitizedPath::from(path);
-        let path = sanitized_path.as_path();
+        let path = SanitizedPath::new(path).as_path();
         self.worktrees(cx)
             .filter_map(|worktree| {
                 let worktree = worktree.read(cx);
                 let abs_path = worktree.as_local()?.abs_path();
-                let contains = path == abs_path
+                let contains = path == abs_path.as_ref()
                     || (path.starts_with(abs_path) && (!exclude_sub_dirs || !metadata.is_dir));
                 contains.then(|| worktree.is_visible())
             })
@@ -3599,7 +3610,7 @@ impl Project {
 
     pub fn open_local_buffer_via_lsp(
         &mut self,
-        abs_path: lsp::Url,
+        abs_path: lsp::Uri,
         language_server_id: LanguageServerId,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
@@ -4720,10 +4731,19 @@ impl Project {
         envelope: TypedEnvelope<proto::ToggleLspLogs>,
         mut cx: AsyncApp,
     ) -> Result<()> {
+        let toggled_log_kind =
+            match proto::toggle_lsp_logs::LogType::from_i32(envelope.payload.log_type)
+                .context("invalid log type")?
+            {
+                proto::toggle_lsp_logs::LogType::Log => LogKind::Logs,
+                proto::toggle_lsp_logs::LogType::Trace => LogKind::Trace,
+                proto::toggle_lsp_logs::LogType::Rpc => LogKind::Rpc,
+            };
         project.update(&mut cx, |_, cx| {
             cx.emit(Event::ToggleLspLogs {
                 server_id: LanguageServerId::from_proto(envelope.payload.server_id),
                 enabled: envelope.payload.enabled,
+                toggled_log_kind,
             })
         })?;
         Ok(())

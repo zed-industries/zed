@@ -31,7 +31,7 @@ use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EnvelopedMessage, PeerId, RequestMessage};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsSources, SettingsUi};
 use std::{
     any::TypeId,
     convert::TryFrom,
@@ -96,7 +96,7 @@ actions!(
     ]
 );
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
 pub struct ClientSettingsContent {
     server_url: Option<String>,
 }
@@ -122,7 +122,7 @@ impl Settings for ClientSettings {
     fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
-#[derive(Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, SettingsUi)]
 pub struct ProxySettingsContent {
     proxy: Option<String>,
 }
@@ -287,6 +287,7 @@ pub enum Status {
     },
     ConnectionLost,
     Reauthenticating,
+    Reauthenticated,
     Reconnecting,
     ReconnectionError {
         next_reconnection: Instant,
@@ -296,6 +297,21 @@ pub enum Status {
 impl Status {
     pub fn is_connected(&self) -> bool {
         matches!(self, Self::Connected { .. })
+    }
+
+    pub fn was_connected(&self) -> bool {
+        matches!(
+            self,
+            Self::ConnectionLost
+                | Self::Reauthenticating
+                | Self::Reauthenticated
+                | Self::Reconnecting
+        )
+    }
+
+    /// Returns whether the client is currently connected or was connected at some point.
+    pub fn is_or_was_connected(&self) -> bool {
+        self.is_connected() || self.was_connected()
     }
 
     pub fn is_signing_in(&self) -> bool {
@@ -511,7 +527,7 @@ pub struct TelemetrySettings {
 }
 
 /// Control what info is collected by Zed.
-#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, Debug, SettingsUi)]
 pub struct TelemetrySettingsContent {
     /// Send debug info like crash reports.
     ///
@@ -857,11 +873,13 @@ impl Client {
         try_provider: bool,
         cx: &AsyncApp,
     ) -> Result<Credentials> {
-        if self.status().borrow().is_signed_out() {
+        let is_reauthenticating = if self.status().borrow().is_signed_out() {
             self.set_status(Status::Authenticating, cx);
+            false
         } else {
             self.set_status(Status::Reauthenticating, cx);
-        }
+            true
+        };
 
         let mut credentials = None;
 
@@ -919,7 +937,14 @@ impl Client {
         self.cloud_client
             .set_credentials(credentials.user_id as u32, credentials.access_token.clone());
         self.state.write().credentials = Some(credentials.clone());
-        self.set_status(Status::Authenticated, cx);
+        self.set_status(
+            if is_reauthenticating {
+                Status::Reauthenticated
+            } else {
+                Status::Authenticated
+            },
+            cx,
+        );
 
         Ok(credentials)
     }
@@ -1034,6 +1059,7 @@ impl Client {
             | Status::Authenticating
             | Status::AuthenticationError
             | Status::Reauthenticating
+            | Status::Reauthenticated
             | Status::ReconnectionError { .. } => false,
             Status::Connected { .. } | Status::Connecting | Status::Reconnecting => {
                 return ConnectionResult::Result(Ok(()));
@@ -1670,21 +1696,10 @@ impl Client {
             );
             cx.spawn(async move |_| match future.await {
                 Ok(()) => {
-                    log::debug!(
-                        "rpc message handled. client_id:{}, sender_id:{:?}, type:{}",
-                        client_id,
-                        original_sender_id,
-                        type_name
-                    );
+                    log::debug!("rpc message handled. client_id:{client_id}, sender_id:{original_sender_id:?}, type:{type_name}");
                 }
                 Err(error) => {
-                    log::error!(
-                        "error handling message. client_id:{}, sender_id:{:?}, type:{}, error:{:?}",
-                        client_id,
-                        original_sender_id,
-                        type_name,
-                        error
-                    );
+                    log::error!("error handling message. client_id:{client_id}, sender_id:{original_sender_id:?}, type:{type_name}, error:{error:#}");
                 }
             })
             .detach();
