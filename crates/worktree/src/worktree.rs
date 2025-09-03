@@ -1775,6 +1775,20 @@ impl LocalWorktree {
             };
             absolutize_path
         };
+
+        if !is_root_entry {
+            // If the parent directory doesn't exist, create it
+            if let Some(parent) = abs_new_path.parent() {
+                if !parent.exists() {
+                    if let Err(e) = std::fs::create_dir_all(parent).with_context(|| {
+                        format!("Creating parent directory {parent:?} for {abs_new_path:?}")
+                    }) {
+                        return Task::ready(Err(anyhow!("error creating parent directory {parent:?}: {e}")));
+                    }
+                }
+            }
+        }
+
         let abs_path = abs_new_path.clone();
         let fs = self.fs.clone();
         let case_sensitive = self.fs_case_sensitive;
