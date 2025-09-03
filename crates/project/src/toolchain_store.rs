@@ -108,11 +108,14 @@ impl ToolchainStore {
         scope: ToolchainScope,
         cx: &mut Context<Self>,
     ) {
-        self.user_toolchains
+        let did_insert = self
+            .user_toolchains
             .entry(scope)
             .or_default()
             .insert(toolchain);
-        cx.emit(ToolchainStoreEvent::CustomToolchainsModified);
+        if did_insert {
+            cx.emit(ToolchainStoreEvent::CustomToolchainsModified);
+        }
     }
 
     pub(crate) fn remove_toolchain(
