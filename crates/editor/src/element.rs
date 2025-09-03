@@ -3270,6 +3270,10 @@ impl EditorElement {
         if rows.start >= rows.end {
             return Vec::new();
         }
+        if !base_background.is_opaque() {
+            // We don't actually know what color is behind this editor.
+            return Vec::new();
+        }
         let highlight_iter = highlight_ranges.iter().cloned();
         let selection_iter = selections.iter().flat_map(|(player_color, layouts)| {
             let color = player_color.selection;
@@ -10974,7 +10978,7 @@ mod tests {
 
     #[gpui::test]
     fn test_merge_overlapping_ranges() {
-        let base_bg = Hsla::default();
+        let base_bg = Hsla::white();
         let color1 = Hsla {
             h: 0.0,
             s: 0.5,
@@ -11044,7 +11048,7 @@ mod tests {
 
     #[gpui::test]
     fn test_bg_segments_per_row() {
-        let base_bg = Hsla::default();
+        let base_bg = Hsla::white();
 
         // Case A: selection spans three display rows: row 1 [5, end), full row 2, row 3 [0, 7)
         {
