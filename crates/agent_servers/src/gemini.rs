@@ -36,6 +36,7 @@ impl AgentServer for Gemini {
         cx: &mut App,
     ) -> Task<Result<Rc<dyn AgentConnection>>> {
         let root_dir = root_dir.to_path_buf();
+        let fs = delegate.project().read(cx).fs().clone();
         let server_name = self.name();
         let settings = cx.read_global(|settings: &SettingsStore, _| {
             settings.get::<AllAgentServersSettings>(None).gemini.clone()
@@ -74,6 +75,13 @@ impl AgentServer for Gemini {
                     .insert("GEMINI_API_KEY".to_owned(), api_key.key);
             }
 
+            let root_dir_exists = fs.is_dir(&root_dir).await;
+            anyhow::ensure!(
+                root_dir_exists,
+                "Session root {} does not exist or is not a directory",
+                root_dir.to_string_lossy()
+            );
+
             let result = crate::acp::connect(server_name, command.clone(), &root_dir, cx).await;
             match &result {
                 Ok(connection) => {
@@ -92,7 +100,7 @@ impl AgentServer for Gemini {
                         log::error!("connected to gemini, but missing prompt_capabilities.image (version is {current_version})");
                         return Err(LoadError::Unsupported {
                             current_version: current_version.into(),
-                            command: command.path.to_string_lossy().to_string().into(),
+                            command: (command.path.to_string_lossy().to_string() + " " + &command.args.join(" ")).into(),
                             minimum_version: Self::MINIMUM_VERSION.into(),
                         }
                         .into());
@@ -129,7 +137,7 @@ impl AgentServer for Gemini {
                     if !supported {
                         return Err(LoadError::Unsupported {
                             current_version: current_version.into(),
-                            command: command.path.to_string_lossy().to_string().into(),
+                            command: (command.path.to_string_lossy().to_string() + " " + &command.args.join(" ")).into(),
                             minimum_version: Self::MINIMUM_VERSION.into(),
                         }
                         .into());
