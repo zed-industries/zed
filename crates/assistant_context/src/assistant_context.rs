@@ -2669,7 +2669,11 @@ impl AssistantContext {
     }
 
     pub fn summarize(&mut self, mut replace_old: bool, cx: &mut Context<Self>) {
-        let Some(model) = LanguageModelRegistry::read_global(cx).thread_summary_model() else {
+        let registry = LanguageModelRegistry::read_global(cx);
+        let Some(model) = registry
+            .thread_summary_model()
+            .or_else(|| registry.default_model())
+        else {
             return;
         };
 
