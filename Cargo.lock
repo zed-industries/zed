@@ -20573,6 +20573,9 @@ dependencies = [
 [[package]]
 name = "zed_env_vars"
 version = "0.1.0"
+dependencies = [
+ "workspace-hack",
+]
 
 [[package]]
 name = "zed_extension_api"

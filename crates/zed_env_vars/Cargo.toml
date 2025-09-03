@@ -13,3 +13,6 @@ path = "src/zed_env_vars.rs"
 
 [features]
 default = []
+
+[dependencies]
+workspace-hack.workspace = true
