@@ -30,12 +30,9 @@ If you'd like to bind this to a keyboard shortcut, you can do so by editing your
 
 #### Installation
 
-If you don't yet have Gemini CLI installed, then Zed will install a version for you. If you do, then we will use the version of Gemini CLI on your path.
+The first time you create a Gemini CLI thread, Zed will install [@google/gemini-cli](https://github.com/zed-industries/claude-code-acp). This installation is only available to Zed and is kept up to date as you use the agent.
 
-You need to be running at least Gemini version `0.2.0`, and if your version of Gemini is too old you will see an
-error message.
-
-The instructions to upgrade Gemini depend on how you originally installed it, but typically, running `npm install -g @google/gemini-cli@latest` should work.
+Zed will always use this managed version of Gemini CLI even if you have it installed globally.
 
 #### Authentication
 
@@ -80,8 +77,9 @@ If you'd like to bind this to a keyboard shortcut, you can do so by editing your
 
 #### Installation
 
-If you don't yet have Claude Code installed, then Zed will install a version for you.
-If you do, then we will use the version of Claude Code on your path.
+The first time you create a Gemini CLI thread, Zed will install [@zed-industries/claude-code-acp](https://github.com/zed-industries/claude-code-acp). This installation is only available to Zed and is kept up to date as you use the agent.
+
+Zed will always use this managed version of Claude Code even if you have it installed globally.
 
 ### Usage
 
