@@ -54,12 +54,10 @@ impl ToolchainScope {
     pub fn description(&self) -> &'static str {
         match self {
             ToolchainScope::Subproject(_, _) => {
-                "This toolchain will be available only in the subproject you're currently in."
+                "Available only in the subproject you're currently in."
             }
-            ToolchainScope::Project => {
-                "This toolchain will be available in all locations in your current project."
-            }
-            ToolchainScope::Global => "This toolchain will be available in all of your projects.",
+            ToolchainScope::Project => "Available in all locations in your current project.",
+            ToolchainScope::Global => "Available in all of your projects on this machine.",
         }
     }
 }

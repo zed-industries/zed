@@ -13,7 +13,7 @@ use gpui::{
 };
 use language::{Language, LanguageName, Toolchain, ToolchainScope};
 use picker::{Picker, PickerDelegate};
-use project::{DirectoryLister, Project, ProjectPath, Toolchains, WorktreeId};
+use project::{DirectoryLister, Project, ProjectPath, ResolvedPath, Toolchains, WorktreeId};
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
@@ -182,6 +182,7 @@ impl AddToolchainState {
     }
     fn resolve_path(
         path: PathBuf,
+        root_path: ProjectPath,
         language_name: LanguageName,
         project: Entity<Project>,
         window: &mut Window,
@@ -223,6 +224,23 @@ impl AddToolchainState {
                     });
                     return Err(anyhow::anyhow!("Failed to resolve toolchain"));
                 };
+                let resolved_toolchain_path = project.read_with(cx, |this, cx| {
+                    this.find_project_path(&toolchain.path.as_ref(), cx)
+                })?;
+
+                // Suggest a default scope based on the applicability.
+                let scope = if let Some(project_path) = resolved_toolchain_path {
+                    if root_path.path.as_ref() != Path::new("")
+                        && project_path.starts_with(&root_path)
+                    {
+                        ToolchainScope::Subproject(root_path.worktree_id, root_path.path)
+                    } else {
+                        ToolchainScope::Project
+                    }
+                } else {
+                    ToolchainScope::Global
+                };
+
                 _ = this.update_in(cx, |this, window, cx| {
                     this.state = AddState::Name {
                         editor: cx.new(|cx| {
@@ -231,7 +249,7 @@ impl AddToolchainState {
                             editor
                         }),
                         toolchain,
-                        scope: ToolchainScope::Global,
+                        scope,
                     };
                     this.focus_handle(cx).focus(window);
                 });
@@ -264,6 +282,7 @@ impl AddToolchainState {
                         error.take();
                         *input_state = Self::resolve_path(
                             path,
+                            this.root_path.clone(),
                             this.language_name.clone(),
                             this.project.clone(),
                             window,
@@ -929,7 +948,8 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                     .into();
                     let toolchain = toolchain.clone();
                     let scope = scope.clone();
-                    this.end_hover_slot(IconButton::new(id, IconName::Trash))
+
+                    this.end_slot(IconButton::new(id, IconName::Trash))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.delegate.project.update(cx, |this, cx| {
                                 this.remove_toolchain(toolchain.clone(), scope.clone(), cx)
