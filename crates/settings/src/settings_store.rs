@@ -84,7 +84,7 @@ pub trait Settings: 'static + Send + Sync {
         Self: Sized;
 
     fn missing_default() -> anyhow::Error {
-        anyhow::anyhow!("missing default")
+        anyhow::anyhow!("missing default for: {}", std::any::type_name::<Self>())
     }
 
     /// Use [the helpers in the vscode_import module](crate::vscode_import) to apply known
@@ -1523,6 +1523,7 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
                 }
             }
         }
+
         self.global_value
             .as_ref()
             .unwrap_or_else(|| panic!("no default value for setting {}", self.setting_type_name()))

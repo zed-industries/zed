@@ -45,9 +45,9 @@ impl Settings for VimModeSetting {
         Ok(Self(
             sources
                 .user
-                .or(sources.server)
-                .unwrap_or(sources.default)
-                .vim_mode
+                .and_then(|mode| mode.vim_mode)
+                .or(sources.server.and_then(|mode| mode.vim_mode))
+                .or(sources.default.vim_mode)
                 .ok_or_else(Self::missing_default)?,
         ))
     }
@@ -57,6 +57,7 @@ impl Settings for VimModeSetting {
     }
 }
 
+#[derive(Debug)]
 pub struct HelixModeSetting(pub bool);
 
 #[derive(
@@ -87,9 +88,9 @@ impl Settings for HelixModeSetting {
         Ok(Self(
             sources
                 .user
-                .or(sources.server)
-                .unwrap_or(sources.default)
-                .helix_mode
+                .and_then(|mode| mode.helix_mode)
+                .or(sources.server.and_then(|mode| mode.helix_mode))
+                .or(sources.default.helix_mode)
                 .ok_or_else(Self::missing_default)?,
         ))
     }
