@@ -10,7 +10,7 @@ use rand_chacha::ChaCha8Rng;
 use std::{
     collections::VecDeque,
     future::Future,
-    panic::{self, AssertUnwindSafe, UnwindSafe},
+    panic::{self, AssertUnwindSafe},
     pin::Pin,
     sync::{
         Arc,
@@ -53,15 +53,14 @@ impl TestScheduler {
 
     /// Run a test once with a specific seed
     pub fn with_seed<R>(seed: u64, f: impl AsyncFnOnce(Arc<TestScheduler>) -> R) -> R {
-        let scheduler = Arc::new(TestScheduler::new(
-            Arc::new(TestClock::new(Utc::now())),
-            SchedulerConfig::with_seed(seed),
-        ));
+        let scheduler = Arc::new(TestScheduler::new(SchedulerConfig::with_seed(seed)));
         let future = f(scheduler.clone());
-        scheduler.block_on(future)
+        let result = scheduler.block_on(future);
+        scheduler.run();
+        result
     }
 
-    pub fn new(clock: Arc<TestClock>, config: SchedulerConfig) -> Self {
+    pub fn new(config: SchedulerConfig) -> Self {
         Self {
             rng: Arc::new(Mutex::new(ChaCha8Rng::seed_from_u64(config.seed))),
             state: Mutex::new(SchedulerState {
@@ -72,7 +71,7 @@ impl TestScheduler {
                 next_session_id: SessionId(0),
             }),
             thread_id: thread::current().id(),
-            clock,
+            clock: Arc::new(TestClock::new()),
             config,
         }
     }
@@ -104,44 +103,7 @@ impl TestScheduler {
         (self as &dyn Scheduler).block_on(future)
     }
 
-    pub async fn unblock<F, T>(&self, f: F) -> T
-    where
-        F: FnOnce() -> T + Send + UnwindSafe + 'static,
-        T: Send + 'static,
-    {
-        let (sender, receiver) = std::sync::mpsc::channel();
-
-        // Create a new thread to run the closure. It would be more efficient to use a thread pool,
-        // but this seems fine for simulator usage.
-        thread::spawn({
-            let sender = sender.clone();
-            move || {
-                sender.send(
-                    panic::catch_unwind(f)
-                        .map_err(|err| format!("panic in closure passed to `unblock`:\n\n{err:?}")),
-                )
-            }
-        });
-
-        const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-        thread::spawn(move || {
-            thread::sleep(TIMEOUT);
-            let _ = sender.send(Err(format!(
-                "closure passed to `unblock` took too long (limit: {TIMEOUT:?})"
-            )));
-        });
-
-        self.random_delay().await;
-
-        // Intentionally block the simulator on completion of the closure. This is needed in order
-        // to simulate it completing before other delayed tasks.
-        receiver
-            .recv()
-            .expect("impossible for sender to be dropped")
-            .unwrap()
-    }
-
-    pub fn random_delay(&self) -> Yield {
+    pub fn yield_random(&self) -> Yield {
         Yield(self.rng.lock().random_range(0..20))
     }
 

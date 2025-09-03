@@ -10,7 +10,9 @@ pub struct TestClock {
 }
 
 impl TestClock {
-    pub fn new(now: DateTime<Utc>) -> Self {
+    pub fn new() -> Self {
+        const START_TIME: &str = "2025-07-01T23:59:58-00:00";
+        let now = DateTime::parse_from_rfc3339(START_TIME).unwrap().to_utc();
         Self {
             now: Mutex::new(now),
         }

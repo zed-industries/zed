@@ -1,5 +1,4 @@
 use super::*;
-use chrono::Utc;
 use futures::{
     FutureExt,
     channel::{mpsc, oneshot},
@@ -188,10 +187,7 @@ fn test_randomize_order() {
 }
 
 async fn capture_execution_order(config: SchedulerConfig) -> Vec<String> {
-    let scheduler = Arc::new(TestScheduler::new(
-        Arc::new(TestClock::new(Utc::now())),
-        config,
-    ));
+    let scheduler = Arc::new(TestScheduler::new(config));
     let foreground = scheduler.foreground();
     let background = scheduler.background();
 
@@ -225,10 +221,7 @@ async fn capture_execution_order(config: SchedulerConfig) -> Vec<String> {
 
 #[test]
 fn test_block() {
-    let scheduler = Arc::new(TestScheduler::new(
-        Arc::new(TestClock::new(Utc::now())),
-        SchedulerConfig::default(),
-    ));
+    let scheduler = Arc::new(TestScheduler::new(SchedulerConfig::default()));
     let executor = BackgroundExecutor::new(scheduler.clone());
     let (tx, rx) = oneshot::channel();
 
@@ -247,10 +240,7 @@ fn test_block() {
 #[test]
 #[should_panic(expected = "Parking forbidden")]
 fn test_parking_panics() {
-    let scheduler = Arc::new(TestScheduler::new(
-        Arc::new(TestClock::new(Utc::now())),
-        SchedulerConfig::default(),
-    ));
+    let scheduler = Arc::new(TestScheduler::new(SchedulerConfig::default()));
     let executor = BackgroundExecutor::new(scheduler);
     executor.block_on(future::pending::<()>());
 }
@@ -261,10 +251,7 @@ fn test_block_with_parking() {
         allow_parking: true,
         ..Default::default()
     };
-    let scheduler = Arc::new(TestScheduler::new(
-        Arc::new(TestClock::new(Utc::now())),
-        config,
-    ));
+    let scheduler = Arc::new(TestScheduler::new(config));
     let executor = BackgroundExecutor::new(scheduler.clone());
     let (tx, rx) = oneshot::channel();
 
