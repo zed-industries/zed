@@ -2341,7 +2341,7 @@ pub fn perform_project_search(
 
 #[cfg(test)]
 pub mod tests {
-    use std::{ops::Deref as _, sync::Arc};
+    use std::{ops::Deref as _, sync::Arc, time::Duration};
 
     use super::*;
     use editor::{DisplayPoint, display_map::DisplayRow};
@@ -2384,6 +2384,7 @@ pub mod tests {
                 "\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\nconst TWO: usize = one::ONE + one::ONE;"
             );
             let match_background_color = cx.theme().colors().search_match_background;
+            let selection_background_color = cx.theme().colors().editor_document_highlight_bracket_background;
             assert_eq!(
                 search_view
                     .results_editor
@@ -2400,6 +2401,14 @@ pub mod tests {
                     (
                         DisplayPoint::new(DisplayRow(5), 6)..DisplayPoint::new(DisplayRow(5), 9),
                         match_background_color
+                    ),
+                    (
+                        DisplayPoint::new(DisplayRow(2), 37)..DisplayPoint::new(DisplayRow(2), 40),
+                        selection_background_color
+                    ),
+                    (
+                        DisplayPoint::new(DisplayRow(5), 6)..DisplayPoint::new(DisplayRow(5), 9),
+                        selection_background_color
                     )
                 ]
             );
@@ -4159,6 +4168,10 @@ pub mod tests {
                 search_view.search(cx);
             })
             .unwrap();
+        // Ensure editor highlights appear after the search is done
+        cx.executor().advance_clock(
+            editor::SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT + Duration::from_millis(100),
+        );
         cx.background_executor.run_until_parked();
     }
 }
