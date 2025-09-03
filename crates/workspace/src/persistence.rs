@@ -688,16 +688,16 @@ impl Domain for WorkspaceDb {
             CREATE UNIQUE INDEX ix_workspaces_location ON workspaces(remote_connection_id, paths);
         ),
         sql!(CREATE TABLE user_toolchains (
-            remote_connection_id INTEGER REFERENCES remote_connections(id),
-            workspace_id INTEGER,
-            worktree_id INTEGER,
-            relative_worktree_path TEXT,
+            remote_connection_id INTEGER,
+            workspace_id INTEGER NOT NULL,
+            worktree_id INTEGER NOT NULL,
+            relative_worktree_path TEXT NOT NULL,
             language_name TEXT NOT NULL,
             name TEXT NOT NULL,
             path TEXT NOT NULL,
             raw_json TEXT NOT NULL,
 
-            PRIMARY KEY (remote_connection_id, workspace_id, worktree_id, relative_worktree_path, language_name, name, path, raw_json)
+            PRIMARY KEY (workspace_id, worktree_id, relative_worktree_path, language_name, name, path, raw_json)
         ) STRICT;),
     ];
 
@@ -874,21 +874,14 @@ impl WorkspaceDb {
         workspace_id: WorkspaceId,
         remote_connection_id: Option<RemoteConnectionId>,
     ) -> BTreeMap<ToolchainScope, IndexSet<Toolchain>> {
-        type RowKind = (
-            Option<WorkspaceId>,
-            Option<u64>,
-            Option<String>,
-            String,
-            String,
-            String,
-            String,
-        );
+        type RowKind = (WorkspaceId, u64, String, String, String, String, String);
+
         let toolchains: Vec<RowKind> = self
             .select_bound(sql! {
                 SELECT workspace_id, worktree_id, relative_worktree_path,
                 language_name, name, path, raw_json
-                FROM user_toolchains WHERE remote_connection_id = ?1 AND (
-                    workspace_id IS NULL OR workspace_id = ?2
+                FROM user_toolchains WHERE remote_connection_id IS ?1 AND (
+                      workspace_id IN (0, ?2)
                 )
             })
             .and_then(|mut statement| {
@@ -896,6 +889,7 @@ impl WorkspaceDb {
             })
             .unwrap_or_default();
         let mut ret = BTreeMap::<_, IndexSet<_>>::default();
+
         for (
             _workspace_id,
             worktree_id,
@@ -906,12 +900,19 @@ impl WorkspaceDb {
             raw_json,
         ) in toolchains
         {
-            let scope = if let Some(_id) = _workspace_id {
-                debug_assert_eq!(workspace_id, _id);
-                debug_assert_eq!(worktree_id.is_none(), relative_worktree_path.is_none());
-                if let Some((worktree_id, relative_worktree_path)) =
-                    worktree_id.zip(relative_worktree_path)
-                {
+            // INTEGER's that are primary keys (like workspace ids, remote connection ids and such) start at 1, so we're safe to
+            let scope = if _workspace_id == WorkspaceId(0) {
+                debug_assert_eq!(worktree_id, u64::MAX);
+                debug_assert_eq!(relative_worktree_path, String::default());
+                ToolchainScope::Global
+            } else {
+                debug_assert_eq!(workspace_id, _workspace_id);
+                debug_assert_eq!(
+                    worktree_id == u64::MAX,
+                    relative_worktree_path == String::default()
+                );
+
+                if worktree_id != u64::MAX && relative_worktree_path != String::default() {
                     ToolchainScope::Subproject(
                         WorktreeId::from_usize(worktree_id as usize),
                         Arc::from(relative_worktree_path.as_ref()),
@@ -919,10 +920,6 @@ impl WorkspaceDb {
                 } else {
                     ToolchainScope::Project
                 }
-            } else {
-                debug_assert!(worktree_id.is_none());
-                debug_assert!(relative_worktree_path.is_none());
-                ToolchainScope::Global
             };
             let Ok(as_json) = serde_json::from_str(&raw_json) else {
                 continue;
@@ -991,6 +988,22 @@ impl WorkspaceDb {
                                 log::error!("{err}");
                                 continue;
                             }
+                        }
+                    }
+                }
+                for (scope, toolchains) in workspace.user_toolchains {
+                    for toolchain in toolchains {
+                        let query = sql!(INSERT OR REPLACE INTO user_toolchains(remote_connection_id, workspace_id, worktree_id, relative_worktree_path, language_name, name, path, raw_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8));
+                        let (workspace_id, worktree_id, relative_worktree_path) = match scope {
+                            ToolchainScope::Subproject(worktree_id, ref path) => (Some(workspace.id), Some(worktree_id), Some(path.to_string_lossy().into_owned())),
+                            ToolchainScope::Project => (Some(workspace.id), None, None),
+                            ToolchainScope::Global => (None, None, None),
+                        };
+                        let args = (remote_connection_id, workspace_id.unwrap_or(WorkspaceId(0)), worktree_id.map_or(usize::MAX,|id| id.to_usize()), relative_worktree_path.unwrap_or_default(),
+                        toolchain.language_name.as_ref().to_owned(), toolchain.name.to_string(), toolchain.path.to_string(), toolchain.as_json.to_string());
+                        if let Err(err) = conn.exec_bound(query)?(args) {
+                            log::error!("{err}");
+                            continue;
                         }
                     }
                 }

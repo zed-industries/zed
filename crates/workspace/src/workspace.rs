@@ -1578,6 +1578,16 @@ impl Workspace {
                     })?
                     .await;
             }
+            if let Some(workspace) = serialized_workspace.as_ref() {
+                project_handle.update(cx, |this, cx| {
+                    for (scope, toolchains) in &workspace.user_toolchains {
+                        for toolchain in toolchains {
+                            this.add_toolchain(toolchain.clone(), scope.clone(), cx);
+                        }
+                    }
+                })?;
+            }
+
             let window = if let Some(window) = requesting_window {
                 let centered_layout = serialized_workspace
                     .as_ref()
