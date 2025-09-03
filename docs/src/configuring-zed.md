@@ -4073,6 +4073,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ```json
 "title_bar": {
+  "show": true,
   "show_branch_icon": false,
   "show_branch_name": true,
   "show_project_items": true,
