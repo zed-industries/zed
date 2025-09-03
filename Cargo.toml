@@ -193,6 +193,7 @@ members = [
     "crates/x_ai",
     "crates/zed",
     "crates/zed_actions",
+    "crates/zed_env_vars",
     "crates/zeta",
     "crates/zeta_cli",
     "crates/zlog",
@@ -420,6 +421,7 @@ worktree = { path = "crates/worktree" }
 x_ai = { path = "crates/x_ai" }
 zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
+zed_env_vars = { path = "crates/zed_env_vars" }
 zeta = { path = "crates/zeta" }
 zlog = { path = "crates/zlog" }
 zlog_settings = { path = "crates/zlog_settings" }
