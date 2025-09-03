@@ -188,7 +188,7 @@
     }
   },
   {
-    "context": "vim_mode == normal || vim_mode == visual",
+    "context": "vim_mode == normal || vim_mode == visual || vim_mode == operator",
     "bindings": {
       "] ]": "vim::NextSectionStart",
       "] [": "vim::NextSectionEnd",
