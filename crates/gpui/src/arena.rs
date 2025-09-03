@@ -2,7 +2,7 @@ use std::{
     alloc::{self, handle_alloc_error},
     cell::Cell,
     ops::{Deref, DerefMut},
-    ptr,
+    ptr::{self, NonNull},
     rc::Rc,
 };
 
@@ -30,8 +30,8 @@ impl Drop for Chunk {
     fn drop(&mut self) {
         unsafe {
             let chunk_size = self.end.offset_from_unsigned(self.start);
-            // this never fails as it succeeded during allocation
-            let layout = alloc::Layout::from_size_align(chunk_size, 1).unwrap();
+            // SAFETY: This succeeded during allocation.
+            let layout = alloc::Layout::from_size_align_unchecked(chunk_size, 1);
             alloc::dealloc(self.start, layout);
         }
     }
@@ -55,14 +55,14 @@ impl Chunk {
         }
     }
 
-    fn allocate(&mut self, layout: alloc::Layout) -> Option<*mut u8> {
+    fn allocate(&mut self, layout: alloc::Layout) -> Option<NonNull<u8>> {
         unsafe {
             let aligned = self.offset.add(self.offset.align_offset(layout.align()));
             let next = aligned.add(layout.size());
 
             if next <= self.end {
                 self.offset = next;
-                Some(aligned)
+                NonNull::new(aligned)
             } else {
                 None
             }
@@ -136,7 +136,7 @@ impl Arena {
             let layout = alloc::Layout::new::<T>();
             let mut current_chunk = &mut self.chunks[self.current_chunk_index];
             let ptr = if let Some(ptr) = current_chunk.allocate(layout) {
-                ptr
+                ptr.as_ptr()
             } else {
                 self.current_chunk_index += 1;
                 if self.current_chunk_index >= self.chunks.len() {
@@ -149,7 +149,7 @@ impl Arena {
                 }
                 current_chunk = &mut self.chunks[self.current_chunk_index];
                 if let Some(ptr) = current_chunk.allocate(layout) {
-                    ptr
+                    ptr.as_ptr()
                 } else {
                     panic!(
                         "Arena chunk_size of {} is too small to allocate {} bytes",
