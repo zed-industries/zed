@@ -4855,4 +4855,25 @@ mod tests {
             "BUG FOUND: Project settings were overwritten when opening via command - original custom content was lost"
         );
     }
+
+    #[gpui::test]
+    fn test_settings_defaults(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            settings::init(cx);
+            workspace::init_settings(cx);
+            title_bar::init(cx);
+            editor::init_settings(cx);
+            debugger_ui::init(cx);
+        });
+        let default_json =
+            cx.read(|cx| cx.global::<SettingsStore>().raw_default_settings().clone());
+
+        let all_paths = cx.read(settings_ui::SettingsUiTree::new).all_paths();
+        for path in all_paths {
+            let Some(_value) = settings_ui::read_settings_value_from_path(&default_json, &path)
+            else {
+                panic!("No default value found for path: {:?}", path.join("."));
+            };
+        }
+    }
 }
