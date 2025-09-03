@@ -151,7 +151,9 @@ struct UiEntry {
     next_sibling: Option<usize>,
     // expanded: bool,
     render: Option<SettingsUiItemSingle>,
-    select_descendant: Option<fn(&serde_json::Value, &mut App) -> usize>,
+    /// For dynamic items this is a way to select a value from a list of values
+    /// this is always none for non-dynamic items
+    select_descendant: Option<fn(&serde_json::Value, &App) -> usize>,
 }
 
 impl UiEntry {
@@ -177,7 +179,7 @@ impl UiEntry {
     }
 }
 
-struct SettingsUiTree {
+pub struct SettingsUiTree {
     root_entry_indices: Vec<usize>,
     entries: Vec<UiEntry>,
     active_entry_index: usize,
@@ -242,7 +244,7 @@ fn build_tree_item(
 }
 
 impl SettingsUiTree {
-    fn new(cx: &App) -> Self {
+    pub fn new(cx: &App) -> Self {
         let settings_store = SettingsStore::global(cx);
         let mut tree = vec![];
         let mut root_entry_indices = vec![];
@@ -268,6 +270,62 @@ impl SettingsUiTree {
             root_entry_indices,
             active_entry_index,
         }
+    }
+
+    // todo(settings_ui): Make sure `Item::None` paths are added to the paths tree,
+    // so that we can keep none/skip and still test in CI that all settings have
+    #[cfg(feature = "test-support")]
+    pub fn all_paths(&self, cx: &App) -> Vec<Vec<&'static str>> {
+        fn all_paths_rec(
+            tree: &[UiEntry],
+            paths: &mut Vec<Vec<&'static str>>,
+            current_path: &mut Vec<&'static str>,
+            idx: usize,
+            cx: &App,
+        ) {
+            let child = &tree[idx];
+            let mut pushed_path = false;
+            if let Some(path) = child.path.as_ref() {
+                current_path.push(path);
+                paths.push(current_path.clone());
+                pushed_path = true;
+            }
+            // todo(settings_ui): handle dynamic nodes here
+            let selected_descendant_index = child
+                .select_descendant
+                .map(|select_descendant| {
+                    read_settings_value_from_path(
+                        SettingsStore::global(cx).raw_default_settings(),
+                        &current_path,
+                    )
+                    .map(|value| select_descendant(value, cx))
+                })
+                .and_then(|selected_descendant_index| {
+                    selected_descendant_index.map(|index| child.nth_descendant_index(tree, index))
+                });
+
+            if let Some(selected_descendant_index) = selected_descendant_index {
+                // just silently fail if we didn't find a setting value for the path
+                if let Some(descendant_index) = selected_descendant_index {
+                    all_paths_rec(tree, paths, current_path, descendant_index, cx);
+                }
+            } else if let Some(desc_idx) = child.first_descendant_index() {
+                let mut desc_idx = Some(desc_idx);
+                while let Some(descendant_index) = desc_idx {
+                    all_paths_rec(&tree, paths, current_path, descendant_index, cx);
+                    desc_idx = tree[descendant_index].next_sibling;
+                }
+            }
+            if pushed_path {
+                current_path.pop();
+            }
+        }
+
+        let mut paths = Vec::new();
+        for &index in &self.root_entry_indices {
+            all_paths_rec(&self.entries, &mut paths, &mut Vec::new(), index, cx);
+        }
+        paths
     }
 }
 
@@ -444,9 +502,9 @@ fn render_item_single(
     }
 }
 
-fn read_settings_value_from_path<'a>(
+pub fn read_settings_value_from_path<'a>(
     settings_contents: &'a serde_json::Value,
-    path: &[&'static str],
+    path: &[&str],
 ) -> Option<&'a serde_json::Value> {
     // todo(settings_ui) make non recursive, and move to `settings` alongside SettingsValue, and add method to SettingsValue to get nested
     let Some((key, remaining)) = path.split_first() else {
