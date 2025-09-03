@@ -1002,8 +1002,22 @@ impl ActiveThread {
                         // Don't notify for intermediate tool use
                     }
                     Ok(StopReason::Refusal) => {
+                        let model_name = self
+                            .thread
+                            .read(cx)
+                            .configured_model()
+                            .map(|configured| configured.model.name().0.to_string())
+                            .unwrap_or_else(|| "The model".to_string());
+                        let refusal_message = format!(
+                            "{} refused to respond to this prompt. This can happen when a model believes the prompt violates its content policy or safety guidelines, so rephrasing it can sometimes address the issue.",
+                            model_name
+                        );
+                        self.last_error = Some(ThreadError::Message {
+                            header: SharedString::from("Request Refused"),
+                            message: SharedString::from(refusal_message),
+                        });
                         self.notify_with_sound(
-                            "Language model refused to respond",
+                            format!("{} refused to respond", model_name),
                             IconName::Warning,
                             window,
                             cx,

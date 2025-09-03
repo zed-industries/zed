@@ -78,10 +78,12 @@ enum ThreadFeedback {
     Negative,
 }
 
+#[derive(Debug)]
 enum ThreadError {
     PaymentRequired,
     ModelRequestLimitReached(cloud_llm_client::Plan),
     ToolUseLimitReached,
+    Refusal,
     AuthenticationRequired(SharedString),
     Other(SharedString),
 }
@@ -1201,6 +1203,14 @@ impl AcpThreadView {
                     window,
                     cx,
                 );
+            }
+            AcpThreadEvent::Refusal => {
+                self.thread_retry_status.take();
+                self.thread_error = Some(ThreadError::Refusal);
+                let model_or_agent_name = self.get_current_model_name(cx);
+                let notification_message =
+                    format!("{} refused to respond to this request", model_or_agent_name);
+                self.notify_with_sound(&notification_message, IconName::Warning, window, cx);
             }
             AcpThreadEvent::Error => {
                 self.thread_retry_status.take();
@@ -4697,6 +4707,7 @@ impl AcpThreadView {
     fn render_thread_error(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
         let content = match self.thread_error.as_ref()? {
             ThreadError::Other(error) => self.render_any_thread_error(error.clone(), cx),
+            ThreadError::Refusal => self.render_refusal_error(cx),
             ThreadError::AuthenticationRequired(error) => {
                 self.render_authentication_required_error(error.clone(), cx)
             }
@@ -4710,6 +4721,43 @@ impl AcpThreadView {
         };
 
         Some(div().child(content))
+    }
+
+    fn get_current_model_name(&self, cx: &App) -> SharedString {
+        // For native agent (Zed Agent), use the specific model name (e.g., "Claude 3.5 Sonnet")
+        // For ACP agents, use the agent name (e.g., "Claude Code", "Gemini CLI")
+        // This provides better clarity about what refused the request
+        if self
+            .agent
+            .clone()
+            .downcast::<agent2::NativeAgentServer>()
+            .is_some()
+        {
+            // Native agent - use the model name
+            self.model_selector
+                .as_ref()
+                .and_then(|selector| selector.read(cx).active_model_name(cx))
+                .unwrap_or_else(|| SharedString::from("The model"))
+        } else {
+            // ACP agent - use the agent name (e.g., "Claude Code", "Gemini CLI")
+            self.agent.name()
+        }
+    }
+
+    fn render_refusal_error(&self, cx: &mut Context<'_, Self>) -> Callout {
+        let model_or_agent_name = self.get_current_model_name(cx);
+        let refusal_message = format!(
+            "{} refused to respond to this prompt. This can happen when a model believes the prompt violates its content policy or safety guidelines, so rephrasing it can sometimes address the issue.",
+            model_or_agent_name
+        );
+
+        Callout::new()
+            .severity(Severity::Error)
+            .title("Request Refused")
+            .icon(IconName::XCircle)
+            .description(refusal_message.clone())
+            .actions_slot(self.create_copy_button(&refusal_message))
+            .dismiss_action(self.dismiss_error_button(cx))
     }
 
     fn render_any_thread_error(&self, error: SharedString, cx: &mut Context<'_, Self>) -> Callout {
@@ -5344,6 +5392,33 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_refusal_handling(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (thread_view, cx) =
+            setup_thread_view(StubAgentServer::new(RefusalAgentConnection), cx).await;
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Do something harmful", window, cx);
+        });
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.send(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Check that the refusal error is set
+        thread_view.read_with(cx, |thread_view, _cx| {
+            assert!(
+                matches!(thread_view.thread_error, Some(ThreadError::Refusal)),
+                "Expected refusal error to be set"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_notification_for_tool_authorization(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -5567,6 +5642,68 @@ pub(crate) mod tests {
             _cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {
             Task::ready(Err(anyhow::anyhow!("Error prompting")))
+        }
+
+        fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {
+            unimplemented!()
+        }
+
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+            self
+        }
+    }
+
+    /// Simulates a model which always returns a refusal response
+    #[derive(Clone)]
+    struct RefusalAgentConnection;
+
+    impl AgentConnection for RefusalAgentConnection {
+        fn new_thread(
+            self: Rc<Self>,
+            project: Entity<Project>,
+            _cwd: &Path,
+            cx: &mut gpui::App,
+        ) -> Task<gpui::Result<Entity<AcpThread>>> {
+            Task::ready(Ok(cx.new(|cx| {
+                let action_log = cx.new(|_| ActionLog::new(project.clone()));
+                AcpThread::new(
+                    "RefusalAgentConnection",
+                    self,
+                    project,
+                    action_log,
+                    SessionId("test".into()),
+                    watch::Receiver::constant(acp::PromptCapabilities {
+                        image: true,
+                        audio: true,
+                        embedded_context: true,
+                    }),
+                    Vec::new(),
+                    cx,
+                )
+            })))
+        }
+
+        fn auth_methods(&self) -> &[acp::AuthMethod] {
+            &[]
+        }
+
+        fn authenticate(
+            &self,
+            _method_id: acp::AuthMethodId,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<()>> {
+            unimplemented!()
+        }
+
+        fn prompt(
+            &self,
+            _id: Option<acp_thread::UserMessageId>,
+            _params: acp::PromptRequest,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<acp::PromptResponse>> {
+            Task::ready(Ok(acp::PromptResponse {
+                stop_reason: acp::StopReason::Refusal,
+            }))
         }
 
         fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {
