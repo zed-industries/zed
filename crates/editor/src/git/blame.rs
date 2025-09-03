@@ -74,7 +74,7 @@ struct GitBlameBuffer {
 
 pub struct GitBlame {
     project: Entity<Project>,
-    buffer: Entity<MultiBuffer>,
+    multi_buffer: WeakEntity<MultiBuffer>,
     buffers: HashMap<BufferId, GitBlameBuffer>,
     task: Task<Result<()>>,
     focused: bool,
@@ -189,29 +189,35 @@ impl gpui::Global for GlobalBlameRenderer {}
 
 impl GitBlame {
     pub fn new(
-        buffer: Entity<MultiBuffer>,
+        multi_buffer: Entity<MultiBuffer>,
         project: Entity<Project>,
         user_triggered: bool,
         focused: bool,
         cx: &mut Context<Self>,
     ) -> Self {
-        let buffer_subscriptions = cx.subscribe(&buffer, |this, buffer, event, cx| match event {
-            multi_buffer::Event::DirtyChanged => {
-                if !buffer.read(cx).is_dirty(cx) {
-                    this.generate(cx);
+        let multi_buffer_subscription = cx.subscribe(
+            &multi_buffer,
+            |git_blame, multi_buffer, event, cx| match event {
+                multi_buffer::Event::DirtyChanged => {
+                    if !multi_buffer.read(cx).is_dirty(cx) {
+                        git_blame.generate(cx);
+                    }
                 }
-            }
-            multi_buffer::Event::ExcerptsAdded { .. }
-            | multi_buffer::Event::ExcerptsEdited { .. } => this.regenerate_on_edit(cx),
-            _ => {}
-        });
+                multi_buffer::Event::ExcerptsAdded { .. }
+                | multi_buffer::Event::ExcerptsEdited { .. } => git_blame.regenerate_on_edit(cx),
+                _ => {}
+            },
+        );
 
         let project_subscription = cx.subscribe(&project, {
-            let buffer = buffer.clone();
+            let multi_buffer = multi_buffer.downgrade();
 
-            move |this, _, event, cx| {
+            move |git_blame, _, event, cx| {
                 if let project::Event::WorktreeUpdatedEntries(_, updated) = event {
-                    let project_entry_id = buffer
+                    let Some(multi_buffer) = multi_buffer.upgrade() else {
+                        return;
+                    };
+                    let project_entry_id = multi_buffer
                         .read(cx)
                         .as_singleton()
                         .and_then(|it| it.read(cx).entry_id(cx));
@@ -220,7 +226,7 @@ impl GitBlame {
                         .any(|(_, entry_id, _)| project_entry_id == Some(*entry_id))
                     {
                         log::debug!("Updated buffers. Regenerating blame data...",);
-                        this.generate(cx);
+                        git_blame.generate(cx);
                     }
                 }
             }
@@ -240,15 +246,15 @@ impl GitBlame {
 
         let mut this = Self {
             project,
-            buffer,
-            buffers: Default::default(),
+            multi_buffer: multi_buffer.downgrade(),
+            buffers: HashMap::default(),
             user_triggered,
             focused,
             changed_while_blurred: false,
             task: Task::ready(Ok(())),
             regenerate_on_edit_task: Task::ready(Ok(())),
             _regenerate_subscriptions: vec![
-                buffer_subscriptions,
+                multi_buffer_subscription,
                 project_subscription,
                 git_store_subscription,
             ],
@@ -336,7 +342,10 @@ impl GitBlame {
     }
 
     fn sync_all(&mut self, cx: &mut App) {
-        self.buffer
+        let Some(multi_buffer) = self.multi_buffer.upgrade() else {
+            return;
+        };
+        multi_buffer
             .read(cx)
             .excerpt_buffer_ids()
             .into_iter()
@@ -347,7 +356,11 @@ impl GitBlame {
         let Some(blame_buffer) = self.buffers.get_mut(&buffer_id) else {
             return;
         };
-        let Some(buffer) = self.buffer.read(cx).buffer(buffer_id) else {
+        let Some(buffer) = self
+            .multi_buffer
+            .upgrade()
+            .and_then(|multi_buffer| multi_buffer.read(cx).buffer(buffer_id))
+        else {
             return;
         };
         let edits = blame_buffer.buffer_edits.consume();
@@ -461,7 +474,9 @@ impl GitBlame {
         for (&id, buffer) in &self.buffers {
             assert_eq!(
                 buffer.entries.summary().rows,
-                self.buffer
+                self.multi_buffer
+                    .upgrade()
+                    .unwrap()
                     .read(cx)
                     .buffer(id)
                     .unwrap()
@@ -479,12 +494,15 @@ impl GitBlame {
             return;
         }
         let blame = self.project.update(cx, |project, cx| {
-            self.buffer
+            let Some(multi_buffer) = self.multi_buffer.upgrade() else {
+                return Vec::new();
+            };
+            multi_buffer
                 .read(cx)
                 .all_buffer_ids()
                 .into_iter()
                 .filter_map(|id| {
-                    let buffer = self.buffer.read(cx).buffer(id)?;
+                    let buffer = multi_buffer.read(cx).buffer(id)?;
                     let snapshot = buffer.read(cx).snapshot();
                     let buffer_edits = buffer.update(cx, |buffer, _| buffer.subscribe());
 
