@@ -111,8 +111,24 @@ impl Render for Example {
                     .flex_row()
                     .gap_3()
                     .items_center()
-                    .child(button("el1").tab_index(4).child("Button 1"))
-                    .child(button("el2").tab_index(5).child("Button 2")),
+                    .child(
+                        button("el1")
+                            .tab_index(4)
+                            .child("Button 1")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.message = "You have clicked Button 1.".into();
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        button("el2")
+                            .tab_index(5)
+                            .child("Button 2")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.message = "You have clicked Button 2.".into();
+                                cx.notify();
+                            })),
+                    ),
             )
     }
 }

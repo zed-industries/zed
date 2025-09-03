@@ -211,11 +211,7 @@ impl MacTextSystemState {
         features: &FontFeatures,
         fallbacks: Option<&FontFallbacks>,
     ) -> Result<SmallVec<[FontId; 4]>> {
-        let name = if name == ".SystemUIFont" {
-            ".AppleSystemUIFont"
-        } else {
-            name
-        };
+        let name = crate::text_system::font_name_with_fallbacks(name, ".AppleSystemUIFont");
 
         let mut font_ids = SmallVec::new();
         let family = self
@@ -323,7 +319,7 @@ impl MacTextSystemState {
     fn is_emoji(&self, font_id: FontId) -> bool {
         self.postscript_names_by_font_id
             .get(&font_id)
-            .map_or(false, |postscript_name| {
+            .is_some_and(|postscript_name| {
                 postscript_name == "AppleColorEmoji" || postscript_name == ".AppleColorEmojiUI"
             })
     }

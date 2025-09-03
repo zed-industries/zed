@@ -3,13 +3,17 @@ use async_recursion::async_recursion;
 use collections::HashSet;
 use futures::{StreamExt as _, stream::FuturesUnordered};
 use gpui::{AppContext as _, AsyncWindowContext, Axis, Entity, Task, WeakEntity};
-use project::{Project, terminals::TerminalKind};
+use project::Project;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use ui::{App, Context, Pixels, Window};
 use util::ResultExt as _;
 
-use db::{define_connection, query, sqlez::statement::Statement, sqlez_macros::sql};
+use db::{
+    query,
+    sqlez::{domain::Domain, statement::Statement, thread_safe_connection::ThreadSafeConnection},
+    sqlez_macros::sql,
+};
 use workspace::{
     ItemHandle, ItemId, Member, Pane, PaneAxis, PaneGroup, SerializableItem as _, Workspace,
     WorkspaceDb, WorkspaceId,
@@ -242,12 +246,9 @@ async fn deserialize_pane_group(
                             .update(cx, |workspace, cx| default_working_directory(workspace, cx))
                             .ok()
                             .flatten();
-                        let kind = TerminalKind::Shell(
-                            working_directory.as_deref().map(Path::to_path_buf),
-                        );
-                        let window = window.window_handle();
-                        let terminal = project
-                            .update(cx, |project, cx| project.create_terminal(kind, window, cx));
+                        let terminal = project.update(cx, |project, cx| {
+                            project.create_terminal_shell(working_directory, cx)
+                        });
                         Some(Some(terminal))
                     } else {
                         Some(None)
@@ -376,9 +377,13 @@ impl<'de> Deserialize<'de> for SerializedAxis {
     }
 }
 
-define_connection! {
-    pub static ref TERMINAL_DB: TerminalDb<WorkspaceDb> =
-        &[sql!(
+pub struct TerminalDb(ThreadSafeConnection);
+
+impl Domain for TerminalDb {
+    const NAME: &str = stringify!(TerminalDb);
+
+    const MIGRATIONS: &[&str] = &[
+        sql!(
             CREATE TABLE terminals (
                 workspace_id INTEGER,
                 item_id INTEGER UNIQUE,
@@ -414,6 +419,8 @@ define_connection! {
         ),
     ];
 }
+
+db::static_connection!(TERMINAL_DB, TerminalDb, [WorkspaceDb]);
 
 impl TerminalDb {
     query! {

@@ -2,25 +2,14 @@ use anyhow::Result;
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsSources, SettingsUi};
 
 /// Settings for slash commands.
-#[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema)]
+#[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema, SettingsUi)]
 pub struct SlashCommandSettings {
-    /// Settings for the `/docs` slash command.
-    #[serde(default)]
-    pub docs: DocsCommandSettings,
     /// Settings for the `/cargo-workspace` slash command.
     #[serde(default)]
     pub cargo_workspace: CargoWorkspaceCommandSettings,
-}
-
-/// Settings for the `/docs` slash command.
-#[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema)]
-pub struct DocsCommandSettings {
-    /// Whether `/docs` is enabled.
-    #[serde(default)]
-    pub enabled: bool,
 }
 
 /// Settings for the `/cargo-workspace` slash command.

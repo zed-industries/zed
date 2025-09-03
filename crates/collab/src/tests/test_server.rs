@@ -1,4 +1,3 @@
-use crate::stripe_client::FakeStripeClient;
 use crate::{
     AppState, Config,
     db::{NewUserParams, UserId, tests::TestDb},
@@ -27,7 +26,7 @@ use node_runtime::NodeRuntime;
 use notifications::NotificationStore;
 use parking_lot::Mutex;
 use project::{Project, WorktreeId};
-use remote::SshRemoteClient;
+use remote::RemoteClient;
 use rpc::{
     RECEIVE_TIMEOUT,
     proto::{self, ChannelRole},
@@ -297,6 +296,7 @@ impl TestServer {
                             client_name,
                             Principal::User(user),
                             ZedVersion(SemanticVersion::new(1, 0, 0)),
+                            Some("test".to_string()),
                             None,
                             None,
                             None,
@@ -370,8 +370,8 @@ impl TestServer {
         let client = TestClient {
             app_state,
             username: name.to_string(),
-            channel_store: cx.read(ChannelStore::global).clone(),
-            notification_store: cx.read(NotificationStore::global).clone(),
+            channel_store: cx.read(ChannelStore::global),
+            notification_store: cx.read(NotificationStore::global),
             state: Default::default(),
         };
         client.wait_for_current_user(cx).await;
@@ -565,12 +565,8 @@ impl TestServer {
     ) -> Arc<AppState> {
         Arc::new(AppState {
             db: test_db.db().clone(),
-            llm_db: None,
             livekit_client: Some(Arc::new(livekit_test_server.create_api_client())),
             blob_store_client: None,
-            real_stripe_client: None,
-            stripe_client: Some(Arc::new(FakeStripeClient::new())),
-            stripe_billing: None,
             executor,
             kinesis_client: None,
             config: Config {
@@ -607,7 +603,6 @@ impl TestServer {
                 auto_join_channel_id: None,
                 migrations_path: None,
                 seed_path: None,
-                stripe_api_key: None,
                 supermaven_admin_api_key: None,
                 user_backfiller_github_access_token: None,
                 kinesis_region: None,
@@ -770,11 +765,11 @@ impl TestClient {
     pub async fn build_ssh_project(
         &self,
         root_path: impl AsRef<Path>,
-        ssh: Entity<SshRemoteClient>,
+        ssh: Entity<RemoteClient>,
         cx: &mut TestAppContext,
     ) -> (Entity<Project>, WorktreeId) {
         let project = cx.update(|cx| {
-            Project::ssh(
+            Project::remote(
                 ssh,
                 self.client().clone(),
                 self.app_state.node_runtime.clone(),
@@ -902,7 +897,7 @@ impl TestClient {
         let window = cx.update(|cx| cx.active_window().unwrap().downcast::<Workspace>().unwrap());
 
         let entity = window.root(cx).unwrap();
-        let cx = VisualTestContext::from_window(*window.deref(), cx).as_mut();
+        let cx = VisualTestContext::from_window(*window.deref(), cx).into_mut();
         // it might be nice to try and cleanup these at the end of each test.
         (entity, cx)
     }

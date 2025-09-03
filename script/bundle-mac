@@ -207,7 +207,7 @@ function prepare_binaries() {
     rm -f target/${architecture}/${target_dir}/Zed.dwarf.gz
 
     echo "Gzipping dSYMs for $architecture"
-    gzip -f target/${architecture}/${target_dir}/Zed.dwarf
+    gzip -kf target/${architecture}/${target_dir}/Zed.dwarf
 
     echo "Uploading dSYMs${architecture} for $architecture to by-uuid/${uuid}.dwarf.gz"
     upload_to_blob_store_public \
@@ -367,19 +367,25 @@ else
     gzip -f --stdout --best target/aarch64-apple-darwin/release/remote_server > target/zed-remote-server-macos-aarch64.gz
 fi
 
-# Upload debug info to sentry.io
-if ! command -v sentry-cli >/dev/null 2>&1; then
-    echo "sentry-cli not found. skipping sentry upload."
-    echo "install with: 'curl -sL https://sentry.io/get-cli | bash'"
-else
+function upload_debug_info() {
+    architecture=$1
     if [[ -n "${SENTRY_AUTH_TOKEN:-}" ]]; then
         echo "Uploading zed debug symbols to sentry..."
         # note: this uploads the unstripped binary which is needed because it contains
         # .eh_frame data for stack unwinindg. see https://github.com/getsentry/symbolic/issues/783
         sentry-cli debug-files upload --include-sources --wait -p zed -o zed-dev \
-            "target/x86_64-apple-darwin/${target_dir}/" \
-            "target/aarch64-apple-darwin/${target_dir}/"
+            "target/${architecture}/${target_dir}/zed" \
+            "target/${architecture}/${target_dir}/remote_server" \
+            "target/${architecture}/${target_dir}/zed.dwarf"
     else
         echo "missing SENTRY_AUTH_TOKEN. skipping sentry upload."
     fi
+}
+
+if command -v sentry-cli >/dev/null 2>&1; then
+    upload_debug_info "aarch64-apple-darwin"
+    upload_debug_info "x86_64-apple-darwin"
+else
+    echo "sentry-cli not found. skipping sentry upload."
+    echo "install with: 'curl -sL https://sentry.io/get-cli | bash'"
 fi

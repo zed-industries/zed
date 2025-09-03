@@ -159,7 +159,7 @@ pub fn render_thread_context_entry(
     context_store: WeakEntity<ContextStore>,
     cx: &mut App,
 ) -> Div {
-    let added = context_store.upgrade().map_or(false, |context_store| {
+    let added = context_store.upgrade().is_some_and(|context_store| {
         context_store
             .read(cx)
             .includes_user_rules(user_rules.prompt_id)

@@ -174,7 +174,7 @@ impl DapLocator for GoLocator {
                     request: "launch".to_string(),
                     mode: "test".to_string(),
                     program,
-                    args: args,
+                    args,
                     build_flags,
                     cwd: build_config.cwd.clone(),
                     env: build_config.env.clone(),
@@ -185,7 +185,7 @@ impl DapLocator for GoLocator {
                     label: resolved_label.to_string().into(),
                     adapter: adapter.0.clone(),
                     build: None,
-                    config: config,
+                    config,
                     tcp_connection: None,
                 })
             }
@@ -220,7 +220,7 @@ impl DapLocator for GoLocator {
                     request: "launch".to_string(),
                     mode: "debug".to_string(),
                     program,
-                    args: args,
+                    args,
                     build_flags,
                 })
                 .unwrap();

@@ -17,8 +17,8 @@
     "bindings": {
       "cmd-i": "agent::ToggleFocus",
       "cmd-shift-i": "agent::ToggleFocus",
-      "cmd-shift-l": "assistant::QuoteSelection", // In cursor uses "Ask" mode
-      "cmd-l": "assistant::QuoteSelection", // In cursor uses "Agent" mode
+      "cmd-shift-l": "agent::QuoteSelection", // In cursor uses "Ask" mode
+      "cmd-l": "agent::QuoteSelection", // In cursor uses "Agent" mode
       "cmd-k": "assistant::InlineAssist",
       "cmd-shift-k": "assistant::InsertIntoEditor"
     }

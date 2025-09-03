@@ -9,6 +9,8 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i64,
     pub name: String,
+    pub capabilities: String,
+    pub worktree_id: Option<i64>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

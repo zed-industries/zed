@@ -5,8 +5,8 @@ mod evals;
 mod streaming_fuzzy_matcher;
 
 use crate::{Template, Templates};
+use action_log::ActionLog;
 use anyhow::Result;
-use assistant_tool::ActionLog;
 use cloud_llm_client::CompletionIntent;
 use create_file_parser::{CreateFileParser, CreateFileParserEvent};
 pub use edit_parser::EditFormat;
@@ -29,7 +29,6 @@ use serde::{Deserialize, Serialize};
 use std::{cmp, iter, mem, ops::Range, path::PathBuf, pin::Pin, sync::Arc, task::Poll};
 use streaming_diff::{CharOperation, StreamingDiff};
 use streaming_fuzzy_matcher::StreamingFuzzyMatcher;
-use util::debug_panic;
 
 #[derive(Serialize)]
 struct CreateFilePromptTemplate {
@@ -66,7 +65,7 @@ pub enum EditAgentOutputEvent {
     ResolvingEditRange(Range<Anchor>),
     UnresolvedEditRange,
     AmbiguousEditRange(Vec<Range<usize>>),
-    Edited,
+    Edited(Range<Anchor>),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -179,7 +178,9 @@ impl EditAgent {
                 )
             });
             output_events_tx
-                .unbounded_send(EditAgentOutputEvent::Edited)
+                .unbounded_send(EditAgentOutputEvent::Edited(
+                    language::Anchor::MIN..language::Anchor::MAX,
+                ))
                 .ok();
         })?;
 
@@ -201,7 +202,9 @@ impl EditAgent {
                         });
                     })?;
                     output_events_tx
-                        .unbounded_send(EditAgentOutputEvent::Edited)
+                        .unbounded_send(EditAgentOutputEvent::Edited(
+                            language::Anchor::MIN..language::Anchor::MAX,
+                        ))
                         .ok();
                 }
             }
@@ -337,8 +340,8 @@ impl EditAgent {
                 // Edit the buffer and report edits to the action log as part of the
                 // same effect cycle, otherwise the edit will be reported as if the
                 // user made it.
-                cx.update(|cx| {
-                    let max_edit_end = buffer.update(cx, |buffer, cx| {
+                let (min_edit_start, max_edit_end) = cx.update(|cx| {
+                    let (min_edit_start, max_edit_end) = buffer.update(cx, |buffer, cx| {
                         buffer.edit(edits.iter().cloned(), None, cx);
                         let max_edit_end = buffer
                             .summaries_for_anchors::<Point, _>(
@@ -346,7 +349,16 @@ impl EditAgent {
                             )
                             .max()
                             .unwrap();
-                        buffer.anchor_before(max_edit_end)
+                        let min_edit_start = buffer
+                            .summaries_for_anchors::<Point, _>(
+                                edits.iter().map(|(range, _)| &range.start),
+                            )
+                            .min()
+                            .unwrap();
+                        (
+                            buffer.anchor_after(min_edit_start),
+                            buffer.anchor_before(max_edit_end),
+                        )
                     });
                     self.action_log
                         .update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
@@ -359,9 +371,10 @@ impl EditAgent {
                             cx,
                         );
                     });
+                    (min_edit_start, max_edit_end)
                 })?;
                 output_events
-                    .unbounded_send(EditAgentOutputEvent::Edited)
+                    .unbounded_send(EditAgentOutputEvent::Edited(min_edit_start..max_edit_end))
                     .ok();
             }
 
@@ -659,34 +672,30 @@ impl EditAgent {
         cx: &mut AsyncApp,
     ) -> Result<BoxStream<'static, Result<String, LanguageModelCompletionError>>> {
         let mut messages_iter = conversation.messages.iter_mut();
-        if let Some(last_message) = messages_iter.next_back() {
-            if last_message.role == Role::Assistant {
-                let old_content_len = last_message.content.len();
-                last_message
-                    .content
-                    .retain(|content| !matches!(content, MessageContent::ToolUse(_)));
-                let new_content_len = last_message.content.len();
+        if let Some(last_message) = messages_iter.next_back()
+            && last_message.role == Role::Assistant
+        {
+            let old_content_len = last_message.content.len();
+            last_message
+                .content
+                .retain(|content| !matches!(content, MessageContent::ToolUse(_)));
+            let new_content_len = last_message.content.len();
 
-                // We just removed pending tool uses from the content of the
-                // last message, so it doesn't make sense to cache it anymore
-                // (e.g., the message will look very different on the next
-                // request). Thus, we move the flag to the message prior to it,
-                // as it will still be a valid prefix of the conversation.
-                if old_content_len != new_content_len && last_message.cache {
-                    if let Some(prev_message) = messages_iter.next_back() {
-                        last_message.cache = false;
-                        prev_message.cache = true;
-                    }
-                }
+            // We just removed pending tool uses from the content of the
+            // last message, so it doesn't make sense to cache it anymore
+            // (e.g., the message will look very different on the next
+            // request). Thus, we move the flag to the message prior to it,
+            // as it will still be a valid prefix of the conversation.
+            if old_content_len != new_content_len
+                && last_message.cache
+                && let Some(prev_message) = messages_iter.next_back()
+            {
+                last_message.cache = false;
+                prev_message.cache = true;
+            }
 
-                if last_message.content.is_empty() {
-                    conversation.messages.pop();
-                }
-            } else {
-                debug_panic!(
-                    "Last message must be an Assistant tool calling! Got {:?}",
-                    last_message.content
-                );
+            if last_message.content.is_empty() {
+                conversation.messages.pop();
             }
         }
 
@@ -761,6 +770,7 @@ mod tests {
     use gpui::{AppContext, TestAppContext};
     use indoc::indoc;
     use language_model::fake_provider::FakeLanguageModel;
+    use pretty_assertions::assert_matches;
     use project::{AgentLocation, Project};
     use rand::prelude::*;
     use rand::rngs::StdRng;
@@ -962,7 +972,7 @@ mod tests {
         );
         cx.run_until_parked();
 
-        model.stream_last_completion_response("<old_text>a");
+        model.send_last_completion_stream_text_chunk("<old_text>a");
         cx.run_until_parked();
         assert_eq!(drain_events(&mut events), vec![]);
         assert_eq!(
@@ -974,7 +984,7 @@ mod tests {
             None
         );
 
-        model.stream_last_completion_response("bc</old_text>");
+        model.send_last_completion_stream_text_chunk("bc</old_text>");
         cx.run_until_parked();
         assert_eq!(
             drain_events(&mut events),
@@ -996,9 +1006,12 @@ mod tests {
             })
         );
 
-        model.stream_last_completion_response("<new_text>abX");
+        model.send_last_completion_stream_text_chunk("<new_text>abX");
         cx.run_until_parked();
-        assert_eq!(drain_events(&mut events), [EditAgentOutputEvent::Edited]);
+        assert_matches!(
+            drain_events(&mut events).as_slice(),
+            [EditAgentOutputEvent::Edited(_)]
+        );
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
             "abXc\ndef\nghi\njkl"
@@ -1011,9 +1024,12 @@ mod tests {
             })
         );
 
-        model.stream_last_completion_response("cY");
+        model.send_last_completion_stream_text_chunk("cY");
         cx.run_until_parked();
-        assert_eq!(drain_events(&mut events), [EditAgentOutputEvent::Edited]);
+        assert_matches!(
+            drain_events(&mut events).as_slice(),
+            [EditAgentOutputEvent::Edited { .. }]
+        );
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
             "abXcY\ndef\nghi\njkl"
@@ -1026,8 +1042,8 @@ mod tests {
             })
         );
 
-        model.stream_last_completion_response("</new_text>");
-        model.stream_last_completion_response("<old_text>hall");
+        model.send_last_completion_stream_text_chunk("</new_text>");
+        model.send_last_completion_stream_text_chunk("<old_text>hall");
         cx.run_until_parked();
         assert_eq!(drain_events(&mut events), vec![]);
         assert_eq!(
@@ -1042,8 +1058,8 @@ mod tests {
             })
         );
 
-        model.stream_last_completion_response("ucinated old</old_text>");
-        model.stream_last_completion_response("<new_text>");
+        model.send_last_completion_stream_text_chunk("ucinated old</old_text>");
+        model.send_last_completion_stream_text_chunk("<new_text>");
         cx.run_until_parked();
         assert_eq!(
             drain_events(&mut events),
@@ -1061,8 +1077,8 @@ mod tests {
             })
         );
 
-        model.stream_last_completion_response("hallucinated new</new_");
-        model.stream_last_completion_response("text>");
+        model.send_last_completion_stream_text_chunk("hallucinated new</new_");
+        model.send_last_completion_stream_text_chunk("text>");
         cx.run_until_parked();
         assert_eq!(drain_events(&mut events), vec![]);
         assert_eq!(
@@ -1077,7 +1093,7 @@ mod tests {
             })
         );
 
-        model.stream_last_completion_response("<old_text>\nghi\nj");
+        model.send_last_completion_stream_text_chunk("<old_text>\nghi\nj");
         cx.run_until_parked();
         assert_eq!(
             drain_events(&mut events),
@@ -1099,8 +1115,8 @@ mod tests {
             })
         );
 
-        model.stream_last_completion_response("kl</old_text>");
-        model.stream_last_completion_response("<new_text>");
+        model.send_last_completion_stream_text_chunk("kl</old_text>");
+        model.send_last_completion_stream_text_chunk("<new_text>");
         cx.run_until_parked();
         assert_eq!(
             drain_events(&mut events),
@@ -1122,11 +1138,11 @@ mod tests {
             })
         );
 
-        model.stream_last_completion_response("GHI</new_text>");
+        model.send_last_completion_stream_text_chunk("GHI</new_text>");
         cx.run_until_parked();
-        assert_eq!(
-            drain_events(&mut events),
-            vec![EditAgentOutputEvent::Edited]
+        assert_matches!(
+            drain_events(&mut events).as_slice(),
+            [EditAgentOutputEvent::Edited { .. }]
         );
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
@@ -1171,9 +1187,9 @@ mod tests {
         );
 
         cx.run_until_parked();
-        assert_eq!(
-            drain_events(&mut events),
-            vec![EditAgentOutputEvent::Edited]
+        assert_matches!(
+            drain_events(&mut events).as_slice(),
+            [EditAgentOutputEvent::Edited(_)]
         );
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
@@ -1189,9 +1205,9 @@ mod tests {
 
         chunks_tx.unbounded_send("```\njkl\n").unwrap();
         cx.run_until_parked();
-        assert_eq!(
-            drain_events(&mut events),
-            vec![EditAgentOutputEvent::Edited]
+        assert_matches!(
+            drain_events(&mut events).as_slice(),
+            [EditAgentOutputEvent::Edited { .. }]
         );
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
@@ -1207,9 +1223,9 @@ mod tests {
 
         chunks_tx.unbounded_send("mno\n").unwrap();
         cx.run_until_parked();
-        assert_eq!(
-            drain_events(&mut events),
-            vec![EditAgentOutputEvent::Edited]
+        assert_matches!(
+            drain_events(&mut events).as_slice(),
+            [EditAgentOutputEvent::Edited { .. }]
         );
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
@@ -1225,9 +1241,9 @@ mod tests {
 
         chunks_tx.unbounded_send("pqr\n```").unwrap();
         cx.run_until_parked();
-        assert_eq!(
-            drain_events(&mut events),
-            vec![EditAgentOutputEvent::Edited]
+        assert_matches!(
+            drain_events(&mut events).as_slice(),
+            [EditAgentOutputEvent::Edited(_)],
         );
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
@@ -1367,7 +1383,9 @@ mod tests {
         cx.background_spawn(async move {
             for chunk in chunks {
                 executor.simulate_random_delay().await;
-                model.as_fake().stream_last_completion_response(chunk);
+                model
+                    .as_fake()
+                    .send_last_completion_stream_text_chunk(chunk);
             }
             model.as_fake().end_last_completion_stream();
         })

@@ -16,12 +16,10 @@ pub use typed_envelope::*;
 
 include!(concat!(env!("OUT_DIR"), "/zed.messages.rs"));
 
-pub const SSH_PEER_ID: PeerId = PeerId { owner_id: 0, id: 0 };
-pub const SSH_PROJECT_ID: u64 = 0;
+pub const REMOTE_SERVER_PEER_ID: PeerId = PeerId { owner_id: 0, id: 0 };
+pub const REMOTE_SERVER_PROJECT_ID: u64 = 0;
 
 messages!(
-    (AcceptTermsOfService, Foreground),
-    (AcceptTermsOfServiceResponse, Foreground),
     (Ack, Foreground),
     (AckBufferOperation, Background),
     (AckChannelMessage, Background),
@@ -99,14 +97,12 @@ messages!(
     (GetHoverResponse, Background),
     (GetNotifications, Foreground),
     (GetNotificationsResponse, Foreground),
-    (GetPanicFiles, Background),
-    (GetPanicFilesResponse, Background),
+    (GetCrashFiles, Background),
+    (GetCrashFilesResponse, Background),
     (GetPathMetadata, Background),
     (GetPathMetadataResponse, Background),
     (GetPermalinkToLine, Foreground),
     (GetPermalinkToLineResponse, Foreground),
-    (GetPrivateUserInfo, Foreground),
-    (GetPrivateUserInfoResponse, Foreground),
     (GetProjectSymbols, Background),
     (GetProjectSymbolsResponse, Background),
     (GetReferences, Background),
@@ -119,10 +115,6 @@ messages!(
     (GetTypeDefinitionResponse, Background),
     (GetImplementation, Background),
     (GetImplementationResponse, Background),
-    (GetLlmToken, Background),
-    (GetLlmTokenResponse, Background),
-    (LanguageServerIdForName, Background),
-    (LanguageServerIdForNameResponse, Background),
     (OpenUnstagedDiff, Foreground),
     (OpenUnstagedDiffResponse, Foreground),
     (OpenUncommittedDiff, Foreground),
@@ -177,6 +169,9 @@ messages!(
     (MarkNotificationRead, Foreground),
     (MoveChannel, Foreground),
     (ReorderChannel, Foreground),
+    (LspQuery, Background),
+    (LspQueryResponse, Background),
+    // todo(lsp) remove after Zed Stable hits v0.204.x
     (MultiLspQuery, Background),
     (MultiLspQueryResponse, Background),
     (OnTypeFormatting, Background),
@@ -198,7 +193,6 @@ messages!(
     (PrepareRenameResponse, Background),
     (ProjectEntryResponse, Foreground),
     (RefreshInlayHints, Foreground),
-    (RefreshLlmToken, Background),
     (RegisterBufferWithLanguageServers, Background),
     (RejoinChannelBuffers, Foreground),
     (RejoinChannelBuffersResponse, Foreground),
@@ -282,7 +276,6 @@ messages!(
     (UpdateProject, Foreground),
     (UpdateProjectCollaborator, Foreground),
     (UpdateUserChannels, Foreground),
-    (UpdateUserPlan, Foreground),
     (UpdateWorktree, Foreground),
     (UpdateWorktreeSettings, Foreground),
     (UpdateRepository, Foreground),
@@ -315,11 +308,15 @@ messages!(
     (LogToDebugConsole, Background),
     (GetDocumentDiagnostics, Background),
     (GetDocumentDiagnosticsResponse, Background),
-    (PullWorkspaceDiagnostics, Background)
+    (PullWorkspaceDiagnostics, Background),
+    (GetDefaultBranch, Background),
+    (GetDefaultBranchResponse, Background),
+    (GitClone, Background),
+    (GitCloneResponse, Background),
+    (ToggleLspLogs, Background),
 );
 
 request_messages!(
-    (AcceptTermsOfService, AcceptTermsOfServiceResponse),
     (ApplyCodeAction, ApplyCodeActionResponse),
     (
         ApplyCompletionAdditionalEdits,
@@ -352,9 +349,7 @@ request_messages!(
     (GetDocumentHighlights, GetDocumentHighlightsResponse),
     (GetDocumentSymbols, GetDocumentSymbolsResponse),
     (GetHover, GetHoverResponse),
-    (GetLlmToken, GetLlmTokenResponse),
     (GetNotifications, GetNotificationsResponse),
-    (GetPrivateUserInfo, GetPrivateUserInfoResponse),
     (GetProjectSymbols, GetProjectSymbolsResponse),
     (GetReferences, GetReferencesResponse),
     (GetSignatureHelp, GetSignatureHelpResponse),
@@ -429,14 +424,16 @@ request_messages!(
     (UpdateWorktree, Ack),
     (UpdateRepository, Ack),
     (RemoveRepository, Ack),
-    (LanguageServerIdForName, LanguageServerIdForNameResponse),
     (LspExtExpandMacro, LspExtExpandMacroResponse),
     (LspExtOpenDocs, LspExtOpenDocsResponse),
     (LspExtRunnables, LspExtRunnablesResponse),
     (SetRoomParticipantRole, Ack),
     (BlameBuffer, BlameBufferResponse),
     (RejoinRemoteProjects, RejoinRemoteProjectsResponse),
+    // todo(lsp) remove after Zed Stable hits v0.204.x
     (MultiLspQuery, MultiLspQueryResponse),
+    (LspQuery, Ack),
+    (LspQueryResponse, Ack),
     (RestartLanguageServers, Ack),
     (StopLanguageServers, Ack),
     (OpenContext, OpenContextResponse),
@@ -460,7 +457,7 @@ request_messages!(
     (ActivateToolchain, Ack),
     (ActiveToolchain, ActiveToolchainResponse),
     (GetPathMetadata, GetPathMetadataResponse),
-    (GetPanicFiles, GetPanicFilesResponse),
+    (GetCrashFiles, GetCrashFilesResponse),
     (CancelLanguageServerWork, Ack),
     (SyncExtensions, SyncExtensionsResponse),
     (InstallExtension, Ack),
@@ -483,7 +480,24 @@ request_messages!(
     (GetDebugAdapterBinary, DebugAdapterBinary),
     (RunDebugLocators, DebugRequest),
     (GetDocumentDiagnostics, GetDocumentDiagnosticsResponse),
-    (PullWorkspaceDiagnostics, Ack)
+    (PullWorkspaceDiagnostics, Ack),
+    (GetDefaultBranch, GetDefaultBranchResponse),
+    (GitClone, GitCloneResponse),
+    (ToggleLspLogs, Ack),
+);
+
+lsp_messages!(
+    (GetReferences, GetReferencesResponse, true),
+    (GetDocumentColor, GetDocumentColorResponse, true),
+    (GetHover, GetHoverResponse, true),
+    (GetCodeActions, GetCodeActionsResponse, true),
+    (GetSignatureHelp, GetSignatureHelpResponse, true),
+    (GetCodeLens, GetCodeLensResponse, true),
+    (GetDocumentDiagnostics, GetDocumentDiagnosticsResponse, true),
+    (GetDefinition, GetDefinitionResponse, true),
+    (GetDeclaration, GetDeclarationResponse, true),
+    (GetTypeDefinition, GetTypeDefinitionResponse, true),
+    (GetImplementation, GetImplementationResponse, true),
 );
 
 entity_messages!(
@@ -528,6 +542,9 @@ entity_messages!(
     LeaveProject,
     LinkedEditingRange,
     LoadCommitDiff,
+    LspQuery,
+    LspQueryResponse,
+    // todo(lsp) remove after Zed Stable hits v0.204.x
     MultiLspQuery,
     RestartLanguageServers,
     StopLanguageServers,
@@ -585,7 +602,6 @@ entity_messages!(
     OpenServerSettings,
     GetPermalinkToLine,
     LanguageServerPromptRequest,
-    LanguageServerIdForName,
     GitGetBranches,
     UpdateGitBranch,
     ListToolchains,
@@ -598,6 +614,7 @@ entity_messages!(
     GitReset,
     GitCheckoutFiles,
     SetIndexText,
+    ToggleLspLogs,
 
     Push,
     Fetch,
@@ -615,7 +632,9 @@ entity_messages!(
     GetDebugAdapterBinary,
     LogToDebugConsole,
     GetDocumentDiagnostics,
-    PullWorkspaceDiagnostics
+    PullWorkspaceDiagnostics,
+    GetDefaultBranch,
+    GitClone
 );
 
 entity_messages!(
@@ -784,6 +803,28 @@ pub fn split_repository_update(
     }])
 }
 
+impl LspQuery {
+    pub fn query_name_and_write_permissions(&self) -> (&str, bool) {
+        match self.request {
+            Some(lsp_query::Request::GetHover(_)) => ("GetHover", false),
+            Some(lsp_query::Request::GetCodeActions(_)) => ("GetCodeActions", true),
+            Some(lsp_query::Request::GetSignatureHelp(_)) => ("GetSignatureHelp", false),
+            Some(lsp_query::Request::GetCodeLens(_)) => ("GetCodeLens", true),
+            Some(lsp_query::Request::GetDocumentDiagnostics(_)) => {
+                ("GetDocumentDiagnostics", false)
+            }
+            Some(lsp_query::Request::GetDefinition(_)) => ("GetDefinition", false),
+            Some(lsp_query::Request::GetDeclaration(_)) => ("GetDeclaration", false),
+            Some(lsp_query::Request::GetTypeDefinition(_)) => ("GetTypeDefinition", false),
+            Some(lsp_query::Request::GetImplementation(_)) => ("GetImplementation", false),
+            Some(lsp_query::Request::GetReferences(_)) => ("GetReferences", false),
+            Some(lsp_query::Request::GetDocumentColor(_)) => ("GetDocumentColor", false),
+            None => ("<unknown>", true),
+        }
+    }
+}
+
+// todo(lsp) remove after Zed Stable hits v0.204.x
 impl MultiLspQuery {
     pub fn request_str(&self) -> &str {
         match self.request {

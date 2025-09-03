@@ -50,8 +50,8 @@ pub fn lsp_formatting_options(settings: &LanguageSettings) -> lsp::FormattingOpt
     }
 }
 
-pub fn file_path_to_lsp_url(path: &Path) -> Result<lsp::Url> {
-    match lsp::Url::from_file_path(path) {
+pub fn file_path_to_lsp_url(path: &Path) -> Result<lsp::Uri> {
+    match lsp::Uri::from_file_path(path) {
         Ok(url) => Ok(url),
         Err(()) => anyhow::bail!("Invalid file path provided to LSP request: {path:?}"),
     }
@@ -332,9 +332,9 @@ impl LspCommand for PrepareRename {
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
         _: LanguageServerId,
-        mut cx: AsyncApp,
+        cx: AsyncApp,
     ) -> Result<PrepareRenameResponse> {
-        buffer.read_with(&mut cx, |buffer, _| match message {
+        buffer.read_with(&cx, |buffer, _| match message {
             Some(lsp::PrepareRenameResponse::Range(range))
             | Some(lsp::PrepareRenameResponse::RangeWithPlaceholder { range, .. }) => {
                 let Range { start, end } = range_from_lsp(range);
@@ -386,7 +386,7 @@ impl LspCommand for PrepareRename {
             .await?;
 
         Ok(Self {
-            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -500,13 +500,12 @@ impl LspCommand for PerformRename {
         mut cx: AsyncApp,
     ) -> Result<ProjectTransaction> {
         if let Some(edit) = message {
-            let (lsp_adapter, lsp_server) =
+            let (_, lsp_server) =
                 language_server_for_buffer(&lsp_store, &buffer, server_id, &mut cx)?;
             LocalLspStore::deserialize_workspace_edit(
                 lsp_store,
                 edit,
                 self.push_to_history,
-                lsp_adapter,
                 lsp_server,
                 &mut cx,
             )
@@ -544,7 +543,7 @@ impl LspCommand for PerformRename {
             })?
             .await?;
         Ok(Self {
-            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
             new_name: message.new_name,
             push_to_history: false,
         })
@@ -659,7 +658,7 @@ impl LspCommand for GetDefinitions {
             })?
             .await?;
         Ok(Self {
-            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -762,7 +761,7 @@ impl LspCommand for GetDeclarations {
             })?
             .await?;
         Ok(Self {
-            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -864,7 +863,7 @@ impl LspCommand for GetImplementations {
             })?
             .await?;
         Ok(Self {
-            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -963,7 +962,7 @@ impl LspCommand for GetTypeDefinitions {
             })?
             .await?;
         Ok(Self {
-            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -1116,18 +1115,12 @@ pub async fn location_links_from_lsp(
         }
     }
 
-    let (lsp_adapter, language_server) =
-        language_server_for_buffer(&lsp_store, &buffer, server_id, &mut cx)?;
+    let (_, language_server) = language_server_for_buffer(&lsp_store, &buffer, server_id, &mut cx)?;
     let mut definitions = Vec::new();
     for (origin_range, target_uri, target_range) in unresolved_links {
         let target_buffer_handle = lsp_store
             .update(&mut cx, |this, cx| {
-                this.open_local_buffer_via_lsp(
-                    target_uri,
-                    language_server.server_id(),
-                    lsp_adapter.name.clone(),
-                    cx,
-                )
+                this.open_local_buffer_via_lsp(target_uri, language_server.server_id(), cx)
             })?
             .await?;
 
@@ -1172,8 +1165,7 @@ pub async fn location_link_from_lsp(
     server_id: LanguageServerId,
     cx: &mut AsyncApp,
 ) -> Result<LocationLink> {
-    let (lsp_adapter, language_server) =
-        language_server_for_buffer(&lsp_store, &buffer, server_id, cx)?;
+    let (_, language_server) = language_server_for_buffer(lsp_store, buffer, server_id, cx)?;
 
     let (origin_range, target_uri, target_range) = (
         link.origin_selection_range,
@@ -1183,12 +1175,7 @@ pub async fn location_link_from_lsp(
 
     let target_buffer_handle = lsp_store
         .update(cx, |lsp_store, cx| {
-            lsp_store.open_local_buffer_via_lsp(
-                target_uri,
-                language_server.server_id(),
-                lsp_adapter.name.clone(),
-                cx,
-            )
+            lsp_store.open_local_buffer_via_lsp(target_uri, language_server.server_id(), cx)
         })?
         .await?;
 
@@ -1326,7 +1313,7 @@ impl LspCommand for GetReferences {
         mut cx: AsyncApp,
     ) -> Result<Vec<Location>> {
         let mut references = Vec::new();
-        let (lsp_adapter, language_server) =
+        let (_, language_server) =
             language_server_for_buffer(&lsp_store, &buffer, server_id, &mut cx)?;
 
         if let Some(locations) = locations {
@@ -1336,7 +1323,6 @@ impl LspCommand for GetReferences {
                         lsp_store.open_local_buffer_via_lsp(
                             lsp_location.uri,
                             language_server.server_id(),
-                            lsp_adapter.name.clone(),
                             cx,
                         )
                     })?
@@ -1344,7 +1330,7 @@ impl LspCommand for GetReferences {
 
                 target_buffer_handle
                     .clone()
-                    .read_with(&mut cx, |target_buffer, _| {
+                    .read_with(&cx, |target_buffer, _| {
                         let target_start = target_buffer
                             .clip_point_utf16(point_from_lsp(lsp_location.range.start), Bias::Left);
                         let target_end = target_buffer
@@ -1388,7 +1374,7 @@ impl LspCommand for GetReferences {
             })?
             .await?;
         Ok(Self {
-            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -1498,9 +1484,9 @@ impl LspCommand for GetDocumentHighlights {
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
         _: LanguageServerId,
-        mut cx: AsyncApp,
+        cx: AsyncApp,
     ) -> Result<Vec<DocumentHighlight>> {
-        buffer.read_with(&mut cx, |buffer, _| {
+        buffer.read_with(&cx, |buffer, _| {
             let mut lsp_highlights = lsp_highlights.unwrap_or_default();
             lsp_highlights.sort_unstable_by_key(|h| (h.range.start, Reverse(h.range.end)));
             lsp_highlights
@@ -1548,7 +1534,7 @@ impl LspCommand for GetDocumentHighlights {
             })?
             .await?;
         Ok(Self {
-            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -1879,7 +1865,7 @@ impl LspCommand for GetSignatureHelp {
             })?
             .await
             .with_context(|| format!("waiting for version for buffer {}", buffer.entity_id()))?;
-        let buffer_snapshot = buffer.read_with(&mut cx, |buffer, _| buffer.snapshot())?;
+        let buffer_snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot())?;
         Ok(Self {
             position: payload
                 .position
@@ -1961,13 +1947,13 @@ impl LspCommand for GetHover {
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
         _: LanguageServerId,
-        mut cx: AsyncApp,
+        cx: AsyncApp,
     ) -> Result<Self::Response> {
         let Some(hover) = message else {
             return Ok(None);
         };
 
-        let (language, range) = buffer.read_with(&mut cx, |buffer, _| {
+        let (language, range) = buffer.read_with(&cx, |buffer, _| {
             (
                 buffer.language().cloned(),
                 hover.range.map(|range| {
@@ -2053,7 +2039,7 @@ impl LspCommand for GetHover {
             })?
             .await?;
         Ok(Self {
-            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -2127,7 +2113,7 @@ impl LspCommand for GetHover {
             return Ok(None);
         }
 
-        let language = buffer.read_with(&mut cx, |buffer, _| buffer.language().cloned())?;
+        let language = buffer.read_with(&cx, |buffer, _| buffer.language().cloned())?;
         let range = if let (Some(start), Some(end)) = (message.start, message.end) {
             language::proto::deserialize_anchor(start)
                 .and_then(|start| language::proto::deserialize_anchor(end).map(|end| start..end))
@@ -2151,6 +2137,16 @@ impl LspCommand for GetHover {
 
     fn buffer_id_from_proto(message: &Self::ProtoRequest) -> Result<BufferId> {
         BufferId::new(message.buffer_id)
+    }
+}
+
+impl GetCompletions {
+    pub fn can_resolve_completions(capabilities: &lsp::ServerCapabilities) -> bool {
+        capabilities
+            .completion_provider
+            .as_ref()
+            .and_then(|options| options.resolve_provider)
+            .unwrap_or(false)
     }
 }
 
@@ -2212,7 +2208,7 @@ impl LspCommand for GetCompletions {
         let unfiltered_completions_count = completions.len();
 
         let language_server_adapter = lsp_store
-            .read_with(&mut cx, |lsp_store, _| {
+            .read_with(&cx, |lsp_store, _| {
                 lsp_store.language_server_adapter_for_id(server_id)
             })?
             .with_context(|| format!("no language server with id {server_id}"))?;
@@ -2345,15 +2341,14 @@ impl LspCommand for GetCompletions {
             .zip(completion_edits)
             .map(|(mut lsp_completion, mut edit)| {
                 LineEnding::normalize(&mut edit.new_text);
-                if lsp_completion.data.is_none() {
-                    if let Some(default_data) = lsp_defaults
+                if lsp_completion.data.is_none()
+                    && let Some(default_data) = lsp_defaults
                         .as_ref()
                         .and_then(|item_defaults| item_defaults.data.clone())
-                    {
-                        // Servers (e.g. JDTLS) prefer unchanged completions, when resolving the items later,
-                        // so we do not insert the defaults here, but `data` is needed for resolving, so this is an exception.
-                        lsp_completion.data = Some(default_data);
-                    }
+                {
+                    // Servers (e.g. JDTLS) prefer unchanged completions, when resolving the items later,
+                    // so we do not insert the defaults here, but `data` is needed for resolving, so this is an exception.
+                    lsp_completion.data = Some(default_data);
                 }
                 CoreCompletion {
                     replace_range: edit.replace_range,
@@ -2399,7 +2394,7 @@ impl LspCommand for GetCompletions {
             .position
             .and_then(language::proto::deserialize_anchor)
             .map(|p| {
-                buffer.read_with(&mut cx, |buffer, _| {
+                buffer.read_with(&cx, |buffer, _| {
                     buffer.clip_point_utf16(Unclipped(p.to_point_utf16(buffer)), Bias::Left)
                 })
             })
@@ -2506,8 +2501,8 @@ pub(crate) fn parse_completion_text_edit(
     };
 
     Some(ParsedCompletionEdit {
-        insert_range: insert_range,
-        replace_range: replace_range,
+        insert_range,
+        replace_range,
         new_text: new_text.clone(),
     })
 }
@@ -2600,11 +2595,9 @@ impl LspCommand for GetCodeActions {
         server_id: LanguageServerId,
         cx: AsyncApp,
     ) -> Result<Vec<CodeAction>> {
-        let requested_kinds_set = if let Some(kinds) = self.kinds {
-            Some(kinds.into_iter().collect::<HashSet<_>>())
-        } else {
-            None
-        };
+        let requested_kinds_set = self
+            .kinds
+            .map(|kinds| kinds.into_iter().collect::<HashSet<_>>());
 
         let language_server = cx.update(|cx| {
             lsp_store
@@ -2627,10 +2620,10 @@ impl LspCommand for GetCodeActions {
             .filter_map(|entry| {
                 let (lsp_action, resolved) = match entry {
                     lsp::CodeActionOrCommand::CodeAction(lsp_action) => {
-                        if let Some(command) = lsp_action.command.as_ref() {
-                            if !available_commands.contains(&command.command) {
-                                return None;
-                            }
+                        if let Some(command) = lsp_action.command.as_ref()
+                            && !available_commands.contains(&command.command)
+                        {
+                            return None;
                         }
                         (LspAction::Action(Box::new(lsp_action)), false)
                     }
@@ -2645,10 +2638,9 @@ impl LspCommand for GetCodeActions {
 
                 if let Some((requested_kinds, kind)) =
                     requested_kinds_set.as_ref().zip(lsp_action.action_kind())
+                    && !requested_kinds.contains(&kind)
                 {
-                    if !requested_kinds.contains(&kind) {
-                        return None;
-                    }
+                    return None;
                 }
 
                 Some(CodeAction {
@@ -2745,7 +2737,7 @@ impl GetCodeActions {
             Some(lsp::CodeActionProviderCapability::Options(CodeActionOptions {
                 code_action_kinds: Some(supported_action_kinds),
                 ..
-            })) => Some(supported_action_kinds.clone()),
+            })) => Some(supported_action_kinds),
             _ => capabilities.code_action_kinds,
         }
     }
@@ -2762,6 +2754,23 @@ impl GetCodeActions {
     }
 }
 
+impl OnTypeFormatting {
+    pub fn supports_on_type_formatting(trigger: &str, capabilities: &ServerCapabilities) -> bool {
+        let Some(on_type_formatting_options) = &capabilities.document_on_type_formatting_provider
+        else {
+            return false;
+        };
+        on_type_formatting_options
+            .first_trigger_character
+            .contains(trigger)
+            || on_type_formatting_options
+                .more_trigger_character
+                .iter()
+                .flatten()
+                .any(|chars| chars.contains(trigger))
+    }
+}
+
 #[async_trait(?Send)]
 impl LspCommand for OnTypeFormatting {
     type Response = Option<Transaction>;
@@ -2773,20 +2782,7 @@ impl LspCommand for OnTypeFormatting {
     }
 
     fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
-        let Some(on_type_formatting_options) = &capabilities
-            .server_capabilities
-            .document_on_type_formatting_provider
-        else {
-            return false;
-        };
-        on_type_formatting_options
-            .first_trigger_character
-            .contains(&self.trigger)
-            || on_type_formatting_options
-                .more_trigger_character
-                .iter()
-                .flatten()
-                .any(|chars| chars.contains(&self.trigger))
+        Self::supports_on_type_formatting(&self.trigger, &capabilities.server_capabilities)
     }
 
     fn to_lsp(
@@ -2864,7 +2860,7 @@ impl LspCommand for OnTypeFormatting {
         })?;
 
         Ok(Self {
-            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
             trigger: message.trigger.clone(),
             options,
             push_to_history: false,
@@ -3139,7 +3135,7 @@ impl InlayHints {
                                     Some(((uri, range), server_id)) => Some((
                                         LanguageServerId(server_id as usize),
                                         lsp::Location {
-                                            uri: lsp::Url::parse(&uri)
+                                            uri: lsp::Uri::from_str(&uri)
                                                 .context("invalid uri in hint part {part:?}")?,
                                             range: lsp::Range::new(
                                                 point_to_lsp(PointUtf16::new(
@@ -3270,6 +3266,16 @@ impl InlayHints {
             })
             .unwrap_or(false)
     }
+
+    pub fn check_capabilities(capabilities: &ServerCapabilities) -> bool {
+        capabilities
+            .inlay_hint_provider
+            .as_ref()
+            .is_some_and(|inlay_hint_provider| match inlay_hint_provider {
+                lsp::OneOf::Left(enabled) => *enabled,
+                lsp::OneOf::Right(_) => true,
+            })
+    }
 }
 
 #[async_trait(?Send)]
@@ -3283,17 +3289,7 @@ impl LspCommand for InlayHints {
     }
 
     fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
-        let Some(inlay_hint_provider) = &capabilities.server_capabilities.inlay_hint_provider
-        else {
-            return false;
-        };
-        match inlay_hint_provider {
-            lsp::OneOf::Left(enabled) => *enabled,
-            lsp::OneOf::Right(inlay_hint_capabilities) => match inlay_hint_capabilities {
-                lsp::InlayHintServerCapabilities::Options(_) => true,
-                lsp::InlayHintServerCapabilities::RegistrationOptions(_) => false,
-            },
-        }
+        Self::check_capabilities(&capabilities.server_capabilities)
     }
 
     fn to_lsp(
@@ -3448,10 +3444,7 @@ impl LspCommand for GetCodeLens {
         capabilities
             .server_capabilities
             .code_lens_provider
-            .as_ref()
-            .map_or(false, |code_lens_options| {
-                code_lens_options.resolve_provider.unwrap_or(false)
-            })
+            .is_some()
     }
 
     fn to_lsp(
@@ -3476,9 +3469,9 @@ impl LspCommand for GetCodeLens {
         lsp_store: Entity<LspStore>,
         buffer: Entity<Buffer>,
         server_id: LanguageServerId,
-        mut cx: AsyncApp,
+        cx: AsyncApp,
     ) -> anyhow::Result<Vec<CodeAction>> {
-        let snapshot = buffer.read_with(&mut cx, |buffer, _| buffer.snapshot())?;
+        let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot())?;
         let language_server = cx.update(|cx| {
             lsp_store
                 .read(cx)
@@ -3580,6 +3573,18 @@ impl LspCommand for GetCodeLens {
     }
 }
 
+impl LinkedEditingRange {
+    pub fn check_server_capabilities(capabilities: ServerCapabilities) -> bool {
+        let Some(linked_editing_options) = capabilities.linked_editing_range_provider else {
+            return false;
+        };
+        if let LinkedEditingRangeServerCapabilities::Simple(false) = linked_editing_options {
+            return false;
+        }
+        true
+    }
+}
+
 #[async_trait(?Send)]
 impl LspCommand for LinkedEditingRange {
     type Response = Vec<Range<Anchor>>;
@@ -3591,16 +3596,7 @@ impl LspCommand for LinkedEditingRange {
     }
 
     fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
-        let Some(linked_editing_options) = &capabilities
-            .server_capabilities
-            .linked_editing_range_provider
-        else {
-            return false;
-        };
-        if let LinkedEditingRangeServerCapabilities::Simple(false) = linked_editing_options {
-            return false;
-        }
-        true
+        Self::check_server_capabilities(capabilities.server_capabilities)
     }
 
     fn to_lsp(
@@ -3737,7 +3733,7 @@ impl GetDocumentDiagnostics {
             .filter_map(|diagnostics| {
                 Some(LspPullDiagnostics::Response {
                     server_id: LanguageServerId::from_proto(diagnostics.server_id),
-                    uri: lsp::Url::from_str(diagnostics.uri.as_str()).log_err()?,
+                    uri: lsp::Uri::from_str(diagnostics.uri.as_str()).log_err()?,
                     diagnostics: if diagnostics.changed {
                         PulledDiagnostics::Unchanged {
                             result_id: diagnostics.result_id?,
@@ -3792,9 +3788,9 @@ impl GetDocumentDiagnostics {
                             start: point_to_lsp(PointUtf16::new(start.row, start.column)),
                             end: point_to_lsp(PointUtf16::new(end.row, end.column)),
                         },
-                        uri: lsp::Url::parse(&info.location_url.unwrap()).unwrap(),
+                        uri: lsp::Uri::from_str(&info.location_url.unwrap()).unwrap(),
                     },
-                    message: info.message.clone(),
+                    message: info.message,
                 }
             })
             .collect::<Vec<_>>();
@@ -3822,12 +3818,11 @@ impl GetDocumentDiagnostics {
                 _ => None,
             },
             code,
-            code_description: match diagnostic.code_description {
-                Some(code_description) => Some(CodeDescription {
-                    href: Some(lsp::Url::parse(&code_description).unwrap()),
+            code_description: diagnostic
+                .code_description
+                .map(|code_description| CodeDescription {
+                    href: Some(lsp::Uri::from_str(&code_description).unwrap()),
                 }),
-                None => None,
-            },
             related_information: Some(related_information),
             tags: Some(tags),
             source: diagnostic.source.clone(),
@@ -3966,7 +3961,7 @@ pub struct WorkspaceLspPullDiagnostics {
 }
 
 fn process_full_workspace_diagnostics_report(
-    diagnostics: &mut HashMap<lsp::Url, WorkspaceLspPullDiagnostics>,
+    diagnostics: &mut HashMap<lsp::Uri, WorkspaceLspPullDiagnostics>,
     server_id: LanguageServerId,
     report: lsp::WorkspaceFullDocumentDiagnosticReport,
 ) {
@@ -3989,7 +3984,7 @@ fn process_full_workspace_diagnostics_report(
 }
 
 fn process_unchanged_workspace_diagnostics_report(
-    diagnostics: &mut HashMap<lsp::Url, WorkspaceLspPullDiagnostics>,
+    diagnostics: &mut HashMap<lsp::Uri, WorkspaceLspPullDiagnostics>,
     server_id: LanguageServerId,
     report: lsp::WorkspaceUnchangedDocumentDiagnosticReport,
 ) {
@@ -4218,8 +4213,9 @@ impl LspCommand for GetDocumentColor {
         server_capabilities
             .server_capabilities
             .color_provider
+            .as_ref()
             .is_some_and(|capability| match capability {
-                lsp::ColorProviderCapability::Simple(supported) => supported,
+                lsp::ColorProviderCapability::Simple(supported) => *supported,
                 lsp::ColorProviderCapability::ColorProvider(..) => true,
                 lsp::ColorProviderCapability::Options(..) => true,
             })
@@ -4347,9 +4343,9 @@ impl LspCommand for GetDocumentColor {
 }
 
 fn process_related_documents(
-    diagnostics: &mut HashMap<lsp::Url, LspPullDiagnostics>,
+    diagnostics: &mut HashMap<lsp::Uri, LspPullDiagnostics>,
     server_id: LanguageServerId,
-    documents: impl IntoIterator<Item = (lsp::Url, lsp::DocumentDiagnosticReportKind)>,
+    documents: impl IntoIterator<Item = (lsp::Uri, lsp::DocumentDiagnosticReportKind)>,
 ) {
     for (url, report_kind) in documents {
         match report_kind {
@@ -4364,9 +4360,9 @@ fn process_related_documents(
 }
 
 fn process_unchanged_diagnostics_report(
-    diagnostics: &mut HashMap<lsp::Url, LspPullDiagnostics>,
+    diagnostics: &mut HashMap<lsp::Uri, LspPullDiagnostics>,
     server_id: LanguageServerId,
-    uri: lsp::Url,
+    uri: lsp::Uri,
     report: lsp::UnchangedDocumentDiagnosticReport,
 ) {
     let result_id = report.result_id;
@@ -4408,9 +4404,9 @@ fn process_unchanged_diagnostics_report(
 }
 
 fn process_full_diagnostics_report(
-    diagnostics: &mut HashMap<lsp::Url, LspPullDiagnostics>,
+    diagnostics: &mut HashMap<lsp::Uri, LspPullDiagnostics>,
     server_id: LanguageServerId,
-    uri: lsp::Url,
+    uri: lsp::Uri,
     report: lsp::FullDocumentDiagnosticReport,
 ) {
     let result_id = report.result_id;
@@ -4491,9 +4487,8 @@ mod tests {
             data: Some(json!({"detail": "test detail"})),
         };
 
-        let proto_diagnostic =
-            GetDocumentDiagnostics::serialize_lsp_diagnostic(lsp_diagnostic.clone())
-                .expect("Failed to serialize diagnostic");
+        let proto_diagnostic = GetDocumentDiagnostics::serialize_lsp_diagnostic(lsp_diagnostic)
+            .expect("Failed to serialize diagnostic");
 
         let start = proto_diagnostic.start.unwrap();
         let end = proto_diagnostic.end.unwrap();
@@ -4545,7 +4540,7 @@ mod tests {
     fn test_related_information() {
         let related_info = lsp::DiagnosticRelatedInformation {
             location: lsp::Location {
-                uri: lsp::Url::parse("file:///test.rs").unwrap(),
+                uri: lsp::Uri::from_str("file:///test.rs").unwrap(),
                 range: lsp::Range {
                     start: lsp::Position::new(1, 1),
                     end: lsp::Position::new(1, 5),

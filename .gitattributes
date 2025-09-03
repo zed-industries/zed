@@ -1,2 +1,5 @@
 # Prevent GitHub from displaying comments within JSON files as errors.
 *.json linguist-language=JSON-with-Comments
+
+# Ensure the WSL script always has LF line endings, even on Windows
+crates/zed/resources/windows/zed-wsl text eol=lf

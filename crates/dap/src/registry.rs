@@ -87,7 +87,7 @@ impl DapRegistry {
         self.0.read().adapters.get(name).cloned()
     }
 
-    pub fn enumerate_adapters(&self) -> Vec<DebugAdapterName> {
+    pub fn enumerate_adapters<B: FromIterator<DebugAdapterName>>(&self) -> B {
         self.0.read().adapters.keys().cloned().collect()
     }
 }

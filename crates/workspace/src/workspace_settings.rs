@@ -6,7 +6,7 @@ use collections::HashMap;
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsSources, SettingsUi};
 
 #[derive(Deserialize)]
 pub struct WorkspaceSettings {
@@ -29,6 +29,8 @@ pub struct WorkspaceSettings {
     pub on_last_window_closed: OnLastWindowClosed,
     pub resize_all_panels_in_dock: Vec<DockPosition>,
     pub close_on_file_delete: bool,
+    pub use_system_window_tabs: bool,
+    pub zoomed_padding: bool,
 }
 
 #[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -116,7 +118,7 @@ pub enum RestoreOnStartupBehavior {
     LastSession,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
 pub struct WorkspaceSettingsContent {
     /// Active pane styling settings.
     pub active_pane_modifiers: Option<ActivePanelModifiers>,
@@ -202,6 +204,16 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: false
     pub close_on_file_delete: Option<bool>,
+    /// Whether to allow windows to tab together based on the user’s tabbing preference (macOS only).
+    ///
+    /// Default: false
+    pub use_system_window_tabs: Option<bool>,
+    /// Whether to show padding for zoomed panels.
+    /// When enabled, zoomed bottom panels will have some top padding,
+    /// while zoomed left/right panels will have padding to the right/left (respectively).
+    ///
+    /// Default: true
+    pub zoomed_padding: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -211,7 +223,7 @@ pub struct TabBarSettings {
     pub show_tab_bar_buttons: bool,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
 pub struct TabBarSettingsContent {
     /// Whether or not to show the tab bar in the editor.
     ///
@@ -254,7 +266,7 @@ pub enum PaneSplitDirectionVertical {
     Right,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, SettingsUi)]
 #[serde(rename_all = "snake_case")]
 pub struct CenteredLayoutSettings {
     /// The relative width of the left padding of the central pane from the
@@ -282,19 +294,17 @@ impl Settings for WorkspaceSettings {
         if vscode
             .read_bool("accessibility.dimUnfocused.enabled")
             .unwrap_or_default()
-        {
-            if let Some(opacity) = vscode
+            && let Some(opacity) = vscode
                 .read_value("accessibility.dimUnfocused.opacity")
                 .and_then(|v| v.as_f64())
-            {
-                if let Some(settings) = current.active_pane_modifiers.as_mut() {
-                    settings.inactive_opacity = Some(opacity as f32)
-                } else {
-                    current.active_pane_modifiers = Some(ActivePanelModifiers {
-                        inactive_opacity: Some(opacity as f32),
-                        ..Default::default()
-                    })
-                }
+        {
+            if let Some(settings) = current.active_pane_modifiers.as_mut() {
+                settings.inactive_opacity = Some(opacity as f32)
+            } else {
+                current.active_pane_modifiers = Some(ActivePanelModifiers {
+                    inactive_opacity: Some(opacity as f32),
+                    ..Default::default()
+                })
             }
         }
 
@@ -345,14 +355,14 @@ impl Settings for WorkspaceSettings {
             .read_value("workbench.editor.limit.value")
             .and_then(|v| v.as_u64())
             .and_then(|n| NonZeroUsize::new(n as usize))
-        {
-            if vscode
+            && vscode
                 .read_bool("workbench.editor.limit.enabled")
                 .unwrap_or_default()
-            {
-                current.max_tabs = Some(n)
-            }
+        {
+            current.max_tabs = Some(n)
         }
+
+        vscode.bool_setting("window.nativeTabs", &mut current.use_system_window_tabs);
 
         // some combination of "window.restoreWindows" and "workbench.startupEditor" might
         // map to our "restore_on_startup"

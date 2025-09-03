@@ -99,8 +99,21 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
                               constant Quad *quads
                               [[buffer(QuadInputIndex_Quads)]]) {
   Quad quad = quads[input.quad_id];
+
+  // Signed distance field threshold for inclusion of pixels. 0.5 is the
+  // minimum distance between the center of the pixel and the edge.
+  const float antialias_threshold = 0.5;
+
   float4 background_color = fill_color(quad.background, input.position.xy, quad.bounds,
     input.background_solid, input.background_color0, input.background_color1);
+  float4 border_color = input.border_color;
+
+  // Apply content_mask corner radii clipping
+  float clip_sdf = quad_sdf(input.position.xy, quad.content_mask.bounds,
+    quad.content_mask.corner_radii);
+  float clip_alpha = saturate(antialias_threshold - clip_sdf);
+  background_color.a *= clip_alpha;
+  border_color *= clip_alpha;
 
   bool unrounded = quad.corner_radii.top_left == 0.0 &&
     quad.corner_radii.bottom_left == 0.0 &&
@@ -120,10 +133,6 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
   float2 half_size = size / 2.0;
   float2 point = input.position.xy - float2(quad.bounds.origin.x, quad.bounds.origin.y);
   float2 center_to_point = point - half_size;
-
-  // Signed distance field threshold for inclusion of pixels. 0.5 is the
-  // minimum distance between the center of the pixel and the edge.
-  const float antialias_threshold = 0.5;
 
   // Radius of the nearest corner
   float corner_radius = pick_corner_radius(center_to_point, quad.corner_radii);
@@ -163,7 +172,6 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
   bool is_beyond_inner_straight_border =
     straight_border_inner_corner_to_point.x > 0.0 ||
     straight_border_inner_corner_to_point.y > 0.0;
-
 
   // Whether the point is far enough inside the quad, such that the pixels are
   // not affected by the straight border.
@@ -208,8 +216,6 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
 
   float4 color = background_color;
   if (border_sdf < antialias_threshold) {
-    float4 border_color = input.border_color;
-
     // Dashed border logic when border_style == 1
     if (quad.border_style == 1) {
       // Position along the perimeter in "dash space", where each dash
@@ -244,6 +250,10 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
         // perimeter. This way each line starts and ends with a dash.
         bool is_horizontal = corner_center_to_point.x < corner_center_to_point.y;
         float border_width = is_horizontal ? border.x : border.y;
+        // When border width of some side is 0, we need to use the other side width for dash velocity.
+        if (border_width == 0.0) {
+            border_width = is_horizontal ? border.y : border.x;
+        }
         dash_velocity = dv_numerator / border_width;
         t = is_horizontal ? point.x : point.y;
         t *= dash_velocity;
@@ -567,15 +577,20 @@ vertex UnderlineVertexOutput underline_vertex(
 fragment float4 underline_fragment(UnderlineFragmentInput input [[stage_in]],
                                    constant Underline *underlines
                                    [[buffer(UnderlineInputIndex_Underlines)]]) {
+  const float WAVE_FREQUENCY = 2.0;
+  const float WAVE_HEIGHT_RATIO = 0.8;
+
   Underline underline = underlines[input.underline_id];
   if (underline.wavy) {
     float half_thickness = underline.thickness * 0.5;
     float2 origin =
         float2(underline.bounds.origin.x, underline.bounds.origin.y);
+
     float2 st = ((input.position.xy - origin) / underline.bounds.size.height) -
                 float2(0., 0.5);
-    float frequency = (M_PI_F * (3. * underline.thickness)) / 8.;
-    float amplitude = 1. / (2. * underline.thickness);
+    float frequency = (M_PI_F * WAVE_FREQUENCY * underline.thickness) / underline.bounds.size.height;
+    float amplitude = (underline.thickness * WAVE_HEIGHT_RATIO) / underline.bounds.size.height;
+
     float sine = sin(st.x * frequency) * amplitude;
     float dSine = cos(st.x * frequency) * amplitude * frequency;
     float distance = (st.y - sine) / sqrt(1. + dSine * dSine);

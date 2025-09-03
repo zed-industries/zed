@@ -25,7 +25,7 @@ impl AgentPanelOnboarding {
         cx.subscribe(
             &LanguageModelRegistry::global(cx),
             |this: &mut Self, _registry, event: &language_model::Event, cx| match event {
-                language_model::Event::ProviderStateChanged
+                language_model::Event::ProviderStateChanged(_)
                 | language_model::Event::AddedProvider(_)
                 | language_model::Event::RemovedProvider(_) => {
                     this.configured_providers = Self::compute_available_providers(cx)
@@ -50,7 +50,7 @@ impl AgentPanelOnboarding {
             .filter(|provider| {
                 provider.is_authenticated(cx) && provider.id() != ZED_CLOUD_PROVIDER_ID
             })
-            .map(|provider| (provider.icon(), provider.name().0.clone()))
+            .map(|provider| (provider.icon(), provider.name().0))
             .collect()
     }
 }
@@ -74,7 +74,7 @@ impl Render for AgentPanelOnboarding {
                 }),
             )
             .map(|this| {
-                if enrolled_in_trial || is_pro_user || self.configured_providers.len() >= 1 {
+                if enrolled_in_trial || is_pro_user || !self.configured_providers.is_empty() {
                     this
                 } else {
                     this.child(ApiKeysWithoutProviders::new())

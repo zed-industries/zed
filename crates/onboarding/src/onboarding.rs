@@ -1,14 +1,14 @@
-use crate::welcome::{ShowWelcome, WelcomePage};
-use client::{Client, UserStore};
-use command_palette_hooks::CommandPaletteFilter;
+pub use crate::welcome::ShowWelcome;
+use crate::{multibuffer_hint::MultibufferHint, welcome::WelcomePage};
+use client::{Client, UserStore, zed_urls};
 use db::kvp::KEY_VALUE_STORE;
-use feature_flags::{FeatureFlag, FeatureFlagViewExt as _};
 use fs::Fs;
 use gpui::{
     Action, AnyElement, App, AppContext, AsyncWindowContext, Context, Entity, EventEmitter,
-    FocusHandle, Focusable, IntoElement, KeyContext, Render, SharedString, Subscription, Task,
-    WeakEntity, Window, actions,
+    FocusHandle, Focusable, Global, IntoElement, KeyContext, Render, SharedString, Subscription,
+    Task, WeakEntity, Window, actions,
 };
+use notifications::status_toast::{StatusToast, ToastIcon};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{SettingsStore, VsCodeSettingsSource};
@@ -26,16 +26,12 @@ use workspace::{
 };
 
 mod ai_setup_page;
+mod base_keymap_picker;
 mod basics_page;
 mod editing_page;
+pub mod multibuffer_hint;
 mod theme_preview;
 mod welcome;
-
-pub struct OnBoardingFeatureFlag {}
-
-impl FeatureFlag for OnBoardingFeatureFlag {
-    const NAME: &'static str = "onboarding";
-}
 
 /// Imports settings from Visual Studio Code.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Deserialize, JsonSchema, Action)]
@@ -56,6 +52,7 @@ pub struct ImportCursorSettings {
 }
 
 pub const FIRST_OPEN: &str = "first_open";
+pub const DOCS_URL: &str = "https://zed.dev/docs/";
 
 actions!(
     zed,
@@ -74,10 +71,24 @@ actions!(
         ActivateEditingPage,
         /// Activates the AI Setup page.
         ActivateAISetupPage,
+        /// Finish the onboarding process.
+        Finish,
+        /// Sign in while in the onboarding flow.
+        SignIn,
+        /// Open the user account in zed.dev while in the onboarding flow.
+        OpenAccount,
+        /// Resets the welcome screen hints to their initial state.
+        ResetHints
     ]
 );
 
 pub fn init(cx: &mut App) {
+    cx.observe_new(|workspace: &mut Workspace, _, _cx| {
+        workspace
+            .register_action(|_workspace, _: &ResetHints, _, cx| MultibufferHint::set_count(0, cx));
+    })
+    .detach();
+
     cx.on_action(|_: &OpenOnboarding, cx| {
         with_active_or_new_workspace(cx, |workspace, window, cx| {
             workspace
@@ -137,9 +148,12 @@ pub fn init(cx: &mut App) {
             let fs = <dyn Fs>::global(cx);
             let action = *action;
 
+            let workspace = cx.weak_entity();
+
             window
                 .spawn(cx, async move |cx: &mut AsyncWindowContext| {
                     handle_import_vscode_settings(
+                        workspace,
                         VsCodeSettingsSource::VsCode,
                         action.skip_prompt,
                         fs,
@@ -154,9 +168,12 @@ pub fn init(cx: &mut App) {
             let fs = <dyn Fs>::global(cx);
             let action = *action;
 
+            let workspace = cx.weak_entity();
+
             window
                 .spawn(cx, async move |cx: &mut AsyncWindowContext| {
                     handle_import_vscode_settings(
+                        workspace,
                         VsCodeSettingsSource::Cursor,
                         action.skip_prompt,
                         fs,
@@ -169,38 +186,14 @@ pub fn init(cx: &mut App) {
     })
     .detach();
 
-    cx.observe_new::<Workspace>(|_, window, cx| {
-        let Some(window) = window else {
-            return;
-        };
+    base_keymap_picker::init(cx);
 
-        let onboarding_actions = [
-            std::any::TypeId::of::<OpenOnboarding>(),
-            std::any::TypeId::of::<ShowWelcome>(),
-        ];
-
-        CommandPaletteFilter::update_global(cx, |filter, _cx| {
-            filter.hide_action_types(&onboarding_actions);
-        });
-
-        cx.observe_flag::<OnBoardingFeatureFlag, _>(window, move |is_enabled, _, _, cx| {
-            if is_enabled {
-                CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                    filter.show_action_types(onboarding_actions.iter());
-                });
-            } else {
-                CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                    filter.hide_action_types(&onboarding_actions);
-                });
-            }
-        })
-        .detach();
-    })
-    .detach();
     register_serializable_item::<Onboarding>(cx);
+    register_serializable_item::<WelcomePage>(cx);
 }
 
 pub fn show_onboarding_view(app_state: Arc<AppState>, cx: &mut App) -> Task<anyhow::Result<()>> {
+    telemetry::event!("Onboarding Page Opened");
     open_new(
         Default::default(),
         app_state,
@@ -229,6 +222,16 @@ enum SelectedPage {
     AiSetup,
 }
 
+impl SelectedPage {
+    fn name(&self) -> &'static str {
+        match self {
+            SelectedPage::Basics => "Basics",
+            SelectedPage::Editing => "Editing",
+            SelectedPage::AiSetup => "AI Setup",
+        }
+    }
+}
+
 struct Onboarding {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
@@ -248,7 +251,21 @@ impl Onboarding {
         })
     }
 
-    fn set_page(&mut self, page: SelectedPage, cx: &mut Context<Self>) {
+    fn set_page(
+        &mut self,
+        page: SelectedPage,
+        clicked: Option<&'static str>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(click) = clicked {
+            telemetry::event!(
+                "Welcome Tab Clicked",
+                from = self.selected_page.name(),
+                to = page.name(),
+                clicked = click,
+            );
+        }
+
         self.selected_page = page;
         cx.notify();
         cx.emit(ItemEvent::UpdateTab);
@@ -312,13 +329,20 @@ impl Onboarding {
                     gpui::Empty.into_any_element(),
                     IntoElement::into_any_element,
                 ))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.set_page(page, cx);
+                .on_click(cx.listener(move |this, click_event, _, cx| {
+                    let click = match click_event {
+                        gpui::ClickEvent::Mouse(_) => "mouse",
+                        gpui::ClickEvent::Keyboard(_) => "keyboard",
+                    };
+
+                    this.set_page(page, Some(click), cx);
                 }))
         })
     }
 
     fn render_nav(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let ai_setup_page = matches!(self.selected_page, SelectedPage::AiSetup);
+
         v_flex()
             .h_full()
             .w(rems_from_px(220.))
@@ -357,108 +381,146 @@ impl Onboarding {
                                     .gap_1()
                                     .children(self.render_nav_buttons(window, cx)),
                             )
-                            .child(
-                                ButtonLike::new("skip_all")
-                                    .child(Label::new("Skip All").ml_1())
-                                    .on_click(|_, _, cx| {
-                                        with_active_or_new_workspace(
-                                            cx,
-                                            |workspace, window, cx| {
-                                                let Some((onboarding_id, onboarding_idx)) =
-                                                    workspace
-                                                        .active_pane()
-                                                        .read(cx)
-                                                        .items()
-                                                        .enumerate()
-                                                        .find_map(|(idx, item)| {
-                                                            let _ =
-                                                                item.downcast::<Onboarding>()?;
-                                                            Some((item.item_id(), idx))
-                                                        })
-                                                else {
-                                                    return;
-                                                };
+                            .map(|this| {
+                                let keybinding = KeyBinding::for_action_in(
+                                    &Finish,
+                                    &self.focus_handle,
+                                    window,
+                                    cx,
+                                )
+                                .map(|kb| kb.size(rems_from_px(12.)));
 
-                                                workspace.active_pane().update(cx, |pane, cx| {
-                                                    // Get the index here to get around the borrow checker
-                                                    let idx = pane.items().enumerate().find_map(
-                                                        |(idx, item)| {
-                                                            let _ =
-                                                                item.downcast::<WelcomePage>()?;
-                                                            Some(idx)
-                                                        },
-                                                    );
-
-                                                    if let Some(idx) = idx {
-                                                        pane.activate_item(
-                                                            idx, true, true, window, cx,
-                                                        );
-                                                    } else {
-                                                        let item =
-                                                            Box::new(WelcomePage::new(window, cx));
-                                                        pane.add_item(
-                                                            item,
-                                                            true,
-                                                            true,
-                                                            Some(onboarding_idx),
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    }
-
-                                                    pane.remove_item(
-                                                        onboarding_id,
-                                                        false,
-                                                        false,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                });
-                                            },
-                                        );
-                                    }),
-                            ),
+                                if ai_setup_page {
+                                    this.child(
+                                        ButtonLike::new("start_building")
+                                            .style(ButtonStyle::Outlined)
+                                            .size(ButtonSize::Medium)
+                                            .child(
+                                                h_flex()
+                                                    .ml_1()
+                                                    .w_full()
+                                                    .justify_between()
+                                                    .child(Label::new("Start Building"))
+                                                    .children(keybinding),
+                                            )
+                                            .on_click(|_, window, cx| {
+                                                window.dispatch_action(Finish.boxed_clone(), cx);
+                                            }),
+                                    )
+                                } else {
+                                    this.child(
+                                        ButtonLike::new("skip_all")
+                                            .size(ButtonSize::Medium)
+                                            .child(
+                                                h_flex()
+                                                    .ml_1()
+                                                    .w_full()
+                                                    .justify_between()
+                                                    .child(
+                                                        Label::new("Skip All").color(Color::Muted),
+                                                    )
+                                                    .children(keybinding),
+                                            )
+                                            .on_click(|_, window, cx| {
+                                                window.dispatch_action(Finish.boxed_clone(), cx);
+                                            }),
+                                    )
+                                }
+                            }),
                     ),
             )
             .child(
                 if let Some(user) = self.user_store.read(cx).current_user() {
-                    h_flex()
-                        .pl_1p5()
-                        .gap_2()
-                        .child(Avatar::new(user.avatar_uri.clone()))
-                        .child(Label::new(user.github_login.clone()))
+                    v_flex()
+                        .gap_1()
+                        .child(
+                            h_flex()
+                                .ml_2()
+                                .gap_2()
+                                .max_w_full()
+                                .w_full()
+                                .child(Avatar::new(user.avatar_uri.clone()))
+                                .child(Label::new(user.github_login.clone()).truncate()),
+                        )
+                        .child(
+                            ButtonLike::new("open_account")
+                                .size(ButtonSize::Medium)
+                                .child(
+                                    h_flex()
+                                        .ml_1()
+                                        .w_full()
+                                        .justify_between()
+                                        .child(Label::new("Open Account"))
+                                        .children(
+                                            KeyBinding::for_action_in(
+                                                &OpenAccount,
+                                                &self.focus_handle,
+                                                window,
+                                                cx,
+                                            )
+                                            .map(|kb| kb.size(rems_from_px(12.))),
+                                        ),
+                                )
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(OpenAccount.boxed_clone(), cx);
+                                }),
+                        )
                         .into_any_element()
                 } else {
                     Button::new("sign_in", "Sign In")
-                        .style(ButtonStyle::Outlined)
                         .full_width()
+                        .style(ButtonStyle::Outlined)
+                        .size(ButtonSize::Medium)
+                        .key_binding(
+                            KeyBinding::for_action_in(&SignIn, &self.focus_handle, window, cx)
+                                .map(|kb| kb.size(rems_from_px(12.))),
+                        )
                         .on_click(|_, window, cx| {
-                            let client = Client::global(cx);
-                            window
-                                .spawn(cx, async move |cx| {
-                                    client
-                                        .sign_in_with_optional_connect(true, &cx)
-                                        .await
-                                        .notify_async_err(cx);
-                                })
-                                .detach();
+                            window.dispatch_action(SignIn.boxed_clone(), cx);
                         })
                         .into_any_element()
                 },
             )
     }
 
+    fn on_finish(_: &Finish, _: &mut Window, cx: &mut App) {
+        telemetry::event!("Welcome Skip Clicked");
+        go_to_welcome_page(cx);
+    }
+
+    fn handle_sign_in(_: &SignIn, window: &mut Window, cx: &mut App) {
+        let client = Client::global(cx);
+
+        window
+            .spawn(cx, async move |cx| {
+                client
+                    .sign_in_with_optional_connect(true, cx)
+                    .await
+                    .notify_async_err(cx);
+            })
+            .detach();
+    }
+
+    fn handle_open_account(_: &OpenAccount, _: &mut Window, cx: &mut App) {
+        cx.open_url(&zed_urls::account_url(cx))
+    }
+
     fn render_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let client = Client::global(cx);
+
         match self.selected_page {
-            SelectedPage::Basics => {
-                crate::basics_page::render_basics_page(window, cx).into_any_element()
-            }
+            SelectedPage::Basics => crate::basics_page::render_basics_page(cx).into_any_element(),
             SelectedPage::Editing => {
                 crate::editing_page::render_editing_page(window, cx).into_any_element()
             }
-            SelectedPage::AiSetup => {
-                crate::ai_setup_page::render_ai_setup_page(&self, window, cx).into_any_element()
-            }
+            SelectedPage::AiSetup => crate::ai_setup_page::render_ai_setup_page(
+                self.workspace.clone(),
+                self.user_store.clone(),
+                client,
+                window,
+                cx,
+            )
+            .into_any_element(),
         }
     }
 }
@@ -470,23 +532,36 @@ impl Render for Onboarding {
             .key_context({
                 let mut ctx = KeyContext::new_with_defaults();
                 ctx.add("Onboarding");
+                ctx.add("menu");
                 ctx
             })
             .track_focus(&self.focus_handle)
             .size_full()
             .bg(cx.theme().colors().editor_background)
+            .on_action(Self::on_finish)
+            .on_action(Self::handle_sign_in)
+            .on_action(Self::handle_open_account)
             .on_action(cx.listener(|this, _: &ActivateBasicsPage, _, cx| {
-                this.set_page(SelectedPage::Basics, cx);
+                this.set_page(SelectedPage::Basics, Some("action"), cx);
             }))
             .on_action(cx.listener(|this, _: &ActivateEditingPage, _, cx| {
-                this.set_page(SelectedPage::Editing, cx);
+                this.set_page(SelectedPage::Editing, Some("action"), cx);
             }))
             .on_action(cx.listener(|this, _: &ActivateAISetupPage, _, cx| {
-                this.set_page(SelectedPage::AiSetup, cx);
+                this.set_page(SelectedPage::AiSetup, Some("action"), cx);
+            }))
+            .on_action(cx.listener(|_, _: &menu::SelectNext, window, cx| {
+                window.focus_next();
+                cx.notify();
+            }))
+            .on_action(cx.listener(|_, _: &menu::SelectPrevious, window, cx| {
+                window.focus_prev();
+                cx.notify();
             }))
             .child(
                 h_flex()
                     .max_w(rems_from_px(1100.))
+                    .max_h(rems_from_px(850.))
                     .size_full()
                     .m_auto()
                     .py_20()
@@ -496,12 +571,14 @@ impl Render for Onboarding {
                     .child(self.render_nav(window, cx))
                     .child(
                         v_flex()
+                            .id("page-content")
+                            .size_full()
                             .max_w_full()
                             .min_w_0()
                             .pl_12()
                             .border_l_1()
                             .border_color(cx.theme().colors().border_variant.opacity(0.5))
-                            .size_full()
+                            .overflow_y_scroll()
                             .child(self.render_page(window, cx)),
                     ),
             )
@@ -537,9 +614,13 @@ impl Item for Onboarding {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Entity<Self>> {
-        self.workspace
-            .update(cx, |workspace, cx| Onboarding::new(workspace, cx))
-            .ok()
+        Some(cx.new(|cx| Onboarding {
+            workspace: self.workspace.clone(),
+            user_store: self.user_store.clone(),
+            selected_page: self.selected_page,
+            focus_handle: cx.focus_handle(),
+            _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
+        }))
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
@@ -547,7 +628,42 @@ impl Item for Onboarding {
     }
 }
 
+fn go_to_welcome_page(cx: &mut App) {
+    with_active_or_new_workspace(cx, |workspace, window, cx| {
+        let Some((onboarding_id, onboarding_idx)) = workspace
+            .active_pane()
+            .read(cx)
+            .items()
+            .enumerate()
+            .find_map(|(idx, item)| {
+                let _ = item.downcast::<Onboarding>()?;
+                Some((item.item_id(), idx))
+            })
+        else {
+            return;
+        };
+
+        workspace.active_pane().update(cx, |pane, cx| {
+            // Get the index here to get around the borrow checker
+            let idx = pane.items().enumerate().find_map(|(idx, item)| {
+                let _ = item.downcast::<WelcomePage>()?;
+                Some(idx)
+            });
+
+            if let Some(idx) = idx {
+                pane.activate_item(idx, true, true, window, cx);
+            } else {
+                let item = Box::new(WelcomePage::new(window, cx));
+                pane.add_item(item, true, true, Some(onboarding_idx), window, cx);
+            }
+
+            pane.remove_item(onboarding_id, false, false, window, cx);
+        });
+    });
+}
+
 pub async fn handle_import_vscode_settings(
+    workspace: WeakEntity<Workspace>,
     source: VsCodeSettingsSource,
     skip_prompt: bool,
     fs: Arc<dyn Fs>,
@@ -588,14 +704,73 @@ pub async fn handle_import_vscode_settings(
         }
     };
 
-    cx.update(|_, cx| {
+    let Ok(result_channel) = cx.update(|_, cx| {
         let source = vscode_settings.source;
         let path = vscode_settings.path.clone();
-        cx.global::<SettingsStore>()
+        let result_channel = cx
+            .global::<SettingsStore>()
             .import_vscode_settings(fs, vscode_settings);
         zlog::info!("Imported {source} settings from {}", path.display());
-    })
-    .ok();
+        result_channel
+    }) else {
+        return;
+    };
+
+    let result = result_channel.await;
+    workspace
+        .update_in(cx, |workspace, _, cx| match result {
+            Ok(_) => {
+                let confirmation_toast = StatusToast::new(
+                    format!("Your {} settings were successfully imported.", source),
+                    cx,
+                    |this, _| {
+                        this.icon(ToastIcon::new(IconName::Check).color(Color::Success))
+                            .dismiss_button(true)
+                    },
+                );
+                SettingsImportState::update(cx, |state, _| match source {
+                    VsCodeSettingsSource::VsCode => {
+                        state.vscode = true;
+                    }
+                    VsCodeSettingsSource::Cursor => {
+                        state.cursor = true;
+                    }
+                });
+                workspace.toggle_status_toast(confirmation_toast, cx);
+            }
+            Err(_) => {
+                let error_toast = StatusToast::new(
+                    "Failed to import settings. See log for details",
+                    cx,
+                    |this, _| {
+                        this.icon(ToastIcon::new(IconName::Close).color(Color::Error))
+                            .action("Open Log", |window, cx| {
+                                window.dispatch_action(workspace::OpenLog.boxed_clone(), cx)
+                            })
+                            .dismiss_button(true)
+                    },
+                );
+                workspace.toggle_status_toast(error_toast, cx);
+            }
+        })
+        .ok();
+}
+
+#[derive(Default, Copy, Clone)]
+pub struct SettingsImportState {
+    pub cursor: bool,
+    pub vscode: bool,
+}
+
+impl Global for SettingsImportState {}
+
+impl SettingsImportState {
+    pub fn global(cx: &App) -> Self {
+        cx.try_global().cloned().unwrap_or_default()
+    }
+    pub fn update<R>(cx: &mut App, f: impl FnOnce(&mut Self, &mut App) -> R) -> R {
+        cx.update_default_global(f)
+    }
 }
 
 impl workspace::SerializableItem for Onboarding {
@@ -641,7 +816,7 @@ impl workspace::SerializableItem for Onboarding {
                     if let Some(page) = page {
                         zlog::info!("Onboarding page {page:?} loaded");
                         onboarding_page.update(cx, |onboarding_page, cx| {
-                            onboarding_page.set_page(page, cx);
+                            onboarding_page.set_page(page, None, cx);
                         })
                     }
                     onboarding_page
@@ -675,13 +850,19 @@ impl workspace::SerializableItem for Onboarding {
 }
 
 mod persistence {
-    use db::{define_connection, query, sqlez_macros::sql};
+    use db::{
+        query,
+        sqlez::{domain::Domain, thread_safe_connection::ThreadSafeConnection},
+        sqlez_macros::sql,
+    };
     use workspace::WorkspaceDb;
 
-    define_connection! {
-        pub static ref ONBOARDING_PAGES: OnboardingPagesDb<WorkspaceDb> =
-            &[
-                sql!(
+    pub struct OnboardingPagesDb(ThreadSafeConnection);
+
+    impl Domain for OnboardingPagesDb {
+        const NAME: &str = stringify!(OnboardingPagesDb);
+
+        const MIGRATIONS: &[&str] = &[sql!(
                     CREATE TABLE onboarding_pages (
                         workspace_id INTEGER,
                         item_id INTEGER UNIQUE,
@@ -691,9 +872,10 @@ mod persistence {
                         FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
                         ON DELETE CASCADE
                     ) STRICT;
-                ),
-            ];
+        )];
     }
+
+    db::static_connection!(ONBOARDING_PAGES, OnboardingPagesDb, [WorkspaceDb]);
 
     impl OnboardingPagesDb {
         query! {

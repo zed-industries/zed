@@ -6,7 +6,7 @@
 
 use anyhow::Result;
 use gpui::App;
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsSources, SettingsUi};
 
 /// Initializes the `vim_mode_setting` crate.
 pub fn init(cx: &mut App) {
@@ -17,6 +17,7 @@ pub fn init(cx: &mut App) {
 /// Whether or not to enable Vim mode.
 ///
 /// Default: false
+#[derive(SettingsUi)]
 pub struct VimModeSetting(pub bool);
 
 impl Settings for VimModeSetting {
@@ -43,6 +44,7 @@ impl Settings for VimModeSetting {
 /// Whether or not to enable Helix mode.
 ///
 /// Default: false
+#[derive(SettingsUi)]
 pub struct HelixModeSetting(pub bool);
 
 impl Settings for HelixModeSetting {

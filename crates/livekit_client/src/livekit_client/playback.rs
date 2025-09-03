@@ -1,6 +1,6 @@
 use anyhow::{Context as _, Result};
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait as _};
+use cpal::traits::{DeviceTrait, StreamTrait as _};
 use futures::channel::mpsc::UnboundedSender;
 use futures::{Stream, StreamExt as _};
 use gpui::{
@@ -18,12 +18,15 @@ use livekit::webrtc::{
     video_stream::native::NativeVideoStream,
 };
 use parking_lot::Mutex;
+use rodio::Source;
 use std::cell::RefCell;
 use std::sync::Weak;
-use std::sync::atomic::{self, AtomicI32};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::time::Duration;
 use std::{borrow::Cow, collections::VecDeque, sync::Arc, thread};
 use util::{ResultExt as _, maybe};
+
+mod source;
 
 pub(crate) struct AudioStack {
     executor: BackgroundExecutor,
@@ -39,6 +42,29 @@ pub(crate) struct AudioStack {
 // this; and downsample when we need to.
 const SAMPLE_RATE: u32 = 48000;
 const NUM_CHANNELS: u32 = 2;
+
+pub(crate) fn play_remote_audio_track(
+    track: &livekit::track::RemoteAudioTrack,
+    cx: &mut gpui::App,
+) -> Result<AudioStream> {
+    let stop_handle = Arc::new(AtomicBool::new(false));
+    let stop_handle_clone = stop_handle.clone();
+    let stream = source::LiveKitStream::new(cx.background_executor(), track)
+        .stoppable()
+        .periodic_access(Duration::from_millis(50), move |s| {
+            if stop_handle.load(Ordering::Relaxed) {
+                s.stop();
+            }
+        });
+    audio::Audio::play_source(stream, cx).context("Could not play audio")?;
+
+    let on_drop = util::defer(move || {
+        stop_handle_clone.store(true, Ordering::Relaxed);
+    });
+    Ok(AudioStream::Output {
+        _drop: Box::new(on_drop),
+    })
+}
 
 impl AudioStack {
     pub(crate) fn new(executor: BackgroundExecutor) -> Self {
@@ -61,7 +87,7 @@ impl AudioStack {
     ) -> AudioStream {
         let output_task = self.start_output();
 
-        let next_ssrc = self.next_ssrc.fetch_add(1, atomic::Ordering::Relaxed);
+        let next_ssrc = self.next_ssrc.fetch_add(1, Ordering::Relaxed);
         let source = AudioMixerSource {
             ssrc: next_ssrc,
             sample_rate: SAMPLE_RATE,
@@ -97,6 +123,23 @@ impl AudioStack {
         }
     }
 
+    fn start_output(&self) -> Arc<Task<()>> {
+        if let Some(task) = self._output_task.borrow().upgrade() {
+            return task;
+        }
+        let task = Arc::new(self.executor.spawn({
+            let apm = self.apm.clone();
+            let mixer = self.mixer.clone();
+            async move {
+                Self::play_output(apm, mixer, SAMPLE_RATE, NUM_CHANNELS)
+                    .await
+                    .log_err();
+            }
+        }));
+        *self._output_task.borrow_mut() = Arc::downgrade(&task);
+        task
+    }
+
     pub(crate) fn capture_local_microphone_track(
         &self,
     ) -> Result<(crate::LocalAudioTrack, AudioStream)> {
@@ -117,7 +160,6 @@ impl AudioStack {
 
         let (frame_tx, mut frame_rx) = futures::channel::mpsc::unbounded();
         let transmit_task = self.executor.spawn({
-            let source = source.clone();
             async move {
                 while let Some(frame) = frame_rx.next().await {
                     source.capture_frame(&frame).await.log_err();
@@ -132,29 +174,12 @@ impl AudioStack {
             drop(transmit_task);
             drop(capture_task);
         });
-        return Ok((
+        Ok((
             super::LocalAudioTrack(track),
             AudioStream::Output {
                 _drop: Box::new(on_drop),
             },
-        ));
-    }
-
-    fn start_output(&self) -> Arc<Task<()>> {
-        if let Some(task) = self._output_task.borrow().upgrade() {
-            return task;
-        }
-        let task = Arc::new(self.executor.spawn({
-            let apm = self.apm.clone();
-            let mixer = self.mixer.clone();
-            async move {
-                Self::play_output(apm, mixer, SAMPLE_RATE, NUM_CHANNELS)
-                    .await
-                    .log_err();
-            }
-        }));
-        *self._output_task.borrow_mut() = Arc::downgrade(&task);
-        task
+        ))
     }
 
     async fn play_output(
@@ -165,7 +190,7 @@ impl AudioStack {
     ) -> Result<()> {
         loop {
             let mut device_change_listener = DeviceChangeListener::new(false)?;
-            let (output_device, output_config) = default_device(false)?;
+            let (output_device, output_config) = crate::default_device(false)?;
             let (end_on_drop_tx, end_on_drop_rx) = std::sync::mpsc::channel::<()>();
             let mixer = mixer.clone();
             let apm = apm.clone();
@@ -237,7 +262,7 @@ impl AudioStack {
     ) -> Result<()> {
         loop {
             let mut device_change_listener = DeviceChangeListener::new(true)?;
-            let (device, config) = default_device(true)?;
+            let (device, config) = crate::default_device(true)?;
             let (end_on_drop_tx, end_on_drop_rx) = std::sync::mpsc::channel::<()>();
             let apm = apm.clone();
             let frame_tx = frame_tx.clone();
@@ -258,9 +283,15 @@ impl AudioStack {
                     let stream = device
                         .build_input_stream_raw(
                             &config.config(),
-                            cpal::SampleFormat::I16,
+                            config.sample_format(),
                             move |data, _: &_| {
-                                let mut data = data.as_slice::<i16>().unwrap();
+                                let data =
+                                    crate::get_sample_data(config.sample_format(), data).log_err();
+                                let Some(data) = data else {
+                                    return;
+                                };
+                                let mut data = data.as_slice();
+
                                 while data.len() > 0 {
                                     let remainder = (buf.capacity() - buf.len()).min(data.len());
                                     buf.extend_from_slice(&data[..remainder]);
@@ -357,27 +388,6 @@ pub(crate) async fn capture_local_video_track(
         )),
         capture_stream,
     ))
-}
-
-fn default_device(input: bool) -> Result<(cpal::Device, cpal::SupportedStreamConfig)> {
-    let device;
-    let config;
-    if input {
-        device = cpal::default_host()
-            .default_input_device()
-            .context("no audio input device available")?;
-        config = device
-            .default_input_config()
-            .context("failed to get default input config")?;
-    } else {
-        device = cpal::default_host()
-            .default_output_device()
-            .context("no audio output device available")?;
-        config = device
-            .default_output_config()
-            .context("failed to get default output config")?;
-    }
-    Ok((device, config))
 }
 
 #[derive(Clone)]

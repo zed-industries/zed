@@ -1,7 +1,8 @@
 use crate::{schema::json_schema_for, ui::ToolCallCardHeader};
+use action_log::ActionLog;
 use anyhow::{Result, anyhow};
 use assistant_tool::{
-    ActionLog, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput, ToolUseStatus,
+    Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput, ToolUseStatus,
 };
 use editor::Editor;
 use futures::channel::oneshot::{self, Receiver};
@@ -233,7 +234,7 @@ impl ToolCard for FindPathToolCard {
         workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let matches_label: SharedString = if self.paths.len() == 0 {
+        let matches_label: SharedString = if self.paths.is_empty() {
             "No matches".into()
         } else if self.paths.len() == 1 {
             "1 match".into()
@@ -257,7 +258,7 @@ impl ToolCard for FindPathToolCard {
 
                         Button::new(("path", index), button_label)
                             .icon(IconName::ArrowUpRight)
-                            .icon_size(IconSize::XSmall)
+                            .icon_size(IconSize::Small)
                             .icon_position(IconPosition::End)
                             .label_size(LabelSize::Small)
                             .color(Color::Muted)
@@ -434,8 +435,8 @@ mod test {
         assert_eq!(
             matches,
             &[
-                PathBuf::from("root/apple/banana/carrot"),
-                PathBuf::from("root/apple/bandana/carbonara")
+                PathBuf::from(path!("root/apple/banana/carrot")),
+                PathBuf::from(path!("root/apple/bandana/carbonara"))
             ]
         );
 
@@ -446,8 +447,8 @@ mod test {
         assert_eq!(
             matches,
             &[
-                PathBuf::from("root/apple/banana/carrot"),
-                PathBuf::from("root/apple/bandana/carbonara")
+                PathBuf::from(path!("root/apple/banana/carrot")),
+                PathBuf::from(path!("root/apple/bandana/carbonara"))
             ]
         );
     }

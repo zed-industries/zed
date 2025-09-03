@@ -232,10 +232,10 @@ pub trait Extension: Send + Sync {
     ///
     /// To work through a real-world example, take a `cargo run` task and a hypothetical `cargo` locator:
     /// 1. We may need to modify the task; in this case, it is problematic that `cargo run` spawns a binary. We should turn `cargo run` into a debug scenario with
-    /// `cargo build` task. This is the decision we make at `dap_locator_create_scenario` scope.
+    ///    `cargo build` task. This is the decision we make at `dap_locator_create_scenario` scope.
     /// 2. Then, after the build task finishes, we will run `run_dap_locator` of the locator that produced the build task to find the program to be debugged. This function
-    /// should give us a debugger-agnostic configuration for launching a debug target (that we end up resolving with [`Extension::dap_config_to_scenario`]). It's almost as if the user
-    /// found the artifact path by themselves.
+    ///    should give us a debugger-agnostic configuration for launching a debug target (that we end up resolving with [`Extension::dap_config_to_scenario`]). It's almost as if the user
+    ///    found the artifact path by themselves.
     ///
     /// Note that you're not obliged to use build tasks with locators. Specifically, it is sufficient to provide a debug configuration directly in the return value of
     /// `dap_locator_create_scenario` if you're able to do that. Make sure to not fill out `build` field in that case, as that will prevent Zed from running second phase of resolution in such case.

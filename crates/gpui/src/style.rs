@@ -7,7 +7,7 @@ use std::{
 use crate::{
     AbsoluteLength, App, Background, BackgroundTag, BorderStyle, Bounds, ContentMask, Corners,
     CornersRefinement, CursorStyle, DefiniteLength, DevicePixels, Edges, EdgesRefinement, Font,
-    FontFallbacks, FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point,
+    FontFallbacks, FontFeatures, FontStyle, FontWeight, GridLocation, Hsla, Length, Pixels, Point,
     PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled, TextRun, Window, black, phi,
     point, quad, rems, size,
 };
@@ -260,6 +260,17 @@ pub struct Style {
     /// The opacity of this element
     pub opacity: Option<f32>,
 
+    /// The grid columns of this element
+    /// Equivalent to the Tailwind `grid-cols-<number>`
+    pub grid_cols: Option<u16>,
+
+    /// The row span of this element
+    /// Equivalent to the Tailwind `grid-rows-<number>`
+    pub grid_rows: Option<u16>,
+
+    /// The grid location of this element
+    pub grid_location: Option<GridLocation>,
+
     /// Whether to draw a red debugging outline around this element
     #[cfg(debug_assertions)]
     pub debug: bool,
@@ -272,6 +283,13 @@ pub struct Style {
 impl Styled for StyleRefinement {
     fn style(&mut self) -> &mut StyleRefinement {
         self
+    }
+}
+
+impl StyleRefinement {
+    /// The grid location of this element
+    pub fn grid_location_mut(&mut self) -> &mut GridLocation {
+        self.grid_location.get_or_insert_default()
     }
 }
 
@@ -555,7 +573,7 @@ impl Style {
 
                 if self
                     .border_color
-                    .map_or(false, |color| !color.is_transparent())
+                    .is_some_and(|color| !color.is_transparent())
                 {
                     min.x += self.border_widths.left.to_pixels(rem_size);
                     max.x -= self.border_widths.right.to_pixels(rem_size);
@@ -583,7 +601,19 @@ impl Style {
                     (false, false) => Bounds::from_corners(min, max),
                 };
 
-                Some(ContentMask { bounds })
+                let corner_radii = self.corner_radii.to_pixels(rem_size);
+                let border_widths = self.border_widths.to_pixels(rem_size);
+                Some(ContentMask {
+                    bounds: Bounds {
+                        origin: bounds.origin - point(border_widths.left, border_widths.top),
+                        size: bounds.size
+                            + size(
+                                border_widths.left + border_widths.right,
+                                border_widths.top + border_widths.bottom,
+                            ),
+                    },
+                    corner_radii,
+                })
             }
         }
     }
@@ -615,7 +645,7 @@ impl Style {
         window.paint_shadows(bounds, corner_radii, &self.box_shadow);
 
         let background_color = self.background.as_ref().and_then(Fill::color);
-        if background_color.map_or(false, |color| !color.is_transparent()) {
+        if background_color.is_some_and(|color| !color.is_transparent()) {
             let mut border_color = match background_color {
                 Some(color) => match color.tag {
                     BackgroundTag::Solid => color.solid,
@@ -643,64 +673,16 @@ impl Style {
 
         if self.is_border_visible() {
             let border_widths = self.border_widths.to_pixels(rem_size);
-            let max_border_width = border_widths.max();
-            let max_corner_radius = corner_radii.max();
-
-            let top_bounds = Bounds::from_corners(
-                bounds.origin,
-                bounds.top_right() + point(Pixels::ZERO, max_border_width.max(max_corner_radius)),
-            );
-            let bottom_bounds = Bounds::from_corners(
-                bounds.bottom_left() - point(Pixels::ZERO, max_border_width.max(max_corner_radius)),
-                bounds.bottom_right(),
-            );
-            let left_bounds = Bounds::from_corners(
-                top_bounds.bottom_left(),
-                bottom_bounds.origin + point(max_border_width, Pixels::ZERO),
-            );
-            let right_bounds = Bounds::from_corners(
-                top_bounds.bottom_right() - point(max_border_width, Pixels::ZERO),
-                bottom_bounds.top_right(),
-            );
-
             let mut background = self.border_color.unwrap_or_default();
             background.a = 0.;
-            let quad = quad(
+            window.paint_quad(quad(
                 bounds,
                 corner_radii,
                 background,
                 border_widths,
                 self.border_color.unwrap_or_default(),
                 self.border_style,
-            );
-
-            window.with_content_mask(Some(ContentMask { bounds: top_bounds }), |window| {
-                window.paint_quad(quad.clone());
-            });
-            window.with_content_mask(
-                Some(ContentMask {
-                    bounds: right_bounds,
-                }),
-                |window| {
-                    window.paint_quad(quad.clone());
-                },
-            );
-            window.with_content_mask(
-                Some(ContentMask {
-                    bounds: bottom_bounds,
-                }),
-                |window| {
-                    window.paint_quad(quad.clone());
-                },
-            );
-            window.with_content_mask(
-                Some(ContentMask {
-                    bounds: left_bounds,
-                }),
-                |window| {
-                    window.paint_quad(quad);
-                },
-            );
+            ));
         }
 
         #[cfg(debug_assertions)]
@@ -711,7 +693,7 @@ impl Style {
 
     fn is_border_visible(&self) -> bool {
         self.border_color
-            .map_or(false, |color| !color.is_transparent())
+            .is_some_and(|color| !color.is_transparent())
             && self.border_widths.any(|length| !length.is_zero())
     }
 }
@@ -757,6 +739,9 @@ impl Default for Style {
             text: TextStyleRefinement::default(),
             mouse_cursor: None,
             opacity: None,
+            grid_rows: None,
+            grid_cols: None,
+            grid_location: None,
 
             #[cfg(debug_assertions)]
             debug: false,
