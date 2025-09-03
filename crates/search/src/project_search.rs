@@ -2396,20 +2396,21 @@ pub mod tests {
                     ),
                     (
                         DisplayPoint::new(DisplayRow(2), 37)..DisplayPoint::new(DisplayRow(2), 40),
-                        match_background_color
-                    ),
-                    (
-                        DisplayPoint::new(DisplayRow(5), 6)..DisplayPoint::new(DisplayRow(5), 9),
-                        match_background_color
+                        selection_background_color
                     ),
                     (
                         DisplayPoint::new(DisplayRow(2), 37)..DisplayPoint::new(DisplayRow(2), 40),
-                        selection_background_color
+                        match_background_color
                     ),
                     (
                         DisplayPoint::new(DisplayRow(5), 6)..DisplayPoint::new(DisplayRow(5), 9),
                         selection_background_color
-                    )
+                    ),
+                    (
+                        DisplayPoint::new(DisplayRow(5), 6)..DisplayPoint::new(DisplayRow(5), 9),
+                        match_background_color
+                    ),
+
                 ]
             );
             assert_eq!(search_view.active_match_index, Some(0));
