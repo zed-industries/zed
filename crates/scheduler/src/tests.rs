@@ -222,7 +222,7 @@ async fn capture_execution_order(config: SchedulerConfig) -> Vec<String> {
 #[test]
 fn test_block() {
     let scheduler = Arc::new(TestScheduler::new(SchedulerConfig::default()));
-    let executor = BackgroundExecutor::new(scheduler.clone());
+    let executor = BackgroundExecutor::new(scheduler);
     let (tx, rx) = oneshot::channel();
 
     // Spawn background task to send value
@@ -252,7 +252,7 @@ fn test_block_with_parking() {
         ..Default::default()
     };
     let scheduler = Arc::new(TestScheduler::new(config));
-    let executor = BackgroundExecutor::new(scheduler.clone());
+    let executor = BackgroundExecutor::new(scheduler);
     let (tx, rx) = oneshot::channel();
 
     // Spawn background task to send value
