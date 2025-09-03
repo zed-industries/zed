@@ -4480,7 +4480,7 @@ mod tests {
                 "keymap_editor",
                 "keystroke_input",
                 "language_selector",
-                "line_ending_selector",
+                "line_ending",
                 "lsp_tool",
                 "markdown",
                 "menu",
