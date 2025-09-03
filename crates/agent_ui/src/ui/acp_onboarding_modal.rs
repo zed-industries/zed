@@ -141,20 +141,12 @@ impl Render for AcpOnboardingModal {
                     .bg(gpui::black().opacity(0.15)),
             )
             .child(
-                h_flex()
-                    .gap_4()
-                    .child(
-                        Vector::new(VectorName::AcpLogo, rems_from_px(106.), rems_from_px(40.))
-                            .color(ui::Color::Custom(cx.theme().colors().text.opacity(0.8))),
-                    )
-                    .child(
-                        Vector::new(
-                            VectorName::AcpLogoSerif,
-                            rems_from_px(111.),
-                            rems_from_px(41.),
-                        )
-                        .color(ui::Color::Custom(cx.theme().colors().text.opacity(0.8))),
-                    ),
+                Vector::new(
+                    VectorName::AcpLogoSerif,
+                    rems_from_px(257.),
+                    rems_from_px(47.),
+                )
+                .color(ui::Color::Custom(cx.theme().colors().text.opacity(0.8))),
             )
             .child(
                 v_flex()
