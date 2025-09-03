@@ -4817,6 +4817,38 @@ impl AcpThreadView {
         Some(div().child(content))
     }
 
+    fn render_new_version_callout(&self, version: &SharedString, cx: &mut Context<Self>) -> Div {
+        v_flex().w_full().justify_end().child(
+            h_flex()
+                .p_2()
+                .pr_3()
+                .w_full()
+                .gap_1p5()
+                .border_t_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().element_background)
+                .child(
+                    h_flex()
+                        .flex_1()
+                        .gap_1p5()
+                        .child(
+                            Icon::new(IconName::Download)
+                                .color(Color::Accent)
+                                .size(IconSize::Small),
+                        )
+                        .child(Label::new("New version available").size(LabelSize::Small)),
+                )
+                .child(
+                    Button::new("update-button", format!("Update to v{}", version))
+                        .label_size(LabelSize::Small)
+                        .style(ButtonStyle::Tinted(TintColor::Accent))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.reset(window, cx);
+                        })),
+                ),
+        )
+    }
+
     fn get_current_model_name(&self, cx: &App) -> SharedString {
         // For native agent (Zed Agent), use the specific model name (e.g., "Claude 3.5 Sonnet")
         // For ACP agents, use the agent name (e.g., "Claude Code", "Gemini CLI")
@@ -5231,42 +5263,7 @@ impl Render for AcpThreadView {
                 self.new_server_version_available.as_ref().filter(|_| {
                     !has_messages || !matches!(self.thread_state, ThreadState::Ready { .. })
                 }),
-                |this, version| {
-                    this.child(
-                        v_flex().flex_1().w_full().justify_end().child(
-                            h_flex()
-                                .p_2()
-                                .pr_3()
-                                .w_full()
-                                .gap_1p5()
-                                .border_t_1()
-                                .border_color(cx.theme().colors().border)
-                                .bg(cx.theme().colors().element_background)
-                                .child(
-                                    h_flex()
-                                        .flex_1()
-                                        .gap_1p5()
-                                        .child(
-                                            Icon::new(IconName::Download)
-                                                .color(Color::Accent)
-                                                .size(IconSize::Small),
-                                        )
-                                        .child(
-                                            Label::new("New version available")
-                                                .size(LabelSize::Small),
-                                        ),
-                                )
-                                .child(
-                                    Button::new("update-button", format!("Update to v{}", version))
-                                        .label_size(LabelSize::Small)
-                                        .style(ButtonStyle::Tinted(TintColor::Accent))
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.reset(window, cx);
-                                        })),
-                                ),
-                        ),
-                    )
-                },
+                |this, version| this.child(self.render_new_version_callout(&version, cx)),
             )
             .children(
                 if let Some(usage_callout) = self.render_usage_callout(line_height, cx) {
