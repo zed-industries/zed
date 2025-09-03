@@ -189,7 +189,7 @@ impl DirectXAtlasState {
             },
             Usage: D3D11_USAGE_DEFAULT,
             BindFlags: bind_flag.0 as u32,
-            CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
+            CPUAccessFlags: 0,
             MiscFlags: 0,
         };
         let mut texture: Option<ID3D11Texture2D> = None;
