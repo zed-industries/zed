@@ -193,10 +193,7 @@ impl Render for WhichKeyLayer {
             })
             .collect();
 
-        // Group bindings if enabled
-        if which_key_settings.group {
-            binding_data = group_bindings(binding_data);
-        }
+        binding_data = group_bindings(binding_data);
 
         // Sort bindings from shortest to longest, with groups last
         // Using stable sort to preserve relative order of equal elements
@@ -249,7 +246,7 @@ impl Render for WhichKeyLayer {
 
         let column_gap = DynamicSpacing::Base32.px(cx); // Gap between columns
         let row_gap = DynamicSpacing::Base04.px(cx); // Gap between rows
-        let content_gap = px(10.0); // Gap between current pending keystroke and grid of keys+actions
+        let content_gap = DynamicSpacing::Base08.px(cx); // Gap between current pending keystroke and grid of keys+actions
         let margin = DynamicSpacing::Base08.px(cx); // Margin around the panel
         let padding = DynamicSpacing::Base16.px(cx); // Padding inside the panel
 
@@ -283,7 +280,7 @@ impl Render for WhichKeyLayer {
 
         // Calculate rows per column
         let total_items = binding_data.len();
-        let rows_per_column = (total_items + columns - 1) / columns; // Ceiling division
+        let rows_per_column = (total_items + columns - 1).div_ceil(columns);
 
         // Create columns
         let mut column_elements = Vec::new();

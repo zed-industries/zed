@@ -18,18 +18,12 @@ pub struct WhichKeySettings {
     pub enabled: bool,
     #[serde(default = "default_delay_ms")]
     pub delay_ms: u64,
-    #[serde(default = "default_group")]
-    pub group: bool,
     #[serde(default)]
     pub location: WhichKeyLocation,
 }
 
 fn default_delay_ms() -> u64 {
     700
-}
-
-fn default_group() -> bool {
-    true
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]

@@ -1853,9 +1853,7 @@
     // Whether to show the which-key popup when holding down key combinations.
     "enabled": true,
     // Delay in milliseconds before showing the which-key popup.
-    "delay_ms": 600,
-    // Whether to group key bindings with the same first keystroke.
-    "group": true,
+    "delay_ms": 700,
     // Where to show the which-key popup.
     // Options: "buffer" (default), "left_panel"
     "location": "buffer"
