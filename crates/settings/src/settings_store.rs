@@ -33,13 +33,13 @@ pub type EditorconfigProperties = ec4rs::Properties;
 use crate::{
     ActiveSettingsProfileName, ParameterizedJsonSchema, SettingsJsonSchemaParams, SettingsUiEntry,
     VsCodeSettings, WorktreeId, parse_json_with_comments, replace_value_in_json_text,
-    settings_ui::SettingsUi, update_value_in_json_text,
+    settings_ui_core::SettingsUi, update_value_in_json_text,
 };
 
 /// A value that can be defined as a user setting.
 ///
 /// Settings can be loaded from a combination of multiple JSON files.
-pub trait Settings: SettingsUi + 'static + Send + Sync {
+pub trait Settings: 'static + Send + Sync {
     /// The name of a key within the JSON file from which this setting should
     /// be deserialized. If this is `None`, then the setting will be deserialized
     /// from the root object.
@@ -57,7 +57,7 @@ pub trait Settings: SettingsUi + 'static + Send + Sync {
     const PRESERVED_KEYS: Option<&'static [&'static str]> = None;
 
     /// The type that is stored in an individual JSON file.
-    type FileContent: Clone + Default + Serialize + DeserializeOwned + JsonSchema;
+    type FileContent: Clone + Default + Serialize + DeserializeOwned + JsonSchema + SettingsUi;
 
     /// The logic for combining together values from one or more JSON files into the
     /// final value for this setting.
@@ -1565,7 +1565,7 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
     }
 
     fn settings_ui_item(&self) -> SettingsUiEntry {
-        <T as SettingsUi>::settings_ui_entry()
+        <<T as Settings>::FileContent as SettingsUi>::settings_ui_entry()
     }
 }
 
@@ -2147,12 +2147,12 @@ mod tests {
         }
     }
 
-    #[derive(Debug, Deserialize, PartialEq, SettingsUi)]
+    #[derive(Debug, Deserialize, PartialEq)]
     struct TurboSetting(bool);
 
     impl Settings for TurboSetting {
         const KEY: Option<&'static str> = Some("turbo");
-        type FileContent = Option<bool>;
+        type FileContent = bool;
 
         fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
             sources.json_merge()
@@ -2161,7 +2161,7 @@ mod tests {
         fn import_from_vscode(_vscode: &VsCodeSettings, _current: &mut Self::FileContent) {}
     }
 
-    #[derive(Clone, Debug, PartialEq, Deserialize, SettingsUi)]
+    #[derive(Clone, Debug, PartialEq, Deserialize)]
     struct MultiKeySettings {
         #[serde(default)]
         key1: String,
@@ -2169,7 +2169,7 @@ mod tests {
         key2: String,
     }
 
-    #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+    #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
     struct MultiKeySettingsJson {
         key1: Option<String>,
         key2: Option<String>,
@@ -2194,7 +2194,7 @@ mod tests {
         }
     }
 
-    #[derive(Debug, Deserialize, SettingsUi)]
+    #[derive(Debug, Deserialize)]
     struct JournalSettings {
         pub path: String,
         pub hour_format: HourFormat,
@@ -2207,7 +2207,7 @@ mod tests {
         Hour24,
     }
 
-    #[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema)]
+    #[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, SettingsUi)]
     struct JournalSettingsJson {
         pub path: Option<String>,
         pub hour_format: Option<HourFormat>,

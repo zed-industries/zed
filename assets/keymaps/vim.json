@@ -324,7 +324,7 @@
     }
   },
   {
-    "context": "vim_mode == insert && !menu",
+    "context": "vim_mode == insert",
     "bindings": {
       "ctrl-c": "vim::NormalBefore",
       "ctrl-[": "vim::NormalBefore",

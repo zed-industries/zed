@@ -936,24 +936,36 @@ impl Lines<'_> {
         self.current_line.clear();
 
         while let Some(chunk) = self.chunks.peek() {
-            let lines = chunk.split('\n');
+            let chunk_lines = chunk.split('\n');
             if self.reversed {
-                let mut lines = lines.rev().peekable();
-                while let Some(line) = lines.next() {
-                    self.current_line.insert_str(0, line);
-                    if lines.peek().is_some() {
+                let mut chunk_lines = chunk_lines.rev().peekable();
+                if let Some(chunk_line) = chunk_lines.next() {
+                    let done = chunk_lines.peek().is_some();
+                    if done {
                         self.chunks
-                            .seek(self.chunks.offset() - line.len() - "\n".len());
+                            .seek(self.chunks.offset() - chunk_line.len() - "\n".len());
+                        if self.current_line.is_empty() {
+                            return Some(chunk_line);
+                        }
+                    }
+                    self.current_line.insert_str(0, chunk_line);
+                    if done {
                         return Some(&self.current_line);
                     }
                 }
             } else {
-                let mut lines = lines.peekable();
-                while let Some(line) = lines.next() {
-                    self.current_line.push_str(line);
-                    if lines.peek().is_some() {
+                let mut chunk_lines = chunk_lines.peekable();
+                if let Some(chunk_line) = chunk_lines.next() {
+                    let done = chunk_lines.peek().is_some();
+                    if done {
                         self.chunks
-                            .seek(self.chunks.offset() + line.len() + "\n".len());
+                            .seek(self.chunks.offset() + chunk_line.len() + "\n".len());
+                        if self.current_line.is_empty() {
+                            return Some(chunk_line);
+                        }
+                    }
+                    self.current_line.push_str(chunk_line);
+                    if done {
                         return Some(&self.current_line);
                     }
                 }
@@ -1571,6 +1583,20 @@ mod tests {
         assert_eq!(lines.next(), Some(""));
         assert_eq!(lines.next(), Some("hi"));
         assert_eq!(lines.next(), Some("defg"));
+        assert_eq!(lines.next(), Some("abc"));
+        assert_eq!(lines.next(), None);
+
+        let rope = Rope::from("abc\nlonger line test\nhi");
+        let mut lines = rope.chunks().lines();
+        assert_eq!(lines.next(), Some("abc"));
+        assert_eq!(lines.next(), Some("longer line test"));
+        assert_eq!(lines.next(), Some("hi"));
+        assert_eq!(lines.next(), None);
+
+        let rope = Rope::from("abc\nlonger line test\nhi");
+        let mut lines = rope.reversed_chunks_in_range(0..rope.len()).lines();
+        assert_eq!(lines.next(), Some("hi"));
+        assert_eq!(lines.next(), Some("longer line test"));
         assert_eq!(lines.next(), Some("abc"));
         assert_eq!(lines.next(), None);
     }

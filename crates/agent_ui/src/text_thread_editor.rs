@@ -25,8 +25,8 @@ use gpui::{
     Action, Animation, AnimationExt, AnyElement, AnyView, App, ClipboardEntry, ClipboardItem,
     Empty, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Global, InteractiveElement,
     IntoElement, ParentElement, Pixels, Render, RenderImage, SharedString, Size,
-    StatefulInteractiveElement, Styled, Subscription, Task, Transformation, WeakEntity, actions,
-    div, img, percentage, point, prelude::*, pulsating_between, size,
+    StatefulInteractiveElement, Styled, Subscription, Task, WeakEntity, actions, div, img, point,
+    prelude::*, pulsating_between, size,
 };
 use language::{
     BufferSnapshot, LspAdapterDelegate, ToOffset,
@@ -53,8 +53,8 @@ use std::{
 };
 use text::SelectionGoal;
 use ui::{
-    ButtonLike, Disclosure, ElevationIndex, KeyBinding, PopoverMenuHandle, TintColor, Tooltip,
-    prelude::*,
+    ButtonLike, CommonAnimationExt, Disclosure, ElevationIndex, KeyBinding, PopoverMenuHandle,
+    TintColor, Tooltip, prelude::*,
 };
 use util::{ResultExt, maybe};
 use workspace::{
@@ -1061,15 +1061,7 @@ impl TextThreadEditor {
                                         Icon::new(IconName::ArrowCircle)
                                             .size(IconSize::XSmall)
                                             .color(Color::Info)
-                                            .with_animation(
-                                                "arrow-circle",
-                                                Animation::new(Duration::from_secs(2)).repeat(),
-                                                |icon, delta| {
-                                                    icon.transform(Transformation::rotate(
-                                                        percentage(delta),
-                                                    ))
-                                                },
-                                            )
+                                            .with_rotate_animation(2)
                                             .into_any_element(),
                                     );
                                     note = Some(Self::esc_kbd(cx).into_any_element());
@@ -2790,11 +2782,7 @@ fn invoked_slash_command_fold_placeholder(
                 .child(Label::new(format!("/{}", command.name)))
                 .map(|parent| match &command.status {
                     InvokedSlashCommandStatus::Running(_) => {
-                        parent.child(Icon::new(IconName::ArrowCircle).with_animation(
-                            "arrow-circle",
-                            Animation::new(Duration::from_secs(4)).repeat(),
-                            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                        ))
+                        parent.child(Icon::new(IconName::ArrowCircle).with_rotate_animation(4))
                     }
                     InvokedSlashCommandStatus::Error(message) => parent.child(
                         Label::new(format!("error: {message}"))
