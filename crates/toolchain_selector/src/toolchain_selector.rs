@@ -13,7 +13,7 @@ use gpui::{
 };
 use language::{Language, LanguageName, Toolchain, ToolchainList, ToolchainScope};
 use picker::{Picker, PickerDelegate};
-use project::{DirectoryLister, Project, ProjectPath, WorktreeId};
+use project::{DirectoryLister, Project, ProjectPath, Toolchains, WorktreeId};
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
@@ -669,7 +669,7 @@ impl ToolchainSelectorDelegate {
                     })
                     .ok()?;
 
-                let (available_toolchains, relative_path) = _project
+                let Toolchains(available_toolchains, relative_path) = _project
                     .update(cx, |this, cx| {
                         this.available_toolchains(
                             ProjectPath {

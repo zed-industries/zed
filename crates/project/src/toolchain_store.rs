@@ -42,6 +42,7 @@ enum ToolchainStoreInner {
     Remote(Entity<RemoteToolchainStore>),
 }
 
+pub struct Toolchains(pub ToolchainList, pub Arc<Path>);
 impl EventEmitter<ToolchainStoreEvent> for ToolchainStore {}
 impl ToolchainStore {
     pub fn init(client: &AnyProtoClient) {
@@ -154,7 +155,7 @@ impl ToolchainStore {
         path: ProjectPath,
         language_name: LanguageName,
         cx: &mut Context<Self>,
-    ) -> Task<Option<(ToolchainList, Arc<Path>)>> {
+    ) -> Task<Option<Toolchains>> {
         let mut user_toolchains = self
             .user_toolchains
             .iter()
@@ -185,7 +186,7 @@ impl ToolchainStore {
             let (mut toolchains, path) = task.await?;
             user_toolchains.append(&mut toolchains.toolchains);
             toolchains.toolchains = user_toolchains;
-            Some((toolchains, path))
+            Some(Toolchains(toolchains, path))
         })
     }
 
@@ -281,7 +282,7 @@ impl ToolchainStore {
             })?
             .await;
         let has_values = toolchains.is_some();
-        let groups = if let Some((toolchains, _)) = &toolchains {
+        let groups = if let Some(Toolchains(toolchains, _)) = &toolchains {
             toolchains
                 .groups
                 .iter()
@@ -295,23 +296,24 @@ impl ToolchainStore {
         } else {
             vec![]
         };
-        let (toolchains, relative_path) = if let Some((toolchains, relative_path)) = toolchains {
-            let toolchains = toolchains
-                .toolchains
-                .into_iter()
-                .map(|toolchain| {
-                    let path = PathBuf::from(toolchain.path.to_string());
-                    proto::Toolchain {
-                        name: toolchain.name.to_string(),
-                        path: path.to_proto(),
-                        raw_json: toolchain.as_json.to_string(),
-                    }
-                })
-                .collect::<Vec<_>>();
-            (toolchains, relative_path)
-        } else {
-            (vec![], Arc::from(Path::new("")))
-        };
+        let (toolchains, relative_path) =
+            if let Some(Toolchains(toolchains, relative_path)) = toolchains {
+                let toolchains = toolchains
+                    .toolchains
+                    .into_iter()
+                    .map(|toolchain| {
+                        let path = PathBuf::from(toolchain.path.to_string());
+                        proto::Toolchain {
+                            name: toolchain.name.to_string(),
+                            path: path.to_proto(),
+                            raw_json: toolchain.as_json.to_string(),
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                (toolchains, relative_path)
+            } else {
+                (vec![], Arc::from(Path::new("")))
+            };
 
         Ok(proto::ListToolchainsResponse {
             has_values,

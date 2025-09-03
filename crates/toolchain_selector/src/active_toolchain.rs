@@ -6,7 +6,7 @@ use gpui::{
     WeakEntity, Window, div,
 };
 use language::{Buffer, BufferEvent, LanguageName, Toolchain};
-use project::{Project, ProjectPath, WorktreeId, toolchain_store::ToolchainStoreEvent};
+use project::{Project, ProjectPath, Toolchains, WorktreeId, toolchain_store::ToolchainStoreEvent};
 use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, SharedString, Tooltip};
 use util::maybe;
 use workspace::{StatusItemView, Workspace, item::ItemHandle};
@@ -170,7 +170,7 @@ impl ActiveToolchain {
                 let project = workspace
                     .read_with(cx, |this, _| this.project().clone())
                     .ok()?;
-                let (toolchains, relative_path) = cx
+                let Toolchains(toolchains, relative_path) = cx
                     .update(|_, cx| {
                         project.read(cx).available_toolchains(
                             ProjectPath {

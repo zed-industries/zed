@@ -11,7 +11,7 @@ use language::LanguageName;
 pub use native_kernel::*;
 
 mod remote_kernels;
-use project::{Project, ProjectPath, WorktreeId};
+use project::{Project, ProjectPath, Toolchains, WorktreeId};
 pub use remote_kernels::*;
 
 use anyhow::Result;
@@ -92,7 +92,7 @@ pub fn python_env_kernel_specifications(
     let background_executor = cx.background_executor().clone();
 
     async move {
-        let toolchains = if let Some((toolchains, _)) = toolchains.await {
+        let toolchains = if let Some(Toolchains(toolchains, _)) = toolchains.await {
             toolchains
         } else {
             return Ok(Vec::new());
