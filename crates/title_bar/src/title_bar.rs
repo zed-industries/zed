@@ -79,7 +79,6 @@ pub fn init(cx: &mut App) {
             workspace.set_titlebar_item(item.into(), window, cx);
         }
 
-        // React to settings changes
         cx.observe_global_in::<settings::SettingsStore>(window, |workspace, window, cx| {
             let show = TitleBarSettings::get_global(cx).show;
             if show {
