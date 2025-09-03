@@ -45,11 +45,20 @@ pub fn init(cx: &mut App) {
 pub struct AgentServerDelegate {
     project: Entity<Project>,
     status_tx: Option<watch::Sender<SharedString>>,
+    new_version_available: Option<watch::Sender<Option<String>>>,
 }
 
 impl AgentServerDelegate {
-    pub fn new(project: Entity<Project>, status_tx: Option<watch::Sender<SharedString>>) -> Self {
-        Self { project, status_tx }
+    pub fn new(
+        project: Entity<Project>,
+        status_tx: Option<watch::Sender<SharedString>>,
+        new_version_tx: Option<watch::Sender<Option<String>>>,
+    ) -> Self {
+        Self {
+            project,
+            status_tx,
+            new_version_available: new_version_tx,
+        }
     }
 
     pub fn project(&self) -> &Entity<Project> {
@@ -73,6 +82,7 @@ impl AgentServerDelegate {
             )));
         };
         let status_tx = self.status_tx;
+        let new_version_available = self.new_version_available;
 
         cx.spawn(async move |cx| {
             if !ignore_system_version {
@@ -160,6 +170,9 @@ impl AgentServerDelegate {
                                 )
                                 .await
                                 .log_err();
+                                if let Some(mut new_version_available) = new_version_available {
+                                    new_version_available.send(Some(latest_version)).ok();
+                                }
                             }
                         }
                     })
