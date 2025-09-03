@@ -1020,10 +1020,6 @@ impl<'a> MarkdownParser<'a> {
 
         if let Some(font_style) = styles.get("font-style") {
             match font_style.to_lowercase().as_str() {
-                "normal" => {
-                    markdown_style.emphasized = false;
-                    markdown_style.italic = false;
-                }
                 "italic" => {
                     markdown_style.italic = true;
                 }
