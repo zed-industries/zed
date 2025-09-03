@@ -309,7 +309,7 @@ pub trait GitRepository: Send + Sync {
     /// Also returns `None` for symlinks.
     fn load_committed_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>>;
 
-    fn merge_base(&self, commits: Vec<String>)
+    fn merge_base(&self, commit_a: String, commit_b: String) -> BoxFuture<'_, Option<String>>;
 
     fn set_index_text(
         &self,
@@ -617,13 +617,33 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
+    fn merge_base(&self, commit_a: String, commit_b: String) -> BoxFuture<'_, Option<String>> {
+        let Some(working_directory) = self.repository.lock().workdir().map(ToOwned::to_owned)
+        else {
+            return future::ready(None).boxed();
+        };
+        let git = GitBinary::new(
+            self.git_binary_path.clone(),
+            working_directory,
+            self.executor.clone(),
+        );
+        async move {
+            let merge_base = git
+                .run(&["merge-base", &commit_a, &commit_b])
+                .await
+                .log_err()?;
+            Some(merge_base.to_string())
+        }
+        .boxed()
+    }
+
     fn diff_to_commit(&self, commit: String, cx: AsyncApp) -> BoxFuture<'_, Result<CommitDiff>> {
         let Some(working_directory) = self.repository.lock().workdir().map(ToOwned::to_owned)
         else {
             return future::ready(Err(anyhow!("no working directory"))).boxed();
         };
         cx.background_spawn(async move {
-            let show_output = util::command::new_std_command("git")
+            let diff_output = util::command::new_std_command("git")
                 .current_dir(&working_directory)
                 .args([
                     "--no-optional-locks",
@@ -640,10 +660,8 @@ impl GitRepository for RealGitRepository {
                 .output()
                 .context("starting git show process")?;
 
-            let show_stdout = String::from_utf8_lossy(&show_output.stdout);
-            let mut lines = show_stdout.split('\n');
-            let parent_sha = lines.next().unwrap().trim().trim_end_matches('\0');
-            let changes = parse_git_diff_name_status(lines.next().unwrap_or(""));
+            let diff_stdout = String::from_utf8_lossy(&diff_output.stdout);
+            let changes = parse_git_diff_name_status(&diff_stdout);
 
             let mut cat_file_process = util::command::new_std_command("git")
                 .current_dir(&working_directory)
@@ -663,14 +681,11 @@ impl GitRepository for RealGitRepository {
             for (path, status_code) in changes {
                 match status_code {
                     StatusCode::Modified => {
-                        // writeln!(&mut stdin, "{commit}:{}", path.display())?;
-                        writeln!(&mut stdin, "{parent_sha}:{}", path.display())?;
+                        writeln!(&mut stdin, "{commit}:{}", path.display())?;
                     }
-                    StatusCode::Added => {
-                        // writeln!(&mut stdin, "{commit}:{}", path.display())?;
-                    }
+                    StatusCode::Added => {}
                     StatusCode::Deleted => {
-                        writeln!(&mut stdin, "{parent_sha}:{}", path.display())?;
+                        writeln!(&mut stdin, "{commit}:{}", path.display())?;
                     }
                     _ => continue,
                 }
@@ -687,9 +702,7 @@ impl GitRepository for RealGitRepository {
                 stdout.read_exact(&mut newline)?;
                 let text = String::from_utf8_lossy(&text).to_string();
 
-                let mut old_text = None;
-                // let mut new_text = None;
-                match status_code {
+                let old_text = match status_code {
                     StatusCode::Modified => {
                         info_line.clear();
                         stdout.read_line(&mut info_line)?;
@@ -699,13 +712,12 @@ impl GitRepository for RealGitRepository {
                         let mut parent_text = vec![0; len];
                         stdout.read_exact(&mut parent_text)?;
                         stdout.read_exact(&mut newline)?;
-                        old_text = Some(String::from_utf8_lossy(&parent_text).to_string());
-                        // new_text = Some(text);
+                        Some(String::from_utf8_lossy(&parent_text).to_string())
                     }
-                    // StatusCode::Added => new_text = Some(text),
-                    StatusCode::Deleted => old_text = Some(text),
+                    StatusCode::Added => None,
+                    StatusCode::Deleted => Some(text),
                     _ => continue,
-                }
+                };
 
                 files.push(CommitFile {
                     path: path.into(),
