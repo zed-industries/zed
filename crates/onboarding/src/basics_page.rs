@@ -325,7 +325,7 @@ fn render_base_keymap_section(tab_index: &mut isize, cx: &mut App) -> impl IntoE
         let fs = <dyn Fs>::global(cx);
 
         update_settings_file::<BaseKeymap>(fs, cx, move |setting, _| {
-            *setting = Some(keymap_base);
+            setting.base_keymap = Some(keymap_base);
         });
     }
 }

@@ -113,20 +113,19 @@ impl Drop for MacOsUnmounter {
     }
 }
 
-#[derive(SettingsUi)]
 struct AutoUpdateSetting(bool);
 
 /// Whether or not to automatically check for updates.
 ///
 /// Default: true
-#[derive(Clone, Copy, Default, JsonSchema, Deserialize, Serialize)]
+#[derive(Clone, Copy, Default, JsonSchema, Deserialize, Serialize, SettingsUi)]
 #[serde(transparent)]
 struct AutoUpdateSettingContent(bool);
 
 impl Settings for AutoUpdateSetting {
     const KEY: Option<&'static str> = Some("auto_update");
 
-    type FileContent = Option<AutoUpdateSettingContent>;
+    type FileContent = AutoUpdateSettingContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         let auto_update = [
@@ -136,17 +135,19 @@ impl Settings for AutoUpdateSetting {
             sources.user,
         ]
         .into_iter()
-        .find_map(|value| value.copied().flatten())
-        .unwrap_or(sources.default.ok_or_else(Self::missing_default)?);
+        .find_map(|value| value.copied())
+        .unwrap_or(*sources.default);
 
         Ok(Self(auto_update.0))
     }
 
     fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
-        vscode.enum_setting("update.mode", current, |s| match s {
+        let mut cur = &mut Some(*current);
+        vscode.enum_setting("update.mode", &mut cur, |s| match s {
             "none" | "manual" => Some(AutoUpdateSettingContent(false)),
             _ => Some(AutoUpdateSettingContent(true)),
         });
+        *current = cur.unwrap();
     }
 }
 

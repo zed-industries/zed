@@ -164,10 +164,7 @@ impl WslRemoteConnection {
         delegate.set_status(Some("Installing remote server"), cx);
 
         let wanted_version = match release_channel {
-            ReleaseChannel::Nightly => None,
-            ReleaseChannel::Dev => {
-                return Err(anyhow!("Dev builds require manual installation"));
-            }
+            ReleaseChannel::Nightly | ReleaseChannel::Dev => None,
             _ => Some(cx.update(|cx| AppVersion::global(cx))?),
         };
 
@@ -176,7 +173,7 @@ impl WslRemoteConnection {
             .await?;
 
         let tmp_path = RemotePathBuf::new(
-            PathBuf::from(format!("{}.{}.tmp", dst_path, std::process::id())),
+            PathBuf::from(format!("{}.{}.gz", dst_path, std::process::id())),
             PathStyle::Posix,
         );
 

@@ -196,12 +196,12 @@ operator: "/" @operator
   (identifier) @attribute
   (scoped_identifier name: (identifier) @attribute)
   (token_tree (identifier) @attribute (#match? @attribute "^[a-z\\d_]*$"))
-  (token_tree (identifier) @variable "::" (identifier) @type (#match? @type "^[A-Z]"))
+  (token_tree (identifier) @none "::" (#match? @none "^[a-z\\d_]*$"))
 ]))
 
 (inner_attribute_item (attribute [
   (identifier) @attribute
   (scoped_identifier name: (identifier) @attribute)
   (token_tree (identifier) @attribute (#match? @attribute "^[a-z\\d_]*$"))
-  (token_tree (identifier) @variable "::" (identifier) @type (#match? @type "^[A-Z]"))
+  (token_tree (identifier) @none "::" (#match? @none "^[a-z\\d_]*$"))
 ]))

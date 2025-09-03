@@ -43,7 +43,7 @@ use pathfinder_geometry::{
     vector::{Vector2F, Vector2I},
 };
 use smallvec::SmallVec;
-use std::{borrow::Cow, char, convert::TryFrom, sync::Arc};
+use std::{borrow::Cow, char, cmp, convert::TryFrom, sync::Arc};
 
 use super::open_type::apply_features_and_fallbacks;
 
@@ -67,7 +67,6 @@ struct MacTextSystemState {
     font_ids_by_postscript_name: HashMap<String, FontId>,
     font_ids_by_font_key: HashMap<FontKey, SmallVec<[FontId; 4]>>,
     postscript_names_by_font_id: HashMap<FontId, String>,
-    zwnjs_scratch_space: Vec<(usize, usize)>,
 }
 
 impl MacTextSystem {
@@ -80,7 +79,6 @@ impl MacTextSystem {
             font_ids_by_postscript_name: HashMap::default(),
             font_ids_by_font_key: HashMap::default(),
             postscript_names_by_font_id: HashMap::default(),
-            zwnjs_scratch_space: Vec::new(),
         }))
     }
 }
@@ -426,41 +424,29 @@ impl MacTextSystemState {
     }
 
     fn layout_line(&mut self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
-        const ZWNJ: char = '\u{200C}';
-        const ZWNJ_STR: &str = "\u{200C}";
-        const ZWNJ_SIZE_16: usize = ZWNJ.len_utf16();
-
-        self.zwnjs_scratch_space.clear();
         // Construct the attributed string, converting UTF8 ranges to UTF16 ranges.
         let mut string = CFMutableAttributedString::new();
-
         {
-            let mut ix_converter = StringIndexConverter::new(&text);
-            let mut last_font_run = None;
+            string.replace_str(&CFString::new(text), CFRange::init(0, 0));
+            let utf16_line_len = string.char_len() as usize;
+
+            let mut ix_converter = StringIndexConverter::new(text);
             for run in font_runs {
-                let text = &text[ix_converter.utf8_ix..][..run.len];
-                // if the fonts are the same, we need to disconnect the text with a ZWNJ
-                // to prevent core text from forming ligatures between them
-                let needs_zwnj = last_font_run.replace(run.font_id) == Some(run.font_id);
+                let utf8_end = ix_converter.utf8_ix + run.len;
+                let utf16_start = ix_converter.utf16_ix;
 
-                let n_zwnjs = self.zwnjs_scratch_space.len();
-                let utf16_start = ix_converter.utf16_ix + n_zwnjs * ZWNJ_SIZE_16;
-                ix_converter.advance_to_utf8_ix(ix_converter.utf8_ix + run.len);
-
-                string.replace_str(&CFString::new(text), CFRange::init(utf16_start as isize, 0));
-                if needs_zwnj {
-                    let zwnjs_pos = string.char_len();
-                    self.zwnjs_scratch_space.push((n_zwnjs, zwnjs_pos as usize));
-                    string.replace_str(
-                        &CFString::from_static_string(ZWNJ_STR),
-                        CFRange::init(zwnjs_pos, 0),
-                    );
+                if utf16_start >= utf16_line_len {
+                    break;
                 }
-                let utf16_end = string.char_len() as usize;
+
+                ix_converter.advance_to_utf8_ix(utf8_end);
+                let utf16_end = cmp::min(ix_converter.utf16_ix, utf16_line_len);
 
                 let cf_range =
                     CFRange::init(utf16_start as isize, (utf16_end - utf16_start) as isize);
-                let font = &self.fonts[run.font_id.0];
+
+                let font: &FontKitFont = &self.fonts[run.font_id.0];
+
                 unsafe {
                     string.set_attribute(
                         cf_range,
@@ -468,12 +454,17 @@ impl MacTextSystemState {
                         &font.native_font().clone_with_font_size(font_size.into()),
                     );
                 }
+
+                if utf16_end == utf16_line_len {
+                    break;
+                }
             }
         }
+
         // Retrieve the glyphs from the shaped line, converting UTF16 offsets to UTF8 offsets.
         let line = CTLine::new_with_attributed_string(string.as_concrete_TypeRef());
         let glyph_runs = line.glyph_runs();
-        let mut runs = <Vec<ShapedRun>>::with_capacity(glyph_runs.len() as usize);
+        let mut runs = Vec::with_capacity(glyph_runs.len() as usize);
         let mut ix_converter = StringIndexConverter::new(text);
         for run in glyph_runs.into_iter() {
             let attributes = run.attributes().unwrap();
@@ -485,44 +476,28 @@ impl MacTextSystemState {
             };
             let font_id = self.id_for_native_font(font);
 
-            let mut glyphs = match runs.last_mut() {
-                Some(run) if run.font_id == font_id => &mut run.glyphs,
-                _ => {
-                    runs.push(ShapedRun {
-                        font_id,
-                        glyphs: Vec::with_capacity(run.glyph_count().try_into().unwrap_or(0)),
-                    });
-                    &mut runs.last_mut().unwrap().glyphs
-                }
-            };
-            for ((&glyph_id, position), &glyph_utf16_ix) in run
+            let mut glyphs = Vec::with_capacity(run.glyph_count().try_into().unwrap_or(0));
+            for ((glyph_id, position), glyph_utf16_ix) in run
                 .glyphs()
                 .iter()
                 .zip(run.positions().iter())
                 .zip(run.string_indices().iter())
             {
-                let mut glyph_utf16_ix = usize::try_from(glyph_utf16_ix).unwrap();
-                let r = self
-                    .zwnjs_scratch_space
-                    .binary_search_by(|&(_, it)| it.cmp(&glyph_utf16_ix));
-                match r {
-                    // this glyph is a ZWNJ, skip it
-                    Ok(_) => continue,
-                    // adjust the index to account for the ZWNJs we've inserted
-                    Err(idx) => glyph_utf16_ix -= idx * ZWNJ_SIZE_16,
-                }
+                let glyph_utf16_ix = usize::try_from(*glyph_utf16_ix).unwrap();
                 if ix_converter.utf16_ix > glyph_utf16_ix {
                     // We cannot reuse current index converter, as it can only seek forward. Restart the search.
                     ix_converter = StringIndexConverter::new(text);
                 }
                 ix_converter.advance_to_utf16_ix(glyph_utf16_ix);
                 glyphs.push(ShapedGlyph {
-                    id: GlyphId(glyph_id as u32),
+                    id: GlyphId(*glyph_id as u32),
                     position: point(position.x as f32, position.y as f32).map(px),
                     index: ix_converter.utf8_ix,
                     is_emoji: self.is_emoji(font_id),
                 });
             }
+
+            runs.push(ShapedRun { font_id, glyphs });
         }
         let typographic_bounds = line.get_typographic_bounds();
         LineLayout {
@@ -720,94 +695,5 @@ mod tests {
         assert_eq!(layout.runs[0].glyphs[0].id, GlyphId(68u32)); // a
         // There's no glyph for \u{feff}
         assert_eq!(layout.runs[0].glyphs[1].id, GlyphId(69u32)); // b
-    }
-
-    #[test]
-    fn test_layout_line_zwnj_insertion() {
-        let fonts = MacTextSystem::new();
-        let font_id = fonts.font_id(&font("Helvetica")).unwrap();
-
-        let text = "hello world";
-        let font_runs = &[
-            FontRun { font_id, len: 5 }, // "hello"
-            FontRun { font_id, len: 6 }, // " world"
-        ];
-
-        let layout = fonts.layout_line(text, px(16.), font_runs);
-        assert_eq!(layout.len, text.len());
-
-        for run in &layout.runs {
-            for glyph in &run.glyphs {
-                assert!(
-                    glyph.index < text.len(),
-                    "Glyph index {} is out of bounds for text length {}",
-                    glyph.index,
-                    text.len()
-                );
-            }
-        }
-
-        // Test with different font runs - should not insert ZWNJ
-        let font_id2 = fonts.font_id(&font("Times")).unwrap_or(font_id);
-        let font_runs_different = &[
-            FontRun { font_id, len: 5 }, // "hello"
-            // " world"
-            FontRun {
-                font_id: font_id2,
-                len: 6,
-            },
-        ];
-
-        let layout2 = fonts.layout_line(text, px(16.), font_runs_different);
-        assert_eq!(layout2.len, text.len());
-
-        for run in &layout2.runs {
-            for glyph in &run.glyphs {
-                assert!(
-                    glyph.index < text.len(),
-                    "Glyph index {} is out of bounds for text length {}",
-                    glyph.index,
-                    text.len()
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn test_layout_line_zwnj_edge_cases() {
-        let fonts = MacTextSystem::new();
-        let font_id = fonts.font_id(&font("Helvetica")).unwrap();
-
-        let text = "hello";
-        let font_runs = &[FontRun { font_id, len: 5 }];
-        let layout = fonts.layout_line(text, px(16.), font_runs);
-        assert_eq!(layout.len, text.len());
-
-        let text = "abc";
-        let font_runs = &[
-            FontRun { font_id, len: 1 }, // "a"
-            FontRun { font_id, len: 1 }, // "b"
-            FontRun { font_id, len: 1 }, // "c"
-        ];
-        let layout = fonts.layout_line(text, px(16.), font_runs);
-        assert_eq!(layout.len, text.len());
-
-        for run in &layout.runs {
-            for glyph in &run.glyphs {
-                assert!(
-                    glyph.index < text.len(),
-                    "Glyph index {} is out of bounds for text length {}",
-                    glyph.index,
-                    text.len()
-                );
-            }
-        }
-
-        // Test with empty text
-        let text = "";
-        let font_runs = &[];
-        let layout = fonts.layout_line(text, px(16.), font_runs);
-        assert_eq!(layout.len, 0);
-        assert!(layout.runs.is_empty());
     }
 }

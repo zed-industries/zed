@@ -574,9 +574,21 @@ impl std::fmt::Debug for Completion {
 /// Response from a source of completions.
 pub struct CompletionResponse {
     pub completions: Vec<Completion>,
+    pub display_options: CompletionDisplayOptions,
     /// When false, indicates that the list is complete and so does not need to be re-queried if it
     /// can be filtered instead.
     pub is_incomplete: bool,
+}
+
+#[derive(Default)]
+pub struct CompletionDisplayOptions {
+    pub dynamic_width: bool,
+}
+
+impl CompletionDisplayOptions {
+    pub fn merge(&mut self, other: &CompletionDisplayOptions) {
+        self.dynamic_width = self.dynamic_width && other.dynamic_width;
+    }
 }
 
 /// Response from language server completion request.
@@ -666,7 +678,6 @@ pub enum ResolveState {
     CanResolve(LanguageServerId, Option<lsp::LSPAny>),
     Resolving,
 }
-
 impl InlayHint {
     pub fn text(&self) -> Rope {
         match &self.label {

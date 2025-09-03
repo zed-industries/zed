@@ -281,7 +281,17 @@ impl Default for GlobalLspSettings {
 }
 
 #[derive(
-    Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize, JsonSchema,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    SettingsUi,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum DiagnosticSeverity {
@@ -290,6 +300,7 @@ pub enum DiagnosticSeverity {
     Error,
     Warning,
     Info,
+    #[serde(alias = "all")]
     Hint,
 }
 
@@ -593,6 +604,7 @@ impl Settings for ProjectSettings {
                     path: cmd.command,
                     args: cmd.args.unwrap_or_default(),
                     env: cmd.env,
+                    timeout: None,
                 }
             }
         }

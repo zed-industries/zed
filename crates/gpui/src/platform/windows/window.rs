@@ -73,7 +73,7 @@ pub(crate) struct WindowsWindowInner {
     pub(crate) windows_version: WindowsVersion,
     pub(crate) validation_number: usize,
     pub(crate) main_receiver: flume::Receiver<Runnable>,
-    pub(crate) main_thread_id_win32: u32,
+    pub(crate) platform_window_handle: HWND,
 }
 
 impl WindowsWindowState {
@@ -228,7 +228,7 @@ impl WindowsWindowInner {
             windows_version: context.windows_version,
             validation_number: context.validation_number,
             main_receiver: context.main_receiver.clone(),
-            main_thread_id_win32: context.main_thread_id_win32,
+            platform_window_handle: context.platform_window_handle,
         }))
     }
 
@@ -342,7 +342,7 @@ struct WindowCreateContext {
     drop_target_helper: IDropTargetHelper,
     validation_number: usize,
     main_receiver: flume::Receiver<Runnable>,
-    main_thread_id_win32: u32,
+    platform_window_handle: HWND,
     appearance: WindowAppearance,
     disable_direct_composition: bool,
 }
@@ -361,7 +361,7 @@ impl WindowsWindow {
             drop_target_helper,
             validation_number,
             main_receiver,
-            main_thread_id_win32,
+            platform_window_handle,
             disable_direct_composition,
         } = creation_info;
         register_window_class(icon);
@@ -419,7 +419,7 @@ impl WindowsWindow {
             drop_target_helper,
             validation_number,
             main_receiver,
-            main_thread_id_win32,
+            platform_window_handle,
             appearance,
             disable_direct_composition,
         };

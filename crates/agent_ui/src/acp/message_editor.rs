@@ -1,5 +1,5 @@
 use crate::{
-    acp::completion_provider::ContextPickerCompletionProvider,
+    acp::completion_provider::{ContextPickerCompletionProvider, SlashCommandCompletion},
     context_picker::{ContextPickerAction, fetch_context_picker::fetch_url_content},
 };
 use acp_thread::{MentionUri, selection_name};
@@ -11,10 +11,10 @@ use assistant_slash_commands::codeblock_fence_for_path;
 use collections::{HashMap, HashSet};
 use editor::{
     Addon, Anchor, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement,
-    EditorEvent, EditorMode, EditorSnapshot, EditorStyle, ExcerptId, FoldPlaceholder, MultiBuffer,
-    SemanticsProvider, ToOffset,
+    EditorEvent, EditorMode, EditorSnapshot, EditorStyle, ExcerptId, FoldPlaceholder, InlayId,
+    MultiBuffer, ToOffset,
     actions::Paste,
-    display_map::{Crease, CreaseId, FoldId},
+    display_map::{Crease, CreaseId, FoldId, Inlay},
 };
 use futures::{
     FutureExt as _,
@@ -22,18 +22,20 @@ use futures::{
 };
 use gpui::{
     Animation, AnimationExt as _, AppContext, ClipboardEntry, Context, Entity, EntityId,
-    EventEmitter, FocusHandle, Focusable, HighlightStyle, Image, ImageFormat, Img, KeyContext,
-    Subscription, Task, TextStyle, UnderlineStyle, WeakEntity, pulsating_between,
+    EventEmitter, FocusHandle, Focusable, Image, ImageFormat, Img, KeyContext, SharedString,
+    Subscription, Task, TextStyle, WeakEntity, pulsating_between,
 };
-use language::{Buffer, Language};
+use language::{Buffer, Language, language_settings::InlayHintKind};
 use language_model::LanguageModelImage;
 use postage::stream::Stream as _;
-use project::{CompletionIntent, Project, ProjectItem, ProjectPath, Worktree};
+use project::{
+    CompletionIntent, InlayHint, InlayHintLabel, Project, ProjectItem, ProjectPath, Worktree,
+};
 use prompt_store::{PromptId, PromptStore};
 use rope::Point;
 use settings::Settings;
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     ffi::OsStr,
     fmt::Write,
     ops::{Range, RangeInclusive},
@@ -42,19 +44,17 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use text::{OffsetRangeExt, ToOffset as _};
+use text::OffsetRangeExt;
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, AnyElement, App, ButtonCommon, ButtonLike, ButtonStyle, Color, Element as _,
     FluentBuilder as _, Icon, IconName, IconSize, InteractiveElement, IntoElement, Label,
-    LabelCommon, LabelSize, ParentElement, Render, SelectableButton, SharedString, Styled,
-    TextSize, TintColor, Toggleable, Window, div, h_flex, px,
+    LabelCommon, LabelSize, ParentElement, Render, SelectableButton, Styled, TextSize, TintColor,
+    Toggleable, Window, div, h_flex,
 };
 use util::{ResultExt, debug_panic};
 use workspace::{Workspace, notifications::NotifyResultExt as _};
 use zed_actions::agent::Chat;
-
-const PARSE_SLASH_COMMAND_DEBOUNCE: Duration = Duration::from_millis(50);
 
 pub struct MessageEditor {
     mention_set: MentionSet,
@@ -63,8 +63,9 @@ pub struct MessageEditor {
     workspace: WeakEntity<Workspace>,
     history_store: Entity<HistoryStore>,
     prompt_store: Option<Entity<PromptStore>>,
-    prevent_slash_commands: bool,
     prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
+    available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
+    agent_name: SharedString,
     _subscriptions: Vec<Subscription>,
     _parse_slash_command_task: Task<()>,
 }
@@ -79,6 +80,8 @@ pub enum MessageEditorEvent {
 
 impl EventEmitter<MessageEditorEvent> for MessageEditor {}
 
+const COMMAND_HINT_INLAY_ID: usize = 0;
+
 impl MessageEditor {
     pub fn new(
         workspace: WeakEntity<Workspace>,
@@ -86,8 +89,9 @@ impl MessageEditor {
         history_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
         prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
+        available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
+        agent_name: SharedString,
         placeholder: impl Into<Arc<str>>,
-        prevent_slash_commands: bool,
         mode: EditorMode,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -99,16 +103,14 @@ impl MessageEditor {
             },
             None,
         );
-        let completion_provider = ContextPickerCompletionProvider::new(
+        let completion_provider = Rc::new(ContextPickerCompletionProvider::new(
             cx.weak_entity(),
             workspace.clone(),
             history_store.clone(),
             prompt_store.clone(),
             prompt_capabilities.clone(),
-        );
-        let semantics_provider = Rc::new(SlashCommandSemanticsProvider {
-            range: Cell::new(None),
-        });
+            available_commands.clone(),
+        ));
         let mention_set = MentionSet::default();
         let editor = cx.new(|cx| {
             let buffer = cx.new(|cx| Buffer::local("", cx).with_language(Arc::new(language), cx));
@@ -119,15 +121,12 @@ impl MessageEditor {
             editor.set_show_indent_guides(false, cx);
             editor.set_soft_wrap();
             editor.set_use_modal_editing(true);
-            editor.set_completion_provider(Some(Rc::new(completion_provider)));
+            editor.set_completion_provider(Some(completion_provider.clone()));
             editor.set_context_menu_options(ContextMenuOptions {
                 min_entries_visible: 12,
                 max_entries_visible: 12,
                 placement: Some(ContextMenuPlacement::Above),
             });
-            if prevent_slash_commands {
-                editor.set_semantics_provider(Some(semantics_provider.clone()));
-            }
             editor.register_addon(MessageEditorAddon::new());
             editor
         });
@@ -141,21 +140,33 @@ impl MessageEditor {
         })
         .detach();
 
+        let mut has_hint = false;
         let mut subscriptions = Vec::new();
+
         subscriptions.push(cx.subscribe_in(&editor, window, {
-            let semantics_provider = semantics_provider.clone();
             move |this, editor, event, window, cx| {
                 if let EditorEvent::Edited { .. } = event {
-                    if prevent_slash_commands {
-                        this.highlight_slash_command(
-                            semantics_provider.clone(),
-                            editor.clone(),
-                            window,
+                    let snapshot = editor.update(cx, |editor, cx| {
+                        let new_hints = this
+                            .command_hint(editor.buffer(), cx)
+                            .into_iter()
+                            .collect::<Vec<_>>();
+                        let has_new_hint = !new_hints.is_empty();
+                        editor.splice_inlays(
+                            if has_hint {
+                                &[InlayId::Hint(COMMAND_HINT_INLAY_ID)]
+                            } else {
+                                &[]
+                            },
+                            new_hints,
                             cx,
                         );
-                    }
-                    let snapshot = editor.update(cx, |editor, cx| editor.snapshot(window, cx));
+                        has_hint = has_new_hint;
+
+                        editor.snapshot(window, cx)
+                    });
                     this.mention_set.remove_invalid(snapshot);
+
                     cx.notify();
                 }
             }
@@ -168,11 +179,55 @@ impl MessageEditor {
             workspace,
             history_store,
             prompt_store,
-            prevent_slash_commands,
             prompt_capabilities,
+            available_commands,
+            agent_name,
             _subscriptions: subscriptions,
             _parse_slash_command_task: Task::ready(()),
         }
+    }
+
+    fn command_hint(&self, buffer: &Entity<MultiBuffer>, cx: &App) -> Option<Inlay> {
+        let available_commands = self.available_commands.borrow();
+        if available_commands.is_empty() {
+            return None;
+        }
+
+        let snapshot = buffer.read(cx).snapshot(cx);
+        let parsed_command = SlashCommandCompletion::try_parse(&snapshot.text(), 0)?;
+        if parsed_command.argument.is_some() {
+            return None;
+        }
+
+        let command_name = parsed_command.command?;
+        let available_command = available_commands
+            .iter()
+            .find(|command| command.name == command_name)?;
+
+        let acp::AvailableCommandInput::Unstructured { mut hint } =
+            available_command.input.clone()?;
+
+        let mut hint_pos = parsed_command.source_range.end + 1;
+        if hint_pos > snapshot.len() {
+            hint_pos = snapshot.len();
+            hint.insert(0, ' ');
+        }
+
+        let hint_pos = snapshot.anchor_after(hint_pos);
+
+        Some(Inlay::hint(
+            COMMAND_HINT_INLAY_ID,
+            hint_pos,
+            &InlayHint {
+                position: hint_pos.text_anchor,
+                label: InlayHintLabel::String(hint),
+                kind: Some(InlayHintKind::Parameter),
+                padding_left: false,
+                padding_right: false,
+                tooltip: None,
+                resolve_state: project::ResolveState::Resolved,
+            },
+        ))
     }
 
     pub fn insert_thread_summary(
@@ -191,7 +246,7 @@ impl MessageEditor {
                 .text_anchor
         });
 
-        self.confirm_completion(
+        self.confirm_mention_completion(
             thread.title.clone(),
             start,
             thread.title.len(),
@@ -227,7 +282,7 @@ impl MessageEditor {
             .collect()
     }
 
-    pub fn confirm_completion(
+    pub fn confirm_mention_completion(
         &mut self,
         crease_text: SharedString,
         start: text::Anchor,
@@ -679,21 +734,62 @@ impl MessageEditor {
         })
     }
 
+    fn validate_slash_commands(
+        text: &str,
+        available_commands: &[acp::AvailableCommand],
+        agent_name: &str,
+    ) -> Result<()> {
+        if let Some(parsed_command) = SlashCommandCompletion::try_parse(text, 0) {
+            if let Some(command_name) = parsed_command.command {
+                // Check if this command is in the list of available commands from the server
+                let is_supported = available_commands
+                    .iter()
+                    .any(|cmd| cmd.name == command_name);
+
+                if !is_supported {
+                    return Err(anyhow!(
+                        "The /{} command is not supported by {}.\n\nAvailable commands: {}",
+                        command_name,
+                        agent_name,
+                        if available_commands.is_empty() {
+                            "none".to_string()
+                        } else {
+                            available_commands
+                                .iter()
+                                .map(|cmd| format!("/{}", cmd.name))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        }
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn contents(
         &self,
         cx: &mut Context<Self>,
     ) -> Task<Result<(Vec<acp::ContentBlock>, Vec<Entity<Buffer>>)>> {
+        // Check for unsupported slash commands before spawning async task
+        let text = self.editor.read(cx).text(cx);
+        let available_commands = self.available_commands.borrow().clone();
+        if let Err(err) =
+            Self::validate_slash_commands(&text, &available_commands, &self.agent_name)
+        {
+            return Task::ready(Err(err));
+        }
+
         let contents = self
             .mention_set
             .contents(&self.prompt_capabilities.get(), cx);
         let editor = self.editor.clone();
-        let prevent_slash_commands = self.prevent_slash_commands;
 
         cx.spawn(async move |_, cx| {
             let contents = contents.await?;
             let mut all_tracked_buffers = Vec::new();
 
-            editor.update(cx, |editor, cx| {
+            let result = editor.update(cx, |editor, cx| {
                 let mut ix = 0;
                 let mut chunks: Vec<acp::ContentBlock> = Vec::new();
                 let text = editor.text(cx);
@@ -706,14 +802,16 @@ impl MessageEditor {
 
                         let crease_range = crease.range().to_offset(&snapshot.buffer_snapshot);
                         if crease_range.start > ix {
-                            let chunk = if prevent_slash_commands
-                                && ix == 0
-                                && parse_slash_command(&text[ix..]).is_some()
-                            {
-                                format!(" {}", &text[ix..crease_range.start]).into()
-                            } else {
-                                text[ix..crease_range.start].into()
-                            };
+                            //todo(): Custom slash command ContentBlock?
+                            // let chunk = if prevent_slash_commands
+                            //     && ix == 0
+                            //     && parse_slash_command(&text[ix..]).is_some()
+                            // {
+                            //     format!(" {}", &text[ix..crease_range.start]).into()
+                            // } else {
+                            //     text[ix..crease_range.start].into()
+                            // };
+                            let chunk = text[ix..crease_range.start].into();
                             chunks.push(chunk);
                         }
                         let chunk = match mention {
@@ -769,22 +867,24 @@ impl MessageEditor {
                     }
 
                     if ix < text.len() {
-                        let last_chunk = if prevent_slash_commands
-                            && ix == 0
-                            && parse_slash_command(&text[ix..]).is_some()
-                        {
-                            format!(" {}", text[ix..].trim_end())
-                        } else {
-                            text[ix..].trim_end().to_owned()
-                        };
+                        //todo(): Custom slash command ContentBlock?
+                        // let last_chunk = if prevent_slash_commands
+                        //     && ix == 0
+                        //     && parse_slash_command(&text[ix..]).is_some()
+                        // {
+                        //     format!(" {}", text[ix..].trim_end())
+                        // } else {
+                        //     text[ix..].trim_end().to_owned()
+                        // };
+                        let last_chunk = text[ix..].trim_end().to_owned();
                         if !last_chunk.is_empty() {
                             chunks.push(last_chunk.into());
                         }
                     }
                 });
-
-                (chunks, all_tracked_buffers)
-            })
+                Ok((chunks, all_tracked_buffers))
+            })?;
+            result
         })
     }
 
@@ -971,7 +1071,14 @@ impl MessageEditor {
                     cx,
                 );
             });
-            tasks.push(self.confirm_completion(file_name, anchor, content_len, uri, window, cx));
+            tasks.push(self.confirm_mention_completion(
+                file_name,
+                anchor,
+                content_len,
+                uri,
+                window,
+                cx,
+            ));
         }
         cx.spawn(async move |_, _| {
             join_all(tasks).await;
@@ -1133,48 +1240,6 @@ impl MessageEditor {
         cx.notify();
     }
 
-    fn highlight_slash_command(
-        &mut self,
-        semantics_provider: Rc<SlashCommandSemanticsProvider>,
-        editor: Entity<Editor>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        struct InvalidSlashCommand;
-
-        self._parse_slash_command_task = cx.spawn_in(window, async move |_, cx| {
-            cx.background_executor()
-                .timer(PARSE_SLASH_COMMAND_DEBOUNCE)
-                .await;
-            editor
-                .update_in(cx, |editor, window, cx| {
-                    let snapshot = editor.snapshot(window, cx);
-                    let range = parse_slash_command(&editor.text(cx));
-                    semantics_provider.range.set(range);
-                    if let Some((start, end)) = range {
-                        editor.highlight_text::<InvalidSlashCommand>(
-                            vec![
-                                snapshot.buffer_snapshot.anchor_after(start)
-                                    ..snapshot.buffer_snapshot.anchor_before(end),
-                            ],
-                            HighlightStyle {
-                                underline: Some(UnderlineStyle {
-                                    thickness: px(1.),
-                                    color: Some(gpui::red()),
-                                    wavy: true,
-                                }),
-                                ..Default::default()
-                            },
-                            cx,
-                        );
-                    } else {
-                        editor.clear_highlights::<InvalidSlashCommand>(cx);
-                    }
-                })
-                .ok();
-        })
-    }
-
     pub fn text(&self, cx: &App) -> String {
         self.editor.read(cx).text(cx)
     }
@@ -1234,6 +1299,7 @@ impl Render for MessageEditor {
                         local_player: cx.theme().players().local(),
                         text: text_style,
                         syntax: cx.theme().syntax().clone(),
+                        inlay_hints_style: editor::make_inlay_hints_style(cx),
                         ..Default::default()
                     },
                 )
@@ -1264,7 +1330,7 @@ pub(crate) fn insert_crease_for_mention(
         let end = snapshot.anchor_before(start.to_offset(&snapshot) + content_len);
 
         let placeholder = FoldPlaceholder {
-            render: render_fold_icon_button(
+            render: render_mention_fold_button(
                 crease_label,
                 crease_icon,
                 start..end,
@@ -1294,7 +1360,7 @@ pub(crate) fn insert_crease_for_mention(
     Some((crease_id, tx))
 }
 
-fn render_fold_icon_button(
+fn render_mention_fold_button(
     label: SharedString,
     icon: SharedString,
     range: Range<Anchor>,
@@ -1471,118 +1537,6 @@ impl MentionSet {
     }
 }
 
-struct SlashCommandSemanticsProvider {
-    range: Cell<Option<(usize, usize)>>,
-}
-
-impl SemanticsProvider for SlashCommandSemanticsProvider {
-    fn hover(
-        &self,
-        buffer: &Entity<Buffer>,
-        position: text::Anchor,
-        cx: &mut App,
-    ) -> Option<Task<Option<Vec<project::Hover>>>> {
-        let snapshot = buffer.read(cx).snapshot();
-        let offset = position.to_offset(&snapshot);
-        let (start, end) = self.range.get()?;
-        if !(start..end).contains(&offset) {
-            return None;
-        }
-        let range = snapshot.anchor_after(start)..snapshot.anchor_after(end);
-        Some(Task::ready(Some(vec![project::Hover {
-            contents: vec![project::HoverBlock {
-                text: "Slash commands are not supported".into(),
-                kind: project::HoverBlockKind::PlainText,
-            }],
-            range: Some(range),
-            language: None,
-        }])))
-    }
-
-    fn inline_values(
-        &self,
-        _buffer_handle: Entity<Buffer>,
-        _range: Range<text::Anchor>,
-        _cx: &mut App,
-    ) -> Option<Task<anyhow::Result<Vec<project::InlayHint>>>> {
-        None
-    }
-
-    fn inlay_hints(
-        &self,
-        _buffer_handle: Entity<Buffer>,
-        _range: Range<text::Anchor>,
-        _cx: &mut App,
-    ) -> Option<Task<anyhow::Result<Vec<project::InlayHint>>>> {
-        None
-    }
-
-    fn resolve_inlay_hint(
-        &self,
-        _hint: project::InlayHint,
-        _buffer_handle: Entity<Buffer>,
-        _server_id: lsp::LanguageServerId,
-        _cx: &mut App,
-    ) -> Option<Task<anyhow::Result<project::InlayHint>>> {
-        None
-    }
-
-    fn supports_inlay_hints(&self, _buffer: &Entity<Buffer>, _cx: &mut App) -> bool {
-        false
-    }
-
-    fn document_highlights(
-        &self,
-        _buffer: &Entity<Buffer>,
-        _position: text::Anchor,
-        _cx: &mut App,
-    ) -> Option<Task<Result<Vec<project::DocumentHighlight>>>> {
-        None
-    }
-
-    fn definitions(
-        &self,
-        _buffer: &Entity<Buffer>,
-        _position: text::Anchor,
-        _kind: editor::GotoDefinitionKind,
-        _cx: &mut App,
-    ) -> Option<Task<Result<Option<Vec<project::LocationLink>>>>> {
-        None
-    }
-
-    fn range_for_rename(
-        &self,
-        _buffer: &Entity<Buffer>,
-        _position: text::Anchor,
-        _cx: &mut App,
-    ) -> Option<Task<Result<Option<Range<text::Anchor>>>>> {
-        None
-    }
-
-    fn perform_rename(
-        &self,
-        _buffer: &Entity<Buffer>,
-        _position: text::Anchor,
-        _new_name: String,
-        _cx: &mut App,
-    ) -> Option<Task<Result<project::ProjectTransaction>>> {
-        None
-    }
-}
-
-fn parse_slash_command(text: &str) -> Option<(usize, usize)> {
-    if let Some(remainder) = text.strip_prefix('/') {
-        let pos = remainder
-            .find(char::is_whitespace)
-            .unwrap_or(remainder.len());
-        let command = &remainder[..pos];
-        if !command.is_empty() && command.chars().all(char::is_alphanumeric) {
-            return Some((0, 1 + command.len()));
-        }
-    }
-    None
-}
-
 pub struct MessageEditorAddon {}
 
 impl MessageEditorAddon {
@@ -1610,7 +1564,13 @@ impl Addon for MessageEditorAddon {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::Cell, ops::Range, path::Path, rc::Rc, sync::Arc};
+    use std::{
+        cell::{Cell, RefCell},
+        ops::Range,
+        path::Path,
+        rc::Rc,
+        sync::Arc,
+    };
 
     use acp_thread::MentionUri;
     use agent_client_protocol as acp;
@@ -1657,8 +1617,9 @@ mod tests {
                     history_store.clone(),
                     None,
                     Default::default(),
+                    Default::default(),
+                    "Test Agent".into(),
                     "Test",
-                    false,
                     EditorMode::AutoHeight {
                         min_lines: 1,
                         max_lines: None,
@@ -1735,6 +1696,140 @@ mod tests {
         pretty_assertions::assert_matches!(content.as_slice(), [acp::ContentBlock::Text { .. }]);
     }
 
+    #[gpui::test]
+    async fn test_slash_command_validation(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/test",
+            json!({
+                ".zed": {
+                    "tasks.json": r#"[{"label": "test", "command": "echo"}]"#
+                },
+                "src": {
+                    "main.rs": "fn main() {}",
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
+        let context_store = cx.new(|cx| ContextStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
+        let prompt_capabilities = Rc::new(Cell::new(acp::PromptCapabilities::default()));
+        // Start with no available commands - simulating Claude which doesn't support slash commands
+        let available_commands = Rc::new(RefCell::new(vec![]));
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace_handle = workspace.downgrade();
+        let message_editor = workspace.update_in(cx, |_, window, cx| {
+            cx.new(|cx| {
+                MessageEditor::new(
+                    workspace_handle.clone(),
+                    project.clone(),
+                    history_store.clone(),
+                    None,
+                    prompt_capabilities.clone(),
+                    available_commands.clone(),
+                    "Claude Code".into(),
+                    "Test",
+                    EditorMode::AutoHeight {
+                        min_lines: 1,
+                        max_lines: None,
+                    },
+                    window,
+                    cx,
+                )
+            })
+        });
+        let editor = message_editor.update(cx, |message_editor, _| message_editor.editor.clone());
+
+        // Test that slash commands fail when no available_commands are set (empty list means no commands supported)
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("/file test.txt", window, cx);
+        });
+
+        let contents_result = message_editor
+            .update(cx, |message_editor, cx| message_editor.contents(cx))
+            .await;
+
+        // Should fail because available_commands is empty (no commands supported)
+        assert!(contents_result.is_err());
+        let error_message = contents_result.unwrap_err().to_string();
+        assert!(error_message.contains("not supported by Claude Code"));
+        assert!(error_message.contains("Available commands: none"));
+
+        // Now simulate Claude providing its list of available commands (which doesn't include file)
+        available_commands.replace(vec![acp::AvailableCommand {
+            name: "help".to_string(),
+            description: "Get help".to_string(),
+            input: None,
+        }]);
+
+        // Test that unsupported slash commands trigger an error when we have a list of available commands
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("/file test.txt", window, cx);
+        });
+
+        let contents_result = message_editor
+            .update(cx, |message_editor, cx| message_editor.contents(cx))
+            .await;
+
+        assert!(contents_result.is_err());
+        let error_message = contents_result.unwrap_err().to_string();
+        assert!(error_message.contains("not supported by Claude Code"));
+        assert!(error_message.contains("/file"));
+        assert!(error_message.contains("Available commands: /help"));
+
+        // Test that supported commands work fine
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("/help", window, cx);
+        });
+
+        let contents_result = message_editor
+            .update(cx, |message_editor, cx| message_editor.contents(cx))
+            .await;
+
+        // Should succeed because /help is in available_commands
+        assert!(contents_result.is_ok());
+
+        // Test that regular text works fine
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello Claude!", window, cx);
+        });
+
+        let (content, _) = message_editor
+            .update(cx, |message_editor, cx| message_editor.contents(cx))
+            .await
+            .unwrap();
+
+        assert_eq!(content.len(), 1);
+        if let acp::ContentBlock::Text(text) = &content[0] {
+            assert_eq!(text.text, "Hello Claude!");
+        } else {
+            panic!("Expected ContentBlock::Text");
+        }
+
+        // Test that @ mentions still work
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Check this @", window, cx);
+        });
+
+        // The @ mention functionality should not be affected
+        let (content, _) = message_editor
+            .update(cx, |message_editor, cx| message_editor.contents(cx))
+            .await
+            .unwrap();
+
+        assert_eq!(content.len(), 1);
+        if let acp::ContentBlock::Text(text) = &content[0] {
+            assert_eq!(text.text, "Check this @");
+        } else {
+            panic!("Expected ContentBlock::Text");
+        }
+    }
+
     struct MessageEditorItem(Entity<MessageEditor>);
 
     impl Item for MessageEditorItem {
@@ -1764,7 +1859,192 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_context_completion_provider(cx: &mut TestAppContext) {
+    async fn test_completion_provider_commands(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let app_state = cx.update(AppState::test);
+
+        cx.update(|cx| {
+            language::init(cx);
+            editor::init(cx);
+            workspace::init(app_state.clone(), cx);
+            Project::init_settings(cx);
+        });
+
+        let project = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = window.root(cx).unwrap();
+
+        let mut cx = VisualTestContext::from_window(*window, cx);
+
+        let context_store = cx.new(|cx| ContextStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
+        let prompt_capabilities = Rc::new(Cell::new(acp::PromptCapabilities::default()));
+        let available_commands = Rc::new(RefCell::new(vec![
+            acp::AvailableCommand {
+                name: "quick-math".to_string(),
+                description: "2 + 2 = 4 - 1 = 3".to_string(),
+                input: None,
+            },
+            acp::AvailableCommand {
+                name: "say-hello".to_string(),
+                description: "Say hello to whoever you want".to_string(),
+                input: Some(acp::AvailableCommandInput::Unstructured {
+                    hint: "<name>".to_string(),
+                }),
+            },
+        ]));
+
+        let editor = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let workspace_handle = cx.weak_entity();
+            let message_editor = cx.new(|cx| {
+                MessageEditor::new(
+                    workspace_handle,
+                    project.clone(),
+                    history_store.clone(),
+                    None,
+                    prompt_capabilities.clone(),
+                    available_commands.clone(),
+                    "Test Agent".into(),
+                    "Test",
+                    EditorMode::AutoHeight {
+                        max_lines: None,
+                        min_lines: 1,
+                    },
+                    window,
+                    cx,
+                )
+            });
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.add_item(
+                    Box::new(cx.new(|_| MessageEditorItem(message_editor.clone()))),
+                    true,
+                    true,
+                    None,
+                    window,
+                    cx,
+                );
+            });
+            message_editor.read(cx).focus_handle(cx).focus(window);
+            message_editor.read(cx).editor().clone()
+        });
+
+        cx.simulate_input("/");
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            assert_eq!(editor.text(cx), "/");
+            assert!(editor.has_visible_completions_menu());
+
+            assert_eq!(
+                current_completion_labels_with_documentation(editor),
+                &[
+                    ("quick-math".into(), "2 + 2 = 4 - 1 = 3".into()),
+                    ("say-hello".into(), "Say hello to whoever you want".into())
+                ]
+            );
+            editor.set_text("", window, cx);
+        });
+
+        cx.simulate_input("/qui");
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            assert_eq!(editor.text(cx), "/qui");
+            assert!(editor.has_visible_completions_menu());
+
+            assert_eq!(
+                current_completion_labels_with_documentation(editor),
+                &[("quick-math".into(), "2 + 2 = 4 - 1 = 3".into())]
+            );
+            editor.set_text("", window, cx);
+        });
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            assert!(editor.has_visible_completions_menu());
+            editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
+        });
+
+        cx.run_until_parked();
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            assert_eq!(editor.display_text(cx), "/quick-math ");
+            assert!(!editor.has_visible_completions_menu());
+            editor.set_text("", window, cx);
+        });
+
+        cx.simulate_input("/say");
+
+        editor.update_in(&mut cx, |editor, _window, cx| {
+            assert_eq!(editor.display_text(cx), "/say");
+            assert!(editor.has_visible_completions_menu());
+
+            assert_eq!(
+                current_completion_labels_with_documentation(editor),
+                &[("say-hello".into(), "Say hello to whoever you want".into())]
+            );
+        });
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            assert!(editor.has_visible_completions_menu());
+            editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
+        });
+
+        cx.run_until_parked();
+
+        editor.update_in(&mut cx, |editor, _window, cx| {
+            assert_eq!(editor.text(cx), "/say-hello ");
+            assert_eq!(editor.display_text(cx), "/say-hello <name>");
+            assert!(editor.has_visible_completions_menu());
+
+            assert_eq!(
+                current_completion_labels_with_documentation(editor),
+                &[("say-hello".into(), "Say hello to whoever you want".into())]
+            );
+        });
+
+        cx.simulate_input("GPT5");
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            assert!(editor.has_visible_completions_menu());
+            editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
+        });
+
+        cx.run_until_parked();
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            assert_eq!(editor.text(cx), "/say-hello GPT5");
+            assert_eq!(editor.display_text(cx), "/say-hello GPT5");
+            assert!(!editor.has_visible_completions_menu());
+
+            // Delete argument
+            for _ in 0..4 {
+                editor.backspace(&editor::actions::Backspace, window, cx);
+            }
+        });
+
+        cx.run_until_parked();
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            assert_eq!(editor.text(cx), "/say-hello ");
+            // Hint is visible because argument was deleted
+            assert_eq!(editor.display_text(cx), "/say-hello <name>");
+
+            // Delete last command letter
+            editor.backspace(&editor::actions::Backspace, window, cx);
+            editor.backspace(&editor::actions::Backspace, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        editor.update_in(&mut cx, |editor, _window, cx| {
+            // Hint goes away once command no longer matches an available one
+            assert_eq!(editor.text(cx), "/say-hell");
+            assert_eq!(editor.display_text(cx), "/say-hell");
+            assert!(!editor.has_visible_completions_menu());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_context_completion_provider_mentions(cx: &mut TestAppContext) {
         init_test(cx);
 
         let app_state = cx.update(AppState::test);
@@ -1857,8 +2137,9 @@ mod tests {
                     history_store.clone(),
                     None,
                     prompt_capabilities.clone(),
+                    Default::default(),
+                    "Test Agent".into(),
                     "Test",
-                    false,
                     EditorMode::AutoHeight {
                         max_lines: None,
                         min_lines: 1,
@@ -1888,7 +2169,6 @@ mod tests {
             assert_eq!(editor.text(cx), "Lorem @");
             assert!(editor.has_visible_completions_menu());
 
-            // Only files since we have default capabilities
             assert_eq!(
                 current_completion_labels(editor),
                 &[
@@ -2282,6 +2562,22 @@ mod tests {
         completions
             .into_iter()
             .map(|completion| completion.label.text)
+            .collect::<Vec<_>>()
+    }
+
+    fn current_completion_labels_with_documentation(editor: &Editor) -> Vec<(String, String)> {
+        let completions = editor.current_completions().expect("Missing completions");
+        completions
+            .into_iter()
+            .map(|completion| {
+                (
+                    completion.label.text,
+                    completion
+                        .documentation
+                        .map(|d| d.text().to_string())
+                        .unwrap_or_default(),
+                )
+            })
             .collect::<Vec<_>>()
     }
 }

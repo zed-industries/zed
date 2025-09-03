@@ -12,7 +12,7 @@ pub enum WhichKeyLocation {
     LeftPanel,
 }
 
-#[derive(Deserialize, SettingsUi)]
+#[derive(Deserialize)]
 pub struct WhichKeySettings {
     #[serde(default)]
     pub enabled: bool,
@@ -26,7 +26,7 @@ fn default_delay_ms() -> u64 {
     700
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
 pub struct WhichKeySettingsContent {
     /// Whether to show the which-key popup when holding down key combinations.
     ///
