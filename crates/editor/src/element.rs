@@ -3314,10 +3314,8 @@ impl EditorElement {
             if row_segments.is_empty() {
                 continue;
             }
-            dbg!(&base_background, &row_segments);
             let segments = mem::take(row_segments);
             let merged = Self::merge_overlapping_ranges(segments, base_background);
-            dbg!(&merged);
             *row_segments = merged;
         }
         per_row_map
