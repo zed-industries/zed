@@ -1782,9 +1782,7 @@ impl LocalWorktree {
 
         let create_dirs = async |fs: &Arc<dyn Fs>, path: &Path| {
             if let Some(parent) = path.parent() {
-                if !fs.is_dir(parent).await {
-                    fs.create_dir(parent).await.with_context(|| format!("Creating parent directory {parent:?}"))?;
-                }
+                fs.create_dir(parent).await.with_context(|| format!("Creating parent directory {parent:?}"))?;
             }
             anyhow::Ok(())
         };
