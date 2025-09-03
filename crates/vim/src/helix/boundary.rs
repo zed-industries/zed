@@ -85,9 +85,9 @@ trait BoundedObject {
         let mut end_search_start = if self.can_be_zero_width(outer) {
             start
         } else {
-            start.next(map)
+            start.next(map)?
         };
-        let mut start_search_start = start.next(map);
+        let mut start_search_start = start.next(map)?;
         loop {
             let next_end = self.next_end(map, end_search_start, outer)?;
             let maybe_next_start = self.next_start(map, start_search_start, outer);
@@ -96,9 +96,9 @@ trait BoundedObject {
                     || (next_start == next_end && self.can_be_zero_width(outer)))
             {
                 let closing = self.close_at_end(next_start, map, outer)?;
-                end_search_start = closing.next(map);
+                end_search_start = closing.next(map)?;
                 start_search_start = if self.can_be_zero_width(outer) {
-                    closing.next(map)
+                    closing.next(map)?
                 } else {
                     closing
                 };
@@ -113,9 +113,9 @@ trait BoundedObject {
         let mut start_search_start = if self.can_be_zero_width(outer) {
             end
         } else {
-            end.previous(map)
+            end.previous(map)?
         };
-        let mut end_search_start = end.previous(map);
+        let mut end_search_start = end.previous(map)?;
         loop {
             let prev_start = self.previous_start(map, start_search_start, outer)?;
             let maybe_prev_end = self.previous_end(map, end_search_start, outer);
@@ -125,11 +125,11 @@ trait BoundedObject {
             {
                 let closing = self.close_at_start(prev_end, map, outer)?;
                 end_search_start = if self.can_be_zero_width(outer) {
-                    closing.previous(map)
+                    closing.previous(map)?
                 } else {
                     closing
                 };
-                start_search_start = closing.previous(map);
+                start_search_start = closing.previous(map)?;
                 continue;
             } else {
                 return Some(prev_start);
@@ -152,11 +152,15 @@ impl DerefMut for Offset {
     }
 }
 impl Offset {
-    fn next(self, map: &DisplaySnapshot) -> Self {
-        Self(map.buffer_snapshot.clip_offset(*self + 1, Bias::Right))
+    fn next(self, map: &DisplaySnapshot) -> Option<Self> {
+        let next = Self(map.buffer_snapshot.clip_offset(*self + 1, Bias::Right));
+        (*next > *self).then(|| next)
     }
-    fn previous(self, map: &DisplaySnapshot) -> Self {
-        Self(map.buffer_snapshot.clip_offset(*self - 1, Bias::Left))
+    fn previous(self, map: &DisplaySnapshot) -> Option<Self> {
+        if *self == 0 {
+            return None;
+        }
+        Some(Self(map.buffer_snapshot.clip_offset(*self - 1, Bias::Left)))
     }
 }
 
@@ -175,7 +179,7 @@ impl<B: BoundedObject> HelixTextObject for B {
             // If the objects can be directly next to each other an object start at the
             // cursor (relative_to) start would not count for close_at_start, so the search
             // needs to start one character to the left.
-            relative_to.start.next(map)
+            relative_to.start.next(map)?
         };
         let min_start = self.close_at_start(search_start, map, self.surround_on_both_sides())?;
         let max_end = self.close_at_end(min_start, map, self.surround_on_both_sides())?;
