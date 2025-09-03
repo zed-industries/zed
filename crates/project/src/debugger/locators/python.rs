@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use dap::{DapLocator, DebugRequest, adapters::DebugAdapterName};
 use gpui::SharedString;
 
-use task::{DebugScenario, SpawnInTerminal, TaskTemplate, VariableName};
+use task::{DebugScenario, SpawnInTerminal, TaskTemplate};
 
 pub(crate) struct PythonLocator;
 
@@ -25,7 +25,7 @@ impl DapLocator for PythonLocator {
         if adapter.0.as_ref() != "Debugpy" {
             return None;
         }
-        let valid_program = build_config.command.starts_with("$ZED_")
+        let valid_program = build_config.command.starts_with("\"$ZED_")
             || Path::new(&build_config.command)
                 .file_name()
                 .is_some_and(|name| name.to_str().is_some_and(|path| path.starts_with("python")));
@@ -33,13 +33,7 @@ impl DapLocator for PythonLocator {
             // We cannot debug selections.
             return None;
         }
-        let command = if build_config.command
-            == VariableName::Custom("PYTHON_ACTIVE_ZED_TOOLCHAIN".into()).template_value()
-        {
-            VariableName::Custom("PYTHON_ACTIVE_ZED_TOOLCHAIN_RAW".into()).template_value()
-        } else {
-            build_config.command.clone()
-        };
+        let command = build_config.command.clone();
         let module_specifier_position = build_config
             .args
             .iter()
