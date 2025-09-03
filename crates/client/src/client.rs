@@ -31,7 +31,7 @@ use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EnvelopedMessage, PeerId, RequestMessage};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsUi};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 use std::{
     any::TypeId,
     convert::TryFrom,
@@ -96,19 +96,18 @@ actions!(
     ]
 );
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
 pub struct ClientSettingsContent {
     server_url: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, SettingsKey)]
+#[settings_key()]
 pub struct ClientSettings {
     pub server_url: String,
 }
 
 impl Settings for ClientSettings {
-    const KEY: Option<&'static str> = None;
-
     type FileContent = ClientSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
@@ -122,19 +121,18 @@ impl Settings for ClientSettings {
     fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
-#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, SettingsUi)]
+#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
 pub struct ProxySettingsContent {
     proxy: Option<String>,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, SettingsKey)]
+#[settings_key()]
 pub struct ProxySettings {
     pub proxy: Option<String>,
 }
 
 impl Settings for ProxySettings {
-    const KEY: Option<&'static str> = None;
-
     type FileContent = ProxySettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
@@ -520,14 +518,15 @@ impl<T: 'static> Drop for PendingEntitySubscription<T> {
     }
 }
 
-#[derive(Copy, Clone, Deserialize, Debug)]
+#[derive(Copy, Clone, Deserialize, Debug, SettingsKey)]
+#[settings_key(key = "telemetry")]
 pub struct TelemetrySettings {
     pub diagnostics: bool,
     pub metrics: bool,
 }
 
 /// Control what info is collected by Zed.
-#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, Debug, SettingsUi)]
+#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, Debug, SettingsUi, SettingsKey)]
 pub struct TelemetrySettingsContent {
     /// Send debug info like crash reports.
     ///
@@ -540,8 +539,6 @@ pub struct TelemetrySettingsContent {
 }
 
 impl settings::Settings for TelemetrySettings {
-    const KEY: Option<&'static str> = Some("telemetry");
-
     type FileContent = TelemetrySettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {

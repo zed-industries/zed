@@ -2,9 +2,10 @@ use anyhow::Result;
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsUi};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi, SettingsKey)]
+#[settings_key(key = "audio")]
 pub struct AudioSettings {
     /// Opt into the new audio system.
     #[serde(rename = "experimental.rodio_audio", default)]
@@ -12,7 +13,7 @@ pub struct AudioSettings {
 }
 
 /// Configuration of audio in Zed.
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi, SettingsKey)]
 #[serde(default)]
 pub struct AudioSettingsContent {
     /// Whether to use the experimental audio system
@@ -21,8 +22,6 @@ pub struct AudioSettingsContent {
 }
 
 impl Settings for AudioSettings {
-    const KEY: Option<&'static str> = Some("audio");
-
     type FileContent = AudioSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _cx: &mut App) -> Result<Self> {

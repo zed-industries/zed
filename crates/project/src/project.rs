@@ -951,14 +951,13 @@ pub enum PulledDiagnostics {
 /// Whether to disable all AI features in Zed.
 ///
 /// Default: false
-#[derive(Copy, Clone, Debug, settings::SettingsUi)]
+#[derive(Copy, Clone, Debug, settings::SettingsUi, settings::SettingsKey)]
+#[settings_key(key = "disable_ai")]
 pub struct DisableAiSettings {
     pub disable_ai: bool,
 }
 
 impl settings::Settings for DisableAiSettings {
-    const KEY: Option<&'static str> = Some("disable_ai");
-
     type FileContent = Option<bool>;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {

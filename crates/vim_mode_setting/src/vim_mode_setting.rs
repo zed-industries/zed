@@ -6,7 +6,7 @@
 
 use anyhow::Result;
 use gpui::App;
-use settings::{Settings, SettingsSources, SettingsUi};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 
 /// Initializes the `vim_mode_setting` crate.
 pub fn init(cx: &mut App) {
@@ -17,12 +17,11 @@ pub fn init(cx: &mut App) {
 /// Whether or not to enable Vim mode.
 ///
 /// Default: false
-#[derive(SettingsUi)]
+#[derive(SettingsUi, SettingsKey)]
+#[settings_key(key = "vim_mode")]
 pub struct VimModeSetting(pub bool);
 
 impl Settings for VimModeSetting {
-    const KEY: Option<&'static str> = Some("vim_mode");
-
     type FileContent = Option<bool>;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
@@ -44,12 +43,11 @@ impl Settings for VimModeSetting {
 /// Whether or not to enable Helix mode.
 ///
 /// Default: false
-#[derive(SettingsUi)]
+#[derive(SettingsUi, SettingsKey)]
+#[settings_key(key = "helix_mode")]
 pub struct HelixModeSetting(pub bool);
 
 impl Settings for HelixModeSetting {
-    const KEY: Option<&'static str> = Some("helix_mode");
-
     type FileContent = Option<bool>;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {

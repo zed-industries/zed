@@ -13,7 +13,7 @@ use gpui::{
 use refineable::Refineable;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
-use settings::{ParameterizedJsonSchema, Settings, SettingsSources, SettingsUi};
+use settings::{ParameterizedJsonSchema, Settings, SettingsKey, SettingsSources, SettingsUi};
 use std::sync::Arc;
 use util::ResultExt as _;
 use util::schemars::replace_subschema;
@@ -87,7 +87,8 @@ impl From<UiDensity> for String {
 }
 
 /// Customizable settings for the UI and theme system.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, SettingsKey)]
+#[settings_key()]
 pub struct ThemeSettings {
     /// The UI font size. Determines the size of text in the UI,
     /// as well as the size of a [gpui::Rems] unit.
@@ -365,7 +366,7 @@ impl IconThemeSelection {
 }
 
 /// Settings for rendering text in UI and text buffers.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
 pub struct ThemeSettingsContent {
     /// The default font size for text in the UI.
     #[serde(default)]
@@ -817,8 +818,6 @@ fn clamp_font_weight(weight: f32) -> FontWeight {
 }
 
 impl settings::Settings for ThemeSettings {
-    const KEY: Option<&'static str> = None;
-
     type FileContent = ThemeSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, cx: &mut App) -> Result<Self> {

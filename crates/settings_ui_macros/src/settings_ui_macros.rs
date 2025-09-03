@@ -212,3 +212,55 @@ fn generate_ui_item_body(
         },
     }
 }
+
+#[proc_macro_derive(SettingsKey, attributes(settings_key))]
+pub fn derive_settings_key(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    let name = &input.ident;
+
+    // Handle generic parameters if present
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+
+    let mut key = Option::<String>::None;
+    let mut fallback_key = Option::<String>::None;
+
+    for attr in &input.attrs {
+        if attr.path().is_ident("settings_key") {
+            attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("key") {
+                    if key.is_some() {
+                        return Err(meta.error("Only one 'group' path can be specified"));
+                    }
+                    meta.input.parse::<Token![=]>()?;
+                    let lit: LitStr = meta.input.parse()?;
+                    key = Some(lit.value());
+                } else if meta.path.is_ident("fallback_key") {
+                    if fallback_key.is_some() {
+                        return Err(meta.error("Only one 'fallback_key' can be specified"));
+                    }
+                    meta.input.parse::<Token![=]>()?;
+                    let lit: LitStr = meta.input.parse()?;
+                    fallback_key = Some(lit.value());
+                }
+                Ok(())
+            })
+            .unwrap_or_else(|e| panic!("in #[settings_key] attribute: {}", e));
+        }
+    }
+
+    let key = key.map_or_else(|| quote! {None}, |key| quote! {Some(#key)});
+    let fallback_key = fallback_key.map_or_else(
+        || quote! {None},
+        |fallback_key| quote! {Some(#fallback_key)},
+    );
+
+    let expanded = quote! {
+        impl #impl_generics settings::SettingsKey for #name #ty_generics #where_clause {
+            const KEY: Option<&'static str> = #key;
+
+            const FALLBACK_KEY: Option<&'static str> = #fallback_key;
+        };
+    };
+
+    proc_macro::TokenStream::from(expanded)
+}

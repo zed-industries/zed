@@ -6,7 +6,7 @@ use gpui::{AbsoluteLength, App, FontFallbacks, FontFeatures, FontWeight, Pixels,
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 
-use settings::{SettingsSources, SettingsUi};
+use settings::{SettingsKey, SettingsSources, SettingsUi};
 use std::path::PathBuf;
 use task::Shell;
 use theme::FontFamilyName;
@@ -24,7 +24,8 @@ pub struct Toolbar {
     pub breadcrumbs: bool,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, SettingsKey)]
+#[settings_key(key = "terminal")]
 pub struct TerminalSettings {
     pub shell: Shell,
     pub working_directory: WorkingDirectory,
@@ -135,7 +136,7 @@ pub enum ActivateScript {
     Pyenv,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
 pub struct TerminalSettingsContent {
     /// What shell to use when opening a terminal.
     ///
@@ -253,8 +254,6 @@ pub struct TerminalSettingsContent {
 }
 
 impl settings::Settings for TerminalSettings {
-    const KEY: Option<&'static str> = Some("terminal");
-
     type FileContent = TerminalSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {

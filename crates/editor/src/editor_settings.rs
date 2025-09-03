@@ -6,12 +6,13 @@ use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsUi, VsCodeSettings};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi, VsCodeSettings};
 use util::serde::default_true;
 
 /// Imports from the VSCode settings at
 /// https://code.visualstudio.com/docs/reference/default-settings
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, SettingsKey)]
+#[settings_key()]
 pub struct EditorSettings {
     pub cursor_blink: bool,
     pub cursor_shape: Option<CursorShape>,
@@ -62,7 +63,17 @@ pub struct EditorSettings {
 
 /// How to render LSP `textDocument/documentColor` colors in the editor.
 #[derive(
-    Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi,
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    SettingsUi,
+    SettingsKey,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum DocumentColorsRenderMode {
@@ -777,8 +788,6 @@ impl EditorSettings {
 }
 
 impl Settings for EditorSettings {
-    const KEY: Option<&'static str> = None;
-
     type FileContent = EditorSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
