@@ -941,10 +941,15 @@ impl Lines<'_> {
                 let mut chunk_lines = chunk_lines.rev().peekable();
                 if let Some(chunk_line) = chunk_lines.next() {
                     let done = chunk_lines.peek().is_some();
-                    self.current_line.insert_str(0, chunk_line);
                     if done {
                         self.chunks
                             .seek(self.chunks.offset() - chunk_line.len() - "\n".len());
+                        if self.current_line.is_empty() {
+                            return Some(chunk_line);
+                        }
+                    }
+                    self.current_line.insert_str(0, chunk_line);
+                    if done {
                         return Some(&self.current_line);
                     }
                 }
@@ -952,10 +957,15 @@ impl Lines<'_> {
                 let mut chunk_lines = chunk_lines.peekable();
                 if let Some(chunk_line) = chunk_lines.next() {
                     let done = chunk_lines.peek().is_some();
-                    self.current_line.push_str(chunk_line);
                     if done {
                         self.chunks
                             .seek(self.chunks.offset() + chunk_line.len() + "\n".len());
+                        if self.current_line.is_empty() {
+                            return Some(chunk_line);
+                        }
+                    }
+                    self.current_line.push_str(chunk_line);
+                    if done {
                         return Some(&self.current_line);
                     }
                 }
