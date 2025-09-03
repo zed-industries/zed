@@ -14,7 +14,6 @@ use crate::{
     session::running::memory_view::MemoryView,
 };
 
-use super::DebugPanelItemEvent;
 use anyhow::{Context as _, Result, anyhow};
 use breakpoint_list::BreakpointList;
 use collections::{HashMap, IndexMap};
@@ -1825,8 +1824,6 @@ impl RunningState {
         self.panes.invert_axies();
     }
 }
-
-impl EventEmitter<DebugPanelItemEvent> for RunningState {}
 
 impl Focusable for RunningState {
     fn focus_handle(&self, _: &App) -> FocusHandle {
