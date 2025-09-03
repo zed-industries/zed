@@ -733,7 +733,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                 replace_range: source_range.clone(),
                                 new_text,
                                 label: CodeLabel::plain(command.name.to_string(), None),
-                                documentation: Some(CompletionDocumentation::SingleLine(
+                                documentation: Some(CompletionDocumentation::MultiLinePlainText(
                                     command.description.into(),
                                 )),
                                 source: project::CompletionSource::Custom,
@@ -772,7 +772,9 @@ impl CompletionProvider for ContextPickerCompletionProvider {
 
                     Ok(vec![CompletionResponse {
                         completions,
-                        display_options: CompletionDisplayOptions::default(),
+                        display_options: CompletionDisplayOptions {
+                            dynamic_width: true,
+                        },
                         // Since this does its own filtering (see `filter_completions()` returns false),
                         // there is no benefit to computing whether this set of completions is incomplete.
                         is_incomplete: true,
@@ -864,7 +866,9 @@ impl CompletionProvider for ContextPickerCompletionProvider {
 
                     Ok(vec![CompletionResponse {
                         completions,
-                        display_options: CompletionDisplayOptions::default(),
+                        display_options: CompletionDisplayOptions {
+                            dynamic_width: true,
+                        },
                         // Since this does its own filtering (see `filter_completions()` returns false),
                         // there is no benefit to computing whether this set of completions is incomplete.
                         is_incomplete: true,
