@@ -831,11 +831,15 @@ impl<'a> MarkdownParser<'a> {
                         elements.push(ParsedMarkdownElement::Image(image));
                     }
                 } else if local_name!("p") == name.local {
+                    let style = MarkdownHighlight::Style(Self::markdown_style_from_html_styles(
+                        Self::extract_styles_from_attributes(attrs),
+                    ));
+
                     self.parse_paragraph(
                         source_range,
                         node,
                         &mut MarkdownParagraph::new(),
-                        &mut Vec::new(),
+                        &mut vec![style],
                         elements,
                     );
                 } else {
@@ -997,6 +1001,59 @@ impl<'a> MarkdownParser<'a> {
         }
 
         styles
+    }
+
+    fn markdown_style_from_html_styles(styles: HashMap<String, String>) -> MarkdownHighlightStyle {
+        let mut markdown_style = MarkdownHighlightStyle::default();
+
+        if let Some(text_decoration) = styles.get("text-decoration") {
+            match text_decoration.to_lowercase().as_str() {
+                "underline" => {
+                    markdown_style.underline = true;
+                }
+                "line-through" => {
+                    markdown_style.strikethrough = true;
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(font_style) = styles.get("font-style") {
+            match font_style.to_lowercase().as_str() {
+                "normal" => {
+                    markdown_style.emphasized = false;
+                    markdown_style.italic = false;
+                }
+                "italic" => {
+                    markdown_style.italic = true;
+                }
+                "oblique" => {
+                    markdown_style.emphasized = true;
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(font_weight) = styles.get("font-weight") {
+            match font_weight.to_lowercase().as_str() {
+                "normal" => {
+                    markdown_style.weight = FontWeight::NORMAL;
+                }
+                "bold" => {
+                    markdown_style.weight = FontWeight::BOLD;
+                }
+                "lighter" => {
+                    markdown_style.weight = FontWeight::THIN;
+                }
+                _ => {
+                    if let Some(weight) = font_weight.parse::<f32>().ok() {
+                        markdown_style.weight = FontWeight(weight);
+                    }
+                }
+            }
+        }
+
+        markdown_style
     }
 
     fn extract_image(
