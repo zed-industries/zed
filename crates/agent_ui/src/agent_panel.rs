@@ -3532,6 +3532,11 @@ impl AgentPanel {
     ) -> AnyElement {
         let message_with_header = format!("{}\n{}", header, message);
 
+        // Don't show Retry button for refusals
+        let is_refusal = header == "Request Refused";
+        let retry_button = self.render_retry_button(thread);
+        let copy_button = self.create_copy_button(message_with_header);
+
         Callout::new()
             .severity(Severity::Error)
             .icon(IconName::XCircle)
@@ -3540,8 +3545,8 @@ impl AgentPanel {
             .actions_slot(
                 h_flex()
                     .gap_0p5()
-                    .child(self.render_retry_button(thread))
-                    .child(self.create_copy_button(message_with_header)),
+                    .when(!is_refusal, |this| this.child(retry_button))
+                    .child(copy_button),
             )
             .dismiss_action(self.dismiss_error_button(thread, cx))
             .into_any_element()
