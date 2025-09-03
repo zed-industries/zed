@@ -4869,11 +4869,20 @@ mod tests {
             cx.read(|cx| cx.global::<SettingsStore>().raw_default_settings().clone());
 
         let all_paths = cx.read(|cx| settings_ui::SettingsUiTree::new(cx).all_paths(cx));
+        let mut failures = Vec::new();
         for path in all_paths {
-            let Some(_value) = settings_ui::read_settings_value_from_path(&default_json, &path)
-            else {
-                panic!("No default value found for path: {:?}", path.join("."));
-            };
+            if settings_ui::read_settings_value_from_path(&default_json, &path).is_none() {
+                failures.push(path);
+            }
+        }
+        if !failures.is_empty() {
+            panic!(
+                "No default value found for paths: {:#?}",
+                failures
+                    .into_iter()
+                    .map(|path| path.join("."))
+                    .collect::<Vec<_>>()
+            );
         }
     }
 }
