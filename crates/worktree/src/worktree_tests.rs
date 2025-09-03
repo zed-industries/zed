@@ -1925,6 +1925,128 @@ fn random_filename(rng: &mut impl Rng) -> String {
 }
 
 #[gpui::test]
+async fn test_rename_file_to_new_directory(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.as_fake().insert_tree(
+        "/root",
+        json!({
+            "test.txt": "content"
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    // Verify the file exists initially
+    tree.read_with(cx, |tree, _| {
+        assert!(tree.entry_for_path("test.txt").is_some());
+        assert!(tree.entry_for_path("dir").is_none());
+    });
+
+    // Rename test.txt to dir/test.txt (dir doesn't exist yet)
+    let entry_id = tree.read_with(cx, |tree, _| {
+        tree.entry_for_path("test.txt").unwrap().id
+    });
+
+    let _result = tree
+        .update(cx, |tree, cx| {
+            tree.rename_entry(entry_id, Path::new("dir/test.txt"), cx)
+        })
+        .await
+        .unwrap();
+
+    // Verify the rename succeeded and created the directory
+    tree.read_with(cx, |tree, _| {
+        assert!(tree.entry_for_path("test.txt").is_none());
+        assert!(tree.entry_for_path("dir").is_some());
+        assert!(tree.entry_for_path("dir/test.txt").is_some());
+    });
+
+    // Verify the file content is preserved
+    let loaded_file = tree
+        .update(cx, |tree, cx| {
+            tree.load_file("dir/test.txt".as_ref(), cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(loaded_file.text, "content");
+}
+
+#[gpui::test]
+async fn test_rename_file_to_new_directory_real_fs(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+    
+    let fs = Arc::new(RealFs::new(None, cx.executor()));
+    let temp_root = TempTree::new(json!({
+        "test.txt": "content"
+    }));
+
+    let tree = Worktree::local(
+        temp_root.path(),
+        true,
+        fs.clone(),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    // Verify the file exists initially
+    tree.read_with(cx, |tree, _| {
+        assert!(tree.entry_for_path("test.txt").is_some());
+        assert!(tree.entry_for_path("dir").is_none());
+    });
+
+    // Rename test.txt to dir/test.txt (dir doesn't exist yet)
+    let entry_id = tree.read_with(cx, |tree, _| {
+        tree.entry_for_path("test.txt").unwrap().id
+    });
+
+    let _result = tree
+        .update(cx, |tree, cx| {
+            tree.rename_entry(entry_id, Path::new("dir/test.txt"), cx)
+        })
+        .await
+        .unwrap();
+
+    // Verify the rename succeeded and created the directory
+    tree.read_with(cx, |tree, _| {
+        assert!(tree.entry_for_path("test.txt").is_none());
+        assert!(tree.entry_for_path("dir").is_some());
+        assert!(tree.entry_for_path("dir/test.txt").is_some());
+    });
+
+    // Verify the file content is preserved
+    let loaded_file = tree
+        .update(cx, |tree, cx| {
+            tree.load_file("dir/test.txt".as_ref(), cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(loaded_file.text, "content");
+
+    // Verify the directory was actually created on the filesystem
+    assert!(temp_root.path().join("dir").is_dir());
+    assert!(temp_root.path().join("dir/test.txt").is_file());
+}
+
+#[gpui::test]
 async fn test_private_single_file_worktree(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());

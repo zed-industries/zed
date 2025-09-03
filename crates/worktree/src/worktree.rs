@@ -1776,22 +1776,19 @@ impl LocalWorktree {
             absolutize_path
         };
 
-        if !is_root_entry {
-            // If the parent directory doesn't exist, create it
-            if let Some(parent) = abs_new_path.parent() {
-                if !parent.exists() {
-                    if let Err(e) = std::fs::create_dir_all(parent).with_context(|| {
-                        format!("Creating parent directory {parent:?} for {abs_new_path:?}")
-                    }) {
-                        return Task::ready(Err(anyhow!("error creating parent directory {parent:?}: {e}")));
-                    }
+        let fs = self.fs.clone();
+        let abs_path = abs_new_path.clone();
+        let case_sensitive = self.fs_case_sensitive;
+
+        let create_dirs = async |fs: &Arc<dyn Fs>, path: &Path| {
+            if let Some(parent) = path.parent() {
+                if !fs.is_dir(parent).await {
+                    fs.create_dir(parent).await.with_context(|| format!("Creating parent directory {parent:?}"))?;
                 }
             }
-        }
+            anyhow::Ok(())
+        };
 
-        let abs_path = abs_new_path.clone();
-        let fs = self.fs.clone();
-        let case_sensitive = self.fs_case_sensitive;
         let rename = cx.background_spawn(async move {
             let abs_old_path = abs_old_path?;
             let abs_new_path = abs_new_path;
@@ -1805,16 +1802,32 @@ impl LocalWorktree {
                 && abs_old_path != abs_new_path
                 && abs_old_path_lower == abs_new_path_lower;
 
-            fs.rename(
+            let rename_result = fs.rename(
                 &abs_old_path,
                 &abs_new_path,
                 fs::RenameOptions {
                     overwrite,
                     ..Default::default()
                 },
-            )
-            .await
-            .with_context(|| format!("Renaming {abs_old_path:?} into {abs_new_path:?}"))
+            ).await;
+
+            match rename_result {
+                Ok(()) => Ok(()),
+                Err(e) => {
+                    // Only retry if the error is because the directory does not exist, and only do it once
+                    // to avoid infinite loop.
+                    if let Some(err) = e.downcast_ref::<std::io::Error>() && err.kind() == std::io::ErrorKind::NotFound {
+                        if create_dirs(&fs, &abs_new_path).await.is_ok() {
+                            return fs.rename(&abs_old_path, &abs_new_path, fs::RenameOptions {
+                                overwrite,
+                                ..Default::default()
+                            }).await
+                            .with_context(|| format!("Renaming {abs_old_path:?} into {abs_new_path:?}"));
+                        }
+                    }
+                    Err(e)
+                }
+            }
         });
 
         cx.spawn(async move |this, cx| {
@@ -1832,6 +1845,11 @@ impl LocalWorktree {
                         );
                         Task::ready(Ok(this.root_entry().cloned()))
                     } else {
+                        // First refresh the parent directory (in case it was newly created)
+                        if let Some(parent) = new_path.parent() {
+                            let _ = local.refresh_entries_for_paths(vec![parent.into()]);
+                        }
+                        // Then refresh the new path
                         local.refresh_entry(new_path.clone(), Some(old_path), cx)
                     }
                 })?
