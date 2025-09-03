@@ -430,6 +430,7 @@ impl AcpThreadView {
             window,
             cx,
         );
+        self.available_commands.replace(vec![]);
         self.new_server_version_available.take();
         cx.notify();
     }
@@ -534,26 +535,6 @@ impl AcpThreadView {
                 match result {
                     Ok(thread) => {
                         let action_log = thread.read(cx).action_log().clone();
-
-                        let mut available_commands = thread.read(cx).available_commands();
-
-                        if connection
-                            .auth_methods()
-                            .iter()
-                            .any(|method| method.id.0.as_ref() == "claude-login")
-                        {
-                            available_commands.push(acp::AvailableCommand {
-                                name: "login".to_owned(),
-                                description: "Authenticate".to_owned(),
-                                input: None,
-                            });
-                            available_commands.push(acp::AvailableCommand {
-                                name: "logout".to_owned(),
-                                description: "Authenticate".to_owned(),
-                                input: None,
-                            });
-                        }
-                        this.available_commands.replace(available_commands);
 
                         this.prompt_capabilities
                             .set(thread.read(cx).prompt_capabilities());
@@ -1343,6 +1324,30 @@ impl AcpThreadView {
                     .set(thread.read(cx).prompt_capabilities());
             }
             AcpThreadEvent::TokenUsageUpdated => {}
+            AcpThreadEvent::AvailableCommandsUpdated(available_commands) => {
+                let mut available_commands = available_commands.clone();
+
+                if thread
+                    .read(cx)
+                    .connection()
+                    .auth_methods()
+                    .iter()
+                    .any(|method| method.id.0.as_ref() == "claude-login")
+                {
+                    available_commands.push(acp::AvailableCommand {
+                        name: "login".to_owned(),
+                        description: "Authenticate".to_owned(),
+                        input: None,
+                    });
+                    available_commands.push(acp::AvailableCommand {
+                        name: "logout".to_owned(),
+                        description: "Authenticate".to_owned(),
+                        input: None,
+                    });
+                }
+
+                self.available_commands.replace(available_commands);
+            }
         }
         cx.notify();
     }
@@ -5770,7 +5775,6 @@ pub(crate) mod tests {
                         audio: true,
                         embedded_context: true,
                     }),
-                    vec![],
                     cx,
                 )
             })))
@@ -5830,7 +5834,6 @@ pub(crate) mod tests {
                         audio: true,
                         embedded_context: true,
                     }),
-                    Vec::new(),
                     cx,
                 )
             })))

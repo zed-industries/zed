@@ -345,7 +345,6 @@ mod test_support {
                         audio: true,
                         embedded_context: true,
                     }),
-                    vec![],
                     cx,
                 )
             });
