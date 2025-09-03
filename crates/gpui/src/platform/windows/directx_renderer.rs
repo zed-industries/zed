@@ -206,7 +206,23 @@ impl DirectXRenderer {
         result.ok().context("Presenting swap chain failed")
     }
 
-    pub(crate) fn handle_device_lost(&mut self, devices: &DirectXDevices) -> Result<()> {
+    pub(crate) fn handle_device_lost(&mut self, devices: &DirectXDevices) {
+        try_to_recover_from_device_lost(
+            || {
+                self.handle_device_lost_impl(devices)
+                    .context("DirectXRenderer handling device lost")
+                    .log_err()
+            },
+            |_| {},
+            || {
+                log::error!(
+                    "DirectXRenderer failed to recover from device lost after multiple attempts"
+                );
+            },
+        );
+    }
+
+    fn handle_device_lost_impl(&mut self, devices: &DirectXDevices) -> Result<()> {
         let disable_direct_composition = self.direct_composition.is_none();
 
         unsafe {

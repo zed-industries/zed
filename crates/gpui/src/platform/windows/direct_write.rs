@@ -211,12 +211,8 @@ impl DirectWriteTextSystem {
         })))
     }
 
-    pub(crate) fn handle_gpu_lost(
-        &self,
-        device: &ID3D11Device,
-        device_context: &ID3D11DeviceContext,
-    ) {
-        self.0.write().handle_gpu_lost(device, device_context);
+    pub(crate) fn handle_gpu_lost(&self, devices: &DirectXDevices) {
+        self.0.write().handle_gpu_lost(devices);
     }
 }
 
@@ -1216,22 +1212,22 @@ impl DirectWriteState {
         result
     }
 
-    fn handle_gpu_lost(&mut self, device: &ID3D11Device, device_context: &ID3D11DeviceContext) {
-        let new_gpu_state = (0..5).find_map(|i| {
-            if i > 0 {
-                // Add a small delay before retrying
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
-            GPUState::new(device, device_context)
-                .context("Recreating GPU state for DirectWrite")
-                .log_err()
-        });
-
-        if let Some(gpu_state) = new_gpu_state {
-            self.components.gpu_state = gpu_state;
-        } else {
-            log::error!("Failed to recreate GPU state for DirectWrite after multiple attempts.");
-        }
+    fn handle_gpu_lost(&mut self, devices: &DirectXDevices) {
+        try_to_recover_from_device_lost(
+            || {
+                GPUState::new(&devices.device, &devices.device_context)
+                    .context("Recreating GPU state for DirectWrite")
+                    .log_err()
+            },
+            |gpu_state| {
+                self.components.gpu_state = gpu_state;
+            },
+            || {
+                log::error!(
+                    "Failed to recreate GPU state for DirectWrite after multiple attempts."
+                );
+            },
+        );
     }
 }
 

@@ -1172,20 +1172,7 @@ impl WindowsWindowInner {
         let mut lock = self.state.borrow_mut();
         let devices = lparam.0 as *const DirectXDevices;
         let devices = unsafe { &*devices };
-        let result = (0..5).find_map(|i| {
-            if i > 0 {
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
-            lock.renderer
-                .handle_device_lost(&devices)
-                .context("Renderer handling device lost")
-                .log_err()
-        });
-        if result.is_none() {
-            log::error!("Failed to recover DirectX devices after multiple attempts.");
-            // Do something here?
-            std::process::exit(1);
-        }
+        lock.renderer.handle_device_lost(&devices);
         Some(0)
     }
 

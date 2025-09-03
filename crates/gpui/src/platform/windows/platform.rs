@@ -772,7 +772,6 @@ impl WindowsPlatformInner {
     }
 
     fn handle_device_lost(&self, lparam: LPARAM) -> Option<isize> {
-        println!("Platform handling device lost");
         let mut lock = self.state.borrow_mut();
         let devices = lparam.0 as *const DirectXDevices;
         let devices = unsafe { &*devices };
@@ -1009,22 +1008,21 @@ fn handle_device_lost(
     // If we don't wait, the final drawing result will be blank.
     std::thread::sleep(std::time::Duration::from_millis(350));
 
-    let new_device = (0..5).find_map(|i| {
-        if i > 0 {
-            // Add a small delay before retrying
-            std::thread::sleep(std::time::Duration::from_millis(200));
-        }
-        DirectXDevices::new()
-            .context("Failed to recreate new DirectX devices after device lost")
-            .log_err()
-    });
-    if let Some(new_devices) = new_device {
-        *devices = new_devices;
-    } else {
-        log::error!("Failed to recover DirectX devices after multiple attempts.");
-        // Do something here?
-        // std::process::exit(1);
-    }
+    try_to_recover_from_device_lost(
+        || {
+            DirectXDevices::new()
+                .context("Failed to recreate new DirectX devices after device lost")
+                .log_err()
+        },
+        |new_devices| {
+            *devices = new_devices;
+        },
+        || {
+            log::error!("Failed to recover DirectX devices after multiple attempts.");
+            // Do something here?
+            // std::process::exit(1);
+        },
+    );
     log::info!("DirectX devices successfully recreated.");
 
     unsafe {
@@ -1037,11 +1035,10 @@ fn handle_device_lost(
     }
 
     if let Some(text_system) = text_system.upgrade() {
-        text_system.handle_gpu_lost(&devices.device, &devices.device_context);
+        text_system.handle_gpu_lost(&devices);
     }
     if let Some(all_windows) = all_windows.upgrade() {
         for window in all_windows.read().iter() {
-            println!("Sending device lost message to window {:?}", window.0);
             unsafe {
                 SendMessageW(
                     window.as_raw(),
@@ -1050,7 +1047,6 @@ fn handle_device_lost(
                     Some(LPARAM(devices as *const _ as _)),
                 );
             }
-            println!("Sent device lost message to window {:?}", window.0);
         }
         std::thread::sleep(std::time::Duration::from_millis(200));
         for window in all_windows.read().iter() {
@@ -1064,7 +1060,6 @@ fn handle_device_lost(
             }
         }
     }
-    println!("Sent device lost message to platform window.");
 }
 
 const PLATFORM_WINDOW_CLASS_NAME: PCWSTR = w!("Zed::PlatformWindow");
