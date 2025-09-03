@@ -913,9 +913,7 @@ impl TerminalPanel {
                                 cx,
                             );
 
-                            if !did_activate {
-                                anyhow::bail!("Failed retrieve terminal pane")
-                            }
+                            anyhow::ensure!(did_activate, "Failed to retrieve terminal pane");
 
                             anyhow::Ok(())
                         })??;
