@@ -98,6 +98,11 @@ However, the SDK doesn't yet expose everything needed to fully support all of th
 > Also note that some [first-party agent](./agent-panel.md) features don't yet work with Claude Code: editing past messages, resuming threads from history, checkpointing, and using the agent in SSH projects.
 > We hope to add these features in the near future.
 
+#### CLAUDE.md
+
+If you already have a `CLAUDE.md` file in your project (either at the root of it or in subdirectories), Claude Code in Zed will use it.
+If you don't have one, you can make Claude Code create one for you through through the `init` slash command.
+
 ## Add Custom Agents {#add-custom-agents}
 
 You can run any agent speaking ACP in Zed by changing your settings as follows:
