@@ -70,7 +70,7 @@ struct FontIdentifier {
 }
 
 impl DirectWriteComponent {
-    pub fn new(device: &ID3D11Device, device_context: &ID3D11DeviceContext) -> Result<Self> {
+    pub fn new(directx_devices: &DirectXDevices) -> Result<Self> {
         // todo: ideally this would not be a large unsafe block but smaller isolated ones for easier auditing
         unsafe {
             let factory: IDWriteFactory5 = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
@@ -85,7 +85,7 @@ impl DirectWriteComponent {
             let locale = String::from_utf16_lossy(&locale_vec);
             let text_renderer = Arc::new(TextRendererWrapper::new(&locale));
 
-            let gpu_state = GPUState::new(device, device_context)?;
+            let gpu_state = GPUState::new(directx_devices)?;
 
             Ok(DirectWriteComponent {
                 locale,
@@ -100,9 +100,9 @@ impl DirectWriteComponent {
 }
 
 impl GPUState {
-    fn new(device: &ID3D11Device, device_context: &ID3D11DeviceContext) -> Result<Self> {
-        let device = device.clone();
-        let device_context = device_context.clone();
+    fn new(directx_devices: &DirectXDevices) -> Result<Self> {
+        let device = directx_devices.device.clone();
+        let device_context = directx_devices.device_context.clone();
 
         let blend_state = {
             let mut blend_state = None;
@@ -183,8 +183,8 @@ impl GPUState {
 }
 
 impl DirectWriteTextSystem {
-    pub(crate) fn new(device: &ID3D11Device, device_context: &ID3D11DeviceContext) -> Result<Self> {
-        let components = DirectWriteComponent::new(device, device_context)?;
+    pub(crate) fn new(directx_devices: &DirectXDevices) -> Result<Self> {
+        let components = DirectWriteComponent::new(directx_devices)?;
         let system_font_collection = unsafe {
             let mut result = std::mem::zeroed();
             components
@@ -211,8 +211,8 @@ impl DirectWriteTextSystem {
         })))
     }
 
-    pub(crate) fn handle_gpu_lost(&self, devices: &DirectXDevices) {
-        self.0.write().handle_gpu_lost(devices);
+    pub(crate) fn handle_gpu_lost(&self, directx_devices: &DirectXDevices) {
+        self.0.write().handle_gpu_lost(directx_devices);
     }
 }
 
@@ -1212,10 +1212,10 @@ impl DirectWriteState {
         result
     }
 
-    fn handle_gpu_lost(&mut self, devices: &DirectXDevices) {
+    fn handle_gpu_lost(&mut self, directx_devices: &DirectXDevices) {
         try_to_recover_from_device_lost(
             || {
-                GPUState::new(&devices.device, &devices.device_context)
+                GPUState::new(directx_devices)
                     .context("Recreating GPU state for DirectWrite")
                     .log_err()
             },

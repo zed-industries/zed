@@ -71,11 +71,11 @@ struct PlatformCallbacks {
 }
 
 impl WindowsPlatformState {
-    fn new(devices: DirectXDevices) -> Self {
+    fn new(directx_devices: DirectXDevices) -> Self {
         let callbacks = PlatformCallbacks::default();
         let jump_list = JumpList::new();
         let current_cursor = load_cursor(CursorStyle::Arrow);
-        let directx_devices = ManuallyDrop::new(devices);
+        let directx_devices = ManuallyDrop::new(directx_devices);
 
         Self {
             callbacks,
@@ -92,12 +92,12 @@ impl WindowsPlatform {
         unsafe {
             OleInitialize(None).context("unable to initialize Windows OLE")?;
         }
-        let devices = DirectXDevices::new().context("Creating DirectX devices")?;
+        let directx_devices = DirectXDevices::new().context("Creating DirectX devices")?;
         let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
         let validation_number = rand::random::<usize>();
         let raw_window_handles = Arc::new(RwLock::new(SmallVec::new()));
         let text_system = Arc::new(
-            DirectWriteTextSystem::new(&devices.device, &devices.device_context)
+            DirectWriteTextSystem::new(&directx_devices)
                 .context("Error creating DirectWriteTextSystem")?,
         );
         register_platform_window_class();
@@ -106,7 +106,7 @@ impl WindowsPlatform {
             raw_window_handles: Arc::downgrade(&raw_window_handles),
             validation_number,
             main_receiver: Some(main_receiver),
-            devices: Some(devices),
+            directx_devices: Some(directx_devices),
         };
         let result = unsafe {
             CreateWindowExW(
@@ -186,7 +186,7 @@ impl WindowsPlatform {
             main_receiver: self.inner.main_receiver.clone(),
             platform_window_handle: self.handle,
             disable_direct_composition: self.disable_direct_composition,
-            devices: (*self.inner.state.borrow().directx_devices).clone(),
+            directx_devices: (*self.inner.state.borrow().directx_devices).clone(),
         }
     }
 
@@ -666,7 +666,9 @@ impl Platform for WindowsPlatform {
 
 impl WindowsPlatformInner {
     fn new(context: &mut PlatformWindowCreateContext) -> Result<Rc<Self>> {
-        let state = RefCell::new(WindowsPlatformState::new(context.devices.take().unwrap()));
+        let state = RefCell::new(WindowsPlatformState::new(
+            context.directx_devices.take().unwrap(),
+        ));
         Ok(Rc::new(Self {
             state,
             raw_window_handles: context.raw_window_handles.clone(),
@@ -773,12 +775,12 @@ impl WindowsPlatformInner {
 
     fn handle_device_lost(&self, lparam: LPARAM) -> Option<isize> {
         let mut lock = self.state.borrow_mut();
-        let devices = lparam.0 as *const DirectXDevices;
-        let devices = unsafe { &*devices };
+        let directx_devices = lparam.0 as *const DirectXDevices;
+        let directx_devices = unsafe { &*directx_devices };
         unsafe {
             ManuallyDrop::drop(&mut lock.directx_devices);
         }
-        lock.directx_devices = ManuallyDrop::new(devices.clone());
+        lock.directx_devices = ManuallyDrop::new(directx_devices.clone());
 
         Some(0)
     }
@@ -805,7 +807,7 @@ pub(crate) struct WindowCreationInfo {
     pub(crate) main_receiver: flume::Receiver<Runnable>,
     pub(crate) platform_window_handle: HWND,
     pub(crate) disable_direct_composition: bool,
-    pub(crate) devices: DirectXDevices,
+    pub(crate) directx_devices: DirectXDevices,
 }
 
 struct PlatformWindowCreateContext {
@@ -813,7 +815,7 @@ struct PlatformWindowCreateContext {
     raw_window_handles: std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
     validation_number: usize,
     main_receiver: Option<flume::Receiver<Runnable>>,
-    devices: Option<DirectXDevices>,
+    directx_devices: Option<DirectXDevices>,
 }
 
 fn open_target(target: impl AsRef<OsStr>) -> Result<()> {
@@ -998,7 +1000,7 @@ fn check_device_lost(device: &ID3D11Device) -> bool {
 }
 
 fn handle_device_lost(
-    devices: &mut DirectXDevices,
+    directx_devices: &mut DirectXDevices,
     platform_window: HWND,
     validation_number: usize,
     all_windows: &std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
@@ -1015,7 +1017,7 @@ fn handle_device_lost(
                 .log_err()
         },
         |new_devices| {
-            *devices = new_devices;
+            *directx_devices = new_devices;
         },
         || {
             log::error!("Failed to recover DirectX devices after multiple attempts.");
@@ -1031,12 +1033,12 @@ fn handle_device_lost(
             platform_window,
             WM_GPUI_GPU_DEVICE_LOST,
             Some(WPARAM(validation_number)),
-            Some(LPARAM(devices as *const _ as _)),
+            Some(LPARAM(directx_devices as *const _ as _)),
         );
     }
 
     if let Some(text_system) = text_system.upgrade() {
-        text_system.handle_gpu_lost(&devices);
+        text_system.handle_gpu_lost(&directx_devices);
     }
     if let Some(all_windows) = all_windows.upgrade() {
         for window in all_windows.read().iter() {
@@ -1045,7 +1047,7 @@ fn handle_device_lost(
                     window.as_raw(),
                     WM_GPUI_GPU_DEVICE_LOST,
                     Some(WPARAM(validation_number)),
-                    Some(LPARAM(devices as *const _ as _)),
+                    Some(LPARAM(directx_devices as *const _ as _)),
                 );
             }
         }

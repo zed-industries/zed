@@ -98,7 +98,7 @@ struct DirectComposition {
 
 impl DirectXRendererDevices {
     pub(crate) fn new(
-        devices: &DirectXDevices,
+        directx_devices: &DirectXDevices,
         disable_direct_composition: bool,
     ) -> Result<ManuallyDrop<Self>> {
         let DirectXDevices {
@@ -106,7 +106,7 @@ impl DirectXRendererDevices {
             dxgi_factory,
             device,
             device_context,
-        } = devices;
+        } = directx_devices;
         let dxgi_device = if disable_direct_composition {
             None
         } else {
@@ -126,14 +126,14 @@ impl DirectXRendererDevices {
 impl DirectXRenderer {
     pub(crate) fn new(
         hwnd: HWND,
-        devices: &DirectXDevices,
+        directx_devices: &DirectXDevices,
         disable_direct_composition: bool,
     ) -> Result<Self> {
         if disable_direct_composition {
             log::info!("Direct Composition is disabled.");
         }
 
-        let devices = DirectXRendererDevices::new(devices, disable_direct_composition)
+        let devices = DirectXRendererDevices::new(directx_devices, disable_direct_composition)
             .context("Creating DirectX devices")?;
         let atlas = Arc::new(DirectXAtlas::new(&devices.device, &devices.device_context));
 
@@ -206,10 +206,10 @@ impl DirectXRenderer {
         result.ok().context("Presenting swap chain failed")
     }
 
-    pub(crate) fn handle_device_lost(&mut self, devices: &DirectXDevices) {
+    pub(crate) fn handle_device_lost(&mut self, directx_devices: &DirectXDevices) {
         try_to_recover_from_device_lost(
             || {
-                self.handle_device_lost_impl(devices)
+                self.handle_device_lost_impl(directx_devices)
                     .context("DirectXRenderer handling device lost")
                     .log_err()
             },
@@ -224,7 +224,7 @@ impl DirectXRenderer {
         );
     }
 
-    fn handle_device_lost_impl(&mut self, devices: &DirectXDevices) -> Result<()> {
+    fn handle_device_lost_impl(&mut self, directx_devices: &DirectXDevices) -> Result<()> {
         let disable_direct_composition = self.direct_composition.is_none();
 
         unsafe {
@@ -247,7 +247,7 @@ impl DirectXRenderer {
             ManuallyDrop::drop(&mut self.devices);
         }
 
-        let devices = DirectXRendererDevices::new(devices, disable_direct_composition)
+        let devices = DirectXRendererDevices::new(directx_devices, disable_direct_composition)
             .context("Recreating DirectX devices")?;
         let resources = DirectXResources::new(
             &devices,
