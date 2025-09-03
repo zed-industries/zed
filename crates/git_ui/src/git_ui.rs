@@ -23,6 +23,7 @@ use zed_actions;
 use crate::{git_panel::GitPanel, text_diff_view::TextDiffView};
 
 mod askpass_modal;
+pub mod branch_diff;
 pub mod branch_picker;
 mod commit_modal;
 pub mod commit_tooltip;

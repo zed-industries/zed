@@ -309,6 +309,8 @@ pub trait GitRepository: Send + Sync {
     /// Also returns `None` for symlinks.
     fn load_committed_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>>;
 
+    fn merge_base(&self, commits: Vec<String>)
+
     fn set_index_text(
         &self,
         path: RepoPath,
@@ -360,6 +362,7 @@ pub trait GitRepository: Send + Sync {
     fn show(&self, commit: String) -> BoxFuture<'_, Result<CommitDetails>>;
 
     fn load_commit(&self, commit: String, cx: AsyncApp) -> BoxFuture<'_, Result<CommitDiff>>;
+    fn diff_to_commit(&self, commit: String, cx: AsyncApp) -> BoxFuture<'_, Result<CommitDiff>>;
     fn blame(&self, path: RepoPath, content: Rope) -> BoxFuture<'_, Result<crate::blame::Blame>>;
 
     /// Returns the absolute path to the repository. For worktrees, this will be the path to the
@@ -612,6 +615,108 @@ impl GitRepository for RealGitRepository {
                 })
             })
             .boxed()
+    }
+
+    fn diff_to_commit(&self, commit: String, cx: AsyncApp) -> BoxFuture<'_, Result<CommitDiff>> {
+        let Some(working_directory) = self.repository.lock().workdir().map(ToOwned::to_owned)
+        else {
+            return future::ready(Err(anyhow!("no working directory"))).boxed();
+        };
+        cx.background_spawn(async move {
+            let show_output = util::command::new_std_command("git")
+                .current_dir(&working_directory)
+                .args([
+                    "--no-optional-locks",
+                    "diff",
+                    "--format=%P",
+                    "-z",
+                    "--no-renames",
+                    "--name-status",
+                ])
+                .arg(&commit)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+                .context("starting git show process")?;
+
+            let show_stdout = String::from_utf8_lossy(&show_output.stdout);
+            let mut lines = show_stdout.split('\n');
+            let parent_sha = lines.next().unwrap().trim().trim_end_matches('\0');
+            let changes = parse_git_diff_name_status(lines.next().unwrap_or(""));
+
+            let mut cat_file_process = util::command::new_std_command("git")
+                .current_dir(&working_directory)
+                .args(["--no-optional-locks", "cat-file", "--batch=%(objectsize)"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .context("starting git cat-file process")?;
+
+            use std::io::Write as _;
+            let mut files = Vec::<CommitFile>::new();
+            let mut stdin = BufWriter::with_capacity(512, cat_file_process.stdin.take().unwrap());
+            let mut stdout = BufReader::new(cat_file_process.stdout.take().unwrap());
+            let mut info_line = String::new();
+            let mut newline = [b'\0'];
+            for (path, status_code) in changes {
+                match status_code {
+                    StatusCode::Modified => {
+                        // writeln!(&mut stdin, "{commit}:{}", path.display())?;
+                        writeln!(&mut stdin, "{parent_sha}:{}", path.display())?;
+                    }
+                    StatusCode::Added => {
+                        // writeln!(&mut stdin, "{commit}:{}", path.display())?;
+                    }
+                    StatusCode::Deleted => {
+                        writeln!(&mut stdin, "{parent_sha}:{}", path.display())?;
+                    }
+                    _ => continue,
+                }
+                stdin.flush()?;
+
+                info_line.clear();
+                stdout.read_line(&mut info_line)?;
+
+                let len = info_line.trim_end().parse().with_context(|| {
+                    format!("invalid object size output from cat-file {info_line}")
+                })?;
+                let mut text = vec![0; len];
+                stdout.read_exact(&mut text)?;
+                stdout.read_exact(&mut newline)?;
+                let text = String::from_utf8_lossy(&text).to_string();
+
+                let mut old_text = None;
+                // let mut new_text = None;
+                match status_code {
+                    StatusCode::Modified => {
+                        info_line.clear();
+                        stdout.read_line(&mut info_line)?;
+                        let len = info_line.trim_end().parse().with_context(|| {
+                            format!("invalid object size output from cat-file {}", info_line)
+                        })?;
+                        let mut parent_text = vec![0; len];
+                        stdout.read_exact(&mut parent_text)?;
+                        stdout.read_exact(&mut newline)?;
+                        old_text = Some(String::from_utf8_lossy(&parent_text).to_string());
+                        // new_text = Some(text);
+                    }
+                    // StatusCode::Added => new_text = Some(text),
+                    StatusCode::Deleted => old_text = Some(text),
+                    _ => continue,
+                }
+
+                files.push(CommitFile {
+                    path: path.into(),
+                    old_text,
+                    new_text: None,
+                })
+            }
+
+            Ok(CommitDiff { files })
+        })
+        .boxed()
     }
 
     fn load_commit(&self, commit: String, cx: AsyncApp) -> BoxFuture<'_, Result<CommitDiff>> {

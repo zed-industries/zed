@@ -3467,6 +3467,38 @@ impl Repository {
         })
     }
 
+    pub fn diff_to_commit(&mut self, commit: String) -> oneshot::Receiver<Result<CommitDiff>> {
+        let id = self.id;
+        self.send_job(None, move |git_repo, cx| async move {
+            match git_repo {
+                RepositoryState::Local { backend, .. } => backend.diff_to_commit(commit, cx).await,
+                RepositoryState::Remote {
+                    client, project_id, ..
+                } => {
+                    todo!();
+                    let response = client
+                        .request(proto::LoadCommitDiff {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                            commit,
+                        })
+                        .await?;
+                    Ok(CommitDiff {
+                        files: response
+                            .files
+                            .into_iter()
+                            .map(|file| CommitFile {
+                                path: Path::new(&file.path).into(),
+                                old_text: file.old_text,
+                                new_text: file.new_text,
+                            })
+                            .collect(),
+                    })
+                }
+            }
+        })
+    }
+
     fn buffer_store(&self, cx: &App) -> Option<Entity<BufferStore>> {
         Some(self.git_store.upgrade()?.read(cx).buffer_store.clone())
     }
