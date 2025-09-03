@@ -10978,7 +10978,7 @@ mod tests {
 
     #[gpui::test]
     fn test_merge_overlapping_ranges() {
-        let base_bg = Hsla::default();
+        let base_bg = Hsla::white();
         let color1 = Hsla {
             h: 0.0,
             s: 0.5,
@@ -11048,7 +11048,7 @@ mod tests {
 
     #[gpui::test]
     fn test_bg_segments_per_row() {
-        let base_bg = Hsla::default();
+        let base_bg = Hsla::white();
 
         // Case A: selection spans three display rows: row 1 [5, end), full row 2, row 3 [0, 7)
         {
