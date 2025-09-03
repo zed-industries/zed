@@ -10,11 +10,11 @@ use agent2::{DbThreadMetadata, HistoryEntry};
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use serde::{Deserialize, Serialize};
 use zed_actions::OpenBrowser;
-use zed_actions::agent::ReauthenticateAgent;
+use zed_actions::agent::{OpenClaudeCodeOnboardingModal, ReauthenticateAgent};
 
 use crate::acp::{AcpThreadHistory, ThreadHistoryEvent};
 use crate::agent_diff::AgentDiffThread;
-use crate::ui::AcpOnboardingModal;
+use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal};
 use crate::{
     AddContextServer, AgentDiffPane, ContinueThread, ContinueWithBurnMode,
     DeleteRecentlyOpenThread, ExpandMessageEditor, Follow, InlineAssistant, NewTextThread,
@@ -206,6 +206,9 @@ pub fn init(cx: &mut App) {
                 })
                 .register_action(|workspace, _: &OpenAcpOnboardingModal, window, cx| {
                     AcpOnboardingModal::toggle(workspace, window, cx)
+                })
+                .register_action(|workspace, _: &OpenClaudeCodeOnboardingModal, window, cx| {
+                    ClaudeCodeOnboardingModal::toggle(workspace, window, cx)
                 })
                 .register_action(|_workspace, _: &ResetOnboarding, window, cx| {
                     window.dispatch_action(workspace::RestoreBanner.boxed_clone(), cx);
