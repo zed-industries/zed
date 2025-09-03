@@ -263,7 +263,7 @@ impl RemoteConnection for SshRemoteConnection {
 
         let ssh_proxy_process = match self
             .socket
-            .ssh_command("sh", &["-lc", &start_proxy_command])
+            .ssh_command("sh", &["-c", &start_proxy_command])
             // IMPORTANT: we kill this process when we drop the task that uses it.
             .kill_on_drop(true)
             .spawn()
@@ -640,7 +640,7 @@ impl SshRemoteConnection {
                 .run_command(
                     "sh",
                     &[
-                        "-lc",
+                        "-c",
                         &shell_script!("mkdir -p {parent}", parent = parent.to_string().as_ref()),
                     ],
                 )
@@ -718,7 +718,7 @@ impl SshRemoteConnection {
                 .run_command(
                     "sh",
                     &[
-                        "-lc",
+                        "-c",
                         &shell_script!("mkdir -p {parent}", parent = parent.to_string().as_ref()),
                     ],
                 )
@@ -766,7 +766,7 @@ impl SshRemoteConnection {
                 dst_path = &dst_path.to_string()
             )
         };
-        self.socket.run_command("sh", &["-lc", &script]).await?;
+        self.socket.run_command("sh", &["-c", &script]).await?;
         Ok(())
     }
 
@@ -1123,7 +1123,7 @@ impl SshSocket {
     }
 
     async fn platform(&self) -> Result<RemotePlatform> {
-        let uname = self.run_command("sh", &["-lc", "uname -sm"]).await?;
+        let uname = self.run_command("sh", &["-c", "uname -sm"]).await?;
         let Some((os, arch)) = uname.split_once(" ") else {
             anyhow::bail!("unknown uname: {uname:?}")
         };
@@ -1154,7 +1154,7 @@ impl SshSocket {
     }
 
     async fn shell(&self) -> String {
-        match self.run_command("sh", &["-lc", "echo $SHELL"]).await {
+        match self.run_command("sh", &["-c", "echo $SHELL"]).await {
             Ok(shell) => shell.trim().to_owned(),
             Err(e) => {
                 log::error!("Failed to get shell: {e}");
