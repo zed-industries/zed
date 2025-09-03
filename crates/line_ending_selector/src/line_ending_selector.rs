@@ -1,16 +1,15 @@
 use editor::Editor;
-use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
-use gpui::{DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, WeakEntity, actions};
+use gpui::{DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity, actions};
 use language::{Buffer, LineEnding};
 use picker::{Picker, PickerDelegate};
 use project::Project;
 use std::sync::Arc;
-use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
+use ui::{ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
-use workspace::{ModalView, Workspace};
+use workspace::ModalView;
 
 actions!(
-    line_ending_selector,
+    line_ending,
     [
         /// Toggles the line ending selector modal.
         Toggle
@@ -26,32 +25,32 @@ pub struct LineEndingSelector {
 }
 
 impl LineEndingSelector {
-    fn register(
-        workspace: &mut Workspace,
-        _window: Option<&mut Window>,
-        _: &mut Context<Workspace>,
-    ) {
-        workspace.register_action(move |workspace, _: &Toggle, window, cx| {
-            Self::toggle(workspace, window, cx);
-        });
+    fn register(editor: &mut Editor, _window: Option<&mut Window>, cx: &mut Context<Editor>) {
+        let editor_handle = cx.weak_entity();
+        editor
+            .register_action(move |_: &Toggle, window, cx| {
+                Self::toggle(&editor_handle, window, cx);
+            })
+            .detach();
     }
 
-    fn toggle(
-        workspace: &mut Workspace,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) -> Option<()> {
-        let (_, buffer, _) = workspace
-            .active_item(cx)?
-            .act_as::<Editor>(cx)?
-            .read(cx)
-            .active_excerpt(cx)?;
-        let project = workspace.project().clone();
+    fn toggle(editor: &WeakEntity<Editor>, window: &mut Window, cx: &mut App) {
+        let Some((workspace, buffer)) = editor
+            .update(cx, |editor, cx| {
+                Some((editor.workspace()?, editor.active_excerpt(cx)?.1))
+            })
+            .ok()
+            .flatten()
+        else {
+            return;
+        };
 
-        workspace.toggle_modal(window, cx, move |window, cx| {
-            LineEndingSelector::new(buffer, project, window, cx)
-        });
-        Some(())
+        workspace.update(cx, |workspace, cx| {
+            let project = workspace.project().clone();
+            workspace.toggle_modal(window, cx, move |window, cx| {
+                LineEndingSelector::new(buffer, project, window, cx)
+            });
+        })
     }
 
     fn new(
@@ -63,7 +62,7 @@ impl LineEndingSelector {
         let line_ending = buffer.read(cx).line_ending();
         let delegate =
             LineEndingSelectorDelegate::new(cx.entity().downgrade(), buffer, project, line_ending);
-        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+        let picker = cx.new(|cx| Picker::nonsearchable_uniform_list(delegate, window, cx));
         Self { picker }
     }
 }
@@ -88,7 +87,7 @@ struct LineEndingSelectorDelegate {
     buffer: Entity<Buffer>,
     project: Entity<Project>,
     line_ending: LineEnding,
-    matches: Vec<StringMatch>,
+    matches: Vec<LineEnding>,
     selected_index: usize,
 }
 
@@ -104,7 +103,7 @@ impl LineEndingSelectorDelegate {
             buffer,
             project,
             line_ending,
-            matches: vec![],
+            matches: vec![LineEnding::Unix, LineEnding::Windows],
             selected_index: 0,
         }
     }
@@ -122,18 +121,16 @@ impl PickerDelegate for LineEndingSelectorDelegate {
     }
 
     fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        if let Some(mat) = self.matches.get(self.selected_index) {
-            let line_ending = match mat.candidate_id {
-                0 => LineEnding::Unix,
-                1 => LineEnding::Windows,
-                _ => unreachable!(),
-            };
+        if let Some(line_ending) = self.matches.get(self.selected_index) {
             self.buffer.update(cx, |this, cx| {
-                this.set_line_ending(line_ending, cx);
+                this.set_line_ending(*line_ending, cx);
             });
             let buffer = self.buffer.clone();
-            self.project.update(cx, |this, cx| {
-                this.save_buffer(buffer, cx).detach();
+            let project = self.project.clone();
+            cx.defer(move |cx| {
+                project.update(cx, |this, cx| {
+                    this.save_buffer(buffer, cx).detach();
+                });
             });
         }
         self.dismissed(window, cx);
@@ -160,53 +157,11 @@ impl PickerDelegate for LineEndingSelectorDelegate {
 
     fn update_matches(
         &mut self,
-        query: String,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
+        _query: String,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
     ) -> gpui::Task<()> {
-        let background = cx.background_executor().clone();
-        cx.spawn_in(window, async move |this, cx| {
-            let matches = if query.is_empty() {
-                vec![
-                    StringMatch {
-                        candidate_id: 0,
-                        string: "LF".to_string(),
-                        positions: Vec::new(),
-                        score: 0.0,
-                    },
-                    StringMatch {
-                        candidate_id: 1,
-                        string: "CRLF".to_string(),
-                        positions: Vec::new(),
-                        score: 0.0,
-                    },
-                ]
-            } else {
-                match_strings(
-                    &[
-                        StringMatchCandidate::new(0, "LF"),
-                        StringMatchCandidate::new(1, "CRLF"),
-                    ],
-                    &query,
-                    false,
-                    false,
-                    2,
-                    &Default::default(),
-                    background,
-                )
-                .await
-            };
-
-            this.update(cx, |this, cx| {
-                let delegate = &mut this.delegate;
-                delegate.matches = matches;
-                delegate.selected_index = delegate
-                    .selected_index
-                    .min(delegate.matches.len().saturating_sub(1));
-                cx.notify();
-            })
-            .log_err();
-        })
+        return Task::ready(());
     }
 
     fn render_match(
@@ -216,12 +171,7 @@ impl PickerDelegate for LineEndingSelectorDelegate {
         _: &mut Window,
         _: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let mat = &self.matches[ix];
-        let line_ending = match mat.candidate_id {
-            0 => LineEnding::Unix,
-            1 => LineEnding::Windows,
-            _ => unreachable!(),
-        };
+        let line_ending = self.matches[ix];
         let label = match line_ending {
             LineEnding::Unix => "LF",
             LineEnding::Windows => "CRLF",
@@ -231,7 +181,7 @@ impl PickerDelegate for LineEndingSelectorDelegate {
             .inset(true)
             .spacing(ListItemSpacing::Sparse)
             .toggle_state(selected)
-            .child(HighlightedLabel::new(label, mat.positions.clone()));
+            .child(Label::new(label));
 
         if self.line_ending == line_ending {
             list_item = list_item.end_slot(Icon::new(IconName::Check).color(Color::Muted));

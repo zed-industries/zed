@@ -9516,7 +9516,6 @@ name = "line_ending_selector"
 version = "0.1.0"
 dependencies = [
  "editor",
- "fuzzy",
  "gpui",
  "language",
  "picker",

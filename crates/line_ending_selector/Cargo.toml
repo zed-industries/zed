@@ -14,7 +14,6 @@ doctest = false
 
 [dependencies]
 editor.workspace = true
-fuzzy.workspace = true
 gpui.workspace = true
 language.workspace = true
 picker.workspace = true
