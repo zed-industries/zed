@@ -1,6 +1,11 @@
 use crate::{
-    SshConnectionOptions, protocol::MessageId, proxy::ProxyLaunchError,
-    transport::ssh::SshRemoteConnection,
+    SshConnectionOptions,
+    protocol::MessageId,
+    proxy::ProxyLaunchError,
+    transport::{
+        ssh::SshRemoteConnection,
+        wsl::{WslConnectionOptions, WslRemoteConnection},
+    },
 };
 use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
@@ -237,7 +242,7 @@ impl From<&State> for ConnectionState {
 pub struct RemoteClient {
     client: Arc<ChannelClient>,
     unique_identifier: String,
-    connection_options: SshConnectionOptions,
+    connection_options: RemoteConnectionOptions,
     path_style: PathStyle,
     state: Option<State>,
 }
@@ -287,6 +292,22 @@ impl RemoteClient {
     pub fn ssh(
         unique_identifier: ConnectionIdentifier,
         connection_options: SshConnectionOptions,
+        cancellation: oneshot::Receiver<()>,
+        delegate: Arc<dyn RemoteClientDelegate>,
+        cx: &mut App,
+    ) -> Task<Result<Option<Entity<Self>>>> {
+        Self::new(
+            unique_identifier,
+            RemoteConnectionOptions::Ssh(connection_options),
+            cancellation,
+            delegate,
+            cx,
+        )
+    }
+
+    pub fn new(
+        unique_identifier: ConnectionIdentifier,
+        connection_options: RemoteConnectionOptions,
         cancellation: oneshot::Receiver<()>,
         delegate: Arc<dyn RemoteClientDelegate>,
         cx: &mut App,
@@ -424,7 +445,7 @@ impl RemoteClient {
         }
 
         let state = self.state.take().unwrap();
-        let (attempts, ssh_connection, delegate) = match state {
+        let (attempts, remote_connection, delegate) = match state {
             State::Connected {
                 ssh_connection,
                 delegate,
@@ -482,15 +503,15 @@ impl RemoteClient {
                 };
             }
 
-            if let Err(error) = ssh_connection
+            if let Err(error) = remote_connection
                 .kill()
                 .await
                 .context("Failed to kill ssh process")
             {
-                failed!(error, attempts, ssh_connection, delegate);
+                failed!(error, attempts, remote_connection, delegate);
             };
 
-            let connection_options = ssh_connection.connection_options();
+            let connection_options = remote_connection.connection_options();
 
             let (outgoing_tx, outgoing_rx) = mpsc::unbounded::<Envelope>();
             let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
@@ -519,7 +540,7 @@ impl RemoteClient {
             {
                 Ok((ssh_connection, io_task)) => (ssh_connection, io_task),
                 Err(error) => {
-                    failed!(error, attempts, ssh_connection, delegate);
+                    failed!(error, attempts, remote_connection, delegate);
                 }
             };
 
@@ -751,6 +772,13 @@ impl RemoteClient {
         Some(self.state.as_ref()?.remote_connection()?.shell())
     }
 
+    pub fn shares_network_interface(&self) -> bool {
+        self.state
+            .as_ref()
+            .and_then(|state| state.remote_connection())
+            .map_or(false, |connection| connection.shares_network_interface())
+    }
+
     pub fn build_command(
         &self,
         program: Option<String>,
@@ -789,11 +817,7 @@ impl RemoteClient {
         self.client.clone().into()
     }
 
-    pub fn host(&self) -> String {
-        self.connection_options.host.clone()
-    }
-
-    pub fn connection_options(&self) -> SshConnectionOptions {
+    pub fn connection_options(&self) -> RemoteConnectionOptions {
         self.connection_options.clone()
     }
 
@@ -836,14 +860,14 @@ impl RemoteClient {
     pub fn fake_server(
         client_cx: &mut gpui::TestAppContext,
         server_cx: &mut gpui::TestAppContext,
-    ) -> (SshConnectionOptions, AnyProtoClient) {
+    ) -> (RemoteConnectionOptions, AnyProtoClient) {
         let port = client_cx
             .update(|cx| cx.default_global::<ConnectionPool>().connections.len() as u16 + 1);
-        let opts = SshConnectionOptions {
+        let opts = RemoteConnectionOptions::Ssh(SshConnectionOptions {
             host: "<fake>".to_string(),
             port: Some(port),
             ..Default::default()
-        };
+        });
         let (outgoing_tx, _) = mpsc::unbounded::<Envelope>();
         let (_, incoming_rx) = mpsc::unbounded::<Envelope>();
         let server_client =
@@ -874,13 +898,13 @@ impl RemoteClient {
 
     #[cfg(any(test, feature = "test-support"))]
     pub async fn fake_client(
-        opts: SshConnectionOptions,
+        opts: RemoteConnectionOptions,
         client_cx: &mut gpui::TestAppContext,
     ) -> Entity<Self> {
         let (_tx, rx) = oneshot::channel();
         client_cx
             .update(|cx| {
-                Self::ssh(
+                Self::new(
                     ConnectionIdentifier::setup(),
                     opts,
                     rx,
@@ -901,7 +925,7 @@ enum ConnectionPoolEntry {
 
 #[derive(Default)]
 struct ConnectionPool {
-    connections: HashMap<SshConnectionOptions, ConnectionPoolEntry>,
+    connections: HashMap<RemoteConnectionOptions, ConnectionPoolEntry>,
 }
 
 impl Global for ConnectionPool {}
@@ -909,7 +933,7 @@ impl Global for ConnectionPool {}
 impl ConnectionPool {
     pub fn connect(
         &mut self,
-        opts: SshConnectionOptions,
+        opts: RemoteConnectionOptions,
         delegate: &Arc<dyn RemoteClientDelegate>,
         cx: &mut App,
     ) -> Shared<Task<Result<Arc<dyn RemoteConnection>, Arc<anyhow::Error>>>> {
@@ -939,9 +963,18 @@ impl ConnectionPool {
                 let opts = opts.clone();
                 let delegate = delegate.clone();
                 async move |cx| {
-                    let connection = SshRemoteConnection::new(opts.clone(), delegate, cx)
-                        .await
-                        .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>);
+                    let connection = match opts.clone() {
+                        RemoteConnectionOptions::Ssh(opts) => {
+                            SshRemoteConnection::new(opts, delegate, cx)
+                                .await
+                                .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
+                        }
+                        RemoteConnectionOptions::Wsl(opts) => {
+                            WslRemoteConnection::new(opts, delegate, cx)
+                                .await
+                                .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
+                        }
+                    };
 
                     cx.update_global(|pool: &mut Self, _| {
                         debug_assert!(matches!(
@@ -972,6 +1005,33 @@ impl ConnectionPool {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum RemoteConnectionOptions {
+    Ssh(SshConnectionOptions),
+    Wsl(WslConnectionOptions),
+}
+
+impl RemoteConnectionOptions {
+    pub fn display_name(&self) -> String {
+        match self {
+            RemoteConnectionOptions::Ssh(opts) => opts.host.clone(),
+            RemoteConnectionOptions::Wsl(opts) => opts.distro_name.clone(),
+        }
+    }
+}
+
+impl From<SshConnectionOptions> for RemoteConnectionOptions {
+    fn from(opts: SshConnectionOptions) -> Self {
+        RemoteConnectionOptions::Ssh(opts)
+    }
+}
+
+impl From<WslConnectionOptions> for RemoteConnectionOptions {
+    fn from(opts: WslConnectionOptions) -> Self {
+        RemoteConnectionOptions::Wsl(opts)
+    }
+}
+
 #[async_trait(?Send)]
 pub(crate) trait RemoteConnection: Send + Sync {
     fn start_proxy(
@@ -992,6 +1052,9 @@ pub(crate) trait RemoteConnection: Send + Sync {
     ) -> Task<Result<()>>;
     async fn kill(&self) -> Result<()>;
     fn has_been_killed(&self) -> bool;
+    fn shares_network_interface(&self) -> bool {
+        false
+    }
     fn build_command(
         &self,
         program: Option<String>,
@@ -1000,7 +1063,7 @@ pub(crate) trait RemoteConnection: Send + Sync {
         working_dir: Option<String>,
         port_forward: Option<(u16, String, u16)>,
     ) -> Result<CommandTemplate>;
-    fn connection_options(&self) -> SshConnectionOptions;
+    fn connection_options(&self) -> RemoteConnectionOptions;
     fn path_style(&self) -> PathStyle;
     fn shell(&self) -> String;
 
@@ -1117,7 +1180,7 @@ impl ChannelClient {
                                     }
                                     Err(error) => {
                                         log::error!(
-                                            "{}:error handling message. type:{}, error:{}",
+                                            "{}:error handling message. type:{}, error:{:#}",
                                             this.name,
                                             type_name,
                                             format!("{error:#}").lines().fold(
@@ -1307,7 +1370,7 @@ impl ProtoClient for ChannelClient {
 #[cfg(any(test, feature = "test-support"))]
 mod fake {
     use super::{ChannelClient, RemoteClientDelegate, RemoteConnection, RemotePlatform};
-    use crate::{SshConnectionOptions, remote_client::CommandTemplate};
+    use crate::remote_client::{CommandTemplate, RemoteConnectionOptions};
     use anyhow::Result;
     use async_trait::async_trait;
     use collections::HashMap;
@@ -1326,7 +1389,7 @@ mod fake {
     use util::paths::{PathStyle, RemotePathBuf};
 
     pub(super) struct FakeRemoteConnection {
-        pub(super) connection_options: SshConnectionOptions,
+        pub(super) connection_options: RemoteConnectionOptions,
         pub(super) server_channel: Arc<ChannelClient>,
         pub(super) server_cx: SendableCx,
     }
@@ -1386,7 +1449,7 @@ mod fake {
             unreachable!()
         }
 
-        fn connection_options(&self) -> SshConnectionOptions {
+        fn connection_options(&self) -> RemoteConnectionOptions {
             self.connection_options.clone()
         }
 

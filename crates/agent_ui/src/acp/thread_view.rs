@@ -8,8 +8,8 @@ use action_log::ActionLog;
 use agent_client_protocol::{self as acp, PromptCapabilities};
 use agent_servers::{AgentServer, AgentServerDelegate, ClaudeCode};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode, NotifyWhenAgentWaiting};
-use agent2::{DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore};
-use anyhow::{Result, anyhow, bail};
+use agent2::{DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore, NativeAgentServer};
+use anyhow::{Context as _, Result, anyhow, bail};
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
 use client::zed_urls;
@@ -23,9 +23,9 @@ use gpui::{
     Action, Animation, AnimationExt, AnyView, App, BorderStyle, ClickEvent, ClipboardItem,
     CursorStyle, EdgesRefinement, ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, Length,
     ListOffset, ListState, MouseButton, PlatformDisplay, SharedString, Stateful, StyleRefinement,
-    Subscription, Task, TextStyle, TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity,
-    Window, WindowHandle, div, ease_in_out, linear_color_stop, linear_gradient, list, percentage,
-    point, prelude::*, pulsating_between,
+    Subscription, Task, TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, Window,
+    WindowHandle, div, ease_in_out, linear_color_stop, linear_gradient, list, point, prelude::*,
+    pulsating_between,
 };
 use language::Buffer;
 
@@ -35,7 +35,7 @@ use project::{Project, ProjectEntryId};
 use prompt_store::{PromptId, PromptStore};
 use rope::Point;
 use settings::{Settings as _, SettingsStore};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
@@ -45,8 +45,8 @@ use terminal_view::terminal_panel::TerminalPanel;
 use text::Anchor;
 use theme::ThemeSettings;
 use ui::{
-    Callout, Disclosure, Divider, DividerColor, ElevationIndex, KeyBinding, PopoverMenuHandle,
-    Scrollbar, ScrollbarState, SpinnerLabel, Tooltip, prelude::*,
+    Callout, CommonAnimationExt, Disclosure, Divider, DividerColor, ElevationIndex, KeyBinding,
+    PopoverMenuHandle, Scrollbar, ScrollbarState, SpinnerLabel, Tooltip, prelude::*,
 };
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use workspace::{CollaboratorId, Workspace};
@@ -284,6 +284,7 @@ pub struct AcpThreadView {
     should_be_following: bool,
     editing_message: Option<usize>,
     prompt_capabilities: Rc<Cell<PromptCapabilities>>,
+    available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
     is_loading_contents: bool,
     _cancel_task: Option<Task<()>>,
     _subscriptions: [Subscription; 3],
@@ -325,7 +326,7 @@ impl AcpThreadView {
         cx: &mut Context<Self>,
     ) -> Self {
         let prompt_capabilities = Rc::new(Cell::new(acp::PromptCapabilities::default()));
-        let prevent_slash_commands = agent.clone().downcast::<ClaudeCode>().is_some();
+        let available_commands = Rc::new(RefCell::new(vec![]));
 
         let placeholder = if agent.name() == "Zed Agent" {
             format!("Message the {} — @ to include context", agent.name())
@@ -340,8 +341,9 @@ impl AcpThreadView {
                 history_store.clone(),
                 prompt_store.clone(),
                 prompt_capabilities.clone(),
+                available_commands.clone(),
+                agent.name(),
                 placeholder,
-                prevent_slash_commands,
                 editor::EditorMode::AutoHeight {
                     min_lines: MIN_EDITOR_LINES,
                     max_lines: Some(MAX_EDITOR_LINES),
@@ -364,7 +366,8 @@ impl AcpThreadView {
                 history_store.clone(),
                 prompt_store.clone(),
                 prompt_capabilities.clone(),
-                prevent_slash_commands,
+                available_commands.clone(),
+                agent.name(),
             )
         });
 
@@ -396,11 +399,12 @@ impl AcpThreadView {
             editing_message: None,
             edits_expanded: false,
             plan_expanded: false,
+            prompt_capabilities,
+            available_commands,
             editor_expanded: false,
             should_be_following: false,
             history_store,
             hovered_recent_history_item: None,
-            prompt_capabilities,
             is_loading_contents: false,
             _subscriptions: subscriptions,
             _cancel_task: None,
@@ -416,6 +420,11 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ThreadState {
+        if !project.read(cx).is_local() && agent.clone().downcast::<NativeAgentServer>().is_none() {
+            return ThreadState::LoadError(LoadError::Other(
+                "External agents are not yet supported for remote projects.".into(),
+            ));
+        }
         let root_dir = project
             .read(cx)
             .visible_worktrees(cx)
@@ -423,7 +432,7 @@ impl AcpThreadView {
             .map(|worktree| worktree.read(cx).abs_path())
             .unwrap_or_else(|| paths::home_dir().as_path().into());
         let (tx, mut rx) = watch::channel("Loading…".into());
-        let delegate = AgentServerDelegate::new(project.clone(), tx);
+        let delegate = AgentServerDelegate::new(project.clone(), Some(tx));
 
         let connect_task = agent.connect(&root_dir, delegate, cx);
         let load_task = cx.spawn_in(window, async move |this, cx| {
@@ -485,6 +494,26 @@ impl AcpThreadView {
                 match result {
                     Ok(thread) => {
                         let action_log = thread.read(cx).action_log().clone();
+
+                        let mut available_commands = thread.read(cx).available_commands();
+
+                        if connection
+                            .auth_methods()
+                            .iter()
+                            .any(|method| method.id.0.as_ref() == "claude-login")
+                        {
+                            available_commands.push(acp::AvailableCommand {
+                                name: "login".to_owned(),
+                                description: "Authenticate".to_owned(),
+                                input: None,
+                            });
+                            available_commands.push(acp::AvailableCommand {
+                                name: "logout".to_owned(),
+                                description: "Authenticate".to_owned(),
+                                input: None,
+                            });
+                        }
+                        this.available_commands.replace(available_commands);
 
                         this.prompt_capabilities
                             .set(thread.read(cx).prompt_capabilities());
@@ -827,6 +856,9 @@ impl AcpThreadView {
                     self.expanded_tool_calls.insert(tool_call_id.clone());
                 }
             }
+            ViewEvent::TerminalMovedToBackground(tool_call_id) => {
+                self.expanded_tool_calls.remove(tool_call_id);
+            }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Focus) => {
                 if let Some(thread) = self.thread()
                     && let Some(AgentThreadEntry::UserMessage(user_message)) =
@@ -896,6 +928,40 @@ impl AcpThreadView {
 
         if thread.read(cx).status() != ThreadStatus::Idle {
             self.stop_current_and_send_new_message(window, cx);
+            return;
+        }
+
+        let text = self.message_editor.read(cx).text(cx);
+        let text = text.trim();
+        if text == "/login" || text == "/logout" {
+            let ThreadState::Ready { thread, .. } = &self.thread_state else {
+                return;
+            };
+
+            let connection = thread.read(cx).connection().clone();
+            if !connection
+                .auth_methods()
+                .iter()
+                .any(|method| method.id.0.as_ref() == "claude-login")
+            {
+                return;
+            };
+            let this = cx.weak_entity();
+            let agent = self.agent.clone();
+            window.defer(cx, |window, cx| {
+                Self::handle_auth_required(
+                    this,
+                    AuthRequired {
+                        description: None,
+                        provider_id: Some(language_model::ANTHROPIC_PROVIDER_ID),
+                    },
+                    agent,
+                    connection,
+                    window,
+                    cx,
+                );
+            });
+            cx.notify();
             return;
         }
 
@@ -1386,31 +1452,52 @@ impl AcpThreadView {
         let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
             return Task::ready(Ok(()));
         };
-        let project = workspace.read(cx).project().read(cx);
+        let project_entity = workspace.read(cx).project();
+        let project = project_entity.read(cx);
         let cwd = project.first_project_directory(cx);
         let shell = project.terminal_settings(&cwd, cx).shell.clone();
 
-        let terminal = terminal_panel.update(cx, |terminal_panel, cx| {
-            terminal_panel.spawn_task(
-                &SpawnInTerminal {
-                    id: task::TaskId("claude-login".into()),
-                    full_label: "claude /login".to_owned(),
-                    label: "claude /login".to_owned(),
-                    command: Some("claude".to_owned()),
-                    args: vec!["/login".to_owned()],
-                    command_label: "claude /login".to_owned(),
-                    cwd,
-                    use_new_terminal: true,
-                    allow_concurrent_runs: true,
-                    hide: task::HideStrategy::Always,
-                    shell,
-                    ..Default::default()
-                },
-                window,
-                cx,
-            )
-        });
-        cx.spawn(async move |cx| {
+        let delegate = AgentServerDelegate::new(project_entity.clone(), None);
+        let command = ClaudeCode::login_command(delegate, cx);
+
+        window.spawn(cx, async move |cx| {
+            let login_command = command.await?;
+            let command = login_command
+                .path
+                .to_str()
+                .with_context(|| format!("invalid login command: {:?}", login_command.path))?;
+            let command = shlex::try_quote(command)?;
+            let args = login_command
+                .arguments
+                .iter()
+                .map(|arg| {
+                    Ok(shlex::try_quote(arg)
+                        .context("Failed to quote argument")?
+                        .to_string())
+                })
+                .collect::<Result<Vec<_>>>()?;
+
+            let terminal = terminal_panel.update_in(cx, |terminal_panel, window, cx| {
+                terminal_panel.spawn_task(
+                    &SpawnInTerminal {
+                        id: task::TaskId("claude-login".into()),
+                        full_label: "claude /login".to_owned(),
+                        label: "claude /login".to_owned(),
+                        command: Some(command.into()),
+                        args,
+                        command_label: "claude /login".to_owned(),
+                        cwd,
+                        use_new_terminal: true,
+                        allow_concurrent_runs: true,
+                        hide: task::HideStrategy::Always,
+                        shell,
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                )
+            })?;
+
             let terminal = terminal.await?;
             let mut exit_status = terminal
                 .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
@@ -2397,7 +2484,8 @@ impl AcpThreadView {
 
         let output = terminal_data.output();
         let command_finished = output.is_some();
-        let truncated_output = output.is_some_and(|output| output.was_content_truncated);
+        let truncated_output =
+            output.is_some_and(|output| output.original_content_len > output.content.len());
         let output_line_count = output.map(|output| output.content_line_count).unwrap_or(0);
 
         let command_failed = command_finished
@@ -2485,13 +2573,7 @@ impl AcpThreadView {
                         Icon::new(IconName::ArrowCircle)
                             .size(IconSize::XSmall)
                             .color(Color::Info)
-                            .with_animation(
-                                "arrow-circle",
-                                Animation::new(Duration::from_secs(2)).repeat(),
-                                |icon, delta| {
-                                    icon.transform(Transformation::rotate(percentage(delta)))
-                                },
-                            ),
+                            .with_rotate_animation(2)
                     )
             })
             .child(
@@ -2519,14 +2601,14 @@ impl AcpThreadView {
             .when(truncated_output, |header| {
                 let tooltip = if let Some(output) = output {
                     if output_line_count + 10 > terminal::MAX_SCROLL_HISTORY_LINES {
-                        "Output exceeded terminal max lines and was \
-                            truncated, the model received the first 16 KB."
-                            .to_string()
+                       format!("Output exceeded terminal max lines and was \
+                            truncated, the model received the first {}.", format_file_size(output.content.len() as u64, true))
                     } else {
                         format!(
                             "Output is {} long, and to avoid unexpected token usage, \
-                                only 16 KB was sent back to the model.",
+                                only {} was sent back to the agent.",
                             format_file_size(output.original_content_len as u64, true),
+                             format_file_size(output.content.len() as u64, true)
                         )
                     }
                 } else {
@@ -2625,7 +2707,18 @@ impl AcpThreadView {
                         .bg(cx.theme().colors().editor_background)
                         .rounded_b_md()
                         .text_ui_sm(cx)
-                        .children(terminal_view.clone()),
+                        .h_full()
+                        .children(terminal_view.map(|terminal_view| {
+                            if terminal_view
+                                .read(cx)
+                                .content_mode(window, cx)
+                                .is_scrollable()
+                            {
+                                div().h_72().child(terminal_view).into_any_element()
+                            } else {
+                                terminal_view.into_any_element()
+                            }
+                        })),
                 )
             })
             .into_any()
@@ -2907,16 +3000,7 @@ impl AcpThreadView {
                                 Icon::new(IconName::ArrowCircle)
                                     .size(IconSize::Small)
                                     .color(Color::Muted)
-                                    .with_animation(
-                                        "arrow-circle",
-                                        Animation::new(Duration::from_secs(2)).repeat(),
-                                        |icon, delta| {
-                                            icon.transform(Transformation::rotate(percentage(
-                                                delta,
-                                            )))
-                                        },
-                                    )
-                                    .into_any_element(),
+                                    .with_rotate_animation(2)
                             )
                             .child(Label::new("Authenticating…").size(LabelSize::Small)),
                     )
@@ -3229,13 +3313,7 @@ impl AcpThreadView {
                             acp::PlanEntryStatus::InProgress => Icon::new(IconName::TodoProgress)
                                 .size(IconSize::Small)
                                 .color(Color::Accent)
-                                .with_animation(
-                                    "running",
-                                    Animation::new(Duration::from_secs(2)).repeat(),
-                                    |icon, delta| {
-                                        icon.transform(Transformation::rotate(percentage(delta)))
-                                    },
-                                )
+                                .with_rotate_animation(2)
                                 .into_any_element(),
                             acp::PlanEntryStatus::Completed => Icon::new(IconName::TodoComplete)
                                 .size(IconSize::Small)
@@ -4959,11 +5037,7 @@ fn loading_contents_spinner(size: IconSize) -> AnyElement {
     Icon::new(IconName::LoadCircle)
         .size(size)
         .color(Color::Accent)
-        .with_animation(
-            "load_context_circle",
-            Animation::new(Duration::from_secs(3)).repeat(),
-            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-        )
+        .with_rotate_animation(3)
         .into_any_element()
 }
 
@@ -5507,6 +5581,7 @@ pub(crate) mod tests {
                         audio: true,
                         embedded_context: true,
                     }),
+                    vec![],
                     cx,
                 )
             })))

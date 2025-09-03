@@ -186,6 +186,7 @@ impl Project {
                             )?,
                         },
                         None => match activation_script.clone() {
+                            #[cfg(not(target_os = "windows"))]
                             activation_script if !activation_script.is_empty() => {
                                 let activation_script = activation_script.join("; ");
                                 let to_run = if let Some(command) = spawn_task.command {
@@ -512,7 +513,7 @@ fn create_remote_shell(
     *env = command.env;
 
     log::debug!("Connecting to a remote server: {:?}", command.program);
-    let host = remote_client.read(cx).connection_options().host;
+    let host = remote_client.read(cx).connection_options().display_name();
 
     Ok(Shell::WithArguments {
         program: command.program,

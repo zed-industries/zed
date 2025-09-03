@@ -9,7 +9,7 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, RateLimiter,
+    LanguageModelToolChoice, LanguageModelToolSchemaFormat, RateLimiter,
 };
 use menu;
 use open_ai::{ResponseStreamEvent, stream_completion};
@@ -320,6 +320,10 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
 
     fn supports_tools(&self) -> bool {
         self.model.capabilities.tools
+    }
+
+    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
+        LanguageModelToolSchemaFormat::JsonSchemaSubset
     }
 
     fn supports_images(&self) -> bool {

@@ -19,7 +19,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
     InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation, SettingsSources,
-    SettingsStore, parse_json_with_comments, watch_config_file,
+    SettingsStore, SettingsUi, parse_json_with_comments, watch_config_file,
 };
 use std::{
     collections::BTreeMap,
@@ -36,7 +36,7 @@ use crate::{
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
 pub struct ProjectSettings {
     /// Configuration for language servers.
     ///
@@ -281,7 +281,17 @@ impl Default for GlobalLspSettings {
 }
 
 #[derive(
-    Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize, JsonSchema,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    SettingsUi,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum DiagnosticSeverity {
@@ -290,6 +300,7 @@ pub enum DiagnosticSeverity {
     Error,
     Warning,
     Info,
+    #[serde(alias = "all")]
     Hint,
 }
 

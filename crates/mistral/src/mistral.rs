@@ -286,12 +286,13 @@ pub enum Prediction {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "lowercase")]
 pub enum ToolChoice {
     Auto,
     Required,
     None,
     Any,
+    #[serde(untagged)]
     Function(ToolDefinition),
 }
 
