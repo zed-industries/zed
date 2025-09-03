@@ -363,11 +363,9 @@ pub async fn complete(
     api_url: &str,
     api_key: &str,
     request: Request,
+    beta_headers: String,
 ) -> Result<Response, AnthropicError> {
     let uri = format!("{api_url}/v1/messages");
-    let beta_headers = Model::from_id(&request.model)
-        .map(|model| model.beta_headers())
-        .unwrap_or_else(|_| Model::DEFAULT_BETA_HEADERS.join(","));
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
