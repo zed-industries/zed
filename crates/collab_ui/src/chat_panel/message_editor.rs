@@ -12,7 +12,9 @@ use language::{
     Anchor, Buffer, BufferSnapshot, CodeLabel, LanguageRegistry, ToOffset,
     language_settings::SoftWrap,
 };
-use project::{Completion, CompletionResponse, CompletionSource, search::SearchQuery};
+use project::{
+    Completion, CompletionDisplayOptions, CompletionResponse, CompletionSource, search::SearchQuery,
+};
 use settings::Settings;
 use std::{
     ops::Range,
@@ -275,6 +277,7 @@ impl MessageEditor {
 
         Task::ready(Ok(vec![CompletionResponse {
             completions: Vec::new(),
+            display_options: CompletionDisplayOptions::default(),
             is_incomplete: false,
         }]))
     }
@@ -317,6 +320,7 @@ impl MessageEditor {
 
         CompletionResponse {
             is_incomplete: completions.len() >= LIMIT,
+            display_options: CompletionDisplayOptions::default(),
             completions,
         }
     }

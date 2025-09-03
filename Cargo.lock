@@ -23,6 +23,7 @@ dependencies = [
  "language_model",
  "markdown",
  "parking_lot",
+ "portable-pty",
  "project",
  "prompt_store",
  "rand 0.8.5",
@@ -30,6 +31,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "task",
  "tempfile",
  "terminal",
  "ui",
@@ -37,6 +39,7 @@ dependencies = [
  "util",
  "uuid",
  "watch",
+ "which 6.0.3",
  "workspace-hack",
 ]
 
@@ -192,9 +195,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.1.1"
+version = "0.2.0-alpha.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b91e5ec3ce05e8effb2a7a3b7b1a587daa6699b9f98bbde6a35e44b8c6c773a"
+checksum = "603941db1d130ee275840c465b73a2312727d4acef97449550ccf033de71301f"
 dependencies = [
  "anyhow",
  "async-broadcast",
@@ -248,7 +251,6 @@ dependencies = [
  "open",
  "parking_lot",
  "paths",
- "portable-pty",
  "pretty_assertions",
  "project",
  "prompt_store",
@@ -274,7 +276,6 @@ dependencies = [
  "uuid",
  "watch",
  "web_search",
- "which 6.0.3",
  "workspace-hack",
  "worktree",
  "zlog",
@@ -9146,6 +9147,7 @@ dependencies = [
  "icons",
  "image",
  "log",
+ "open_router",
  "parking_lot",
  "proto",
  "schemars",
@@ -11221,6 +11223,8 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "strum 0.27.1",
+ "thiserror 2.0.12",
  "workspace-hack",
 ]
 
@@ -13744,7 +13748,6 @@ dependencies = [
  "regex",
  "reqwest 0.12.15 (git+https://github.com/zed-industries/reqwest.git?rev=951c770a32f1998d6e999cef3e59e0013e6c4415)",
  "serde",
- "smol",
  "tokio",
  "workspace-hack",
 ]
@@ -14920,6 +14923,7 @@ dependencies = [
 name = "settings_ui_macros"
 version = "0.1.0"
 dependencies = [
+ "heck 0.5.0",
  "proc-macro2",
  "quote",
  "syn 2.0.101",
@@ -20135,9 +20139,9 @@ dependencies = [
 
 [[package]]
 name = "xcb"
-version = "1.5.0"
+version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1e2f212bb1a92cd8caac8051b829a6582ede155ccb60b5d5908b81b100952be"
+checksum = "f07c123b796139bfe0603e654eaf08e132e52387ba95b252c78bad3640ba37ea"
 dependencies = [
  "bitflags 1.3.2",
  "libc",
@@ -20394,7 +20398,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.203.0"
+version = "0.204.0"
 dependencies = [
  "acp_tools",
  "activity_indicator",

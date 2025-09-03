@@ -1091,6 +1091,7 @@ impl AgentPanel {
         let workspace = self.workspace.clone();
         let project = self.project.clone();
         let fs = self.fs.clone();
+        let is_not_local = !self.project.read(cx).is_local();
 
         const LAST_USED_EXTERNAL_AGENT_KEY: &str = "agent_panel__last_used_external_agent";
 
@@ -1122,17 +1123,21 @@ impl AgentPanel {
                     agent
                 }
                 None => {
-                    cx.background_spawn(async move {
-                        KEY_VALUE_STORE.read_kvp(LAST_USED_EXTERNAL_AGENT_KEY)
-                    })
-                    .await
-                    .log_err()
-                    .flatten()
-                    .and_then(|value| {
-                        serde_json::from_str::<LastUsedExternalAgent>(&value).log_err()
-                    })
-                    .unwrap_or_default()
-                    .agent
+                    if is_not_local {
+                        ExternalAgent::NativeAgent
+                    } else {
+                        cx.background_spawn(async move {
+                            KEY_VALUE_STORE.read_kvp(LAST_USED_EXTERNAL_AGENT_KEY)
+                        })
+                        .await
+                        .log_err()
+                        .flatten()
+                        .and_then(|value| {
+                            serde_json::from_str::<LastUsedExternalAgent>(&value).log_err()
+                        })
+                        .unwrap_or_default()
+                        .agent
+                    }
                 }
             };
 
@@ -1911,13 +1916,17 @@ impl AgentPanel {
             AgentType::Gemini => {
                 self.external_thread(Some(crate::ExternalAgent::Gemini), None, None, window, cx)
             }
-            AgentType::ClaudeCode => self.external_thread(
-                Some(crate::ExternalAgent::ClaudeCode),
-                None,
-                None,
-                window,
-                cx,
-            ),
+            AgentType::ClaudeCode => {
+                self.selected_agent = AgentType::ClaudeCode;
+                self.serialize(cx);
+                self.external_thread(
+                    Some(crate::ExternalAgent::ClaudeCode),
+                    None,
+                    None,
+                    window,
+                    cx,
+                )
+            }
             AgentType::Custom { name, command } => self.external_thread(
                 Some(crate::ExternalAgent::Custom { name, command }),
                 None,
@@ -2523,6 +2532,9 @@ impl AgentPanel {
             .with_handle(self.new_thread_menu_handle.clone())
             .menu({
                 let workspace = self.workspace.clone();
+                let is_not_local = workspace
+                    .update(cx, |workspace, cx| !workspace.project().read(cx).is_local())
+                    .unwrap_or_default();
 
                 move |window, cx| {
                     telemetry::event!("New Thread Clicked");
@@ -2613,6 +2625,7 @@ impl AgentPanel {
                                     ContextMenuEntry::new("New Gemini CLI Thread")
                                         .icon(IconName::AiGemini)
                                         .icon_color(Color::Muted)
+                                        .disabled(is_not_local)
                                         .handler({
                                             let workspace = workspace.clone();
                                             move |window, cx| {
@@ -2639,6 +2652,7 @@ impl AgentPanel {
                                 menu.item(
                                     ContextMenuEntry::new("New Claude Code Thread")
                                         .icon(IconName::AiClaude)
+                                        .disabled(is_not_local)
                                         .icon_color(Color::Muted)
                                         .handler({
                                             let workspace = workspace.clone();
@@ -2671,6 +2685,7 @@ impl AgentPanel {
                                         ContextMenuEntry::new(format!("New {} Thread", agent_name))
                                             .icon(IconName::Terminal)
                                             .icon_color(Color::Muted)
+                                            .disabled(is_not_local)
                                             .handler({
                                                 let workspace = workspace.clone();
                                                 let agent_name = agent_name.clone();
@@ -3517,6 +3532,11 @@ impl AgentPanel {
     ) -> AnyElement {
         let message_with_header = format!("{}\n{}", header, message);
 
+        // Don't show Retry button for refusals
+        let is_refusal = header == "Request Refused";
+        let retry_button = self.render_retry_button(thread);
+        let copy_button = self.create_copy_button(message_with_header);
+
         Callout::new()
             .severity(Severity::Error)
             .icon(IconName::XCircle)
@@ -3525,8 +3545,8 @@ impl AgentPanel {
             .actions_slot(
                 h_flex()
                     .gap_0p5()
-                    .child(self.render_retry_button(thread))
-                    .child(self.create_copy_button(message_with_header)),
+                    .when(!is_refusal, |this| this.child(retry_button))
+                    .child(copy_button),
             )
             .dismiss_action(self.dismiss_error_button(thread, cx))
             .into_any_element()

@@ -1,12 +1,9 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use client::{Client, UserStore, zed_urls};
 use cloud_llm_client::Plan;
-use gpui::{
-    Animation, AnimationExt, AnyElement, App, Entity, IntoElement, RenderOnce, Transformation,
-    Window, percentage,
-};
-use ui::{Divider, Vector, VectorName, prelude::*};
+use gpui::{AnyElement, App, Entity, IntoElement, RenderOnce, Window};
+use ui::{CommonAnimationExt, Divider, Vector, VectorName, prelude::*};
 
 use crate::{SignInStatus, YoungAccountBanner, plan_definitions::PlanDefinitions};
 
@@ -147,11 +144,7 @@ impl RenderOnce for AiUpsellCard {
                     rems_from_px(72.),
                 )
                 .color(Color::Custom(cx.theme().colors().text_accent.alpha(0.3)))
-                .with_animation(
-                    "loading_stamp",
-                    Animation::new(Duration::from_secs(10)).repeat(),
-                    |this, delta| this.transform(Transformation::rotate(percentage(delta))),
-                ),
+                .with_rotate_animation(10),
             );
 
         let pro_trial_stamp = div()

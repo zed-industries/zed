@@ -6,7 +6,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources, SettingsUi};
 
-#[derive(Debug, Default, SettingsUi)]
+#[derive(Debug, Default)]
 pub struct JupyterSettings {
     pub kernel_selections: HashMap<String, String>,
 }
@@ -20,7 +20,7 @@ impl JupyterSettings {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Clone, Serialize, Deserialize, JsonSchema, Debug, SettingsUi)]
 pub struct JupyterSettingsContent {
     /// Default kernels to select for each language.
     ///

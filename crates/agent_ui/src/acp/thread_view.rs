@@ -8,7 +8,7 @@ use action_log::ActionLog;
 use agent_client_protocol::{self as acp, PromptCapabilities};
 use agent_servers::{AgentServer, AgentServerDelegate, ClaudeCode};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode, NotifyWhenAgentWaiting};
-use agent2::{DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore};
+use agent2::{DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore, NativeAgentServer};
 use anyhow::{Context as _, Result, anyhow, bail};
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
@@ -23,9 +23,9 @@ use gpui::{
     Action, Animation, AnimationExt, AnyView, App, BorderStyle, ClickEvent, ClipboardItem,
     CursorStyle, EdgesRefinement, ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, Length,
     ListOffset, ListState, MouseButton, PlatformDisplay, SharedString, Stateful, StyleRefinement,
-    Subscription, Task, TextStyle, TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity,
-    Window, WindowHandle, div, ease_in_out, linear_color_stop, linear_gradient, list, percentage,
-    point, prelude::*, pulsating_between,
+    Subscription, Task, TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, Window,
+    WindowHandle, div, ease_in_out, linear_color_stop, linear_gradient, list, point, prelude::*,
+    pulsating_between,
 };
 use language::Buffer;
 
@@ -35,7 +35,7 @@ use project::{Project, ProjectEntryId};
 use prompt_store::{PromptId, PromptStore};
 use rope::Point;
 use settings::{Settings as _, SettingsStore};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
@@ -45,8 +45,8 @@ use terminal_view::terminal_panel::TerminalPanel;
 use text::Anchor;
 use theme::ThemeSettings;
 use ui::{
-    Callout, Disclosure, Divider, DividerColor, ElevationIndex, KeyBinding, PopoverMenuHandle,
-    Scrollbar, ScrollbarState, SpinnerLabel, Tooltip, prelude::*,
+    Callout, CommonAnimationExt, Disclosure, Divider, DividerColor, ElevationIndex, KeyBinding,
+    PopoverMenuHandle, Scrollbar, ScrollbarState, SpinnerLabel, Tooltip, prelude::*,
 };
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use workspace::{CollaboratorId, Workspace};
@@ -78,10 +78,12 @@ enum ThreadFeedback {
     Negative,
 }
 
+#[derive(Debug)]
 enum ThreadError {
     PaymentRequired,
     ModelRequestLimitReached(cloud_llm_client::Plan),
     ToolUseLimitReached,
+    Refusal,
     AuthenticationRequired(SharedString),
     Other(SharedString),
 }
@@ -284,6 +286,7 @@ pub struct AcpThreadView {
     should_be_following: bool,
     editing_message: Option<usize>,
     prompt_capabilities: Rc<Cell<PromptCapabilities>>,
+    available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
     is_loading_contents: bool,
     _cancel_task: Option<Task<()>>,
     _subscriptions: [Subscription; 3],
@@ -325,7 +328,7 @@ impl AcpThreadView {
         cx: &mut Context<Self>,
     ) -> Self {
         let prompt_capabilities = Rc::new(Cell::new(acp::PromptCapabilities::default()));
-        let prevent_slash_commands = agent.clone().downcast::<ClaudeCode>().is_some();
+        let available_commands = Rc::new(RefCell::new(vec![]));
 
         let placeholder = if agent.name() == "Zed Agent" {
             format!("Message the {} — @ to include context", agent.name())
@@ -340,8 +343,9 @@ impl AcpThreadView {
                 history_store.clone(),
                 prompt_store.clone(),
                 prompt_capabilities.clone(),
+                available_commands.clone(),
+                agent.name(),
                 placeholder,
-                prevent_slash_commands,
                 editor::EditorMode::AutoHeight {
                     min_lines: MIN_EDITOR_LINES,
                     max_lines: Some(MAX_EDITOR_LINES),
@@ -364,7 +368,8 @@ impl AcpThreadView {
                 history_store.clone(),
                 prompt_store.clone(),
                 prompt_capabilities.clone(),
-                prevent_slash_commands,
+                available_commands.clone(),
+                agent.name(),
             )
         });
 
@@ -396,11 +401,12 @@ impl AcpThreadView {
             editing_message: None,
             edits_expanded: false,
             plan_expanded: false,
+            prompt_capabilities,
+            available_commands,
             editor_expanded: false,
             should_be_following: false,
             history_store,
             hovered_recent_history_item: None,
-            prompt_capabilities,
             is_loading_contents: false,
             _subscriptions: subscriptions,
             _cancel_task: None,
@@ -416,6 +422,11 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ThreadState {
+        if !project.read(cx).is_local() && agent.clone().downcast::<NativeAgentServer>().is_none() {
+            return ThreadState::LoadError(LoadError::Other(
+                "External agents are not yet supported for remote projects.".into(),
+            ));
+        }
         let root_dir = project
             .read(cx)
             .visible_worktrees(cx)
@@ -485,6 +496,26 @@ impl AcpThreadView {
                 match result {
                     Ok(thread) => {
                         let action_log = thread.read(cx).action_log().clone();
+
+                        let mut available_commands = thread.read(cx).available_commands();
+
+                        if connection
+                            .auth_methods()
+                            .iter()
+                            .any(|method| method.id.0.as_ref() == "claude-login")
+                        {
+                            available_commands.push(acp::AvailableCommand {
+                                name: "login".to_owned(),
+                                description: "Authenticate".to_owned(),
+                                input: None,
+                            });
+                            available_commands.push(acp::AvailableCommand {
+                                name: "logout".to_owned(),
+                                description: "Authenticate".to_owned(),
+                                input: None,
+                            });
+                        }
+                        this.available_commands.replace(available_commands);
 
                         this.prompt_capabilities
                             .set(thread.read(cx).prompt_capabilities());
@@ -827,6 +858,9 @@ impl AcpThreadView {
                     self.expanded_tool_calls.insert(tool_call_id.clone());
                 }
             }
+            ViewEvent::TerminalMovedToBackground(tool_call_id) => {
+                self.expanded_tool_calls.remove(tool_call_id);
+            }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Focus) => {
                 if let Some(thread) = self.thread()
                     && let Some(AgentThreadEntry::UserMessage(user_message)) =
@@ -896,6 +930,40 @@ impl AcpThreadView {
 
         if thread.read(cx).status() != ThreadStatus::Idle {
             self.stop_current_and_send_new_message(window, cx);
+            return;
+        }
+
+        let text = self.message_editor.read(cx).text(cx);
+        let text = text.trim();
+        if text == "/login" || text == "/logout" {
+            let ThreadState::Ready { thread, .. } = &self.thread_state else {
+                return;
+            };
+
+            let connection = thread.read(cx).connection().clone();
+            if !connection
+                .auth_methods()
+                .iter()
+                .any(|method| method.id.0.as_ref() == "claude-login")
+            {
+                return;
+            };
+            let this = cx.weak_entity();
+            let agent = self.agent.clone();
+            window.defer(cx, |window, cx| {
+                Self::handle_auth_required(
+                    this,
+                    AuthRequired {
+                        description: None,
+                        provider_id: Some(language_model::ANTHROPIC_PROVIDER_ID),
+                    },
+                    agent,
+                    connection,
+                    window,
+                    cx,
+                );
+            });
+            cx.notify();
             return;
         }
 
@@ -1188,6 +1256,14 @@ impl AcpThreadView {
                     window,
                     cx,
                 );
+            }
+            AcpThreadEvent::Refusal => {
+                self.thread_retry_status.take();
+                self.thread_error = Some(ThreadError::Refusal);
+                let model_or_agent_name = self.get_current_model_name(cx);
+                let notification_message =
+                    format!("{} refused to respond to this request", model_or_agent_name);
+                self.notify_with_sound(&notification_message, IconName::Warning, window, cx);
             }
             AcpThreadEvent::Error => {
                 self.thread_retry_status.take();
@@ -2418,7 +2494,8 @@ impl AcpThreadView {
 
         let output = terminal_data.output();
         let command_finished = output.is_some();
-        let truncated_output = output.is_some_and(|output| output.was_content_truncated);
+        let truncated_output =
+            output.is_some_and(|output| output.original_content_len > output.content.len());
         let output_line_count = output.map(|output| output.content_line_count).unwrap_or(0);
 
         let command_failed = command_finished
@@ -2506,13 +2583,7 @@ impl AcpThreadView {
                         Icon::new(IconName::ArrowCircle)
                             .size(IconSize::XSmall)
                             .color(Color::Info)
-                            .with_animation(
-                                "arrow-circle",
-                                Animation::new(Duration::from_secs(2)).repeat(),
-                                |icon, delta| {
-                                    icon.transform(Transformation::rotate(percentage(delta)))
-                                },
-                            ),
+                            .with_rotate_animation(2)
                     )
             })
             .child(
@@ -2540,14 +2611,14 @@ impl AcpThreadView {
             .when(truncated_output, |header| {
                 let tooltip = if let Some(output) = output {
                     if output_line_count + 10 > terminal::MAX_SCROLL_HISTORY_LINES {
-                        "Output exceeded terminal max lines and was \
-                            truncated, the model received the first 16 KB."
-                            .to_string()
+                       format!("Output exceeded terminal max lines and was \
+                            truncated, the model received the first {}.", format_file_size(output.content.len() as u64, true))
                     } else {
                         format!(
                             "Output is {} long, and to avoid unexpected token usage, \
-                                only 16 KB was sent back to the model.",
+                                only {} was sent back to the agent.",
                             format_file_size(output.original_content_len as u64, true),
+                             format_file_size(output.content.len() as u64, true)
                         )
                     }
                 } else {
@@ -2646,7 +2717,18 @@ impl AcpThreadView {
                         .bg(cx.theme().colors().editor_background)
                         .rounded_b_md()
                         .text_ui_sm(cx)
-                        .children(terminal_view.clone()),
+                        .h_full()
+                        .children(terminal_view.map(|terminal_view| {
+                            if terminal_view
+                                .read(cx)
+                                .content_mode(window, cx)
+                                .is_scrollable()
+                            {
+                                div().h_72().child(terminal_view).into_any_element()
+                            } else {
+                                terminal_view.into_any_element()
+                            }
+                        })),
                 )
             })
             .into_any()
@@ -2928,16 +3010,7 @@ impl AcpThreadView {
                                 Icon::new(IconName::ArrowCircle)
                                     .size(IconSize::Small)
                                     .color(Color::Muted)
-                                    .with_animation(
-                                        "arrow-circle",
-                                        Animation::new(Duration::from_secs(2)).repeat(),
-                                        |icon, delta| {
-                                            icon.transform(Transformation::rotate(percentage(
-                                                delta,
-                                            )))
-                                        },
-                                    )
-                                    .into_any_element(),
+                                    .with_rotate_animation(2)
                             )
                             .child(Label::new("Authenticating…").size(LabelSize::Small)),
                     )
@@ -3250,13 +3323,7 @@ impl AcpThreadView {
                             acp::PlanEntryStatus::InProgress => Icon::new(IconName::TodoProgress)
                                 .size(IconSize::Small)
                                 .color(Color::Accent)
-                                .with_animation(
-                                    "running",
-                                    Animation::new(Duration::from_secs(2)).repeat(),
-                                    |icon, delta| {
-                                        icon.transform(Transformation::rotate(percentage(delta)))
-                                    },
-                                )
+                                .with_rotate_animation(2)
                                 .into_any_element(),
                             acp::PlanEntryStatus::Completed => Icon::new(IconName::TodoComplete)
                                 .size(IconSize::Small)
@@ -4683,6 +4750,7 @@ impl AcpThreadView {
     fn render_thread_error(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
         let content = match self.thread_error.as_ref()? {
             ThreadError::Other(error) => self.render_any_thread_error(error.clone(), cx),
+            ThreadError::Refusal => self.render_refusal_error(cx),
             ThreadError::AuthenticationRequired(error) => {
                 self.render_authentication_required_error(error.clone(), cx)
             }
@@ -4696,6 +4764,43 @@ impl AcpThreadView {
         };
 
         Some(div().child(content))
+    }
+
+    fn get_current_model_name(&self, cx: &App) -> SharedString {
+        // For native agent (Zed Agent), use the specific model name (e.g., "Claude 3.5 Sonnet")
+        // For ACP agents, use the agent name (e.g., "Claude Code", "Gemini CLI")
+        // This provides better clarity about what refused the request
+        if self
+            .agent
+            .clone()
+            .downcast::<agent2::NativeAgentServer>()
+            .is_some()
+        {
+            // Native agent - use the model name
+            self.model_selector
+                .as_ref()
+                .and_then(|selector| selector.read(cx).active_model_name(cx))
+                .unwrap_or_else(|| SharedString::from("The model"))
+        } else {
+            // ACP agent - use the agent name (e.g., "Claude Code", "Gemini CLI")
+            self.agent.name()
+        }
+    }
+
+    fn render_refusal_error(&self, cx: &mut Context<'_, Self>) -> Callout {
+        let model_or_agent_name = self.get_current_model_name(cx);
+        let refusal_message = format!(
+            "{} refused to respond to this prompt. This can happen when a model believes the prompt violates its content policy or safety guidelines, so rephrasing it can sometimes address the issue.",
+            model_or_agent_name
+        );
+
+        Callout::new()
+            .severity(Severity::Error)
+            .title("Request Refused")
+            .icon(IconName::XCircle)
+            .description(refusal_message.clone())
+            .actions_slot(self.create_copy_button(&refusal_message))
+            .dismiss_action(self.dismiss_error_button(cx))
     }
 
     fn render_any_thread_error(&self, error: SharedString, cx: &mut Context<'_, Self>) -> Callout {
@@ -4980,11 +5085,7 @@ fn loading_contents_spinner(size: IconSize) -> AnyElement {
     Icon::new(IconName::LoadCircle)
         .size(size)
         .color(Color::Accent)
-        .with_animation(
-            "load_context_circle",
-            Animation::new(Duration::from_secs(3)).repeat(),
-            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-        )
+        .with_rotate_animation(3)
         .into_any_element()
 }
 
@@ -5330,6 +5431,33 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_refusal_handling(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (thread_view, cx) =
+            setup_thread_view(StubAgentServer::new(RefusalAgentConnection), cx).await;
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Do something harmful", window, cx);
+        });
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.send(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Check that the refusal error is set
+        thread_view.read_with(cx, |thread_view, _cx| {
+            assert!(
+                matches!(thread_view.thread_error, Some(ThreadError::Refusal)),
+                "Expected refusal error to be set"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_notification_for_tool_authorization(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -5528,6 +5656,7 @@ pub(crate) mod tests {
                         audio: true,
                         embedded_context: true,
                     }),
+                    vec![],
                     cx,
                 )
             })))
@@ -5552,6 +5681,68 @@ pub(crate) mod tests {
             _cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {
             Task::ready(Err(anyhow::anyhow!("Error prompting")))
+        }
+
+        fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {
+            unimplemented!()
+        }
+
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+            self
+        }
+    }
+
+    /// Simulates a model which always returns a refusal response
+    #[derive(Clone)]
+    struct RefusalAgentConnection;
+
+    impl AgentConnection for RefusalAgentConnection {
+        fn new_thread(
+            self: Rc<Self>,
+            project: Entity<Project>,
+            _cwd: &Path,
+            cx: &mut gpui::App,
+        ) -> Task<gpui::Result<Entity<AcpThread>>> {
+            Task::ready(Ok(cx.new(|cx| {
+                let action_log = cx.new(|_| ActionLog::new(project.clone()));
+                AcpThread::new(
+                    "RefusalAgentConnection",
+                    self,
+                    project,
+                    action_log,
+                    SessionId("test".into()),
+                    watch::Receiver::constant(acp::PromptCapabilities {
+                        image: true,
+                        audio: true,
+                        embedded_context: true,
+                    }),
+                    Vec::new(),
+                    cx,
+                )
+            })))
+        }
+
+        fn auth_methods(&self) -> &[acp::AuthMethod] {
+            &[]
+        }
+
+        fn authenticate(
+            &self,
+            _method_id: acp::AuthMethodId,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<()>> {
+            unimplemented!()
+        }
+
+        fn prompt(
+            &self,
+            _id: Option<acp_thread::UserMessageId>,
+            _params: acp::PromptRequest,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<acp::PromptResponse>> {
+            Task::ready(Ok(acp::PromptResponse {
+                stop_reason: acp::StopReason::Refusal,
+            }))
         }
 
         fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {

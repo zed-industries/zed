@@ -84,13 +84,16 @@ struct Args {
     /// Run zed in dev-server mode
     #[arg(long)]
     dev_server_token: Option<String>,
-    /// The username and WSL distribution to use when opening paths. ,If not specified,
+    /// The username and WSL distribution to use when opening paths. If not specified,
     /// Zed will attempt to open the paths directly.
     ///
     /// The username is optional, and if not specified, the default user for the distribution
     /// will be used.
     ///
-    /// Example: `me@Ubuntu` or `Ubuntu` for default distribution.
+    /// Example: `me@Ubuntu` or `Ubuntu`.
+    ///
+    /// WARN: You should not fill in this field by hand.
+    #[cfg(target_os = "windows")]
     #[arg(long, value_name = "USER@DISTRO")]
     wsl: Option<String>,
     /// Not supported in Zed CLI, only supported on Zed binary
@@ -301,6 +304,11 @@ fn main() -> Result<()> {
         ]);
     }
 
+    #[cfg(target_os = "windows")]
+    let wsl = args.wsl.as_ref();
+    #[cfg(not(target_os = "windows"))]
+    let wsl = None;
+
     for path in args.paths_with_position.iter() {
         if path.starts_with("zed://")
             || path.starts_with("http://")
@@ -319,7 +327,7 @@ fn main() -> Result<()> {
             paths.push(tmp_file.path().to_string_lossy().to_string());
             let (tmp_file, _) = tmp_file.keep()?;
             anonymous_fd_tmp_files.push((file, tmp_file));
-        } else if let Some(wsl) = &args.wsl {
+        } else if let Some(wsl) = wsl {
             urls.push(format!("file://{}", parse_path_in_wsl(path, wsl)?));
         } else {
             paths.push(parse_path_with_position(path)?);
@@ -338,11 +346,16 @@ fn main() -> Result<()> {
             let (_, handshake) = server.accept().context("Handshake after Zed spawn")?;
             let (tx, rx) = (handshake.requests, handshake.responses);
 
+            #[cfg(target_os = "windows")]
+            let wsl = args.wsl;
+            #[cfg(not(target_os = "windows"))]
+            let wsl = None;
+
             tx.send(CliRequest::Open {
                 paths,
                 urls,
                 diff_paths,
-                wsl: args.wsl,
+                wsl,
                 wait: args.wait,
                 open_new_workspace,
                 env,

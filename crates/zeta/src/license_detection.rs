@@ -202,20 +202,13 @@ fn check_pattern(pattern: &[PatternPart], input: &str) -> bool {
             match_any_chars.end += part.match_any_chars.end;
             continue;
         }
-        let mut matched = false;
-        for skip_count in match_any_chars.start..=match_any_chars.end {
-            let end_ix = input_ix.saturating_sub(skip_count);
-            if end_ix < part.text.len() {
-                break;
-            }
-            if input[..end_ix].ends_with(&part.text) {
-                matched = true;
-                input_ix = end_ix - part.text.len();
-                match_any_chars = part.match_any_chars.clone();
-                break;
-            }
-        }
-        if !matched && !part.optional {
+        let search_range_start = input_ix.saturating_sub(match_any_chars.end + part.text.len());
+        let search_range_end = input_ix.saturating_sub(match_any_chars.start);
+        let found_ix = &input[search_range_start..search_range_end].rfind(&part.text);
+        if let Some(found_ix) = found_ix {
+            input_ix = search_range_start + found_ix;
+            match_any_chars = part.match_any_chars.clone();
+        } else if !part.optional {
             log::trace!(
                 "Failed to match pattern `...{}` against input `...{}`",
                 &part.text[part.text.len().saturating_sub(128)..],

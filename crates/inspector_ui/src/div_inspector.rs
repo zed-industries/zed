@@ -14,7 +14,10 @@ use language::{
     DiagnosticSeverity, LanguageServerId, Point, ToOffset as _, ToPoint as _,
 };
 use project::lsp_store::CompletionDocumentation;
-use project::{Completion, CompletionResponse, CompletionSource, Project, ProjectPath};
+use project::{
+    Completion, CompletionDisplayOptions, CompletionResponse, CompletionSource, Project,
+    ProjectPath,
+};
 use std::fmt::Write as _;
 use std::ops::Range;
 use std::path::Path;
@@ -664,6 +667,7 @@ impl CompletionProvider for RustStyleCompletionProvider {
                     confirm: None,
                 })
                 .collect(),
+            display_options: CompletionDisplayOptions::default(),
             is_incomplete: false,
         }]))
     }

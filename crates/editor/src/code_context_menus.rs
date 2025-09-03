@@ -11,9 +11,9 @@ use language::{Buffer, LanguageName, LanguageRegistry};
 use markdown::{Markdown, MarkdownElement};
 use multi_buffer::{Anchor, ExcerptId};
 use ordered_float::OrderedFloat;
-use project::CompletionSource;
 use project::lsp_store::CompletionDocumentation;
 use project::{CodeAction, Completion, TaskSourceKind};
+use project::{CompletionDisplayOptions, CompletionSource};
 use task::DebugScenario;
 use task::TaskContext;
 
@@ -232,6 +232,7 @@ pub struct CompletionsMenu {
     markdown_cache: Rc<RefCell<VecDeque<(MarkdownCacheKey, Entity<Markdown>)>>>,
     language_registry: Option<Arc<LanguageRegistry>>,
     language: Option<LanguageName>,
+    display_options: CompletionDisplayOptions,
     snippet_sort_order: SnippetSortOrder,
 }
 
@@ -271,6 +272,7 @@ impl CompletionsMenu {
         is_incomplete: bool,
         buffer: Entity<Buffer>,
         completions: Box<[Completion]>,
+        display_options: CompletionDisplayOptions,
         snippet_sort_order: SnippetSortOrder,
         language_registry: Option<Arc<LanguageRegistry>>,
         language: Option<LanguageName>,
@@ -304,6 +306,7 @@ impl CompletionsMenu {
             markdown_cache: RefCell::new(VecDeque::new()).into(),
             language_registry,
             language,
+            display_options,
             snippet_sort_order,
         };
 
@@ -375,6 +378,7 @@ impl CompletionsMenu {
             markdown_cache: RefCell::new(VecDeque::new()).into(),
             language_registry: None,
             language: None,
+            display_options: CompletionDisplayOptions::default(),
             snippet_sort_order,
         }
     }
@@ -737,6 +741,33 @@ impl CompletionsMenu {
         cx: &mut Context<Editor>,
     ) -> AnyElement {
         let show_completion_documentation = self.show_completion_documentation;
+        let widest_completion_ix = if self.display_options.dynamic_width {
+            let completions = self.completions.borrow();
+            let widest_completion_ix = self
+                .entries
+                .borrow()
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, mat)| {
+                    let completion = &completions[mat.candidate_id];
+                    let documentation = &completion.documentation;
+
+                    let mut len = completion.label.text.chars().count();
+                    if let Some(CompletionDocumentation::SingleLine(text)) = documentation {
+                        if show_completion_documentation {
+                            len += text.chars().count();
+                        }
+                    }
+
+                    len
+                })
+                .map(|(ix, _)| ix);
+            drop(completions);
+            widest_completion_ix
+        } else {
+            None
+        };
+
         let selected_item = self.selected_item;
         let completions = self.completions.clone();
         let entries = self.entries.clone();
@@ -863,7 +894,13 @@ impl CompletionsMenu {
         .max_h(max_height_in_lines as f32 * window.line_height())
         .track_scroll(self.scroll_handle.clone())
         .with_sizing_behavior(ListSizingBehavior::Infer)
-        .w(rems(34.));
+        .map(|this| {
+            if self.display_options.dynamic_width {
+                this.with_width_from_item(widest_completion_ix)
+            } else {
+                this.w(rems(34.))
+            }
+        });
 
         Popover::new().child(list).into_any_element()
     }
