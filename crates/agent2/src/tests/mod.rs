@@ -72,7 +72,6 @@ async fn test_echo(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-#[cfg_attr(target_os = "windows", ignore)] // TODO: Fix this test on Windows
 async fn test_thinking(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
@@ -1349,7 +1348,6 @@ async fn test_cancellation(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-#[cfg_attr(target_os = "windows", ignore)] // TODO: Fix this test on Windows
 async fn test_in_progress_send_canceled_by_next_send(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
@@ -1688,7 +1686,6 @@ async fn test_truncate_second_message(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-#[cfg_attr(target_os = "windows", ignore)] // TODO: Fix this test on Windows
 async fn test_title_generation(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
@@ -2353,15 +2350,20 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
         settings::init(cx);
         Project::init_settings(cx);
         agent_settings::init(cx);
-        gpui_tokio::init(cx);
-        let http_client = ReqwestClient::user_agent("agent tests").unwrap();
-        cx.set_http_client(Arc::new(http_client));
 
-        client::init_settings(cx);
-        let client = Client::production(cx);
-        let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        language_model::init(client.clone(), cx);
-        language_models::init(user_store, client.clone(), cx);
+        match model {
+            TestModel::Fake => {}
+            TestModel::Sonnet4 => {
+                gpui_tokio::init(cx);
+                let http_client = ReqwestClient::user_agent("agent tests").unwrap();
+                cx.set_http_client(Arc::new(http_client));
+                client::init_settings(cx);
+                let client = Client::production(cx);
+                let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+                language_model::init(client.clone(), cx);
+                language_models::init(user_store, client.clone(), cx);
+            }
+        };
 
         watch_settings(fs.clone(), cx);
     });
@@ -2475,6 +2477,7 @@ fn setup_context_server(
                     path: "somebinary".into(),
                     args: Vec::new(),
                     env: None,
+                    timeout: None,
                 },
             },
         );

@@ -190,6 +190,7 @@ dependencies = [
  "uuid",
  "workspace",
  "workspace-hack",
+ "zed_env_vars",
  "zstd",
 ]
 
@@ -278,6 +279,7 @@ dependencies = [
  "web_search",
  "workspace-hack",
  "worktree",
+ "zed_env_vars",
  "zlog",
  "zstd",
 ]
@@ -848,6 +850,7 @@ dependencies = [
  "uuid",
  "workspace",
  "workspace-hack",
+ "zed_env_vars",
 ]
 
 [[package]]
@@ -4489,6 +4492,7 @@ dependencies = [
  "tempfile",
  "util",
  "workspace-hack",
+ "zed_env_vars",
 ]
 
 [[package]]
@@ -9147,6 +9151,7 @@ dependencies = [
  "icons",
  "image",
  "log",
+ "open_router",
  "parking_lot",
  "proto",
  "schemars",
@@ -11222,6 +11227,8 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "strum 0.27.1",
+ "thiserror 2.0.12",
  "workspace-hack",
 ]
 
@@ -13745,7 +13752,6 @@ dependencies = [
  "regex",
  "reqwest 0.12.15 (git+https://github.com/zed-industries/reqwest.git?rev=951c770a32f1998d6e999cef3e59e0013e6c4415)",
  "serde",
- "smol",
  "tokio",
  "workspace-hack",
 ]
@@ -14904,6 +14910,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "command_palette_hooks",
+ "debugger_ui",
  "editor",
  "feature_flags",
  "gpui",
@@ -20398,7 +20405,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.203.0"
+version = "0.204.0"
 dependencies = [
  "acp_tools",
  "activity_indicator",
@@ -20548,6 +20555,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
+ "zed_env_vars",
  "zeta",
  "zlog",
  "zlog_settings",
@@ -20561,6 +20569,13 @@ dependencies = [
  "schemars",
  "serde",
  "uuid",
+ "workspace-hack",
+]
+
+[[package]]
+name = "zed_env_vars"
+version = "0.1.0"
+dependencies = [
  "workspace-hack",
 ]
 

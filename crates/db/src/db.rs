@@ -17,9 +17,10 @@ use sqlez::thread_safe_connection::ThreadSafeConnection;
 use sqlez_macros::sql;
 use std::future::Future;
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
 use std::sync::{LazyLock, atomic::Ordering};
-use std::{env, sync::atomic::AtomicBool};
 use util::{ResultExt, maybe};
+use zed_env_vars::ZED_STATELESS;
 
 const CONNECTION_INITIALIZE_QUERY: &str = sql!(
     PRAGMA foreign_keys=TRUE;
@@ -35,9 +36,6 @@ const DB_INITIALIZE_QUERY: &str = sql!(
 const FALLBACK_DB_NAME: &str = "FALLBACK_MEMORY_DB";
 
 const DB_FILE_NAME: &str = "db.sqlite";
-
-pub static ZED_STATELESS: LazyLock<bool> =
-    LazyLock::new(|| env::var("ZED_STATELESS").is_ok_and(|v| !v.is_empty()));
 
 pub static ALL_FILE_DB_FAILED: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(false));
 

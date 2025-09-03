@@ -742,6 +742,10 @@ impl DirectWriteState {
                 &mut grid_fit_mode,
             )?;
         }
+        let rendering_mode = match rendering_mode {
+            DWRITE_RENDERING_MODE1_OUTLINE => DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC,
+            m => m,
+        };
 
         let glyph_analysis = unsafe {
             self.components.factory.CreateGlyphRunAnalysis(
@@ -1249,7 +1253,7 @@ impl GlyphLayerTexture {
             },
             Usage: D3D11_USAGE_DEFAULT,
             BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
-            CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
+            CPUAccessFlags: 0,
             MiscFlags: 0,
         };
 

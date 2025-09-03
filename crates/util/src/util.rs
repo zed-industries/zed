@@ -329,7 +329,7 @@ pub fn load_login_shell_environment() -> Result<()> {
 /// Configures the process to start a new session, to prevent interactive shells from taking control
 /// of the terminal.
 ///
-/// For more details: https://registerspill.thorstenball.com/p/how-to-lose-control-of-your-shell
+/// For more details: <https://registerspill.thorstenball.com/p/how-to-lose-control-of-your-shell>
 pub fn set_pre_exec_to_start_new_session(
     command: &mut std::process::Command,
 ) -> &mut std::process::Command {

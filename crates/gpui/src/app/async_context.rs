@@ -218,7 +218,7 @@ impl AsyncApp {
         Some(read(app.try_global()?, &app))
     }
 
-    /// A convenience method for [App::update_global]
+    /// A convenience method for [`App::update_global`](BorrowAppContext::update_global)
     /// for updating the global state of the specified type.
     pub fn update_global<G: Global, R>(
         &self,
@@ -293,7 +293,7 @@ impl AsyncWindowContext {
             .update(self, |_, window, cx| read(cx.global(), window, cx))
     }
 
-    /// A convenience method for [`App::update_global`].
+    /// A convenience method for [`App::update_global`](BorrowAppContext::update_global).
     /// for updating the global state of the specified type.
     pub fn update_global<G, R>(
         &mut self,
