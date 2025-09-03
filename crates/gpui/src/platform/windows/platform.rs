@@ -45,6 +45,7 @@ pub(crate) struct WindowsPlatform {
 struct WindowsPlatformInner {
     state: RefCell<WindowsPlatformState>,
     raw_window_handles: std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
+    text_system: std::sync::Weak<DirectWriteTextSystem>,
     // The below members will never change throughout the entire lifecycle of the app.
     validation_number: usize,
     main_receiver: flume::Receiver<Runnable>,
@@ -673,6 +674,7 @@ impl WindowsPlatformInner {
         Ok(Rc::new(Self {
             state,
             raw_window_handles: context.raw_window_handles.clone(),
+            text_system: context.text_system.clone(),
             validation_number: context.validation_number,
             main_receiver: context.main_receiver.take().unwrap(),
         }))
@@ -815,6 +817,7 @@ pub(crate) struct WindowCreationInfo {
 struct PlatformWindowCreateContext {
     inner: Option<Result<Rc<WindowsPlatformInner>>>,
     raw_window_handles: std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
+    text_system: std::sync::Weak<DirectWriteTextSystem>,
     validation_number: usize,
     main_receiver: Option<flume::Receiver<Runnable>>,
 }
@@ -1006,6 +1009,9 @@ fn handle_device_lost(
     validation_number: usize,
     all_windows: &std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
 ) {
+    // Here we wait a bit to ensure the the system has time to recover from the device lost state.
+    // If we don't wait, the final drawing result will be blank.
+    std::thread::sleep(std::time::Duration::from_millis(350));
     let mut success = false;
     for _ in 0..5 {
         match DirectXDevices::new() {
@@ -1026,13 +1032,11 @@ fn handle_device_lost(
         std::process::exit(1);
     }
     log::info!("DirectX devices successfully recreated.");
-    // let ptr = Box::new(devices.clone());
     unsafe {
         SendMessageW(
             platform_window,
             WM_GPUI_DEVICE_LOST,
             Some(WPARAM(validation_number)),
-            // Some(LPARAM(Box::into_raw(ptr) as _)),
             Some(LPARAM(devices as *const _ as _)),
         );
     }
@@ -1048,6 +1052,17 @@ fn handle_device_lost(
                 );
             }
             println!("Sent device lost message to window {:?}", window.0);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        for window in all_windows.read().iter() {
+            unsafe {
+                SendMessageW(
+                    window.as_raw(),
+                    WM_GPUI_FORCE_UPDATE_WINDOW,
+                    Some(WPARAM(validation_number)),
+                    None,
+                );
+            }
         }
     }
     println!("Sent device lost message to platform window.");

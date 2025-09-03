@@ -7,7 +7,7 @@ use ::util::ResultExt;
 use anyhow::{Context, Result};
 use windows::{
     Win32::{
-        Foundation::{HMODULE, HWND},
+        Foundation::HWND,
         Graphics::{
             Direct3D::*,
             Direct3D11::*,
@@ -207,9 +207,6 @@ impl DirectXRenderer {
     }
 
     pub(crate) fn handle_device_lost(&mut self, devices: DirectXDevices) -> Result<()> {
-        // Here we wait a bit to ensure the the system has time to recover from the device lost state.
-        // If we don't wait, the final drawing result will be blank.
-        std::thread::sleep(std::time::Duration::from_millis(300));
         let disable_direct_composition = self.direct_composition.is_none();
 
         unsafe {
@@ -997,92 +994,6 @@ impl Drop for DirectXResources {
             ManuallyDrop::drop(&mut self.render_target);
         }
     }
-}
-
-#[inline]
-fn check_debug_layer_available() -> bool {
-    #[cfg(debug_assertions)]
-    {
-        unsafe { DXGIGetDebugInterface1::<IDXGIInfoQueue>(0) }
-            .log_err()
-            .is_some()
-    }
-    #[cfg(not(debug_assertions))]
-    {
-        false
-    }
-}
-
-#[inline]
-fn get_dxgi_factory(debug_layer_available: bool) -> Result<IDXGIFactory6> {
-    let factory_flag = if debug_layer_available {
-        DXGI_CREATE_FACTORY_DEBUG
-    } else {
-        #[cfg(debug_assertions)]
-        log::warn!(
-            "Failed to get DXGI debug interface. DirectX debugging features will be disabled."
-        );
-        DXGI_CREATE_FACTORY_FLAGS::default()
-    };
-    unsafe { Ok(CreateDXGIFactory2(factory_flag)?) }
-}
-
-fn get_adapter(dxgi_factory: &IDXGIFactory6, debug_layer_available: bool) -> Result<IDXGIAdapter1> {
-    for adapter_index in 0.. {
-        let adapter: IDXGIAdapter1 = unsafe {
-            dxgi_factory
-                .EnumAdapterByGpuPreference(adapter_index, DXGI_GPU_PREFERENCE_MINIMUM_POWER)
-        }?;
-        if let Ok(desc) = unsafe { adapter.GetDesc1() } {
-            let gpu_name = String::from_utf16_lossy(&desc.Description)
-                .trim_matches(char::from(0))
-                .to_string();
-            log::info!("Using GPU: {}", gpu_name);
-        }
-        // Check to see whether the adapter supports Direct3D 11, but don't
-        // create the actual device yet.
-        if get_device(&adapter, None, None, None, debug_layer_available)
-            .log_err()
-            .is_some()
-        {
-            return Ok(adapter);
-        }
-    }
-
-    unreachable!()
-}
-
-fn get_device(
-    adapter: &IDXGIAdapter1,
-    device: Option<*mut Option<ID3D11Device>>,
-    context: Option<*mut Option<ID3D11DeviceContext>>,
-    feature_level: Option<*mut D3D_FEATURE_LEVEL>,
-    debug_layer_available: bool,
-) -> Result<()> {
-    let device_flags = if debug_layer_available {
-        D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_DEBUG
-    } else {
-        D3D11_CREATE_DEVICE_BGRA_SUPPORT
-    };
-    unsafe {
-        D3D11CreateDevice(
-            adapter,
-            D3D_DRIVER_TYPE_UNKNOWN,
-            HMODULE::default(),
-            device_flags,
-            // 4x MSAA is required for Direct3D Feature Level 10.1 or better
-            Some(&[
-                D3D_FEATURE_LEVEL_11_1,
-                D3D_FEATURE_LEVEL_11_0,
-                D3D_FEATURE_LEVEL_10_1,
-            ]),
-            D3D11_SDK_VERSION,
-            device,
-            feature_level,
-            context,
-        )?;
-    }
-    Ok(())
 }
 
 #[inline]

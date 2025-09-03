@@ -41,7 +41,6 @@ impl WindowsWindowInner {
         let handled = match msg {
             WM_ACTIVATE => self.handle_activate_msg(wparam),
             WM_CREATE => self.handle_create_msg(handle),
-            WM_DEVICECHANGE => self.handle_device_change_msg(handle, wparam),
             WM_MOVE => self.handle_move_msg(handle, lparam),
             WM_SIZE => self.handle_size_msg(wparam, lparam),
             WM_GETMINMAXINFO => self.handle_get_min_max_info_msg(lparam),
@@ -105,7 +104,7 @@ impl WindowsWindowInner {
             WM_SHOWWINDOW => self.handle_window_visibility_changed(handle, wparam),
             WM_GPUI_CURSOR_STYLE_CHANGED => self.handle_cursor_changed(lparam),
             WM_GPUI_FORCE_UPDATE_WINDOW => self.draw_window(handle, true),
-            WM_GPUI_DEVICE_LOST => self.handle_device_lost(handle, lparam),
+            WM_GPUI_DEVICE_LOST => self.handle_device_lost(lparam),
             _ => None,
         };
         if let Some(n) = handled {
@@ -1169,29 +1168,7 @@ impl WindowsWindowInner {
         None
     }
 
-    fn handle_device_change_msg(&self, handle: HWND, wparam: WPARAM) -> Option<isize> {
-        if wparam.0 == DBT_DEVNODES_CHANGED as usize {
-            // The reason for sending this message is to actually trigger a redraw of the window.
-            unsafe {
-                PostMessageW(
-                    Some(handle),
-                    WM_GPUI_FORCE_UPDATE_WINDOW,
-                    WPARAM(0),
-                    LPARAM(0),
-                )
-                .log_err();
-            }
-            // If the GPU device is lost, this redraw will take care of recreating the device context.
-            // The WM_GPUI_FORCE_UPDATE_WINDOW message will take care of redrawing the window, after
-            // the device context has been recreated.
-            self.draw_window(handle, true)
-        } else {
-            // Other device change messages are not handled.
-            None
-        }
-    }
-
-    fn handle_device_lost(&self, handle: HWND, lparam: LPARAM) -> Option<isize> {
+    fn handle_device_lost(&self, lparam: LPARAM) -> Option<isize> {
         let mut lock = self.state.borrow_mut();
         let devices = lparam.0 as *const DirectXDevices;
         let devices = unsafe { &*devices };
