@@ -12,13 +12,13 @@ use async_task::Runnable;
 use futures::{FutureExt as _, channel::oneshot, future::LocalBoxFuture};
 use std::{
     future::Future,
-    pin::{Pin, pin},
+    pin::Pin,
     task::{Context, Poll},
     time::Duration,
 };
 
 pub trait Scheduler: Send + Sync {
-    fn block(&self, future: LocalBoxFuture<()>);
+    fn block(&self, future: LocalBoxFuture<()>, timeout: Option<Duration>);
     fn schedule_foreground(&self, session_id: SessionId, runnable: Runnable);
     fn schedule_background(&self, runnable: Runnable);
     fn timer(&self, timeout: Duration) -> Timer;
@@ -28,7 +28,7 @@ pub trait Scheduler: Send + Sync {
 impl dyn Scheduler {
     pub fn block_on<Fut: Future>(&self, future: Fut) -> Fut::Output {
         let mut output = None;
-        self.block(async { output = Some(future.await) }.boxed_local());
+        self.block(async { output = Some(future.await) }.boxed_local(), None);
         output.unwrap()
     }
 
@@ -37,14 +37,12 @@ impl dyn Scheduler {
         future: &mut Fut,
         timeout: Duration,
     ) -> Option<Fut::Output> {
-        let mut timer = self.timer(timeout).fuse();
-        let mut future = pin!(async { future.await }.fuse());
-        self.block_on(async {
-            futures::select_biased! {
-                output = future => Some(output),
-                _ = timer => None,
-            }
-        })
+        let mut output = None;
+        self.block(
+            async { output = Some(future.await) }.boxed_local(),
+            Some(timeout),
+        );
+        output
     }
 }
 

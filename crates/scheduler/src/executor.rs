@@ -30,6 +30,10 @@ impl ForegroundExecutor {
         runnable.schedule();
         Task(TaskState::Spawned(task))
     }
+
+    pub fn timer(&self, duration: Duration) -> Timer {
+        self.scheduler.timer(duration)
+    }
 }
 
 impl ForegroundExecutor {

@@ -4,21 +4,21 @@ use crate::{
 use async_task::Runnable;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use futures::{FutureExt as _, channel::oneshot, future::LocalBoxFuture};
-use parking::{Parker, Unparker};
 use parking_lot::Mutex;
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 use std::{
     collections::VecDeque,
     future::Future,
-    panic::{self, AssertUnwindSafe},
+    panic::{self, AssertUnwindSafe, UnwindSafe},
+    pin::Pin,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering::SeqCst},
     },
     task::{Context, Poll, Wake, Waker},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 pub struct TestScheduler {
@@ -27,8 +27,6 @@ pub struct TestScheduler {
     state: Mutex<SchedulerState>,
     pub thread_id: thread::ThreadId,
     pub config: SchedulerConfig,
-    parker: Arc<Mutex<Parker>>,
-    unparker: Unparker,
 }
 
 impl TestScheduler {
@@ -64,7 +62,6 @@ impl TestScheduler {
     }
 
     pub fn new(clock: Arc<TestClock>, config: SchedulerConfig) -> Self {
-        let (parker, unparker) = parking::pair();
         Self {
             rng: Arc::new(Mutex::new(ChaCha8Rng::seed_from_u64(config.seed))),
             state: Mutex::new(SchedulerState {
@@ -77,9 +74,11 @@ impl TestScheduler {
             thread_id: thread::current().id(),
             clock,
             config,
-            parker: Arc::new(Mutex::new(parker)),
-            unparker,
         }
+    }
+
+    pub fn clock(&self) -> Arc<TestClock> {
+        self.clock.clone()
     }
 
     pub fn rng(&self) -> Arc<Mutex<ChaCha8Rng>> {
@@ -105,17 +104,50 @@ impl TestScheduler {
         (self as &dyn Scheduler).block_on(future)
     }
 
-    pub fn block_with_timeout<Fut: Unpin + Future>(
-        &self,
-        future: &mut Fut,
-        timeout: Duration,
-    ) -> Option<Fut::Output> {
-        (self as &dyn Scheduler).block_with_timeout(future, timeout)
+    pub async fn unblock<F, T>(&self, f: F) -> T
+    where
+        F: FnOnce() -> T + Send + UnwindSafe + 'static,
+        T: Send + 'static,
+    {
+        let (sender, receiver) = std::sync::mpsc::channel();
+
+        // Create a new thread to run the closure. It would be more efficient to use a thread pool,
+        // but this seems fine for simulator usage.
+        thread::spawn({
+            let sender = sender.clone();
+            move || {
+                sender.send(
+                    panic::catch_unwind(f)
+                        .map_err(|err| format!("panic in closure passed to `unblock`:\n\n{err:?}")),
+                )
+            }
+        });
+
+        const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+        thread::spawn(move || {
+            thread::sleep(TIMEOUT);
+            let _ = sender.send(Err(format!(
+                "closure passed to `unblock` took too long (limit: {TIMEOUT:?})"
+            )));
+        });
+
+        self.random_delay().await;
+
+        // Intentionally block the simulator on completion of the closure. This is needed in order
+        // to simulate it completing before other delayed tasks.
+        receiver
+            .recv()
+            .expect("impossible for sender to be dropped")
+            .unwrap()
+    }
+
+    pub fn random_delay(&self) -> Yield {
+        Yield(self.rng.lock().random_range(0..20))
     }
 
     pub fn run(&self) {
-        while self.step() {
-            // Continue stepping until no work remains
+        while self.step() || self.advance_clock() {
+            // Continue until no work remains
         }
     }
 
@@ -138,31 +170,16 @@ impl TestScheduler {
             return true;
         }
 
-        if self.advance_clock() {
-            return true;
-        }
-
         false
     }
 
     fn advance_clock(&self) -> bool {
-        if let Some(timer) = self.state.lock().timers.choose(&mut *self.rng.lock()) {
+        if let Some(timer) = self.state.lock().timers.first() {
             self.clock.set_now(timer.expiration);
             true
         } else {
             false
         }
-    }
-
-    fn park(&self) {
-        {
-            let state = self.state.lock();
-            if !state.allow_parking {
-                drop(state);
-                panic!("Parking forbidden");
-            }
-        }
-        self.parker.lock().park();
     }
 }
 
@@ -172,101 +189,124 @@ impl Scheduler for TestScheduler {
     }
 
     fn schedule_foreground(&self, session_id: SessionId, runnable: Runnable) {
-        {
-            let mut state = self.state.lock();
-            let ix = if state.randomize_order {
-                let start_ix = state
-                    .runnables
-                    .iter()
-                    .rposition(|task| task.session_id == Some(session_id))
-                    .map_or(0, |ix| ix + 1);
-                self.rng
-                    .lock()
-                    .random_range(start_ix..=state.runnables.len())
-            } else {
-                state.runnables.len()
-            };
-            state.runnables.insert(
-                ix,
-                ScheduledRunnable {
-                    session_id: Some(session_id),
-                    runnable,
-                },
-            );
-        }
-        self.unparker.unpark();
+        let mut state = self.state.lock();
+        let ix = if state.randomize_order {
+            let start_ix = state
+                .runnables
+                .iter()
+                .rposition(|task| task.session_id == Some(session_id))
+                .map_or(0, |ix| ix + 1);
+            self.rng
+                .lock()
+                .random_range(start_ix..=state.runnables.len())
+        } else {
+            state.runnables.len()
+        };
+        state.runnables.insert(
+            ix,
+            ScheduledRunnable {
+                session_id: Some(session_id),
+                runnable,
+            },
+        );
     }
 
     fn schedule_background(&self, runnable: Runnable) {
-        {
-            let mut state = self.state.lock();
-            let ix = if state.randomize_order {
-                self.rng.lock().random_range(0..=state.runnables.len())
-            } else {
-                state.runnables.len()
-            };
-            state.runnables.insert(
-                ix,
-                ScheduledRunnable {
-                    session_id: None,
-                    runnable,
-                },
-            );
-        }
-        self.unparker.unpark();
+        let mut state = self.state.lock();
+        let ix = if state.randomize_order {
+            self.rng.lock().random_range(0..=state.runnables.len())
+        } else {
+            state.runnables.len()
+        };
+        state.runnables.insert(
+            ix,
+            ScheduledRunnable {
+                session_id: None,
+                runnable,
+            },
+        );
     }
 
     fn timer(&self, duration: Duration) -> Timer {
         let (tx, rx) = oneshot::channel();
         let expiration = self.clock.now() + ChronoDuration::from_std(duration).unwrap();
-        {
-            let state = &mut *self.state.lock();
-            state.timers.push(ScheduledTimer {
-                expiration,
-                _notify: tx,
-            });
-            state.timers.sort_by_key(|timer| timer.expiration);
-        }
-        self.unparker.unpark();
+        let state = &mut *self.state.lock();
+        state.timers.push(ScheduledTimer {
+            expiration,
+            _notify: tx,
+        });
+        state.timers.sort_by_key(|timer| timer.expiration);
         Timer(rx)
     }
 
-    fn block(&self, mut future: LocalBoxFuture<()>) {
+    /// Block until the given future completes, with an optional timeout. If the
+    /// future is unable to make progress at any moment before the timeout and
+    /// no other tasks or timers remain, we panic unless parking is allowed. If
+    /// parking is allowed, we block up to the timeout or indefinitely if none
+    /// is provided. This is to allow testing a mix of deterministic and
+    /// non-deterministic async behavior, such as when interacting with I/O in
+    /// an otherwise deterministic test.
+    fn block(&self, mut future: LocalBoxFuture<()>, timeout: Option<Duration>) {
+        let (parker, unparker) = parking::pair();
+        let deadline = timeout.map(|timeout| Instant::now() + timeout);
         let awoken = Arc::new(AtomicBool::new(false));
         let waker = Waker::from(Arc::new(WakerFn::new({
-            let unparker = self.unparker.clone();
             let awoken = awoken.clone();
             move || {
                 awoken.store(true, SeqCst);
                 unparker.unpark();
             }
         })));
+        let mut remaining_ticks = if timeout.is_some() {
+            self.rng
+                .lock()
+                .random_range(0..=self.config.max_timeout_ticks)
+        } else {
+            usize::MAX
+        };
         let mut cx = Context::from_waker(&waker);
-        while let Poll::Pending = future.poll_unpin(&mut cx) {
+
+        while remaining_ticks > 0 {
+            remaining_ticks -= 1;
+            let Poll::Pending = future.poll_unpin(&mut cx) else {
+                break;
+            };
+
             let awoken = awoken.swap(false, SeqCst);
             let mut stepped = false;
             while self.rng.lock().random() {
-                if self.rng.lock().random_bool(0.3) {
-                    stepped |= self.advance_clock();
-                }
                 stepped |= self.step();
-
                 if !stepped {
-                    if !awoken {
-                        self.park();
+                    if awoken || self.advance_clock() {
+                        break;
+                    } else if self.state.lock().allow_parking {
+                        if let Some(deadline) = deadline {
+                            if parker.park_deadline(deadline) {
+                                break;
+                            } else {
+                                return;
+                            }
+                        } else {
+                            parker.park();
+                            break;
+                        }
+                    } else if timeout.is_some() {
+                        return;
+                    } else {
+                        panic!("Parking forbidden");
                     }
-                    break;
                 }
             }
         }
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SchedulerConfig {
     pub seed: u64,
     pub randomize_order: bool,
     pub allow_parking: bool,
+    pub max_timeout_ticks: usize,
 }
 
 impl SchedulerConfig {
@@ -284,6 +324,7 @@ impl Default for SchedulerConfig {
             seed: 0,
             randomize_order: true,
             allow_parking: false,
+            max_timeout_ticks: 1000,
         }
     }
 }
@@ -329,5 +370,21 @@ impl<F: Fn()> Wake for WakerFn<F> {
 
     fn wake_by_ref(self: &Arc<Self>) {
         (self.f)();
+    }
+}
+
+pub struct Yield(usize);
+
+impl Future for Yield {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        if self.0 == 0 {
+            Poll::Ready(())
+        } else {
+            self.0 -= 1;
+            cx.waker().wake_by_ref();
+            Poll::Pending
+        }
     }
 }

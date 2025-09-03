@@ -309,6 +309,7 @@ fn test_helper_methods() {
 
 #[test]
 fn test_block_with_timeout() {
+    dbg!();
     // Test case: future completes within timeout
     TestScheduler::once(async |scheduler| {
         let background = scheduler.background();
@@ -317,6 +318,7 @@ fn test_block_with_timeout() {
         assert_eq!(output, Some(42));
     });
 
+    dbg!();
     // Test case: future times out
     TestScheduler::once(async |scheduler| {
         let background = scheduler.background();
@@ -325,6 +327,7 @@ fn test_block_with_timeout() {
         assert_eq!(output, None);
     });
 
+    dbg!();
     // Test case: future makes progress via timer but still times out
     let mut results = BTreeSet::new();
     TestScheduler::many(100, async |scheduler| {
