@@ -1250,6 +1250,7 @@ struct InjectionPatternConfig {
     combined: bool,
 }
 
+#[derive(Debug)]
 struct BracketsConfig {
     query: Query,
     open_capture_ix: u32,
