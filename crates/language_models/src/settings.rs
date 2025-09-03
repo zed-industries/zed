@@ -5,7 +5,7 @@ use collections::HashMap;
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsUi};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 
 use crate::provider::{
     self,
@@ -46,7 +46,10 @@ pub struct AllLanguageModelSettings {
     pub zed_dot_dev: ZedDotDevSettings,
 }
 
-#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, SettingsUi)]
+#[derive(
+    Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, SettingsUi, SettingsKey,
+)]
+#[settings_key(key = "language_models")]
 pub struct AllLanguageModelSettingsContent {
     pub anthropic: Option<AnthropicSettingsContent>,
     pub bedrock: Option<AmazonBedrockSettingsContent>,
@@ -145,8 +148,6 @@ pub struct OpenRouterSettingsContent {
 }
 
 impl settings::Settings for AllLanguageModelSettings {
-    const KEY: Option<&'static str> = Some("language_models");
-
     const PRESERVED_KEYS: Option<&'static [&'static str]> = Some(&["version"]);
 
     type FileContent = AllLanguageModelSettingsContent;

@@ -79,7 +79,7 @@ pub struct GitHostingProviderConfig {
 }
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
-#[settings_key()]
+#[settings_key(None)]
 pub struct GitHostingProviderSettings {
     /// The list of custom Git hosting providers.
     #[serde(default)]

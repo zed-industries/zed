@@ -32,7 +32,7 @@ use parking_lot::Mutex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use settings::{SettingsKey, SettingsUi, WorktreeId};
+use settings::{SettingsUi, WorktreeId};
 use smallvec::SmallVec;
 use smol::future::yield_now;
 use std::{
@@ -174,17 +174,7 @@ pub enum IndentKind {
 
 /// The shape of a selection cursor.
 #[derive(
-    Copy,
-    Clone,
-    Debug,
-    Default,
-    Serialize,
-    Deserialize,
-    PartialEq,
-    Eq,
-    JsonSchema,
-    SettingsUi,
-    SettingsKey,
+    Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum CursorShape {

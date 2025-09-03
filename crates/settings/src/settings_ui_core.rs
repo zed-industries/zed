@@ -5,9 +5,9 @@ use fs::Fs;
 use gpui::{AnyElement, App, AppContext as _, ReadGlobal as _, Window};
 use smallvec::SmallVec;
 
-use crate::{SettingsKey, SettingsStore};
+use crate::SettingsStore;
 
-pub trait SettingsUi: SettingsKey {
+pub trait SettingsUi {
     fn settings_ui_item() -> SettingsUiItem {
         // todo(settings_ui): remove this default impl, only entry should have a default impl
         // because it's expected that the macro or custom impl use the item and the known paths to create the entry
@@ -109,16 +109,6 @@ pub enum SettingsUiItem {
     None,
 }
 
-impl SettingsKey for bool {
-    const FALLBACK_KEY: Option<&'static str> = None;
-    const KEY: Option<&'static str> = None;
-}
-
-impl<T: SettingsKey> SettingsKey for Option<T> {
-    const KEY: Option<&'static str> = T::KEY;
-    const FALLBACK_KEY: Option<&'static str> = T::FALLBACK_KEY;
-}
-
 impl SettingsUi for bool {
     fn settings_ui_item() -> SettingsUiItem {
         SettingsUiItem::Single(SettingsUiItemSingle::SwitchField)
@@ -170,11 +160,6 @@ macro_rules! numeric_stepper_for_num_type {
             fn settings_ui_item() -> SettingsUiItem {
                 SettingsUiItem::Single(SettingsUiItemSingle::NumericStepper(NumType::$num_type))
             }
-        }
-
-        impl SettingsKey for $type {
-            const KEY: Option<&'static str> = None;
-            const FALLBACK_KEY: Option<&'static str> = None;
         }
 
         impl SettingsUi for Option<$type> {

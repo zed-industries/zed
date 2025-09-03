@@ -113,8 +113,6 @@ impl Drop for MacOsUnmounter {
     }
 }
 
-#[derive(SettingsKey)]
-#[settings_key(key = "auto_update")]
 struct AutoUpdateSetting(bool);
 
 /// Whether or not to automatically check for updates.
@@ -122,6 +120,7 @@ struct AutoUpdateSetting(bool);
 /// Default: true
 #[derive(Clone, Copy, Default, JsonSchema, Deserialize, Serialize, SettingsUi, SettingsKey)]
 #[serde(transparent)]
+#[settings_key(key = "auto_update")]
 struct AutoUpdateSettingContent(bool);
 
 impl Settings for AutoUpdateSetting {

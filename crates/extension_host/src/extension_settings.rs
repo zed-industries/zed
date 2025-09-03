@@ -7,7 +7,7 @@ use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 use std::sync::Arc;
 
 #[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema, SettingsUi, SettingsKey)]
-#[settings_key()]
+#[settings_key(None)]
 pub struct ExtensionSettings {
     /// The extensions that should be automatically installed by Zed.
     ///

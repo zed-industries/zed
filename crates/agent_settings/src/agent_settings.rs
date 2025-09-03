@@ -48,8 +48,7 @@ pub enum NotifyWhenAgentWaiting {
     Never,
 }
 
-#[derive(Default, Clone, Debug, SettingsKey)]
-#[settings_key(key = "agent", fallback_key = "assistant")]
+#[derive(Default, Clone, Debug)]
 pub struct AgentSettings {
     pub enabled: bool,
     pub button: bool,
@@ -225,6 +224,7 @@ impl AgentSettingsContent {
 }
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema, Debug, Default, SettingsUi, SettingsKey)]
+#[settings_key(key = "agent", fallback_key = "assistant")]
 pub struct AgentSettingsContent {
     /// Whether the Agent is enabled.
     ///

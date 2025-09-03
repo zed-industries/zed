@@ -8,8 +8,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 
-#[derive(Deserialize, SettingsKey)]
-#[settings_key()]
+#[derive(Deserialize)]
 pub struct WorkspaceSettings {
     pub active_pane_modifiers: ActivePanelModifiers,
     pub bottom_dock_layout: BottomDockLayout,
@@ -120,6 +119,7 @@ pub enum RestoreOnStartupBehavior {
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
+#[settings_key(None)]
 pub struct WorkspaceSettingsContent {
     /// Active pane styling settings.
     pub active_pane_modifiers: Option<ActivePanelModifiers>,
@@ -217,8 +217,7 @@ pub struct WorkspaceSettingsContent {
     pub zoomed_padding: Option<bool>,
 }
 
-#[derive(Deserialize, SettingsKey)]
-#[settings_key(key = "tab_bar")]
+#[derive(Deserialize)]
 pub struct TabBarSettings {
     pub show: bool,
     pub show_nav_history_buttons: bool,
@@ -226,6 +225,7 @@ pub struct TabBarSettings {
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
+#[settings_key(key = "tab_bar")]
 pub struct TabBarSettingsContent {
     /// Whether or not to show the tab bar in the editor.
     ///
@@ -268,7 +268,7 @@ pub enum PaneSplitDirectionVertical {
     Right,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, SettingsUi)]
 #[serde(rename_all = "snake_case")]
 pub struct CenteredLayoutSettings {
     /// The relative width of the left padding of the central pane from the

@@ -24,8 +24,7 @@ pub struct Toolbar {
     pub breadcrumbs: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, SettingsKey)]
-#[settings_key(key = "terminal")]
+#[derive(Clone, Debug, Deserialize)]
 pub struct TerminalSettings {
     pub shell: Shell,
     pub working_directory: WorkingDirectory,
@@ -137,6 +136,7 @@ pub enum ActivateScript {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
+#[settings_key(key = "terminal")]
 pub struct TerminalSettingsContent {
     /// What shell to use when opening a terminal.
     ///

@@ -345,7 +345,7 @@ fn render_vim_mode_switch(tab_index: &mut isize, cx: &mut App) -> impl IntoEleme
             let fs = <dyn Fs>::global(cx);
             move |&selection, _, cx| {
                 update_settings_file::<VimModeSetting>(fs.clone(), cx, move |setting, _| {
-                    *setting = match selection {
+                    setting.vim_mode = match selection {
                         ToggleState::Selected => Some(true),
                         ToggleState::Unselected => Some(false),
                         ToggleState::Indeterminate => None,

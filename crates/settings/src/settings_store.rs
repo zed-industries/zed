@@ -48,7 +48,7 @@ pub trait SettingsKey: 'static + Send + Sync {
 /// A value that can be defined as a user setting.
 ///
 /// Settings can be loaded from a combination of multiple JSON files.
-pub trait Settings: 'static + Send + Sync + SettingsKey {
+pub trait Settings: 'static + Send + Sync {
     /// The name of the keys in the [`FileContent`](Self::FileContent) that should
     /// always be written to a settings file, even if their value matches the default
     /// value.
@@ -59,8 +59,19 @@ pub trait Settings: 'static + Send + Sync + SettingsKey {
     const PRESERVED_KEYS: Option<&'static [&'static str]> = None;
 
     /// The type that is stored in an individual JSON file.
-    type FileContent: Clone + Default + Serialize + DeserializeOwned + JsonSchema + SettingsUi;
+    type FileContent: Clone
+        + Default
+        + Serialize
+        + DeserializeOwned
+        + JsonSchema
+        + SettingsUi
+        + SettingsKey;
 
+    /*
+     *  let path = Settings
+     *
+     *
+     */
     /// The logic for combining together values from one or more JSON files into the
     /// final value for this setting.
     ///
@@ -1402,7 +1413,7 @@ impl Debug for SettingsStore {
 
 impl<T: Settings> AnySettingValue for SettingValue<T> {
     fn key(&self) -> Option<&'static str> {
-        T::KEY
+        T::FileContent::KEY
     }
 
     fn setting_type_name(&self) -> &'static str {
@@ -1454,16 +1465,21 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
         mut json: &Value,
     ) -> (Option<&'static str>, Result<DeserializedSetting>) {
         let mut key = None;
-        if let Some(k) = T::KEY {
+        if let Some(k) = T::FileContent::KEY {
             if let Some(value) = json.get(k) {
                 json = value;
                 key = Some(k);
-            } else if let Some((k, value)) = T::FALLBACK_KEY.and_then(|k| Some((k, json.get(k)?))) {
+            } else if let Some((k, value)) =
+                T::FileContent::FALLBACK_KEY.and_then(|k| Some((k, json.get(k)?)))
+            {
                 json = value;
                 key = Some(k);
             } else {
                 let value = T::FileContent::default();
-                return (T::KEY, Ok(DeserializedSetting(Box::new(value))));
+                return (
+                    T::FileContent::KEY,
+                    Ok(DeserializedSetting(Box::new(value))),
+                );
             }
         }
         let value = serde_path_to_error::deserialize::<_, T::FileContent>(json)
@@ -2122,8 +2138,7 @@ mod tests {
         pretty_assertions::assert_eq!(new, expected);
     }
 
-    #[derive(Debug, PartialEq, Deserialize, SettingsUi, SettingsKey)]
-    #[settings_key(key = "user")]
+    #[derive(Debug, PartialEq, Deserialize, SettingsUi)]
     struct UserSettings {
         name: String,
         age: u32,
@@ -2131,6 +2146,7 @@ mod tests {
     }
 
     #[derive(Default, Clone, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
+    #[settings_key(key = "user")]
     struct UserSettingsContent {
         name: Option<String>,
         age: Option<u32>,
@@ -2149,12 +2165,29 @@ mod tests {
         }
     }
 
-    #[derive(Debug, Deserialize, PartialEq, SettingsKey)]
-    #[settings_key(key = "turbo")]
+    #[derive(Debug, Deserialize, PartialEq)]
     struct TurboSetting(bool);
 
+    #[derive(
+        Copy,
+        Clone,
+        PartialEq,
+        Eq,
+        Debug,
+        Default,
+        serde::Serialize,
+        serde::Deserialize,
+        SettingsUi,
+        SettingsKey,
+        JsonSchema,
+    )]
+    #[settings_key(None)]
+    pub struct TurboSettingContent {
+        turbo: Option<bool>,
+    }
+
     impl Settings for TurboSetting {
-        type FileContent = bool;
+        type FileContent = TurboSettingContent;
 
         fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
             sources.json_merge()
@@ -2163,8 +2196,7 @@ mod tests {
         fn import_from_vscode(_vscode: &VsCodeSettings, _current: &mut Self::FileContent) {}
     }
 
-    #[derive(Clone, Debug, PartialEq, Deserialize, SettingsKey)]
-    #[settings_key()]
+    #[derive(Clone, Debug, PartialEq, Deserialize)]
     struct MultiKeySettings {
         #[serde(default)]
         key1: String,
@@ -2173,6 +2205,7 @@ mod tests {
     }
 
     #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
+    #[settings_key(None)]
     struct MultiKeySettingsJson {
         key1: Option<String>,
         key2: Option<String>,
@@ -2195,8 +2228,7 @@ mod tests {
         }
     }
 
-    #[derive(Debug, Deserialize, SettingsKey)]
-    #[settings_key(key = "journal")]
+    #[derive(Debug, Deserialize)]
     struct JournalSettings {
         pub path: String,
         pub hour_format: HourFormat,
@@ -2212,6 +2244,7 @@ mod tests {
     #[derive(
         Clone, Default, Debug, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey,
     )]
+    #[settings_key(key = "journal")]
     struct JournalSettingsJson {
         pub path: Option<String>,
         pub hour_format: Option<HourFormat>,
@@ -2300,7 +2333,7 @@ mod tests {
     #[derive(
         Clone, Debug, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey,
     )]
-    #[settings_key()]
+    #[settings_key(None)]
     struct LanguageSettings {
         #[serde(default)]
         languages: HashMap<String, LanguageSettingEntry>,

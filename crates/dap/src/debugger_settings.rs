@@ -4,9 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 
-#[derive(
-    Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, SettingsUi, SettingsKey,
-)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, SettingsUi)]
 #[serde(rename_all = "snake_case")]
 pub enum DebugPanelDockPosition {
     Left,
@@ -18,7 +16,7 @@ pub enum DebugPanelDockPosition {
 #[serde(default)]
 // todo(settings_ui) @ben: I'm pretty sure not having the fields be optional here is a bug,
 // it means the defaults will override previously set values if a single key is missing
-#[settings_ui(group = "Debugger", path = "debugger")]
+#[settings_ui(group = "Debugger")]
 #[settings_key(key = "debugger")]
 pub struct DebuggerSettings {
     /// Determines the stepping granularity.

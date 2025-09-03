@@ -49,8 +49,7 @@ impl Default for SaveOptions {
     }
 }
 
-#[derive(Deserialize, settings::SettingsKey)]
-#[settings_key(key = "tabs")]
+#[derive(Deserialize)]
 pub struct ItemSettings {
     pub git_status: bool,
     pub close_position: ClosePosition,
@@ -60,8 +59,7 @@ pub struct ItemSettings {
     pub show_close_button: ShowCloseButton,
 }
 
-#[derive(Deserialize, SettingsKey)]
-#[settings_key(key = "preview_tabs")]
+#[derive(Deserialize)]
 pub struct PreviewTabsSettings {
     pub enabled: bool,
     pub enable_preview_from_file_finder: bool,
@@ -104,6 +102,7 @@ pub enum ActivateOnClose {
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
+#[settings_key(key = "tabs")]
 pub struct ItemSettingsContent {
     /// Whether to show the Git file status on a tab item.
     ///
@@ -133,6 +132,7 @@ pub struct ItemSettingsContent {
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
+#[settings_key(key = "preview_tabs")]
 pub struct PreviewTabsSettingsContent {
     /// Whether to show opened editors as preview tabs.
     /// Preview tabs do not stay open, are reused until explicitly set to be kept open opened (via double-click or editing) and show file names in italic.

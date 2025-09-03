@@ -11,8 +11,7 @@ use util::serde::default_true;
 
 /// Imports from the VSCode settings at
 /// https://code.visualstudio.com/docs/reference/default-settings
-#[derive(Deserialize, Clone, SettingsKey)]
-#[settings_key()]
+#[derive(Deserialize, Clone)]
 pub struct EditorSettings {
     pub cursor_blink: bool,
     pub cursor_shape: Option<CursorShape>,
@@ -63,17 +62,7 @@ pub struct EditorSettings {
 
 /// How to render LSP `textDocument/documentColor` colors in the editor.
 #[derive(
-    Copy,
-    Clone,
-    Debug,
-    Default,
-    Serialize,
-    Deserialize,
-    PartialEq,
-    Eq,
-    JsonSchema,
-    SettingsUi,
-    SettingsKey,
+    Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum DocumentColorsRenderMode {
@@ -442,8 +431,9 @@ pub enum SnippetSortOrder {
     None,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
 #[settings_ui(group = "Editor")]
+#[settings_key(None)]
 pub struct EditorSettingsContent {
     /// Whether the cursor blinks in the editor.
     ///

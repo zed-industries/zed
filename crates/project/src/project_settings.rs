@@ -37,7 +37,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
-#[settings_key()]
+#[settings_key(None)]
 pub struct ProjectSettings {
     /// Configuration for language servers.
     ///
@@ -293,7 +293,6 @@ impl Default for GlobalLspSettings {
     Deserialize,
     JsonSchema,
     SettingsUi,
-    SettingsKey,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum DiagnosticSeverity {

@@ -56,8 +56,7 @@ pub fn all_language_settings<'a>(
 }
 
 /// The settings for all languages.
-#[derive(Debug, Clone, SettingsKey)]
-#[settings_key()]
+#[derive(Debug, Clone)]
 pub struct AllLanguageSettings {
     /// The edit prediction settings.
     pub edit_predictions: EditPredictionSettings,
@@ -297,6 +296,7 @@ pub struct CopilotSettings {
 #[derive(
     Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey,
 )]
+#[settings_key(None)]
 pub struct AllLanguageSettingsContent {
     /// The settings for enabling/disabling features.
     #[serde(default)]

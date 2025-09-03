@@ -97,12 +97,12 @@ actions!(
 );
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
+#[settings_key(None)]
 pub struct ClientSettingsContent {
     server_url: Option<String>,
 }
 
-#[derive(Deserialize, SettingsKey)]
-#[settings_key()]
+#[derive(Deserialize)]
 pub struct ClientSettings {
     pub server_url: String,
 }
@@ -122,12 +122,12 @@ impl Settings for ClientSettings {
 }
 
 #[derive(Default, Clone, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
+#[settings_key(None)]
 pub struct ProxySettingsContent {
     proxy: Option<String>,
 }
 
-#[derive(Deserialize, Default, SettingsKey)]
-#[settings_key()]
+#[derive(Deserialize, Default)]
 pub struct ProxySettings {
     pub proxy: Option<String>,
 }
@@ -518,8 +518,7 @@ impl<T: 'static> Drop for PendingEntitySubscription<T> {
     }
 }
 
-#[derive(Copy, Clone, Deserialize, Debug, SettingsKey)]
-#[settings_key(key = "telemetry")]
+#[derive(Copy, Clone, Deserialize, Debug)]
 pub struct TelemetrySettings {
     pub diagnostics: bool,
     pub metrics: bool,
@@ -527,6 +526,7 @@ pub struct TelemetrySettings {
 
 /// Control what info is collected by Zed.
 #[derive(Default, Clone, Serialize, Deserialize, JsonSchema, Debug, SettingsUi, SettingsKey)]
+#[settings_key(key = "telemetry")]
 pub struct TelemetrySettingsContent {
     /// Send debug info like crash reports.
     ///

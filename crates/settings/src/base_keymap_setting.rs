@@ -10,19 +10,8 @@ use settings_ui_macros::{SettingsKey, SettingsUi};
 ///
 /// Default: VSCode
 #[derive(
-    Copy,
-    Clone,
-    Debug,
-    Serialize,
-    Deserialize,
-    JsonSchema,
-    PartialEq,
-    Eq,
-    Default,
-    SettingsUi,
-    SettingsKey,
+    Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default, SettingsUi,
 )]
-#[settings_key()]
 pub enum BaseKeymap {
     #[default]
     VSCode,
@@ -125,6 +114,7 @@ impl BaseKeymap {
     SettingsKey,
 )]
 // extracted so that it can be an option, and still work with derive(SettingsUi)
+#[settings_key(None)]
 pub struct BaseKeymapSetting {
     pub base_keymap: Option<BaseKeymap>,
 }

@@ -28,6 +28,7 @@ use context_server_store::ContextServerStore;
 pub use environment::{EnvironmentErrorMessage, ProjectEnvironmentEvent};
 use git::repository::get_git_committer;
 use git_store::{Repository, RepositoryId};
+use schemars::JsonSchema;
 pub mod search_history;
 mod yarn;
 
@@ -94,7 +95,10 @@ use rpc::{
 };
 use search::{SearchInputKind, SearchQuery, SearchResult};
 use search_history::SearchHistory;
-use settings::{InvalidSettingsError, Settings, SettingsLocation, SettingsSources, SettingsStore};
+use settings::{
+    InvalidSettingsError, Settings, SettingsKey, SettingsLocation, SettingsSources, SettingsStore,
+    SettingsUi,
+};
 use smol::channel::Receiver;
 use snippet::Snippet;
 use snippet_provider::SnippetProvider;
@@ -951,14 +955,31 @@ pub enum PulledDiagnostics {
 /// Whether to disable all AI features in Zed.
 ///
 /// Default: false
-#[derive(Copy, Clone, Debug, settings::SettingsUi, settings::SettingsKey)]
-#[settings_key(key = "disable_ai")]
+#[derive(Copy, Clone, Debug, settings::SettingsUi)]
 pub struct DisableAiSettings {
     pub disable_ai: bool,
 }
 
+#[derive(
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    Debug,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    SettingsUi,
+    SettingsKey,
+    JsonSchema,
+)]
+#[settings_key(None)]
+pub struct DisableAiSettingContent {
+    pub disable_ai: Option<bool>,
+}
+
 impl settings::Settings for DisableAiSettings {
-    type FileContent = Option<bool>;
+    type FileContent = DisableAiSettingContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         // For security reasons, settings can only make AI restrictions MORE strict, not less.
@@ -971,7 +992,7 @@ impl settings::Settings for DisableAiSettings {
             .iter()
             .chain(sources.user.iter())
             .chain(sources.server.iter())
-            .any(|disabled| **disabled == Some(true));
+            .any(|disabled| disabled.disable_ai == Some(true));
 
         Ok(Self { disable_ai })
     }
@@ -5533,7 +5554,9 @@ mod disable_ai_settings_tests {
         cx.update(|cx| {
             // Test 1: Default is false (AI enabled)
             let sources = SettingsSources {
-                default: &Some(false),
+                default: &DisableAiSettingContent {
+                    disable_ai: Some(false),
+                },
                 global: None,
                 extensions: None,
                 user: None,
