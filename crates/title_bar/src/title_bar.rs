@@ -31,7 +31,7 @@ use gpui::{
 };
 use keymap_editor;
 use onboarding_banner::OnboardingBanner;
-use project::{DisableAiSettings, Project};
+use project::Project;
 use remote::RemoteConnectionOptions;
 use settings::Settings as _;
 use std::sync::Arc;
@@ -179,11 +179,7 @@ impl Render for TitleBar {
 
         children.push(self.render_collaborator_list(window, cx).into_any_element());
 
-        if title_bar_settings.show_onboarding_banner
-        // Only keep the `disable_ai` check around if the currently
-        // introduced feature is about AI.
-            && !DisableAiSettings::get_global(cx).disable_ai
-        {
+        if title_bar_settings.show_onboarding_banner {
             children.push(self.banner.clone().into_any_element())
         }
 
@@ -281,8 +277,6 @@ impl TitleBar {
         subscriptions.push(cx.observe_window_activation(window, Self::window_activation_changed));
         subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
 
-        // When updating this to a non-AI feature release,
-        // remove the `disable_ai` check in the title bar render function above.
         let banner = cx.new(|cx| {
             OnboardingBanner::new(
                 "ACP Claude Code Onboarding",
@@ -292,6 +286,8 @@ impl TitleBar {
                 zed_actions::agent::OpenClaudeCodeOnboardingModal.boxed_clone(),
                 cx,
             )
+            // When updating this to a non-AI feature release, remove this line.
+            .visible_when(|cx| !project::DisableAiSettings::get_global(cx).disable_ai)
         });
 
         let platform_titlebar = cx.new(|cx| PlatformTitleBar::new(id, cx));
