@@ -120,6 +120,8 @@ You can run any agent speaking ACP in Zed by changing your settings as follows:
 
 This can also be useful if you're in the middle of developing a new agent that speaks the protocol and you want to debug it.
 
+You can also specify a custom path, arguments, or environment for the builtin integrations by using the `claude` and `gemini` names.
+
 ## Debugging Agents
 
 When using external agents in Zed, you can access the debug view via with `dev: open acp logs` from the Command Palette. This lets you see the messages being sent and received between Zed and the agent.
