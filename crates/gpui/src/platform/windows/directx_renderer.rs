@@ -211,7 +211,6 @@ impl DirectXRenderer {
             || {
                 self.handle_device_lost_impl(directx_devices)
                     .context("DirectXRenderer handling device lost")
-                    .log_err()
             },
             |_| {},
             || {

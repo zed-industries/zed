@@ -19,7 +19,7 @@ use windows::Win32::{
 };
 
 pub(crate) fn try_to_recover_from_device_lost<T>(
-    mut f: impl FnMut() -> Option<T>,
+    mut f: impl FnMut() -> Result<T>,
     on_success: impl FnOnce(T),
     on_error: impl FnOnce(),
 ) {
@@ -28,7 +28,7 @@ pub(crate) fn try_to_recover_from_device_lost<T>(
             // Add a small delay before retrying
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
-        f()
+        f().log_err()
     });
 
     if let Some(result) = result {

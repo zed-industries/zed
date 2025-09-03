@@ -1214,11 +1214,7 @@ impl DirectWriteState {
 
     fn handle_gpu_lost(&mut self, directx_devices: &DirectXDevices) {
         try_to_recover_from_device_lost(
-            || {
-                GPUState::new(directx_devices)
-                    .context("Recreating GPU state for DirectWrite")
-                    .log_err()
-            },
+            || GPUState::new(directx_devices).context("Recreating GPU state for DirectWrite"),
             |gpu_state| {
                 self.components.gpu_state = gpu_state;
             },

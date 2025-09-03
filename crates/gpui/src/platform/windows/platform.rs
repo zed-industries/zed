@@ -1014,7 +1014,6 @@ fn handle_device_lost(
         || {
             DirectXDevices::new()
                 .context("Failed to recreate new DirectX devices after device lost")
-                .log_err()
         },
         |new_devices| {
             *directx_devices = new_devices;
