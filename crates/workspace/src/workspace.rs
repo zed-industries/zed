@@ -73,6 +73,7 @@ use postage::stream::Stream;
 use project::{
     DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
+    toolchain_store::ToolchainStoreEvent,
 };
 use remote::{RemoteClientDelegate, RemoteConnectionOptions, remote_client::ConnectionIdentifier};
 use schemars::JsonSchema;
@@ -1274,6 +1275,19 @@ impl Workspace {
             },
         )
         .detach();
+        if let Some(toolchain_store) = project.read(cx).toolchain_store() {
+            cx.subscribe_in(
+                &toolchain_store,
+                window,
+                |workspace, _, event, window, cx| match event {
+                    ToolchainStoreEvent::CustomToolchainsModified => {
+                        workspace.serialize_workspace(window, cx);
+                    }
+                    _ => {}
+                },
+            )
+            .detach();
+        }
 
         cx.on_focus_lost(window, |this, window, cx| {
             let focus_handle = this.focus_handle(cx);
@@ -5227,10 +5241,16 @@ impl Workspace {
                         .read(cx)
                         .all_source_breakpoints(cx)
                 });
+                let user_toolchains = self
+                    .project
+                    .read(cx)
+                    .user_toolchains(cx)
+                    .unwrap_or_default();
 
                 let center_group = build_serialized_pane_group(&self.center.root, window, cx);
                 let docks = build_serialized_docks(self, window, cx);
                 let window_bounds = Some(SerializedWindowBounds(window.window_bounds()));
+
                 let serialized_workspace = SerializedWorkspace {
                     id: database_id,
                     location,
@@ -5243,6 +5263,7 @@ impl Workspace {
                     session_id: self.session_id.clone(),
                     breakpoints,
                     window_id: Some(window.window_handle().window_id().as_u64()),
+                    user_toolchains,
                 };
 
                 window.spawn(cx, async move |_| {

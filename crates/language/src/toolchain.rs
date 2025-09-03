@@ -39,6 +39,7 @@ pub struct Toolchain {
 pub enum ToolchainScope {
     Subproject(WorktreeId, Arc<Path>),
     Project,
+    /// Available in all projects on this box. It wouldn't make sense to show suggestions across machines.
     Global,
 }
 

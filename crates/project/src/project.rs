@@ -47,7 +47,7 @@ use clock::ReplicaId;
 
 use dap::client::DebugAdapterClient;
 
-use collections::{BTreeSet, HashMap, HashSet};
+use collections::{BTreeSet, HashMap, HashSet, IndexSet};
 use debounced_delay::DebouncedDelay;
 pub use debugger::breakpoint_store::BreakpointWithPosition;
 use debugger::{
@@ -101,6 +101,7 @@ use snippet::Snippet;
 use snippet_provider::SnippetProvider;
 use std::{
     borrow::Cow,
+    collections::BTreeMap,
     ops::Range,
     path::{Component, Path, PathBuf},
     pin::pin,
@@ -3384,6 +3385,13 @@ impl Project {
             });
             Some(())
         });
+    }
+
+    pub fn user_toolchains(
+        &self,
+        cx: &App,
+    ) -> Option<BTreeMap<ToolchainScope, IndexSet<Toolchain>>> {
+        Some(self.toolchain_store.as_ref()?.read(cx).user_toolchains())
     }
 
     pub fn resolve_toolchain(

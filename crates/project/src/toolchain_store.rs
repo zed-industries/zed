@@ -109,6 +109,9 @@ impl ToolchainStore {
         }
     }
 
+    pub(crate) fn user_toolchains(&self) -> BTreeMap<ToolchainScope, IndexSet<Toolchain>> {
+        self.user_toolchains.clone()
+    }
     pub(crate) fn add_toolchain(
         &mut self,
         toolchain: Toolchain,

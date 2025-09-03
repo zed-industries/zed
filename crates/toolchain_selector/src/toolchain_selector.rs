@@ -13,7 +13,7 @@ use gpui::{
 };
 use language::{Language, LanguageName, Toolchain, ToolchainScope};
 use picker::{Picker, PickerDelegate};
-use project::{DirectoryLister, Project, ProjectPath, ResolvedPath, Toolchains, WorktreeId};
+use project::{DirectoryLister, Project, ProjectPath, Toolchains, WorktreeId};
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
@@ -238,6 +238,7 @@ impl AddToolchainState {
                         ToolchainScope::Project
                     }
                 } else {
+                    // This path lies outside of the project.
                     ToolchainScope::Global
                 };
 
