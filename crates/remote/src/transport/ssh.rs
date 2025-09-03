@@ -317,12 +317,14 @@ impl SshRemoteConnection {
                 "-o",
                 "ControlMaster=yes",
                 "-o",
+                "ConnectTimeout=30",
+                "-o",
             ];
             // On Windows, `ControlMaster` and `ControlPath` are not supported:
             // https://github.com/PowerShell/Win32-OpenSSH/issues/405
             // https://github.com/PowerShell/Win32-OpenSSH/wiki/Project-Scope
             #[cfg(target_os = "windows")]
-            let args = ["-N"];
+            let args = ["-N", "-o", "ConnectTimeout=30"];
             let mut master_process = util::command::new_smol_command("ssh");
             master_process
                 .kill_on_drop(true)
@@ -760,7 +762,13 @@ impl SshSocket {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .args(self.connection_options.additional_args())
-            .args(["-o", "ControlMaster=no", "-o"])
+            .args([
+                "-o",
+                "ConnectTimeout=30",
+                "-o",
+                "ControlMaster=no",
+                "-o",
+            ])
             .arg(format!("ControlPath={}", self.socket_path.display()))
     }
 
@@ -771,6 +779,7 @@ impl SshSocket {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .args(self.connection_options.additional_args())
+            .args(["-o", "ConnectTimeout=30"])
             .envs(self.envs.clone())
     }
 
@@ -798,17 +807,19 @@ impl SshSocket {
 
     async fn platform(&self) -> Result<RemotePlatform> {
         let uname = self.run_command("sh", &["-lc", "uname -sm"]).await?;
-        let Some((os, arch)) = uname.split_once(" ") else {
-            anyhow::bail!("unknown uname: {uname:?}")
+        let mut parts = uname.trim().split_whitespace();
+        let os = parts.next();
+        let arch = parts.next().unwrap_or_default();
+
+        let os = match os {
+            Some("Darwin") => "macos",
+            Some("Linux") => "linux",
+            Some(os) => {
+                anyhow::bail!("Prebuilt remote servers are not yet available for {os:?}. See https://zed.dev/docs/remote-development")
+            }
+            None => anyhow::bail!("unknown uname: {uname:?}"),
         };
 
-        let os = match os.trim() {
-            "Darwin" => "macos",
-            "Linux" => "linux",
-            _ => anyhow::bail!(
-                "Prebuilt remote servers are not yet available for {os:?}. See https://zed.dev/docs/remote-development"
-            ),
-        };
         // exclude armv5,6,7 as they are 32-bit.
         let arch = if arch.starts_with("armv8")
             || arch.starts_with("armv9")
@@ -816,7 +827,7 @@ impl SshSocket {
             || arch.starts_with("aarch64")
         {
             "aarch64"
-        } else if arch.starts_with("x86") {
+        } else if arch.starts_with("x86") || arch.is_empty() {
             "x86_64"
         } else {
             anyhow::bail!(
