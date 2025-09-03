@@ -742,6 +742,10 @@ impl DirectWriteState {
                 &mut grid_fit_mode,
             )?;
         }
+        let rendering_mode = match rendering_mode {
+            DWRITE_RENDERING_MODE1_OUTLINE => DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC,
+            m => m,
+        };
 
         let glyph_analysis = unsafe {
             self.components.factory.CreateGlyphRunAnalysis(
