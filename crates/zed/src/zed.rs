@@ -4868,7 +4868,7 @@ mod tests {
         let default_json =
             cx.read(|cx| cx.global::<SettingsStore>().raw_default_settings().clone());
 
-        let all_paths = cx.read(settings_ui::SettingsUiTree::new).all_paths();
+        let all_paths = cx.read(|cx| settings_ui::SettingsUiTree::new(cx).all_paths(cx));
         for path in all_paths {
             let Some(_value) = settings_ui::read_settings_value_from_path(&default_json, &path)
             else {

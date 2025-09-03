@@ -27,6 +27,7 @@ pub struct SettingsUiEntry {
     /// The path in the settings JSON file for this setting. Relative to parent
     /// None implies `#[serde(flatten)]` or `Settings::KEY.is_none()` for top level settings
     pub path: Option<&'static str>,
+    /// What is displayed for the text for this entry
     pub title: &'static str,
     pub item: SettingsUiItem,
 }
@@ -95,7 +96,7 @@ impl<T: serde::Serialize> SettingsValue<T> {
 
 pub struct SettingsUiItemDynamic {
     pub options: Vec<SettingsUiEntry>,
-    pub determine_option: fn(&serde_json::Value, &mut App) -> usize,
+    pub determine_option: fn(&serde_json::Value, &App) -> usize,
 }
 
 pub struct SettingsUiItemGroup {

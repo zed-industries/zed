@@ -153,7 +153,7 @@ struct UiEntry {
     render: Option<SettingsUiItemSingle>,
     /// For dynamic items this is a way to select a value from a list of values
     /// this is always none for non-dynamic items
-    select_descendant: Option<fn(&serde_json::Value, &mut App) -> usize>,
+    select_descendant: Option<fn(&serde_json::Value, &App) -> usize>,
 }
 
 impl UiEntry {
@@ -272,13 +272,16 @@ impl SettingsUiTree {
         }
     }
 
+    // todo(settings_ui): Make sure `Item::None` paths are added to the paths tree,
+    // so that we can keep none/skip and still test in CI that all settings have
     #[cfg(feature = "test-support")]
-    pub fn all_paths(&self) -> Vec<Vec<&'static str>> {
+    pub fn all_paths(&self, cx: &App) -> Vec<Vec<&'static str>> {
         fn all_paths_rec(
             tree: &[UiEntry],
             paths: &mut Vec<Vec<&'static str>>,
             current_path: &mut Vec<&'static str>,
             idx: usize,
+            cx: &App,
         ) {
             let child = &tree[idx];
             let mut pushed_path = false;
@@ -288,12 +291,28 @@ impl SettingsUiTree {
                 pushed_path = true;
             }
             // todo(settings_ui): handle dynamic nodes here
-            if let Some(desc_idx) = child.first_descendant_index()
-                && child.select_descendant.is_none()
-            {
+            let selected_descendant_index = child
+                .select_descendant
+                .map(|select_descendant| {
+                    read_settings_value_from_path(
+                        SettingsStore::global(cx).raw_default_settings(),
+                        &current_path,
+                    )
+                    .map(|value| select_descendant(value, cx))
+                })
+                .and_then(|selected_descendant_index| {
+                    selected_descendant_index.map(|index| child.nth_descendant_index(tree, index))
+                });
+
+            if let Some(selected_descendant_index) = selected_descendant_index {
+                // just silently fail if we didn't find a setting value for the path
+                if let Some(descendant_index) = selected_descendant_index {
+                    all_paths_rec(tree, paths, current_path, descendant_index, cx);
+                }
+            } else if let Some(desc_idx) = child.first_descendant_index() {
                 let mut desc_idx = Some(desc_idx);
                 while let Some(descendant_index) = desc_idx {
-                    all_paths_rec(&tree, paths, current_path, descendant_index);
+                    all_paths_rec(&tree, paths, current_path, descendant_index, cx);
                     desc_idx = tree[descendant_index].next_sibling;
                 }
             }
@@ -304,7 +323,7 @@ impl SettingsUiTree {
 
         let mut paths = Vec::new();
         for &index in &self.root_entry_indices {
-            all_paths_rec(&self.entries, &mut paths, &mut Vec::new(), index);
+            all_paths_rec(&self.entries, &mut paths, &mut Vec::new(), index, cx);
         }
         paths
     }
