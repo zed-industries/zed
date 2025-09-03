@@ -37,7 +37,7 @@ impl ClaudeCodeOnboardingModal {
 
             if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                 panel.update(cx, |panel, cx| {
-                    panel.new_agent_thread(AgentType::Gemini, window, cx);
+                    panel.new_agent_thread(AgentType::ClaudeCode, window, cx);
                 });
             }
         });
