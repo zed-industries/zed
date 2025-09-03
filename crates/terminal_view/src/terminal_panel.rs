@@ -41,7 +41,7 @@ use workspace::{
     ui::IconName,
 };
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Result, anyhow};
 use zed_actions::assistant::InlineAssist;
 
 const TERMINAL_PANEL_KEY: &str = "TerminalPanel";
