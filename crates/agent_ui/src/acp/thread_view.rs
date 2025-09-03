@@ -666,6 +666,10 @@ impl AcpThreadView {
                 move |_, ev, window, cx| {
                     if let language_model::Event::ProviderStateChanged(updated_provider_id) = &ev
                         && &provider_id == updated_provider_id
+                        && LanguageModelRegistry::global(cx)
+                            .read(cx)
+                            .provider(&provider_id)
+                            .map_or(false, |provider| provider.is_authenticated(cx))
                     {
                         this.update(cx, |this, cx| {
                             this.thread_state = Self::initial_state(
@@ -1365,11 +1369,11 @@ impl AcpThreadView {
                 .read(cx)
                 .provider(&language_model::ANTHROPIC_PROVIDER_ID)
                 .unwrap();
-            if !provider.is_authenticated(cx) {
-                let this = cx.weak_entity();
-                let agent = self.agent.clone();
-                let connection = connection.clone();
-                window.defer(cx, |window, cx| {
+            let this = cx.weak_entity();
+            let agent = self.agent.clone();
+            let connection = connection.clone();
+            window.defer(cx, move |window, cx| {
+                if !provider.is_authenticated(cx) {
                     Self::handle_auth_required(
                         this,
                         AuthRequired {
@@ -1381,9 +1385,21 @@ impl AcpThreadView {
                         window,
                         cx,
                     );
-                });
-                return;
-            }
+                } else {
+                    this.update(cx, |this, cx| {
+                        this.thread_state = Self::initial_state(
+                            agent,
+                            None,
+                            this.workspace.clone(),
+                            this.project.clone(),
+                            window,
+                            cx,
+                        )
+                    })
+                    .ok();
+                }
+            });
+            return;
         } else if method.0.as_ref() == "vertex-ai"
             && std::env::var("GOOGLE_API_KEY").is_err()
             && (std::env::var("GOOGLE_CLOUD_PROJECT").is_err()
