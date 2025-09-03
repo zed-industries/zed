@@ -72,20 +72,19 @@ struct PlatformCallbacks {
 }
 
 impl WindowsPlatformState {
-    fn new() -> Result<Self> {
+    fn new(devices: DirectXDevices) -> Self {
         let callbacks = PlatformCallbacks::default();
         let jump_list = JumpList::new();
         let current_cursor = load_cursor(CursorStyle::Arrow);
-        let directx_devices =
-            ManuallyDrop::new(DirectXDevices::new().context("Creating DirectX devices")?);
+        let directx_devices = ManuallyDrop::new(devices);
 
-        Ok(Self {
+        Self {
             callbacks,
             jump_list,
             current_cursor,
             directx_devices,
             menus: Vec::new(),
-        })
+        }
     }
 }
 
@@ -94,15 +93,22 @@ impl WindowsPlatform {
         unsafe {
             OleInitialize(None).context("unable to initialize Windows OLE")?;
         }
+        let devices = DirectXDevices::new().context("Creating DirectX devices")?;
         let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
         let validation_number = rand::random::<usize>();
         let raw_window_handles = Arc::new(RwLock::new(SmallVec::new()));
+        let text_system = Arc::new(
+            DirectWriteTextSystem::new(&devices.device, &devices.device_context)
+                .context("Error creating DirectWriteTextSystem")?,
+        );
         register_platform_window_class();
         let mut context = PlatformWindowCreateContext {
             inner: None,
             raw_window_handles: Arc::downgrade(&raw_window_handles),
+            text_system: Arc::downgrade(&text_system),
             validation_number,
             main_receiver: Some(main_receiver),
+            devices: Some(devices),
         };
         let result = unsafe {
             CreateWindowExW(
@@ -131,16 +137,6 @@ impl WindowsPlatform {
             .is_ok_and(|value| value == "true" || value == "1");
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
-
-        let lock = inner.state.borrow();
-        let text_system = Arc::new(
-            DirectWriteTextSystem::new(
-                &lock.directx_devices.device,
-                &lock.directx_devices.device_context,
-            )
-            .context("Error creating DirectWriteTextSystem")?,
-        );
-        drop(lock);
 
         let drop_target_helper: IDropTargetHelper = unsafe {
             CoCreateInstance(&CLSID_DragDropHelper, None, CLSCTX_INPROC_SERVER)
@@ -670,7 +666,7 @@ impl Platform for WindowsPlatform {
 
 impl WindowsPlatformInner {
     fn new(context: &mut PlatformWindowCreateContext) -> Result<Rc<Self>> {
-        let state = RefCell::new(WindowsPlatformState::new().context("Creating platform state")?);
+        let state = RefCell::new(WindowsPlatformState::new(context.devices.take().unwrap()));
         Ok(Rc::new(Self {
             state,
             raw_window_handles: context.raw_window_handles.clone(),
@@ -820,6 +816,7 @@ struct PlatformWindowCreateContext {
     text_system: std::sync::Weak<DirectWriteTextSystem>,
     validation_number: usize,
     main_receiver: Option<flume::Receiver<Runnable>>,
+    devices: Option<DirectXDevices>,
 }
 
 fn open_target(target: impl AsRef<OsStr>) -> Result<()> {
