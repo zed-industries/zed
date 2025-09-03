@@ -71,7 +71,7 @@ impl ModalView for ClaudeCodeOnboardingModal {}
 
 impl Render for ClaudeCodeOnboardingModal {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let illustration_element = |label: bool, opacity: f32| {
+        let illustration_element = |icon: IconName, label: Option<SharedString>, opacity: f32| {
             h_flex()
                 .px_1()
                 .py_0p5()
@@ -82,14 +82,14 @@ impl Render for ClaudeCodeOnboardingModal {
                 .border_color(cx.theme().colors().border)
                 .border_dashed()
                 .child(
-                    Icon::new(IconName::Stop)
+                    Icon::new(icon)
                         .size(IconSize::Small)
                         .color(Color::Custom(cx.theme().colors().text_muted.opacity(0.15))),
                 )
                 .map(|this| {
-                    if label {
+                    if let Some(label_text) = label {
                         this.child(
-                            Label::new("Your Agent Here")
+                            Label::new(label_text)
                                 .size(LabelSize::Small)
                                 .color(Color::Muted),
                         )
@@ -141,26 +141,22 @@ impl Render for ClaudeCodeOnboardingModal {
                     .bg(gpui::black().opacity(0.15)),
             )
             .child(
-                h_flex()
-                    .gap_4()
-                    .child(
-                        Vector::new(VectorName::AcpLogo, rems_from_px(106.), rems_from_px(40.))
-                            .color(ui::Color::Custom(cx.theme().colors().text.opacity(0.8))),
-                    )
-                    .child(
-                        Vector::new(
-                            VectorName::AcpLogoSerif,
-                            rems_from_px(111.),
-                            rems_from_px(41.),
-                        )
-                        .color(ui::Color::Custom(cx.theme().colors().text.opacity(0.8))),
-                    ),
+                Vector::new(
+                    VectorName::AcpLogoSerif,
+                    rems_from_px(257.),
+                    rems_from_px(47.),
+                )
+                .color(ui::Color::Custom(cx.theme().colors().text.opacity(0.8))),
             )
             .child(
                 v_flex()
                     .gap_1p5()
-                    .child(illustration_element(false, 0.15))
-                    .child(illustration_element(true, 0.3))
+                    .child(illustration_element(IconName::Stop, None, 0.15))
+                    .child(illustration_element(
+                        IconName::AiGemini,
+                        Some("New Gemini CLI Thread".into()),
+                        0.3,
+                    ))
                     .child(
                         h_flex()
                             .pl_1()
@@ -178,21 +174,25 @@ impl Render for ClaudeCodeOnboardingModal {
                             )
                             .child(Label::new("New Claude Code Thread").size(LabelSize::Small)),
                     )
-                    .child(illustration_element(true, 0.3))
-                    .child(illustration_element(false, 0.15)),
+                    .child(illustration_element(
+                        IconName::Stop,
+                        Some("Your Agent Here".into()),
+                        0.3,
+                    ))
+                    .child(illustration_element(IconName::Stop, None, 0.15)),
             );
 
         let heading = v_flex()
             .w_full()
             .gap_1()
             .child(
-                Label::new("Now Available")
+                Label::new("Beta Release")
                     .size(LabelSize::Small)
                     .color(Color::Muted),
             )
-            .child(Headline::new("Bring Your Own Agent to Zed").size(HeadlineSize::Large));
+            .child(Headline::new("Claude Code: Natively in Zed").size(HeadlineSize::Large));
 
-        let copy = "Bring the agent of your choice to Zed via our new Agent Client Protocol (ACP), now with Claude Code integration.";
+        let copy = "Powered by the Agent Client Protocol, you can now run Claude Code as\na first-class citizen in Zed's agent panel.";
 
         let open_panel_button = Button::new("open-panel", "Start with Claude Code")
             .icon_size(IconSize::Indicator)
