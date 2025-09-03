@@ -46,7 +46,7 @@ use text::Anchor;
 use theme::ThemeSettings;
 use ui::{
     Callout, Disclosure, Divider, DividerColor, ElevationIndex, KeyBinding, PopoverMenuHandle,
-    Scrollbar, ScrollbarState, SpinnerLabel, Tooltip, prelude::*,
+    Scrollbar, ScrollbarState, SpinnerLabel, TintColor, Tooltip, prelude::*,
 };
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use workspace::{CollaboratorId, Workspace};
@@ -288,6 +288,7 @@ pub struct AcpThreadView {
     prompt_capabilities: Rc<Cell<PromptCapabilities>>,
     available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
     is_loading_contents: bool,
+    new_server_version_available: Option<SharedString>,
     _cancel_task: Option<Task<()>>,
     _subscriptions: [Subscription; 3],
 }
@@ -416,7 +417,21 @@ impl AcpThreadView {
             _subscriptions: subscriptions,
             _cancel_task: None,
             focus_handle: cx.focus_handle(),
+            new_server_version_available: None,
         }
+    }
+
+    fn reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.thread_state = Self::initial_state(
+            self.agent.clone(),
+            None,
+            self.workspace.clone(),
+            self.project.clone(),
+            window,
+            cx,
+        );
+        self.new_server_version_available.take();
+        cx.notify();
     }
 
     fn initial_state(
@@ -451,8 +466,13 @@ impl AcpThreadView {
             })
             .next()
             .unwrap_or_else(|| paths::home_dir().as_path().into());
-        let (tx, mut rx) = watch::channel("Loading…".into());
-        let delegate = AgentServerDelegate::new(project.clone(), Some(tx));
+        let (status_tx, mut status_rx) = watch::channel("Loading…".into());
+        let (new_version_available_tx, mut new_version_available_rx) = watch::channel(None);
+        let delegate = AgentServerDelegate::new(
+            project.clone(),
+            Some(status_tx),
+            Some(new_version_available_tx),
+        );
 
         let connect_task = agent.connect(&root_dir, delegate, cx);
         let load_task = cx.spawn_in(window, async move |this, cx| {
@@ -627,10 +647,23 @@ impl AcpThreadView {
             .log_err();
         });
 
+        cx.spawn(async move |this, cx| {
+            while let Ok(new_version) = new_version_available_rx.recv().await {
+                if let Some(new_version) = new_version {
+                    this.update(cx, |this, cx| {
+                        this.new_server_version_available = Some(new_version.into());
+                        cx.notify();
+                    })
+                    .log_err();
+                }
+            }
+        })
+        .detach();
+
         let loading_view = cx.new(|cx| {
             let update_title_task = cx.spawn(async move |this, cx| {
                 loop {
-                    let status = rx.recv().await?;
+                    let status = status_rx.recv().await?;
                     this.update(cx, |this: &mut LoadingView, cx| {
                         this.title = status;
                         cx.notify();
@@ -672,15 +705,7 @@ impl AcpThreadView {
                             .map_or(false, |provider| provider.is_authenticated(cx))
                     {
                         this.update(cx, |this, cx| {
-                            this.thread_state = Self::initial_state(
-                                agent.clone(),
-                                None,
-                                this.workspace.clone(),
-                                this.project.clone(),
-                                window,
-                                cx,
-                            );
-                            cx.notify();
+                            this.reset(window, cx);
                         })
                         .ok();
                     }
@@ -1443,7 +1468,6 @@ impl AcpThreadView {
         cx.notify();
         self.auth_task =
             Some(cx.spawn_in(window, {
-                let project = self.project.clone();
                 let agent = self.agent.clone();
                 async move |this, cx| {
                     let result = authenticate.await;
@@ -1472,14 +1496,7 @@ impl AcpThreadView {
                             }
                             this.handle_thread_error(err, cx);
                         } else {
-                            this.thread_state = Self::initial_state(
-                                agent,
-                                None,
-                                this.workspace.clone(),
-                                project.clone(),
-                                window,
-                                cx,
-                            )
+                            this.reset(window, cx);
                         }
                         this.auth_task.take()
                     })
@@ -1501,7 +1518,7 @@ impl AcpThreadView {
         let cwd = project.first_project_directory(cx);
         let shell = project.terminal_settings(&cwd, cx).shell.clone();
 
-        let delegate = AgentServerDelegate::new(project_entity.clone(), None);
+        let delegate = AgentServerDelegate::new(project_entity.clone(), None, None);
         let command = ClaudeCode::login_command(delegate, cx);
 
         window.spawn(cx, async move |cx| {
@@ -4821,6 +4838,38 @@ impl AcpThreadView {
         Some(div().child(content))
     }
 
+    fn render_new_version_callout(&self, version: &SharedString, cx: &mut Context<Self>) -> Div {
+        v_flex().w_full().justify_end().child(
+            h_flex()
+                .p_2()
+                .pr_3()
+                .w_full()
+                .gap_1p5()
+                .border_t_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().element_background)
+                .child(
+                    h_flex()
+                        .flex_1()
+                        .gap_1p5()
+                        .child(
+                            Icon::new(IconName::Download)
+                                .color(Color::Accent)
+                                .size(IconSize::Small),
+                        )
+                        .child(Label::new("New version available").size(LabelSize::Small)),
+                )
+                .child(
+                    Button::new("update-button", format!("Update to v{}", version))
+                        .label_size(LabelSize::Small)
+                        .style(ButtonStyle::Tinted(TintColor::Accent))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.reset(window, cx);
+                        })),
+                ),
+        )
+    }
+
     fn get_current_model_name(&self, cx: &App) -> SharedString {
         // For native agent (Zed Agent), use the specific model name (e.g., "Claude 3.5 Sonnet")
         // For ACP agents, use the agent name (e.g., "Claude Code", "Gemini CLI")
@@ -5235,6 +5284,12 @@ impl Render for AcpThreadView {
             })
             .children(self.render_thread_retry_status_callout(window, cx))
             .children(self.render_thread_error(window, cx))
+            .when_some(
+                self.new_server_version_available.as_ref().filter(|_| {
+                    !has_messages || !matches!(self.thread_state, ThreadState::Ready { .. })
+                }),
+                |this, version| this.child(self.render_new_version_callout(&version, cx)),
+            )
             .children(
                 if let Some(usage_callout) = self.render_usage_callout(line_height, cx) {
                     Some(usage_callout.into_any_element())

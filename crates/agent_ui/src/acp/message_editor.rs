@@ -700,7 +700,7 @@ impl MessageEditor {
             self.project.read(cx).fs().clone(),
             self.history_store.clone(),
         ));
-        let delegate = AgentServerDelegate::new(self.project.clone(), None);
+        let delegate = AgentServerDelegate::new(self.project.clone(), None, None);
         let connection = server.connect(Path::new(""), delegate, cx);
         cx.spawn(async move |_, cx| {
             let agent = connection.await?;
