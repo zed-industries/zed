@@ -3270,6 +3270,9 @@ impl EditorElement {
         if rows.start >= rows.end {
             return Vec::new();
         }
+        if base_background.is_transparent() {
+            return Vec::new();
+        }
         let highlight_iter = highlight_ranges.iter().cloned();
         let selection_iter = selections.iter().flat_map(|(player_color, layouts)| {
             let color = player_color.selection;
@@ -3310,8 +3313,10 @@ impl EditorElement {
             if row_segments.is_empty() {
                 continue;
             }
+            dbg!(&base_background, &row_segments);
             let segments = mem::take(row_segments);
             let merged = Self::merge_overlapping_ranges(segments, base_background);
+            dbg!(&merged);
             *row_segments = merged;
         }
         per_row_map
