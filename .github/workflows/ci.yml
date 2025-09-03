@@ -81,6 +81,7 @@ jobs:
             echo "run_license=false" >> "$GITHUB_OUTPUT"
 
           echo "$CHANGED_FILES" | grep -qP '^(nix/|flake\.|Cargo\.|rust-toolchain.toml|\.cargo/config.toml)' && \
+            echo "$GITHUB_REF_NAME" | grep -qvP '^v[0-9]+\.[0-9]+\.[0-9x](-pre)?$' && \
             echo "run_nix=true" >> "$GITHUB_OUTPUT" || \
             echo "run_nix=false" >> "$GITHUB_OUTPUT"
 
