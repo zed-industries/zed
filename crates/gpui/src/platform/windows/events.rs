@@ -1193,7 +1193,12 @@ impl WindowsWindowInner {
 
     fn handle_device_lost(&self, handle: HWND, lparam: LPARAM) -> Option<isize> {
         let mut lock = self.state.borrow_mut();
-        println!("Window {:?} handling device lost", handle.0);
+        let devices = lparam.0 as *const DirectXDevices;
+        let devices = unsafe { &*devices };
+        lock.renderer
+            .handle_device_lost(devices.clone())
+            .context("Renderer handling device lost")
+            .log_err();
         Some(0)
     }
 

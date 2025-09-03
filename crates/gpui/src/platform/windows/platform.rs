@@ -130,12 +130,17 @@ impl WindowsPlatform {
             .is_ok_and(|value| value == "true" || value == "1");
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
-        let directx_devices = DirectXRendererDevices::new(disable_direct_composition)
-            .context("Unable to init directx devices.")?;
+
+        let lock = inner.state.borrow();
         let text_system = Arc::new(
-            DirectWriteTextSystem::new(&directx_devices)
-                .context("Error creating DirectWriteTextSystem")?,
+            DirectWriteTextSystem::new(
+                &lock.directx_devices.device,
+                &lock.directx_devices.device_context,
+            )
+            .context("Error creating DirectWriteTextSystem")?,
         );
+        drop(lock);
+
         let drop_target_helper: IDropTargetHelper = unsafe {
             CoCreateInstance(&CLSID_DragDropHelper, None, CLSCTX_INPROC_SERVER)
                 .context("Error creating drop target helper.")?
@@ -186,6 +191,7 @@ impl WindowsPlatform {
             main_receiver: self.inner.main_receiver.clone(),
             platform_window_handle: self.handle,
             disable_direct_composition: self.disable_direct_composition,
+            devices: (*self.inner.state.borrow().directx_devices).clone(),
         }
     }
 
@@ -771,7 +777,7 @@ impl WindowsPlatformInner {
     fn handle_device_lost(&self, lparam: LPARAM) -> Option<isize> {
         println!("Platform handling device lost");
         let mut lock = self.state.borrow_mut();
-        let devices = unsafe { lparam.0 as *const DirectXDevices };
+        let devices = lparam.0 as *const DirectXDevices;
         let devices = unsafe { &*devices };
         unsafe {
             ManuallyDrop::drop(&mut lock.directx_devices);
@@ -803,6 +809,7 @@ pub(crate) struct WindowCreationInfo {
     pub(crate) main_receiver: flume::Receiver<Runnable>,
     pub(crate) platform_window_handle: HWND,
     pub(crate) disable_direct_composition: bool,
+    pub(crate) devices: DirectXDevices,
 }
 
 struct PlatformWindowCreateContext {

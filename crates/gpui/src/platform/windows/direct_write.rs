@@ -70,7 +70,7 @@ struct FontIdentifier {
 }
 
 impl DirectWriteComponent {
-    pub fn new(gpu_context: &DirectXRendererDevices) -> Result<Self> {
+    pub fn new(device: &ID3D11Device, device_context: &ID3D11DeviceContext) -> Result<Self> {
         // todo: ideally this would not be a large unsafe block but smaller isolated ones for easier auditing
         unsafe {
             let factory: IDWriteFactory5 = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
@@ -85,7 +85,7 @@ impl DirectWriteComponent {
             let locale = String::from_utf16_lossy(&locale_vec);
             let text_renderer = Arc::new(TextRendererWrapper::new(&locale));
 
-            let gpu_state = GPUState::new(gpu_context)?;
+            let gpu_state = GPUState::new(device, device_context)?;
 
             Ok(DirectWriteComponent {
                 locale,
@@ -100,9 +100,9 @@ impl DirectWriteComponent {
 }
 
 impl GPUState {
-    fn new(gpu_context: &DirectXRendererDevices) -> Result<Self> {
-        let device = gpu_context.device.clone();
-        let device_context = gpu_context.device_context.clone();
+    fn new(device: &ID3D11Device, device_context: &ID3D11DeviceContext) -> Result<Self> {
+        let device = device.clone();
+        let device_context = device_context.clone();
 
         let blend_state = {
             let mut blend_state = None;
@@ -183,8 +183,8 @@ impl GPUState {
 }
 
 impl DirectWriteTextSystem {
-    pub(crate) fn new(gpu_context: &DirectXRendererDevices) -> Result<Self> {
-        let components = DirectWriteComponent::new(gpu_context)?;
+    pub(crate) fn new(device: &ID3D11Device, device_context: &ID3D11DeviceContext) -> Result<Self> {
+        let components = DirectWriteComponent::new(device, device_context)?;
         let system_font_collection = unsafe {
             let mut result = std::mem::zeroed();
             components

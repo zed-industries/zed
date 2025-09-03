@@ -79,6 +79,7 @@ pub(crate) struct WindowsWindowInner {
 impl WindowsWindowState {
     fn new(
         hwnd: HWND,
+        devices: DirectXDevices,
         window_params: &CREATESTRUCTW,
         current_cursor: Option<HCURSOR>,
         display: WindowsDisplay,
@@ -104,7 +105,7 @@ impl WindowsWindowState {
         };
         let border_offset = WindowBorderOffset::default();
         let restore_from_minimized = None;
-        let renderer = DirectXRenderer::new(hwnd, disable_direct_composition)
+        let renderer = DirectXRenderer::new(hwnd, devices, disable_direct_composition)
             .context("Creating DirectX renderer")?;
         let callbacks = Callbacks::default();
         let input_handler = None;
@@ -205,9 +206,10 @@ impl WindowsWindowState {
 }
 
 impl WindowsWindowInner {
-    fn new(context: &WindowCreateContext, hwnd: HWND, cs: &CREATESTRUCTW) -> Result<Rc<Self>> {
+    fn new(context: &mut WindowCreateContext, hwnd: HWND, cs: &CREATESTRUCTW) -> Result<Rc<Self>> {
         let state = RefCell::new(WindowsWindowState::new(
             hwnd,
+            context.devices.take().unwrap(),
             cs,
             context.current_cursor,
             context.display,
@@ -345,6 +347,7 @@ struct WindowCreateContext {
     platform_window_handle: HWND,
     appearance: WindowAppearance,
     disable_direct_composition: bool,
+    devices: Option<DirectXDevices>,
 }
 
 impl WindowsWindow {
@@ -363,6 +366,7 @@ impl WindowsWindow {
             main_receiver,
             platform_window_handle,
             disable_direct_composition,
+            devices,
         } = creation_info;
         register_window_class(icon);
         let hide_title_bar = params
@@ -422,6 +426,7 @@ impl WindowsWindow {
             platform_window_handle,
             appearance,
             disable_direct_composition,
+            devices: Some(devices),
         };
         let creation_result = unsafe {
             CreateWindowExW(

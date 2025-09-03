@@ -50,8 +50,8 @@ pub(crate) struct DirectXRenderer {
 /// Direct3D objects
 #[derive(Clone)]
 pub(crate) struct DirectXRendererDevices {
-    adapter: IDXGIAdapter1,
-    dxgi_factory: IDXGIFactory6,
+    pub(crate) adapter: IDXGIAdapter1,
+    pub(crate) dxgi_factory: IDXGIFactory6,
     pub(crate) device: ID3D11Device,
     pub(crate) device_context: ID3D11DeviceContext,
     dxgi_device: Option<IDXGIDevice>,
@@ -97,38 +97,16 @@ struct DirectComposition {
 }
 
 impl DirectXRendererDevices {
-    pub(crate) fn new(disable_direct_composition: bool) -> Result<ManuallyDrop<Self>> {
-        let debug_layer_available = check_debug_layer_available();
-        let dxgi_factory =
-            get_dxgi_factory(debug_layer_available).context("Creating DXGI factory")?;
-        let adapter =
-            get_adapter(&dxgi_factory, debug_layer_available).context("Getting DXGI adapter")?;
-        let (device, device_context) = {
-            let mut device: Option<ID3D11Device> = None;
-            let mut context: Option<ID3D11DeviceContext> = None;
-            let mut feature_level = D3D_FEATURE_LEVEL::default();
-            get_device(
-                &adapter,
-                Some(&mut device),
-                Some(&mut context),
-                Some(&mut feature_level),
-                debug_layer_available,
-            )
-            .context("Creating Direct3D device")?;
-            match feature_level {
-                D3D_FEATURE_LEVEL_11_1 => {
-                    log::info!("Created device with Direct3D 11.1 feature level.")
-                }
-                D3D_FEATURE_LEVEL_11_0 => {
-                    log::info!("Created device with Direct3D 11.0 feature level.")
-                }
-                D3D_FEATURE_LEVEL_10_1 => {
-                    log::info!("Created device with Direct3D 10.1 feature level.")
-                }
-                _ => unreachable!(),
-            }
-            (device.unwrap(), context.unwrap())
-        };
+    pub(crate) fn new(
+        devices: DirectXDevices,
+        disable_direct_composition: bool,
+    ) -> Result<ManuallyDrop<Self>> {
+        let DirectXDevices {
+            adapter,
+            dxgi_factory,
+            device,
+            device_context,
+        } = devices;
         let dxgi_device = if disable_direct_composition {
             None
         } else {
@@ -138,20 +116,24 @@ impl DirectXRendererDevices {
         Ok(ManuallyDrop::new(Self {
             adapter,
             dxgi_factory,
-            dxgi_device,
             device,
             device_context,
+            dxgi_device,
         }))
     }
 }
 
 impl DirectXRenderer {
-    pub(crate) fn new(hwnd: HWND, disable_direct_composition: bool) -> Result<Self> {
+    pub(crate) fn new(
+        hwnd: HWND,
+        devices: DirectXDevices,
+        disable_direct_composition: bool,
+    ) -> Result<Self> {
         if disable_direct_composition {
             log::info!("Direct Composition is disabled.");
         }
 
-        let devices = DirectXRendererDevices::new(disable_direct_composition)
+        let devices = DirectXRendererDevices::new(devices, disable_direct_composition)
             .context("Creating DirectX devices")?;
         let atlas = Arc::new(DirectXAtlas::new(&devices.device, &devices.device_context));
 
@@ -218,25 +200,13 @@ impl DirectXRenderer {
         Ok(())
     }
 
+    #[inline]
     fn present(&mut self) -> Result<()> {
-        unsafe {
-            let result = self.resources.swap_chain.Present(0, DXGI_PRESENT(0));
-            // Presenting the swap chain can fail if the DirectX device was removed or reset.
-            if result == DXGI_ERROR_DEVICE_REMOVED || result == DXGI_ERROR_DEVICE_RESET {
-                let reason = self.devices.device.GetDeviceRemovedReason();
-                log::error!(
-                    "DirectX device removed or reset when drawing. Reason: {:?}",
-                    reason
-                );
-                self.handle_device_lost()?;
-            } else {
-                result.ok()?;
-            }
-        }
-        Ok(())
+        let result = unsafe { self.resources.swap_chain.Present(0, DXGI_PRESENT(0)) };
+        result.ok().context("Presenting swap chain failed")
     }
 
-    fn handle_device_lost(&mut self) -> Result<()> {
+    pub(crate) fn handle_device_lost(&mut self, devices: DirectXDevices) -> Result<()> {
         // Here we wait a bit to ensure the the system has time to recover from the device lost state.
         // If we don't wait, the final drawing result will be blank.
         std::thread::sleep(std::time::Duration::from_millis(300));
@@ -262,7 +232,7 @@ impl DirectXRenderer {
             ManuallyDrop::drop(&mut self.devices);
         }
 
-        let devices = DirectXRendererDevices::new(disable_direct_composition)
+        let devices = DirectXRendererDevices::new(devices, disable_direct_composition)
             .context("Recreating DirectX devices")?;
         let resources = DirectXResources::new(
             &devices,
@@ -337,49 +307,39 @@ impl DirectXRenderer {
         if self.resources.width == width && self.resources.height == height {
             return Ok(());
         }
+        self.resources.width = width;
+        self.resources.height = height;
+
+        // Clear the render target before resizing
+        unsafe { self.devices.device_context.OMSetRenderTargets(None, None) };
+        unsafe { ManuallyDrop::drop(&mut self.resources.render_target) };
+        drop(self.resources.render_target_view[0].take().unwrap());
+
+        // Resizing the swap chain requires a call to the underlying DXGI adapter, which can return the device removed error.
+        // The app might have moved to a monitor that's attached to a different graphics device.
+        // When a graphics device is removed or reset, the desktop resolution often changes, resulting in a window size change.
+        // But here we just return the error, because we are handling device lost scenarios elsewhere.
         unsafe {
-            // Clear the render target before resizing
-            self.devices.device_context.OMSetRenderTargets(None, None);
-            ManuallyDrop::drop(&mut self.resources.render_target);
-            drop(self.resources.render_target_view[0].take().unwrap());
-
-            let result = self.resources.swap_chain.ResizeBuffers(
-                BUFFER_COUNT as u32,
-                width,
-                height,
-                RENDER_TARGET_FORMAT,
-                DXGI_SWAP_CHAIN_FLAG(0),
-            );
-            // Resizing the swap chain requires a call to the underlying DXGI adapter, which can return the device removed error.
-            // The app might have moved to a monitor that's attached to a different graphics device.
-            // When a graphics device is removed or reset, the desktop resolution often changes, resulting in a window size change.
-            match result {
-                Ok(_) => {}
-                Err(e) => {
-                    if e.code() == DXGI_ERROR_DEVICE_REMOVED || e.code() == DXGI_ERROR_DEVICE_RESET
-                    {
-                        let reason = self.devices.device.GetDeviceRemovedReason();
-                        log::error!(
-                            "DirectX device removed or reset when resizing. Reason: {:?}",
-                            reason
-                        );
-                        self.resources.width = width;
-                        self.resources.height = height;
-                        self.handle_device_lost()?;
-                        return Ok(());
-                    } else {
-                        log::error!("Failed to resize swap chain: {:?}", e);
-                        return Err(e.into());
-                    }
-                }
-            }
-
             self.resources
-                .recreate_resources(&self.devices, width, height)?;
+                .swap_chain
+                .ResizeBuffers(
+                    BUFFER_COUNT as u32,
+                    width,
+                    height,
+                    RENDER_TARGET_FORMAT,
+                    DXGI_SWAP_CHAIN_FLAG(0),
+                )
+                .context("Failed to resize swap chain")?;
+        }
+
+        self.resources
+            .recreate_resources(&self.devices, width, height)?;
+        unsafe {
             self.devices
                 .device_context
                 .OMSetRenderTargets(Some(&self.resources.render_target_view), None);
         }
+
         Ok(())
     }
 
@@ -745,8 +705,6 @@ impl DirectXResources {
         self.path_intermediate_msaa_view = path_intermediate_msaa_view;
         self.path_intermediate_srv = path_intermediate_srv;
         self.viewport = viewport;
-        self.width = width;
-        self.height = height;
         Ok(())
     }
 }
