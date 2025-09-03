@@ -170,7 +170,10 @@ impl ActiveToolchain {
                 let project = workspace
                     .read_with(cx, |this, _| this.project().clone())
                     .ok()?;
-                let Toolchains(toolchains, relative_path) = cx
+                let Toolchains {
+                    toolchains,
+                    root_path: relative_path,
+                } = cx
                     .update(|_, cx| {
                         project.read(cx).available_toolchains(
                             ProjectPath {
