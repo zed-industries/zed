@@ -349,6 +349,7 @@ pub enum HideMouseCursorOrigin {
 
 pub fn init_settings(cx: &mut App) {
     EditorSettings::register(cx);
+    SearchSettings::register(cx);
 }
 
 pub fn init(cx: &mut App) {
@@ -18751,6 +18752,21 @@ impl Editor {
 
     pub fn set_relative_line_number(&mut self, is_relative: Option<bool>, cx: &mut Context<Self>) {
         self.use_relative_line_numbers = is_relative;
+        cx.notify();
+    }
+
+    /// Controls whether search results should be case-insensitive (`true`) or
+    /// case-sensitive (`false`).
+    pub fn set_ignorecase(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        let Some(workspace) = self.workspace() else {
+            return;
+        };
+
+        let fs = workspace.read(cx).app_state().fs.clone();
+        update_settings_file::<SearchSettings>(fs, cx, move |settings, _| {
+            settings.case_sensitive = Some(!enabled);
+        });
+
         cx.notify();
     }
 
