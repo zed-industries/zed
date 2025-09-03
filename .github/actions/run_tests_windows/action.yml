@@ -24,6 +24,4 @@ runs:
       shell: powershell
       working-directory: ${{ inputs.working-directory }}
       run: |
-        $env:RUST_BACKTRACE = "full"
-
         cargo nextest run --workspace --no-fail-fast
