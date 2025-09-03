@@ -88,9 +88,14 @@ If you do, then we will use the version of Claude Code on your path.
 Similar to Zed's first-party agent, you can use Claude Code to do anything that you need.
 And to give it context, you can @-mention files, recent threads, symbols, or fetch the web.
 
-Zed also supports the [slash commands](https://docs.anthropic.com/en/docs/claude-code/slash-commands) that the [Claude Code SDK](https://docs.anthropic.com/en/docs/claude-code/sdk/sdk-overview) exposes.
+In complement to talking to it [over ACP](https://agentclientprotocol.com), Zed relies on the [Claude Code SDK](https://docs.anthropic.com/en/docs/claude-code/sdk/sdk-overview) to support some of its specific features.
+However, the SDK doesn't yet expose everything needed to fully support all of them:
 
-> Note that some first-party agent features don't yet work with Claude Code: editing past messages, resuming threads from history, checkpointing, and using the agent in SSH projects.
+- Slash Commands: All the [built-in commands](https://docs.anthropic.com/en/docs/claude-code/slash-commands#built-in-slash-commands) exposed by the SDK and [custom slash commands](https://docs.anthropic.com/en/docs/claude-code/slash-commands#custom-slash-commands) are fully supported.
+- [Subagents](https://docs.anthropic.com/en/docs/claude-code/sub-agents) are supported.
+- [Hooks](https://docs.anthropic.com/en/docs/claude-code/hooks-guide) are currently _not_ supported.
+
+> Also note that some [first-party agent](./agent-panel.md) features don't yet work with Claude Code: editing past messages, resuming threads from history, checkpointing, and using the agent in SSH projects.
 > We hope to add these features in the near future.
 
 ## Add Custom Agents {#add-custom-agents}
