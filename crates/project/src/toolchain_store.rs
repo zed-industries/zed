@@ -102,11 +102,32 @@ impl ToolchainStore {
         }
     }
 
-    pub(crate) fn add_toolchain(&mut self, toolchain: Toolchain, scope: ToolchainScope) {
+    pub(crate) fn add_toolchain(
+        &mut self,
+        toolchain: Toolchain,
+        scope: ToolchainScope,
+        cx: &mut Context<Self>,
+    ) {
         self.user_toolchains
             .entry(scope)
             .or_default()
             .insert(toolchain);
+        cx.emit(ToolchainStoreEvent::CustomToolchainsModified);
+    }
+
+    pub(crate) fn remove_toolchain(
+        &mut self,
+        toolchain: Toolchain,
+        scope: ToolchainScope,
+        cx: &mut Context<Self>,
+    ) {
+        let mut did_remove = false;
+        self.user_toolchains
+            .entry(scope)
+            .and_modify(|toolchains| did_remove = toolchains.shift_remove(&toolchain));
+        if did_remove {
+            cx.emit(ToolchainStoreEvent::CustomToolchainsModified);
+        }
     }
 
     pub(crate) fn resolve_toolchain(
@@ -400,6 +421,7 @@ struct RemoteStore(WeakEntity<RemoteToolchainStore>);
 #[derive(Clone)]
 pub enum ToolchainStoreEvent {
     ToolchainActivated,
+    CustomToolchainsModified,
 }
 
 impl EventEmitter<ToolchainStoreEvent> for LocalToolchainStore {}

@@ -3365,12 +3365,27 @@ impl Project {
         cx: &mut Context<Self>,
     ) {
         maybe!({
-            self.toolchain_store.as_ref()?.update(cx, |this, _| {
-                this.add_toolchain(toolchain, scope);
+            self.toolchain_store.as_ref()?.update(cx, |this, cx| {
+                this.add_toolchain(toolchain, scope, cx);
             });
             Some(())
         });
     }
+
+    pub fn remove_toolchain(
+        &self,
+        toolchain: Toolchain,
+        scope: ToolchainScope,
+        cx: &mut Context<Self>,
+    ) {
+        maybe!({
+            self.toolchain_store.as_ref()?.update(cx, |this, cx| {
+                this.remove_toolchain(toolchain, scope, cx);
+            });
+            Some(())
+        });
+    }
+
     pub fn resolve_toolchain(
         &self,
         path: PathBuf,
