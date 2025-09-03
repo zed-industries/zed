@@ -785,7 +785,6 @@ pub struct AcpThread {
     session_id: acp::SessionId,
     token_usage: Option<TokenUsage>,
     prompt_capabilities: acp::PromptCapabilities,
-    available_commands: Vec<acp::AvailableCommand>,
     _observe_prompt_capabilities: Task<anyhow::Result<()>>,
     determine_shell: Shared<Task<String>>,
     terminals: HashMap<acp::TerminalId, Entity<Terminal>>,
@@ -805,6 +804,7 @@ pub enum AcpThreadEvent {
     LoadError(LoadError),
     PromptCapabilitiesUpdated,
     Refusal,
+    AvailableCommandsUpdated(Vec<acp::AvailableCommand>),
 }
 
 impl EventEmitter<AcpThreadEvent> for AcpThread {}
@@ -860,7 +860,6 @@ impl AcpThread {
         action_log: Entity<ActionLog>,
         session_id: acp::SessionId,
         mut prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
-        available_commands: Vec<acp::AvailableCommand>,
         cx: &mut Context<Self>,
     ) -> Self {
         let prompt_capabilities = *prompt_capabilities_rx.borrow();
@@ -900,7 +899,6 @@ impl AcpThread {
             session_id,
             token_usage: None,
             prompt_capabilities,
-            available_commands,
             _observe_prompt_capabilities: task,
             terminals: HashMap::default(),
             determine_shell,
@@ -909,10 +907,6 @@ impl AcpThread {
 
     pub fn prompt_capabilities(&self) -> acp::PromptCapabilities {
         self.prompt_capabilities
-    }
-
-    pub fn available_commands(&self) -> Vec<acp::AvailableCommand> {
-        self.available_commands.clone()
     }
 
     pub fn connection(&self) -> &Rc<dyn AgentConnection> {
@@ -1009,6 +1003,9 @@ impl AcpThread {
             }
             acp::SessionUpdate::Plan(plan) => {
                 self.update_plan(plan, cx);
+            }
+            acp::SessionUpdate::AvailableCommandsUpdate { available_commands } => {
+                cx.emit(AcpThreadEvent::AvailableCommandsUpdated(available_commands))
             }
         }
         Ok(())
@@ -3080,7 +3077,6 @@ mod tests {
                         audio: true,
                         embedded_context: true,
                     }),
-                    vec![],
                     cx,
                 )
             });
