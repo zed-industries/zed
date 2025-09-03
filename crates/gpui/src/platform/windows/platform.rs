@@ -244,7 +244,7 @@ impl WindowsPlatform {
             loop {
                 vsync_provider.wait_for_vsync();
                 if check_device_lost(&directx_device.device) {
-                    handle_device_lost(
+                    handle_gpu_device_lost(
                         &mut directx_device,
                         platform_window.as_raw(),
                         validation_number,
@@ -1007,7 +1007,7 @@ fn check_device_lost(device: &ID3D11Device) -> bool {
     }
 }
 
-fn handle_device_lost(
+fn handle_gpu_device_lost(
     directx_devices: &mut DirectXDevices,
     platform_window: HWND,
     validation_number: usize,
