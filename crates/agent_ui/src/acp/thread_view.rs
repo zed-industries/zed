@@ -432,11 +432,24 @@ impl AcpThreadView {
                 "External agents are not yet supported for remote projects.".into(),
             ));
         }
-        let root_dir = project
-            .read(cx)
-            .visible_worktrees(cx)
+        let mut worktrees = project.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
+        // Pick the first non-single-file worktree for the root directory if there are any,
+        // and otherwise the parent of a single-file worktree, falling back to $HOME if there are no visible worktrees.
+        worktrees.sort_by(|l, r| {
+            l.read(cx)
+                .is_single_file()
+                .cmp(&r.read(cx).is_single_file())
+        });
+        let root_dir = worktrees
+            .into_iter()
+            .filter_map(|worktree| {
+                if worktree.read(cx).is_single_file() {
+                    Some(worktree.read(cx).abs_path().parent()?.into())
+                } else {
+                    Some(worktree.read(cx).abs_path())
+                }
+            })
             .next()
-            .map(|worktree| worktree.read(cx).abs_path())
             .unwrap_or_else(|| paths::home_dir().as_path().into());
         let (tx, mut rx) = watch::channel("Loading…".into());
         let delegate = AgentServerDelegate::new(project.clone(), Some(tx));
