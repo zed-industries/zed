@@ -185,7 +185,7 @@ dependencies = [
  "text",
  "theme",
  "thiserror 2.0.12",
- "time 0.3.41",
+ "time",
  "util",
  "uuid",
  "workspace",
@@ -426,7 +426,7 @@ dependencies = [
  "terminal_view",
  "text",
  "theme",
- "time 0.3.41",
+ "time",
  "time_format",
  "tree-sitter-md",
  "ui",
@@ -1511,7 +1511,7 @@ dependencies = [
  "hex",
  "http 1.3.1",
  "ring",
- "time 0.3.41",
+ "time",
  "tokio",
  "tracing",
  "url",
@@ -1758,7 +1758,7 @@ dependencies = [
  "ring",
  "sha2",
  "subtle",
- "time 0.3.41",
+ "time",
  "tracing",
  "zeroize",
 ]
@@ -1949,7 +1949,7 @@ dependencies = [
  "pin-utils",
  "ryu",
  "serde",
- "time 0.3.41",
+ "time",
  "tokio",
  "tokio-util",
 ]
@@ -2902,7 +2902,7 @@ dependencies = [
  "settings",
  "sum_tree",
  "text",
- "time 0.3.41",
+ "time",
  "util",
  "workspace-hack",
 ]
@@ -3099,7 +3099,7 @@ dependencies = [
  "telemetry_events",
  "text",
  "thiserror 2.0.12",
- "time 0.3.41",
+ "time",
  "tiny_http",
  "tokio",
  "tokio-native-tls",
@@ -3360,7 +3360,7 @@ dependencies = [
  "telemetry_events",
  "text",
  "theme",
- "time 0.3.41",
+ "time",
  "tokio",
  "toml 0.8.20",
  "tower 0.4.13",
@@ -3412,7 +3412,7 @@ dependencies = [
  "story",
  "telemetry",
  "theme",
- "time 0.3.41",
+ "time",
  "time_format",
  "title_bar",
  "tree-sitter-md",
@@ -3489,7 +3489,7 @@ dependencies = [
  "settings",
  "telemetry",
  "theme",
- "time 0.3.41",
+ "time",
  "ui",
  "util",
  "workspace",
@@ -4250,7 +4250,7 @@ dependencies = [
  "cssparser-macros",
  "dtoa-short",
  "itoa",
- "phf 0.11.3",
+ "phf",
  "smallvec",
 ]
 
@@ -4871,7 +4871,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bc6db32f0995bc4553d2de888999075acd0dbeef75ba923503f6a724263dc6f3"
 dependencies = [
  "documented-macros",
- "phf 0.11.3",
+ "phf",
  "thiserror 1.0.69",
 ]
 
@@ -4908,7 +4908,7 @@ version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "415b6ec780d34dcf624666747194393603d0373b7141eef01d12ee58881507d9"
 dependencies = [
- "phf 0.11.3",
+ "phf",
 ]
 
 [[package]]
@@ -5081,7 +5081,7 @@ dependencies = [
  "tempfile",
  "text",
  "theme",
- "time 0.3.41",
+ "time",
  "tree-sitter-bash",
  "tree-sitter-c",
  "tree-sitter-html",
@@ -5184,7 +5184,7 @@ version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "99e1f1df1f181f2539bac8bf027d31ca5ffbf9e559e3f2d09413b9107b5c02f4"
 dependencies = [
- "phf 0.11.3",
+ "phf",
 ]
 
 [[package]]
@@ -6059,7 +6059,7 @@ dependencies = [
  "smol",
  "tempfile",
  "text",
- "time 0.3.41",
+ "time",
  "util",
  "windows 0.61.1",
  "workspace-hack",
@@ -6346,17 +6346,6 @@ dependencies = [
 
 [[package]]
 name = "getrandom"
-version = "0.1.16"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fc3cb4d91f53b50155bdcfd23f6a4c39ae1969c2ae85982b135750cccaf5fce"
-dependencies = [
- "cfg-if",
- "libc",
- "wasi 0.9.0+wasi-snapshot-preview1",
-]
-
-[[package]]
-name = "getrandom"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c4567c8db10ae91089c99af84c68c38da3ec2f087c3f82960bcdbf3656b6f4d7"
@@ -6430,7 +6419,7 @@ dependencies = [
  "tempfile",
  "text",
  "thiserror 2.0.12",
- "time 0.3.41",
+ "time",
  "unindent",
  "url",
  "util",
@@ -6517,7 +6506,7 @@ dependencies = [
  "strum 0.27.1",
  "telemetry",
  "theme",
- "time 0.3.41",
+ "time",
  "time_format",
  "ui",
  "unindent",
@@ -7861,20 +7850,6 @@ checksum = "62adaabb884c94955b19907d60019f4e145d091c75345379e70d1ee696f7854f"
 
 [[package]]
 name = "html5ever"
-version = "0.25.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e5c13fb08e5d4dfc151ee5e88bae63f7773d61852f3bdc73c9f4b9e1bde03148"
-dependencies = [
- "log",
- "mac",
- "markup5ever 0.10.1",
- "proc-macro2",
- "quote",
- "syn 1.0.109",
-]
-
-[[package]]
-name = "html5ever"
 version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c13771afe0e6e846f1e67d038d4cb29998a6779f93c809212e4e9c32efd244d4"
@@ -7900,22 +7875,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "html5minify"
-version = "0.3.3"
-source = "git+https://github.com/RemcoSmitsDev/html5minify?rev=71b82efed5e3118342e92d91623c41817bb01e7d#71b82efed5e3118342e92d91623c41817bb01e7d"
-dependencies = [
- "html5ever 0.25.2",
- "markup5ever_rcdom 0.1.0",
-]
-
-[[package]]
 name = "html_to_markdown"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "html5ever 0.27.0",
  "indoc",
- "markup5ever_rcdom 0.3.0",
+ "markup5ever_rcdom",
  "pretty_assertions",
  "regex",
  "workspace-hack",
@@ -9990,11 +9956,10 @@ dependencies = [
  "fs",
  "gpui",
  "html5ever 0.27.0",
- "html5minify",
  "language",
  "linkify",
  "log",
- "markup5ever_rcdom 0.3.0",
+ "markup5ever_rcdom",
  "pretty_assertions",
  "pulldown-cmark 0.12.2",
  "settings",
@@ -10007,27 +9972,13 @@ dependencies = [
 
 [[package]]
 name = "markup5ever"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a24f40fb03852d1cdd84330cddcaf98e9ec08a7b7768e952fad3b4cf048ec8fd"
-dependencies = [
- "log",
- "phf 0.8.0",
- "phf_codegen 0.8.0",
- "string_cache",
- "string_cache_codegen",
- "tendril",
-]
-
-[[package]]
-name = "markup5ever"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "16ce3abbeba692c8b8441d036ef91aea6df8da2c6b6e21c7e14d3c18e526be45"
 dependencies = [
  "log",
- "phf 0.11.3",
- "phf_codegen 0.11.3",
+ "phf",
+ "phf_codegen",
  "string_cache",
  "string_cache_codegen",
  "tendril",
@@ -10046,18 +9997,6 @@ dependencies = [
 
 [[package]]
 name = "markup5ever_rcdom"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f015da43bcd8d4f144559a3423f4591d69b8ce0652c905374da7205df336ae2b"
-dependencies = [
- "html5ever 0.25.2",
- "markup5ever 0.10.1",
- "tendril",
- "xml5ever 0.16.2",
-]
-
-[[package]]
-name = "markup5ever_rcdom"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "edaa21ab3701bfee5099ade5f7e1f84553fd19228cf332f13cd6e964bf59be18"
@@ -10065,7 +10004,7 @@ dependencies = [
  "html5ever 0.27.0",
  "markup5ever 0.12.1",
  "tendril",
- "xml5ever 0.18.1",
+ "xml5ever",
 ]
 
 [[package]]
@@ -10716,7 +10655,7 @@ dependencies = [
  "rpc",
  "settings",
  "sum_tree",
- "time 0.3.41",
+ "time",
  "ui",
  "util",
  "workspace",
@@ -12173,31 +12112,12 @@ dependencies = [
 
 [[package]]
 name = "phf"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3dfb61232e34fcb633f43d12c58f83c1df82962dcdfa565a4e866ffc17dafe12"
-dependencies = [
- "phf_shared 0.8.0",
-]
-
-[[package]]
-name = "phf"
 version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fd6780a80ae0c52cc120a26a1a42c1ae51b247a253e4e06113d23d2c2edd078"
 dependencies = [
  "phf_macros",
- "phf_shared 0.11.3",
-]
-
-[[package]]
-name = "phf_codegen"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cbffee61585b0411840d3ece935cce9cb6321f01c45477d30066498cd5e1a815"
-dependencies = [
- "phf_generator 0.8.0",
- "phf_shared 0.8.0",
+ "phf_shared",
 ]
 
 [[package]]
@@ -12206,18 +12126,8 @@ version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aef8048c789fa5e851558d709946d6d79a8ff88c0440c587967f8e94bfb1216a"
 dependencies = [
- "phf_generator 0.11.3",
- "phf_shared 0.11.3",
-]
-
-[[package]]
-name = "phf_generator"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17367f0cc86f2d25802b2c26ee58a7b23faeccf78a396094c13dced0d0182526"
-dependencies = [
- "phf_shared 0.8.0",
- "rand 0.7.3",
+ "phf_generator",
+ "phf_shared",
 ]
 
 [[package]]
@@ -12226,7 +12136,7 @@ version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3c80231409c20246a13fddb31776fb942c38553c51e871f8cbd687a4cfb5843d"
 dependencies = [
- "phf_shared 0.11.3",
+ "phf_shared",
  "rand 0.8.5",
 ]
 
@@ -12236,20 +12146,11 @@ version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f84ac04429c13a7ff43785d75ad27569f2951ce0ffd30a3321230db2fc727216"
 dependencies = [
- "phf_generator 0.11.3",
- "phf_shared 0.11.3",
+ "phf_generator",
+ "phf_shared",
  "proc-macro2",
  "quote",
  "syn 2.0.101",
-]
-
-[[package]]
-name = "phf_shared"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c00cf8b9eafe68dde5e9eaa2cef8ee84a9336a47d566ec55ca16589633b65af7"
-dependencies = [
- "siphasher 0.3.11",
 ]
 
 [[package]]
@@ -12258,7 +12159,7 @@ version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67eabc2ef2a60eb7faa00097bd1ffdb5bd28e62bf39990626a582201b7a754e5"
 dependencies = [
- "siphasher 1.0.1",
+ "siphasher",
 ]
 
 [[package]]
@@ -12382,7 +12283,7 @@ dependencies = [
  "indexmap",
  "quick-xml 0.32.0",
  "serde",
- "time 0.3.41",
+ "time",
 ]
 
 [[package]]
@@ -13196,20 +13097,6 @@ checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
 
 [[package]]
 name = "rand"
-version = "0.7.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a6b1679d49b24bbfe0c803429aa1874472f50d9b363131f0e89fc356b544d03"
-dependencies = [
- "getrandom 0.1.16",
- "libc",
- "rand_chacha 0.2.2",
- "rand_core 0.5.1",
- "rand_hc",
- "rand_pcg",
-]
-
-[[package]]
-name = "rand"
 version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34af8d1a0e25924bc5b7c43c079c942339d8f0a8b57c39049bef581b46327404"
@@ -13227,16 +13114,6 @@ checksum = "9fbfd9d094a40bf3ae768db9361049ace4c0e04a4fd6b359518bd7b73a73dd97"
 dependencies = [
  "rand_chacha 0.9.0",
  "rand_core 0.9.3",
-]
-
-[[package]]
-name = "rand_chacha"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f4c8ed856279c9737206bf725bf36935d8666ead7aa69b52be55af369d193402"
-dependencies = [
- "ppv-lite86",
- "rand_core 0.5.1",
 ]
 
 [[package]]
@@ -13261,15 +13138,6 @@ dependencies = [
 
 [[package]]
 name = "rand_core"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90bde5296fc891b0cef12a6d03ddccc162ce7b2aff54160af9338f8d40df6d19"
-dependencies = [
- "getrandom 0.1.16",
-]
-
-[[package]]
-name = "rand_core"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
@@ -13284,24 +13152,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "99d9a13982dcf210057a8a78572b2217b667c3beacbf3a0d8b454f6f82837d38"
 dependencies = [
  "getrandom 0.3.2",
-]
-
-[[package]]
-name = "rand_hc"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca3129af7b92a17112d59ad498c6f81eaf463253766b90396d39ea7a39d6613c"
-dependencies = [
- "rand_core 0.5.1",
-]
-
-[[package]]
-name = "rand_pcg"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16abd0c1b639e9eb4d7c50c0b8100b0d0f849be2349829c740fe8e6eb4816429"
-dependencies = [
- "rand_core 0.5.1",
 ]
 
 [[package]]
@@ -14661,7 +14511,7 @@ dependencies = [
  "sqlx",
  "strum 0.26.3",
  "thiserror 2.0.12",
- "time 0.3.41",
+ "time",
  "tracing",
  "url",
  "uuid",
@@ -14693,7 +14543,7 @@ dependencies = [
  "ordered-float 4.6.0",
  "rust_decimal",
  "serde_json",
- "time 0.3.41",
+ "time",
  "uuid",
 ]
 
@@ -14709,7 +14559,7 @@ dependencies = [
  "sea-query",
  "serde_json",
  "sqlx",
- "time 0.3.41",
+ "time",
  "uuid",
 ]
 
@@ -15236,7 +15086,7 @@ dependencies = [
  "num-bigint",
  "num-traits",
  "thiserror 2.0.12",
- "time 0.3.41",
+ "time",
 ]
 
 [[package]]
@@ -15256,14 +15106,8 @@ checksum = "16257adbfaef1ee58b1363bdc0664c9b8e1e30aed86049635fb5f147d065a9c0"
 dependencies = [
  "log",
  "termcolor",
- "time 0.3.41",
+ "time",
 ]
-
-[[package]]
-name = "siphasher"
-version = "0.3.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38b58827f4464d87d377d175e90bf58eb00fd8716ff0a62f80356b5e61555d0d"
 
 [[package]]
 name = "siphasher"
@@ -15543,7 +15387,7 @@ dependencies = [
  "sha2",
  "smallvec",
  "thiserror 2.0.12",
- "time 0.3.41",
+ "time",
  "tokio",
  "tokio-stream",
  "tracing",
@@ -15632,7 +15476,7 @@ dependencies = [
  "sqlx-core",
  "stringprep",
  "thiserror 2.0.12",
- "time 0.3.41",
+ "time",
  "tracing",
  "uuid",
  "whoami",
@@ -15675,7 +15519,7 @@ dependencies = [
  "sqlx-core",
  "stringprep",
  "thiserror 2.0.12",
- "time 0.3.41",
+ "time",
  "tracing",
  "uuid",
  "whoami",
@@ -15702,7 +15546,7 @@ dependencies = [
  "serde_urlencoded",
  "sqlx-core",
  "thiserror 2.0.12",
- "time 0.3.41",
+ "time",
  "tracing",
  "url",
  "uuid",
@@ -15829,7 +15673,7 @@ checksum = "bf776ba3fa74f83bf4b63c3dcbbf82173db2632ed8452cb2d891d33f459de70f"
 dependencies = [
  "new_debug_unreachable",
  "parking_lot",
- "phf_shared 0.11.3",
+ "phf_shared",
  "precomputed-hash",
  "serde",
 ]
@@ -15840,8 +15684,8 @@ version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c711928715f1fe0fe509c53b43e993a9a557babc2d0a3567d0a3006f1ac931a0"
 dependencies = [
- "phf_generator 0.11.3",
- "phf_shared 0.11.3",
+ "phf_generator",
+ "phf_shared",
  "proc-macro2",
  "quote",
 ]
@@ -16074,7 +15918,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68c7541fff44b35860c1a7a47a7cadf3e4a304c457b58f9870d9706ece028afc"
 dependencies = [
  "kurbo",
- "siphasher 1.0.1",
+ "siphasher",
 ]
 
 [[package]]
@@ -16760,17 +16604,6 @@ dependencies = [
 
 [[package]]
 name = "time"
-version = "0.1.45"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b797afad3f312d1c66a56d11d0316f916356d11bd158fbc6ca6389ff6bf805a"
-dependencies = [
- "libc",
- "wasi 0.10.0+wasi-snapshot-preview1",
- "winapi",
-]
-
-[[package]]
-name = "time"
 version = "0.3.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a7619e19bc266e0f9c5e6686659d394bc57973859340060a69221e57dbc0c40"
@@ -16809,7 +16642,7 @@ dependencies = [
  "core-foundation 0.10.0",
  "core-foundation-sys",
  "sys-locale",
- "time 0.3.41",
+ "time",
  "workspace-hack",
 ]
 
@@ -17905,7 +17738,7 @@ dependencies = [
  "roxmltree",
  "rustybuzz 0.20.1",
  "simplecss",
- "siphasher 1.0.1",
+ "siphasher",
  "strict-num",
  "svgtypes",
  "tiny-skia-path",
@@ -18249,18 +18082,6 @@ dependencies = [
  "tower-service",
  "tracing",
 ]
-
-[[package]]
-name = "wasi"
-version = "0.9.0+wasi-snapshot-preview1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cccddf32554fecc6acb585f82a32a72e28b48f8c4c1883ddfeeeaa96f7d8e519"
-
-[[package]]
-name = "wasi"
-version = "0.10.0+wasi-snapshot-preview1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a143597ca7c7793eff794def352d41792a93c481eb1042423ff7ff72ba2c31f"
 
 [[package]]
 name = "wasi"
@@ -18878,8 +18699,8 @@ version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "954c5a41f2bcb7314344079d0891505458cc2f4b422bdea1d5bfbe6d1a04903b"
 dependencies = [
- "phf 0.11.3",
- "phf_codegen 0.11.3",
+ "phf",
+ "phf_codegen",
  "string_cache",
  "string_cache_codegen",
 ]
@@ -20122,8 +19943,8 @@ dependencies = [
  "object",
  "once_cell",
  "percent-encoding",
- "phf 0.11.3",
- "phf_shared 0.11.3",
+ "phf",
+ "phf_shared",
  "prettyplease",
  "proc-macro2",
  "prost 0.9.0",
@@ -20168,7 +19989,7 @@ dependencies = [
  "syn 2.0.101",
  "sync_wrapper 1.0.2",
  "thiserror 2.0.12",
- "time 0.3.41",
+ "time",
  "time-macros",
  "tokio",
  "tokio-rustls 0.26.2",
@@ -20390,18 +20211,6 @@ name = "xkeysym"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9cc00251562a284751c9973bace760d86c0276c471b4be569fe6b068ee97a56"
-
-[[package]]
-name = "xml5ever"
-version = "0.16.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9234163818fd8e2418fcde330655e757900d4236acd8cc70fef345ef91f6d865"
-dependencies = [
- "log",
- "mac",
- "markup5ever 0.10.1",
- "time 0.1.45",
-]
 
 [[package]]
 name = "xml5ever"
@@ -20717,7 +20526,7 @@ dependencies = [
  "theme",
  "theme_extension",
  "theme_selector",
- "time 0.3.41",
+ "time",
  "title_bar",
  "toolchain_selector",
  "tree-sitter-md",
@@ -21067,7 +20876,7 @@ dependencies = [
  "hmac",
  "pbkdf2 0.11.0",
  "sha1",
- "time 0.3.41",
+ "time",
  "zstd",
 ]
 

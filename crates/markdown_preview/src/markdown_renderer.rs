@@ -664,10 +664,8 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                         },
                     ),
                 );
-                let mut links =
-                    Vec::with_capacity(parsed.region_ranges.len() + parsed.regions.len());
-                let mut link_ranges =
-                    Vec::with_capacity(parsed.region_ranges.len() + parsed.regions.len());
+                let mut links = Vec::new();
+                let mut link_ranges = Vec::new();
                 for (range, region) in parsed.region_ranges.iter().zip(&parsed.regions) {
                     if let Some(link) = region.link.clone() {
                         links.push(link);

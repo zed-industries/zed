@@ -22,7 +22,6 @@ editor.workspace = true
 fs.workspace = true
 gpui.workspace = true
 html5ever.workspace = true
-html5minify.workspace = true
 language.workspace = true
 linkify.workspace = true
 log.workspace = true

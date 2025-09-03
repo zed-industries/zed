@@ -16,9 +16,7 @@ pub async fn parse_markdown(
     let mut options = Options::all();
     options.remove(pulldown_cmark::Options::ENABLE_DEFINITION_LIST);
 
-    let markdown_input = minify_markdown(markdown_input);
-
-    let parser = Parser::new_ext(&markdown_input, options);
+    let parser = Parser::new_ext(markdown_input, options);
     let parser = MarkdownParser::new(
         parser.into_offset_iter().collect(),
         file_location_directory,
@@ -27,23 +25,6 @@ pub async fn parse_markdown(
     let renderer = parser.parse_document().await;
     ParsedMarkdown {
         children: renderer.parsed,
-    }
-}
-
-fn minify_markdown(source: &str) -> String {
-    let mut writer = std::io::Cursor::new(vec![]);
-    let mut reader = std::io::Cursor::new(source);
-    let mut minify = html5minify::Minifier::new(&mut writer);
-    minify.omit_doctype(true);
-
-    if let Ok(()) = minify.minify(&mut reader) {
-        let bytes = writer.into_inner();
-        match String::from_utf8(bytes) {
-            Ok(s) => s,
-            Err(_) => source.to_string(),
-        }
-    } else {
-        source.to_string()
     }
 }
 
