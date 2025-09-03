@@ -60,7 +60,7 @@ And to give it context, you can @-mention files, recent threads, symbols, or fet
 ## Claude Code
 
 Similar to Gemini CLI, you can also run [Claude Code](https://www.anthropic.com/claude-code) directly via Zed's [agent panel](./agent-panel.md).
-Under the hood, Zed runs Claude Code and communicate to it over ACP.
+Under the hood, Zed runs Claude Code and communicate to it over ACP, through [a dedicated adapter](https://github.com/zed-industries/claude-code-acp).
 
 ### Getting Started
 
