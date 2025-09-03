@@ -7,6 +7,7 @@ pub struct OnboardingBanner {
     dismissed: bool,
     source: String,
     details: BannerDetails,
+    visible_when: Option<Box<dyn Fn(&mut App) -> bool>>,
 }
 
 #[derive(Clone)]
@@ -42,12 +43,18 @@ impl OnboardingBanner {
                 label: label.into(),
                 subtitle: subtitle.or(Some(SharedString::from("Introducing:"))),
             },
+            visible_when: None,
             dismissed: get_dismissed(source),
         }
     }
 
-    fn should_show(&self, _cx: &mut App) -> bool {
-        !self.dismissed
+    pub fn visible_when(mut self, predicate: impl Fn(&mut App) -> bool + 'static) -> Self {
+        self.visible_when = Some(Box::new(predicate));
+        self
+    }
+
+    fn should_show(&self, cx: &mut App) -> bool {
+        !self.dismissed && self.visible_when.as_ref().map_or(true, |f| f(cx))
     }
 
     fn dismiss(&mut self, cx: &mut Context<Self>) {
