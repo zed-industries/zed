@@ -32,7 +32,17 @@ If you'd like to bind this to a keyboard shortcut, you can do so by editing your
 
 The first time you create a Gemini CLI thread, Zed will install [@google/gemini-cli](https://github.com/zed-industries/claude-code-acp). This installation is only available to Zed and is kept up to date as you use the agent.
 
-Zed will always use this managed version of Gemini CLI even if you have it installed globally.
+By default, Zed will use this managed version of Gemini CLI even if you have it installed globally. However, you can configure it to use a version in your `PATH` by adding this to your settings:
+
+```json
+{
+  "agent_servers": {
+    "gemini": {
+      "ignore_system_version": false
+    }
+  }
+}
+```
 
 #### Authentication
 
