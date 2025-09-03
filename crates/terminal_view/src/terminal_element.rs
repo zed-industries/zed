@@ -34,7 +34,7 @@ use workspace::Workspace;
 use std::mem;
 use std::{fmt::Debug, ops::RangeInclusive, rc::Rc};
 
-use crate::{BlockContext, BlockProperties, ContentMode, TerminalMode, TerminalView};
+use crate::{BlockContext, BlockProperties, ContentMode, ImeState, TerminalMode, TerminalView};
 
 /// The information generated during layout that is necessary for painting.
 pub struct LayoutState {
@@ -1191,10 +1191,7 @@ impl Element for TerminalElement {
             let origin =
                 bounds.origin + Point::new(layout.gutter, px(0.)) - Point::new(px(0.), scroll_top);
 
-            let marked_text_cloned: Option<String> = {
-                let ime_state = self.terminal_view.read(cx);
-                ime_state.marked_text.clone()
-            };
+            let marked_text = self.terminal_view.read(cx).ime_state.as_ref().map(|ime_state| ime_state.marked_text.clone());
 
             let terminal_input_handler = TerminalInputHandler {
                 terminal: self.terminal.clone(),
@@ -1280,7 +1277,7 @@ impl Element for TerminalElement {
                     }
                     let text_paint_time = text_paint_start.elapsed();
 
-                    if let Some(text_to_mark) = &marked_text_cloned
+                    if let Some(text_to_mark) = &marked_text
                         && !text_to_mark.is_empty()
                             && let Some(cursor_layout) = &original_cursor {
                                 let ime_position = cursor_layout.bounding_rect(origin).origin;
@@ -1309,7 +1306,7 @@ impl Element for TerminalElement {
                                     .log_err();
                             }
 
-                    if self.cursor_visible && marked_text_cloned.is_none()
+                    if self.cursor_visible && marked_text.is_none()
                         && let Some(mut cursor) = original_cursor {
                             cursor.paint(origin, window, cx);
                         }
@@ -1417,15 +1414,13 @@ impl InputHandler for TerminalInputHandler {
         &mut self,
         _range_utf16: Option<std::ops::Range<usize>>,
         new_text: &str,
-        new_marked_range: Option<std::ops::Range<usize>>,
+        new_selected_range: Option<std::ops::Range<usize>>,
         _window: &mut Window,
         cx: &mut App,
     ) {
-        if let Some(range) = new_marked_range {
-            self.terminal_view.update(cx, |view, view_cx| {
-                view.set_marked_text(new_text.to_string(), range, view_cx);
-            });
-        }
+        self.terminal_view.update(cx, |view, view_cx| {
+            view.set_marked_text(new_text.to_string(), new_selected_range, view_cx);
+        });
     }
 
     fn unmark_text(&mut self, _window: &mut Window, cx: &mut App) {
