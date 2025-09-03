@@ -11,7 +11,7 @@ use gpui::{
     Focusable, ParentElement, Render, Styled, Subscription, Task, WeakEntity, Window, actions,
     pulsating_between,
 };
-use language::{Language, LanguageName, Toolchain, ToolchainList, ToolchainScope};
+use language::{Language, LanguageName, Toolchain, ToolchainScope};
 use picker::{Picker, PickerDelegate};
 use project::{DirectoryLister, Project, ProjectPath, Toolchains, WorktreeId};
 use std::{
@@ -619,7 +619,7 @@ impl ModalView for ToolchainSelector {}
 
 pub struct ToolchainSelectorDelegate {
     toolchain_selector: WeakEntity<ToolchainSelector>,
-    candidates: ToolchainList,
+    candidates: Arc<[(Toolchain, Option<ToolchainScope>)]>,
     matches: Vec<StringMatch>,
     selected_index: usize,
     workspace: WeakEntity<Workspace>,
@@ -672,7 +672,7 @@ impl ToolchainSelectorDelegate {
                 let Toolchains {
                     toolchains: available_toolchains,
                     root_path: relative_path,
-                    ..
+                    user_toolchains,
                 } = _project
                     .update(cx, |this, cx| {
                         this.available_toolchains(
@@ -703,15 +703,27 @@ impl ToolchainSelectorDelegate {
                 });
 
                 let _ = this.update_in(cx, move |this, window, cx| {
-                    this.delegate.candidates = available_toolchains;
+                    this.delegate.candidates = user_toolchains
+                        .into_iter()
+                        .flat_map(|(scope, toolchains)| {
+                            toolchains
+                                .into_iter()
+                                .map(move |toolchain| (toolchain, Some(scope.clone())))
+                        })
+                        .chain(
+                            available_toolchains
+                                .toolchains
+                                .into_iter()
+                                .map(|toolchain| (toolchain, None)),
+                        )
+                        .collect();
 
                     if let Some(active_toolchain) = active_toolchain
                         && let Some(position) = this
                             .delegate
                             .candidates
-                            .toolchains
                             .iter()
-                            .position(|toolchain| *toolchain == active_toolchain)
+                            .position(|(toolchain, _)| *toolchain == active_toolchain)
                     {
                         this.delegate.set_selected_index(position, window, cx);
                     }
@@ -761,7 +773,7 @@ impl PickerDelegate for ToolchainSelectorDelegate {
 
     fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         if let Some(string_match) = self.matches.get(self.selected_index) {
-            let toolchain = self.candidates.toolchains[string_match.candidate_id].clone();
+            let (toolchain, _) = self.candidates[string_match.candidate_id].clone();
             if let Some(workspace_id) = self
                 .workspace
                 .read_with(cx, |this, _| this.database_id())
@@ -828,11 +840,11 @@ impl PickerDelegate for ToolchainSelectorDelegate {
         cx.spawn_in(window, async move |this, cx| {
             let matches = if query.is_empty() {
                 candidates
-                    .toolchains
                     .into_iter()
                     .enumerate()
-                    .map(|(index, candidate)| {
-                        let path = Self::relativize_path(candidate.path, &worktree_root_path);
+                    .map(|(index, (candidate, _))| {
+                        let path =
+                            Self::relativize_path(candidate.path.clone(), &worktree_root_path);
                         let string = format!("{}{}", candidate.name, path);
                         StringMatch {
                             candidate_id: index,
@@ -844,11 +856,11 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                     .collect()
             } else {
                 let candidates = candidates
-                    .toolchains
                     .into_iter()
                     .enumerate()
-                    .map(|(candidate_id, toolchain)| {
-                        let path = Self::relativize_path(toolchain.path, &worktree_root_path);
+                    .map(|(candidate_id, (toolchain, _))| {
+                        let path =
+                            Self::relativize_path(toolchain.path.clone(), &worktree_root_path);
                         let string = format!("{}{}", toolchain.name, path);
                         StringMatchCandidate::new(candidate_id, &string)
                     })
@@ -881,11 +893,11 @@ impl PickerDelegate for ToolchainSelectorDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _window: &mut Window,
-        _: &mut Context<Picker<Self>>,
+        _: &mut Window,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let mat = &self.matches[ix];
-        let toolchain = &self.candidates.toolchains[mat.candidate_id];
+        let (toolchain, scope) = &self.candidates[mat.candidate_id];
 
         let label = toolchain.name.clone();
         let path = Self::relativize_path(toolchain.path.clone(), &self.worktree_abs_path_root);
@@ -897,8 +909,9 @@ impl PickerDelegate for ToolchainSelectorDelegate {
         path_highlights.iter_mut().for_each(|index| {
             *index -= label.len();
         });
+        let id: SharedString = format!("toolchain-{ix}",).into();
         Some(
-            ListItem::new(ix)
+            ListItem::new(id)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
@@ -907,7 +920,46 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                     HighlightedLabel::new(path, path_highlights)
                         .size(LabelSize::Small)
                         .color(Color::Muted),
-                ),
+                )
+                .when_some(scope.as_ref(), |this, scope| {
+                    let id: SharedString = format!(
+                        "delete-custom-toolchain-{}-{}",
+                        toolchain.name, toolchain.path
+                    )
+                    .into();
+                    let toolchain = toolchain.clone();
+                    let scope = scope.clone();
+                    this.end_hover_slot(IconButton::new(id, IconName::Trash))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.delegate.project.update(cx, |this, cx| {
+                                this.remove_toolchain(toolchain.clone(), scope.clone(), cx)
+                            });
+
+                            this.delegate.matches.retain_mut(|m| {
+                                if m.candidate_id == ix {
+                                    return false;
+                                } else if m.candidate_id > ix {
+                                    m.candidate_id -= 1;
+                                }
+                                true
+                            });
+
+                            this.delegate.candidates = this
+                                .delegate
+                                .candidates
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(i, toolchain)| (ix != i).then_some(toolchain.clone()))
+                                .collect();
+
+                            if this.delegate.selected_index >= ix {
+                                this.delegate.selected_index =
+                                    this.delegate.selected_index.saturating_sub(1);
+                            }
+                            cx.stop_propagation();
+                            cx.notify();
+                        }))
+                }),
         )
     }
     fn render_footer(
