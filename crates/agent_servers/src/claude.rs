@@ -1,6 +1,5 @@
 use language_models::provider::anthropic::AnthropicLanguageModelProvider;
 use settings::SettingsStore;
-use std::path::Path;
 use std::rc::Rc;
 use std::{any::Any, path::PathBuf};
 
@@ -71,11 +70,10 @@ impl AgentServer for ClaudeCode {
 
     fn connect(
         &self,
-        root_dir: &Path,
         delegate: AgentServerDelegate,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn AgentConnection>>> {
-        let root_dir = root_dir.to_path_buf();
+        let project = delegate.project().clone();
         let server_name = self.name();
         let settings = cx.read_global(|settings: &SettingsStore, _| {
             settings.get::<AllAgentServersSettings>(None).claude.clone()
@@ -105,11 +103,10 @@ impl AgentServer for ClaudeCode {
             {
                 command
                     .env
-                    .get_or_insert_default()
                     .insert("ANTHROPIC_API_KEY".to_owned(), api_key.key);
             }
 
-            crate::acp::connect(server_name, command.clone(), &root_dir, cx).await
+            crate::acp::connect(server_name, command.clone(), &project, cx).await
         })
     }
 

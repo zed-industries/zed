@@ -454,7 +454,7 @@ impl AcpThreadView {
         let (tx, mut rx) = watch::channel("Loading…".into());
         let delegate = AgentServerDelegate::new(project.clone(), Some(tx));
 
-        let connect_task = agent.connect(&root_dir, delegate, cx);
+        let connect_task = agent.connect(delegate, cx);
         let load_task = cx.spawn_in(window, async move |this, cx| {
             let connection = match connect_task.await {
                 Ok(connection) => connection,
@@ -5655,7 +5655,6 @@ pub(crate) mod tests {
 
         fn connect(
             &self,
-            _root_dir: &Path,
             _delegate: AgentServerDelegate,
             _cx: &mut App,
         ) -> Task<gpui::Result<Rc<dyn AgentConnection>>> {
