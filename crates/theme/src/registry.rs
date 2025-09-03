@@ -13,8 +13,8 @@ use util::ResultExt;
 
 use crate::{
     Appearance, AppearanceContent, ChevronIcons, DEFAULT_ICON_THEME_NAME, DirectoryIcons,
-    IconDefinition, IconTheme, NamedDirectoryIcons, Theme, ThemeFamily, ThemeFamilyContent,
-    default_icon_theme, read_icon_theme, read_user_theme, refine_theme_family,
+    IconDefinition, IconTheme, Theme, ThemeFamily, ThemeFamilyContent, default_icon_theme,
+    read_icon_theme, read_user_theme, refine_theme_family,
 };
 
 /// The metadata for a theme.
@@ -298,13 +298,18 @@ impl ThemeRegistry {
             let mut file_suffixes = default_icon_theme.file_suffixes.clone();
             file_suffixes.extend(icon_theme.file_suffixes);
 
-            let mut named_directory_icons_expanded =
-                default_icon_theme.named_directory_icons.expanded.clone();
-            named_directory_icons_expanded.extend(icon_theme.named_directory_icons.expanded);
-
-            let mut named_directory_icons_collapsed =
-                default_icon_theme.named_directory_icons.collapsed.clone();
-            named_directory_icons_collapsed.extend(icon_theme.named_directory_icons.collapsed);
+            let mut named_directory_icons = default_icon_theme.named_directory_icons.clone();
+            named_directory_icons.extend(icon_theme.named_directory_icons.into_iter().map(
+                |(key, value)| {
+                    (
+                        key,
+                        DirectoryIcons {
+                            collapsed: value.collapsed,
+                            expanded: value.expanded,
+                        },
+                    )
+                },
+            ));
 
             let icon_theme = IconTheme {
                 id: uuid::Uuid::new_v4().to_string(),
@@ -317,10 +322,7 @@ impl ThemeRegistry {
                     collapsed: icon_theme.directory_icons.collapsed.map(resolve_icon_path),
                     expanded: icon_theme.directory_icons.expanded.map(resolve_icon_path),
                 },
-                named_directory_icons: NamedDirectoryIcons {
-                    collapsed: named_directory_icons_collapsed,
-                    expanded: named_directory_icons_expanded,
-                },
+                named_directory_icons,
                 chevron_icons: ChevronIcons {
                     collapsed: icon_theme.chevron_icons.collapsed.map(resolve_icon_path),
                     expanded: icon_theme.chevron_icons.expanded.map(resolve_icon_path),

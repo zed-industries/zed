@@ -21,7 +21,7 @@ pub struct IconThemeContent {
     #[serde(default)]
     pub directory_icons: DirectoryIconsContent,
     #[serde(default)]
-    pub named_directory_icons: NamedDirectoryIconsContent,
+    pub named_directory_icons: HashMap<String, DirectoryIconsContent>,
     #[serde(default)]
     pub chevron_icons: ChevronIconsContent,
     #[serde(default)]
@@ -36,14 +36,6 @@ pub struct IconThemeContent {
 pub struct DirectoryIconsContent {
     pub collapsed: Option<SharedString>,
     pub expanded: Option<SharedString>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
-pub struct NamedDirectoryIconsContent {
-    #[serde(default)]
-    pub collapsed: HashMap<String, String>,
-    #[serde(default)]
-    pub expanded: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
