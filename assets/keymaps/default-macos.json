@@ -379,6 +379,12 @@
     }
   },
   {
+    "context": "AcpThread",
+    "bindings": {
+      "ctrl-shift-m": "agent::CycleCompletionMode"
+    }
+  },
+  {
     "context": "AcpThread > Editor && !use_modifier_to_send",
     "use_key_equivalents": true,
     "bindings": {

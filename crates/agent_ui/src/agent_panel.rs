@@ -1671,6 +1671,7 @@ impl AgentPanel {
                 thread.set_completion_mode(match current_mode {
                     CompletionMode::Burn => CompletionMode::Normal,
                     CompletionMode::Normal => CompletionMode::Burn,
+                    _ => CompletionMode::Burn,
                 });
             });
         });
