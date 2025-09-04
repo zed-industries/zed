@@ -21,7 +21,10 @@ pub enum SearchResult {
         buffer: Entity<Buffer>,
         ranges: Vec<Range<Anchor>>,
     },
-    LimitReached,
+    Finished {
+        limit_reached: bool,
+        any_file_matched_pattern: bool,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq)]
