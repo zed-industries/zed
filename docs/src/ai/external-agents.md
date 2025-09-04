@@ -30,12 +30,19 @@ If you'd like to bind this to a keyboard shortcut, you can do so by editing your
 
 #### Installation
 
-If you don't yet have Gemini CLI installed, then Zed will install a version for you. If you do, then we will use the version of Gemini CLI on your path.
+The first time you create a Gemini CLI thread, Zed will install [@google/gemini-cli](https://github.com/zed-industries/claude-code-acp). This installation is only available to Zed and is kept up to date as you use the agent.
 
-You need to be running at least Gemini version `0.2.0`, and if your version of Gemini is too old you will see an
-error message.
+By default, Zed will use this managed version of Gemini CLI even if you have it installed globally. However, you can configure it to use a version in your `PATH` by adding this to your settings:
 
-The instructions to upgrade Gemini depend on how you originally installed it, but typically, running `npm install -g @google/gemini-cli@latest` should work.
+```json
+{
+  "agent_servers": {
+    "gemini": {
+      "ignore_system_version": false
+    }
+  }
+}
+```
 
 #### Authentication
 
@@ -80,8 +87,9 @@ If you'd like to bind this to a keyboard shortcut, you can do so by editing your
 
 #### Installation
 
-If you don't yet have Claude Code installed, then Zed will install a version for you.
-If you do, then we will use the version of Claude Code on your path.
+The first time you create a Claude Code thread, Zed will install [@zed-industries/claude-code-acp](https://github.com/zed-industries/claude-code-acp). This installation is only available to Zed and is kept up to date as you use the agent.
+
+Zed will always use this managed version of Claude Code even if you have it installed globally.
 
 ### Usage
 
@@ -121,6 +129,8 @@ You can run any agent speaking ACP in Zed by changing your settings as follows:
 ```
 
 This can also be useful if you're in the middle of developing a new agent that speaks the protocol and you want to debug it.
+
+You can also specify a custom path, arguments, or environment for the builtin integrations by using the `claude` and `gemini` names.
 
 ## Debugging Agents
 
