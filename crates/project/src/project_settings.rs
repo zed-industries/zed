@@ -517,6 +517,12 @@ pub struct BinarySettings {
     pub ignore_system_version: Option<bool>,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
+pub struct FetchSettings {
+    // Whether to consider pre-releases for fetching
+    pub pre_release: Option<bool>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
 #[serde(rename_all = "snake_case")]
 pub struct LspSettings {
@@ -528,6 +534,7 @@ pub struct LspSettings {
     /// Default: true
     #[serde(default = "default_true")]
     pub enable_lsp_tasks: bool,
+    pub fetch: Option<FetchSettings>,
 }
 
 impl Default for LspSettings {
@@ -537,6 +544,7 @@ impl Default for LspSettings {
             initialization_options: None,
             settings: None,
             enable_lsp_tasks: true,
+            fetch: None,
         }
     }
 }

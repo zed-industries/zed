@@ -86,10 +86,16 @@ impl RenderOnce for AiUpsellCard {
             )
             .child(plan_definitions.free_plan());
 
-        let grid_bg = h_flex().absolute().inset_0().w_full().h(px(240.)).child(
-            Vector::new(VectorName::Grid, rems_from_px(500.), rems_from_px(240.))
-                .color(Color::Custom(cx.theme().colors().border.opacity(0.05))),
-        );
+        let grid_bg = h_flex()
+            .absolute()
+            .inset_0()
+            .w_full()
+            .h(px(240.))
+            .bg(gpui::pattern_slash(
+                cx.theme().colors().border.opacity(0.1),
+                2.,
+                25.,
+            ));
 
         let gradient_bg = div()
             .absolute()

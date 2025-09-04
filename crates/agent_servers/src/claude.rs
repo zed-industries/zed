@@ -40,7 +40,7 @@ impl ClaudeCode {
                         Self::PACKAGE_NAME.into(),
                         "node_modules/@anthropic-ai/claude-code/cli.js".into(),
                         true,
-                        None,
+                        Some("0.2.5".parse().unwrap()),
                         cx,
                     )
                 })?
