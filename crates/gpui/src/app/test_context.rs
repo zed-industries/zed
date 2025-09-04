@@ -3,13 +3,12 @@ use crate::{
     BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, DrawPhase, Drawable,
     Element, Empty, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform,
-    TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
-    WindowHandle, WindowOptions,
+    Platform, Point, Render, Result, Size, Task, TestPlatform, TestScreenCaptureSource, TestWindow,
+    TextSystem, VisualContext, Window, WindowBounds, WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
-use rand::{SeedableRng, rngs::StdRng};
+use scheduler::{TestScheduler, TestSchedulerConfig};
 use std::{cell::RefCell, future::Future, ops::Deref, rc::Rc, sync::Arc, time::Duration};
 
 /// A TestAppContext is provided to tests created with `#[gpui::test]`, it provides
@@ -23,7 +22,7 @@ pub struct TestAppContext {
     #[doc(hidden)]
     pub foreground_executor: ForegroundExecutor,
     #[doc(hidden)]
-    pub dispatcher: TestDispatcher,
+    pub scheduler: Arc<TestScheduler>,
     test_platform: Rc<TestPlatform>,
     text_system: Arc<TextSystem>,
     fn_name: Option<&'static str>,
@@ -121,10 +120,9 @@ impl AppContext for TestAppContext {
 
 impl TestAppContext {
     /// Creates a new `TestAppContext`. Usually you can rely on `#[gpui::test]` to do this for you.
-    pub fn build(dispatcher: TestDispatcher, fn_name: Option<&'static str>) -> Self {
-        let arc_dispatcher = Arc::new(dispatcher.clone());
-        let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
-        let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
+    pub fn build(scheduler: Arc<TestScheduler>, fn_name: Option<&'static str>) -> Self {
+        let background_executor = BackgroundExecutor::new(scheduler.background());
+        let foreground_executor = ForegroundExecutor::new(scheduler.foreground());
         let platform = TestPlatform::new(background_executor.clone(), foreground_executor.clone());
         let asset_source = Arc::new(());
         let http_client = http_client::FakeHttpClient::with_404_response();
@@ -134,7 +132,7 @@ impl TestAppContext {
             app: App::new_app(platform.clone(), asset_source, http_client),
             background_executor,
             foreground_executor,
-            dispatcher,
+            scheduler,
             test_platform: platform,
             text_system,
             fn_name,
@@ -144,8 +142,10 @@ impl TestAppContext {
 
     /// Create a single TestAppContext, for non-multi-client tests
     pub fn single() -> Self {
-        let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
-        Self::build(dispatcher, None)
+        Self::build(
+            Arc::new(TestScheduler::new(TestSchedulerConfig::with_seed(0))),
+            None,
+        )
     }
 
     /// The name of the test function that created this `TestAppContext`
@@ -160,7 +160,7 @@ impl TestAppContext {
 
     /// returns a new `TestAppContext` re-using the same executors to interleave tasks.
     pub fn new_app(&self) -> TestAppContext {
-        Self::build(self.dispatcher.clone(), self.fn_name)
+        Self::build(self.scheduler.clone(), self.fn_name)
     }
 
     /// Called by the test helper to end the test.

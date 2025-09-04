@@ -25,14 +25,15 @@
 //!   assert!(true)
 //! }
 //! ```
-use crate::{Entity, Subscription, TestAppContext, TestDispatcher};
+use crate::{Entity, Subscription, TestAppContext};
 use futures::StreamExt as _;
-use rand::prelude::*;
+use scheduler::{TestScheduler, TestSchedulerConfig};
 use smol::channel;
 use std::{
     env,
     panic::{self, RefUnwindSafe},
     pin::Pin,
+    sync::Arc,
 };
 
 /// Run the given test function with the configured parameters.
@@ -42,7 +43,7 @@ pub fn run_test(
     num_iterations: usize,
     explicit_seeds: &[u64],
     max_retries: usize,
-    test_fn: &mut (dyn RefUnwindSafe + Fn(TestDispatcher, u64)),
+    test_fn: &mut (dyn RefUnwindSafe + Fn(Arc<TestScheduler>, u64)),
     on_fail_fn: Option<fn()>,
 ) {
     let (seeds, is_multiple_runs) = calculate_seeds(num_iterations as u64, explicit_seeds);
@@ -54,8 +55,8 @@ pub fn run_test(
                 eprintln!("seed = {seed}");
             }
             let result = panic::catch_unwind(|| {
-                let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(seed));
-                test_fn(dispatcher, seed);
+                let scheduler = Arc::new(TestScheduler::new(TestSchedulerConfig::with_seed(seed)));
+                test_fn(scheduler, seed);
             });
 
             match result {

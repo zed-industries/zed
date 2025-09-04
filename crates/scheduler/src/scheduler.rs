@@ -29,6 +29,12 @@ pub trait Scheduler: Send + Sync {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct SessionId(u16);
 
+impl SessionId {
+    pub fn new(id: u16) -> Self {
+        SessionId(id)
+    }
+}
+
 pub struct Timer(oneshot::Receiver<()>);
 
 impl Future for Timer {

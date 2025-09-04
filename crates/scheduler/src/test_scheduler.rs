@@ -25,7 +25,7 @@ pub struct TestScheduler {
     rng: Arc<Mutex<StdRng>>,
     state: Mutex<SchedulerState>,
     pub thread_id: thread::ThreadId,
-    pub config: SchedulerConfig,
+    pub config: TestSchedulerConfig,
 }
 
 impl TestScheduler {
@@ -52,14 +52,14 @@ impl TestScheduler {
 
     /// Run a test once with a specific seed
     pub fn with_seed<R>(seed: u64, f: impl AsyncFnOnce(Arc<TestScheduler>) -> R) -> R {
-        let scheduler = Arc::new(TestScheduler::new(SchedulerConfig::with_seed(seed)));
+        let scheduler = Arc::new(TestScheduler::new(TestSchedulerConfig::with_seed(seed)));
         let future = f(scheduler.clone());
         let result = scheduler.foreground().block_on(future);
         scheduler.run(); // Ensure spawned tasks finish up before returning in tests
         result
     }
 
-    pub fn new(config: SchedulerConfig) -> Self {
+    pub fn new(config: TestSchedulerConfig) -> Self {
         Self {
             rng: Arc::new(Mutex::new(StdRng::seed_from_u64(config.seed))),
             state: Mutex::new(SchedulerState {
@@ -82,6 +82,10 @@ impl TestScheduler {
 
     pub fn rng(&self) -> Arc<Mutex<StdRng>> {
         self.rng.clone()
+    }
+
+    pub fn forbid_parking(&self) {
+        self.state.lock().allow_parking = false;
     }
 
     /// Create a foreground executor for this scheduler
@@ -270,14 +274,14 @@ impl Scheduler for TestScheduler {
 }
 
 #[derive(Clone, Debug)]
-pub struct SchedulerConfig {
+pub struct TestSchedulerConfig {
     pub seed: u64,
     pub randomize_order: bool,
     pub allow_parking: bool,
     pub max_timeout_ticks: usize,
 }
 
-impl SchedulerConfig {
+impl TestSchedulerConfig {
     pub fn with_seed(seed: u64) -> Self {
         Self {
             seed,
@@ -286,7 +290,7 @@ impl SchedulerConfig {
     }
 }
 
-impl Default for SchedulerConfig {
+impl Default for TestSchedulerConfig {
     fn default() -> Self {
         Self {
             seed: 0,

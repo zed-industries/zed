@@ -2,14 +2,18 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::{PlatformDispatcher, TaskLabel};
+use crate::{BackgroundExecutor, ForegroundExecutor, PlatformDispatcher, TaskLabel};
 use async_task::Runnable;
 use parking::{Parker, Unparker};
 use parking_lot::Mutex;
+use scheduler::Scheduler;
 use std::{
     ffi::c_void,
     ptr::{NonNull, addr_of},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU16, Ordering::SeqCst},
+    },
     time::Duration,
 };
 
@@ -22,6 +26,54 @@ pub(crate) mod dispatch_sys {
 use dispatch_sys::*;
 pub(crate) fn dispatch_get_main_queue() -> dispatch_queue_t {
     addr_of!(_dispatch_main_q) as *const _ as dispatch_queue_t
+}
+
+pub(crate) struct MacScheduler {
+    next_session_id: AtomicU16,
+}
+
+impl MacScheduler {
+    pub fn new() -> Self {
+        MacScheduler {
+            next_session_id: AtomicU16::new(0),
+        }
+    }
+
+    pub fn background(self: &Arc<Self>) -> BackgroundExecutor {
+        BackgroundExecutor::new(scheduler::BackgroundExecutor::new(self.clone()))
+    }
+
+    pub fn foreground(self: &Arc<Self>) -> ForegroundExecutor {
+        let session_id = scheduler::SessionId::new(self.next_session_id.fetch_add(1, SeqCst));
+        ForegroundExecutor::new(scheduler::ForegroundExecutor::new(session_id, self.clone()))
+    }
+}
+
+impl Scheduler for MacScheduler {
+    fn block(
+        &self,
+        session_id: scheduler::SessionId,
+        future: futures::future::LocalBoxFuture<()>,
+        timeout: Option<Duration>,
+    ) {
+        todo!()
+    }
+
+    fn schedule_foreground(&self, session_id: scheduler::SessionId, runnable: Runnable) {
+        todo!()
+    }
+
+    fn schedule_background(&self, runnable: Runnable) {
+        todo!()
+    }
+
+    fn timer(&self, timeout: Duration) -> scheduler::Timer {
+        todo!()
+    }
+
+    fn now(&self) -> chrono::DateTime<chrono::Utc> {
+        todo!()
+    }
 }
 
 pub(crate) struct MacDispatcher {

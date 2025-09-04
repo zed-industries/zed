@@ -146,7 +146,7 @@ fn generate_test_function(
                         }
                         Some("BackgroundExecutor") => {
                             inner_fn_args.extend(quote!(gpui::BackgroundExecutor::new(
-                                std::sync::Arc::new(dispatcher.clone()),
+                                scheduler.background()
                             ),));
                             continue;
                         }
@@ -162,15 +162,14 @@ fn generate_test_function(
                         let cx_varname = format_ident!("cx_{}", ix);
                         cx_vars.extend(quote!(
                             let mut #cx_varname = gpui::TestAppContext::build(
-                                dispatcher.clone(),
+                                scheduler.clone(),
                                 Some(stringify!(#outer_fn_name)),
                             );
                         ));
                         cx_teardowns.extend(quote!(
-                            dispatcher.run_until_parked();
-                            #cx_varname.executor().forbid_parking();
+                            scheduler.run();
                             #cx_varname.quit();
-                            dispatcher.run_until_parked();
+                            scheduler.run();
                         ));
                         inner_fn_args.extend(quote!(&mut #cx_varname,));
                         continue;
@@ -190,10 +189,9 @@ fn generate_test_function(
                     #num_iterations,
                     &[#seeds],
                     #max_retries,
-                    &mut |dispatcher, _seed| {
-                        let executor = gpui::BackgroundExecutor::new(std::sync::Arc::new(dispatcher.clone()));
+                    &mut |scheduler, _seed| {
                         #cx_vars
-                        executor.block_test(#inner_fn_name(#inner_fn_args));
+                        scheduler.foreground().block_on(#inner_fn_name(#inner_fn_args));
                         #cx_teardowns
                     },
                     #on_failure_fn_name
@@ -225,33 +223,33 @@ fn generate_test_function(
                             let cx_varname_lock = format_ident!("cx_{}_lock", ix);
                             cx_vars.extend(quote!(
                                 let mut #cx_varname = gpui::TestAppContext::build(
-                                   dispatcher.clone(),
+                                   scheduler.clone(),
                                    Some(stringify!(#outer_fn_name))
                                 );
                                 let mut #cx_varname_lock = #cx_varname.app.borrow_mut();
                             ));
                             inner_fn_args.extend(quote!(&mut #cx_varname_lock,));
                             cx_teardowns.extend(quote!(
-                                    drop(#cx_varname_lock);
-                                    dispatcher.run_until_parked();
-                                    #cx_varname.update(|cx| { cx.background_executor().forbid_parking(); cx.quit(); });
-                                    dispatcher.run_until_parked();
-                                ));
+                                drop(#cx_varname_lock);
+                                scheduler.run();
+                                #cx_varname.update(|cx| { scheduler.forbid_parking(); cx.quit(); });
+                                scheduler.run();
+                            ));
                             continue;
                         }
                         Some("TestAppContext") => {
                             let cx_varname = format_ident!("cx_{}", ix);
                             cx_vars.extend(quote!(
                                 let mut #cx_varname = gpui::TestAppContext::build(
-                                    dispatcher.clone(),
+                                    scheduler.clone(),
                                     Some(stringify!(#outer_fn_name))
                                 );
                             ));
                             cx_teardowns.extend(quote!(
-                                dispatcher.run_until_parked();
-                                #cx_varname.executor().forbid_parking();
+                                scheduler.run();
+                                scheduler.forbid_parking();
                                 #cx_varname.quit();
-                                dispatcher.run_until_parked();
+                                scheduler.run();
                             ));
                             inner_fn_args.extend(quote!(&mut #cx_varname,));
                             continue;
@@ -273,7 +271,7 @@ fn generate_test_function(
                     #num_iterations,
                     &[#seeds],
                     #max_retries,
-                    &mut |dispatcher, _seed| {
+                    &mut |scheduler, _seed| {
                         #cx_vars
                         #inner_fn_name(#inner_fn_args);
                         #cx_teardowns

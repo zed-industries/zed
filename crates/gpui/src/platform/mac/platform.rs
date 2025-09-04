@@ -6,8 +6,8 @@ use super::{
 };
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardString,
-    CursorStyle, ForegroundExecutor, Image, ImageFormat, KeyContext, Keymap, MacDispatcher,
-    MacDisplay, MacWindow, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions, Platform,
+    CursorStyle, ForegroundExecutor, Image, ImageFormat, KeyContext, Keymap, MacDisplay,
+    MacScheduler, MacWindow, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions, Platform,
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
     PlatformWindow, Result, SemanticVersion, SystemMenuType, Task, WindowAppearance, WindowParams,
     hash,
@@ -183,7 +183,7 @@ impl Default for MacPlatform {
 
 impl MacPlatform {
     pub(crate) fn new(headless: bool) -> Self {
-        let dispatcher = Arc::new(MacDispatcher::new());
+        let scheduler = Arc::new(MacScheduler::new());
 
         #[cfg(feature = "font-kit")]
         let text_system = Arc::new(crate::MacTextSystem::new());
@@ -197,8 +197,8 @@ impl MacPlatform {
         Self(Mutex::new(MacPlatformState {
             headless,
             text_system,
-            background_executor: BackgroundExecutor::new(dispatcher.clone()),
-            foreground_executor: ForegroundExecutor::new(dispatcher),
+            background_executor: scheduler.background(),
+            foreground_executor: scheduler.foreground(),
             renderer_context: renderer::Context::default(),
             pasteboard: unsafe { NSPasteboard::generalPasteboard(nil) },
             text_hash_pasteboard_type: unsafe { ns_string("zed-text-hash") },

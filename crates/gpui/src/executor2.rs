@@ -110,6 +110,11 @@ type AnyFuture<R> = Pin<Box<dyn 'static + Send + Future<Output = R>>>;
 /// In tests this is simulated by running tasks one by one in a deterministic
 /// (but arbitrary) order controlled by the `SEED` environment variable.
 impl BackgroundExecutor {
+    /// Create a new BackgroundExecutor
+    pub fn new(executor: scheduler::BackgroundExecutor) -> Self {
+        Self(executor)
+    }
+
     /// Enqueues the given future to be run to completion on a background thread.
     pub fn spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R>
     where
@@ -284,6 +289,11 @@ impl BackgroundExecutor {
 
 /// ForegroundExecutor runs things on the main thread.
 impl ForegroundExecutor {
+    /// Create a new ForegroundExecutor
+    pub fn new(executor: scheduler::ForegroundExecutor) -> Self {
+        Self(executor)
+    }
+
     /// Enqueues the given Task to run on the main thread at some point in the future.
     #[track_caller]
     pub fn spawn<R>(&self, future: impl Future<Output = R> + 'static) -> Task<R>

@@ -317,16 +317,14 @@ impl Boundary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        Font, FontFeatures, FontStyle, FontWeight, Hsla, TestAppContext, TestDispatcher, font,
-    };
+    use crate::{Font, FontFeatures, FontStyle, FontWeight, Hsla, TestAppContext, font};
     #[cfg(target_os = "macos")]
     use crate::{TextRun, WindowTextSystem, WrapBoundary};
-    use rand::prelude::*;
+    use scheduler::{TestScheduler, TestSchedulerConfig};
 
     fn build_wrapper() -> LineWrapper {
-        let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
-        let cx = TestAppContext::build(dispatcher, None);
+        let scheduler = Arc::new(TestScheduler::new(TestSchedulerConfig::with_seed(0)));
+        let cx = TestAppContext::build(scheduler, None);
         let id = cx.text_system().resolve_font(&font(".ZedMono"));
         LineWrapper::new(id, px(16.), cx.text_system().platform_text_system.clone())
     }

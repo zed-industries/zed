@@ -1,4 +1,4 @@
-use crate::{BackgroundExecutor, Task};
+use crate::BackgroundExecutor;
 use std::{
     future::Future,
     pin::Pin,
@@ -7,6 +7,7 @@ use std::{
     time::Duration,
 };
 
+use scheduler::Timer;
 pub use util::*;
 
 /// A helper trait for building complex objects with imperative conditionals in a fluent style.
@@ -85,7 +86,7 @@ impl<T: Future> FutureExt for T {
 
 pub struct WithTimeout<T> {
     future: T,
-    timer: Task<()>,
+    timer: Timer,
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -153,7 +153,7 @@ fn test_randomize_order() {
     // Test deterministic mode: different seeds should produce same execution order
     let mut deterministic_results = HashSet::new();
     for seed in 0..10 {
-        let config = SchedulerConfig {
+        let config = TestSchedulerConfig {
             seed,
             randomize_order: false,
             ..Default::default()
@@ -173,7 +173,7 @@ fn test_randomize_order() {
     // Test randomized mode: different seeds can produce different execution orders
     let mut randomized_results = HashSet::new();
     for seed in 0..20 {
-        let config = SchedulerConfig::with_seed(seed);
+        let config = TestSchedulerConfig::with_seed(seed);
         let order = block_on(capture_execution_order(config));
         assert_eq!(order.len(), 6);
         randomized_results.insert(order);
@@ -186,7 +186,7 @@ fn test_randomize_order() {
     );
 }
 
-async fn capture_execution_order(config: SchedulerConfig) -> Vec<String> {
+async fn capture_execution_order(config: TestSchedulerConfig) -> Vec<String> {
     let scheduler = Arc::new(TestScheduler::new(config));
     let foreground = scheduler.foreground();
     let background = scheduler.background();
@@ -221,7 +221,7 @@ async fn capture_execution_order(config: SchedulerConfig) -> Vec<String> {
 
 #[test]
 fn test_block() {
-    let scheduler = Arc::new(TestScheduler::new(SchedulerConfig::default()));
+    let scheduler = Arc::new(TestScheduler::new(TestSchedulerConfig::default()));
     let (tx, rx) = oneshot::channel();
 
     // Spawn background task to send value
@@ -240,13 +240,13 @@ fn test_block() {
 #[test]
 #[should_panic(expected = "Parking forbidden")]
 fn test_parking_panics() {
-    let scheduler = Arc::new(TestScheduler::new(SchedulerConfig::default()));
+    let scheduler = Arc::new(TestScheduler::new(TestSchedulerConfig::default()));
     scheduler.foreground().block_on(future::pending::<()>());
 }
 
 #[test]
 fn test_block_with_parking() {
-    let config = SchedulerConfig {
+    let config = TestSchedulerConfig {
         allow_parking: true,
         ..Default::default()
     };
