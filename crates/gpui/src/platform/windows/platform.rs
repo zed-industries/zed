@@ -89,7 +89,11 @@ impl WindowsPlatform {
             OleInitialize(None).context("unable to initialize Windows OLE")?;
         }
         let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
-        let validation_number = rand::random::<usize>();
+        let validation_number = if usize::BITS == 64 {
+            rand::random::<u64>() as usize
+        } else {
+            rand::random::<u32>() as usize
+        };
         let raw_window_handles = Arc::new(RwLock::new(SmallVec::new()));
         register_platform_window_class();
         let mut context = PlatformWindowCreateContext {

@@ -1325,7 +1325,7 @@ mod tests {
             .map(|line| format!("{}{}", " ".repeat(rng.random_range(0..=8)), line))
             .collect::<Vec<_>>()
             .join("\n");
-        let delta = IndentDelta::Spaces(rng.random_range(0..=8) as isize - 4);
+        let delta = IndentDelta::Spaces(rng.random_range(-4i8..=4i8) as isize);
 
         let chunks = to_random_chunks(&mut rng, &new_text);
         let new_text_chunks = stream::iter(chunks.iter().enumerate().map(|(index, chunk)| {
