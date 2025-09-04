@@ -140,10 +140,10 @@ impl Render for WhichKeyModal {
 
         // Get dock widths and bottom dock height for dynamic padding
         // If workspace is zoomed, ignore panel padding and render at bottom of buffer
-        let (left_margin, right_margin, bottom_margin) = if let Ok(margins) =
+        let (left_margin, right_margin) = if let Ok(margins) =
             self.workspace.read_with(cx, |workspace, cx| {
                 if is_zoomed {
-                    return (Pixels::ZERO, Pixels::ZERO, Pixels::ZERO);
+                    return (Pixels::ZERO, Pixels::ZERO);
                 }
 
                 let left_width = workspace
@@ -156,17 +156,12 @@ impl Render for WhichKeyModal {
                     .read(cx)
                     .active_panel_size(window, cx)
                     .unwrap_or_default();
-                let bottom_height = workspace
-                    .bottom_dock()
-                    .read(cx)
-                    .active_panel_size(window, cx)
-                    .unwrap_or_default();
 
-                (left_width, right_width, bottom_height)
+                (left_width, right_width)
             }) {
             margins
         } else {
-            (Pixels::ZERO, Pixels::ZERO, Pixels::ZERO)
+            (Pixels::ZERO, Pixels::ZERO)
         };
 
         let column_gap = DynamicSpacing::Base32.px(cx); // Gap between columns
@@ -276,7 +271,7 @@ impl Render for WhichKeyModal {
             })
             .unwrap_or(None);
 
-        let panel_bottom_y = bottom_margin + status_bar_height + margin;
+        let panel_bottom_y = status_bar_height + margin;
 
         // Adjust height to avoid covering cursor
         let adjusted_height = if let Some(cursor_pos) = cursor_position {
