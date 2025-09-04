@@ -167,7 +167,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
         },
         LanguageInfo {
             name: "python",
-            adapters: vec![basedpyright_lsp_adapter, py_lsp_adapter],
+            adapters: vec![basedpyright_lsp_adapter],
             context: Some(python_context_provider),
             toolchain: Some(python_toolchain_provider),
             manifest_name: Some(SharedString::new_static("pyproject.toml").into()),
@@ -261,7 +261,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
         typescript_lsp_adapter,
     );
     languages.register_available_lsp_adapter(python_lsp_adapter.name(), python_lsp_adapter);
-
+    languages.register_available_lsp_adapter(py_lsp_adapter.name(), py_lsp_adapter);
     // Register Tailwind for the existing languages that should have it by default.
     //
     // This can be driven by the `language_servers` setting once we have a way for

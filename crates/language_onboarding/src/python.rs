@@ -2,8 +2,9 @@ use db::kvp::Dismissable;
 use editor::Editor;
 use gpui::{Context, EventEmitter, Subscription};
 use ui::{
-    Banner, Button, Clickable, FluentBuilder as _, IconButton, IconName, InteractiveElement as _,
-    IntoElement, ParentElement as _, Render, Styled as _, Window, div, h_flex,
+    Banner, Button, Clickable, Color, FluentBuilder as _, IconButton, IconName,
+    InteractiveElement as _, IntoElement, Label, LabelCommon, LabelSize, ParentElement as _,
+    Render, Styled as _, Window, div, h_flex, v_flex,
 };
 use workspace::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace};
 
@@ -48,7 +49,10 @@ impl Render for BasedPyrightBanner {
                         .child(
                             h_flex()
                                 .gap_2()
-                                .child("Basedpyright is now the default language server for Python")
+                                .child(v_flex()
+                                    .child("Basedpyright is now the only default language server for Python")
+                                    .child(Label::new("We have disabled PyRight and pylsp by default. They can be re-enabled in your settings.").size(LabelSize::XSmall).color(Color::Muted))
+                                )
                                 .child(
                                     Button::new("learn-more", "Learn More")
                                         .icon(IconName::ArrowUpRight)

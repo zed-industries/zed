@@ -1615,7 +1615,9 @@ impl LspAdapter for BasedPyrightLspAdapter {
                         Value::String(interpreter_path),
                     );
                 }
-
+                //basedpyright.analysis.typeCheckingMode
+                // Basedpyright by default uses `strict` type checking, we tone it down as to not surpris users
+                if let Some() = object.pointer_mut("") {}
                 if !object.contains_key("typeCheckingMode")
                     && let Some(analysis) = object
                         .entry("basedpyright.analysis")
