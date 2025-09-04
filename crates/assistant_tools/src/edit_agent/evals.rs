@@ -1399,7 +1399,7 @@ fn eval(
 }
 
 fn run_eval(eval: EvalInput, tx: mpsc::Sender<Result<EvalOutput>>) {
-    let dispatcher = gpui::TestDispatcher::new(StdRng::from_entropy());
+    let dispatcher = gpui::TestDispatcher::new(StdRng::from_os_rng());
     let mut cx = TestAppContext::build(dispatcher, None);
     let output = cx.executor().block_test(async {
         let test = EditAgentTest::new(&mut cx).await;
@@ -1707,7 +1707,7 @@ async fn retry_on_rate_limit<R>(mut request: impl AsyncFnMut() -> Result<R>) -> 
         };
 
         if let Some(retry_after) = retry_delay {
-            let jitter = retry_after.mul_f64(rand::thread_rng().gen_range(0.0..1.0));
+            let jitter = retry_after.mul_f64(rand::rng().random_range(0.0..1.0));
             eprintln!("Attempt #{attempt}: Retry after {retry_after:?} + jitter of {jitter:?}");
             Timer::after(retry_after + jitter).await;
         } else {

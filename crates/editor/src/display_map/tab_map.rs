@@ -736,9 +736,9 @@ mod tests {
 
     #[gpui::test(iterations = 100)]
     fn test_random_tabs(cx: &mut gpui::App, mut rng: StdRng) {
-        let tab_size = NonZeroU32::new(rng.gen_range(1..=4)).unwrap();
-        let len = rng.gen_range(0..30);
-        let buffer = if rng.r#gen() {
+        let tab_size = NonZeroU32::new(rng.random_range(1..=4)).unwrap();
+        let len = rng.random_range(0..30);
+        let buffer = if rng.random() {
             let text = util::RandomCharIter::new(&mut rng)
                 .take(len)
                 .collect::<String>();
@@ -769,11 +769,11 @@ mod tests {
         );
 
         for _ in 0..5 {
-            let end_row = rng.gen_range(0..=text.max_point().row);
-            let end_column = rng.gen_range(0..=text.line_len(end_row));
+            let end_row = rng.random_range(0..=text.max_point().row);
+            let end_column = rng.random_range(0..=text.line_len(end_row));
             let mut end = TabPoint(text.clip_point(Point::new(end_row, end_column), Bias::Right));
-            let start_row = rng.gen_range(0..=text.max_point().row);
-            let start_column = rng.gen_range(0..=text.line_len(start_row));
+            let start_row = rng.random_range(0..=text.max_point().row);
+            let start_column = rng.random_range(0..=text.line_len(start_row));
             let mut start =
                 TabPoint(text.clip_point(Point::new(start_row, start_column), Bias::Left));
             if start > end {
