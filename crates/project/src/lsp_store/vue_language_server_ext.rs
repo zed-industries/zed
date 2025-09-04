@@ -15,12 +15,15 @@ struct ServerRequestParams {
 }
 
 #[derive(Serialize, Deserialize)]
-struct ServerRequestArguments {}
+#[serde(untagged)]
+enum ServerRequestArguments {
+    Data(String, serde_json::Value, Option<serde_json::Value>),
+}
 
 impl lsp::request::Request for TypescriptServerRequest {
     type Params = ServerRequestParams;
 
-    type Result = ();
+    type Result = serde_json::Value;
 
     const METHOD: &'static str = "tsserver/request";
 }
@@ -28,7 +31,7 @@ impl lsp::request::Request for TypescriptServerRequest {
 impl lsp::request::Request for TypescriptServerResponse {
     type Params = serde_json::Value;
 
-    type Result = ();
+    type Result = serde_json::Value;
 
     const METHOD: &'static str = "tsserver/response";
 }
@@ -37,9 +40,23 @@ const VUE_SERVER_NAME: LanguageServerName = LanguageServerName::new_static("vue-
 const VTSLS: LanguageServerName = LanguageServerName::new_static("vtsls");
 const TS_LS: LanguageServerName = LanguageServerName::new_static("typescript-language-server");
 
+// todo:
+//
+// 1. figure out req/res cycle
+//
+// What's the request and response name I should handle/send to vue language server?
+// The request and response names are not configurable:
+//     Request(receive from vue lsp): tsserver/request
+//     Response(send to vue lsp): tsserver/response
+//
+// 2. why hvoer/diagnsotic not working currently in vue
+// 3. when do we get tserver/reqest from vue lsp???
+//
+//
 pub fn register_requests(lsp_store: WeakEntity<LspStore>, language_server: &LanguageServer) {
     let language_server_name = language_server.name();
     if language_server_name == VUE_SERVER_NAME {
+        let vue_server_id = language_server.server_id();
         language_server
             .on_request::<TypescriptServerRequest, _, _>({
                 let this = lsp_store.clone();
@@ -66,6 +83,7 @@ pub fn register_requests(lsp_store: WeakEntity<LspStore>, language_server: &Lang
                             .request::<TypescriptServerRequest>(params)
                             .await
                             .into_response()
+                            .map(|e| dbg!(e))
                     }
                 }
             })

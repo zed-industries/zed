@@ -1769,7 +1769,7 @@
       "use_on_type_format": false
     },
     "Vue.js": {
-      "language_servers": ["vue-language-server", "..."],
+      "language_servers": ["vue-language-server", "vtsls", "..."],
       "prettier": {
         "allowed": true
       }
