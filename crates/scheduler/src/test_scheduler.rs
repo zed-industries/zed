@@ -219,7 +219,7 @@ impl Scheduler for TestScheduler {
                 unparker.unpark();
             }
         })));
-        let mut remaining_ticks = if timeout.is_some() {
+        let max_ticks = if timeout.is_some() {
             self.rng
                 .lock()
                 .random_range(0..=self.config.max_timeout_ticks)
@@ -228,35 +228,27 @@ impl Scheduler for TestScheduler {
         };
         let mut cx = Context::from_waker(&waker);
 
-        while remaining_ticks > 0 {
-            remaining_ticks -= 1;
+        for _ in 0..max_ticks {
             let Poll::Pending = future.poll_unpin(&mut cx) else {
                 break;
             };
 
+            let mut stepped = None;
+            while self.rng.lock().random() && stepped.unwrap_or(true) {
+                *stepped.get_or_insert(false) |= self.step();
+            }
+
+            let stepped = stepped.unwrap_or(true);
             let awoken = awoken.swap(false, SeqCst);
-            let mut stepped = false;
-            while self.rng.lock().random() {
-                stepped |= self.step();
-                if !stepped {
-                    if awoken || self.advance_clock() {
+            if !stepped && !awoken && !self.advance_clock() {
+                if self.state.lock().allow_parking {
+                    if !park(&parker, deadline) {
                         break;
-                    } else if self.state.lock().allow_parking {
-                        if let Some(deadline) = deadline {
-                            if parker.park_deadline(deadline) {
-                                break;
-                            } else {
-                                return;
-                            }
-                        } else {
-                            parker.park();
-                            break;
-                        }
-                    } else if timeout.is_some() {
-                        return;
-                    } else {
-                        panic!("Parking forbidden");
                     }
+                } else if deadline.is_some() {
+                    break;
+                } else {
+                    panic!("Parking forbidden");
                 }
             }
         }
@@ -348,5 +340,14 @@ impl Future for Yield {
             cx.waker().wake_by_ref();
             Poll::Pending
         }
+    }
+}
+
+fn park(parker: &parking::Parker, deadline: Option<Instant>) -> bool {
+    if let Some(deadline) = deadline {
+        parker.park_deadline(deadline)
+    } else {
+        parker.park();
+        true
     }
 }
