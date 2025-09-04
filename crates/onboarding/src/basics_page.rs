@@ -253,7 +253,7 @@ fn render_telemetry_section(tab_index: &mut isize, cx: &App) -> impl IntoElement
                     move |setting, _| setting.metrics = Some(enabled),
                 );
 
-                // This telemetry event shouldn't fire when it's off. If it does we're be alerted
+                // This telemetry event shouldn't fire when it's off. If it does we'll be alerted
                 // and can fix it in a timely manner to respect a user's choice.
                 telemetry::event!("Welcome Page Telemetry Metrics Toggled",
                     options = if enabled {
@@ -292,7 +292,7 @@ fn render_telemetry_section(tab_index: &mut isize, cx: &App) -> impl IntoElement
                         move |setting, _| setting.diagnostics = Some(enabled),
                     );
 
-                    // This telemetry event shouldn't fire when it's off. If it does we're be alerted
+                    // This telemetry event shouldn't fire when it's off. If it does we'll be alerted
                     // and can fix it in a timely manner to respect a user's choice.
                     telemetry::event!("Welcome Page Telemetry Diagnostics Toggled",
                         options = if enabled {
