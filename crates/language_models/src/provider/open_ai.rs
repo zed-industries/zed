@@ -156,9 +156,20 @@ impl OpenAiLanguageModelProvider {
                     .clone();
 
                 if this.last_api_url != current_api_url {
-                    this.api_key = None;
-                    this.api_key_from_env = false;
                     this.last_api_url = current_api_url;
+                    let spawn_task = cx.spawn(async move |handle, cx| {
+                        if let Ok(task) = handle.update(cx, |this, cx| this.authenticate(cx)) {
+                            if let Err(_) = task.await {
+                                handle
+                                    .update(cx, |this, _| {
+                                        this.api_key = None;
+                                        this.api_key_from_env = false;
+                                    })
+                                    .ok();
+                            }
+                        }
+                    });
+                    spawn_task.detach();
                 }
                 cx.notify();
             }),
