@@ -14,10 +14,7 @@ use copilot::{Copilot, Status};
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::{FutureExt, Stream, StreamExt};
-use gpui::{
-    Action, Animation, AnimationExt, AnyView, App, AsyncApp, Entity, Render, Subscription, Task,
-    Transformation, percentage, svg,
-};
+use gpui::{Action, AnyView, App, AsyncApp, Entity, Render, Subscription, Task, svg};
 use language::language_settings::all_language_settings;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -28,8 +25,7 @@ use language_model::{
     StopReason, TokenUsage,
 };
 use settings::SettingsStore;
-use std::time::Duration;
-use ui::prelude::*;
+use ui::{CommonAnimationExt, prelude::*};
 use util::debug_panic;
 
 use crate::provider::x_ai::count_xai_tokens;
@@ -672,11 +668,7 @@ impl Render for ConfigurationView {
                         }),
                 )
         } else {
-            let loading_icon = Icon::new(IconName::ArrowCircle).with_animation(
-                "arrow-circle",
-                Animation::new(Duration::from_secs(4)).repeat(),
-                |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-            );
+            let loading_icon = Icon::new(IconName::ArrowCircle).with_rotate_animation(4);
 
             const ERROR_LABEL: &str = "Copilot Chat requires an active GitHub Copilot subscription. Please ensure Copilot is configured and try again, or use a different Assistant provider.";
 

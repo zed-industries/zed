@@ -1031,7 +1031,6 @@ pub enum Event {
     ItemAdded {
         item: Box<dyn ItemHandle>,
     },
-    ItemRemoved,
     ActiveItemChanged,
     UserSavedItem {
         pane: WeakEntity<Pane>,
@@ -1047,7 +1046,6 @@ pub enum Event {
     },
     ZoomChanged,
     ModalOpened,
-    ClearActivityIndicator,
 }
 
 #[derive(Debug)]
@@ -3963,7 +3961,6 @@ impl Workspace {
                 }
                 serialize_workspace = false;
             }
-            pane::Event::RemoveItem { .. } => {}
             pane::Event::RemovedItem { item } => {
                 cx.emit(Event::ActiveItemChanged);
                 self.update_window_edited(window, cx);

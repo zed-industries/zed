@@ -1,5 +1,5 @@
 use crate::{
-    acp::completion_provider::ContextPickerCompletionProvider,
+    acp::completion_provider::{ContextPickerCompletionProvider, SlashCommandCompletion},
     context_picker::{ContextPickerAction, fetch_context_picker::fetch_url_content},
 };
 use acp_thread::{MentionUri, selection_name};
@@ -11,10 +11,10 @@ use assistant_slash_commands::codeblock_fence_for_path;
 use collections::{HashMap, HashSet};
 use editor::{
     Addon, Anchor, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement,
-    EditorEvent, EditorMode, EditorSnapshot, EditorStyle, ExcerptId, FoldPlaceholder, MultiBuffer,
-    ToOffset,
+    EditorEvent, EditorMode, EditorSnapshot, EditorStyle, ExcerptId, FoldPlaceholder, InlayId,
+    MultiBuffer, ToOffset,
     actions::Paste,
-    display_map::{Crease, CreaseId, FoldId},
+    display_map::{Crease, CreaseId, FoldId, Inlay},
 };
 use futures::{
     FutureExt as _,
@@ -22,13 +22,15 @@ use futures::{
 };
 use gpui::{
     Animation, AnimationExt as _, AppContext, ClipboardEntry, Context, Entity, EntityId,
-    EventEmitter, FocusHandle, Focusable, Image, ImageFormat, Img, KeyContext, Subscription, Task,
-    TextStyle, WeakEntity, pulsating_between,
+    EventEmitter, FocusHandle, Focusable, Image, ImageFormat, Img, KeyContext, SharedString,
+    Subscription, Task, TextStyle, WeakEntity, pulsating_between,
 };
-use language::{Buffer, Language};
+use language::{Buffer, Language, language_settings::InlayHintKind};
 use language_model::LanguageModelImage;
 use postage::stream::Stream as _;
-use project::{CompletionIntent, Project, ProjectItem, ProjectPath, Worktree};
+use project::{
+    CompletionIntent, InlayHint, InlayHintLabel, Project, ProjectItem, ProjectPath, Worktree,
+};
 use prompt_store::{PromptId, PromptStore};
 use rope::Point;
 use settings::Settings;
@@ -47,8 +49,8 @@ use theme::ThemeSettings;
 use ui::{
     ActiveTheme, AnyElement, App, ButtonCommon, ButtonLike, ButtonStyle, Color, Element as _,
     FluentBuilder as _, Icon, IconName, IconSize, InteractiveElement, IntoElement, Label,
-    LabelCommon, LabelSize, ParentElement, Render, SelectableButton, SharedString, Styled,
-    TextSize, TintColor, Toggleable, Window, div, h_flex,
+    LabelCommon, LabelSize, ParentElement, Render, SelectableButton, Styled, TextSize, TintColor,
+    Toggleable, Window, div, h_flex,
 };
 use util::{ResultExt, debug_panic};
 use workspace::{Workspace, notifications::NotifyResultExt as _};
@@ -62,6 +64,8 @@ pub struct MessageEditor {
     history_store: Entity<HistoryStore>,
     prompt_store: Option<Entity<PromptStore>>,
     prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
+    available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
+    agent_name: SharedString,
     _subscriptions: Vec<Subscription>,
     _parse_slash_command_task: Task<()>,
 }
@@ -76,6 +80,8 @@ pub enum MessageEditorEvent {
 
 impl EventEmitter<MessageEditorEvent> for MessageEditor {}
 
+const COMMAND_HINT_INLAY_ID: usize = 0;
+
 impl MessageEditor {
     pub fn new(
         workspace: WeakEntity<Workspace>,
@@ -84,6 +90,7 @@ impl MessageEditor {
         prompt_store: Option<Entity<PromptStore>>,
         prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
         available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
+        agent_name: SharedString,
         placeholder: impl Into<Arc<str>>,
         mode: EditorMode,
         window: &mut Window,
@@ -102,7 +109,7 @@ impl MessageEditor {
             history_store.clone(),
             prompt_store.clone(),
             prompt_capabilities.clone(),
-            available_commands,
+            available_commands.clone(),
         ));
         let mention_set = MentionSet::default();
         let editor = cx.new(|cx| {
@@ -133,12 +140,33 @@ impl MessageEditor {
         })
         .detach();
 
+        let mut has_hint = false;
         let mut subscriptions = Vec::new();
+
         subscriptions.push(cx.subscribe_in(&editor, window, {
             move |this, editor, event, window, cx| {
                 if let EditorEvent::Edited { .. } = event {
-                    let snapshot = editor.update(cx, |editor, cx| editor.snapshot(window, cx));
+                    let snapshot = editor.update(cx, |editor, cx| {
+                        let new_hints = this
+                            .command_hint(editor.buffer(), cx)
+                            .into_iter()
+                            .collect::<Vec<_>>();
+                        let has_new_hint = !new_hints.is_empty();
+                        editor.splice_inlays(
+                            if has_hint {
+                                &[InlayId::Hint(COMMAND_HINT_INLAY_ID)]
+                            } else {
+                                &[]
+                            },
+                            new_hints,
+                            cx,
+                        );
+                        has_hint = has_new_hint;
+
+                        editor.snapshot(window, cx)
+                    });
                     this.mention_set.remove_invalid(snapshot);
+
                     cx.notify();
                 }
             }
@@ -152,9 +180,54 @@ impl MessageEditor {
             history_store,
             prompt_store,
             prompt_capabilities,
+            available_commands,
+            agent_name,
             _subscriptions: subscriptions,
             _parse_slash_command_task: Task::ready(()),
         }
+    }
+
+    fn command_hint(&self, buffer: &Entity<MultiBuffer>, cx: &App) -> Option<Inlay> {
+        let available_commands = self.available_commands.borrow();
+        if available_commands.is_empty() {
+            return None;
+        }
+
+        let snapshot = buffer.read(cx).snapshot(cx);
+        let parsed_command = SlashCommandCompletion::try_parse(&snapshot.text(), 0)?;
+        if parsed_command.argument.is_some() {
+            return None;
+        }
+
+        let command_name = parsed_command.command?;
+        let available_command = available_commands
+            .iter()
+            .find(|command| command.name == command_name)?;
+
+        let acp::AvailableCommandInput::Unstructured { mut hint } =
+            available_command.input.clone()?;
+
+        let mut hint_pos = parsed_command.source_range.end + 1;
+        if hint_pos > snapshot.len() {
+            hint_pos = snapshot.len();
+            hint.insert(0, ' ');
+        }
+
+        let hint_pos = snapshot.anchor_after(hint_pos);
+
+        Some(Inlay::hint(
+            COMMAND_HINT_INLAY_ID,
+            hint_pos,
+            &InlayHint {
+                position: hint_pos.text_anchor,
+                label: InlayHintLabel::String(hint),
+                kind: Some(InlayHintKind::Parameter),
+                padding_left: false,
+                padding_right: false,
+                tooltip: None,
+                resolve_state: project::ResolveState::Resolved,
+            },
+        ))
     }
 
     pub fn insert_thread_summary(
@@ -627,7 +700,7 @@ impl MessageEditor {
             self.project.read(cx).fs().clone(),
             self.history_store.clone(),
         ));
-        let delegate = AgentServerDelegate::new(self.project.clone(), None);
+        let delegate = AgentServerDelegate::new(self.project.clone(), None, None);
         let connection = server.connect(Path::new(""), delegate, cx);
         cx.spawn(async move |_, cx| {
             let agent = connection.await?;
@@ -661,10 +734,52 @@ impl MessageEditor {
         })
     }
 
+    fn validate_slash_commands(
+        text: &str,
+        available_commands: &[acp::AvailableCommand],
+        agent_name: &str,
+    ) -> Result<()> {
+        if let Some(parsed_command) = SlashCommandCompletion::try_parse(text, 0) {
+            if let Some(command_name) = parsed_command.command {
+                // Check if this command is in the list of available commands from the server
+                let is_supported = available_commands
+                    .iter()
+                    .any(|cmd| cmd.name == command_name);
+
+                if !is_supported {
+                    return Err(anyhow!(
+                        "The /{} command is not supported by {}.\n\nAvailable commands: {}",
+                        command_name,
+                        agent_name,
+                        if available_commands.is_empty() {
+                            "none".to_string()
+                        } else {
+                            available_commands
+                                .iter()
+                                .map(|cmd| format!("/{}", cmd.name))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        }
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn contents(
         &self,
         cx: &mut Context<Self>,
     ) -> Task<Result<(Vec<acp::ContentBlock>, Vec<Entity<Buffer>>)>> {
+        // Check for unsupported slash commands before spawning async task
+        let text = self.editor.read(cx).text(cx);
+        let available_commands = self.available_commands.borrow().clone();
+        if let Err(err) =
+            Self::validate_slash_commands(&text, &available_commands, &self.agent_name)
+        {
+            return Task::ready(Err(err));
+        }
+
         let contents = self
             .mention_set
             .contents(&self.prompt_capabilities.get(), cx);
@@ -674,7 +789,7 @@ impl MessageEditor {
             let contents = contents.await?;
             let mut all_tracked_buffers = Vec::new();
 
-            editor.update(cx, |editor, cx| {
+            let result = editor.update(cx, |editor, cx| {
                 let mut ix = 0;
                 let mut chunks: Vec<acp::ContentBlock> = Vec::new();
                 let text = editor.text(cx);
@@ -767,9 +882,9 @@ impl MessageEditor {
                         }
                     }
                 });
-
-                (chunks, all_tracked_buffers)
-            })
+                Ok((chunks, all_tracked_buffers))
+            })?;
+            result
         })
     }
 
@@ -1184,6 +1299,7 @@ impl Render for MessageEditor {
                         local_player: cx.theme().players().local(),
                         text: text_style,
                         syntax: cx.theme().syntax().clone(),
+                        inlay_hints_style: editor::make_inlay_hints_style(cx),
                         ..Default::default()
                     },
                 )
@@ -1502,6 +1618,7 @@ mod tests {
                     None,
                     Default::default(),
                     Default::default(),
+                    "Test Agent".into(),
                     "Test",
                     EditorMode::AutoHeight {
                         min_lines: 1,
@@ -1579,6 +1696,140 @@ mod tests {
         pretty_assertions::assert_matches!(content.as_slice(), [acp::ContentBlock::Text { .. }]);
     }
 
+    #[gpui::test]
+    async fn test_slash_command_validation(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/test",
+            json!({
+                ".zed": {
+                    "tasks.json": r#"[{"label": "test", "command": "echo"}]"#
+                },
+                "src": {
+                    "main.rs": "fn main() {}",
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
+        let context_store = cx.new(|cx| ContextStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
+        let prompt_capabilities = Rc::new(Cell::new(acp::PromptCapabilities::default()));
+        // Start with no available commands - simulating Claude which doesn't support slash commands
+        let available_commands = Rc::new(RefCell::new(vec![]));
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace_handle = workspace.downgrade();
+        let message_editor = workspace.update_in(cx, |_, window, cx| {
+            cx.new(|cx| {
+                MessageEditor::new(
+                    workspace_handle.clone(),
+                    project.clone(),
+                    history_store.clone(),
+                    None,
+                    prompt_capabilities.clone(),
+                    available_commands.clone(),
+                    "Claude Code".into(),
+                    "Test",
+                    EditorMode::AutoHeight {
+                        min_lines: 1,
+                        max_lines: None,
+                    },
+                    window,
+                    cx,
+                )
+            })
+        });
+        let editor = message_editor.update(cx, |message_editor, _| message_editor.editor.clone());
+
+        // Test that slash commands fail when no available_commands are set (empty list means no commands supported)
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("/file test.txt", window, cx);
+        });
+
+        let contents_result = message_editor
+            .update(cx, |message_editor, cx| message_editor.contents(cx))
+            .await;
+
+        // Should fail because available_commands is empty (no commands supported)
+        assert!(contents_result.is_err());
+        let error_message = contents_result.unwrap_err().to_string();
+        assert!(error_message.contains("not supported by Claude Code"));
+        assert!(error_message.contains("Available commands: none"));
+
+        // Now simulate Claude providing its list of available commands (which doesn't include file)
+        available_commands.replace(vec![acp::AvailableCommand {
+            name: "help".to_string(),
+            description: "Get help".to_string(),
+            input: None,
+        }]);
+
+        // Test that unsupported slash commands trigger an error when we have a list of available commands
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("/file test.txt", window, cx);
+        });
+
+        let contents_result = message_editor
+            .update(cx, |message_editor, cx| message_editor.contents(cx))
+            .await;
+
+        assert!(contents_result.is_err());
+        let error_message = contents_result.unwrap_err().to_string();
+        assert!(error_message.contains("not supported by Claude Code"));
+        assert!(error_message.contains("/file"));
+        assert!(error_message.contains("Available commands: /help"));
+
+        // Test that supported commands work fine
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("/help", window, cx);
+        });
+
+        let contents_result = message_editor
+            .update(cx, |message_editor, cx| message_editor.contents(cx))
+            .await;
+
+        // Should succeed because /help is in available_commands
+        assert!(contents_result.is_ok());
+
+        // Test that regular text works fine
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello Claude!", window, cx);
+        });
+
+        let (content, _) = message_editor
+            .update(cx, |message_editor, cx| message_editor.contents(cx))
+            .await
+            .unwrap();
+
+        assert_eq!(content.len(), 1);
+        if let acp::ContentBlock::Text(text) = &content[0] {
+            assert_eq!(text.text, "Hello Claude!");
+        } else {
+            panic!("Expected ContentBlock::Text");
+        }
+
+        // Test that @ mentions still work
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Check this @", window, cx);
+        });
+
+        // The @ mention functionality should not be affected
+        let (content, _) = message_editor
+            .update(cx, |message_editor, cx| message_editor.contents(cx))
+            .await
+            .unwrap();
+
+        assert_eq!(content.len(), 1);
+        if let acp::ContentBlock::Text(text) = &content[0] {
+            assert_eq!(text.text, "Check this @");
+        } else {
+            panic!("Expected ContentBlock::Text");
+        }
+    }
+
     struct MessageEditorItem(Entity<MessageEditor>);
 
     impl Item for MessageEditorItem {
@@ -1639,7 +1890,7 @@ mod tests {
                 name: "say-hello".to_string(),
                 description: "Say hello to whoever you want".to_string(),
                 input: Some(acp::AvailableCommandInput::Unstructured {
-                    hint: "Who do you want to say hello to?".to_string(),
+                    hint: "<name>".to_string(),
                 }),
             },
         ]));
@@ -1654,6 +1905,7 @@ mod tests {
                     None,
                     prompt_capabilities.clone(),
                     available_commands.clone(),
+                    "Test Agent".into(),
                     "Test",
                     EditorMode::AutoHeight {
                         max_lines: None,
@@ -1714,7 +1966,7 @@ mod tests {
         cx.run_until_parked();
 
         editor.update_in(&mut cx, |editor, window, cx| {
-            assert_eq!(editor.text(cx), "/quick-math ");
+            assert_eq!(editor.display_text(cx), "/quick-math ");
             assert!(!editor.has_visible_completions_menu());
             editor.set_text("", window, cx);
         });
@@ -1722,7 +1974,7 @@ mod tests {
         cx.simulate_input("/say");
 
         editor.update_in(&mut cx, |editor, _window, cx| {
-            assert_eq!(editor.text(cx), "/say");
+            assert_eq!(editor.display_text(cx), "/say");
             assert!(editor.has_visible_completions_menu());
 
             assert_eq!(
@@ -1740,6 +1992,7 @@ mod tests {
 
         editor.update_in(&mut cx, |editor, _window, cx| {
             assert_eq!(editor.text(cx), "/say-hello ");
+            assert_eq!(editor.display_text(cx), "/say-hello <name>");
             assert!(editor.has_visible_completions_menu());
 
             assert_eq!(
@@ -1757,8 +2010,35 @@ mod tests {
 
         cx.run_until_parked();
 
-        editor.update_in(&mut cx, |editor, _window, cx| {
+        editor.update_in(&mut cx, |editor, window, cx| {
             assert_eq!(editor.text(cx), "/say-hello GPT5");
+            assert_eq!(editor.display_text(cx), "/say-hello GPT5");
+            assert!(!editor.has_visible_completions_menu());
+
+            // Delete argument
+            for _ in 0..4 {
+                editor.backspace(&editor::actions::Backspace, window, cx);
+            }
+        });
+
+        cx.run_until_parked();
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            assert_eq!(editor.text(cx), "/say-hello ");
+            // Hint is visible because argument was deleted
+            assert_eq!(editor.display_text(cx), "/say-hello <name>");
+
+            // Delete last command letter
+            editor.backspace(&editor::actions::Backspace, window, cx);
+            editor.backspace(&editor::actions::Backspace, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        editor.update_in(&mut cx, |editor, _window, cx| {
+            // Hint goes away once command no longer matches an available one
+            assert_eq!(editor.text(cx), "/say-hell");
+            assert_eq!(editor.display_text(cx), "/say-hell");
             assert!(!editor.has_visible_completions_menu());
         });
     }
@@ -1858,6 +2138,7 @@ mod tests {
                     None,
                     prompt_capabilities.clone(),
                     Default::default(),
+                    "Test Agent".into(),
                     "Test",
                     EditorMode::AutoHeight {
                         max_lines: None,

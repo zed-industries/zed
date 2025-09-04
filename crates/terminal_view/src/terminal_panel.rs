@@ -41,7 +41,7 @@ use workspace::{
     ui::IconName,
 };
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Result, anyhow};
 use zed_actions::assistant::InlineAssist;
 
 const TERMINAL_PANEL_KEY: &str = "TerminalPanel";
@@ -905,11 +905,16 @@ impl TerminalPanel {
                 RevealStrategy::Always => match reveal_target {
                     RevealTarget::Center => {
                         task_workspace.update_in(cx, |workspace, window, cx| {
-                            workspace
-                                .active_item(cx)
-                                .context("retrieving active terminal item in the workspace")?
-                                .item_focus_handle(cx)
-                                .focus(window);
+                            let did_activate = workspace.activate_item(
+                                &terminal_to_replace,
+                                true,
+                                true,
+                                window,
+                                cx,
+                            );
+
+                            anyhow::ensure!(did_activate, "Failed to retrieve terminal pane");
+
                             anyhow::Ok(())
                         })??;
                     }

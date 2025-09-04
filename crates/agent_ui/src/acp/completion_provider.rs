@@ -15,7 +15,8 @@ use language::{Buffer, CodeLabel, HighlightId};
 use lsp::CompletionContext;
 use project::lsp_store::CompletionDocumentation;
 use project::{
-    Completion, CompletionIntent, CompletionResponse, Project, ProjectPath, Symbol, WorktreeId,
+    Completion, CompletionDisplayOptions, CompletionIntent, CompletionResponse, Project,
+    ProjectPath, Symbol, WorktreeId,
 };
 use prompt_store::PromptStore;
 use rope::Point;
@@ -732,7 +733,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                 replace_range: source_range.clone(),
                                 new_text,
                                 label: CodeLabel::plain(command.name.to_string(), None),
-                                documentation: Some(CompletionDocumentation::SingleLine(
+                                documentation: Some(CompletionDocumentation::MultiLinePlainText(
                                     command.description.into(),
                                 )),
                                 source: project::CompletionSource::Custom,
@@ -771,6 +772,9 @@ impl CompletionProvider for ContextPickerCompletionProvider {
 
                     Ok(vec![CompletionResponse {
                         completions,
+                        display_options: CompletionDisplayOptions {
+                            dynamic_width: true,
+                        },
                         // Since this does its own filtering (see `filter_completions()` returns false),
                         // there is no benefit to computing whether this set of completions is incomplete.
                         is_incomplete: true,
@@ -862,6 +866,9 @@ impl CompletionProvider for ContextPickerCompletionProvider {
 
                     Ok(vec![CompletionResponse {
                         completions,
+                        display_options: CompletionDisplayOptions {
+                            dynamic_width: true,
+                        },
                         // Since this does its own filtering (see `filter_completions()` returns false),
                         // there is no benefit to computing whether this set of completions is incomplete.
                         is_incomplete: true,
@@ -1005,14 +1012,14 @@ impl ContextCompletion {
 }
 
 #[derive(Debug, Default, PartialEq)]
-struct SlashCommandCompletion {
-    source_range: Range<usize>,
-    command: Option<String>,
-    argument: Option<String>,
+pub struct SlashCommandCompletion {
+    pub source_range: Range<usize>,
+    pub command: Option<String>,
+    pub argument: Option<String>,
 }
 
 impl SlashCommandCompletion {
-    fn try_parse(line: &str, offset_to_line: usize) -> Option<Self> {
+    pub fn try_parse(line: &str, offset_to_line: usize) -> Option<Self> {
         // If we decide to support commands that are not at the beginning of the prompt, we can remove this check
         if !line.starts_with('/') || offset_to_line != 0 {
             return None;

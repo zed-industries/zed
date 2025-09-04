@@ -315,10 +315,6 @@ pub enum BufferEvent {
     DiagnosticsUpdated,
     /// The buffer gained or lost editing capabilities.
     CapabilityChanged,
-    /// The buffer was explicitly requested to close.
-    Closed,
-    /// The buffer was discarded when closing.
-    Discarded,
 }
 
 /// The file associated with a buffer.
@@ -1246,8 +1242,10 @@ impl Buffer {
 
     /// Assign the buffer a new [`Capability`].
     pub fn set_capability(&mut self, capability: Capability, cx: &mut Context<Self>) {
-        self.capability = capability;
-        cx.emit(BufferEvent::CapabilityChanged)
+        if self.capability != capability {
+            self.capability = capability;
+            cx.emit(BufferEvent::CapabilityChanged)
+        }
     }
 
     /// This method is called to signal that the buffer has been saved.
@@ -1264,12 +1262,6 @@ impl Buffer {
         self.saved_mtime = mtime;
         self.was_changed();
         cx.emit(BufferEvent::Saved);
-        cx.notify();
-    }
-
-    /// This method is called to signal that the buffer has been discarded.
-    pub fn discarded(&self, cx: &mut Context<Self>) {
-        cx.emit(BufferEvent::Discarded);
         cx.notify();
     }
 
