@@ -94,6 +94,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
     let json_lsp_adapter = Arc::new(json::JsonLspAdapter::new(node.clone(), languages.clone()));
     let node_version_lsp_adapter = Arc::new(json::NodeVersionAdapter);
     let py_lsp_adapter = Arc::new(python::PyLspAdapter::new());
+    let ty_lsp_adapter = Arc::new(python::TyLspAdapter::new(cx));
     let python_context_provider = Arc::new(python::PythonContextProvider);
     let python_lsp_adapter = Arc::new(python::PyrightLspAdapter::new(node.clone()));
     let basedpyright_lsp_adapter = Arc::new(BasedPyrightLspAdapter::new());
@@ -287,6 +288,10 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
             move || adapter.clone()
         },
     );
+    languages.register_available_lsp_adapter(ty_lsp_adapter.name(), {
+        let adapter = ty_lsp_adapter;
+        move || adapter.clone()
+    });
 
     // Register Tailwind for the existing languages that should have it by default.
     //
