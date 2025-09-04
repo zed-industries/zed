@@ -19,6 +19,7 @@ pub trait SettingsUi {
             path: None,
             title: "None entry",
             item: SettingsUiItem::None,
+            documentation: None,
         }
     }
 }
@@ -29,6 +30,8 @@ pub struct SettingsUiEntry {
     pub path: Option<&'static str>,
     /// What is displayed for the text for this entry
     pub title: &'static str,
+    /// documentation for this entry. Constructued from the documentation comment above the struct or field
+    pub documentation: Option<&'static str>,
     pub item: SettingsUiItem,
 }
 
@@ -54,6 +57,7 @@ pub enum SettingsUiItemSingle {
 
 pub struct SettingsValue<T> {
     pub title: &'static str,
+    pub documentation: Option<&'static str>,
     pub path: SmallVec<[&'static str; 1]>,
     pub value: Option<T>,
     pub default_value: T,

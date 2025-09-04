@@ -137,6 +137,7 @@ impl Item for SettingsPage {
 struct UiEntry {
     title: &'static str,
     path: Option<&'static str>,
+    documentation: Option<&'static str>,
     _depth: usize,
     // a
     //  b     < a descendant range < a total descendant range
@@ -194,6 +195,7 @@ fn build_tree_item(
     tree.push(UiEntry {
         title: entry.title,
         path: entry.path,
+        documentation: entry.documentation,
         _depth: depth,
         descendant_range: index + 1..index + 1,
         total_descendant_range: index + 1..index + 1,
@@ -374,6 +376,7 @@ fn render_content(
 
         element =
             element.child(Label::new(SharedString::new_static(child.title)).size(LabelSize::Large));
+
         // todo(settings_ui): subgroups?
         let mut pushed_path = false;
         if let Some(child_path) = child.path {
@@ -383,6 +386,7 @@ fn render_content(
         let settings_value = settings_value_from_settings_and_path(
             path.clone(),
             child.title,
+            child.documentation,
             // PERF: how to structure this better? There feels like there's a way to avoid the clone
             // and every value lookup
             SettingsStore::global(cx).raw_user_settings(),
@@ -446,7 +450,7 @@ impl Render for SettingsPage {
                     .child(render_nav(&self.settings_tree, window, cx)),
             )
             .child(
-                div().col_span(4).h_full().child(
+                div().col_span(6).h_full().child(
                     render_content(&self.settings_tree, window, cx)
                         .id("settings-ui-content")
                         .track_scroll(scroll_handle.read(cx))
@@ -547,6 +551,7 @@ fn downcast_any_item<T: serde::de::DeserializeOwned>(
     let deserialized_setting_value = SettingsValue {
         title: settings_value.title,
         path: settings_value.path,
+        documentation: settings_value.documentation,
         value,
         default_value,
     };
@@ -668,7 +673,7 @@ fn render_switch_field(
     SwitchField::new(
         id,
         SharedString::new_static(value.title),
-        None,
+        value.documentation.map(SharedString::new_static),
         match value.read() {
             true => ToggleState::Selected,
             false => ToggleState::Unselected,
@@ -759,6 +764,7 @@ fn render_toggle_button_group(
 fn settings_value_from_settings_and_path(
     path: SmallVec<[&'static str; 1]>,
     title: &'static str,
+    documentation: Option<&'static str>,
     user_settings: &serde_json::Value,
     default_settings: &serde_json::Value,
 ) -> SettingsValue<serde_json::Value> {
@@ -771,6 +777,7 @@ fn settings_value_from_settings_and_path(
     let settings_value = SettingsValue {
         default_value,
         value,
+        documentation,
         path: path.clone(),
         // todo(settings_ui) is title required inside SettingsValue?
         title,
