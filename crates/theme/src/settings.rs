@@ -87,7 +87,7 @@ impl From<UiDensity> for String {
 }
 
 /// Customizable settings for the UI and theme system.
-#[derive(Clone, PartialEq, SettingsUi)]
+#[derive(Clone, PartialEq)]
 pub struct ThemeSettings {
     /// The UI font size. Determines the size of text in the UI,
     /// as well as the size of a [gpui::Rems] unit.
@@ -365,7 +365,7 @@ impl IconThemeSelection {
 }
 
 /// Settings for rendering text in UI and text buffers.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
 pub struct ThemeSettingsContent {
     /// The default font size for text in the UI.
     #[serde(default)]

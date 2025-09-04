@@ -14,10 +14,7 @@ use copilot::{Copilot, Status};
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::{FutureExt, Stream, StreamExt};
-use gpui::{
-    Action, Animation, AnimationExt, AnyView, App, AsyncApp, Entity, Render, Subscription, Task,
-    Transformation, percentage, svg,
-};
+use gpui::{Action, AnyView, App, AsyncApp, Entity, Render, Subscription, Task, svg};
 use language::language_settings::all_language_settings;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -28,9 +25,10 @@ use language_model::{
     StopReason, TokenUsage,
 };
 use settings::SettingsStore;
-use std::time::Duration;
-use ui::prelude::*;
+use ui::{CommonAnimationExt, prelude::*};
 use util::debug_panic;
+
+use crate::provider::x_ai::count_xai_tokens;
 
 use super::anthropic::count_anthropic_tokens;
 use super::google::count_google_tokens;
@@ -228,7 +226,9 @@ impl LanguageModel for CopilotChatLanguageModel {
             ModelVendor::OpenAI | ModelVendor::Anthropic => {
                 LanguageModelToolSchemaFormat::JsonSchema
             }
-            ModelVendor::Google => LanguageModelToolSchemaFormat::JsonSchemaSubset,
+            ModelVendor::Google | ModelVendor::XAI => {
+                LanguageModelToolSchemaFormat::JsonSchemaSubset
+            }
         }
     }
 
@@ -256,6 +256,10 @@ impl LanguageModel for CopilotChatLanguageModel {
         match self.model.vendor() {
             ModelVendor::Anthropic => count_anthropic_tokens(request, cx),
             ModelVendor::Google => count_google_tokens(request, cx),
+            ModelVendor::XAI => {
+                let model = x_ai::Model::from_id(self.model.id()).unwrap_or_default();
+                count_xai_tokens(request, model, cx)
+            }
             ModelVendor::OpenAI => {
                 let model = open_ai::Model::from_id(self.model.id()).unwrap_or_default();
                 count_open_ai_tokens(request, model, cx)
@@ -664,11 +668,7 @@ impl Render for ConfigurationView {
                         }),
                 )
         } else {
-            let loading_icon = Icon::new(IconName::ArrowCircle).with_animation(
-                "arrow-circle",
-                Animation::new(Duration::from_secs(4)).repeat(),
-                |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-            );
+            let loading_icon = Icon::new(IconName::ArrowCircle).with_rotate_animation(4);
 
             const ERROR_LABEL: &str = "Copilot Chat requires an active GitHub Copilot subscription. Please ensure Copilot is configured and try again, or use a different Assistant provider.";
 

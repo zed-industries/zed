@@ -531,7 +531,7 @@ impl TerminalBuilder {
             },
         };
 
-        if !activation_script.is_empty() && no_task {
+        if cfg!(not(target_os = "windows")) && !activation_script.is_empty() && no_task {
             for activation_script in activation_script {
                 terminal.input(activation_script.into_bytes());
                 terminal.write_to_pty(b"\n");
@@ -1139,11 +1139,6 @@ impl Terminal {
                     .push_back(InternalEvent::ScrollToAlacPoint(*search_match.start()));
             }
         }
-    }
-
-    pub fn clear_matches(&mut self) {
-        self.matches.clear();
-        self.set_selection(None);
     }
 
     pub fn select_matches(&mut self, matches: &[RangeInclusive<AlacPoint>]) {

@@ -4,14 +4,14 @@ use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources, SettingsUi};
 
-#[derive(Deserialize, Debug, SettingsUi)]
+#[derive(Deserialize, Debug)]
 pub struct CallSettings {
     pub mute_on_join: bool,
     pub share_on_join: bool,
 }
 
 /// Configuration of voice calls in Zed.
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi)]
 pub struct CallSettingsContent {
     /// Whether the microphone should be muted when joining a channel or a call.
     ///

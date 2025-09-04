@@ -1,5 +1,5 @@
 use std::collections::BTreeSet;
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc};
 
 use anyhow::{Context as _, Result};
 use auto_update::AutoUpdater;
@@ -7,9 +7,9 @@ use editor::Editor;
 use extension_host::ExtensionStore;
 use futures::channel::oneshot;
 use gpui::{
-    Animation, AnimationExt, AnyWindowHandle, App, AsyncApp, DismissEvent, Entity, EventEmitter,
-    Focusable, FontFeatures, ParentElement as _, PromptLevel, Render, SemanticVersion,
-    SharedString, Task, TextStyleRefinement, Transformation, WeakEntity, percentage,
+    AnyWindowHandle, App, AsyncApp, DismissEvent, Entity, EventEmitter, Focusable, FontFeatures,
+    ParentElement as _, PromptLevel, Render, SemanticVersion, SharedString, Task,
+    TextStyleRefinement, WeakEntity,
 };
 
 use language::CursorShape;
@@ -24,13 +24,13 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources, SettingsUi};
 use theme::ThemeSettings;
 use ui::{
-    ActiveTheme, Color, Context, Icon, IconName, IconSize, InteractiveElement, IntoElement, Label,
-    LabelCommon, Styled, Window, prelude::*,
+    ActiveTheme, Color, CommonAnimationExt, Context, Icon, IconName, IconSize, InteractiveElement,
+    IntoElement, Label, LabelCommon, Styled, Window, prelude::*,
 };
 use util::serde::default_true;
 use workspace::{AppState, ModalView, Workspace};
 
-#[derive(Deserialize, SettingsUi)]
+#[derive(Deserialize)]
 pub struct SshSettings {
     pub ssh_connections: Option<Vec<SshConnection>>,
     /// Whether to read ~/.ssh/config for ssh connection sources.
@@ -121,7 +121,7 @@ pub struct SshProject {
     pub paths: Vec<String>,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
 pub struct RemoteSettingsContent {
     pub ssh_connections: Option<Vec<SshConnection>>,
     pub read_ssh_config: Option<bool>,
@@ -268,13 +268,7 @@ impl Render for RemoteConnectionPrompt {
                         .child(
                             Icon::new(IconName::ArrowCircle)
                                 .size(IconSize::Medium)
-                                .with_animation(
-                                    "arrow-circle",
-                                    Animation::new(Duration::from_secs(2)).repeat(),
-                                    |icon, delta| {
-                                        icon.transform(Transformation::rotate(percentage(delta)))
-                                    },
-                                ),
+                                .with_rotate_animation(2),
                         )
                         .child(
                             div()

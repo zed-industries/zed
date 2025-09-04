@@ -6025,6 +6025,7 @@ impl EditorElement {
         window.with_content_mask(
             Some(ContentMask {
                 bounds: layout.position_map.text_hitbox.bounds,
+                ..Default::default()
             }),
             |window| {
                 let editor = self.editor.read(cx);
@@ -6063,7 +6064,7 @@ impl EditorElement {
                 };
 
                 self.paint_lines_background(layout, window, cx);
-                let invisible_display_ranges = self.paint_highlights(layout, window);
+                let invisible_display_ranges = self.paint_highlights(layout, window, cx);
                 self.paint_document_colors(layout, window);
                 self.paint_lines(&invisible_display_ranges, layout, window, cx);
                 self.paint_redactions(layout, window);
@@ -6085,6 +6086,7 @@ impl EditorElement {
         &mut self,
         layout: &mut EditorLayout,
         window: &mut Window,
+        cx: &mut App,
     ) -> SmallVec<[Range<DisplayPoint>; 32]> {
         window.paint_layer(layout.position_map.text_hitbox.bounds, |window| {
             let mut invisible_display_ranges = SmallVec::<[Range<DisplayPoint>; 32]>::new();
@@ -6101,7 +6103,11 @@ impl EditorElement {
                 );
             }
 
-            let corner_radius = 0.15 * layout.position_map.line_height;
+            let corner_radius = if EditorSettings::get_global(cx).rounded_selection {
+                0.15 * layout.position_map.line_height
+            } else {
+                Pixels::ZERO
+            };
 
             for (player_color, selections) in &layout.selections {
                 for selection in selections.iter() {
@@ -6962,9 +6968,15 @@ impl EditorElement {
             } else {
                 let mut bounds = layout.hitbox.bounds;
                 bounds.origin.x += layout.gutter_hitbox.bounds.size.width;
-                window.with_content_mask(Some(ContentMask { bounds }), |window| {
-                    block.element.paint(window, cx);
-                })
+                window.with_content_mask(
+                    Some(ContentMask {
+                        bounds,
+                        ..Default::default()
+                    }),
+                    |window| {
+                        block.element.paint(window, cx);
+                    },
+                )
             }
         }
     }
@@ -8265,9 +8277,13 @@ impl Element for EditorElement {
         }
 
         let rem_size = self.rem_size(cx);
+        let content_mask = ContentMask {
+            bounds,
+            ..Default::default()
+        };
         window.with_rem_size(rem_size, |window| {
             window.with_text_style(Some(text_style), |window| {
-                window.with_content_mask(Some(ContentMask { bounds }), |window| {
+                window.with_content_mask(Some(content_mask), |window| {
                     let (mut snapshot, is_read_only) = self.editor.update(cx, |editor, cx| {
                         (editor.snapshot(window, cx), editor.read_only(cx))
                     });
@@ -9375,9 +9391,13 @@ impl Element for EditorElement {
             ..Default::default()
         };
         let rem_size = self.rem_size(cx);
+        let content_mask = ContentMask {
+            bounds,
+            ..Default::default()
+        };
         window.with_rem_size(rem_size, |window| {
             window.with_text_style(Some(text_style), |window| {
-                window.with_content_mask(Some(ContentMask { bounds }), |window| {
+                window.with_content_mask(Some(content_mask), |window| {
                     self.paint_mouse_listeners(layout, window, cx);
                     self.paint_background(layout, window, cx);
                     self.paint_indent_guides(layout, window, cx);

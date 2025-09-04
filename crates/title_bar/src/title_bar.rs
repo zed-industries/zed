@@ -279,13 +279,15 @@ impl TitleBar {
 
         let banner = cx.new(|cx| {
             OnboardingBanner::new(
-                "ACP Onboarding",
-                IconName::Sparkle,
-                "Bring Your Own Agent",
+                "ACP Claude Code Onboarding",
+                IconName::AiClaude,
+                "Claude Code",
                 Some("Introducing:".into()),
-                zed_actions::agent::OpenAcpOnboardingModal.boxed_clone(),
+                zed_actions::agent::OpenClaudeCodeOnboardingModal.boxed_clone(),
                 cx,
             )
+            // When updating this to a non-AI feature release, remove this line.
+            .visible_when(|cx| !project::DisableAiSettings::get_global(cx).disable_ai)
         });
 
         let platform_titlebar = cx.new(|cx| PlatformTitleBar::new(id, cx));
