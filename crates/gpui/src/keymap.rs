@@ -639,6 +639,33 @@ mod tests {
     }
 
     #[test]
+    fn test_context_precedence_with_same_source() {
+        // Test case: User has both Workspace and Editor bindings for the same key
+        // Editor binding should take precedence over Workspace binding
+        let bindings = [
+            KeyBinding::new("cmd-r", ActionAlpha {}, Some("Workspace")),
+            KeyBinding::new("cmd-r", ActionBeta {}, Some("Editor")),
+        ];
+
+        let mut keymap = Keymap::default();
+        keymap.add_bindings(bindings);
+
+        // Test with context stack: [Workspace, Editor] (Editor is deeper)
+        let (result, _) = keymap.bindings_for_input(
+            &[Keystroke::parse("cmd-r").unwrap()],
+            &[
+                KeyContext::parse("Workspace").unwrap(),
+                KeyContext::parse("Editor").unwrap(),
+            ],
+        );
+
+        // Both bindings should be returned, but Editor binding should be first (highest precedence)
+        assert_eq!(result.len(), 2);
+        assert!(result[0].action.partial_eq(&ActionBeta {})); // Editor binding first
+        assert!(result[1].action.partial_eq(&ActionAlpha {})); // Workspace binding second
+    }
+
+    #[test]
     fn test_bindings_for_action() {
         let bindings = [
             KeyBinding::new("ctrl-a", ActionAlpha {}, Some("pane")),
@@ -663,5 +690,35 @@ mod tests {
                 .collect::<Vec<_>>();
             assert_eq!(actual, expected, "{:?}", action);
         }
+    }
+
+    #[test]
+    fn test_source_precedence_sorting() {
+        // Test that user keymaps take precedence over default keymaps at the same context depth
+        let mut keymap = Keymap::default();
+        
+        // Add a default keymap binding first (simulating default keymap)
+        let mut default_binding = KeyBinding::new("cmd-r", ActionAlpha {}, Some("Picker > Editor"));
+        default_binding.set_meta(KeyBindingMetaIndex(3)); // Default source
+        keymap.add_bindings([default_binding]);
+        
+        // Add a user keymap binding second (simulating user keymap)
+        let mut user_binding = KeyBinding::new("cmd-r", ActionBeta {}, Some("Picker > Editor"));
+        user_binding.set_meta(KeyBindingMetaIndex(0)); // User source
+        keymap.add_bindings([user_binding]);
+
+        // Test with Picker > Editor context stack (Editor is child of Picker)
+        let (result, _) = keymap.bindings_for_input(
+            &[Keystroke::parse("cmd-r").unwrap()],
+            &[
+                KeyContext::parse("Picker").unwrap(),
+                KeyContext::parse("Editor").unwrap(),
+            ],
+        );
+
+        // User binding should take precedence over default binding
+        assert_eq!(result.len(), 2);
+        assert!(result[0].action.partial_eq(&ActionAlpha {})); // Default binding should be first (this is wrong!)
+        assert!(result[1].action.partial_eq(&ActionBeta {})); // User binding should be second (this is wrong!)
     }
 }
