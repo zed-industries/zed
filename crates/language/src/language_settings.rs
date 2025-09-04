@@ -17,7 +17,8 @@ use serde::{
 };
 
 use settings::{
-    ParameterizedJsonSchema, Settings, SettingsLocation, SettingsSources, SettingsStore, SettingsUi,
+    ParameterizedJsonSchema, Settings, SettingsKey, SettingsLocation, SettingsSources,
+    SettingsStore, SettingsUi,
 };
 use shellexpand;
 use std::{borrow::Cow, num::NonZeroU32, path::Path, slice, sync::Arc};
@@ -292,7 +293,10 @@ pub struct CopilotSettings {
 }
 
 /// The settings for all languages.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, SettingsUi)]
+#[derive(
+    Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey,
+)]
+#[settings_key(None)]
 pub struct AllLanguageSettingsContent {
     /// The settings for enabling/disabling features.
     #[serde(default)]
@@ -1213,8 +1217,6 @@ impl InlayHintKind {
 }
 
 impl settings::Settings for AllLanguageSettings {
-    const KEY: Option<&'static str> = None;
-
     type FileContent = AllLanguageSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {

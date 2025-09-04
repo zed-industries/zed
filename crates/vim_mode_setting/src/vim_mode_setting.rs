@@ -6,7 +6,8 @@
 
 use anyhow::Result;
 use gpui::App;
-use settings::{Settings, SettingsSources, SettingsUi};
+use schemars::JsonSchema;
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 
 /// Initializes the `vim_mode_setting` crate.
 pub fn init(cx: &mut App) {
@@ -14,25 +15,40 @@ pub fn init(cx: &mut App) {
     HelixModeSetting::register(cx);
 }
 
-/// Whether or not to enable Vim mode.
-///
-/// Default: false
-#[derive(SettingsUi)]
 pub struct VimModeSetting(pub bool);
 
-impl Settings for VimModeSetting {
-    const KEY: Option<&'static str> = Some("vim_mode");
+#[derive(
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    Debug,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    SettingsUi,
+    SettingsKey,
+    JsonSchema,
+)]
+#[settings_key(None)]
+pub struct VimModeSettingContent {
+    /// Whether or not to enable Vim mode.
+    ///
+    /// Default: false
+    pub vim_mode: Option<bool>,
+}
 
-    type FileContent = Option<bool>;
+impl Settings for VimModeSetting {
+    type FileContent = VimModeSettingContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         Ok(Self(
             sources
                 .user
-                .or(sources.server)
-                .copied()
-                .flatten()
-                .unwrap_or(sources.default.ok_or_else(Self::missing_default)?),
+                .and_then(|mode| mode.vim_mode)
+                .or(sources.server.and_then(|mode| mode.vim_mode))
+                .or(sources.default.vim_mode)
+                .ok_or_else(Self::missing_default)?,
         ))
     }
 
@@ -41,25 +57,41 @@ impl Settings for VimModeSetting {
     }
 }
 
-/// Whether or not to enable Helix mode.
-///
-/// Default: false
-#[derive(SettingsUi)]
+#[derive(Debug)]
 pub struct HelixModeSetting(pub bool);
 
-impl Settings for HelixModeSetting {
-    const KEY: Option<&'static str> = Some("helix_mode");
+#[derive(
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    Debug,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    SettingsUi,
+    SettingsKey,
+    JsonSchema,
+)]
+#[settings_key(None)]
+pub struct HelixModeSettingContent {
+    /// Whether or not to enable Helix mode.
+    ///
+    /// Default: false
+    pub helix_mode: Option<bool>,
+}
 
-    type FileContent = Option<bool>;
+impl Settings for HelixModeSetting {
+    type FileContent = HelixModeSettingContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         Ok(Self(
             sources
                 .user
-                .or(sources.server)
-                .copied()
-                .flatten()
-                .unwrap_or(sources.default.ok_or_else(Self::missing_default)?),
+                .and_then(|mode| mode.helix_mode)
+                .or(sources.server.and_then(|mode| mode.helix_mode))
+                .or(sources.default.helix_mode)
+                .ok_or_else(Self::missing_default)?,
         ))
     }
 

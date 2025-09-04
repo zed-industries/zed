@@ -10,7 +10,7 @@ use paths::remote_servers_dir;
 use release_channel::{AppCommitSha, ReleaseChannel};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsStore, SettingsUi};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsStore, SettingsUi};
 use smol::{fs, io::AsyncReadExt};
 use smol::{fs::File, process::Command};
 use std::{
@@ -118,13 +118,12 @@ struct AutoUpdateSetting(bool);
 /// Whether or not to automatically check for updates.
 ///
 /// Default: true
-#[derive(Clone, Copy, Default, JsonSchema, Deserialize, Serialize, SettingsUi)]
+#[derive(Clone, Copy, Default, JsonSchema, Deserialize, Serialize, SettingsUi, SettingsKey)]
 #[serde(transparent)]
+#[settings_key(key = "auto_update")]
 struct AutoUpdateSettingContent(bool);
 
 impl Settings for AutoUpdateSetting {
-    const KEY: Option<&'static str> = Some("auto_update");
-
     type FileContent = AutoUpdateSettingContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {

@@ -1,10 +1,11 @@
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsUi};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 
 /// The settings for the image viewer.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default, SettingsUi)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default, SettingsUi, SettingsKey)]
+#[settings_key(key = "image_viewer")]
 pub struct ImageViewerSettings {
     /// The unit to use for displaying image file sizes.
     ///
@@ -24,8 +25,6 @@ pub enum ImageFileSizeUnit {
 }
 
 impl Settings for ImageViewerSettings {
-    const KEY: Option<&'static str> = Some("image_viewer");
-
     type FileContent = Self;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
