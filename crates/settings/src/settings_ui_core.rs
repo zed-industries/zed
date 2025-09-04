@@ -30,7 +30,7 @@ pub struct SettingsUiEntry {
     pub path: Option<&'static str>,
     /// What is displayed for the text for this entry
     pub title: &'static str,
-    /// documentation for this entry. Constructued from the documentation comment above the struct or field
+    /// documentation for this entry. Constructed from the documentation comment above the struct or field
     pub documentation: Option<&'static str>,
     pub item: SettingsUiItem,
 }
