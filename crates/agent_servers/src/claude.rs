@@ -80,8 +80,15 @@ impl AgentServer for ClaudeCode {
         let settings = cx.read_global(|settings: &SettingsStore, _| {
             settings.get::<AllAgentServersSettings>(None).claude.clone()
         });
+        let project = delegate.project().clone();
 
         cx.spawn(async move |cx| {
+            let mut project_env = project
+                .update(cx, |project, cx| {
+                    project.directory_environment(root_dir.as_path().into(), cx)
+                })?
+                .await
+                .unwrap_or_default();
             let mut command = if let Some(settings) = settings {
                 settings.command
             } else {
@@ -97,6 +104,8 @@ impl AgentServer for ClaudeCode {
                 })?
                 .await?
             };
+            project_env.extend(command.env.take().unwrap_or_default());
+            command.env = Some(project_env);
 
             command
                 .env
