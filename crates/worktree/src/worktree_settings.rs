@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsUi};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 use util::paths::PathMatcher;
 
 #[derive(Clone, PartialEq, Eq)]
@@ -31,7 +31,8 @@ impl WorktreeSettings {
     }
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
+#[settings_key(None)]
 pub struct WorktreeSettingsContent {
     /// Completely ignore files matching globs from `file_scan_exclusions`. Overrides
     /// `file_scan_inclusions`.
@@ -65,8 +66,6 @@ pub struct WorktreeSettingsContent {
 }
 
 impl Settings for WorktreeSettings {
-    const KEY: Option<&'static str> = None;
-
     type FileContent = WorktreeSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
