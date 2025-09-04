@@ -7471,6 +7471,7 @@ dependencies = [
  "reqwest_client",
  "resvg",
  "scap",
+ "scheduler",
  "schemars",
  "seahash",
  "semantic_version",

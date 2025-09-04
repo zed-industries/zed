@@ -56,6 +56,7 @@ impl BackgroundExecutor {
     }
 }
 
+#[derive(Clone)]
 pub struct BackgroundExecutor {
     scheduler: Arc<dyn Scheduler>,
 }
