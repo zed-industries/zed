@@ -31,13 +31,13 @@ actions!(
 actions!(
     syntax_tree_view,
     [
-        /// Update the syntax tree view to the last focused file.
-        UpdateAssociatedEditor
+        /// Update the syntax tree view to show the last focused file.
+        UseActiveEditor
     ]
 );
 
 pub fn init(cx: &mut App) {
-    let syntax_tree_actions = [TypeId::of::<UpdateAssociatedEditor>()];
+    let syntax_tree_actions = [TypeId::of::<UseActiveEditor>()];
 
     CommandPaletteFilter::update_global(cx, |this, _| {
         this.hide_action_types(&syntax_tree_actions);
@@ -76,7 +76,7 @@ pub fn init(cx: &mut App) {
                 cx,
             )
         });
-        workspace.register_action(|workspace, _: &UpdateAssociatedEditor, window, cx| {
+        workspace.register_action(|workspace, _: &UseActiveEditor, window, cx| {
             if let Some(tree_view) = workspace.item_of_type::<SyntaxTreeView>(cx) {
                 tree_view.update(cx, |view, cx| {
                     view.update_active_editor(&Default::default(), window, cx)
@@ -202,7 +202,7 @@ impl SyntaxTreeView {
 
     fn update_active_editor(
         &mut self,
-        _: &UpdateAssociatedEditor,
+        _: &UseActiveEditor,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
