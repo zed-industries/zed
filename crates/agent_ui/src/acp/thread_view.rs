@@ -19,7 +19,6 @@ use editor::{Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEff
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::FutureExt as _;
-// UI components for ACP thread view
 use gpui::{
     Action, Animation, AnimationExt, AnyView, App, BorderStyle, ClickEvent, ClipboardItem,
     CursorStyle, EdgesRefinement, ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, Length,
