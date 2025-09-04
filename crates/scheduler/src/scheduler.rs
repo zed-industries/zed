@@ -18,32 +18,11 @@ use std::{
 };
 
 pub trait Scheduler: Send + Sync {
-    fn block(&self, future: LocalBoxFuture<()>, timeout: Option<Duration>);
+    fn block(&self, session_id: SessionId, future: LocalBoxFuture<()>, timeout: Option<Duration>);
     fn schedule_foreground(&self, session_id: SessionId, runnable: Runnable);
     fn schedule_background(&self, runnable: Runnable);
     fn timer(&self, timeout: Duration) -> Timer;
     fn is_main_thread(&self) -> bool;
-}
-
-impl dyn Scheduler {
-    pub fn block_on<Fut: Future>(&self, future: Fut) -> Fut::Output {
-        let mut output = None;
-        self.block(async { output = Some(future.await) }.boxed_local(), None);
-        output.unwrap()
-    }
-
-    pub fn block_with_timeout<Fut: Unpin + Future>(
-        &self,
-        future: &mut Fut,
-        timeout: Duration,
-    ) -> Option<Fut::Output> {
-        let mut output = None;
-        self.block(
-            async { output = Some(future.await) }.boxed_local(),
-            Some(timeout),
-        );
-        output
-    }
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]

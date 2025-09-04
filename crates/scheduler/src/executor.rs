@@ -1,4 +1,5 @@
 use crate::{Scheduler, SessionId, Timer};
+use futures::FutureExt as _;
 use std::{
     future::Future,
     marker::PhantomData,
@@ -29,6 +30,30 @@ impl ForegroundExecutor {
         });
         runnable.schedule();
         Task(TaskState::Spawned(task))
+    }
+
+    pub fn block_on<Fut: Future>(&self, future: Fut) -> Fut::Output {
+        let mut output = None;
+        self.scheduler.block(
+            self.session_id,
+            async { output = Some(future.await) }.boxed_local(),
+            None,
+        );
+        output.unwrap()
+    }
+
+    pub fn block_with_timeout<Fut: Unpin + Future>(
+        &self,
+        future: &mut Fut,
+        timeout: Duration,
+    ) -> Option<Fut::Output> {
+        let mut output = None;
+        self.scheduler.block(
+            self.session_id,
+            async { output = Some(future.await) }.boxed_local(),
+            Some(timeout),
+        );
+        output
     }
 
     pub fn timer(&self, duration: Duration) -> Timer {
@@ -75,18 +100,6 @@ impl BackgroundExecutor {
         Task(TaskState::Spawned(task))
     }
 
-    pub fn block_on<Fut: Future>(&self, future: Fut) -> Fut::Output {
-        self.scheduler.block_on(future)
-    }
-
-    pub fn block_with_timeout<Fut: Unpin + Future>(
-        &self,
-        future: &mut Fut,
-        timeout: Duration,
-    ) -> Option<Fut::Output> {
-        self.scheduler.block_with_timeout(future, timeout)
-    }
-
     pub fn timer(&self, duration: Duration) -> Timer {
         self.scheduler.timer(duration)
     }
@@ -115,6 +128,13 @@ impl<T> Task<T> {
     /// Creates a new task that will resolve with the value
     pub fn ready(val: T) -> Self {
         Task(TaskState::Ready(Some(val)))
+    }
+
+    pub fn is_ready(&self) -> bool {
+        match &self.0 {
+            TaskState::Ready(_) => true,
+            TaskState::Spawned(task) => task.is_finished(),
+        }
     }
 
     /// Detaching a task runs it to completion in the background

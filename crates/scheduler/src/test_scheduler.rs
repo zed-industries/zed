@@ -54,8 +54,8 @@ impl TestScheduler {
     pub fn with_seed<R>(seed: u64, f: impl AsyncFnOnce(Arc<TestScheduler>) -> R) -> R {
         let scheduler = Arc::new(TestScheduler::new(SchedulerConfig::with_seed(seed)));
         let future = f(scheduler.clone());
-        let result = scheduler.block_on(future);
-        scheduler.run();
+        let result = scheduler.foreground().block_on(future);
+        scheduler.run(); // Ensure spawned tasks finish up before returning in tests
         result
     }
 
@@ -65,6 +65,7 @@ impl TestScheduler {
             state: Mutex::new(SchedulerState {
                 runnables: VecDeque::new(),
                 timers: Vec::new(),
+                blocked_sessions: Vec::new(),
                 randomize_order: config.randomize_order,
                 allow_parking: config.allow_parking,
                 next_session_id: SessionId(0),
@@ -98,10 +99,6 @@ impl TestScheduler {
         BackgroundExecutor::new(self.clone())
     }
 
-    pub fn block_on<Fut: Future>(&self, future: Fut) -> Fut::Output {
-        (self as &dyn Scheduler).block_on(future)
-    }
-
     pub fn yield_random(&self) -> Yield {
         Yield(self.rng.lock().random_range(0..20))
     }
@@ -125,7 +122,16 @@ impl TestScheduler {
             return true;
         }
 
-        let runnable = self.state.lock().runnables.pop_front();
+        let runnable = {
+            let state = &mut *self.state.lock();
+            let ix = state.runnables.iter().position(|runnable| {
+                runnable
+                    .session_id
+                    .is_none_or(|session_id| !state.blocked_sessions.contains(&session_id))
+            });
+            ix.and_then(|ix| state.runnables.remove(ix))
+        };
+
         if let Some(runnable) = runnable {
             runnable.run();
             return true;
@@ -207,7 +213,14 @@ impl Scheduler for TestScheduler {
     /// is provided. This is to allow testing a mix of deterministic and
     /// non-deterministic async behavior, such as when interacting with I/O in
     /// an otherwise deterministic test.
-    fn block(&self, mut future: LocalBoxFuture<()>, timeout: Option<Duration>) {
+    fn block(
+        &self,
+        session_id: SessionId,
+        mut future: LocalBoxFuture<()>,
+        timeout: Option<Duration>,
+    ) {
+        self.state.lock().blocked_sessions.push(session_id);
+
         let (parker, unparker) = parking::pair();
         let deadline = timeout.map(|timeout| Instant::now() + timeout);
         let awoken = Arc::new(AtomicBool::new(false));
@@ -251,6 +264,8 @@ impl Scheduler for TestScheduler {
                 }
             }
         }
+
+        self.state.lock().blocked_sessions.pop();
     }
 }
 
@@ -301,6 +316,7 @@ struct ScheduledTimer {
 struct SchedulerState {
     runnables: VecDeque<ScheduledRunnable>,
     timers: Vec<ScheduledTimer>,
+    blocked_sessions: Vec<SessionId>,
     randomize_order: bool,
     allow_parking: bool,
     next_session_id: SessionId,
