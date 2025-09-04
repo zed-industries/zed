@@ -142,14 +142,14 @@ impl SyntaxTreeView {
             focus_handle: cx.focus_handle(),
         };
 
-        this.handle_item_upated(active_item, window, cx);
+        this.handle_item_updated(active_item, window, cx);
 
         cx.subscribe_in(
             &workspace_handle.upgrade().unwrap(),
             window,
             move |this, workspace, event, window, cx| match event {
                 WorkspaceEvent::ItemAdded { .. } | WorkspaceEvent::ActiveItemChanged => {
-                    this.handle_item_upated(workspace.read(cx).active_item(cx), window, cx)
+                    this.handle_item_updated(workspace.read(cx).active_item(cx), window, cx)
                 }
                 WorkspaceEvent::ItemRemoved { item_id } => {
                     this.handle_item_removed(item_id, window, cx);
@@ -162,7 +162,7 @@ impl SyntaxTreeView {
         this
     }
 
-    fn handle_item_upated(
+    fn handle_item_updated(
         &mut self,
         active_item: Option<Box<dyn ItemHandle>>,
         window: &mut Window,
