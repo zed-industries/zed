@@ -32,7 +32,7 @@ use parking_lot::Mutex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use settings::WorktreeId;
+use settings::{SettingsUi, WorktreeId};
 use smallvec::SmallVec;
 use smol::future::yield_now;
 use std::{
@@ -173,7 +173,9 @@ pub enum IndentKind {
 }
 
 /// The shape of a selection cursor.
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(
+    Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CursorShape {
     /// A vertical bar
@@ -313,10 +315,6 @@ pub enum BufferEvent {
     DiagnosticsUpdated,
     /// The buffer gained or lost editing capabilities.
     CapabilityChanged,
-    /// The buffer was explicitly requested to close.
-    Closed,
-    /// The buffer was discarded when closing.
-    Discarded,
 }
 
 /// The file associated with a buffer.
@@ -1244,8 +1242,10 @@ impl Buffer {
 
     /// Assign the buffer a new [`Capability`].
     pub fn set_capability(&mut self, capability: Capability, cx: &mut Context<Self>) {
-        self.capability = capability;
-        cx.emit(BufferEvent::CapabilityChanged)
+        if self.capability != capability {
+            self.capability = capability;
+            cx.emit(BufferEvent::CapabilityChanged)
+        }
     }
 
     /// This method is called to signal that the buffer has been saved.
@@ -1262,12 +1262,6 @@ impl Buffer {
         self.saved_mtime = mtime;
         self.was_changed();
         cx.emit(BufferEvent::Saved);
-        cx.notify();
-    }
-
-    /// This method is called to signal that the buffer has been discarded.
-    pub fn discarded(&self, cx: &mut Context<Self>) {
-        cx.emit(BufferEvent::Discarded);
         cx.notify();
     }
 
@@ -2848,12 +2842,12 @@ impl Buffer {
 
             let new_start = last_end.map_or(0, |last_end| last_end + 1);
             let mut range = self.random_byte_range(new_start, rng);
-            if rng.gen_bool(0.2) {
+            if rng.random_bool(0.2) {
                 mem::swap(&mut range.start, &mut range.end);
             }
             last_end = Some(range.end);
 
-            let new_text_len = rng.gen_range(0..10);
+            let new_text_len = rng.random_range(0..10);
             let mut new_text: String = RandomCharIter::new(&mut *rng).take(new_text_len).collect();
             new_text = new_text.to_uppercase();
 

@@ -131,6 +131,7 @@ members = [
     "crates/refineable",
     "crates/refineable/derive_refineable",
     "crates/release_channel",
+    "crates/scheduler",
     "crates/remote",
     "crates/remote_server",
     "crates/repl",
@@ -193,6 +194,7 @@ members = [
     "crates/x_ai",
     "crates/zed",
     "crates/zed_actions",
+    "crates/zed_env_vars",
     "crates/zeta",
     "crates/zeta_cli",
     "crates/zlog",
@@ -209,7 +211,6 @@ members = [
     "extensions/slash-commands-example",
     "extensions/snippets",
     "extensions/test-extension",
-    "extensions/toml",
 
     #
     # Tooling
@@ -299,9 +300,7 @@ git_hosting_providers = { path = "crates/git_hosting_providers" }
 git_ui = { path = "crates/git_ui" }
 go_to_line = { path = "crates/go_to_line" }
 google_ai = { path = "crates/google_ai" }
-gpui = { path = "crates/gpui", default-features = false, features = [
-    "http_client",
-] }
+gpui = { path = "crates/gpui", default-features = false }
 gpui_macros = { path = "crates/gpui_macros" }
 gpui_tokio = { path = "crates/gpui_tokio" }
 html_to_markdown = { path = "crates/html_to_markdown" }
@@ -361,6 +360,7 @@ proto = { path = "crates/proto" }
 recent_projects = { path = "crates/recent_projects" }
 refineable = { path = "crates/refineable" }
 release_channel = { path = "crates/release_channel" }
+scheduler = { path = "crates/scheduler" }
 remote = { path = "crates/remote" }
 remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
@@ -422,6 +422,7 @@ worktree = { path = "crates/worktree" }
 x_ai = { path = "crates/x_ai" }
 zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
+zed_env_vars = { path = "crates/zed_env_vars" }
 zeta = { path = "crates/zeta" }
 zlog = { path = "crates/zlog" }
 zlog_settings = { path = "crates/zlog_settings" }
@@ -430,7 +431,7 @@ zlog_settings = { path = "crates/zlog_settings" }
 # External crates
 #
 
-agent-client-protocol =  "0.1"
+agent-client-protocol = { version = "0.2.0-alpha.6", features = ["unstable"]}
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", branch = "add-hush-login-flag" }
 any_vec = "0.14"
@@ -444,6 +445,7 @@ async-fs = "2.1"
 async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
 async-recursion = "1.0.0"
 async-tar = "0.5.0"
+async-task = "4.7"
 async-trait = "0.1"
 async-tungstenite = "0.29.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
@@ -459,9 +461,9 @@ aws-smithy-types = { version = "1.3.0", features = ["http-body-1-x"] }
 base64 = "0.22"
 bincode = "1.2.1"
 bitflags = "2.6.0"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "e0ec4e720957edd51b945b64dd85605ea54bcfe5" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "e0ec4e720957edd51b945b64dd85605ea54bcfe5" }
-blade-util = { git = "https://github.com/kvark/blade", rev = "e0ec4e720957edd51b945b64dd85605ea54bcfe5" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "bfa594ea697d4b6326ea29f747525c85ecf933b9" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "bfa594ea697d4b6326ea29f747525c85ecf933b9" }
+blade-util = { git = "https://github.com/kvark/blade", rev = "bfa594ea697d4b6326ea29f747525c85ecf933b9" }
 blake3 = "1.5.3"
 bytes = "1.0"
 cargo_metadata = "0.19"
@@ -538,6 +540,7 @@ objc = "0.2"
 open = "5.0.0"
 ordered-float = "2.1.1"
 palette = { version = "0.7.5", default-features = false, features = ["std"] }
+parking = "2.0"
 parking_lot = "0.12.1"
 partial-json-fixer = "0.5.3"
 parse_int = "0.9"
@@ -560,7 +563,7 @@ prost-build = "0.9"
 prost-types = "0.9"
 pulldown-cmark = { version = "0.12.0", default-features = false }
 quote = "1.0.9"
-rand = "0.8.5"
+rand = "0.9"
 rayon = "1.8"
 ref-cast = "1.0.24"
 regex = "1.5"
@@ -592,6 +595,7 @@ serde_json_lenient = { version = "0.2", features = [
     "preserve_order",
     "raw_value",
 ] }
+serde_path_to_error = "0.1.17"
 serde_repr = "0.1"
 serde_urlencoded = "0.7"
 sha2 = "0.10"
@@ -695,6 +699,7 @@ features = [
     "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Gdi",
     "Win32_Graphics_Imaging",
+    "Win32_Graphics_Hlsl",
     "Win32_Networking_WinSock",
     "Win32_Security",
     "Win32_Security_Credentials",
@@ -845,6 +850,9 @@ too_many_arguments = "allow"
 
 # We often have large enum variants yet we rarely actually bother with splitting them up.
 large_enum_variant = "allow"
+
+# Boolean expressions can be hard to read, requiring only the minimal form gets in the way
+nonminimal_bool = "allow"
 
 [workspace.metadata.cargo-machete]
 ignored = [

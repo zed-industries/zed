@@ -1,26 +1,29 @@
 # Agent Panel
 
-The Agent Panel allows you to interact with many LLMs and coding agents that can support you in various types of tasks, such as generating code, codebase understanding, and other general inquiries like writing emails, documentation, and more.
+The Agent Panel allows you to interact with many LLMs and coding agents that can help with in various types of tasks, such as generating code, codebase understanding, and other general inquiries like writing emails, documentation, and more.
 
 To open it, use the `agent: new thread` action in [the Command Palette](../getting-started.md#command-palette) or click the ✨ (sparkles) icon in the status bar.
 
-If you're using the Agent Panel for the first time, you need to have at least one LLM or agent provider configured.
+## Getting Started
+
+If you're using the Agent Panel for the first time, you need to have at least one LLM provider or external agent configured.
 You can do that by:
 
 1. [subscribing to our Pro plan](https://zed.dev/pricing), so you have access to our hosted models
 2. [bringing your own API keys](./llm-providers.md#use-your-own-keys) for your desired provider
-3. using an external agent like [Gemini CLI](./external-agents.md#gemini-cli)
+3. using an external agent like [Gemini CLI](./external-agents.md#gemini-cli) or [Claude Code](./external-agents.md#claude-code)
 
 ## Overview {#overview}
 
-After you've configured one or more LLM providers, type at the message editor and hit `enter` to submit your prompt.
+With an LLM provider or an external agent configured, type at the message editor and hit `enter` to submit your prompt.
 If you need extra room to type, you can expand the message editor with {#kb agent::ExpandMessageEditor}.
 
 You should start to see the responses stream in with indications of [which tools](./tools.md) the model is using to fulfill your prompt.
+From this point on, you can interact with the many supported features outlined below.
 
-> Note that, at the moment, not all features outlined below work for external agents, like [Gemini CLI](./external-agents.md#gemini-cli)—features like _restoring threads from history_, _checkpoints_, _token usage display_, _model selection_, and others may be supported in the future.
+> Note that for external agents, like [Gemini CLI](./external-agents.md#gemini-cli) or [Claude Code](./external-agents.md#claude-code), some of the features outlined below are _not_ currently supported—for example, _restoring threads from history_, _checkpoints_, _token usage display_, _model selection_, and others. All of them should hopefully be supported in the future.
 
-### Creating New Threads
+### Creating New Threads {#new-thread}
 
 By default, the Agent Panel uses Zed's first-party agent.
 

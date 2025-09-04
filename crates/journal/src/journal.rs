@@ -5,7 +5,7 @@ use editor::{Editor, SelectionEffects};
 use gpui::{App, AppContext as _, Context, Window, actions};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsUi};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 use std::{
     fs::OpenOptions,
     path::{Path, PathBuf},
@@ -22,7 +22,8 @@ actions!(
 );
 
 /// Settings specific to journaling
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, SettingsUi)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
+#[settings_key(key = "journal")]
 pub struct JournalSettings {
     /// The path of the directory where journal entries are stored.
     ///
@@ -52,8 +53,6 @@ pub enum HourFormat {
 }
 
 impl settings::Settings for JournalSettings {
-    const KEY: Option<&'static str> = Some("journal");
-
     type FileContent = Self;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {

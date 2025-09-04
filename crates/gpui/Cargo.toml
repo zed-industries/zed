@@ -12,13 +12,13 @@ license = "Apache-2.0"
 workspace = true
 
 [features]
-default = ["http_client", "font-kit", "wayland", "x11", "windows-manifest"]
+default = ["font-kit", "wayland", "x11", "windows-manifest"]
 test-support = [
     "leak-detection",
     "collections/test-support",
     "rand",
     "util/test-support",
-    "http_client?/test-support",
+    "http_client/test-support",
     "wayland",
     "x11",
 ]
@@ -91,7 +91,7 @@ derive_more.workspace = true
 etagere = "0.2"
 futures.workspace = true
 gpui_macros.workspace = true
-http_client = { optional = true, workspace = true }
+http_client.workspace = true
 image.workspace = true
 inventory.workspace = true
 itertools.workspace = true

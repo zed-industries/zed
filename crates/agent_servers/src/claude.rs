@@ -1,4 +1,3 @@
-use language_models::provider::anthropic::AnthropicLanguageModelProvider;
 use settings::SettingsStore;
 use std::path::Path;
 use std::rc::Rc;
@@ -40,7 +39,7 @@ impl ClaudeCode {
                         Self::PACKAGE_NAME.into(),
                         "node_modules/@anthropic-ai/claude-code/cli.js".into(),
                         true,
-                        None,
+                        Some("0.2.5".parse().unwrap()),
                         cx,
                     )
                 })?
@@ -76,6 +75,7 @@ impl AgentServer for ClaudeCode {
         cx: &mut App,
     ) -> Task<Result<Rc<dyn AgentConnection>>> {
         let root_dir = root_dir.to_path_buf();
+        let fs = delegate.project().read(cx).fs().clone();
         let server_name = self.name();
         let settings = cx.read_global(|settings: &SettingsStore, _| {
             settings.get::<AllAgentServersSettings>(None).claude.clone()
@@ -98,16 +98,17 @@ impl AgentServer for ClaudeCode {
                 .await?
             };
 
-            if let Some(api_key) = cx
-                .update(AnthropicLanguageModelProvider::api_key)?
-                .await
-                .ok()
-            {
-                command
-                    .env
-                    .get_or_insert_default()
-                    .insert("ANTHROPIC_API_KEY".to_owned(), api_key.key);
-            }
+            command
+                .env
+                .get_or_insert_default()
+                .insert("ANTHROPIC_API_KEY".to_owned(), "".to_owned());
+
+            let root_dir_exists = fs.is_dir(&root_dir).await;
+            anyhow::ensure!(
+                root_dir_exists,
+                "Session root {} does not exist or is not a directory",
+                root_dir.to_string_lossy()
+            );
 
             crate::acp::connect(server_name, command.clone(), &root_dir, cx).await
         })

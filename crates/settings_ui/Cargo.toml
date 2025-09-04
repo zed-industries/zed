@@ -13,6 +13,7 @@ path = "src/settings_ui.rs"
 
 [features]
 default = []
+test-support = []
 
 [dependencies]
 anyhow.workspace = true
@@ -28,6 +29,10 @@ theme.workspace = true
 ui.workspace = true
 workspace.workspace = true
 workspace-hack.workspace = true
+
+
+[dev-dependencies]
+debugger_ui.workspace = true
 
 # Uncomment other workspace dependencies as needed
 # assistant.workspace = true

@@ -3,7 +3,7 @@ mod configure_context_server_modal;
 mod manage_profiles_modal;
 mod tool_picker;
 
-use std::{ops::Range, sync::Arc, time::Duration};
+use std::{ops::Range, sync::Arc};
 
 use agent_servers::{AgentServerCommand, AllAgentServersSettings, CustomAgentServerSettings};
 use agent_settings::AgentSettings;
@@ -17,9 +17,8 @@ use extension::ExtensionManifest;
 use extension_host::ExtensionStore;
 use fs::Fs;
 use gpui::{
-    Action, Animation, AnimationExt as _, AnyView, App, AsyncWindowContext, Corner, Entity,
-    EventEmitter, FocusHandle, Focusable, Hsla, ScrollHandle, Subscription, Task, Transformation,
-    WeakEntity, percentage,
+    Action, AnyView, App, AsyncWindowContext, Corner, Entity, EventEmitter, FocusHandle, Focusable,
+    Hsla, ScrollHandle, Subscription, Task, WeakEntity,
 };
 use language::LanguageRegistry;
 use language_model::{
@@ -32,8 +31,9 @@ use project::{
 };
 use settings::{Settings, SettingsStore, update_settings_file};
 use ui::{
-    Chip, ContextMenu, Disclosure, Divider, DividerColor, ElevationIndex, Indicator, PopoverMenu,
-    Scrollbar, ScrollbarState, Switch, SwitchColor, SwitchField, Tooltip, prelude::*,
+    Chip, CommonAnimationExt, ContextMenu, Disclosure, Divider, DividerColor, ElevationIndex,
+    Indicator, PopoverMenu, Scrollbar, ScrollbarState, Switch, SwitchColor, SwitchField, Tooltip,
+    prelude::*,
 };
 use util::ResultExt as _;
 use workspace::{Workspace, create_and_open_local_file};
@@ -670,10 +670,9 @@ impl AgentConfiguration {
                 Icon::new(IconName::LoadCircle)
                     .size(IconSize::XSmall)
                     .color(Color::Accent)
-                    .with_animation(
-                        SharedString::from(format!("{}-starting", context_server_id.0,)),
-                        Animation::new(Duration::from_secs(3)).repeat(),
-                        |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                    .with_keyed_rotate_animation(
+                        SharedString::from(format!("{}-starting", context_server_id.0)),
+                        3,
                     )
                     .into_any_element(),
                 "Server is starting.",
