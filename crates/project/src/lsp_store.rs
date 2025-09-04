@@ -3619,6 +3619,7 @@ impl LspStore {
         client.add_entity_request_handler(Self::handle_lsp_command::<PrepareRename>);
         client.add_entity_request_handler(Self::handle_lsp_command::<PerformRename>);
         client.add_entity_request_handler(Self::handle_lsp_command::<LinkedEditingRange>);
+        client.add_entity_request_handler(Self::handle_lsp_command::<GetFoldingRanges>);
 
         client.add_entity_request_handler(Self::handle_lsp_ext_cancel_flycheck);
         client.add_entity_request_handler(Self::handle_lsp_ext_run_flycheck);
@@ -8159,6 +8160,17 @@ impl LspStore {
                 )
                 .await?;
             }
+            Request::GetFoldingRanges(get_folding_ranges) => {
+                Self::query_lsp_locally::<GetFoldingRanges>(
+                    lsp_store,
+                    sender_id,
+                    lsp_request_id,
+                    get_folding_ranges,
+                    None,
+                    cx.clone(),
+                )
+                .await?;
+            }
             // Diagnostics pull synchronizes internally via the buffer state, and cannot be handled generically as the other requests.
             Request::GetDocumentDiagnostics(get_document_diagnostics) => {
                 let buffer_id = BufferId::new(get_document_diagnostics.buffer_id())?;
@@ -8675,6 +8687,51 @@ impl LspStore {
                                     cx,
                                 ),
                             )),
+                        })
+                        .collect(),
+                })
+            }
+            Some(proto::multi_lsp_query::Request::GetFoldingRanges(message)) => {
+                buffer
+                    .update(&mut cx, |buffer, _| {
+                        buffer.wait_for_version(deserialize_version(&message.version))
+                    })?
+                    .await?;
+                let get_folding_ranges = GetFoldingRanges::from_proto(
+                    message,
+                    lsp_store.clone(),
+                    buffer.clone(),
+                    cx.clone(),
+                )
+                .await?;
+
+                let folding_ranges = lsp_store
+                    .update(&mut cx, |project, cx| {
+                        project.request_multiple_lsp_locally(
+                            &buffer,
+                            None::<usize>,
+                            get_folding_ranges,
+                            cx,
+                        )
+                    })?
+                    .await
+                    .into_iter();
+
+                lsp_store.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
+                    responses: folding_ranges
+                        .map(|(server_id, ranges)| proto::LspResponse {
+                            server_id: server_id.to_proto(),
+                            response: Some(
+                                proto::lsp_response::Response::GetFoldingRangesResponse(
+                                    GetFoldingRanges::response_to_proto(
+                                        ranges,
+                                        project,
+                                        sender_id,
+                                        &buffer_version,
+                                        cx,
+                                    ),
+                                ),
+                            ),
                         })
                         .collect(),
                 })
