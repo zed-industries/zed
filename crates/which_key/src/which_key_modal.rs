@@ -2,7 +2,7 @@
 
 use gpui::{
     App, AvailableSpace, Context, DismissEvent, EventEmitter, FocusHandle, Focusable, FontWeight,
-    Keystroke, Subscription, WeakEntity, Window, humanize_action_name,
+    Keystroke, Subscription, WeakEntity, Window, humanize_action_name, size,
 };
 use settings::Settings;
 use std::collections::HashMap;
@@ -174,9 +174,12 @@ impl Render for WhichKeyModal {
         let max_column_width = ui_font_size * 125.0;
 
         // Calculate actual column width based on largest binding element
-        let actual_column_width = self
+        let largest_binding = self
             .bindings
             .iter()
+            .max_by_key(|(remaining_keystrokes, action_name)| {
+                remaining_keystrokes.len() + action_name.len()
+            })
             .map(|(remaining_keystrokes, action_name)| {
                 create_aligned_binding_element(
                     remaining_keystrokes.clone(),
@@ -185,13 +188,11 @@ impl Render for WhichKeyModal {
                 )
                 .into_any_element()
                 .layout_as_root(AvailableSpace::min_size(), window, cx)
-                .width
             })
-            .max_by(|x, y| x.0.partial_cmp(&y.0).unwrap())
-            .unwrap_or(Pixels::ZERO);
+            .unwrap_or(size(Pixels::ZERO, Pixels::ZERO));
 
         // Final width of the columns
-        let column_width = actual_column_width.min(max_column_width);
+        let column_width = largest_binding.width.min(max_column_width);
 
         // Calculate available width (window width minus padding)
         let window_width = window.viewport_size().width;
@@ -222,13 +223,19 @@ impl Render for WhichKeyModal {
             // Find the longest keystroke text width for this column
             let column_longest_keystroke_width = column_items
                 .iter()
+                .max_by_key(|(remaining_keystrokes, _)| {
+                    (
+                        remaining_keystrokes.len(),
+                        remaining_keystrokes.ends_with(|c| c == 'm' || c == 'w'),
+                    )
+                })
                 .map(|(remaining_keystrokes, _)| {
                     Label::new(remaining_keystrokes.clone())
                         .into_any_element()
                         .layout_as_root(AvailableSpace::min_size(), window, cx)
                         .width
-                })
-                .max_by(|x, y| x.0.partial_cmp(&y.0).unwrap());
+                        + px(5.)
+                });
 
             let column = v_flex().gap(row_gap).children(column_items.iter().map(
                 |(remaining_keystrokes, action_name)| {
@@ -244,10 +251,7 @@ impl Render for WhichKeyModal {
         }
 
         // Calculate real size of 1 row
-        let row_height = Label::new("")
-            .into_any_element()
-            .layout_as_root(AvailableSpace::min_size(), window, cx)
-            .height;
+        let row_height = largest_binding.height;
 
         // Calculate height
         let base_height = (padding * 2) /* Container padding */
@@ -314,7 +318,6 @@ impl Render for WhichKeyModal {
                             .children(column_elements),
                     ),
             )
-            .into_any_element() // All return paths must return the same concrete type.
     }
 }
 
