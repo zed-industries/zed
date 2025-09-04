@@ -253,8 +253,9 @@ pub(crate) struct UiFontSize(Pixels);
 
 impl Global for UiFontSize {}
 
+/// In-memory override for the font size in the agent panel.
 #[derive(Default)]
-pub(crate) struct AgentFontSize(Pixels);
+pub struct AgentFontSize(Pixels);
 
 impl Global for AgentFontSize {}
 
