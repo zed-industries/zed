@@ -1,7 +1,7 @@
 use crate::file_finder_settings::FileFinderSettings;
 use file_icons::FileIcons;
 use futures::channel::oneshot;
-use fuzzy::{StringMatch, StringMatchCandidate};
+use fuzzy::{CharBag, StringMatch, StringMatchCandidate};
 use gpui::{HighlightStyle, StyledText, Task};
 use picker::{Picker, PickerDelegate};
 use project::{DirectoryItem, DirectoryLister};
@@ -125,6 +125,13 @@ impl OpenPathDelegate {
             DirectoryState::None { .. } => Vec::new(),
         }
     }
+
+    fn current_dir(&self) -> &'static str {
+        match self.path_style {
+            PathStyle::Posix => "./",
+            PathStyle::Windows => ".\\",
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -233,6 +240,7 @@ impl PickerDelegate for OpenPathDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
         let lister = &self.lister;
+        let input_is_empty = query.is_empty();
         let (dir, suffix) = get_dir_and_suffix(query, self.path_style);
 
         let query = match &self.directory_state {
@@ -263,6 +271,7 @@ impl PickerDelegate for OpenPathDelegate {
         let cancel_flag = self.cancel_flag.clone();
 
         let parent_path_is_root = self.prompt_root == dir;
+        let current_dir = self.current_dir();
         cx.spawn_in(window, async move |this, cx| {
             if let Some(query) = query {
                 let paths = query.await;
@@ -353,10 +362,38 @@ impl PickerDelegate for OpenPathDelegate {
                 return;
             };
 
+            let mut max_id = 0;
             if !suffix.starts_with('.') {
-                new_entries.retain(|entry| !entry.path.string.starts_with('.'));
+                new_entries.retain(|entry| {
+                    max_id = max_id.max(entry.path.id);
+                    !entry.path.string.starts_with('.')
+                });
             }
+
             if suffix.is_empty() {
+                let should_prepend_with_current_dir = this
+                    .read_with(cx, |picker, _| {
+                        !input_is_empty
+                            && !matches!(
+                                picker.delegate.directory_state,
+                                DirectoryState::Create { .. }
+                            )
+                    })
+                    .unwrap_or(false);
+                if should_prepend_with_current_dir {
+                    new_entries.insert(
+                        0,
+                        CandidateInfo {
+                            path: StringMatchCandidate {
+                                id: max_id + 1,
+                                string: current_dir.to_string(),
+                                char_bag: CharBag::from(current_dir),
+                            },
+                            is_dir: true,
+                        },
+                    );
+                }
+
                 this.update(cx, |this, cx| {
                     this.delegate.selected_index = 0;
                     this.delegate.string_matches = new_entries
@@ -485,6 +522,10 @@ impl PickerDelegate for OpenPathDelegate {
         _: &mut Context<Picker<Self>>,
     ) -> Option<String> {
         let candidate = self.get_entry(self.selected_index)?;
+        if candidate.path.string.is_empty() || candidate.path.string == self.current_dir() {
+            return None;
+        }
+
         let path_style = self.path_style;
         Some(
             maybe!({
@@ -629,12 +670,18 @@ impl PickerDelegate for OpenPathDelegate {
             DirectoryState::None { .. } => Vec::new(),
         };
 
+        let is_current_dir_candidate = candidate.path.string == self.current_dir();
+
         let file_icon = maybe!({
             if !settings.file_icons {
                 return None;
             }
             let icon = if candidate.is_dir {
-                FileIcons::get_folder_icon(false, cx)?
+                if is_current_dir_candidate {
+                    return Some(Icon::new(IconName::ReplyArrowRight).color(Color::Muted));
+                } else {
+                    FileIcons::get_folder_icon(false, cx)?
+                }
             } else {
                 let path = path::Path::new(&candidate.path.string);
                 FileIcons::get_icon(path, cx)?
@@ -652,6 +699,8 @@ impl PickerDelegate for OpenPathDelegate {
                     .child(HighlightedLabel::new(
                         if parent_path == &self.prompt_root {
                             format!("{}{}", self.prompt_root, candidate.path.string)
+                        } else if is_current_dir_candidate {
+                            "open this directory".to_string()
                         } else {
                             candidate.path.string
                         },
@@ -746,6 +795,17 @@ impl PickerDelegate for OpenPathDelegate {
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         Arc::from(format!("[directory{MAIN_SEPARATOR_STR}]filename.ext"))
+    }
+
+    fn separators_after_indices(&self) -> Vec<usize> {
+        let Some(m) = self.string_matches.first() else {
+            return Vec::new();
+        };
+        if m.string == self.current_dir() {
+            vec![0]
+        } else {
+            Vec::new()
+        }
     }
 }
 
