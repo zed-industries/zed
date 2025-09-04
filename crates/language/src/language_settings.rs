@@ -208,7 +208,9 @@ impl LanguageSettings {
 }
 
 /// The provider that supplies edit predictions.
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema, SettingsUi,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum EditPredictionProvider {
     None,
@@ -231,13 +233,14 @@ impl EditPredictionProvider {
 
 /// The settings for edit predictions, such as [GitHub Copilot](https://github.com/features/copilot)
 /// or [Supermaven](https://supermaven.com).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, SettingsUi)]
 pub struct EditPredictionSettings {
     /// The provider that supplies edit predictions.
     pub provider: EditPredictionProvider,
     /// A list of globs representing files that edit predictions should be disabled for.
     /// This list adds to a pre-existing, sensible default set of globs.
     /// Any additional ones you add are combined with them.
+    #[settings_ui(skip)]
     pub disabled_globs: Vec<DisabledGlob>,
     /// Configures how edit predictions are displayed in the buffer.
     pub mode: EditPredictionsMode,
@@ -269,7 +272,9 @@ pub struct DisabledGlob {
 }
 
 /// The mode in which edit predictions should be displayed.
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema, SettingsUi,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum EditPredictionsMode {
     /// If provider supports it, display inline when holding modifier key (e.g., alt).
@@ -282,13 +287,15 @@ pub enum EditPredictionsMode {
     Eager,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, SettingsUi)]
 pub struct CopilotSettings {
     /// HTTP/HTTPS proxy to use for Copilot.
+    #[settings_ui(skip)]
     pub proxy: Option<String>,
     /// Disable certificate verification for proxy (not recommended).
     pub proxy_no_verify: Option<bool>,
     /// Enterprise URI for Copilot.
+    #[settings_ui(skip)]
     pub enterprise_uri: Option<String>,
 }
 
@@ -297,6 +304,7 @@ pub struct CopilotSettings {
     Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey,
 )]
 #[settings_key(None)]
+#[settings_ui(group = "Default Language Settings")]
 pub struct AllLanguageSettingsContent {
     /// The settings for enabling/disabling features.
     #[serde(default)]
@@ -309,10 +317,12 @@ pub struct AllLanguageSettingsContent {
     pub defaults: LanguageSettingsContent,
     /// The settings for individual languages.
     #[serde(default)]
+    #[settings_ui(skip)]
     pub languages: LanguageToSettingsMap,
     /// Settings for associating file extensions and filenames
     /// with languages.
     #[serde(default)]
+    #[settings_ui(skip)]
     pub file_types: HashMap<Arc<str>, Vec<String>>,
 }
 
@@ -345,7 +355,7 @@ inventory::submit! {
 }
 
 /// Controls how completions are processed for this language.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi)]
 #[serde(rename_all = "snake_case")]
 pub struct CompletionSettings {
     /// Controls how words are completed.
@@ -420,7 +430,7 @@ fn default_3() -> usize {
 }
 
 /// The settings for a particular language.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, SettingsUi)]
 pub struct LanguageSettingsContent {
     /// How many columns a tab should occupy.
     ///
@@ -617,12 +627,13 @@ pub enum RewrapBehavior {
 }
 
 /// The contents of the edit prediction settings.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, SettingsUi)]
 pub struct EditPredictionSettingsContent {
     /// A list of globs representing files that edit predictions should be disabled for.
     /// This list adds to a pre-existing, sensible default set of globs.
     /// Any additional ones you add are combined with them.
     #[serde(default)]
+    #[settings_ui(skip)]
     pub disabled_globs: Option<Vec<String>>,
     /// The mode used to display edit predictions in the buffer.
     /// Provider support required.
@@ -637,12 +648,13 @@ pub struct EditPredictionSettingsContent {
     pub enabled_in_text_threads: bool,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, SettingsUi)]
 pub struct CopilotSettingsContent {
     /// HTTP/HTTPS proxy to use for Copilot.
     ///
     /// Default: none
     #[serde(default)]
+    #[settings_ui(skip)]
     pub proxy: Option<String>,
     /// Disable certificate verification for the proxy (not recommended).
     ///
@@ -653,19 +665,21 @@ pub struct CopilotSettingsContent {
     ///
     /// Default: none
     #[serde(default)]
+    #[settings_ui(skip)]
     pub enterprise_uri: Option<String>,
 }
 
 /// The settings for enabling/disabling features.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
 #[serde(rename_all = "snake_case")]
+#[settings_ui(group = "Features")]
 pub struct FeaturesContent {
     /// Determines which edit prediction provider to use.
     pub edit_prediction_provider: Option<EditPredictionProvider>,
 }
 
 /// Controls the soft-wrapping behavior in the editor.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi)]
 #[serde(rename_all = "snake_case")]
 pub enum SoftWrap {
     /// Prefer a single line generally, unless an overly long line is encountered.
@@ -934,7 +948,9 @@ pub enum Formatter {
 }
 
 /// The settings for indent guides.
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, SettingsUi,
+)]
 pub struct IndentGuideSettings {
     /// Whether to display indent guides in the editor.
     ///
