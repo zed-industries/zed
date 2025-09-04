@@ -395,6 +395,7 @@ pub trait LspAdapter: 'static + Send + Sync {
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
+        cx: &AsyncApp,
     ) -> Result<Box<dyn 'static + Send + Any>>;
 
     fn will_fetch_server(
@@ -605,7 +606,7 @@ async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>
     delegate.update_status(name.clone(), BinaryStatus::CheckingForUpdate);
 
     let latest_version = adapter
-        .fetch_latest_server_version(delegate.as_ref())
+        .fetch_latest_server_version(delegate.as_ref(), cx)
         .await?;
 
     if let Some(binary) = adapter
@@ -2222,6 +2223,7 @@ impl LspAdapter for FakeLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
+        _: &AsyncApp,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         unreachable!();
     }
