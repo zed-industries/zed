@@ -149,6 +149,11 @@ struct GlobalFs(Arc<dyn Fs>);
 impl Global for GlobalFs {}
 
 impl dyn Fs {
+    pub fn try_global(cx: &App) -> Option<Arc<Self>> {
+        cx.try_global::<GlobalFs>()
+            .map(|global_fs| global_fs.0.clone())
+    }
+
     /// Returns the global [`Fs`].
     pub fn global(cx: &App) -> Arc<Self> {
         GlobalFs::global(cx).0.clone()

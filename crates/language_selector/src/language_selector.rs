@@ -10,9 +10,11 @@ use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ParentElement,
     Render, Styled, WeakEntity, Window, actions,
 };
-use language::{Buffer, LanguageMatcher, LanguageName, LanguageRegistry};
+use language::{
+    Buffer, LanguageMatcher, LanguageName, LanguageRegistry, language_settings::AllLanguageSettings,
+};
 use picker::{Picker, PickerDelegate};
-use project::Project;
+use project::{Fs, Project, ProjectItem};
 use settings::Settings;
 use std::{ops::Not as _, path::Path, sync::Arc};
 use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
@@ -195,8 +197,8 @@ impl PickerDelegate for LanguageSelectorDelegate {
 
     fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         if let Some(mat) = self.matches.get(self.selected_index) {
-            let language_name = &self.candidates[mat.candidate_id].string;
-            let language = self.language_registry.language_for_name(language_name);
+            let language_name = self.candidates[mat.candidate_id].string.clone();
+            let language = self.language_registry.language_for_name(&language_name);
             let project = self.project.downgrade();
             let buffer = self.buffer.downgrade();
             cx.spawn_in(window, async move |_, cx| {
@@ -205,6 +207,26 @@ impl PickerDelegate for LanguageSelectorDelegate {
                 let buffer = buffer.upgrade().context("buffer was dropped")?;
                 project.update(cx, |project, cx| {
                     project.set_language_for_buffer(&buffer, language, cx);
+
+                    let absolute_path = buffer
+                        .read(cx)
+                        .project_path(cx)
+                        .and_then(|path| project.absolute_path(&path, cx));
+                    if let Some(absolute_path) = absolute_path {
+                        if let Some(fs) = <dyn Fs>::try_global(cx) {
+                            settings::update_settings_file::<AllLanguageSettings>(
+                                fs,
+                                cx,
+                                move |language_settings, _| {
+                                    language_settings
+                                        .file_types
+                                        .entry(Arc::from(language_name.as_str()))
+                                        .or_default()
+                                        .push(absolute_path.to_string_lossy().to_string());
+                                },
+                            );
+                        }
+                    }
                 })
             })
             .detach_and_log_err(cx);
