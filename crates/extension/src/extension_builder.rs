@@ -158,6 +158,9 @@ impl ExtensionBuilder {
             .arg(extension_dir.join("target"))
             // WASI builds do not work with sccache and just stuck, so disable it.
             .env("RUSTC_WRAPPER", "")
+            // Enable additional optimizations in extensions
+            .env("CARGO_PROFILE_RELEASE_LTO", "true")
+            .env("CARGO_PROFILE_RELEASE_CODEGEN_UNITS", "1")
             .current_dir(extension_dir)
             .output()
             .context("failed to run `cargo`")?;
