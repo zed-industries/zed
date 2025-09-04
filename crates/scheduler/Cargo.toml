@@ -1,0 +1,25 @@
+[package]
+name = "scheduler"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/scheduler.rs"
+doctest = false
+
+[features]
+test-support = []
+
+[dependencies]
+async-task.workspace = true
+chrono.workspace = true
+futures.workspace = true
+parking.workspace = true
+parking_lot.workspace = true
+rand.workspace = true
+workspace-hack.workspace = true

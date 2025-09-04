@@ -2842,12 +2842,12 @@ impl Buffer {
 
             let new_start = last_end.map_or(0, |last_end| last_end + 1);
             let mut range = self.random_byte_range(new_start, rng);
-            if rng.gen_bool(0.2) {
+            if rng.random_bool(0.2) {
                 mem::swap(&mut range.start, &mut range.end);
             }
             last_end = Some(range.end);
 
-            let new_text_len = rng.gen_range(0..10);
+            let new_text_len = rng.random_range(0..10);
             let mut new_text: String = RandomCharIter::new(&mut *rng).take(new_text_len).collect();
             new_text = new_text.to_uppercase();
 

@@ -164,7 +164,7 @@ use project::{
         DiagnosticSeverity, GitGutterSetting, GoToDiagnosticSeverityFilter, ProjectSettings,
     },
 };
-use rand::{seq::SliceRandom, thread_rng};
+use rand::seq::SliceRandom;
 use rpc::{ErrorCode, ErrorExt, proto::PeerId};
 use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide};
 use selections_collection::{
@@ -10971,7 +10971,7 @@ impl Editor {
     }
 
     pub fn shuffle_lines(&mut self, _: &ShuffleLines, window: &mut Window, cx: &mut Context<Self>) {
-        self.manipulate_immutable_lines(window, cx, |lines| lines.shuffle(&mut thread_rng()))
+        self.manipulate_immutable_lines(window, cx, |lines| lines.shuffle(&mut rand::rng()))
     }
 
     fn manipulate_lines<M>(

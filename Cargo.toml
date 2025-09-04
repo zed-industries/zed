@@ -131,6 +131,7 @@ members = [
     "crates/refineable",
     "crates/refineable/derive_refineable",
     "crates/release_channel",
+    "crates/scheduler",
     "crates/remote",
     "crates/remote_server",
     "crates/repl",
@@ -360,6 +361,7 @@ proto = { path = "crates/proto" }
 recent_projects = { path = "crates/recent_projects" }
 refineable = { path = "crates/refineable" }
 release_channel = { path = "crates/release_channel" }
+scheduler = { path = "crates/scheduler" }
 remote = { path = "crates/remote" }
 remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
@@ -444,6 +446,7 @@ async-fs = "2.1"
 async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
 async-recursion = "1.0.0"
 async-tar = "0.5.0"
+async-task = "4.7"
 async-trait = "0.1"
 async-tungstenite = "0.29.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
@@ -538,6 +541,7 @@ objc = "0.2"
 open = "5.0.0"
 ordered-float = "2.1.1"
 palette = { version = "0.7.5", default-features = false, features = ["std"] }
+parking = "2.0"
 parking_lot = "0.12.1"
 partial-json-fixer = "0.5.3"
 parse_int = "0.9"
@@ -560,7 +564,7 @@ prost-build = "0.9"
 prost-types = "0.9"
 pulldown-cmark = { version = "0.12.0", default-features = false }
 quote = "1.0.9"
-rand = "0.8.5"
+rand = "0.9"
 rayon = "1.8"
 ref-cast = "1.0.24"
 regex = "1.5"
