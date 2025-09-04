@@ -467,6 +467,16 @@ impl SettingsStore {
         &self.raw_user_settings
     }
 
+    /// TODO kb docs
+    pub fn set_raw_user_settings(&mut self, new_settings: Value) {
+        log::warn!(
+            "##################################### old_settings: {:?}, new_settings: {new_settings:?}",
+            self.raw_default_settings
+        );
+        // TODO kb merge?
+        self.raw_default_settings = new_settings;
+    }
+
     /// Get the configured settings profile names.
     pub fn configured_settings_profiles(&self) -> impl Iterator<Item = &str> {
         self.raw_user_settings
@@ -519,20 +529,6 @@ impl SettingsStore {
                     && e.kind() == std::io::ErrorKind::NotFound
                 {
                     return Ok(crate::initial_user_settings_content().to_string());
-                }
-                Err(err)
-            }
-        }
-    }
-
-    pub async fn load_global_settings(fs: &Arc<dyn Fs>) -> Result<String> {
-        match fs.load(paths::global_settings_file()).await {
-            result @ Ok(_) => result,
-            Err(err) => {
-                if let Some(e) = err.downcast_ref::<std::io::Error>()
-                    && e.kind() == std::io::ErrorKind::NotFound
-                {
-                    return Ok("{}".to_string());
                 }
                 Err(err)
             }
