@@ -2,7 +2,9 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::value::RawValue;
+use std::marker::PhantomData;
 use strum::{Display, EnumIter, EnumString};
 use uuid::Uuid;
 
@@ -152,30 +154,10 @@ pub struct PredictEditsBody {
     pub git_info: Option<PredictEditsGitInfo>,
 }
 
-/// Additional context only stored when can_collect_data is true for the corresponding edit
-/// predictions request.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PredictEditsAdditionalContext {
-    /// Path to the file in the repository that contains the input excerpt.
-    pub input_path: String,
-    /// Cursor position within the file that contains the input excerpt.
-    pub cursor_point: Point,
-    /// Cursor offset in bytes within the file that contains the input excerpt.
-    pub cursor_offset: usize,
-    #[serde(flatten)]
-    pub git_info: PredictEditsGitInfo,
-    /// Diagnostic near the cursor position.
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub diagnostic_groups: Vec<(String, Box<serde_json::value::RawValue>)>,
-    /// True if the diagnostics were truncated.
-    pub diagnostic_groups_truncated: bool,
-    /// Recently active files that may be within this repository.
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub recent_files: Vec<PredictEditsRecentFile>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictEditsGitInfo {
+    /// full_path to the repo (worktree name + relative path to repo)
+    pub worktree_path: Option<String>,
     /// SHA of git HEAD commit at time of prediction.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub head_sha: Option<String>,
@@ -187,32 +169,6 @@ pub struct PredictEditsGitInfo {
     pub remote_upstream_url: Option<String>,
 }
 
-/// A zero-indexed point in a text buffer consisting of a row and column.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Point {
-    pub row: u32,
-    pub column: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PredictEditsRecentFile {
-    /// Path to a file within the repository.
-    pub path: String,
-    /// Most recent cursor position with the file.
-    pub cursor_point: Point,
-    /// Milliseconds between the editor for this file being active and the request time.
-    pub active_to_now_ms: u32,
-    /// Number of times the editor for this file was activated.
-    pub activation_count: u32,
-    /// Rough estimate of milliseconds the user was editing the file.
-    pub cumulative_time_editing_ms: u32,
-    /// Rough estimate of milliseconds the user was navigating within the file.
-    pub cumulative_time_navigating_ms: u32,
-    /// Whether the file is a multibuffer.
-    #[serde(skip_serializing_if = "is_default", default)]
-    pub is_multibuffer: bool,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictEditsResponse {
     pub request_id: Uuid,
@@ -222,6 +178,55 @@ pub struct PredictEditsResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AcceptEditPredictionBody {
     pub request_id: Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PredictEditsTrainingData {
+    pub request_id: Uuid,
+    /// When true, `request_id` is an ID that corresponds to an edit prediction.
+    pub has_prediction: bool,
+    /// State that `events` is based on. Initially this is `GitHead` and subsequent uploads will
+    /// then be based on the previous upload.
+    pub diff_base: PredictEditsDiffBase,
+    /// Fine-grained edit events atop `diff_base`.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub events: Vec<SerializedJson<PredictEditsEvent>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PredictEditsDiffBase {
+    GitHead { git_info: PredictEditsGitInfo },
+    PreviousUpload { request_id: Uuid },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PredictEditsEvent {
+    pub entry_id: usize,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub path: Option<String>,
+    pub timestamp_ms: u64,
+    pub data: PredictEditsEventData,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PredictEditsEventData {
+    MoveCursor {
+        offset: usize,
+        #[serde(skip_serializing_if = "Vec::is_empty", default)]
+        diagnostic_groups: Vec<(String, Box<RawValue>)>,
+        #[serde(skip_serializing_if = "is_default", default)]
+        diagnostic_groups_truncated: bool,
+    },
+    Create {
+        content: String,
+    },
+    Delete,
+    Edit {
+        unified_diff: String,
+    },
+    MarkDiffTooLarge,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
@@ -380,6 +385,58 @@ pub struct CurrentUsage {
 pub struct UsageData {
     pub used: u32,
     pub limit: UsageLimit,
+}
+
+#[derive(Debug, Clone)]
+pub struct SerializedJson<T> {
+    raw: Box<RawValue>,
+    _phantom: PhantomData<T>,
+}
+
+impl<T> SerializedJson<T>
+where
+    T: Serialize + for<'de> Deserialize<'de>,
+{
+    pub fn new(value: &T) -> Result<Self, serde_json::Error> {
+        Ok(SerializedJson {
+            raw: serde_json::value::to_raw_value(value)?,
+            _phantom: PhantomData,
+        })
+    }
+
+    pub fn deserialize(&self) -> Result<T, serde_json::Error> {
+        serde_json::from_str(self.raw.get())
+    }
+
+    pub fn as_raw(&self) -> &RawValue {
+        &self.raw
+    }
+
+    pub fn into_raw(self) -> Box<RawValue> {
+        self.raw
+    }
+}
+
+impl<T> Serialize for SerializedJson<T> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.raw.serialize(serializer)
+    }
+}
+
+impl<'de, T> Deserialize<'de> for SerializedJson<T> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = Box::<RawValue>::deserialize(deserializer)?;
+        Ok(SerializedJson {
+            raw,
+            _phantom: PhantomData,
+        })
+    }
 }
 
 fn is_default<T: Default + PartialEq>(value: &T) -> bool {

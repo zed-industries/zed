@@ -5,6 +5,7 @@ mod license_detection;
 mod onboarding_modal;
 mod onboarding_telemetry;
 mod rate_completion_modal;
+mod training_data_uploader;
 
 use arrayvec::ArrayVec;
 pub(crate) use completion_diff_element::*;
@@ -59,6 +60,8 @@ use uuid::Uuid;
 use workspace::Workspace;
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
 use worktree::Worktree;
+
+use crate::training_data_uploader::TrainingDataUploader;
 
 const CURSOR_MARKER: &str = "<|user_cursor_is_here|>";
 const START_OF_FILE_MARKER: &str = "<|start_of_file|>";
@@ -247,6 +250,8 @@ pub struct Zeta {
     user_store: Entity<UserStore>,
     license_detection_watchers: HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
     projects: HashMap<EntityId, ZetaProject>,
+    /// todo! document that this should be the only place Entity<TrainingDataUploader> is stored.
+    training_data_uploader: Option<Entity<TrainingDataUploader>>,
 }
 
 struct ZetaProject {
@@ -377,6 +382,7 @@ impl Zeta {
             license_detection_watchers: HashMap::default(),
             user_store,
             projects: HashMap::default(),
+            training_data_uploader: None,
         }
     }
 
@@ -528,6 +534,31 @@ impl Zeta {
             make_events_prompt,
             can_collect_data,
         ));
+
+        // todo! async
+        if matches!(can_collect_data, CanCollectData(true)) {
+            let training_data_uploader = match &self.training_data_uploader {
+                None => {
+                    let training_data_uploader = cx.new(|cx| TrainingDataUploader::new(cx));
+                    self.training_data_uploader = Some(training_data_uploader.clone());
+                    &training_data_uploader
+                }
+                Some(training_data_uploader) => training_data_uploader,
+            };
+
+            training_data_uploader.update(cx, |training_data_uploader, cx| {
+                let project = project.read(cx);
+                let entry = project.entry_for_path(&project_path, cx)?;
+                if !worktree_entry_is_eligible_for_collection(&entry) {
+                    return None;
+                }
+
+                let git_store = project.git_store().read(cx);
+                let (repository, repo_path) =
+                    git_store.repository_and_path_for_project_path(&project_path, cx)?;
+                let repo_path_string = repo_path.to_str()?.to_string();
+            });
+        }
 
         cx.spawn(async move |this, cx| {
             let GatherContextOutput {
