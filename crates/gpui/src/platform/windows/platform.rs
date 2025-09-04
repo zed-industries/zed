@@ -257,9 +257,7 @@ impl WindowsPlatform {
                 };
                 for hwnd in all_windows.read().iter() {
                     unsafe {
-                        RedrawWindow(Some(hwnd.as_raw()), None, None, RDW_INVALIDATE)
-                            .ok()
-                            .log_err();
+                        let _ = RedrawWindow(Some(hwnd.as_raw()), None, None, RDW_INVALIDATE);
                     }
                 }
             }
