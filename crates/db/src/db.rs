@@ -23,7 +23,7 @@ use util::{ResultExt, maybe};
 use zed_env_vars::ZED_STATELESS;
 
 const CONNECTION_INITIALIZE_QUERY: &str = sql!(
-    PRAGMA foreign_keys=TRUE;
+    PRAGMA foreign_keys=FALSE;
 );
 
 const DB_INITIALIZE_QUERY: &str = sql!(
