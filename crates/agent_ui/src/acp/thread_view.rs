@@ -983,7 +983,7 @@ impl AcpThreadView {
                     this,
                     AuthRequired {
                         description: None,
-                        provider_id: Some(language_model::ANTHROPIC_PROVIDER_ID),
+                        provider_id: None,
                     },
                     agent,
                     connection,
@@ -3016,6 +3016,8 @@ impl AcpThreadView {
         let show_description =
             configuration_view.is_none() && description.is_none() && pending_auth_method.is_none();
 
+        let auth_methods = connection.auth_methods();
+
         v_flex().flex_1().size_full().justify_end().child(
             v_flex()
                 .p_2()
@@ -3046,21 +3048,23 @@ impl AcpThreadView {
                         .cloned()
                         .map(|view| div().w_full().child(view)),
                 )
-                .when(
-                    show_description,
-                    |el| {
-                        el.child(
-                            Label::new(format!(
-                                "You are not currently authenticated with {}. Please choose one of the following options:",
-                                self.agent.name()
-                            ))
-                            .size(LabelSize::Small)
-                            .color(Color::Muted)
-                            .mb_1()
-                            .ml_5(),
-                        )
-                    },
-                )
+                .when(show_description, |el| {
+                    el.child(
+                        Label::new(format!(
+                            "You are not currently authenticated with {}.{}",
+                            self.agent.name(),
+                            if auth_methods.len() > 1 {
+                                " Please choose one of the following options:"
+                            } else {
+                                ""
+                            }
+                        ))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                        .mb_1()
+                        .ml_5(),
+                    )
+                })
                 .when_some(pending_auth_method, |el, _| {
                     el.child(
                         h_flex()
@@ -3086,7 +3090,7 @@ impl AcpThreadView {
                             .child(Label::new("Authenticating…").size(LabelSize::Small)),
                     )
                 })
-                .when(!connection.auth_methods().is_empty(), |this| {
+                .when(!auth_methods.is_empty(), |this| {
                     this.child(
                         h_flex()
                             .justify_end()
@@ -3098,38 +3102,32 @@ impl AcpThreadView {
                                     .pt_2()
                                     .border_color(cx.theme().colors().border.opacity(0.8))
                             })
-                            .children(
-                                connection
-                                    .auth_methods()
-                                    .iter()
-                                    .enumerate()
-                                    .rev()
-                                    .map(|(ix, method)| {
-                                        Button::new(
-                                            SharedString::from(method.id.0.clone()),
-                                            method.name.clone(),
-                                        )
-                                        .when(ix == 0, |el| {
-                                            el.style(ButtonStyle::Tinted(ui::TintColor::Warning))
-                                        })
-                                        .label_size(LabelSize::Small)
-                                        .on_click({
-                                            let method_id = method.id.clone();
-                                            cx.listener(move |this, _, window, cx| {
-                                                telemetry::event!(
-                                                    "Authenticate Agent Started",
-                                                    agent = this.agent.telemetry_id(),
-                                                    method = method_id
-                                                );
+                            .children(connection.auth_methods().iter().enumerate().rev().map(
+                                |(ix, method)| {
+                                    Button::new(
+                                        SharedString::from(method.id.0.clone()),
+                                        method.name.clone(),
+                                    )
+                                    .when(ix == 0, |el| {
+                                        el.style(ButtonStyle::Tinted(ui::TintColor::Warning))
+                                    })
+                                    .label_size(LabelSize::Small)
+                                    .on_click({
+                                        let method_id = method.id.clone();
+                                        cx.listener(move |this, _, window, cx| {
+                                            telemetry::event!(
+                                                "Authenticate Agent Started",
+                                                agent = this.agent.telemetry_id(),
+                                                method = method_id
+                                            );
 
-                                                this.authenticate(method_id.clone(), window, cx)
-                                            })
+                                            this.authenticate(method_id.clone(), window, cx)
                                         })
-                                    }),
-                            ),
+                                    })
+                                },
+                            )),
                     )
-                })
-
+                }),
         )
     }
 
