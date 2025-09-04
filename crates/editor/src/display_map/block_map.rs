@@ -128,10 +128,10 @@ impl<T> BlockPlacement<T> {
         }
     }
 
-    fn sort_order(&self) -> u8 {
+    fn tie_break(&self) -> u8 {
         match self {
-            BlockPlacement::Above(_) => 0,
-            BlockPlacement::Replace(_) => 1,
+            BlockPlacement::Replace(_) => 0,
+            BlockPlacement::Above(_) => 1,
             BlockPlacement::Near(_) => 2,
             BlockPlacement::Below(_) => 3,
         }
@@ -143,7 +143,7 @@ impl BlockPlacement<Anchor> {
         self.start()
             .cmp(other.start(), buffer)
             .then_with(|| other.end().cmp(self.end(), buffer))
-            .then_with(|| self.sort_order().cmp(&other.sort_order()))
+            .then_with(|| self.tie_break().cmp(&other.tie_break()))
     }
 
     fn to_wrap_row(&self, wrap_snapshot: &WrapSnapshot) -> Option<BlockPlacement<WrapRow>> {
@@ -847,6 +847,7 @@ impl BlockMap {
                 .start()
                 .cmp(placement_b.start())
                 .then_with(|| placement_b.end().cmp(placement_a.end()))
+                .then_with(|| placement_a.tie_break().cmp(&placement_b.tie_break()))
                 .then_with(|| {
                     if block_a.is_header() {
                         Ordering::Less
@@ -856,7 +857,6 @@ impl BlockMap {
                         Ordering::Equal
                     }
                 })
-                .then_with(|| placement_a.sort_order().cmp(&placement_b.sort_order()))
                 .then_with(|| match (block_a, block_b) {
                     (
                         Block::ExcerptBoundary {
