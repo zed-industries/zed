@@ -21,6 +21,7 @@ impl Render for HolyGrailExample {
 
         div()
             .gap_1()
+            .id("Random")
             .grid()
             .bg(rgb(0x505050))
             .size(px(500.0))
@@ -37,7 +38,9 @@ impl Render for HolyGrailExample {
             )
             .child(
                 block(gpui::red())
-                    .col_span(1)
+                    .id("Table of contents")
+                    .row_span(1)
+                    .container_3xs(|style| style.col_span(1).row_span_auto())
                     .h_56()
                     .child("Table of contents"),
             )
@@ -49,8 +52,10 @@ impl Render for HolyGrailExample {
             )
             .child(
                 block(gpui::blue())
-                    .col_span(1)
-                    .row_span(3)
+                    .id("Ads")
+                    .col_span(3)
+                    .row_span(1)
+                    .container_3xs(|style| style.col_span(1).row_span(3))
                     .child("AD :(")
                     .text_color(gpui::white()),
             )
