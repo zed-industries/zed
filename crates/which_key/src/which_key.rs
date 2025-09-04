@@ -3,7 +3,7 @@
 mod which_key_modal;
 mod which_key_settings;
 
-use gpui::{App, AppContext, Context, Keystroke, Task, WeakEntity, Window};
+use gpui::{App, Keystroke};
 use settings::Settings;
 use std::{sync::LazyLock, time::Duration};
 use util::ResultExt;
@@ -14,15 +14,46 @@ use workspace::Workspace;
 pub fn init(cx: &mut App) {
     WhichKeySettings::register(cx);
 
-    cx.observe_new(|workspace: &mut Workspace, window, cx| {
+    cx.observe_new(|_: &mut Workspace, window, cx| {
         let Some(window) = window else {
             return;
         };
+        let mut timer = None;
+        cx.observe_pending_input(window, move |workspace, window, cx| {
+            if window.pending_input_keystrokes().is_none() {
+                if let Some(modal) = workspace.active_modal::<WhichKeyModal>(cx) {
+                    modal.update(cx, |modal, cx| modal.dismiss(cx));
+                };
+                timer.take();
+                return;
+            }
 
-        let workspace_handle = cx.entity();
-        let which_key =
-            cx.new::<WhichKey>(|cx| WhichKey::new(workspace_handle.downgrade(), window, cx));
-        workspace.which_key = Some(which_key.into_any());
+            let which_key_settings = WhichKeySettings::get_global(cx);
+            if !which_key_settings.enabled {
+                return;
+            }
+
+            let delay_ms = which_key_settings.delay_ms;
+
+            timer.replace(cx.spawn_in(window, async move |workspace_handle, cx| {
+                cx.background_executor()
+                    .timer(Duration::from_millis(delay_ms))
+                    .await;
+
+                workspace_handle
+                    .update_in(cx, |workspace, window, cx| {
+                        if workspace.active_modal::<WhichKeyModal>(cx).is_some() {
+                            return;
+                        };
+
+                        workspace.toggle_modal(window, cx, |window, cx| {
+                            WhichKeyModal::new(workspace_handle.clone(), window, cx)
+                        });
+                    })
+                    .log_err();
+            }));
+        })
+        .detach();
     })
     .detach();
 }
@@ -66,72 +97,3 @@ pub static FILTERED_KEYSTROKES: LazyLock<Vec<Vec<Keystroke>>> = LazyLock::new(||
     })
     .collect()
 });
-
-pub struct WhichKey {
-    timer: Option<Task<()>>,
-    workspace: WeakEntity<Workspace>,
-}
-
-impl WhichKey {
-    pub fn new(
-        workspace: WeakEntity<Workspace>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        cx.observe_pending_input(window, |this: &mut Self, window, cx| {
-            this.update_pending_keys(window, cx);
-        })
-        .detach();
-
-        Self {
-            timer: None,
-            workspace,
-        }
-    }
-
-    fn update_pending_keys(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if window.pending_input_keystrokes().is_none() {
-            // Hide modal
-            self.workspace
-                .update(cx, |workspace, cx| {
-                    if workspace.active_modal::<WhichKeyModal>(cx).is_none() {
-                        return;
-                    };
-
-                    workspace.hide_modal(window, cx);
-                })
-                .log_err();
-
-            self.timer = None;
-            return;
-        }
-
-        let which_key_settings = WhichKeySettings::get_global(cx);
-        if !which_key_settings.enabled {
-            return;
-        }
-
-        let delay_ms = which_key_settings.delay_ms;
-        let workspace_handle = self.workspace.clone();
-
-        self.timer = Some(cx.spawn_in(window, async move |_, cx| {
-            cx.background_executor()
-                .timer(Duration::from_millis(delay_ms))
-                .await;
-
-            // Open modal
-            workspace_handle
-                .clone()
-                .update_in(cx, |workspace, window, cx| {
-                    if workspace.active_modal::<WhichKeyModal>(cx).is_some() {
-                        return;
-                    };
-
-                    workspace.toggle_modal(window, cx, |window, cx| {
-                        WhichKeyModal::new(workspace_handle, window, cx)
-                    });
-                })
-                .log_err();
-        }));
-    }
-}

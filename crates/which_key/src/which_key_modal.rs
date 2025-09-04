@@ -8,7 +8,6 @@ use settings::Settings;
 use std::collections::HashMap;
 use theme::ThemeSettings;
 use ui::{DynamicSpacing, prelude::*, text_for_keystrokes};
-use util::ResultExt;
 use workspace::{ModalView, Workspace};
 
 use crate::FILTERED_KEYSTROKES;
@@ -16,6 +15,8 @@ use crate::FILTERED_KEYSTROKES;
 pub struct WhichKeyModal {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
+    bindings: Vec<(SharedString, SharedString)>,
+    pending_keys: SharedString,
     _pending_input_subscription: Subscription,
     _focus_out_subscription: Subscription,
 }
@@ -29,58 +30,106 @@ impl WhichKeyModal {
         // Keep focus where it currently is
         let focus_handle = window.focused(cx).unwrap_or(cx.focus_handle());
 
-        Self {
+        let handle = cx.weak_entity();
+        let mut this = Self {
             workspace: workspace.clone(),
             focus_handle: focus_handle.clone(),
+            bindings: Vec::new(),
+            pending_keys: SharedString::new_static(""),
             _pending_input_subscription: cx.observe_pending_input(
                 window,
                 |this: &mut Self, window, cx| {
                     this.update_pending_keys(window, cx);
                 },
             ),
-            _focus_out_subscription: window.on_focus_out(
-                &focus_handle,
-                cx,
-                move |_, window, cx| {
-                    WhichKeyModal::hide(workspace.clone(), window, cx);
-                },
-            ),
-        }
+            _focus_out_subscription: window.on_focus_out(&focus_handle, cx, move |_, _, cx| {
+                handle.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
+            }),
+        };
+        this.update_pending_keys(window, cx);
+        this
+    }
+
+    pub fn dismiss(&self, cx: &mut Context<Self>) {
+        cx.emit(DismissEvent)
     }
 
     fn update_pending_keys(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if window.pending_input_keystrokes().is_none() {
-            WhichKeyModal::hide(self.workspace.clone(), window, cx);
-        }
-    }
+        let Some(pending_keys) = window.pending_input_keystrokes() else {
+            cx.emit(DismissEvent);
+            return;
+        };
+        let bindings = window.possible_bindings_for_input(pending_keys);
 
-    fn hide(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &mut App) {
-        workspace
-            .update(cx, |workspace, cx| {
-                if workspace.active_modal::<WhichKeyModal>(cx).is_none() {
-                    return;
-                };
-
-                workspace.hide_modal(window, cx);
+        let mut binding_data = bindings
+            .iter()
+            .map(|binding| {
+                // Map to keystrokes
+                (
+                    binding
+                        .keystrokes()
+                        .iter()
+                        .map(|k| k.inner().to_owned())
+                        .collect::<Vec<_>>(),
+                    binding.action(),
+                )
             })
-            .log_err();
+            .filter(|(keystrokes, _action)| {
+                // Check if this binding matches any filtered keystroke pattern
+                !FILTERED_KEYSTROKES.iter().any(|filtered| {
+                    keystrokes.len() >= filtered.len()
+                        && keystrokes[..filtered.len()] == filtered[..]
+                })
+            })
+            .map(|(keystrokes, action)| {
+                // Map to remaining keystrokes and action name
+                let remaining_keystrokes = keystrokes[pending_keys.len()..].to_vec();
+                let action_name: SharedString = humanize_action_name(action.name()).into();
+                (remaining_keystrokes, action_name)
+            })
+            .collect();
+
+        binding_data = group_bindings(binding_data);
+
+        // Sort bindings from shortest to longest, with groups last
+        // Using stable sort to preserve relative order of equal elements
+        binding_data.sort_by(|(keystrokes_a, action_a), (keystrokes_b, action_b)| {
+            // Groups (actions starting with "+") should go last
+            let is_group_a = action_a.starts_with('+');
+            let is_group_b = action_b.starts_with('+');
+
+            // First, separate groups from non-groups
+            let group_cmp = is_group_a.cmp(&is_group_b);
+            if group_cmp != std::cmp::Ordering::Equal {
+                return group_cmp;
+            }
+
+            // Then sort by keystroke count
+            let keystroke_cmp = keystrokes_a.len().cmp(&keystrokes_b.len());
+            if keystroke_cmp != std::cmp::Ordering::Equal {
+                return keystroke_cmp;
+            }
+
+            // Finally sort by text length, then lexicographically for full stability
+            let text_a = text_for_keystrokes(keystrokes_a, cx);
+            let text_b = text_for_keystrokes(keystrokes_b, cx);
+            let text_len_cmp = text_a.len().cmp(&text_b.len());
+            if text_len_cmp != std::cmp::Ordering::Equal {
+                return text_len_cmp;
+            }
+            text_a.cmp(&text_b)
+        });
+        binding_data.dedup();
+        self.pending_keys = text_for_keystrokes(&pending_keys, cx).into();
+        self.bindings = binding_data
+            .into_iter()
+            .map(|(keystrokes, action)| (text_for_keystrokes(&keystrokes, cx).into(), action))
+            .collect();
     }
 }
 
 impl Render for WhichKeyModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let pending_keys = window.pending_input_keystrokes().map(|x| x.to_vec());
-        let bindings = pending_keys
-            .as_ref()
-            .map(|pending_keys| window.possible_bindings_for_input(pending_keys));
-
-        let (Some(pending_keys), Some(bindings)) = (pending_keys, bindings) else {
-            return div().into_any_element();
-        };
-        if bindings.is_empty() {
-            return div().into_any_element();
-        }
-
         let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
         let status_bar_height = DynamicSpacing::Base08.px(cx) * 2.0 + ui_font_size;
 
@@ -120,67 +169,6 @@ impl Render for WhichKeyModal {
             (Pixels::ZERO, Pixels::ZERO, Pixels::ZERO)
         };
 
-        let mut binding_data: Vec<_> = bindings
-            .iter()
-            .map(|binding| {
-                // Map to keystrokes
-                (
-                    binding
-                        .keystrokes()
-                        .iter()
-                        .map(|k| k.inner().to_owned())
-                        .collect::<Vec<_>>(),
-                    binding.action(),
-                )
-            })
-            .filter(|(keystrokes, _action)| {
-                // Check if this binding matches any filtered keystroke pattern
-                !FILTERED_KEYSTROKES.iter().any(|filtered| {
-                    keystrokes.len() >= filtered.len()
-                        && keystrokes[..filtered.len()] == filtered[..]
-                })
-            })
-            .map(|(keystrokes, action)| {
-                // Map to remaining keystrokes and action name
-                let remaining_keystrokes = keystrokes[pending_keys.len()..].to_vec();
-                let action_name = humanize_action_name(action.name());
-                (remaining_keystrokes, action_name)
-            })
-            .collect();
-
-        binding_data = group_bindings(binding_data);
-
-        // Sort bindings from shortest to longest, with groups last
-        // Using stable sort to preserve relative order of equal elements
-        binding_data.sort_by(|(keystrokes_a, action_a), (keystrokes_b, action_b)| {
-            // Groups (actions starting with "+") should go last
-            let is_group_a = action_a.starts_with('+');
-            let is_group_b = action_b.starts_with('+');
-
-            // First, separate groups from non-groups
-            let group_cmp = is_group_a.cmp(&is_group_b);
-            if group_cmp != std::cmp::Ordering::Equal {
-                return group_cmp;
-            }
-
-            // Then sort by keystroke count
-            let keystroke_cmp = keystrokes_a.len().cmp(&keystrokes_b.len());
-            if keystroke_cmp != std::cmp::Ordering::Equal {
-                return keystroke_cmp;
-            }
-
-            // Finally sort by text length, then lexicographically for full stability
-            let text_a = text_for_keystrokes(keystrokes_a, cx);
-            let text_b = text_for_keystrokes(keystrokes_b, cx);
-            let text_len_cmp = text_a.len().cmp(&text_b.len());
-            if text_len_cmp != std::cmp::Ordering::Equal {
-                return text_len_cmp;
-            }
-            text_a.cmp(&text_b)
-        });
-        // Remove duplicates
-        binding_data.dedup();
-
         let column_gap = DynamicSpacing::Base32.px(cx); // Gap between columns
         let row_gap = DynamicSpacing::Base04.px(cx); // Gap between rows
         let content_gap = DynamicSpacing::Base08.px(cx); // Gap between current pending keystroke and grid of keys+actions
@@ -191,13 +179,18 @@ impl Render for WhichKeyModal {
         let max_column_width = ui_font_size * 125.0;
 
         // Calculate actual column width based on largest binding element
-        let actual_column_width = binding_data
+        let actual_column_width = self
+            .bindings
             .iter()
             .map(|(remaining_keystrokes, action_name)| {
-                create_aligned_binding_element(remaining_keystrokes, action_name, None, cx)
-                    .into_any_element()
-                    .layout_as_root(AvailableSpace::min_size(), window, cx)
-                    .width
+                create_aligned_binding_element(
+                    remaining_keystrokes.clone(),
+                    action_name.clone(),
+                    None,
+                )
+                .into_any_element()
+                .layout_as_root(AvailableSpace::min_size(), window, cx)
+                .width
             })
             .max_by(|x, y| x.0.partial_cmp(&y.0).unwrap())
             .unwrap_or(Pixels::ZERO);
@@ -216,7 +209,7 @@ impl Render for WhichKeyModal {
             .max(1.0) as usize;
 
         // Calculate rows per column
-        let total_items = binding_data.len();
+        let total_items = self.bindings.len();
         let rows_per_column = (total_items + columns - 1).div_ceil(columns);
 
         // Create columns
@@ -229,13 +222,13 @@ impl Render for WhichKeyModal {
                 break;
             }
 
-            let column_items = &binding_data[start_idx..end_idx];
+            let column_items = &self.bindings[start_idx..end_idx];
 
             // Find the longest keystroke text width for this column
             let column_longest_keystroke_width = column_items
                 .iter()
                 .map(|(remaining_keystrokes, _)| {
-                    Label::new(text_for_keystrokes(remaining_keystrokes, cx))
+                    Label::new(remaining_keystrokes.clone())
                         .into_any_element()
                         .layout_as_root(AvailableSpace::min_size(), window, cx)
                         .width
@@ -245,10 +238,9 @@ impl Render for WhichKeyModal {
             let column = v_flex().gap(row_gap).children(column_items.iter().map(
                 |(remaining_keystrokes, action_name)| {
                     create_aligned_binding_element(
-                        remaining_keystrokes,
-                        action_name,
+                        remaining_keystrokes.clone(),
+                        action_name.clone(),
                         column_longest_keystroke_width,
-                        cx,
                     )
                 },
             ));
@@ -319,9 +311,7 @@ impl Render for WhichKeyModal {
             .child(
                 v_flex()
                     .gap(content_gap)
-                    .child(
-                        Label::new(text_for_keystrokes(&pending_keys, cx)).weight(FontWeight::BOLD),
-                    )
+                    .child(Label::new(self.pending_keys.clone()).weight(FontWeight::BOLD))
                     .child(
                         h_flex()
                             .gap(column_gap)
@@ -347,8 +337,11 @@ impl ModalView for WhichKeyModal {
     }
 }
 
-fn group_bindings(binding_data: Vec<(Vec<Keystroke>, String)>) -> Vec<(Vec<Keystroke>, String)> {
-    let mut groups: HashMap<Option<Keystroke>, Vec<(Vec<Keystroke>, String)>> = HashMap::new();
+fn group_bindings(
+    binding_data: Vec<(Vec<Keystroke>, SharedString)>,
+) -> Vec<(Vec<Keystroke>, SharedString)> {
+    let mut groups: HashMap<Option<Keystroke>, Vec<(Vec<Keystroke>, SharedString)>> =
+        HashMap::new();
 
     // Group bindings by their first keystroke
     for (remaining_keystrokes, action_name) in binding_data {
@@ -369,7 +362,7 @@ fn group_bindings(binding_data: Vec<(Vec<Keystroke>, String)>) -> Vec<(Vec<Keyst
             // This is a group - create a single entry with just the first keystroke
             let first_keystroke = vec![first_key.unwrap()];
             let count = group_bindings.len();
-            result.push((first_keystroke, format!("+{} keybinds", count)));
+            result.push((first_keystroke, format!("+{} keybinds", count).into()));
         } else {
             // Not a group or empty keystrokes - add all bindings as-is
             result.append(&mut group_bindings);
@@ -380,28 +373,23 @@ fn group_bindings(binding_data: Vec<(Vec<Keystroke>, String)>) -> Vec<(Vec<Keyst
 }
 
 fn create_aligned_binding_element(
-    remaining_keystrokes: &[Keystroke],
-    action_name: &str,
+    keystrokes: SharedString,
+    action_name: SharedString,
     keystroke_width: Option<Pixels>,
-    cx: &Context<WhichKeyModal>,
 ) -> impl IntoElement {
     let keystroke = div()
         .when_some(keystroke_width, |div, width| div.w(width))
-        .child(
-            Label::new(text_for_keystrokes(remaining_keystrokes, cx)).color({
-                if action_name.starts_with('+') {
-                    Color::Success
-                } else {
-                    Color::Accent
-                }
-            }),
-        )
+        .child(Label::new(keystrokes).color({
+            if action_name.starts_with('+') {
+                Color::Success
+            } else {
+                Color::Accent
+            }
+        }))
         .text_align(gpui::TextAlign::Right);
 
     h_flex().items_center().gap_1p5().children([
         keystroke.into_any_element(),
-        Label::new(action_name.to_string())
-            .truncate()
-            .into_any_element(),
+        Label::new(action_name).truncate().into_any_element(),
     ])
 }

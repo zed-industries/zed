@@ -1147,7 +1147,6 @@ pub struct Workspace {
     _items_serializer: Task<Result<()>>,
     session_id: Option<String>,
     scheduled_tasks: Vec<Task<()>>,
-    pub which_key: Option<AnyEntity>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1480,7 +1479,6 @@ impl Workspace {
             session_id: Some(session_id),
 
             scheduled_tasks: Vec::new(),
-            which_key: None,
         }
     }
 
@@ -5738,12 +5736,6 @@ impl Workspace {
     {
         self.modal_layer.update(cx, |modal_layer, cx| {
             modal_layer.toggle_modal(window, cx, build)
-        })
-    }
-
-    pub fn hide_modal(&mut self, window: &mut Window, cx: &mut App) {
-        self.modal_layer.update(cx, |modal_layer, cx| {
-            modal_layer.hide_modal(window, cx);
         })
     }
 
