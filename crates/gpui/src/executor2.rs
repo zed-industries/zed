@@ -28,10 +28,7 @@ use rand::rngs::StdRng;
 /// A pointer to the executor that is currently running,
 /// for spawning background tasks.
 #[derive(Clone)]
-pub struct BackgroundExecutor {
-    #[doc(hidden)]
-    pub dispatcher: Arc<dyn PlatformDispatcher>,
-}
+pub struct BackgroundExecutor(scheduler::BackgroundExecutor);
 
 /// A pointer to the executor that is currently running,
 /// for spawning tasks on the main thread.
@@ -55,29 +52,17 @@ pub struct ForegroundExecutor {
 /// the task to continue running, but with no way to return a value.
 #[must_use]
 #[derive(Debug)]
-pub struct Task<T>(TaskState<T>);
-
-#[derive(Debug)]
-enum TaskState<T> {
-    /// A task that is ready to return a value
-    Ready(Option<T>),
-
-    /// A task that is currently running.
-    Spawned(async_task::Task<T>),
-}
+pub struct Task<T>(scheduler::Task<T>);
 
 impl<T> Task<T> {
     /// Creates a new task that will resolve with the value
     pub fn ready(val: T) -> Self {
-        Task(TaskState::Ready(Some(val)))
+        Task(scheduler::Task::ready(val))
     }
 
     /// Detaching a task runs it to completion in the background
     pub fn detach(self) {
-        match self {
-            Task(TaskState::Ready(_)) => {}
-            Task(TaskState::Spawned(task)) => task.detach(),
-        }
+        self.0.detach()
     }
 }
 
@@ -100,11 +85,8 @@ where
 impl<T> Future for Task<T> {
     type Output = T;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        match unsafe { self.get_unchecked_mut() } {
-            Task(TaskState::Ready(val)) => Poll::Ready(val.take().unwrap()),
-            Task(TaskState::Spawned(task)) => task.poll(cx),
-        }
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        self.0.poll(cx)
     }
 }
 
@@ -136,199 +118,63 @@ type AnyFuture<R> = Pin<Box<dyn 'static + Send + Future<Output = R>>>;
 /// In tests this is simulated by running tasks one by one in a deterministic
 /// (but arbitrary) order controlled by the `SEED` environment variable.
 impl BackgroundExecutor {
-    #[doc(hidden)]
-    pub fn new(dispatcher: Arc<dyn PlatformDispatcher>) -> Self {
-        Self { dispatcher }
-    }
-
     /// Enqueues the given future to be run to completion on a background thread.
-    pub fn spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R>
+    pub fn spawn<R>(&self, _future: impl Future<Output = R> + Send + 'static) -> Task<R>
     where
         R: Send + 'static,
     {
-        self.spawn_internal::<R>(Box::pin(future), None)
+        // self.0.spawn(future)
+        todo!()
     }
 
     /// Enqueues the given future to be run to completion on a background thread.
     /// The given label can be used to control the priority of the task in tests.
     pub fn spawn_labeled<R>(
         &self,
-        label: TaskLabel,
-        future: impl Future<Output = R> + Send + 'static,
+        _label: TaskLabel,
+        _future: impl Future<Output = R> + Send + 'static,
     ) -> Task<R>
     where
         R: Send + 'static,
     {
-        self.spawn_internal::<R>(Box::pin(future), Some(label))
-    }
-
-    fn spawn_internal<R: Send + 'static>(
-        &self,
-        future: AnyFuture<R>,
-        label: Option<TaskLabel>,
-    ) -> Task<R> {
-        let dispatcher = self.dispatcher.clone();
-        let (runnable, task) =
-            async_task::spawn(future, move |runnable| dispatcher.dispatch(runnable, label));
-        runnable.schedule();
-        Task(TaskState::Spawned(task))
+        // self.0.spawn_labeled(label, future)
+        todo!()
     }
 
     /// Used by the test harness to run an async test in a synchronous fashion.
     #[cfg(any(test, feature = "test-support"))]
     #[track_caller]
-    pub fn block_test<R>(&self, future: impl Future<Output = R>) -> R {
-        if let Ok(value) = self.block_internal(false, future, None) {
-            value
-        } else {
-            unreachable!()
-        }
+    pub fn block_test<R>(&self, _future: impl Future<Output = R>) -> R {
+        // self.0.block_test(future)
+        todo!()
     }
 
     /// Block the current thread until the given future resolves.
     /// Consider using `block_with_timeout` instead.
-    pub fn block<R>(&self, future: impl Future<Output = R>) -> R {
-        if let Ok(value) = self.block_internal(true, future, None) {
-            value
-        } else {
-            unreachable!()
-        }
-    }
-
-    #[cfg(not(any(test, feature = "test-support")))]
-    pub(crate) fn block_internal<Fut: Future>(
-        &self,
-        _background_only: bool,
-        future: Fut,
-        timeout: Option<Duration>,
-    ) -> Result<Fut::Output, impl Future<Output = Fut::Output> + use<Fut>> {
-        use std::time::Instant;
-
-        let mut future = Box::pin(future);
-        if timeout == Some(Duration::ZERO) {
-            return Err(future);
-        }
-        let deadline = timeout.map(|timeout| Instant::now() + timeout);
-
-        let unparker = self.dispatcher.unparker();
-        let waker = waker_fn(move || {
-            unparker.unpark();
-        });
-        let mut cx = std::task::Context::from_waker(&waker);
-
-        loop {
-            match future.as_mut().poll(&mut cx) {
-                Poll::Ready(result) => return Ok(result),
-                Poll::Pending => {
-                    let timeout =
-                        deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
-                    if !self.dispatcher.park(timeout)
-                        && deadline.is_some_and(|deadline| deadline < Instant::now())
-                    {
-                        return Err(future);
-                    }
-                }
-            }
-        }
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    #[track_caller]
-    pub(crate) fn block_internal<Fut: Future>(
-        &self,
-        background_only: bool,
-        future: Fut,
-        timeout: Option<Duration>,
-    ) -> Result<Fut::Output, impl Future<Output = Fut::Output> + use<Fut>> {
-        use std::sync::atomic::AtomicBool;
-
-        let mut future = Box::pin(future);
-        if timeout == Some(Duration::ZERO) {
-            return Err(future);
-        }
-        let Some(dispatcher) = self.dispatcher.as_test() else {
-            return Err(future);
-        };
-
-        let mut max_ticks = if timeout.is_some() {
-            dispatcher.gen_block_on_ticks()
-        } else {
-            usize::MAX
-        };
-        let unparker = self.dispatcher.unparker();
-        let awoken = Arc::new(AtomicBool::new(false));
-        let waker = waker_fn({
-            let awoken = awoken.clone();
-            move || {
-                awoken.store(true, SeqCst);
-                unparker.unpark();
-            }
-        });
-        let mut cx = std::task::Context::from_waker(&waker);
-
-        loop {
-            match future.as_mut().poll(&mut cx) {
-                Poll::Ready(result) => return Ok(result),
-                Poll::Pending => {
-                    if max_ticks == 0 {
-                        return Err(future);
-                    }
-                    max_ticks -= 1;
-
-                    if !dispatcher.tick(background_only) {
-                        if awoken.swap(false, SeqCst) {
-                            continue;
-                        }
-
-                        if !dispatcher.parking_allowed() {
-                            if dispatcher.advance_clock_to_next_delayed() {
-                                continue;
-                            }
-                            let mut backtrace_message = String::new();
-                            let mut waiting_message = String::new();
-                            if let Some(backtrace) = dispatcher.waiting_backtrace() {
-                                backtrace_message =
-                                    format!("\nbacktrace of waiting future:\n{:?}", backtrace);
-                            }
-                            if let Some(waiting_hint) = dispatcher.waiting_hint() {
-                                waiting_message = format!("\n  waiting on: {}\n", waiting_hint);
-                            }
-                            panic!(
-                                "parked with nothing left to run{waiting_message}{backtrace_message}",
-                            )
-                        }
-                        self.dispatcher.park(None);
-                    }
-                }
-            }
-        }
+    pub fn block<R>(&self, _future: impl Future<Output = R>) -> R {
+        // self.0.block(future)
+        todo!()
     }
 
     /// Block the current thread until the given future resolves
     /// or `duration` has elapsed.
     pub fn block_with_timeout<Fut: Future>(
         &self,
-        duration: Duration,
-        future: Fut,
-    ) -> Result<Fut::Output, impl Future<Output = Fut::Output> + use<Fut>> {
-        self.block_internal(true, future, Some(duration))
+        _duration: Duration,
+        _future: Fut,
+    ) -> Result<Fut::Output, Fut> {
+        // self.0.block_with_timeout(duration, future)
+        todo!()
     }
 
     /// Scoped lets you start a number of tasks and waits
     /// for all of them to complete before returning.
-    pub async fn scoped<'scope, F>(&self, scheduler: F)
+    pub async fn scoped<'scope, F>(&self, _scheduler: F)
     where
         F: FnOnce(&mut Scope<'scope>),
     {
-        let mut scope = Scope::new(self.clone());
-        (scheduler)(&mut scope);
-        let spawned = mem::take(&mut scope.futures)
-            .into_iter()
-            .map(|f| self.spawn(f))
-            .collect::<Vec<_>>();
-        for task in spawned {
-            task.await;
-        }
+        // self.0.scoped(scheduler).await
+        todo!()
     }
 
     /// Get the current time.
@@ -336,65 +182,66 @@ impl BackgroundExecutor {
     /// Calling this instead of `std::time::Instant::now` allows the use
     /// of fake timers in tests.
     pub fn now(&self) -> Instant {
-        self.dispatcher.now()
+        // self.0.now()
+        todo!()
     }
 
     /// Returns a task that will complete after the given duration.
     /// Depending on other concurrent tasks the elapsed duration may be longer
     /// than requested.
-    pub fn timer(&self, duration: Duration) -> Task<()> {
-        if duration.is_zero() {
-            return Task::ready(());
-        }
-        let (runnable, task) = async_task::spawn(async move {}, {
-            let dispatcher = self.dispatcher.clone();
-            move |runnable| dispatcher.dispatch_after(duration, runnable)
-        });
-        runnable.schedule();
-        Task(TaskState::Spawned(task))
+    pub fn timer(&self, _duration: Duration) -> Task<()> {
+        // self.0.timer(duration)
+        todo!()
     }
 
     /// in tests, start_waiting lets you indicate which task is waiting (for debugging only)
     #[cfg(any(test, feature = "test-support"))]
     pub fn start_waiting(&self) {
-        self.dispatcher.as_test().unwrap().start_waiting();
+        // self.0.start_waiting()
+        todo!()
     }
 
     /// in tests, removes the debugging data added by start_waiting
     #[cfg(any(test, feature = "test-support"))]
     pub fn finish_waiting(&self) {
-        self.dispatcher.as_test().unwrap().finish_waiting();
+        // self.0.finish_waiting()
+        todo!()
     }
 
     /// in tests, run an arbitrary number of tasks (determined by the SEED environment variable)
     #[cfg(any(test, feature = "test-support"))]
     pub fn simulate_random_delay(&self) -> impl Future<Output = ()> + use<> {
-        self.dispatcher.as_test().unwrap().simulate_random_delay()
+        // self.0.simulate_random_delay()
+        todo!()
     }
 
     /// in tests, indicate that a given task from `spawn_labeled` should run after everything else
     #[cfg(any(test, feature = "test-support"))]
     pub fn deprioritize(&self, task_label: TaskLabel) {
-        self.dispatcher.as_test().unwrap().deprioritize(task_label)
+        // self.0.deprioritize(task_label)
+        todo!()
     }
 
     /// in tests, move time forward. This does not run any tasks, but does make `timer`s ready.
     #[cfg(any(test, feature = "test-support"))]
     pub fn advance_clock(&self, duration: Duration) {
-        self.dispatcher.as_test().unwrap().advance_clock(duration)
+        // self.0.advance_clock(duration)
+        todo!()
     }
 
     /// in tests, run one task.
     #[cfg(any(test, feature = "test-support"))]
     pub fn tick(&self) -> bool {
-        self.dispatcher.as_test().unwrap().tick(false)
+        // self.0.tick()
+        todo!()
     }
 
     /// in tests, run all tasks that are ready to run. If after doing so
     /// the test still has outstanding tasks, this will panic. (See also [`Self::allow_parking`])
     #[cfg(any(test, feature = "test-support"))]
     pub fn run_until_parked(&self) {
-        self.dispatcher.as_test().unwrap().run_until_parked()
+        // self.0.run_until_parked()
+        todo!()
     }
 
     /// in tests, prevents `run_until_parked` from panicking if there are outstanding tasks.
@@ -402,45 +249,48 @@ impl BackgroundExecutor {
     /// do take real async time to run.
     #[cfg(any(test, feature = "test-support"))]
     pub fn allow_parking(&self) {
-        self.dispatcher.as_test().unwrap().allow_parking();
+        // self.0.allow_parking()
+        todo!()
     }
 
     /// undoes the effect of [`Self::allow_parking`].
     #[cfg(any(test, feature = "test-support"))]
     pub fn forbid_parking(&self) {
-        self.dispatcher.as_test().unwrap().forbid_parking();
+        // self.0.forbid_parking()
+        todo!()
     }
 
     /// adds detail to the "parked with nothing let to run" message.
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_waiting_hint(&self, msg: Option<String>) {
-        self.dispatcher.as_test().unwrap().set_waiting_hint(msg);
+        // self.0.set_waiting_hint(msg)
+        todo!()
     }
 
     /// in tests, returns the rng used by the dispatcher and seeded by the `SEED` environment variable
     #[cfg(any(test, feature = "test-support"))]
     pub fn rng(&self) -> StdRng {
-        self.dispatcher.as_test().unwrap().rng()
+        // self.0.rng()
+        todo!()
     }
 
     /// How many CPUs are available to the dispatcher.
     pub fn num_cpus(&self) -> usize {
-        #[cfg(any(test, feature = "test-support"))]
-        return 4;
-
-        #[cfg(not(any(test, feature = "test-support")))]
-        return num_cpus::get();
+        // self.0.num_cpus()
+        todo!()
     }
 
     /// Whether we're on the main thread.
     pub fn is_main_thread(&self) -> bool {
-        self.dispatcher.is_main_thread()
+        // self.0.is_main_thread()
+        todo!()
     }
 
     #[cfg(any(test, feature = "test-support"))]
     /// in tests, control the number of ticks that `block_with_timeout` will run before timing out.
     pub fn set_block_on_ticks(&self, range: std::ops::RangeInclusive<usize>) {
-        self.dispatcher.as_test().unwrap().set_block_on_ticks(range);
+        // self.0.set_block_on_ticks(range)
+        todo!()
     }
 }
 
