@@ -98,7 +98,7 @@ phf_shared = { version = "0.11" }
 prost = { version = "0.9" }
 prost-types = { version = "0.9" }
 rand-c38e5c1d305a1b54 = { package = "rand", version = "0.8", features = ["small_rng"] }
-rand_chacha = { version = "0.9" }
+rand_chacha = { version = "0.3" }
 rand_core = { version = "0.6", default-features = false, features = ["std"] }
 regalloc2 = { version = "0.11", features = ["checker", "enable-serde"] }
 regex = { version = "1" }
@@ -232,7 +232,7 @@ prost = { version = "0.9" }
 prost-types = { version = "0.9" }
 quote = { version = "1" }
 rand-c38e5c1d305a1b54 = { package = "rand", version = "0.8", features = ["small_rng"] }
-rand_chacha = { version = "0.9" }
+rand_chacha = { version = "0.3" }
 rand_core = { version = "0.6", default-features = false, features = ["std"] }
 regalloc2 = { version = "0.11", features = ["checker", "enable-serde"] }
 regex = { version = "1" }

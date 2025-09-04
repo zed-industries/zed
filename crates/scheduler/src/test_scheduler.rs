@@ -6,7 +6,6 @@ use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use futures::{FutureExt as _, channel::oneshot, future::LocalBoxFuture};
 use parking_lot::Mutex;
 use rand::prelude::*;
-use rand_chacha::ChaCha8Rng;
 use std::{
     collections::VecDeque,
     future::Future,
@@ -23,7 +22,7 @@ use std::{
 
 pub struct TestScheduler {
     clock: Arc<TestClock>,
-    rng: Arc<Mutex<ChaCha8Rng>>,
+    rng: Arc<Mutex<StdRng>>,
     state: Mutex<SchedulerState>,
     pub thread_id: thread::ThreadId,
     pub config: SchedulerConfig,
@@ -62,7 +61,7 @@ impl TestScheduler {
 
     pub fn new(config: SchedulerConfig) -> Self {
         Self {
-            rng: Arc::new(Mutex::new(ChaCha8Rng::seed_from_u64(config.seed))),
+            rng: Arc::new(Mutex::new(StdRng::seed_from_u64(config.seed))),
             state: Mutex::new(SchedulerState {
                 runnables: VecDeque::new(),
                 timers: Vec::new(),
@@ -80,7 +79,7 @@ impl TestScheduler {
         self.clock.clone()
     }
 
-    pub fn rng(&self) -> Arc<Mutex<ChaCha8Rng>> {
+    pub fn rng(&self) -> Arc<Mutex<StdRng>> {
         self.rng.clone()
     }
 

@@ -22,5 +22,4 @@ futures.workspace = true
 parking.workspace = true
 parking_lot.workspace = true
 rand.workspace = true
-rand_chacha.workspace = true
 workspace-hack.workspace = true

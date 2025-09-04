@@ -565,7 +565,6 @@ prost-types = "0.9"
 pulldown-cmark = { version = "0.12.0", default-features = false }
 quote = "1.0.9"
 rand = "0.9"
-rand_chacha = "0.9"
 rayon = "1.8"
 ref-cast = "1.0.24"
 regex = "1.5"
