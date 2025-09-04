@@ -59,6 +59,7 @@ impl super::LspAdapter for GoLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
+        _: &AsyncApp,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         let release =
             latest_github_release("golang/tools", false, false, delegate.http_client()).await?;
