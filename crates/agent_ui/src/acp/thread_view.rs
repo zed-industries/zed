@@ -19,6 +19,7 @@ use editor::{Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEff
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::FutureExt as _;
+// UI components for ACP thread view
 use gpui::{
     Action, Animation, AnimationExt, AnyView, App, BorderStyle, ClickEvent, ClipboardItem,
     CursorStyle, EdgesRefinement, ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, Length,
@@ -3860,7 +3861,7 @@ impl AcpThreadView {
                 match current_mode {
                     CompletionMode::Burn => CompletionMode::Normal,
                     CompletionMode::Normal => CompletionMode::Burn,
-                    CompletionMode::AcceptEdits | CompletionMode::PlanMode => CompletionMode::Burn,
+                    CompletionMode::AcceptEdits => CompletionMode::Burn,
                 },
                 cx,
             );
@@ -3910,21 +3911,9 @@ impl AcpThreadView {
         &mut self,
         _: &crate::TogglePlanMode,
         _window: &mut Window,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) {
-        let Some(thread) = self.as_native_thread(cx) else {
-            return;
-        };
-        thread.update(cx, |thread, cx| {
-            let current_mode = thread.completion_mode();
-            thread.set_completion_mode(
-                match current_mode {
-                    CompletionMode::PlanMode => CompletionMode::Normal,
-                    _ => CompletionMode::PlanMode,
-                },
-                cx,
-            );
-        });
+        // Not supported in ACP threads
     }
 
     fn cycle_completion_mode(
@@ -3935,35 +3924,40 @@ impl AcpThreadView {
     ) {
         self.completion_mode = match self.completion_mode {
             CompletionMode::Normal => CompletionMode::AcceptEdits,
-            CompletionMode::AcceptEdits => CompletionMode::PlanMode,
-            CompletionMode::PlanMode => CompletionMode::Burn,
+            CompletionMode::AcceptEdits => CompletionMode::Normal,
             CompletionMode::Burn => CompletionMode::Normal,
         };
-        
-        // Update the thread's completion mode if it exists
+
         if let Some(thread) = self.thread() {
-            thread.update(cx, |thread, _cx| {
-                thread.set_completion_mode(self.completion_mode);
+            thread.update(cx, |thread, cx| {
+                thread.set_completion_mode(self.completion_mode, cx);
             });
         }
-        
+
         cx.notify();
     }
 
     fn render_mode_indicator(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let (label, color) = match self.completion_mode {
             CompletionMode::Normal => ("Normal", Color::Muted),
-            CompletionMode::Burn => ("Burn", Color::Error),
-            CompletionMode::AcceptEdits => ("Accept", Color::Success),
-            CompletionMode::PlanMode => ("Plan", Color::Info),
+            CompletionMode::AcceptEdits => ("Auto-Accept", Color::Success),
+            CompletionMode::Burn => ("Normal", Color::Muted),
         };
-        
+
         Some(
             div()
                 .px_1()
                 .py_0p5()
                 .rounded_md()
                 .bg(color.color(cx).opacity(0.15))
+                .cursor(CursorStyle::PointingHand)
+                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
+                    this.cycle_completion_mode(
+                        &crate::CycleCompletionMode,
+                        window,
+                        cx,
+                    );
+                }))
                 .child(
                     Label::new(label)
                         .size(LabelSize::XSmall)
@@ -3972,7 +3966,7 @@ impl AcpThreadView {
                 .into_any_element()
         )
     }
-    
+
     fn render_burn_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let thread = self.as_native_thread(cx)?.read(cx);
 

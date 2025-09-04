@@ -381,7 +381,7 @@
   {
     "context": "AcpThread",
     "bindings": {
-      "ctrl-shift-m": "agent::CycleCompletionMode"
+      "ctrl-alt-m": "agent::CycleCompletionMode"
     }
   },
   {

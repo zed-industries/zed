@@ -326,7 +326,6 @@ pub enum CompletionMode {
     #[serde(alias = "max")]
     Burn,
     AcceptEdits,
-    PlanMode,
 }
 
 impl From<CompletionMode> for cloud_llm_client::CompletionMode {
@@ -335,7 +334,6 @@ impl From<CompletionMode> for cloud_llm_client::CompletionMode {
             CompletionMode::Normal => cloud_llm_client::CompletionMode::Normal,
             CompletionMode::Burn => cloud_llm_client::CompletionMode::Max,
             CompletionMode::AcceptEdits => cloud_llm_client::CompletionMode::Normal,
-            CompletionMode::PlanMode => cloud_llm_client::CompletionMode::Normal,
         }
     }
 }

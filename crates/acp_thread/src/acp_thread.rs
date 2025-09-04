@@ -910,11 +910,39 @@ impl AcpThread {
     pub fn prompt_capabilities(&self) -> acp::PromptCapabilities {
         self.prompt_capabilities
     }
-    
-    pub fn set_completion_mode(&mut self, mode: agent_settings::CompletionMode) {
+
+    pub fn set_completion_mode(&mut self, mode: agent_settings::CompletionMode, cx: &mut Context<Self>) {
         self.completion_mode = mode;
+        
+        if mode == agent_settings::CompletionMode::AcceptEdits {
+            self.approve_pending_tool_calls(cx);
+        }
     }
     
+    fn approve_pending_tool_calls(&mut self, cx: &mut Context<Self>) {
+        let mut pending_approvals = Vec::new();
+        for entry in &self.entries {
+            if let AgentThreadEntry::ToolCall(tool_call) = entry {
+                if let ToolCallStatus::WaitingForConfirmation { options, .. } = &tool_call.status {
+                    if let Some(allow_option) = options.iter().find(|opt| {
+                        opt.kind == acp::PermissionOptionKind::AllowOnce
+                    }) {
+                        pending_approvals.push((tool_call.id.clone(), allow_option.id.clone()));
+                    }
+                }
+            }
+        }
+        
+        for (tool_id, option_id) in pending_approvals {
+            self.authorize_tool_call(
+                tool_id,
+                option_id,
+                acp::PermissionOptionKind::AllowOnce,
+                cx,
+            );
+        }
+    }
+
     pub fn completion_mode(&self) -> agent_settings::CompletionMode {
         self.completion_mode
     }
@@ -1318,9 +1346,9 @@ impl AcpThread {
         let (tx, rx) = oneshot::channel();
 
         // Check if we should auto-accept based on completion mode or settings
-        let should_auto_accept = self.completion_mode == agent_settings::CompletionMode::AcceptEdits 
+        let should_auto_accept = self.completion_mode == agent_settings::CompletionMode::AcceptEdits
             || AgentSettings::get_global(cx).always_allow_tool_actions;
-            
+
         if should_auto_accept {
             // Don't use AllowAlways, because then if you were to turn off always_allow_tool_actions,
             // some tools would (incorrectly) continue to auto-accept.
