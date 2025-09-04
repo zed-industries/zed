@@ -42,6 +42,11 @@ impl AgentServer for Gemini {
             settings.get::<AllAgentServersSettings>(None).gemini.clone()
         });
 
+        // Get the project environment variables for the root directory
+        let project_env = delegate.project().update(cx, |project, cx| {
+            project.directory_environment(root_dir.as_path().into(), cx)
+        });
+
         cx.spawn(async move |cx| {
             let ignore_system_version = settings
                 .as_ref()
@@ -68,12 +73,21 @@ impl AgentServer for Gemini {
                 command.args.push(ACP_ARG.into());
             }
 
+            // Start with project environment variables (from shell, .env files, etc.)
+            let mut env = project_env.await.unwrap_or_default();
+
+            // Add the API key if available (this takes precedence over project env)
             if let Some(api_key) = cx.update(GoogleLanguageModelProvider::api_key)?.await.ok() {
-                command
-                    .env
-                    .get_or_insert_default()
-                    .insert("GEMINI_API_KEY".to_owned(), api_key.key);
+                env.insert("GEMINI_API_KEY".to_owned(), api_key.key);
             }
+
+            // Merge with any existing command env (command env takes precedence)
+            if let Some(command_env) = &command.env {
+                env.extend(command_env.clone());
+            }
+
+            // Set the merged environment back on the command
+            command.env = Some(env);
 
             let root_dir_exists = fs.is_dir(&root_dir).await;
             anyhow::ensure!(

@@ -82,6 +82,13 @@ impl AgentServer for ClaudeCode {
             settings.get::<AllAgentServersSettings>(None).claude.clone()
         });
 
+        dbg!(&root_dir);
+
+        // Get the project environment variables for the root directory
+        let project_env = delegate.project().update(cx, |project, cx| {
+            project.directory_environment(root_dir.as_path().into(), cx)
+        });
+
         cx.spawn(async move |cx| {
             let mut command = if let Some(settings) = settings {
                 settings.command
@@ -99,6 +106,17 @@ impl AgentServer for ClaudeCode {
                 .await?
             };
 
+            // Merge project environment variables (from .env files, etc.)
+            if let Some(env) = dbg!(project_env.await) {
+                if let Some(command_env) = &mut command.env {
+                    command_env.extend(
+                        env.iter()
+                            .map(|(key, val)| dbg!((key.clone(), val.clone()))),
+                    );
+                }
+            }
+
+            // Add the API key if available (project-specific env may override this)
             if let Some(api_key) = cx
                 .update(AnthropicLanguageModelProvider::api_key)?
                 .await
