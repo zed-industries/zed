@@ -429,6 +429,8 @@ impl TerminalBuilder {
                     .or_else(|| Some(home_dir().to_path_buf())),
                 drain_on_exit: true,
                 env: env.clone().into_iter().collect(),
+                #[cfg(target_os = "windows")]
+                escape_args: true,
             }
         };
 
@@ -2200,7 +2202,6 @@ mod tests {
     use gpui::{Pixels, Point, TestAppContext, bounds, point, size};
     use rand::{Rng, distr, rngs::ThreadRng};
 
-    #[ignore = "Test is flaky on macOS, and doesn't run on Windows"]
     #[gpui::test]
     async fn test_basic_terminal(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
