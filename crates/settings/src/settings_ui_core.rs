@@ -128,7 +128,9 @@ pub enum NumType {
     U64 = 0,
     U32 = 1,
     F32 = 2,
+    USIZE = 3,
 }
+
 pub static NUM_TYPE_NAMES: std::sync::LazyLock<[&'static str; NumType::COUNT]> =
     std::sync::LazyLock::new(|| NumType::ALL.map(NumType::type_name));
 pub static NUM_TYPE_IDS: std::sync::LazyLock<[TypeId; NumType::COUNT]> =
@@ -143,6 +145,7 @@ impl NumType {
             NumType::U64 => TypeId::of::<u64>(),
             NumType::U32 => TypeId::of::<u32>(),
             NumType::F32 => TypeId::of::<f32>(),
+            NumType::USIZE => TypeId::of::<usize>(),
         }
     }
 
@@ -151,6 +154,7 @@ impl NumType {
             NumType::U64 => std::any::type_name::<u64>(),
             NumType::U32 => std::any::type_name::<u32>(),
             NumType::F32 => std::any::type_name::<f32>(),
+            NumType::USIZE => std::any::type_name::<usize>(),
         }
     }
 }
@@ -175,3 +179,4 @@ numeric_stepper_for_num_type!(u64, U64);
 numeric_stepper_for_num_type!(u32, U32);
 // todo(settings_ui) is there a better ui for f32?
 numeric_stepper_for_num_type!(f32, F32);
+numeric_stepper_for_num_type!(usize, USIZE);
