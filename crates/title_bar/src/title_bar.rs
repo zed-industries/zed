@@ -29,10 +29,11 @@ use gpui::{
     IntoElement, MouseButton, ParentElement, Render, StatefulInteractiveElement, Styled,
     Subscription, WeakEntity, Window, actions, div,
 };
+use keymap_editor;
 use onboarding_banner::OnboardingBanner;
 use project::Project;
+use remote::RemoteConnectionOptions;
 use settings::Settings as _;
-use settings_ui::keybindings;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use title_bar_settings::TitleBarSettings;
@@ -278,13 +279,15 @@ impl TitleBar {
 
         let banner = cx.new(|cx| {
             OnboardingBanner::new(
-                "ACP Onboarding",
-                IconName::Sparkle,
-                "Bring Your Own Agent",
+                "ACP Claude Code Onboarding",
+                IconName::AiClaude,
+                "Claude Code",
                 Some("Introducing:".into()),
-                zed_actions::agent::OpenAcpOnboardingModal.boxed_clone(),
+                zed_actions::agent::OpenClaudeCodeOnboardingModal.boxed_clone(),
                 cx,
             )
+            // When updating this to a non-AI feature release, remove this line.
+            .visible_when(|cx| !project::DisableAiSettings::get_global(cx).disable_ai)
         });
 
         let platform_titlebar = cx.new(|cx| PlatformTitleBar::new(id, cx));
@@ -304,12 +307,14 @@ impl TitleBar {
 
     fn render_remote_project_connection(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let options = self.project.read(cx).remote_connection_options(cx)?;
-        let host: SharedString = options.connection_string().into();
+        let host: SharedString = options.display_name().into();
 
-        let nickname = options
-            .nickname
-            .map(|nick| nick.into())
-            .unwrap_or_else(|| host.clone());
+        let nickname = if let RemoteConnectionOptions::Ssh(options) = options {
+            options.nickname.map(|nick| nick.into())
+        } else {
+            None
+        };
+        let nickname = nickname.unwrap_or_else(|| host.clone());
 
         let (indicator_color, meta) = match self.project.read(cx).remote_connection_state(cx)? {
             remote::ConnectionState::Connecting => (Color::Info, format!("Connecting to: {host}")),
@@ -684,7 +689,7 @@ impl TitleBar {
                             "Settings Profiles",
                             zed_actions::settings_profile_selector::Toggle.boxed_clone(),
                         )
-                        .action("Key Bindings", Box::new(keybindings::OpenKeymapEditor))
+                        .action("Key Bindings", Box::new(keymap_editor::OpenKeymapEditor))
                         .action(
                             "Themes…",
                             zed_actions::theme_selector::Toggle::default().boxed_clone(),
@@ -732,7 +737,7 @@ impl TitleBar {
                                 "Settings Profiles",
                                 zed_actions::settings_profile_selector::Toggle.boxed_clone(),
                             )
-                            .action("Key Bindings", Box::new(keybindings::OpenKeymapEditor))
+                            .action("Key Bindings", Box::new(keymap_editor::OpenKeymapEditor))
                             .action(
                                 "Themes…",
                                 zed_actions::theme_selector::Toggle::default().boxed_clone(),

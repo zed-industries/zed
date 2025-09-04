@@ -5,6 +5,8 @@ use std::{
     time::Duration,
 };
 
+mod ui_components;
+
 use anyhow::{Context as _, anyhow};
 use collections::{HashMap, HashSet};
 use editor::{CompletionProvider, Editor, EditorEvent};
@@ -20,7 +22,7 @@ use gpui::{
 };
 use language::{Language, LanguageConfig, ToOffset as _};
 use notifications::status_toast::{StatusToast, ToastIcon};
-use project::Project;
+use project::{CompletionDisplayOptions, Project};
 use settings::{BaseKeymap, KeybindSource, KeymapFile, Settings as _, SettingsAssets};
 use ui::{
     ActiveTheme as _, App, Banner, BorrowAppContext, ContextMenu, IconButtonShape, Indicator,
@@ -34,8 +36,10 @@ use workspace::{
     register_serializable_item,
 };
 
+pub use ui_components::*;
+
 use crate::{
-    keybindings::persistence::KEYBINDING_EDITORS,
+    persistence::KEYBINDING_EDITORS,
     ui_components::{
         keystroke_input::{ClearKeystrokes, KeystrokeInput, StartRecording, StopRecording},
         table::{ColumnWidths, ResizeBehavior, Table, TableInteractionState},
@@ -2907,6 +2911,7 @@ impl CompletionProvider for KeyContextCompletionProvider {
                     confirm: None,
                 })
                 .collect(),
+            display_options: CompletionDisplayOptions::default(),
             is_incomplete: false,
         }]))
     }

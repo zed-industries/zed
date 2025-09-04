@@ -113,15 +113,10 @@ pub enum Event {
         transaction_id: TransactionId,
     },
     Reloaded,
-    ReloadNeeded,
-
     LanguageChanged(BufferId),
-    CapabilityChanged,
     Reparsed(BufferId),
     Saved,
     FileHandleChanged,
-    Closed,
-    Discarded,
     DirtyChanged,
     DiagnosticsUpdated,
     BufferDiffChanged,
@@ -735,7 +730,7 @@ impl MultiBuffer {
 
     pub fn as_singleton(&self) -> Option<Entity<Buffer>> {
         if self.singleton {
-            return Some(
+            Some(
                 self.buffers
                     .borrow()
                     .values()
@@ -743,7 +738,7 @@ impl MultiBuffer {
                     .unwrap()
                     .buffer
                     .clone(),
-            );
+            )
         } else {
             None
         }
@@ -2433,28 +2428,24 @@ impl MultiBuffer {
         event: &language::BufferEvent,
         cx: &mut Context<Self>,
     ) {
+        use language::BufferEvent;
         cx.emit(match event {
-            language::BufferEvent::Edited => Event::Edited {
+            BufferEvent::Edited => Event::Edited {
                 singleton_buffer_edited: true,
                 edited_buffer: Some(buffer),
             },
-            language::BufferEvent::DirtyChanged => Event::DirtyChanged,
-            language::BufferEvent::Saved => Event::Saved,
-            language::BufferEvent::FileHandleChanged => Event::FileHandleChanged,
-            language::BufferEvent::Reloaded => Event::Reloaded,
-            language::BufferEvent::ReloadNeeded => Event::ReloadNeeded,
-            language::BufferEvent::LanguageChanged => {
-                Event::LanguageChanged(buffer.read(cx).remote_id())
-            }
-            language::BufferEvent::Reparsed => Event::Reparsed(buffer.read(cx).remote_id()),
-            language::BufferEvent::DiagnosticsUpdated => Event::DiagnosticsUpdated,
-            language::BufferEvent::Closed => Event::Closed,
-            language::BufferEvent::Discarded => Event::Discarded,
-            language::BufferEvent::CapabilityChanged => {
+            BufferEvent::DirtyChanged => Event::DirtyChanged,
+            BufferEvent::Saved => Event::Saved,
+            BufferEvent::FileHandleChanged => Event::FileHandleChanged,
+            BufferEvent::Reloaded => Event::Reloaded,
+            BufferEvent::LanguageChanged => Event::LanguageChanged(buffer.read(cx).remote_id()),
+            BufferEvent::Reparsed => Event::Reparsed(buffer.read(cx).remote_id()),
+            BufferEvent::DiagnosticsUpdated => Event::DiagnosticsUpdated,
+            BufferEvent::CapabilityChanged => {
                 self.capability = buffer.read(cx).capability();
-                Event::CapabilityChanged
+                return;
             }
-            language::BufferEvent::Operation { .. } => return,
+            BufferEvent::Operation { .. } | BufferEvent::ReloadNeeded => return,
         });
     }
 
@@ -2550,6 +2541,10 @@ impl MultiBuffer {
             .values()
             .map(|state| state.buffer.clone())
             .collect()
+    }
+
+    pub fn all_buffer_ids(&self) -> Vec<BufferId> {
+        self.buffers.borrow().keys().copied().collect()
     }
 
     pub fn buffer(&self, buffer_id: BufferId) -> Option<Entity<Buffer>> {
@@ -3585,7 +3580,7 @@ impl MultiBuffer {
     pub fn build_random(rng: &mut impl rand::Rng, cx: &mut gpui::App) -> Entity<Self> {
         cx.new(|cx| {
             let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
-            let mutation_count = rng.gen_range(1..=5);
+            let mutation_count = rng.random_range(1..=5);
             multibuffer.randomly_edit_excerpts(rng, mutation_count, cx);
             multibuffer
         })
@@ -3608,16 +3603,17 @@ impl MultiBuffer {
             }
 
             let new_start = last_end.map_or(0, |last_end| last_end + 1);
-            let end = snapshot.clip_offset(rng.gen_range(new_start..=snapshot.len()), Bias::Right);
-            let start = snapshot.clip_offset(rng.gen_range(new_start..=end), Bias::Right);
+            let end =
+                snapshot.clip_offset(rng.random_range(new_start..=snapshot.len()), Bias::Right);
+            let start = snapshot.clip_offset(rng.random_range(new_start..=end), Bias::Right);
             last_end = Some(end);
 
             let mut range = start..end;
-            if rng.gen_bool(0.2) {
+            if rng.random_bool(0.2) {
                 mem::swap(&mut range.start, &mut range.end);
             }
 
-            let new_text_len = rng.gen_range(0..10);
+            let new_text_len = rng.random_range(0..10);
             let new_text: String = RandomCharIter::new(&mut *rng).take(new_text_len).collect();
 
             edits.push((range, new_text.into()));
@@ -3644,18 +3640,18 @@ impl MultiBuffer {
 
         let mut buffers = Vec::new();
         for _ in 0..mutation_count {
-            if rng.gen_bool(0.05) {
+            if rng.random_bool(0.05) {
                 log::info!("Clearing multi-buffer");
                 self.clear(cx);
                 continue;
-            } else if rng.gen_bool(0.1) && !self.excerpt_ids().is_empty() {
+            } else if rng.random_bool(0.1) && !self.excerpt_ids().is_empty() {
                 let ids = self.excerpt_ids();
                 let mut excerpts = HashSet::default();
-                for _ in 0..rng.gen_range(0..ids.len()) {
+                for _ in 0..rng.random_range(0..ids.len()) {
                     excerpts.extend(ids.choose(rng).copied());
                 }
 
-                let line_count = rng.gen_range(0..5);
+                let line_count = rng.random_range(0..5);
 
                 log::info!("Expanding excerpts {excerpts:?} by {line_count} lines");
 
@@ -3669,8 +3665,8 @@ impl MultiBuffer {
             }
 
             let excerpt_ids = self.excerpt_ids();
-            if excerpt_ids.is_empty() || (rng.r#gen() && excerpt_ids.len() < max_excerpts) {
-                let buffer_handle = if rng.r#gen() || self.buffers.borrow().is_empty() {
+            if excerpt_ids.is_empty() || (rng.random() && excerpt_ids.len() < max_excerpts) {
+                let buffer_handle = if rng.random() || self.buffers.borrow().is_empty() {
                     let text = RandomCharIter::new(&mut *rng).take(10).collect::<String>();
                     buffers.push(cx.new(|cx| Buffer::local(text, cx)));
                     let buffer = buffers.last().unwrap().read(cx);
@@ -3692,11 +3688,11 @@ impl MultiBuffer {
 
                 let buffer = buffer_handle.read(cx);
                 let buffer_text = buffer.text();
-                let ranges = (0..rng.gen_range(0..5))
+                let ranges = (0..rng.random_range(0..5))
                     .map(|_| {
                         let end_ix =
-                            buffer.clip_offset(rng.gen_range(0..=buffer.len()), Bias::Right);
-                        let start_ix = buffer.clip_offset(rng.gen_range(0..=end_ix), Bias::Left);
+                            buffer.clip_offset(rng.random_range(0..=buffer.len()), Bias::Right);
+                        let start_ix = buffer.clip_offset(rng.random_range(0..=end_ix), Bias::Left);
                         ExcerptRange::new(start_ix..end_ix)
                     })
                     .collect::<Vec<_>>();
@@ -3713,7 +3709,7 @@ impl MultiBuffer {
                 let excerpt_id = self.push_excerpts(buffer_handle.clone(), ranges, cx);
                 log::info!("Inserted with ids: {:?}", excerpt_id);
             } else {
-                let remove_count = rng.gen_range(1..=excerpt_ids.len());
+                let remove_count = rng.random_range(1..=excerpt_ids.len());
                 let mut excerpts_to_remove = excerpt_ids
                     .choose_multiple(rng, remove_count)
                     .cloned()
@@ -3735,7 +3731,7 @@ impl MultiBuffer {
     ) {
         use rand::prelude::*;
 
-        if rng.gen_bool(0.7) || self.singleton {
+        if rng.random_bool(0.7) || self.singleton {
             let buffer = self
                 .buffers
                 .borrow()
@@ -3745,7 +3741,7 @@ impl MultiBuffer {
 
             if let Some(buffer) = buffer {
                 buffer.update(cx, |buffer, cx| {
-                    if rng.r#gen() {
+                    if rng.random() {
                         buffer.randomly_edit(rng, mutation_count, cx);
                     } else {
                         buffer.randomly_undo_redo(rng, cx);
@@ -6393,8 +6389,8 @@ impl MultiBufferSnapshot {
 #[cfg(any(test, feature = "test-support"))]
 impl MultiBufferSnapshot {
     pub fn random_byte_range(&self, start_offset: usize, rng: &mut impl rand::Rng) -> Range<usize> {
-        let end = self.clip_offset(rng.gen_range(start_offset..=self.len()), Bias::Right);
-        let start = self.clip_offset(rng.gen_range(start_offset..=end), Bias::Right);
+        let end = self.clip_offset(rng.random_range(start_offset..=self.len()), Bias::Right);
+        let start = self.clip_offset(rng.random_range(start_offset..=end), Bias::Right);
         start..end
     }
 

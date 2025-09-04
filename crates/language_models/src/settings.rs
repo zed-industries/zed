@@ -5,7 +5,7 @@ use collections::HashMap;
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsSources, SettingsUi};
 
 use crate::provider::{
     self,
@@ -46,7 +46,7 @@ pub struct AllLanguageModelSettings {
     pub zed_dot_dev: ZedDotDevSettings,
 }
 
-#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, SettingsUi)]
 pub struct AllLanguageModelSettingsContent {
     pub anthropic: Option<AnthropicSettingsContent>,
     pub bedrock: Option<AmazonBedrockSettingsContent>,

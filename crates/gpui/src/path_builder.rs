@@ -318,7 +318,7 @@ impl PathBuilder {
         Ok(Self::build_path(buf))
     }
 
-    /// Builds a [`Path`] from a [`lyon::VertexBuffers`].
+    /// Builds a [`Path`] from a [`lyon::tessellation::VertexBuffers`].
     pub fn build_path(buf: VertexBuffers<lyon::math::Point, u16>) -> Path<Pixels> {
         if buf.vertices.is_empty() {
             return Path::new(Point::default());

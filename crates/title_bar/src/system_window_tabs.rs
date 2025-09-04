@@ -1,4 +1,4 @@
-use settings::Settings;
+use settings::{Settings, SettingsStore};
 
 use gpui::{
     AnyWindowHandle, Context, Hsla, InteractiveElement, MouseButton, ParentElement, ScrollHandle,
@@ -11,7 +11,7 @@ use ui::{
     LabelSize, Tab, h_flex, prelude::*, right_click_menu,
 };
 use workspace::{
-    CloseWindow, ItemSettings, Workspace,
+    CloseWindow, ItemSettings, Workspace, WorkspaceSettings,
     item::{ClosePosition, ShowCloseButton},
 };
 
@@ -53,6 +53,46 @@ impl SystemWindowTabs {
     }
 
     pub fn init(cx: &mut App) {
+        let mut was_use_system_window_tabs =
+            WorkspaceSettings::get_global(cx).use_system_window_tabs;
+
+        cx.observe_global::<SettingsStore>(move |cx| {
+            let use_system_window_tabs = WorkspaceSettings::get_global(cx).use_system_window_tabs;
+            if use_system_window_tabs == was_use_system_window_tabs {
+                return;
+            }
+            was_use_system_window_tabs = use_system_window_tabs;
+
+            let tabbing_identifier = if use_system_window_tabs {
+                Some(String::from("zed"))
+            } else {
+                None
+            };
+
+            if use_system_window_tabs {
+                SystemWindowTabController::init(cx);
+            }
+
+            cx.windows().iter().for_each(|handle| {
+                let _ = handle.update(cx, |_, window, cx| {
+                    window.set_tabbing_identifier(tabbing_identifier.clone());
+                    if use_system_window_tabs {
+                        let tabs = if let Some(tabs) = window.tabbed_windows() {
+                            tabs
+                        } else {
+                            vec![SystemWindowTab::new(
+                                SharedString::from(window.window_title()),
+                                window.window_handle(),
+                            )]
+                        };
+
+                        SystemWindowTabController::add_tab(cx, handle.window_id(), tabs);
+                    }
+                });
+            });
+        })
+        .detach();
+
         cx.observe_new(|workspace: &mut Workspace, _, _| {
             workspace.register_action_renderer(|div, _, window, cx| {
                 let window_id = window.window_handle().window_id();
@@ -336,6 +376,7 @@ impl SystemWindowTabs {
 
 impl Render for SystemWindowTabs {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let use_system_window_tabs = WorkspaceSettings::get_global(cx).use_system_window_tabs;
         let active_background_color = cx.theme().colors().title_bar_background;
         let inactive_background_color = cx.theme().colors().tab_bar_background;
         let entity = cx.entity();
@@ -368,7 +409,9 @@ impl Render for SystemWindowTabs {
             .collect::<Vec<_>>();
 
         let number_of_tabs = tab_items.len().max(1);
-        if !window.tab_bar_visible() && !visible {
+        if (!window.tab_bar_visible() && !visible)
+            || (!use_system_window_tabs && number_of_tabs == 1)
+        {
             return h_flex().into_any_element();
         }
 

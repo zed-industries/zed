@@ -36,6 +36,7 @@ impl AgentServer for Gemini {
         cx: &mut App,
     ) -> Task<Result<Rc<dyn AgentConnection>>> {
         let root_dir = root_dir.to_path_buf();
+        let fs = delegate.project().read(cx).fs().clone();
         let server_name = self.name();
         let settings = cx.read_global(|settings: &SettingsStore, _| {
             settings.get::<AllAgentServersSettings>(None).gemini.clone()
@@ -63,7 +64,9 @@ impl AgentServer for Gemini {
                 })?
                 .await?
             };
-            command.args.push("--experimental-acp".into());
+            if !command.args.contains(&ACP_ARG.into()) {
+                command.args.push(ACP_ARG.into());
+            }
 
             if let Some(api_key) = cx.update(GoogleLanguageModelProvider::api_key)?.await.ok() {
                 command
@@ -71,6 +74,13 @@ impl AgentServer for Gemini {
                     .get_or_insert_default()
                     .insert("GEMINI_API_KEY".to_owned(), api_key.key);
             }
+
+            let root_dir_exists = fs.is_dir(&root_dir).await;
+            anyhow::ensure!(
+                root_dir_exists,
+                "Session root {} does not exist or is not a directory",
+                root_dir.to_string_lossy()
+            );
 
             let result = crate::acp::connect(server_name, command.clone(), &root_dir, cx).await;
             match &result {
@@ -86,17 +96,17 @@ impl AgentServer for Gemini {
                             .await;
                         let current_version =
                             String::from_utf8(version_output?.stdout)?.trim().to_owned();
-                        if !connection.prompt_capabilities().image {
-                            return Err(LoadError::Unsupported {
-                                current_version: current_version.into(),
-                                command: command.path.to_string_lossy().to_string().into(),
-                                minimum_version: Self::MINIMUM_VERSION.into(),
-                            }
-                            .into());
+
+                        log::error!("connected to gemini, but missing prompt_capabilities.image (version is {current_version})");
+                        return Err(LoadError::Unsupported {
+                            current_version: current_version.into(),
+                            command: (command.path.to_string_lossy().to_string() + " " + &command.args.join(" ")).into(),
+                            minimum_version: Self::MINIMUM_VERSION.into(),
                         }
+                        .into());
                     }
                 }
-                Err(_) => {
+                Err(e) => {
                     let version_fut = util::command::new_smol_command(&command.path)
                         .args(command.args.iter())
                         .arg("--version")
@@ -111,16 +121,23 @@ impl AgentServer for Gemini {
 
                     let (version_output, help_output) =
                         futures::future::join(version_fut, help_fut).await;
+                    let Some(version_output) = version_output.ok().and_then(|output| String::from_utf8(output.stdout).ok()) else {
+                        return result;
+                    };
+                    let Some((help_stdout, help_stderr)) = help_output.ok().and_then(|output| String::from_utf8(output.stdout).ok().zip(String::from_utf8(output.stderr).ok())) else  {
+                        return result;
+                    };
 
-                    let current_version = std::str::from_utf8(&version_output?.stdout)?
-                        .trim()
-                        .to_string();
-                    let supported = String::from_utf8(help_output?.stdout)?.contains(ACP_ARG);
+                    let current_version = version_output.trim().to_string();
+                    let supported = help_stdout.contains(ACP_ARG) || current_version.parse::<semver::Version>().is_ok_and(|version| version >= Self::MINIMUM_VERSION.parse::<semver::Version>().unwrap());
 
+                    log::error!("failed to create ACP connection to gemini (version is {current_version}, supported: {supported}): {e}");
+                    log::debug!("gemini --help stdout: {help_stdout:?}");
+                    log::debug!("gemini --help stderr: {help_stderr:?}");
                     if !supported {
                         return Err(LoadError::Unsupported {
                             current_version: current_version.into(),
-                            command: command.path.to_string_lossy().to_string().into(),
+                            command: (command.path.to_string_lossy().to_string() + " " + &command.args.join(" ")).into(),
                             minimum_version: Self::MINIMUM_VERSION.into(),
                         }
                         .into());

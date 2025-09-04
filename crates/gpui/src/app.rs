@@ -2313,7 +2313,7 @@ pub struct AnyDrag {
 }
 
 /// Contains state associated with a tooltip. You'll only need this struct if you're implementing
-/// tooltip behavior on a custom element. Otherwise, use [Div::tooltip].
+/// tooltip behavior on a custom element. Otherwise, use [Div::tooltip](crate::Interactivity::tooltip).
 #[derive(Clone)]
 pub struct AnyTooltip {
     /// The view used to display the tooltip

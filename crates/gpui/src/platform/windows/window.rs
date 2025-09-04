@@ -73,12 +73,13 @@ pub(crate) struct WindowsWindowInner {
     pub(crate) windows_version: WindowsVersion,
     pub(crate) validation_number: usize,
     pub(crate) main_receiver: flume::Receiver<Runnable>,
-    pub(crate) main_thread_id_win32: u32,
+    pub(crate) platform_window_handle: HWND,
 }
 
 impl WindowsWindowState {
     fn new(
         hwnd: HWND,
+        directx_devices: &DirectXDevices,
         window_params: &CREATESTRUCTW,
         current_cursor: Option<HCURSOR>,
         display: WindowsDisplay,
@@ -104,7 +105,7 @@ impl WindowsWindowState {
         };
         let border_offset = WindowBorderOffset::default();
         let restore_from_minimized = None;
-        let renderer = DirectXRenderer::new(hwnd, disable_direct_composition)
+        let renderer = DirectXRenderer::new(hwnd, directx_devices, disable_direct_composition)
             .context("Creating DirectX renderer")?;
         let callbacks = Callbacks::default();
         let input_handler = None;
@@ -205,9 +206,10 @@ impl WindowsWindowState {
 }
 
 impl WindowsWindowInner {
-    fn new(context: &WindowCreateContext, hwnd: HWND, cs: &CREATESTRUCTW) -> Result<Rc<Self>> {
+    fn new(context: &mut WindowCreateContext, hwnd: HWND, cs: &CREATESTRUCTW) -> Result<Rc<Self>> {
         let state = RefCell::new(WindowsWindowState::new(
             hwnd,
+            &context.directx_devices,
             cs,
             context.current_cursor,
             context.display,
@@ -228,7 +230,7 @@ impl WindowsWindowInner {
             windows_version: context.windows_version,
             validation_number: context.validation_number,
             main_receiver: context.main_receiver.clone(),
-            main_thread_id_win32: context.main_thread_id_win32,
+            platform_window_handle: context.platform_window_handle,
         }))
     }
 
@@ -342,9 +344,10 @@ struct WindowCreateContext {
     drop_target_helper: IDropTargetHelper,
     validation_number: usize,
     main_receiver: flume::Receiver<Runnable>,
-    main_thread_id_win32: u32,
+    platform_window_handle: HWND,
     appearance: WindowAppearance,
     disable_direct_composition: bool,
+    directx_devices: DirectXDevices,
 }
 
 impl WindowsWindow {
@@ -361,8 +364,9 @@ impl WindowsWindow {
             drop_target_helper,
             validation_number,
             main_receiver,
-            main_thread_id_win32,
+            platform_window_handle,
             disable_direct_composition,
+            directx_devices,
         } = creation_info;
         register_window_class(icon);
         let hide_title_bar = params
@@ -419,9 +423,10 @@ impl WindowsWindow {
             drop_target_helper,
             validation_number,
             main_receiver,
-            main_thread_id_win32,
+            platform_window_handle,
             appearance,
             disable_direct_composition,
+            directx_devices,
         };
         let creation_result = unsafe {
             CreateWindowExW(

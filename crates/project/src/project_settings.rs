@@ -19,7 +19,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
     InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation, SettingsSources,
-    SettingsStore, parse_json_with_comments, watch_config_file,
+    SettingsStore, SettingsUi, parse_json_with_comments, watch_config_file,
 };
 use std::{
     collections::BTreeMap,
@@ -36,7 +36,7 @@ use crate::{
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
 pub struct ProjectSettings {
     /// Configuration for language servers.
     ///
@@ -281,7 +281,17 @@ impl Default for GlobalLspSettings {
 }
 
 #[derive(
-    Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize, JsonSchema,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    SettingsUi,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum DiagnosticSeverity {
@@ -290,6 +300,7 @@ pub enum DiagnosticSeverity {
     Error,
     Warning,
     Info,
+    #[serde(alias = "all")]
     Hint,
 }
 
@@ -505,6 +516,12 @@ pub struct BinarySettings {
     pub ignore_system_version: Option<bool>,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
+pub struct FetchSettings {
+    // Whether to consider pre-releases for fetching
+    pub pre_release: Option<bool>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
 #[serde(rename_all = "snake_case")]
 pub struct LspSettings {
@@ -516,6 +533,7 @@ pub struct LspSettings {
     /// Default: true
     #[serde(default = "default_true")]
     pub enable_lsp_tasks: bool,
+    pub fetch: Option<FetchSettings>,
 }
 
 impl Default for LspSettings {
@@ -525,6 +543,7 @@ impl Default for LspSettings {
             initialization_options: None,
             settings: None,
             enable_lsp_tasks: true,
+            fetch: None,
         }
     }
 }
@@ -593,6 +612,7 @@ impl Settings for ProjectSettings {
                     path: cmd.command,
                     args: cmd.args.unwrap_or_default(),
                     env: cmd.env,
+                    timeout: None,
                 }
             }
         }
