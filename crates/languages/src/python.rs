@@ -87,20 +87,20 @@ fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
 }
 
-pub struct PythonLspAdapter {
+pub struct PyrightLspAdapter {
     node: NodeRuntime,
 }
 
-impl PythonLspAdapter {
+impl PyrightLspAdapter {
     const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("pyright");
 
     pub fn new(node: NodeRuntime) -> Self {
-        PythonLspAdapter { node }
+        PyrightLspAdapter { node }
     }
 }
 
 #[async_trait(?Send)]
-impl LspAdapter for PythonLspAdapter {
+impl LspAdapter for PyrightLspAdapter {
     fn name(&self) -> LanguageServerName {
         Self::SERVER_NAME
     }
