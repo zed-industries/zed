@@ -57,7 +57,6 @@ impl Render for BasedPyrightBanner {
                                     Button::new("learn-more", "Learn More")
                                         .icon(IconName::ArrowUpRight)
                                         .on_click(|_, _, cx| {
-                                            // FIXME more specific link
                                             cx.open_url("https://zed.dev/docs/languages/python")
                                         }),
                                 ),
