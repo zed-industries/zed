@@ -149,7 +149,7 @@ mod tests {
                 let mut rng = rand::thread_rng();
                 let mut numbers = Vec::new();
                 for _ in 0..5 {
-                    numbers.push(rng.gen_range(1..101));
+                    numbers.push(rng.random_range(1..101));
                 }
                 numbers
             }
@@ -208,7 +208,7 @@ mod tests {
             <|editable_region_end|>
                 let mut numbers = Vec::new();
                 for _ in 0..5 {
-                    numbers.push(rng.gen_range(1..101));
+                    numbers.push(rng.random_range(1..101));
             ```"#}
         );
     }

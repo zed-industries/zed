@@ -1610,9 +1610,9 @@ mod tests {
         let mut expected = String::new();
         let mut actual = Rope::new();
         for _ in 0..operations {
-            let end_ix = clip_offset(&expected, rng.gen_range(0..=expected.len()), Right);
-            let start_ix = clip_offset(&expected, rng.gen_range(0..=end_ix), Left);
-            let len = rng.gen_range(0..=64);
+            let end_ix = clip_offset(&expected, rng.random_range(0..=expected.len()), Right);
+            let start_ix = clip_offset(&expected, rng.random_range(0..=end_ix), Left);
+            let len = rng.random_range(0..=64);
             let new_text: String = RandomCharIter::new(&mut rng).take(len).collect();
 
             let mut new_actual = Rope::new();
@@ -1629,8 +1629,8 @@ mod tests {
             log::info!("text: {:?}", expected);
 
             for _ in 0..5 {
-                let end_ix = clip_offset(&expected, rng.gen_range(0..=expected.len()), Right);
-                let start_ix = clip_offset(&expected, rng.gen_range(0..=end_ix), Left);
+                let end_ix = clip_offset(&expected, rng.random_range(0..=expected.len()), Right);
+                let start_ix = clip_offset(&expected, rng.random_range(0..=end_ix), Left);
 
                 let actual_text = actual.chunks_in_range(start_ix..end_ix).collect::<String>();
                 assert_eq!(actual_text, &expected[start_ix..end_ix]);
@@ -1695,14 +1695,14 @@ mod tests {
                 );
 
                 // Check that next_line/prev_line work correctly from random positions
-                let mut offset = rng.gen_range(start_ix..=end_ix);
+                let mut offset = rng.random_range(start_ix..=end_ix);
                 while !expected.is_char_boundary(offset) {
                     offset -= 1;
                 }
                 chunks.seek(offset);
 
                 for _ in 0..5 {
-                    if rng.r#gen() {
+                    if rng.random() {
                         let expected_next_line_start = expected[offset..end_ix]
                             .find('\n')
                             .map(|newline_ix| offset + newline_ix + 1);
@@ -1791,8 +1791,8 @@ mod tests {
                     }
 
                     assert!((start_ix..=end_ix).contains(&chunks.offset()));
-                    if rng.r#gen() {
-                        offset = rng.gen_range(start_ix..=end_ix);
+                    if rng.random() {
+                        offset = rng.random_range(start_ix..=end_ix);
                         while !expected.is_char_boundary(offset) {
                             offset -= 1;
                         }
@@ -1876,8 +1876,8 @@ mod tests {
             }
 
             for _ in 0..5 {
-                let end_ix = clip_offset(&expected, rng.gen_range(0..=expected.len()), Right);
-                let start_ix = clip_offset(&expected, rng.gen_range(0..=end_ix), Left);
+                let end_ix = clip_offset(&expected, rng.random_range(0..=expected.len()), Right);
+                let start_ix = clip_offset(&expected, rng.random_range(0..=end_ix), Left);
                 assert_eq!(
                     actual.cursor(start_ix).summary::<TextSummary>(end_ix),
                     TextSummary::from(&expected[start_ix..end_ix])
