@@ -35,7 +35,7 @@ use std::{
     sync::Arc,
 };
 use task::{ShellKind, TaskTemplate, TaskTemplates, VariableName};
-use util::ResultExt;
+use util::{ResultExt, maybe};
 
 pub(crate) struct PyprojectTomlManifestProvider;
 
@@ -1615,19 +1615,22 @@ impl LspAdapter for BasedPyrightLspAdapter {
                         Value::String(interpreter_path),
                     );
                 }
-                //basedpyright.analysis.typeCheckingMode
                 // Basedpyright by default uses `strict` type checking, we tone it down as to not surpris users
-                if let Some() = object.pointer_mut("") {}
-                if !object.contains_key("typeCheckingMode")
-                    && let Some(analysis) = object
-                        .entry("basedpyright.analysis")
-                        .or_insert(Value::Object(serde_json::Map::default()))
-                        .as_object_mut()
-                {
-                    analysis
-                        .entry("typeCheckingMode")
-                        .or_insert("standard".into());
-                }
+                maybe!({
+                    let basedpyright = object
+                        .entry("basedpyright")
+                        .or_insert(Value::Object(serde_json::Map::default()));
+                    let analysis = basedpyright
+                        .as_object_mut()?
+                        .entry("analysis")
+                        .or_insert(Value::Object(serde_json::Map::default()));
+                    if let serde_json::map::Entry::Vacant(v) =
+                        analysis.as_object_mut()?.entry("typeCheckingMode")
+                    {
+                        v.insert(Value::String("standard".to_owned()));
+                    }
+                    Some(())
+                });
             }
 
             user_settings
