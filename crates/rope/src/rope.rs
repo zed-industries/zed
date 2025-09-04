@@ -936,24 +936,36 @@ impl Lines<'_> {
         self.current_line.clear();
 
         while let Some(chunk) = self.chunks.peek() {
-            let lines = chunk.split('\n');
+            let chunk_lines = chunk.split('\n');
             if self.reversed {
-                let mut lines = lines.rev().peekable();
-                while let Some(line) = lines.next() {
-                    self.current_line.insert_str(0, line);
-                    if lines.peek().is_some() {
+                let mut chunk_lines = chunk_lines.rev().peekable();
+                if let Some(chunk_line) = chunk_lines.next() {
+                    let done = chunk_lines.peek().is_some();
+                    if done {
                         self.chunks
-                            .seek(self.chunks.offset() - line.len() - "\n".len());
+                            .seek(self.chunks.offset() - chunk_line.len() - "\n".len());
+                        if self.current_line.is_empty() {
+                            return Some(chunk_line);
+                        }
+                    }
+                    self.current_line.insert_str(0, chunk_line);
+                    if done {
                         return Some(&self.current_line);
                     }
                 }
             } else {
-                let mut lines = lines.peekable();
-                while let Some(line) = lines.next() {
-                    self.current_line.push_str(line);
-                    if lines.peek().is_some() {
+                let mut chunk_lines = chunk_lines.peekable();
+                if let Some(chunk_line) = chunk_lines.next() {
+                    let done = chunk_lines.peek().is_some();
+                    if done {
                         self.chunks
-                            .seek(self.chunks.offset() + line.len() + "\n".len());
+                            .seek(self.chunks.offset() + chunk_line.len() + "\n".len());
+                        if self.current_line.is_empty() {
+                            return Some(chunk_line);
+                        }
+                    }
+                    self.current_line.push_str(chunk_line);
+                    if done {
                         return Some(&self.current_line);
                     }
                 }
@@ -1573,6 +1585,20 @@ mod tests {
         assert_eq!(lines.next(), Some("defg"));
         assert_eq!(lines.next(), Some("abc"));
         assert_eq!(lines.next(), None);
+
+        let rope = Rope::from("abc\nlonger line test\nhi");
+        let mut lines = rope.chunks().lines();
+        assert_eq!(lines.next(), Some("abc"));
+        assert_eq!(lines.next(), Some("longer line test"));
+        assert_eq!(lines.next(), Some("hi"));
+        assert_eq!(lines.next(), None);
+
+        let rope = Rope::from("abc\nlonger line test\nhi");
+        let mut lines = rope.reversed_chunks_in_range(0..rope.len()).lines();
+        assert_eq!(lines.next(), Some("hi"));
+        assert_eq!(lines.next(), Some("longer line test"));
+        assert_eq!(lines.next(), Some("abc"));
+        assert_eq!(lines.next(), None);
     }
 
     #[gpui::test(iterations = 100)]
@@ -1584,9 +1610,9 @@ mod tests {
         let mut expected = String::new();
         let mut actual = Rope::new();
         for _ in 0..operations {
-            let end_ix = clip_offset(&expected, rng.gen_range(0..=expected.len()), Right);
-            let start_ix = clip_offset(&expected, rng.gen_range(0..=end_ix), Left);
-            let len = rng.gen_range(0..=64);
+            let end_ix = clip_offset(&expected, rng.random_range(0..=expected.len()), Right);
+            let start_ix = clip_offset(&expected, rng.random_range(0..=end_ix), Left);
+            let len = rng.random_range(0..=64);
             let new_text: String = RandomCharIter::new(&mut rng).take(len).collect();
 
             let mut new_actual = Rope::new();
@@ -1603,8 +1629,8 @@ mod tests {
             log::info!("text: {:?}", expected);
 
             for _ in 0..5 {
-                let end_ix = clip_offset(&expected, rng.gen_range(0..=expected.len()), Right);
-                let start_ix = clip_offset(&expected, rng.gen_range(0..=end_ix), Left);
+                let end_ix = clip_offset(&expected, rng.random_range(0..=expected.len()), Right);
+                let start_ix = clip_offset(&expected, rng.random_range(0..=end_ix), Left);
 
                 let actual_text = actual.chunks_in_range(start_ix..end_ix).collect::<String>();
                 assert_eq!(actual_text, &expected[start_ix..end_ix]);
@@ -1669,14 +1695,14 @@ mod tests {
                 );
 
                 // Check that next_line/prev_line work correctly from random positions
-                let mut offset = rng.gen_range(start_ix..=end_ix);
+                let mut offset = rng.random_range(start_ix..=end_ix);
                 while !expected.is_char_boundary(offset) {
                     offset -= 1;
                 }
                 chunks.seek(offset);
 
                 for _ in 0..5 {
-                    if rng.r#gen() {
+                    if rng.random() {
                         let expected_next_line_start = expected[offset..end_ix]
                             .find('\n')
                             .map(|newline_ix| offset + newline_ix + 1);
@@ -1765,8 +1791,8 @@ mod tests {
                     }
 
                     assert!((start_ix..=end_ix).contains(&chunks.offset()));
-                    if rng.r#gen() {
-                        offset = rng.gen_range(start_ix..=end_ix);
+                    if rng.random() {
+                        offset = rng.random_range(start_ix..=end_ix);
                         while !expected.is_char_boundary(offset) {
                             offset -= 1;
                         }
@@ -1850,8 +1876,8 @@ mod tests {
             }
 
             for _ in 0..5 {
-                let end_ix = clip_offset(&expected, rng.gen_range(0..=expected.len()), Right);
-                let start_ix = clip_offset(&expected, rng.gen_range(0..=end_ix), Left);
+                let end_ix = clip_offset(&expected, rng.random_range(0..=expected.len()), Right);
+                let start_ix = clip_offset(&expected, rng.random_range(0..=end_ix), Left);
                 assert_eq!(
                     actual.cursor(start_ix).summary::<TextSummary>(end_ix),
                     TextSummary::from(&expected[start_ix..end_ix])

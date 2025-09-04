@@ -28,7 +28,7 @@ pub enum EntrySpacing {
     Standard,
 }
 
-#[derive(Deserialize, Debug, Clone, Copy, PartialEq, SettingsUi)]
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct ProjectPanelSettings {
     pub button: bool,
     pub hide_gitignore: bool,
@@ -92,7 +92,7 @@ pub enum ShowDiagnostics {
     All,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi)]
 pub struct ProjectPanelSettingsContent {
     /// Whether to show the project panel button in the status bar.
     ///

@@ -473,6 +473,11 @@ impl Hsla {
         self.a == 0.0
     }
 
+    /// Returns true if the HSLA color is fully opaque, false otherwise.
+    pub fn is_opaque(&self) -> bool {
+        self.a == 1.0
+    }
+
     /// Blends `other` on top of `self` based on `other`'s alpha value. The resulting color is a combination of `self`'s and `other`'s colors.
     ///
     /// If `other`'s alpha value is 1.0 or greater, `other` color is fully opaque, thus `other` is returned as the output color.

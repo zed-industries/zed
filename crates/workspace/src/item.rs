@@ -49,7 +49,7 @@ impl Default for SaveOptions {
     }
 }
 
-#[derive(Deserialize, SettingsUi)]
+#[derive(Deserialize)]
 pub struct ItemSettings {
     pub git_status: bool,
     pub close_position: ClosePosition,
@@ -59,7 +59,7 @@ pub struct ItemSettings {
     pub show_close_button: ShowCloseButton,
 }
 
-#[derive(Deserialize, SettingsUi)]
+#[derive(Deserialize)]
 pub struct PreviewTabsSettings {
     pub enabled: bool,
     pub enable_preview_from_file_finder: bool,
@@ -101,7 +101,7 @@ pub enum ActivateOnClose {
     LeftNeighbour,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
 pub struct ItemSettingsContent {
     /// Whether to show the Git file status on a tab item.
     ///
@@ -130,7 +130,7 @@ pub struct ItemSettingsContent {
     show_close_button: Option<ShowCloseButton>,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
 pub struct PreviewTabsSettingsContent {
     /// Whether to show opened editors as preview tabs.
     /// Preview tabs do not stay open, are reused until explicitly set to be kept open opened (via double-click or editing) and show file names in italic.
@@ -541,7 +541,6 @@ pub trait ItemHandle: 'static + Send {
         cx: &mut Context<Workspace>,
     );
     fn deactivated(&self, window: &mut Window, cx: &mut App);
-    fn discarded(&self, project: Entity<Project>, window: &mut Window, cx: &mut App);
     fn on_removed(&self, cx: &App);
     fn workspace_deactivated(&self, window: &mut Window, cx: &mut App);
     fn navigate(&self, data: Box<dyn Any>, window: &mut Window, cx: &mut App) -> bool;
@@ -973,10 +972,6 @@ impl<T: Item> ItemHandle for Entity<T> {
         cx.defer_in(window, |workspace, window, cx| {
             workspace.serialize_workspace(window, cx);
         });
-    }
-
-    fn discarded(&self, project: Entity<Project>, window: &mut Window, cx: &mut App) {
-        self.update(cx, |this, cx| this.discarded(project, window, cx));
     }
 
     fn deactivated(&self, window: &mut Window, cx: &mut App) {

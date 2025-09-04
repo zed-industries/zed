@@ -341,7 +341,6 @@ impl PickerDelegate for BranchListDelegate {
             };
             picker
                 .update(cx, |picker, _| {
-                    #[allow(clippy::nonminimal_bool)]
                     if !query.is_empty()
                         && !matches
                             .first()

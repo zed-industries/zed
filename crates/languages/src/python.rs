@@ -157,6 +157,7 @@ impl LspAdapter for PythonLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
+        _: &AsyncApp,
     ) -> Result<Box<dyn 'static + Any + Send>> {
         Ok(Box::new(
             self.node
@@ -409,9 +410,6 @@ const PYTHON_TEST_TARGET_TASK_VARIABLE: VariableName =
 const PYTHON_ACTIVE_TOOLCHAIN_PATH: VariableName =
     VariableName::Custom(Cow::Borrowed("PYTHON_ACTIVE_ZED_TOOLCHAIN"));
 
-const PYTHON_ACTIVE_TOOLCHAIN_PATH_RAW: VariableName =
-    VariableName::Custom(Cow::Borrowed("PYTHON_ACTIVE_ZED_TOOLCHAIN_RAW"));
-
 const PYTHON_MODULE_NAME_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("PYTHON_MODULE_NAME"));
 
@@ -435,7 +433,7 @@ impl ContextProvider for PythonContextProvider {
         let worktree_id = location_file.as_ref().map(|f| f.worktree_id(cx));
 
         cx.spawn(async move |cx| {
-            let raw_toolchain = if let Some(worktree_id) = worktree_id {
+            let active_toolchain = if let Some(worktree_id) = worktree_id {
                 let file_path = location_file
                     .as_ref()
                     .and_then(|f| f.path().parent())
@@ -453,15 +451,13 @@ impl ContextProvider for PythonContextProvider {
                 String::from("python3")
             };
 
-            let active_toolchain = format!("\"{raw_toolchain}\"");
             let toolchain = (PYTHON_ACTIVE_TOOLCHAIN_PATH, active_toolchain);
-            let raw_toolchain_var = (PYTHON_ACTIVE_TOOLCHAIN_PATH_RAW, raw_toolchain);
 
             Ok(task::TaskVariables::from_iter(
                 test_target
                     .into_iter()
                     .chain(module_target.into_iter())
-                    .chain([toolchain, raw_toolchain_var]),
+                    .chain([toolchain]),
             ))
         })
     }
@@ -478,31 +474,31 @@ impl ContextProvider for PythonContextProvider {
             // Execute a selection
             TaskTemplate {
                 label: "execute selection".to_owned(),
-                command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
+                command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value_with_whitespace(),
                 args: vec![
                     "-c".to_owned(),
                     VariableName::SelectedText.template_value_with_whitespace(),
                 ],
-                cwd: Some("$ZED_WORKTREE_ROOT".into()),
+                cwd: Some(VariableName::WorktreeRoot.template_value()),
                 ..TaskTemplate::default()
             },
             // Execute an entire file
             TaskTemplate {
                 label: format!("run '{}'", VariableName::File.template_value()),
-                command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
+                command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value_with_whitespace(),
                 args: vec![VariableName::File.template_value_with_whitespace()],
-                cwd: Some("$ZED_WORKTREE_ROOT".into()),
+                cwd: Some(VariableName::WorktreeRoot.template_value()),
                 ..TaskTemplate::default()
             },
             // Execute a file as module
             TaskTemplate {
                 label: format!("run module '{}'", VariableName::File.template_value()),
-                command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
+                command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value_with_whitespace(),
                 args: vec![
                     "-m".to_owned(),
-                    PYTHON_MODULE_NAME_TASK_VARIABLE.template_value(),
+                    PYTHON_MODULE_NAME_TASK_VARIABLE.template_value_with_whitespace(),
                 ],
-                cwd: Some("$ZED_WORKTREE_ROOT".into()),
+                cwd: Some(VariableName::WorktreeRoot.template_value()),
                 tags: vec!["python-module-main-method".to_owned()],
                 ..TaskTemplate::default()
             },
@@ -514,19 +510,19 @@ impl ContextProvider for PythonContextProvider {
                     // Run tests for an entire file
                     TaskTemplate {
                         label: format!("unittest '{}'", VariableName::File.template_value()),
-                        command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
+                        command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value_with_whitespace(),
                         args: vec![
                             "-m".to_owned(),
                             "unittest".to_owned(),
                             VariableName::File.template_value_with_whitespace(),
                         ],
-                        cwd: Some("$ZED_WORKTREE_ROOT".into()),
+                        cwd: Some(VariableName::WorktreeRoot.template_value()),
                         ..TaskTemplate::default()
                     },
                     // Run test(s) for a specific target within a file
                     TaskTemplate {
                         label: "unittest $ZED_CUSTOM_PYTHON_TEST_TARGET".to_owned(),
-                        command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
+                        command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value_with_whitespace(),
                         args: vec![
                             "-m".to_owned(),
                             "unittest".to_owned(),
@@ -536,7 +532,7 @@ impl ContextProvider for PythonContextProvider {
                             "python-unittest-class".to_owned(),
                             "python-unittest-method".to_owned(),
                         ],
-                        cwd: Some("$ZED_WORKTREE_ROOT".into()),
+                        cwd: Some(VariableName::WorktreeRoot.template_value()),
                         ..TaskTemplate::default()
                     },
                 ]
@@ -546,25 +542,25 @@ impl ContextProvider for PythonContextProvider {
                     // Run tests for an entire file
                     TaskTemplate {
                         label: format!("pytest '{}'", VariableName::File.template_value()),
-                        command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
+                        command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value_with_whitespace(),
                         args: vec![
                             "-m".to_owned(),
                             "pytest".to_owned(),
                             VariableName::File.template_value_with_whitespace(),
                         ],
-                        cwd: Some("$ZED_WORKTREE_ROOT".into()),
+                        cwd: Some(VariableName::WorktreeRoot.template_value()),
                         ..TaskTemplate::default()
                     },
                     // Run test(s) for a specific target within a file
                     TaskTemplate {
                         label: "pytest $ZED_CUSTOM_PYTHON_TEST_TARGET".to_owned(),
-                        command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
+                        command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value_with_whitespace(),
                         args: vec![
                             "-m".to_owned(),
                             "pytest".to_owned(),
                             PYTHON_TEST_TARGET_TASK_VARIABLE.template_value_with_whitespace(),
                         ],
-                        cwd: Some("$ZED_WORKTREE_ROOT".into()),
+                        cwd: Some(VariableName::WorktreeRoot.template_value()),
                         tags: vec![
                             "python-pytest-class".to_owned(),
                             "python-pytest-method".to_owned(),
@@ -1116,6 +1112,7 @@ impl LspAdapter for PyLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
+        _: &AsyncApp,
     ) -> Result<Box<dyn 'static + Any + Send>> {
         Ok(Box::new(()) as Box<_>)
     }
@@ -1427,6 +1424,7 @@ impl LspAdapter for BasedPyrightLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
+        _: &AsyncApp,
     ) -> Result<Box<dyn 'static + Any + Send>> {
         Ok(Box::new(()) as Box<_>)
     }

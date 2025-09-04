@@ -144,7 +144,8 @@ impl InlineAssistant {
             let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
                 return;
             };
-            let enabled = AgentSettings::get_global(cx).enabled;
+            let enabled = !DisableAiSettings::get_global(cx).disable_ai
+                && AgentSettings::get_global(cx).enabled;
             terminal_panel.update(cx, |terminal_panel, cx| {
                 terminal_panel.set_assistant_enabled(enabled, cx)
             });

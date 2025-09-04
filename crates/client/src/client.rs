@@ -96,12 +96,12 @@ actions!(
     ]
 );
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
 pub struct ClientSettingsContent {
     server_url: Option<String>,
 }
 
-#[derive(Deserialize, SettingsUi)]
+#[derive(Deserialize)]
 pub struct ClientSettings {
     pub server_url: String,
 }
@@ -122,12 +122,12 @@ impl Settings for ClientSettings {
     fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
-#[derive(Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, SettingsUi)]
 pub struct ProxySettingsContent {
     proxy: Option<String>,
 }
 
-#[derive(Deserialize, Default, SettingsUi)]
+#[derive(Deserialize, Default)]
 pub struct ProxySettings {
     pub proxy: Option<String>,
 }
@@ -520,14 +520,14 @@ impl<T: 'static> Drop for PendingEntitySubscription<T> {
     }
 }
 
-#[derive(Copy, Clone, Deserialize, Debug, SettingsUi)]
+#[derive(Copy, Clone, Deserialize, Debug)]
 pub struct TelemetrySettings {
     pub diagnostics: bool,
     pub metrics: bool,
 }
 
 /// Control what info is collected by Zed.
-#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, Debug, SettingsUi)]
 pub struct TelemetrySettingsContent {
     /// Send debug info like crash reports.
     ///
@@ -691,7 +691,7 @@ impl Client {
                     #[cfg(any(test, feature = "test-support"))]
                     let mut rng = StdRng::seed_from_u64(0);
                     #[cfg(not(any(test, feature = "test-support")))]
-                    let mut rng = StdRng::from_entropy();
+                    let mut rng = StdRng::from_os_rng();
 
                     let mut delay = INITIAL_RECONNECTION_DELAY;
                     loop {
@@ -721,8 +721,9 @@ impl Client {
                                 },
                                 cx,
                             );
-                            let jitter =
-                                Duration::from_millis(rng.gen_range(0..delay.as_millis() as u64));
+                            let jitter = Duration::from_millis(
+                                rng.random_range(0..delay.as_millis() as u64),
+                            );
                             cx.background_executor().timer(delay + jitter).await;
                             delay = cmp::min(delay * 2, MAX_RECONNECTION_DELAY);
                         } else {

@@ -18,7 +18,7 @@ pub enum ShowIndentGuides {
     Never,
 }
 
-#[derive(Deserialize, Debug, Clone, Copy, PartialEq, SettingsUi)]
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct OutlinePanelSettings {
     pub button: bool,
     pub default_width: Pixels,
@@ -61,7 +61,7 @@ pub struct IndentGuidesSettingsContent {
     pub show: Option<ShowIndentGuides>,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi)]
 pub struct OutlinePanelSettingsContent {
     /// Whether to show the outline panel button in the status bar.
     ///

@@ -909,7 +909,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::{distributions, prelude::*};
+    use rand::{distr::StandardUniform, prelude::*};
     use std::cmp;
 
     #[ctor::ctor]
@@ -951,24 +951,24 @@ mod tests {
 
             let rng = &mut rng;
             let mut tree = SumTree::<u8>::default();
-            let count = rng.gen_range(0..10);
-            if rng.r#gen() {
-                tree.extend(rng.sample_iter(distributions::Standard).take(count), &());
+            let count = rng.random_range(0..10);
+            if rng.random() {
+                tree.extend(rng.sample_iter(StandardUniform).take(count), &());
             } else {
                 let items = rng
-                    .sample_iter(distributions::Standard)
+                    .sample_iter(StandardUniform)
                     .take(count)
                     .collect::<Vec<_>>();
                 tree.par_extend(items, &());
             }
 
             for _ in 0..num_operations {
-                let splice_end = rng.gen_range(0..tree.extent::<Count>(&()).0 + 1);
-                let splice_start = rng.gen_range(0..splice_end + 1);
-                let count = rng.gen_range(0..10);
+                let splice_end = rng.random_range(0..tree.extent::<Count>(&()).0 + 1);
+                let splice_start = rng.random_range(0..splice_end + 1);
+                let count = rng.random_range(0..10);
                 let tree_end = tree.extent::<Count>(&());
                 let new_items = rng
-                    .sample_iter(distributions::Standard)
+                    .sample_iter(StandardUniform)
                     .take(count)
                     .collect::<Vec<u8>>();
 
@@ -978,7 +978,7 @@ mod tests {
                 tree = {
                     let mut cursor = tree.cursor::<Count>(&());
                     let mut new_tree = cursor.slice(&Count(splice_start), Bias::Right);
-                    if rng.r#gen() {
+                    if rng.random() {
                         new_tree.extend(new_items, &());
                     } else {
                         new_tree.par_extend(new_items, &());
@@ -1005,7 +1005,7 @@ mod tests {
                     .filter(|(_, item)| (item & 1) == 0)
                     .collect::<Vec<_>>();
 
-                let mut item_ix = if rng.r#gen() {
+                let mut item_ix = if rng.random() {
                     filter_cursor.next();
                     0
                 } else {
@@ -1022,12 +1022,12 @@ mod tests {
                     filter_cursor.next();
                     item_ix += 1;
 
-                    while item_ix > 0 && rng.gen_bool(0.2) {
+                    while item_ix > 0 && rng.random_bool(0.2) {
                         log::info!("prev");
                         filter_cursor.prev();
                         item_ix -= 1;
 
-                        if item_ix == 0 && rng.gen_bool(0.2) {
+                        if item_ix == 0 && rng.random_bool(0.2) {
                             filter_cursor.prev();
                             assert_eq!(filter_cursor.item(), None);
                             assert_eq!(filter_cursor.start().0, 0);
@@ -1039,9 +1039,9 @@ mod tests {
 
                 let mut before_start = false;
                 let mut cursor = tree.cursor::<Count>(&());
-                let start_pos = rng.gen_range(0..=reference_items.len());
+                let start_pos = rng.random_range(0..=reference_items.len());
                 cursor.seek(&Count(start_pos), Bias::Right);
-                let mut pos = rng.gen_range(start_pos..=reference_items.len());
+                let mut pos = rng.random_range(start_pos..=reference_items.len());
                 cursor.seek_forward(&Count(pos), Bias::Right);
 
                 for i in 0..10 {
@@ -1084,10 +1084,18 @@ mod tests {
             }
 
             for _ in 0..10 {
-                let end = rng.gen_range(0..tree.extent::<Count>(&()).0 + 1);
-                let start = rng.gen_range(0..end + 1);
-                let start_bias = if rng.r#gen() { Bias::Left } else { Bias::Right };
-                let end_bias = if rng.r#gen() { Bias::Left } else { Bias::Right };
+                let end = rng.random_range(0..tree.extent::<Count>(&()).0 + 1);
+                let start = rng.random_range(0..end + 1);
+                let start_bias = if rng.random() {
+                    Bias::Left
+                } else {
+                    Bias::Right
+                };
+                let end_bias = if rng.random() {
+                    Bias::Left
+                } else {
+                    Bias::Right
+                };
 
                 let mut cursor = tree.cursor::<Count>(&());
                 cursor.seek(&Count(start), start_bias);
