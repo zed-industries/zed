@@ -563,6 +563,7 @@ impl LspAdapter for TypeScriptLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
+        _: &AsyncApp,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         Ok(Box::new(TypeScriptVersions {
             typescript_version: self.node.npm_package_latest_version("typescript").await?,
@@ -885,6 +886,7 @@ impl LspAdapter for EsLintLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _delegate: &dyn LspAdapterDelegate,
+        _: &AsyncApp,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         let url = build_asset_url(
             "zed-industries/vscode-eslint",

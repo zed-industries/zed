@@ -147,11 +147,16 @@ impl LspAdapter for RustLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
+        cx: &AsyncApp,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         let release = latest_github_release(
             "rust-lang/rust-analyzer",
             true,
-            false,
+            ProjectSettings::try_read_global(cx, |s| {
+                s.lsp.get(&SERVER_NAME)?.fetch.as_ref()?.pre_release
+            })
+            .flatten()
+            .unwrap_or(false),
             delegate.http_client(),
         )
         .await?;

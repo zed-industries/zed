@@ -16783,6 +16783,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
                     "some other init value": false
                 })),
                 enable_lsp_tasks: false,
+                fetch: None,
             },
         );
     });
@@ -16803,6 +16804,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
                     "anotherInitValue": false
                 })),
                 enable_lsp_tasks: false,
+                fetch: None,
             },
         );
     });
@@ -16823,6 +16825,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
                     "anotherInitValue": false
                 })),
                 enable_lsp_tasks: false,
+                fetch: None,
             },
         );
     });
@@ -16841,6 +16844,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
                 settings: None,
                 initialization_options: None,
                 enable_lsp_tasks: false,
+                fetch: None,
             },
         );
     });

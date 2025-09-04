@@ -9,22 +9,23 @@ C++ support is available natively in Zed.
 
 You can configure which `clangd` binary Zed should use.
 
-To use a binary in a custom location, add the following to your `settings.json`:
+By default, Zed will try to find a `clangd` in your `$PATH` and try to use that. If that binary successfully executes, it's used. Otherwise, Zed will fall back to installing its own `clangd` version and use that.
+
+If you want to install a pre-release `clangd` version instead you can instruct Zed to do so by setting `pre_release` to `true` in your `settings.json`:
 
 ```json
 {
   "lsp": {
     "clangd": {
-      "binary": {
-        "path": "/path/to/clangd",
-        "arguments": []
+      "fetch": {
+        "pre_release": true
       }
     }
   }
 }
 ```
 
-If you want to disable Zed looking for a `clangd` binary, you can set `ignore_system_version` to `true`:
+If you want to disable Zed looking for a `clangd` binary, you can set `ignore_system_version` to `true` in your `settings.json`:
 
 ```json
 {
@@ -37,6 +38,23 @@ If you want to disable Zed looking for a `clangd` binary, you can set `ignore_sy
   }
 }
 ```
+
+If you want to use a binary in a custom location, you can specify a `path` and optional `arguments`:
+
+```json
+{
+  "lsp": {
+    "cangd": {
+      "binary": {
+        "path": "/path/to/clangd",
+        "arguments": []
+      }
+    }
+  }
+}
+```
+
+This `"path"` has to be an absolute path.
 
 ## Arguments
 
