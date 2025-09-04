@@ -826,20 +826,24 @@ impl<'a> MarkdownParser<'a> {
             }
             markup5ever_rcdom::NodeData::Comment { .. } => {}
             markup5ever_rcdom::NodeData::Element { name, attrs, .. } => {
+                let mut styles = if let Some(styles) = Self::markdown_style_from_html_styles(
+                    Self::extract_styles_from_attributes(attrs),
+                ) {
+                    vec![MarkdownHighlight::Style(styles)]
+                } else {
+                    Vec::default()
+                };
+
                 if local_name!("img") == name.local {
                     if let Some(image) = self.extract_image(source_range, attrs) {
                         elements.push(ParsedMarkdownElement::Image(image));
                     }
                 } else if local_name!("p") == name.local {
-                    let style = MarkdownHighlight::Style(Self::markdown_style_from_html_styles(
-                        Self::extract_styles_from_attributes(attrs),
-                    ));
-
                     self.parse_paragraph(
                         source_range,
                         node,
                         &mut MarkdownParagraph::new(),
-                        &mut vec![style],
+                        &mut styles,
                         elements,
                     );
                 } else {
@@ -1003,7 +1007,9 @@ impl<'a> MarkdownParser<'a> {
         styles
     }
 
-    fn markdown_style_from_html_styles(styles: HashMap<String, String>) -> MarkdownHighlightStyle {
+    fn markdown_style_from_html_styles(
+        styles: HashMap<String, String>,
+    ) -> Option<MarkdownHighlightStyle> {
         let mut markdown_style = MarkdownHighlightStyle::default();
 
         if let Some(text_decoration) = styles.get("text-decoration") {
@@ -1032,9 +1038,6 @@ impl<'a> MarkdownParser<'a> {
 
         if let Some(font_weight) = styles.get("font-weight") {
             match font_weight.to_lowercase().as_str() {
-                "normal" => {
-                    markdown_style.weight = FontWeight::NORMAL;
-                }
                 "bold" => {
                     markdown_style.weight = FontWeight::BOLD;
                 }
@@ -1049,7 +1052,11 @@ impl<'a> MarkdownParser<'a> {
             }
         }
 
-        markdown_style
+        if markdown_style != MarkdownHighlightStyle::default() {
+            Some(markdown_style)
+        } else {
+            None
+        }
     }
 
     fn extract_image(
