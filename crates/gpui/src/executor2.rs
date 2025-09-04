@@ -1,4 +1,4 @@
-use crate::{App, PlatformDispatcher};
+use crate::App;
 use async_task::Runnable;
 use futures::FutureExt as _;
 use futures::channel::mpsc;
@@ -13,11 +13,7 @@ use std::{
     mem,
     num::NonZeroUsize,
     pin::Pin,
-    rc::Rc,
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering::SeqCst},
-    },
+    sync::atomic::{AtomicUsize, Ordering::SeqCst},
     task::{Context, Poll},
     time::{Duration, Instant},
 };
@@ -39,11 +35,7 @@ pub struct BackgroundExecutor(scheduler::BackgroundExecutor);
 /// only polled from the same thread it was spawned from. These checks would fail when spawning
 /// foreground tasks from from background threads.
 #[derive(Clone)]
-pub struct ForegroundExecutor {
-    #[doc(hidden)]
-    pub dispatcher: Arc<dyn PlatformDispatcher>,
-    not_send: PhantomData<Rc<()>>,
-}
+pub struct ForegroundExecutor(scheduler::ForegroundExecutor);
 
 /// Task is a primitive that allows work to happen in the background.
 ///
@@ -87,7 +79,7 @@ impl<T> Future for Task<T> {
     type Output = T;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        self.0.poll_unpin(cx)
+        unsafe { self.map_unchecked_mut(|t| &mut t.0) }.poll(cx)
     }
 }
 
@@ -299,34 +291,28 @@ impl BackgroundExecutor {
 
 /// ForegroundExecutor runs things on the main thread.
 impl ForegroundExecutor {
-    /// Creates a new ForegroundExecutor from the given PlatformDispatcher.
-    pub fn new(dispatcher: Arc<dyn PlatformDispatcher>) -> Self {
-        Self {
-            dispatcher,
-            not_send: PhantomData,
-        }
-    }
-
     /// Enqueues the given Task to run on the main thread at some point in the future.
     #[track_caller]
     pub fn spawn<R>(&self, future: impl Future<Output = R> + 'static) -> Task<R>
     where
         R: 'static,
     {
-        let dispatcher = self.dispatcher.clone();
+        // let dispatcher = self.dispatcher.clone();
 
-        #[track_caller]
-        fn inner<R: 'static>(
-            dispatcher: Arc<dyn PlatformDispatcher>,
-            future: AnyLocalFuture<R>,
-        ) -> Task<R> {
-            let (runnable, task) = spawn_local_with_source_location(future, move |runnable| {
-                dispatcher.dispatch_on_main_thread(runnable)
-            });
-            runnable.schedule();
-            Task(TaskState::Spawned(task))
-        }
-        inner::<R>(dispatcher, Box::pin(future))
+        // #[track_caller]
+        // fn inner<R: 'static>(
+        //     dispatcher: Arc<dyn PlatformDispatcher>,
+        //     future: AnyLocalFuture<R>,
+        // ) -> Task<R> {
+        //     let (runnable, task) = spawn_local_with_source_location(future, move |runnable| {
+        //         dispatcher.dispatch_on_main_thread(runnable)
+        //     });
+        //     runnable.schedule();
+        //     Task(TaskState::Spawned(task))
+        // }
+        // inner::<R>(dispatcher, Box::pin(future))
+        // todo!("reduce monomorphization and spawn_local_with_source_location")
+        Task(self.0.spawn(future))
     }
 }
 
