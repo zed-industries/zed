@@ -522,7 +522,6 @@ impl PickerDelegate for OpenPathDelegate {
         _: &mut Context<Picker<Self>>,
     ) -> Option<String> {
         let candidate = self.get_entry(self.selected_index)?;
-        // TODO kb unit test tab completions for `/` case (also C:\\ on Win) + test the `./` completion
         if candidate.path.string.is_empty() || candidate.path.string == self.current_dir() {
             return None;
         }
