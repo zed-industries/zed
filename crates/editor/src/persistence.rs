@@ -1,12 +1,16 @@
 use anyhow::Result;
-use db::sqlez::bindable::{Bind, Column, StaticColumnCount};
-use db::sqlez::statement::Statement;
+use db::{
+    query,
+    sqlez::{
+        bindable::{Bind, Column, StaticColumnCount},
+        domain::Domain,
+        statement::Statement,
+    },
+    sqlez_macros::sql,
+};
 use fs::MTime;
 use itertools::Itertools as _;
 use std::path::PathBuf;
-
-use db::sqlez_macros::sql;
-use db::{define_connection, query};
 
 use workspace::{ItemId, WorkspaceDb, WorkspaceId};
 
@@ -83,7 +87,11 @@ impl Column for SerializedEditor {
     }
 }
 
-define_connection!(
+pub struct EditorDb(db::sqlez::thread_safe_connection::ThreadSafeConnection);
+
+impl Domain for EditorDb {
+    const NAME: &str = stringify!(EditorDb);
+
     // Current schema shape using pseudo-rust syntax:
     // editors(
     //   item_id: usize,
@@ -113,7 +121,8 @@ define_connection!(
     //   start: usize,
     //   end: usize,
     // )
-    pub static ref DB: EditorDb<WorkspaceDb> = &[
+
+    const MIGRATIONS: &[&str] = &[
         sql! (
             CREATE TABLE editors(
                 item_id INTEGER NOT NULL,
@@ -189,7 +198,9 @@ define_connection!(
             ) STRICT;
         ),
     ];
-);
+}
+
+db::static_connection!(DB, EditorDb, [WorkspaceDb]);
 
 // https://www.sqlite.org/limits.html
 // > <..> the maximum value of a host parameter number is SQLITE_MAX_VARIABLE_NUMBER,

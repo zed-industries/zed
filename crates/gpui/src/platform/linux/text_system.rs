@@ -213,11 +213,7 @@ impl CosmicTextSystemState {
         features: &FontFeatures,
     ) -> Result<SmallVec<[FontId; 4]>> {
         // TODO: Determine the proper system UI font.
-        let name = if name == ".SystemUIFont" {
-            "Zed Plex Sans"
-        } else {
-            name
-        };
+        let name = crate::text_system::font_name_with_fallbacks(name, "IBM Plex Sans");
 
         let families = self
             .font_system

@@ -149,6 +149,22 @@ pub struct PredictEditsBody {
     pub can_collect_data: bool,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub diagnostic_groups: Option<Vec<(String, serde_json::Value)>>,
+    /// Info about the git repository state, only present when can_collect_data is true.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub git_info: Option<PredictEditsGitInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PredictEditsGitInfo {
+    /// SHA of git HEAD commit at time of prediction.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub head_sha: Option<String>,
+    /// URL of the remote called `origin`.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub remote_origin_url: Option<String>,
+    /// URL of the remote called `upstream`.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub remote_upstream_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -247,12 +263,12 @@ pub struct WebSearchBody {
     pub query: String,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct WebSearchResponse {
     pub results: Vec<WebSearchResult>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct WebSearchResult {
     pub title: String,
     pub url: String,
@@ -308,13 +324,13 @@ pub struct GetSubscriptionResponse {
     pub usage: Option<CurrentUsage>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct CurrentUsage {
     pub model_requests: UsageData,
     pub edit_predictions: UsageData,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct UsageData {
     pub used: u32,
     pub limit: UsageLimit,

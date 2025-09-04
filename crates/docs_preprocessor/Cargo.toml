@@ -9,7 +9,9 @@ license = "GPL-3.0-or-later"
 anyhow.workspace = true
 command_palette.workspace = true
 gpui.workspace = true
-mdbook = "0.4.40"
+# We are specifically pinning this version of mdbook, as later versions introduce issues with double-nested subdirectories.
+# Ask @maxdeviant about this before bumping.
+mdbook = "= 0.4.40"
 regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true

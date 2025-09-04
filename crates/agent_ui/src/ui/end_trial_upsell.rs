@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use ai_onboarding::{AgentPanelOnboardingCard, BulletItem};
+use ai_onboarding::{AgentPanelOnboardingCard, PlanDefinitions};
 use client::zed_urls;
 use gpui::{AnyElement, App, IntoElement, RenderOnce, Window};
-use ui::{Divider, List, Tooltip, prelude::*};
+use ui::{Divider, Tooltip, prelude::*};
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct EndTrialUpsell {
@@ -18,6 +18,8 @@ impl EndTrialUpsell {
 
 impl RenderOnce for EndTrialUpsell {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let plan_definitions = PlanDefinitions;
+
         let pro_section = v_flex()
             .gap_1()
             .child(
@@ -31,13 +33,7 @@ impl RenderOnce for EndTrialUpsell {
                     )
                     .child(Divider::horizontal()),
             )
-            .child(
-                List::new()
-                    .child(BulletItem::new("500 prompts with Claude models"))
-                    .child(BulletItem::new(
-                        "Unlimited edit predictions with Zeta, our open-source model",
-                    )),
-            )
+            .child(plan_definitions.pro_plan(false))
             .child(
                 Button::new("cta-button", "Upgrade to Zed Pro")
                     .full_width()
@@ -68,11 +64,7 @@ impl RenderOnce for EndTrialUpsell {
                     )
                     .child(Divider::horizontal()),
             )
-            .child(
-                List::new()
-                    .child(BulletItem::new("50 prompts with the Claude models"))
-                    .child(BulletItem::new("2,000 accepted edit predictions")),
-            );
+            .child(plan_definitions.free_plan());
 
         AgentPanelOnboardingCard::new()
             .child(Headline::new("Your Zed Pro Trial has expired"))
@@ -102,18 +94,20 @@ impl RenderOnce for EndTrialUpsell {
 
 impl Component for EndTrialUpsell {
     fn scope() -> ComponentScope {
-        ComponentScope::Agent
+        ComponentScope::Onboarding
+    }
+
+    fn name() -> &'static str {
+        "End of Trial Upsell Banner"
     }
 
     fn sort_name() -> &'static str {
-        "AgentEndTrialUpsell"
+        "End of Trial Upsell Banner"
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         Some(
             v_flex()
-                .p_4()
-                .gap_4()
                 .child(EndTrialUpsell {
                     dismiss_upsell: Arc::new(|_, _| {}),
                 })

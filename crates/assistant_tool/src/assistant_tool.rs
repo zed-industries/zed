@@ -1,4 +1,3 @@
-mod action_log;
 pub mod outline;
 mod tool_registry;
 mod tool_schema;
@@ -10,6 +9,7 @@ use std::fmt::Formatter;
 use std::ops::Deref;
 use std::sync::Arc;
 
+use action_log::ActionLog;
 use anyhow::Result;
 use gpui::AnyElement;
 use gpui::AnyWindowHandle;
@@ -25,7 +25,6 @@ use language_model::LanguageModelToolSchemaFormat;
 use project::Project;
 use workspace::Workspace;
 
-pub use crate::action_log::*;
 pub use crate::tool_registry::*;
 pub use crate::tool_schema::*;
 pub use crate::tool_working_set::*;

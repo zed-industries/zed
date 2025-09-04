@@ -16,9 +16,6 @@ extend-exclude = [
     "crates/google_ai/src/supported_countries.rs",
     "crates/open_ai/src/supported_countries.rs",
 
-    # Some crate names are flagged as typos.
-    "crates/indexed_docs/src/providers/rustdoc/popular_crates.txt",
-
     # Some mock data is flagged as typos.
     "crates/assistant_tools/src/web_search_tool.rs",
 
@@ -39,7 +36,10 @@ extend-exclude = [
     # glsl isn't recognized by this tool.
     "extensions/glsl/languages/glsl/",
     # Windows likes its abbreviations.
-    "crates/gpui/src/platform/windows/",
+    "crates/gpui/src/platform/windows/directx_renderer.rs",
+    "crates/gpui/src/platform/windows/events.rs",
+    "crates/gpui/src/platform/windows/direct_write.rs",
+    "crates/gpui/src/platform/windows/window.rs",
     # Some typos in the base mdBook CSS.
     "docs/theme/css/",
     # Spellcheck triggers on `|Fixe[sd]|` regex part.
@@ -71,6 +71,10 @@ extend-ignore-re = [
     # Not an actual typo but an intentionally invalid color, in `color_extractor`
     "#fof",
     # Stripped version of reserved keyword `type`
-    "typ"
+    "typ",
+    # AMD GPU Services
+    "ags",
+    # AMD GPU Services
+    "AGS"
 ]
 check-filename = true

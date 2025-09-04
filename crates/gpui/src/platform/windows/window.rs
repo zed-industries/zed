@@ -26,10 +26,9 @@ use windows::{
     core::*,
 };
 
-use crate::platform::blade::{BladeContext, BladeRenderer};
 use crate::*;
 
-pub(crate) struct WindowsWindow(pub Rc<WindowsWindowStatePtr>);
+pub(crate) struct WindowsWindow(pub Rc<WindowsWindowInner>);
 
 pub struct WindowsWindowState {
     pub origin: Point<Pixels>,
@@ -49,7 +48,7 @@ pub struct WindowsWindowState {
     pub system_key_handled: bool,
     pub hovered: bool,
 
-    pub renderer: BladeRenderer,
+    pub renderer: DirectXRenderer,
 
     pub click_state: ClickState,
     pub system_settings: WindowsSystemSettings,
@@ -62,9 +61,9 @@ pub struct WindowsWindowState {
     hwnd: HWND,
 }
 
-pub(crate) struct WindowsWindowStatePtr {
+pub(crate) struct WindowsWindowInner {
     hwnd: HWND,
-    this: Weak<Self>,
+    pub(super) this: Weak<Self>,
     drop_target_helper: IDropTargetHelper,
     pub(crate) state: RefCell<WindowsWindowState>,
     pub(crate) handle: AnyWindowHandle,
@@ -74,27 +73,30 @@ pub(crate) struct WindowsWindowStatePtr {
     pub(crate) windows_version: WindowsVersion,
     pub(crate) validation_number: usize,
     pub(crate) main_receiver: flume::Receiver<Runnable>,
-    pub(crate) main_thread_id_win32: u32,
+    pub(crate) platform_window_handle: HWND,
 }
 
 impl WindowsWindowState {
     fn new(
         hwnd: HWND,
-        transparent: bool,
-        cs: &CREATESTRUCTW,
+        directx_devices: &DirectXDevices,
+        window_params: &CREATESTRUCTW,
         current_cursor: Option<HCURSOR>,
         display: WindowsDisplay,
-        gpu_context: &BladeContext,
         min_size: Option<Size<Pixels>>,
         appearance: WindowAppearance,
+        disable_direct_composition: bool,
     ) -> Result<Self> {
         let scale_factor = {
             let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
             monitor_dpi / USER_DEFAULT_SCREEN_DPI as f32
         };
-        let origin = logical_point(cs.x as f32, cs.y as f32, scale_factor);
+        let origin = logical_point(window_params.x as f32, window_params.y as f32, scale_factor);
         let logical_size = {
-            let physical_size = size(DevicePixels(cs.cx), DevicePixels(cs.cy));
+            let physical_size = size(
+                DevicePixels(window_params.cx),
+                DevicePixels(window_params.cy),
+            );
             physical_size.to_pixels(scale_factor)
         };
         let fullscreen_restore_bounds = Bounds {
@@ -103,7 +105,8 @@ impl WindowsWindowState {
         };
         let border_offset = WindowBorderOffset::default();
         let restore_from_minimized = None;
-        let renderer = windows_renderer::init(gpu_context, hwnd, transparent)?;
+        let renderer = DirectXRenderer::new(hwnd, directx_devices, disable_direct_composition)
+            .context("Creating DirectX renderer")?;
         let callbacks = Callbacks::default();
         let input_handler = None;
         let pending_surrogate = None;
@@ -202,17 +205,17 @@ impl WindowsWindowState {
     }
 }
 
-impl WindowsWindowStatePtr {
-    fn new(context: &WindowCreateContext, hwnd: HWND, cs: &CREATESTRUCTW) -> Result<Rc<Self>> {
+impl WindowsWindowInner {
+    fn new(context: &mut WindowCreateContext, hwnd: HWND, cs: &CREATESTRUCTW) -> Result<Rc<Self>> {
         let state = RefCell::new(WindowsWindowState::new(
             hwnd,
-            context.transparent,
+            &context.directx_devices,
             cs,
             context.current_cursor,
             context.display,
-            context.gpu_context,
             context.min_size,
             context.appearance,
+            context.disable_direct_composition,
         )?);
 
         Ok(Rc::new_cyclic(|this| Self {
@@ -227,18 +230,18 @@ impl WindowsWindowStatePtr {
             windows_version: context.windows_version,
             validation_number: context.validation_number,
             main_receiver: context.main_receiver.clone(),
-            main_thread_id_win32: context.main_thread_id_win32,
+            platform_window_handle: context.platform_window_handle,
         }))
     }
 
     fn toggle_fullscreen(&self) {
-        let Some(state_ptr) = self.this.upgrade() else {
+        let Some(this) = self.this.upgrade() else {
             log::error!("Unable to toggle fullscreen: window has been dropped");
             return;
         };
         self.executor
             .spawn(async move {
-                let mut lock = state_ptr.state.borrow_mut();
+                let mut lock = this.state.borrow_mut();
                 let StyleAndBounds {
                     style,
                     x,
@@ -250,10 +253,9 @@ impl WindowsWindowStatePtr {
                 } else {
                     let (window_bounds, _) = lock.calculate_window_bounds();
                     lock.fullscreen_restore_bounds = window_bounds;
-                    let style =
-                        WINDOW_STYLE(unsafe { get_window_long(state_ptr.hwnd, GWL_STYLE) } as _);
+                    let style = WINDOW_STYLE(unsafe { get_window_long(this.hwnd, GWL_STYLE) } as _);
                     let mut rc = RECT::default();
-                    unsafe { GetWindowRect(state_ptr.hwnd, &mut rc) }.log_err();
+                    unsafe { GetWindowRect(this.hwnd, &mut rc) }.log_err();
                     let _ = lock.fullscreen.insert(StyleAndBounds {
                         style,
                         x: rc.left,
@@ -277,10 +279,10 @@ impl WindowsWindowStatePtr {
                     }
                 };
                 drop(lock);
-                unsafe { set_window_long(state_ptr.hwnd, GWL_STYLE, style.0 as isize) };
+                unsafe { set_window_long(this.hwnd, GWL_STYLE, style.0 as isize) };
                 unsafe {
                     SetWindowPos(
-                        state_ptr.hwnd,
+                        this.hwnd,
                         None,
                         x,
                         y,
@@ -329,12 +331,11 @@ pub(crate) struct Callbacks {
     pub(crate) appearance_changed: Option<Box<dyn FnMut()>>,
 }
 
-struct WindowCreateContext<'a> {
-    inner: Option<Result<Rc<WindowsWindowStatePtr>>>,
+struct WindowCreateContext {
+    inner: Option<Result<Rc<WindowsWindowInner>>>,
     handle: AnyWindowHandle,
     hide_title_bar: bool,
     display: WindowsDisplay,
-    transparent: bool,
     is_movable: bool,
     min_size: Option<Size<Pixels>>,
     executor: ForegroundExecutor,
@@ -343,9 +344,10 @@ struct WindowCreateContext<'a> {
     drop_target_helper: IDropTargetHelper,
     validation_number: usize,
     main_receiver: flume::Receiver<Runnable>,
-    gpu_context: &'a BladeContext,
-    main_thread_id_win32: u32,
+    platform_window_handle: HWND,
     appearance: WindowAppearance,
+    disable_direct_composition: bool,
+    directx_devices: DirectXDevices,
 }
 
 impl WindowsWindow {
@@ -353,7 +355,6 @@ impl WindowsWindow {
         handle: AnyWindowHandle,
         params: WindowParams,
         creation_info: WindowCreationInfo,
-        gpu_context: &BladeContext,
     ) -> Result<Self> {
         let WindowCreationInfo {
             icon,
@@ -363,15 +364,17 @@ impl WindowsWindow {
             drop_target_helper,
             validation_number,
             main_receiver,
-            main_thread_id_win32,
+            platform_window_handle,
+            disable_direct_composition,
+            directx_devices,
         } = creation_info;
-        let classname = register_wnd_class(icon);
+        register_window_class(icon);
         let hide_title_bar = params
             .titlebar
             .as_ref()
             .map(|titlebar| titlebar.appears_transparent)
             .unwrap_or(true);
-        let windowname = HSTRING::from(
+        let window_name = HSTRING::from(
             params
                 .titlebar
                 .as_ref()
@@ -379,14 +382,25 @@ impl WindowsWindow {
                 .map(|title| title.as_ref())
                 .unwrap_or(""),
         );
-        let (dwexstyle, mut dwstyle) = if params.kind == WindowKind::PopUp {
-            (WS_EX_TOOLWINDOW | WS_EX_LAYERED, WINDOW_STYLE(0x0))
+
+        let (mut dwexstyle, dwstyle) = if params.kind == WindowKind::PopUp {
+            (WS_EX_TOOLWINDOW, WINDOW_STYLE(0x0))
         } else {
-            (
-                WS_EX_APPWINDOW | WS_EX_LAYERED,
-                WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX,
-            )
+            let mut dwstyle = WS_SYSMENU;
+
+            if params.is_resizable {
+                dwstyle |= WS_THICKFRAME | WS_MAXIMIZEBOX;
+            }
+
+            if params.is_minimizable {
+                dwstyle |= WS_MINIMIZEBOX;
+            }
+
+            (WS_EX_APPWINDOW, dwstyle)
         };
+        if !disable_direct_composition {
+            dwexstyle |= WS_EX_NOREDIRECTIONBITMAP;
+        }
 
         let hinstance = get_module_handle();
         let display = if let Some(display_id) = params.display_id {
@@ -401,7 +415,6 @@ impl WindowsWindow {
             handle,
             hide_title_bar,
             display,
-            transparent: true,
             is_movable: params.is_movable,
             min_size: params.window_min_size,
             executor,
@@ -410,16 +423,16 @@ impl WindowsWindow {
             drop_target_helper,
             validation_number,
             main_receiver,
-            gpu_context,
-            main_thread_id_win32,
+            platform_window_handle,
             appearance,
+            disable_direct_composition,
+            directx_devices,
         };
-        let lpparam = Some(&context as *const _ as *const _);
         let creation_result = unsafe {
             CreateWindowExW(
                 dwexstyle,
-                classname,
-                &windowname,
+                WINDOW_CLASS_NAME,
+                &window_name,
                 dwstyle,
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
@@ -428,41 +441,35 @@ impl WindowsWindow {
                 None,
                 None,
                 Some(hinstance.into()),
-                lpparam,
+                Some(&context as *const _ as *const _),
             )
         };
-        // We should call `?` on state_ptr first, then call `?` on hwnd.
-        // Or, we will lose the error info reported by `WindowsWindowState::new`
-        let state_ptr = context.inner.take().unwrap()?;
+
+        // Failure to create a `WindowsWindowState` can cause window creation to fail,
+        // so check the inner result first.
+        let this = context.inner.take().unwrap()?;
         let hwnd = creation_result?;
-        register_drag_drop(state_ptr.clone())?;
+
+        register_drag_drop(&this)?;
         configure_dwm_dark_mode(hwnd, appearance);
-        state_ptr.state.borrow_mut().border_offset.update(hwnd)?;
+        this.state.borrow_mut().border_offset.update(hwnd)?;
         let placement = retrieve_window_placement(
             hwnd,
             display,
             params.bounds,
-            state_ptr.state.borrow().scale_factor,
-            state_ptr.state.borrow().border_offset,
+            this.state.borrow().scale_factor,
+            this.state.borrow().border_offset,
         )?;
         if params.show {
             unsafe { SetWindowPlacement(hwnd, &placement)? };
         } else {
-            state_ptr.state.borrow_mut().initial_placement = Some(WindowOpenStatus {
+            this.state.borrow_mut().initial_placement = Some(WindowOpenStatus {
                 placement,
                 state: WindowOpenState::Windowed,
             });
         }
-        // The render pipeline will perform compositing on the GPU when the
-        // swapchain is configured correctly (see downstream of
-        // update_transparency).
-        // The following configuration is a one-time setup to ensure that the
-        // window is going to be composited with per-pixel alpha, but the render
-        // pipeline is responsible for effectively calling UpdateLayeredWindow
-        // at the appropriate time.
-        unsafe { SetLayeredWindowAttributes(hwnd, COLORREF(0), 255, LWA_ALPHA)? };
 
-        Ok(Self(state_ptr))
+        Ok(Self(this))
     }
 }
 
@@ -485,7 +492,6 @@ impl rwh::HasDisplayHandle for WindowsWindow {
 
 impl Drop for WindowsWindow {
     fn drop(&mut self) {
-        self.0.state.borrow_mut().renderer.destroy();
         // clone this `Rc` to prevent early release of the pointer
         let this = self.0.clone();
         self.0
@@ -598,10 +604,7 @@ impl PlatformWindow for WindowsWindow {
     ) -> Option<Receiver<usize>> {
         let (done_tx, done_rx) = oneshot::channel();
         let msg = msg.to_string();
-        let detail_string = match detail {
-            Some(info) => Some(info.to_string()),
-            None => None,
-        };
+        let detail_string = detail.map(|detail| detail.to_string());
         let handle = self.0.hwnd;
         let answers = answers.to_vec();
         self.0
@@ -683,6 +686,36 @@ impl PlatformWindow for WindowsWindow {
                 this.set_window_placement().log_err();
                 unsafe { SetActiveWindow(hwnd).log_err() };
                 unsafe { SetFocus(Some(hwnd)).log_err() };
+
+                // premium ragebait by windows, this is needed because the window
+                // must have received an input event to be able to set itself to foreground
+                // so let's just simulate user input as that seems to be the most reliable way
+                // some more info: https://gist.github.com/Aetopia/1581b40f00cc0cadc93a0e8ccb65dc8c
+                // bonus: this bug also doesn't manifest if you have vs attached to the process
+                let inputs = [
+                    INPUT {
+                        r#type: INPUT_KEYBOARD,
+                        Anonymous: INPUT_0 {
+                            ki: KEYBDINPUT {
+                                wVk: VK_MENU,
+                                dwFlags: KEYBD_EVENT_FLAGS(0),
+                                ..Default::default()
+                            },
+                        },
+                    },
+                    INPUT {
+                        r#type: INPUT_KEYBOARD,
+                        Anonymous: INPUT_0 {
+                            ki: KEYBDINPUT {
+                                wVk: VK_MENU,
+                                dwFlags: KEYEVENTF_KEYUP,
+                                ..Default::default()
+                            },
+                        },
+                    },
+                ];
+                unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+
                 // todo(windows)
                 // crate `windows 0.56` reports true as Err
                 unsafe { SetForegroundWindow(hwnd).as_bool() };
@@ -705,24 +738,21 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
-        let mut window_state = self.0.state.borrow_mut();
-        window_state
-            .renderer
-            .update_transparency(background_appearance != WindowBackgroundAppearance::Opaque);
+        let hwnd = self.0.hwnd;
 
         match background_appearance {
             WindowBackgroundAppearance::Opaque => {
                 // ACCENT_DISABLED
-                set_window_composition_attribute(window_state.hwnd, None, 0);
+                set_window_composition_attribute(hwnd, None, 0);
             }
             WindowBackgroundAppearance::Transparent => {
                 // Use ACCENT_ENABLE_TRANSPARENTGRADIENT for transparent background
-                set_window_composition_attribute(window_state.hwnd, None, 2);
+                set_window_composition_attribute(hwnd, None, 2);
             }
             WindowBackgroundAppearance::Blurred => {
                 // Enable acrylic blur
                 // ACCENT_ENABLE_ACRYLICBLURBEHIND
-                set_window_composition_attribute(window_state.hwnd, Some((0, 0, 0, 0)), 4);
+                set_window_composition_attribute(hwnd, Some((0, 0, 0, 0)), 4);
             }
         }
     }
@@ -794,11 +824,11 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn draw(&self, scene: &Scene) {
-        self.0.state.borrow_mut().renderer.draw(scene)
+        self.0.state.borrow_mut().renderer.draw(scene).log_err();
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
-        self.0.state.borrow().renderer.sprite_atlas().clone()
+        self.0.state.borrow().renderer.sprite_atlas()
     }
 
     fn get_raw_handle(&self) -> HWND {
@@ -806,16 +836,16 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
-        Some(self.0.state.borrow().renderer.gpu_specs())
+        self.0.state.borrow().renderer.gpu_specs().log_err()
     }
 
     fn update_ime_position(&self, _bounds: Bounds<ScaledPixels>) {
-        // todo(windows)
+        // There is no such thing on Windows.
     }
 }
 
 #[implement(IDropTarget)]
-struct WindowsDragDropHandler(pub Rc<WindowsWindowStatePtr>);
+struct WindowsDragDropHandler(pub Rc<WindowsWindowInner>);
 
 impl WindowsDragDropHandler {
     fn handle_drag_drop(&self, input: PlatformInput) {
@@ -1096,15 +1126,15 @@ enum WindowOpenState {
     Windowed,
 }
 
-fn register_wnd_class(icon_handle: HICON) -> PCWSTR {
-    const CLASS_NAME: PCWSTR = w!("Zed::Window");
+const WINDOW_CLASS_NAME: PCWSTR = w!("Zed::Window");
 
+fn register_window_class(icon_handle: HICON) {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
         let wc = WNDCLASSW {
-            lpfnWndProc: Some(wnd_proc),
+            lpfnWndProc: Some(window_procedure),
             hIcon: icon_handle,
-            lpszClassName: PCWSTR(CLASS_NAME.as_ptr()),
+            lpszClassName: PCWSTR(WINDOW_CLASS_NAME.as_ptr()),
             style: CS_HREDRAW | CS_VREDRAW,
             hInstance: get_module_handle().into(),
             hbrBackground: unsafe { CreateSolidBrush(COLORREF(0x00000000)) },
@@ -1112,54 +1142,58 @@ fn register_wnd_class(icon_handle: HICON) -> PCWSTR {
         };
         unsafe { RegisterClassW(&wc) };
     });
-
-    CLASS_NAME
 }
 
-unsafe extern "system" fn wnd_proc(
+unsafe extern "system" fn window_procedure(
     hwnd: HWND,
     msg: u32,
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
     if msg == WM_NCCREATE {
-        let cs = lparam.0 as *const CREATESTRUCTW;
-        let cs = unsafe { &*cs };
-        let ctx = cs.lpCreateParams as *mut WindowCreateContext;
-        let ctx = unsafe { &mut *ctx };
-        let creation_result = WindowsWindowStatePtr::new(ctx, hwnd, cs);
-        if creation_result.is_err() {
-            ctx.inner = Some(creation_result);
-            return LRESULT(0);
-        }
-        let weak = Box::new(Rc::downgrade(creation_result.as_ref().unwrap()));
-        unsafe { set_window_long(hwnd, GWLP_USERDATA, Box::into_raw(weak) as isize) };
-        ctx.inner = Some(creation_result);
-        return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
+        let window_params = lparam.0 as *const CREATESTRUCTW;
+        let window_params = unsafe { &*window_params };
+        let window_creation_context = window_params.lpCreateParams as *mut WindowCreateContext;
+        let window_creation_context = unsafe { &mut *window_creation_context };
+        return match WindowsWindowInner::new(window_creation_context, hwnd, window_params) {
+            Ok(window_state) => {
+                let weak = Box::new(Rc::downgrade(&window_state));
+                unsafe { set_window_long(hwnd, GWLP_USERDATA, Box::into_raw(weak) as isize) };
+                window_creation_context.inner = Some(Ok(window_state));
+                unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+            }
+            Err(error) => {
+                window_creation_context.inner = Some(Err(error));
+                LRESULT(0)
+            }
+        };
     }
-    let ptr = unsafe { get_window_long(hwnd, GWLP_USERDATA) } as *mut Weak<WindowsWindowStatePtr>;
+
+    let ptr = unsafe { get_window_long(hwnd, GWLP_USERDATA) } as *mut Weak<WindowsWindowInner>;
     if ptr.is_null() {
         return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
     }
     let inner = unsafe { &*ptr };
-    let r = if let Some(state) = inner.upgrade() {
-        handle_msg(hwnd, msg, wparam, lparam, state)
+    let result = if let Some(inner) = inner.upgrade() {
+        inner.handle_msg(hwnd, msg, wparam, lparam)
     } else {
         unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
     };
+
     if msg == WM_NCDESTROY {
         unsafe { set_window_long(hwnd, GWLP_USERDATA, 0) };
         unsafe { drop(Box::from_raw(ptr)) };
     }
-    r
+
+    result
 }
 
-pub(crate) fn try_get_window_inner(hwnd: HWND) -> Option<Rc<WindowsWindowStatePtr>> {
+pub(crate) fn window_from_hwnd(hwnd: HWND) -> Option<Rc<WindowsWindowInner>> {
     if hwnd.is_invalid() {
         return None;
     }
 
-    let ptr = unsafe { get_window_long(hwnd, GWLP_USERDATA) } as *mut Weak<WindowsWindowStatePtr>;
+    let ptr = unsafe { get_window_long(hwnd, GWLP_USERDATA) } as *mut Weak<WindowsWindowInner>;
     if !ptr.is_null() {
         let inner = unsafe { &*ptr };
         inner.upgrade()
@@ -1182,9 +1216,9 @@ fn get_module_handle() -> HMODULE {
     }
 }
 
-fn register_drag_drop(state_ptr: Rc<WindowsWindowStatePtr>) -> Result<()> {
-    let window_handle = state_ptr.hwnd;
-    let handler = WindowsDragDropHandler(state_ptr);
+fn register_drag_drop(window: &Rc<WindowsWindowInner>) -> Result<()> {
+    let window_handle = window.hwnd;
+    let handler = WindowsDragDropHandler(window.clone());
     // The lifetime of `IDropTarget` is handled by Windows, it won't release until
     // we call `RevokeDragDrop`.
     // So, it's safe to drop it here.
@@ -1302,52 +1336,6 @@ fn set_window_composition_attribute(hwnd: HWND, color: Option<Color>, state: u32
                 cb_data: std::mem::size_of::<AccentPolicy>(),
             };
             let _ = set_window_composition_attribute(hwnd, &mut data as *mut _ as _);
-        }
-    }
-}
-
-mod windows_renderer {
-    use crate::platform::blade::{BladeContext, BladeRenderer, BladeSurfaceConfig};
-    use raw_window_handle as rwh;
-    use std::num::NonZeroIsize;
-    use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::GWLP_HINSTANCE};
-
-    use crate::{get_window_long, show_error};
-
-    pub(super) fn init(
-        context: &BladeContext,
-        hwnd: HWND,
-        transparent: bool,
-    ) -> anyhow::Result<BladeRenderer> {
-        let raw = RawWindow { hwnd };
-        let config = BladeSurfaceConfig {
-            size: Default::default(),
-            transparent,
-        };
-        BladeRenderer::new(context, &raw, config)
-            .inspect_err(|err| show_error("Failed to initialize BladeRenderer", err.to_string()))
-    }
-
-    struct RawWindow {
-        hwnd: HWND,
-    }
-
-    impl rwh::HasWindowHandle for RawWindow {
-        fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
-            Ok(unsafe {
-                let hwnd = NonZeroIsize::new_unchecked(self.hwnd.0 as isize);
-                let mut handle = rwh::Win32WindowHandle::new(hwnd);
-                let hinstance = get_window_long(self.hwnd, GWLP_HINSTANCE);
-                handle.hinstance = NonZeroIsize::new(hinstance);
-                rwh::WindowHandle::borrow_raw(handle.into())
-            })
-        }
-    }
-
-    impl rwh::HasDisplayHandle for RawWindow {
-        fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
-            let handle = rwh::WindowsDisplayHandle::new();
-            Ok(unsafe { rwh::DisplayHandle::borrow_raw(handle.into()) })
         }
     }
 }

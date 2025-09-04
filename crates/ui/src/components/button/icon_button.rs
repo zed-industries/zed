@@ -133,7 +133,7 @@ impl Clickable for IconButton {
 }
 
 impl FixedWidth for IconButton {
-    fn width(mut self, width: DefiniteLength) -> Self {
+    fn width(mut self, width: impl Into<DefiniteLength>) -> Self {
         self.base = self.base.width(width);
         self
     }
@@ -164,6 +164,11 @@ impl ButtonCommon for IconButton {
         self
     }
 
+    fn tab_index(mut self, tab_index: impl Into<isize>) -> Self {
+        self.base = self.base.tab_index(tab_index);
+        self
+    }
+
     fn layer(mut self, elevation: ElevationIndex) -> Self {
         self.base = self.base.layer(elevation);
         self
@@ -189,7 +194,7 @@ impl RenderOnce for IconButton {
             .map(|this| match self.shape {
                 IconButtonShape::Square => {
                     let size = self.icon_size.square(window, cx);
-                    this.width(size.into()).height(size.into())
+                    this.width(size).height(size.into())
                 }
                 IconButtonShape::Wide => this,
             })

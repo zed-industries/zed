@@ -4,6 +4,7 @@ use crate::{
     ThemeNotFoundError, ThemeRegistry, ThemeStyleContent,
 };
 use anyhow::Result;
+use collections::HashMap;
 use derive_more::{Deref, DerefMut};
 use gpui::{
     App, Context, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Global, Pixels,
@@ -12,12 +13,13 @@ use gpui::{
 use refineable::Refineable;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
-use settings::{ParameterizedJsonSchema, Settings, SettingsSources};
+use settings::{ParameterizedJsonSchema, Settings, SettingsSources, SettingsUi};
 use std::sync::Arc;
 use util::ResultExt as _;
 use util::schemars::replace_subschema;
 
 const MIN_FONT_SIZE: Pixels = px(6.0);
+const MAX_FONT_SIZE: Pixels = px(100.0);
 const MIN_LINE_HEIGHT: f32 = 1.0;
 
 #[derive(
@@ -102,8 +104,8 @@ pub struct ThemeSettings {
     ///
     /// The terminal font family can be overridden using it's own setting.
     pub buffer_font: Font,
-    /// The agent font size. Determines the size of text in the agent panel.
-    agent_font_size: Pixels,
+    /// The agent font size. Determines the size of text in the agent panel. Falls back to the UI font size if unset.
+    agent_font_size: Option<Pixels>,
     /// The line height for buffers, and the terminal.
     ///
     /// Changing this may affect the spacing of some UI elements.
@@ -117,7 +119,9 @@ pub struct ThemeSettings {
     /// Manual overrides for the active theme.
     ///
     /// Note: This setting is still experimental. See [this tracking issue](https://github.com/zed-industries/zed/issues/18078)
-    pub theme_overrides: Option<ThemeStyleContent>,
+    pub experimental_theme_overrides: Option<ThemeStyleContent>,
+    /// Manual overrides per theme
+    pub theme_overrides: HashMap<String, ThemeStyleContent>,
     /// The current icon theme selection.
     pub icon_theme_selection: Option<IconThemeSelection>,
     /// The active icon theme.
@@ -361,7 +365,7 @@ impl IconThemeSelection {
 }
 
 /// Settings for rendering text in UI and text buffers.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
 pub struct ThemeSettingsContent {
     /// The default font size for text in the UI.
     #[serde(default)]
@@ -401,9 +405,9 @@ pub struct ThemeSettingsContent {
     #[serde(default)]
     #[schemars(default = "default_font_features")]
     pub buffer_font_features: Option<FontFeatures>,
-    /// The font size for the agent panel.
+    /// The font size for the agent panel. Falls back to the UI font size if unset.
     #[serde(default)]
-    pub agent_font_size: Option<f32>,
+    pub agent_font_size: Option<Option<f32>>,
     /// The name of the Zed theme to use.
     #[serde(default)]
     pub theme: Option<ThemeSelection>,
@@ -425,7 +429,13 @@ pub struct ThemeSettingsContent {
     ///
     /// These values will override the ones on the current theme specified in `theme`.
     #[serde(rename = "experimental.theme_overrides", default)]
-    pub theme_overrides: Option<ThemeStyleContent>,
+    pub experimental_theme_overrides: Option<ThemeStyleContent>,
+
+    /// Overrides per theme
+    ///
+    /// These values will override the ones on the specified theme
+    #[serde(default)]
+    pub theme_overrides: HashMap<String, ThemeStyleContent>,
 }
 
 fn default_font_features() -> Option<FontFeatures> {
@@ -438,7 +448,7 @@ fn default_font_fallbacks() -> Option<FontFallbacks> {
 
 impl ThemeSettingsContent {
     /// Sets the theme for the given appearance to the theme with the specified name.
-    pub fn set_theme(&mut self, theme_name: String, appearance: Appearance) {
+    pub fn set_theme(&mut self, theme_name: impl Into<Arc<str>>, appearance: Appearance) {
         if let Some(selection) = self.theme.as_mut() {
             let theme_to_update = match selection {
                 ThemeSelection::Static(theme) => theme,
@@ -590,13 +600,13 @@ impl ThemeSettings {
         clamp_font_size(font_size)
     }
 
-    /// Returns the UI font size.
+    /// Returns the agent panel font size. Falls back to the UI font size if unset.
     pub fn agent_font_size(&self, cx: &App) -> Pixels {
-        let font_size = cx
-            .try_global::<AgentFontSize>()
+        cx.try_global::<AgentFontSize>()
             .map(|size| size.0)
-            .unwrap_or(self.agent_font_size);
-        clamp_font_size(font_size)
+            .or(self.agent_font_size)
+            .map(clamp_font_size)
+            .unwrap_or_else(|| self.ui_font_size(cx))
     }
 
     /// Returns the buffer font size, read from the settings.
@@ -613,6 +623,14 @@ impl ThemeSettings {
     /// Use [`Self::ui_font_size`] to get the real font size.
     pub fn ui_font_size_settings(&self) -> Pixels {
         self.ui_font_size
+    }
+
+    /// Returns the agent font size, read from the settings.
+    ///
+    /// The real agent font size is stored in-memory, to support temporary font size changes.
+    /// Use [`Self::agent_font_size`] to get the real font size.
+    pub fn agent_font_size_settings(&self) -> Option<Pixels> {
+        self.agent_font_size
     }
 
     // TODO: Rename: `line_height` -> `buffer_line_height`
@@ -647,30 +665,39 @@ impl ThemeSettings {
 
     /// Applies the theme overrides, if there are any, to the current theme.
     pub fn apply_theme_overrides(&mut self) {
-        if let Some(theme_overrides) = &self.theme_overrides {
-            let mut base_theme = (*self.active_theme).clone();
-
-            if let Some(window_background_appearance) = theme_overrides.window_background_appearance
-            {
-                base_theme.styles.window_background_appearance =
-                    window_background_appearance.into();
-            }
-
-            base_theme
-                .styles
-                .colors
-                .refine(&theme_overrides.theme_colors_refinement());
-            base_theme
-                .styles
-                .status
-                .refine(&theme_overrides.status_colors_refinement());
-            base_theme.styles.player.merge(&theme_overrides.players);
-            base_theme.styles.accents.merge(&theme_overrides.accents);
-            base_theme.styles.syntax =
-                SyntaxTheme::merge(base_theme.styles.syntax, theme_overrides.syntax_overrides());
-
-            self.active_theme = Arc::new(base_theme);
+        // Apply the old overrides setting first, so that the new setting can override those.
+        if let Some(experimental_theme_overrides) = &self.experimental_theme_overrides {
+            let mut theme = (*self.active_theme).clone();
+            ThemeSettings::modify_theme(&mut theme, experimental_theme_overrides);
+            self.active_theme = Arc::new(theme);
         }
+
+        if let Some(theme_overrides) = self.theme_overrides.get(self.active_theme.name.as_ref()) {
+            let mut theme = (*self.active_theme).clone();
+            ThemeSettings::modify_theme(&mut theme, theme_overrides);
+            self.active_theme = Arc::new(theme);
+        }
+    }
+
+    fn modify_theme(base_theme: &mut Theme, theme_overrides: &ThemeStyleContent) {
+        if let Some(window_background_appearance) = theme_overrides.window_background_appearance {
+            base_theme.styles.window_background_appearance = window_background_appearance.into();
+        }
+
+        base_theme
+            .styles
+            .colors
+            .refine(&theme_overrides.theme_colors_refinement());
+        base_theme
+            .styles
+            .status
+            .refine(&theme_overrides.status_colors_refinement());
+        base_theme.styles.player.merge(&theme_overrides.players);
+        base_theme.styles.accents.merge(&theme_overrides.accents);
+        base_theme.styles.syntax = SyntaxTheme::merge(
+            base_theme.styles.syntax.clone(),
+            theme_overrides.syntax_overrides(),
+        );
     }
 
     /// Switches to the icon theme with the given name, if it exists.
@@ -714,14 +741,12 @@ pub fn adjusted_font_size(size: Pixels, cx: &App) -> Pixels {
 }
 
 /// Adjusts the buffer font size.
-pub fn adjust_buffer_font_size(cx: &mut App, mut f: impl FnMut(&mut Pixels)) {
+pub fn adjust_buffer_font_size(cx: &mut App, f: impl FnOnce(Pixels) -> Pixels) {
     let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
-    let mut adjusted_size = cx
+    let adjusted_size = cx
         .try_global::<BufferFontSize>()
         .map_or(buffer_font_size, |adjusted_size| adjusted_size.0);
-
-    f(&mut adjusted_size);
-    cx.set_global(BufferFontSize(clamp_font_size(adjusted_size)));
+    cx.set_global(BufferFontSize(clamp_font_size(f(adjusted_size))));
     cx.refresh_windows();
 }
 
@@ -747,14 +772,12 @@ pub fn setup_ui_font(window: &mut Window, cx: &mut App) -> gpui::Font {
 }
 
 /// Sets the adjusted UI font size.
-pub fn adjust_ui_font_size(cx: &mut App, mut f: impl FnMut(&mut Pixels)) {
+pub fn adjust_ui_font_size(cx: &mut App, f: impl FnOnce(Pixels) -> Pixels) {
     let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
-    let mut adjusted_size = cx
+    let adjusted_size = cx
         .try_global::<UiFontSize>()
         .map_or(ui_font_size, |adjusted_size| adjusted_size.0);
-
-    f(&mut adjusted_size);
-    cx.set_global(UiFontSize(clamp_font_size(adjusted_size)));
+    cx.set_global(UiFontSize(clamp_font_size(f(adjusted_size))));
     cx.refresh_windows();
 }
 
@@ -766,19 +789,17 @@ pub fn reset_ui_font_size(cx: &mut App) {
     }
 }
 
-/// Sets the adjusted UI font size.
-pub fn adjust_agent_font_size(cx: &mut App, mut f: impl FnMut(&mut Pixels)) {
+/// Sets the adjusted agent panel font size.
+pub fn adjust_agent_font_size(cx: &mut App, f: impl FnOnce(Pixels) -> Pixels) {
     let agent_font_size = ThemeSettings::get_global(cx).agent_font_size(cx);
-    let mut adjusted_size = cx
+    let adjusted_size = cx
         .try_global::<AgentFontSize>()
         .map_or(agent_font_size, |adjusted_size| adjusted_size.0);
-
-    f(&mut adjusted_size);
-    cx.set_global(AgentFontSize(clamp_font_size(adjusted_size)));
+    cx.set_global(AgentFontSize(clamp_font_size(f(adjusted_size))));
     cx.refresh_windows();
 }
 
-/// Resets the UI font size to the default value.
+/// Resets the agent panel font size to the default value.
 pub fn reset_agent_font_size(cx: &mut App) {
     if cx.has_global::<AgentFontSize>() {
         cx.remove_global::<AgentFontSize>();
@@ -788,7 +809,7 @@ pub fn reset_agent_font_size(cx: &mut App) {
 
 /// Ensures font size is within the valid range.
 pub fn clamp_font_size(size: Pixels) -> Pixels {
-    size.max(MIN_FONT_SIZE)
+    size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)
 }
 
 fn clamp_font_weight(weight: f32) -> FontWeight {
@@ -842,13 +863,14 @@ impl settings::Settings for ThemeSettings {
             },
             buffer_font_size: defaults.buffer_font_size.unwrap().into(),
             buffer_line_height: defaults.buffer_line_height.unwrap(),
-            agent_font_size: defaults.agent_font_size.unwrap().into(),
+            agent_font_size: defaults.agent_font_size.flatten().map(Into::into),
             theme_selection: defaults.theme.clone(),
             active_theme: themes
                 .get(defaults.theme.as_ref().unwrap().theme(*system_appearance))
                 .or(themes.get(&zed_default_dark().name))
                 .unwrap(),
-            theme_overrides: None,
+            experimental_theme_overrides: None,
+            theme_overrides: HashMap::default(),
             icon_theme_selection: defaults.icon_theme.clone(),
             active_icon_theme: defaults
                 .icon_theme
@@ -867,6 +889,8 @@ impl settings::Settings for ThemeSettings {
             .user
             .into_iter()
             .chain(sources.release_channel)
+            .chain(sources.operating_system)
+            .chain(sources.profile)
             .chain(sources.server)
         {
             if let Some(value) = value.ui_density {
@@ -916,6 +940,8 @@ impl settings::Settings for ThemeSettings {
                 }
             }
 
+            this.experimental_theme_overrides
+                .clone_from(&value.experimental_theme_overrides);
             this.theme_overrides.clone_from(&value.theme_overrides);
             this.apply_theme_overrides();
 
@@ -936,20 +962,20 @@ impl settings::Settings for ThemeSettings {
                 }
             }
 
-            merge(&mut this.ui_font_size, value.ui_font_size.map(Into::into));
-            this.ui_font_size = this.ui_font_size.clamp(px(6.), px(100.));
-
+            merge(
+                &mut this.ui_font_size,
+                value.ui_font_size.map(Into::into).map(clamp_font_size),
+            );
             merge(
                 &mut this.buffer_font_size,
-                value.buffer_font_size.map(Into::into),
+                value.buffer_font_size.map(Into::into).map(clamp_font_size),
             );
-            this.buffer_font_size = this.buffer_font_size.clamp(px(6.), px(100.));
-
             merge(
                 &mut this.agent_font_size,
-                value.agent_font_size.map(Into::into),
+                value
+                    .agent_font_size
+                    .map(|value| value.map(Into::into).map(clamp_font_size)),
             );
-            this.agent_font_size = this.agent_font_size.clamp(px(6.), px(100.));
 
             merge(&mut this.buffer_line_height, value.buffer_line_height);
 

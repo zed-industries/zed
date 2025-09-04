@@ -303,10 +303,10 @@ impl LineDiff {
                         self.flush_insert(old_text);
                         self.buffered_insert.push_str(suffix);
                     } else {
-                        self.buffered_insert.push_str(&text);
+                        self.buffered_insert.push_str(text);
                     }
                 } else {
-                    self.buffered_insert.push_str(&text);
+                    self.buffered_insert.push_str(text);
                     if !text.ends_with('\n') {
                         self.flush_insert(old_text);
                     }
@@ -523,7 +523,7 @@ mod tests {
             apply_line_operations(old_text, &new_text, &expected_line_ops)
         );
 
-        let line_ops = char_ops_to_line_ops(&old_text, &char_ops);
+        let line_ops = char_ops_to_line_ops(old_text, &char_ops);
         assert_eq!(line_ops, expected_line_ops);
     }
 
@@ -534,7 +534,7 @@ mod tests {
             CharOperation::Keep { bytes: 5 },
             CharOperation::Delete { bytes: 4 },
         ];
-        let line_ops = char_ops_to_line_ops(&old_text, &char_ops);
+        let line_ops = char_ops_to_line_ops(old_text, &char_ops);
         assert_eq!(
             line_ops,
             vec![
@@ -559,7 +559,7 @@ mod tests {
                 text: "\ncccc".into(),
             },
         ];
-        let line_ops = char_ops_to_line_ops(&old_text, &char_ops);
+        let line_ops = char_ops_to_line_ops(old_text, &char_ops);
         assert_eq!(
             line_ops,
             vec![
@@ -582,7 +582,7 @@ mod tests {
             CharOperation::Delete { bytes: 5 },
             CharOperation::Keep { bytes: 4 },
         ];
-        let line_ops = char_ops_to_line_ops(&old_text, &char_ops);
+        let line_ops = char_ops_to_line_ops(old_text, &char_ops);
         assert_eq!(
             line_ops,
             vec![
@@ -609,7 +609,7 @@ mod tests {
             },
             CharOperation::Keep { bytes: 5 },
         ];
-        let line_ops = char_ops_to_line_ops(&old_text, &char_ops);
+        let line_ops = char_ops_to_line_ops(old_text, &char_ops);
         assert_eq!(
             line_ops,
             vec![
@@ -638,7 +638,7 @@ mod tests {
                 text: "\nEEEE".into(),
             },
         ];
-        let line_ops = char_ops_to_line_ops(&old_text, &char_ops);
+        let line_ops = char_ops_to_line_ops(old_text, &char_ops);
         assert_eq!(
             line_ops,
             vec![
@@ -664,7 +664,7 @@ mod tests {
             CharOperation::Insert { text: "A".into() },
             CharOperation::Keep { bytes: 10 },
         ];
-        let line_ops = char_ops_to_line_ops(&old_text, &char_ops);
+        let line_ops = char_ops_to_line_ops(old_text, &char_ops);
         assert_eq!(
             line_ops,
             vec![
@@ -689,7 +689,7 @@ mod tests {
             CharOperation::Keep { bytes: 4 },
         ];
         let new_text = apply_char_operations(old_text, &char_ops);
-        let line_ops = char_ops_to_line_ops(&old_text, &char_ops);
+        let line_ops = char_ops_to_line_ops(old_text, &char_ops);
         assert_eq!(
             line_ops,
             vec![
@@ -710,7 +710,7 @@ mod tests {
             CharOperation::Insert { text: "\n".into() },
             CharOperation::Keep { bytes: 9 },
         ];
-        let line_ops = char_ops_to_line_ops(&old_text, &char_ops);
+        let line_ops = char_ops_to_line_ops(old_text, &char_ops);
         assert_eq!(
             line_ops,
             vec![
@@ -733,7 +733,7 @@ mod tests {
             CharOperation::Delete { bytes: 1 },
             CharOperation::Keep { bytes: 4 },
         ];
-        let line_ops = char_ops_to_line_ops(&old_text, &char_ops);
+        let line_ops = char_ops_to_line_ops(old_text, &char_ops);
         assert_eq!(
             line_ops,
             vec![
@@ -759,7 +759,7 @@ mod tests {
             },
             CharOperation::Keep { bytes: 4 },
         ];
-        let line_ops = char_ops_to_line_ops(&old_text, &char_ops);
+        let line_ops = char_ops_to_line_ops(old_text, &char_ops);
         assert_eq!(
             line_ops,
             vec![
@@ -783,7 +783,7 @@ mod tests {
             CharOperation::Delete { bytes: 2 },
             CharOperation::Keep { bytes: 4 },
         ];
-        let line_ops = char_ops_to_line_ops(&old_text, &char_ops);
+        let line_ops = char_ops_to_line_ops(old_text, &char_ops);
         assert_eq!(
             line_ops,
             vec![
@@ -814,7 +814,7 @@ mod tests {
             },
             CharOperation::Keep { bytes: 6 },
         ];
-        let line_ops = char_ops_to_line_ops(&old_text, &char_ops);
+        let line_ops = char_ops_to_line_ops(old_text, &char_ops);
         assert_eq!(
             line_ops,
             vec![

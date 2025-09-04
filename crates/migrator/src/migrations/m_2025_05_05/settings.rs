@@ -24,7 +24,7 @@ fn rename_assistant(
         .nodes_for_capture_index(key_capture_ix)
         .next()?
         .byte_range();
-    return Some((key_range, "agent".to_string()));
+    Some((key_range, "agent".to_string()))
 }
 
 fn rename_edit_prediction_assistant(
@@ -37,5 +37,5 @@ fn rename_edit_prediction_assistant(
         .nodes_for_capture_index(key_capture_ix)
         .next()?
         .byte_range();
-    return Some((key_range, "enabled_in_text_threads".to_string()));
+    Some((key_range, "enabled_in_text_threads".to_string()))
 }

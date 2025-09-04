@@ -40,7 +40,7 @@ impl AsyncBody {
     }
 
     pub fn from_bytes(bytes: Bytes) -> Self {
-        Self(Inner::Bytes(Cursor::new(bytes.clone())))
+        Self(Inner::Bytes(Cursor::new(bytes)))
     }
 }
 
@@ -85,6 +85,17 @@ impl From<&'static str> for AsyncBody {
     #[inline]
     fn from(s: &'static str) -> Self {
         Self::from_bytes(Bytes::from_static(s.as_bytes()))
+    }
+}
+
+impl TryFrom<reqwest::Body> for AsyncBody {
+    type Error = anyhow::Error;
+
+    fn try_from(value: reqwest::Body) -> Result<Self, Self::Error> {
+        value
+            .as_bytes()
+            .ok_or_else(|| anyhow::anyhow!("Underlying data is a stream"))
+            .map(|bytes| Self::from_bytes(Bytes::copy_from_slice(bytes)))
     }
 }
 

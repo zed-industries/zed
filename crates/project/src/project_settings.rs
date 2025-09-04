@@ -19,9 +19,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
     InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation, SettingsSources,
-    SettingsStore, parse_json_with_comments, watch_config_file,
+    SettingsStore, SettingsUi, parse_json_with_comments, watch_config_file,
 };
 use std::{
+    collections::BTreeMap,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -35,7 +36,7 @@ use crate::{
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
 pub struct ProjectSettings {
     /// Configuration for language servers.
     ///
@@ -180,17 +181,6 @@ pub struct DiagnosticsSettings {
 
     /// Settings for showing inline diagnostics.
     pub inline: InlineDiagnosticsSettings,
-
-    /// Configuration, related to Rust language diagnostics.
-    pub cargo: Option<CargoDiagnosticsSettings>,
-}
-
-impl DiagnosticsSettings {
-    pub fn fetch_cargo_diagnostics(&self) -> bool {
-        self.cargo.as_ref().map_or(false, |cargo_diagnostics| {
-            cargo_diagnostics.fetch_cargo_diagnostics
-        })
-    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
@@ -257,7 +247,6 @@ impl Default for DiagnosticsSettings {
             include_warnings: true,
             lsp_pull_diagnostics: LspPullDiagnosticsSettings::default(),
             inline: InlineDiagnosticsSettings::default(),
-            cargo: None,
         }
     }
 }
@@ -291,18 +280,18 @@ impl Default for GlobalLspSettings {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-pub struct CargoDiagnosticsSettings {
-    /// When enabled, Zed disables rust-analyzer's check on save and starts to query
-    /// Cargo diagnostics separately.
-    ///
-    /// Default: false
-    #[serde(default)]
-    pub fetch_cargo_diagnostics: bool,
-}
-
 #[derive(
-    Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize, JsonSchema,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    SettingsUi,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum DiagnosticSeverity {
@@ -311,6 +300,7 @@ pub enum DiagnosticSeverity {
     Error,
     Warning,
     Info,
+    #[serde(alias = "all")]
     Hint,
 }
 
@@ -431,10 +421,9 @@ impl GitSettings {
 
     pub fn inline_blame_delay(&self) -> Option<Duration> {
         match self.inline_blame {
-            Some(InlineBlameSettings {
-                delay_ms: Some(delay_ms),
-                ..
-            }) if delay_ms > 0 => Some(Duration::from_millis(delay_ms)),
+            Some(InlineBlameSettings { delay_ms, .. }) if delay_ms > 0 => {
+                Some(Duration::from_millis(delay_ms))
+            }
             _ => None,
         }
     }
@@ -470,7 +459,7 @@ pub enum GitGutterSetting {
     Hide,
 }
 
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct InlineBlameSettings {
     /// Whether or not to show git blame data inline in
@@ -483,11 +472,19 @@ pub struct InlineBlameSettings {
     /// after a delay once the cursor stops moving.
     ///
     /// Default: 0
-    pub delay_ms: Option<u64>,
+    #[serde(default)]
+    pub delay_ms: u64,
+    /// The amount of padding between the end of the source line and the start
+    /// of the inline blame in units of columns.
+    ///
+    /// Default: 7
+    #[serde(default = "default_inline_blame_padding")]
+    pub padding: u32,
     /// The minimum column number to show the inline blame information at
     ///
     /// Default: 0
-    pub min_column: Option<u32>,
+    #[serde(default)]
+    pub min_column: u32,
     /// Whether to show commit summary as part of the inline blame.
     ///
     /// Default: false
@@ -495,16 +492,37 @@ pub struct InlineBlameSettings {
     pub show_commit_summary: bool,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+fn default_inline_blame_padding() -> u32 {
+    7
+}
+
+impl Default for InlineBlameSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            delay_ms: 0,
+            padding: default_inline_blame_padding(),
+            min_column: 0,
+            show_commit_summary: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
 pub struct BinarySettings {
     pub path: Option<String>,
     pub arguments: Option<Vec<String>>,
-    // this can't be an FxHashMap because the extension APIs require the default SipHash
-    pub env: Option<std::collections::HashMap<String, String>>,
+    pub env: Option<BTreeMap<String, String>>,
     pub ignore_system_version: Option<bool>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
+pub struct FetchSettings {
+    // Whether to consider pre-releases for fetching
+    pub pre_release: Option<bool>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
 #[serde(rename_all = "snake_case")]
 pub struct LspSettings {
     pub binary: Option<BinarySettings>,
@@ -515,6 +533,7 @@ pub struct LspSettings {
     /// Default: true
     #[serde(default = "default_true")]
     pub enable_lsp_tasks: bool,
+    pub fetch: Option<FetchSettings>,
 }
 
 impl Default for LspSettings {
@@ -524,6 +543,7 @@ impl Default for LspSettings {
             initialization_options: None,
             settings: None,
             enable_lsp_tasks: true,
+            fetch: None,
         }
     }
 }
@@ -592,6 +612,7 @@ impl Settings for ProjectSettings {
                     path: cmd.command,
                     args: cmd.args.unwrap_or_default(),
                     env: cmd.env,
+                    timeout: None,
                 }
             }
         }
@@ -1082,7 +1103,7 @@ impl SettingsObserver {
         cx: &mut Context<Self>,
     ) -> Task<()> {
         let mut user_tasks_file_rx =
-            watch_config_file(&cx.background_executor(), fs, file_path.clone());
+            watch_config_file(cx.background_executor(), fs, file_path.clone());
         let user_tasks_content = cx.background_executor().block(user_tasks_file_rx.next());
         let weak_entry = cx.weak_entity();
         cx.spawn(async move |settings_observer, cx| {
@@ -1137,7 +1158,7 @@ impl SettingsObserver {
         cx: &mut Context<Self>,
     ) -> Task<()> {
         let mut user_tasks_file_rx =
-            watch_config_file(&cx.background_executor(), fs, file_path.clone());
+            watch_config_file(cx.background_executor(), fs, file_path.clone());
         let user_tasks_content = cx.background_executor().block(user_tasks_file_rx.next());
         let weak_entry = cx.weak_entity();
         cx.spawn(async move |settings_observer, cx| {
