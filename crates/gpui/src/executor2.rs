@@ -1,6 +1,8 @@
 use crate::{App, PlatformDispatcher};
 use async_task::Runnable;
+use futures::FutureExt as _;
 use futures::channel::mpsc;
+use scheduler::Timer;
 use smol::prelude::*;
 use std::mem::ManuallyDrop;
 use std::panic::Location;
@@ -20,7 +22,6 @@ use std::{
     time::{Duration, Instant},
 };
 use util::TryFutureExt;
-use waker_fn::waker_fn;
 
 #[cfg(any(test, feature = "test-support"))]
 use rand::rngs::StdRng;
@@ -86,7 +87,7 @@ impl<T> Future for Task<T> {
     type Output = T;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        self.0.poll(cx)
+        self.0.poll_unpin(cx)
     }
 }
 
@@ -119,12 +120,12 @@ type AnyFuture<R> = Pin<Box<dyn 'static + Send + Future<Output = R>>>;
 /// (but arbitrary) order controlled by the `SEED` environment variable.
 impl BackgroundExecutor {
     /// Enqueues the given future to be run to completion on a background thread.
-    pub fn spawn<R>(&self, _future: impl Future<Output = R> + Send + 'static) -> Task<R>
+    pub fn spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R>
     where
         R: Send + 'static,
     {
-        // self.0.spawn(future)
-        todo!()
+        // todo!("reduce monomorphization")
+        Task(self.0.spawn(future))
     }
 
     /// Enqueues the given future to be run to completion on a background thread.
@@ -132,28 +133,26 @@ impl BackgroundExecutor {
     pub fn spawn_labeled<R>(
         &self,
         _label: TaskLabel,
-        _future: impl Future<Output = R> + Send + 'static,
+        future: impl Future<Output = R> + Send + 'static,
     ) -> Task<R>
     where
         R: Send + 'static,
     {
-        // self.0.spawn_labeled(label, future)
-        todo!()
+        // todo!("Solve deprioritization in project_tests.rs")
+        Task(self.0.spawn(future))
     }
 
     /// Used by the test harness to run an async test in a synchronous fashion.
     #[cfg(any(test, feature = "test-support"))]
     #[track_caller]
-    pub fn block_test<R>(&self, _future: impl Future<Output = R>) -> R {
-        // self.0.block_test(future)
-        todo!()
+    pub fn block_test<R>(&self, future: impl Future<Output = R>) -> R {
+        todo!("move this to foreground executor (do we even need it ...test??)")
     }
 
     /// Block the current thread until the given future resolves.
     /// Consider using `block_with_timeout` instead.
     pub fn block<R>(&self, _future: impl Future<Output = R>) -> R {
-        // self.0.block(future)
-        todo!()
+        todo!("move this to foreground executor")
     }
 
     /// Block the current thread until the given future resolves
@@ -163,18 +162,24 @@ impl BackgroundExecutor {
         _duration: Duration,
         _future: Fut,
     ) -> Result<Fut::Output, Fut> {
-        // self.0.block_with_timeout(duration, future)
-        todo!()
+        todo!("move this to foreground executor")
     }
 
     /// Scoped lets you start a number of tasks and waits
     /// for all of them to complete before returning.
-    pub async fn scoped<'scope, F>(&self, _scheduler: F)
+    pub async fn scoped<'scope, F>(&self, f: F)
     where
         F: FnOnce(&mut Scope<'scope>),
     {
-        // self.0.scoped(scheduler).await
-        todo!()
+        let mut scope = Scope::new(self.clone());
+        (f)(&mut scope);
+        let spawned = mem::take(&mut scope.futures)
+            .into_iter()
+            .map(|f| self.spawn(f))
+            .collect::<Vec<_>>();
+        for task in spawned {
+            task.await;
+        }
     }
 
     /// Get the current time.
@@ -182,16 +187,14 @@ impl BackgroundExecutor {
     /// Calling this instead of `std::time::Instant::now` allows the use
     /// of fake timers in tests.
     pub fn now(&self) -> Instant {
-        // self.0.now()
-        todo!()
+        todo!("convert to a chrono::DateTime?")
     }
 
     /// Returns a task that will complete after the given duration.
     /// Depending on other concurrent tasks the elapsed duration may be longer
     /// than requested.
-    pub fn timer(&self, _duration: Duration) -> Task<()> {
-        // self.0.timer(duration)
-        todo!()
+    pub fn timer(&self, duration: Duration) -> Timer {
+        self.0.timer(duration)
     }
 
     /// in tests, start_waiting lets you indicate which task is waiting (for debugging only)
@@ -211,8 +214,8 @@ impl BackgroundExecutor {
     /// in tests, run an arbitrary number of tasks (determined by the SEED environment variable)
     #[cfg(any(test, feature = "test-support"))]
     pub fn simulate_random_delay(&self) -> impl Future<Output = ()> + use<> {
-        // self.0.simulate_random_delay()
-        todo!()
+        // todo!()
+        std::future::pending()
     }
 
     /// in tests, indicate that a given task from `spawn_labeled` should run after everything else

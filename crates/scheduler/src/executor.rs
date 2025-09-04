@@ -1,4 +1,5 @@
 use crate::{Scheduler, SessionId, Timer};
+use chrono::{DateTime, Utc};
 use futures::FutureExt as _;
 use std::{
     future::Future,
@@ -87,6 +88,10 @@ pub struct BackgroundExecutor {
 }
 
 impl BackgroundExecutor {
+    pub fn now(&self) -> DateTime<Utc> {
+        self.scheduler.now()
+    }
+
     pub fn spawn<F>(&self, future: F) -> Task<F::Output>
     where
         F: Future + Send + 'static,

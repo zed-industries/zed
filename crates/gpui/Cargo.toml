@@ -85,6 +85,7 @@ blade-graphics = { workspace = true, optional = true }
 blade-macros = { workspace = true, optional = true }
 blade-util = { workspace = true, optional = true }
 bytemuck = { version = "1", optional = true }
+chrono.workspace = true
 collections.workspace = true
 ctor.workspace = true
 derive_more.workspace = true

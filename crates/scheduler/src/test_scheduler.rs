@@ -151,61 +151,6 @@ impl TestScheduler {
 }
 
 impl Scheduler for TestScheduler {
-    fn is_main_thread(&self) -> bool {
-        thread::current().id() == self.thread_id
-    }
-
-    fn schedule_foreground(&self, session_id: SessionId, runnable: Runnable) {
-        let mut state = self.state.lock();
-        let ix = if state.randomize_order {
-            let start_ix = state
-                .runnables
-                .iter()
-                .rposition(|task| task.session_id == Some(session_id))
-                .map_or(0, |ix| ix + 1);
-            self.rng
-                .lock()
-                .random_range(start_ix..=state.runnables.len())
-        } else {
-            state.runnables.len()
-        };
-        state.runnables.insert(
-            ix,
-            ScheduledRunnable {
-                session_id: Some(session_id),
-                runnable,
-            },
-        );
-    }
-
-    fn schedule_background(&self, runnable: Runnable) {
-        let mut state = self.state.lock();
-        let ix = if state.randomize_order {
-            self.rng.lock().random_range(0..=state.runnables.len())
-        } else {
-            state.runnables.len()
-        };
-        state.runnables.insert(
-            ix,
-            ScheduledRunnable {
-                session_id: None,
-                runnable,
-            },
-        );
-    }
-
-    fn timer(&self, duration: Duration) -> Timer {
-        let (tx, rx) = oneshot::channel();
-        let expiration = self.clock.now() + ChronoDuration::from_std(duration).unwrap();
-        let state = &mut *self.state.lock();
-        state.timers.push(ScheduledTimer {
-            expiration,
-            _notify: tx,
-        });
-        state.timers.sort_by_key(|timer| timer.expiration);
-        Timer(rx)
-    }
-
     /// Block until the given future completes, with an optional timeout. If the
     /// future is unable to make progress at any moment before the timeout and
     /// no other tasks or timers remain, we panic unless parking is allowed. If
@@ -266,6 +211,65 @@ impl Scheduler for TestScheduler {
         }
 
         self.state.lock().blocked_sessions.pop();
+    }
+
+    fn schedule_foreground(&self, session_id: SessionId, runnable: Runnable) {
+        let mut state = self.state.lock();
+        let ix = if state.randomize_order {
+            let start_ix = state
+                .runnables
+                .iter()
+                .rposition(|task| task.session_id == Some(session_id))
+                .map_or(0, |ix| ix + 1);
+            self.rng
+                .lock()
+                .random_range(start_ix..=state.runnables.len())
+        } else {
+            state.runnables.len()
+        };
+        state.runnables.insert(
+            ix,
+            ScheduledRunnable {
+                session_id: Some(session_id),
+                runnable,
+            },
+        );
+    }
+
+    fn schedule_background(&self, runnable: Runnable) {
+        let mut state = self.state.lock();
+        let ix = if state.randomize_order {
+            self.rng.lock().random_range(0..=state.runnables.len())
+        } else {
+            state.runnables.len()
+        };
+        state.runnables.insert(
+            ix,
+            ScheduledRunnable {
+                session_id: None,
+                runnable,
+            },
+        );
+    }
+
+    fn is_main_thread(&self) -> bool {
+        thread::current().id() == self.thread_id
+    }
+
+    fn timer(&self, duration: Duration) -> Timer {
+        let (tx, rx) = oneshot::channel();
+        let expiration = self.clock.now() + ChronoDuration::from_std(duration).unwrap();
+        let state = &mut *self.state.lock();
+        state.timers.push(ScheduledTimer {
+            expiration,
+            _notify: tx,
+        });
+        state.timers.sort_by_key(|timer| timer.expiration);
+        Timer(rx)
+    }
+
+    fn now(&self) -> DateTime<Utc> {
+        self.clock.now()
     }
 }
 

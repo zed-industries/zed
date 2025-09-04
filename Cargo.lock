@@ -7425,6 +7425,7 @@ dependencies = [
  "calloop",
  "calloop-wayland-source",
  "cbindgen",
+ "chrono",
  "cocoa 0.26.0",
  "collections",
  "core-foundation 0.10.0",
