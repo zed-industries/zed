@@ -7,9 +7,9 @@ use file_finder::OpenPathDelegate;
 use futures::channel::oneshot;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    Animation, AnimationExt, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, ParentElement, Render, Styled, Subscription, Task, WeakEntity, Window, actions,
-    pulsating_between,
+    Action, Animation, AnimationExt, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, KeyContext, ParentElement, Render, Styled, Subscription, Task, WeakEntity, Window,
+    actions, pulsating_between,
 };
 use language::{Language, LanguageName, Toolchain, ToolchainScope};
 use picker::{Picker, PickerDelegate};
@@ -31,7 +31,9 @@ actions!(
     toolchain,
     [
         /// Selects a toolchain for the current project.
-        Select
+        Select,
+        /// Adds a new toolchain for the current project.
+        AddToolchain
     ]
 );
 
@@ -43,6 +45,10 @@ pub struct ToolchainSelector {
     state: State,
     create_search_state: Arc<dyn Fn(&mut Window, &mut Context<Self>) -> SearchState + 'static>,
     language: Option<Arc<Language>>,
+    project: Entity<Project>,
+    language_name: LanguageName,
+    worktree_id: WorktreeId,
+    relative_path: Arc<Path>,
 }
 
 #[derive(Clone)]
@@ -511,6 +517,16 @@ impl ToolchainSelector {
         workspace.register_action(move |workspace, _: &Select, window, cx| {
             Self::toggle(workspace, window, cx);
         });
+        workspace.register_action(move |workspace, _: &AddToolchain, window, cx| {
+            let Some(toolchain_selector) = workspace.active_modal::<Self>(cx) else {
+                Self::toggle(workspace, window, cx);
+                return;
+            };
+
+            toolchain_selector.update(cx, |toolchain_selector, cx| {
+                toolchain_selector.handle_add_toolchain(&AddToolchain, window, cx);
+            });
+        });
     }
 
     fn toggle(
@@ -592,6 +608,10 @@ impl ToolchainSelector {
             }
         })
         .detach();
+        let project_clone = project.clone();
+        let language_name_clone = language_name.clone();
+        let relative_path_clone = relative_path.clone();
+
         let create_search_state = Arc::new(move |window: &mut Window, cx: &mut Context<Self>| {
             let toolchain_selector = cx.entity().downgrade();
             let picker = cx.new(|cx| {
@@ -601,13 +621,17 @@ impl ToolchainSelector {
                     workspace.clone(),
                     worktree_id,
                     worktree_root.clone(),
-                    project.clone(),
-                    relative_path.clone(),
-                    language_name.clone(),
+                    project_clone.clone(),
+                    relative_path_clone.clone(),
+                    language_name_clone.clone(),
                     window,
                     cx,
                 );
                 Picker::uniform_list(delegate, window, cx)
+            });
+            let picker_focus_handle = picker.focus_handle(cx);
+            picker.update(cx, |picker, _| {
+                picker.delegate.focus_handle = picker_focus_handle.clone();
             });
             SearchState { picker }
         });
@@ -616,14 +640,45 @@ impl ToolchainSelector {
             state: State::Search(create_search_state(window, cx)),
             create_search_state,
             language: None,
+            project: project.clone(),
+            language_name: language_name.clone(),
+            worktree_id,
+            relative_path: relative_path.clone(),
+        }
+    }
+
+    fn handle_add_toolchain(
+        &mut self,
+        _: &AddToolchain,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(self.state, State::Search(_)) {
+            self.state = State::AddToolchain(AddToolchainState::new(
+                self.project.clone(),
+                self.language_name.clone(),
+                ProjectPath {
+                    worktree_id: self.worktree_id,
+                    path: self.relative_path.clone(),
+                },
+                window,
+                cx,
+            ));
+            self.state.focus_handle(cx).focus(window);
+            cx.notify();
         }
     }
 }
 
 impl Render for ToolchainSelector {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut key_context = KeyContext::new_with_defaults();
+        key_context.add("ToolchainSelector");
+
         v_flex()
+            .key_context(key_context)
             .w(rems(34.))
+            .on_action(cx.listener(Self::handle_add_toolchain))
             .child(self.state.clone().render(window, cx))
     }
 }
@@ -650,6 +705,7 @@ pub struct ToolchainSelectorDelegate {
     add_toolchain_text: Arc<str>,
     project: Entity<Project>,
     language_name: LanguageName,
+    focus_handle: FocusHandle,
     _fetch_candidates_task: Task<Option<()>>,
 }
 
@@ -767,6 +823,7 @@ impl ToolchainSelectorDelegate {
             _fetch_candidates_task,
             project,
             language_name: language,
+            focus_handle: cx.focus_handle(),
             add_toolchain_text: Arc::from("Add Toolchain"),
         }
     }
@@ -988,47 +1045,39 @@ impl PickerDelegate for ToolchainSelectorDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
-        let path = ProjectPath {
-            worktree_id: self.worktree_id,
-            path: self.relative_path.clone(),
-        };
         Some(
             v_flex()
-                // .bg(cx.theme().colors().background.clone())
                 .rounded_b_md()
                 .child(Divider::horizontal())
                 .child(
-                    h_flex().justify_end().p_1().child(
-                        Button::new("xd", self.add_toolchain_text.clone())
-                            .icon(IconName::Plus)
-                            .style(ButtonStyle::Filled)
-                            .icon_position(IconPosition::Start)
-                            .on_click(cx.listener({
-                                let project = self.project.clone();
-                                let language = self.language_name.clone();
-                                move |picker, _, window, cx| {
-                                    maybe!({
-                                        picker
-                                            .delegate
-                                            .toolchain_selector
-                                            .update(cx, |this, cx| {
-                                                this.state =
-                                                    State::AddToolchain(AddToolchainState::new(
-                                                        project.clone(),
-                                                        language.clone(),
-                                                        path.clone(),
-                                                        window,
-                                                        cx,
-                                                    ));
-                                                this.state.focus_handle(cx).focus(window);
-
-                                                cx.notify();
-                                            })
-                                            .ok()
-                                    });
-                                }
-                            })),
-                    ),
+                    h_flex()
+                        .p_1p5()
+                        .gap_0p5()
+                        .justify_end()
+                        .child(
+                            Button::new("xd", self.add_toolchain_text.clone())
+                                .key_binding(KeyBinding::for_action_in(
+                                    &AddToolchain,
+                                    &self.focus_handle,
+                                    _window,
+                                    cx,
+                                ))
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(Box::new(AddToolchain), cx)
+                                }),
+                        )
+                        .child(
+                            Button::new("select", "Select")
+                                .key_binding(KeyBinding::for_action_in(
+                                    &menu::Confirm,
+                                    &self.focus_handle,
+                                    _window,
+                                    cx,
+                                ))
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(menu::Confirm.boxed_clone(), cx)
+                                }),
+                        ),
                 )
                 .into_any_element(),
         )
