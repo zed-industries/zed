@@ -15,7 +15,6 @@ pub mod tasks;
 mod theme_preview;
 mod toast_layer;
 mod toolbar;
-mod which_key_layer;
 mod workspace_settings;
 
 pub use crate::notifications::NotificationFrame;
@@ -108,9 +107,7 @@ pub use ui;
 use ui::{Window, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::SanitizedPath, serde::default_true};
 use uuid::Uuid;
-use which_key;
-pub use which_key::*;
-pub use which_key_layer::*;
+
 pub use workspace_settings::{
     AutosaveSetting, BottomDockLayout, RestoreOnStartupBehavior, TabBarSettings, WorkspaceSettings,
 };
@@ -506,7 +503,6 @@ pub fn init_settings(cx: &mut App) {
     ItemSettings::register(cx);
     PreviewTabsSettings::register(cx);
     TabBarSettings::register(cx);
-    which_key::init(cx);
 }
 
 fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, cx: &mut App) {
@@ -1120,7 +1116,6 @@ pub struct Workspace {
     status_bar: Entity<StatusBar>,
     modal_layer: Entity<ModalLayer>,
     toast_layer: Entity<ToastLayer>,
-    which_key_layer: Entity<WhichKeyLayer>,
     titlebar_item: Option<AnyView>,
     notifications: Notifications,
     suppressed_notifications: HashSet<NotificationId>,
@@ -1152,6 +1147,7 @@ pub struct Workspace {
     _items_serializer: Task<Result<()>>,
     session_id: Option<String>,
     scheduled_tasks: Vec<Task<()>>,
+    pub which_key: Option<AnyEntity>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1346,7 +1342,6 @@ impl Workspace {
         cx.emit(Event::WorkspaceCreated(weak_handle.clone()));
         let modal_layer = cx.new(|_| ModalLayer::new());
         let toast_layer = cx.new(|_| ToastLayer::new());
-        let which_key_layer = cx.new(|ctx| WhichKeyLayer::new(weak_handle.clone(), window, ctx));
         cx.subscribe(
             &modal_layer,
             |_, _, _: &modal_layer::ModalOpenedEvent, cx| {
@@ -1447,7 +1442,7 @@ impl Workspace {
             status_bar,
             modal_layer,
             toast_layer,
-            which_key_layer,
+
             titlebar_item: None,
             notifications: Notifications::default(),
             suppressed_notifications: HashSet::default(),
@@ -1485,6 +1480,7 @@ impl Workspace {
             session_id: Some(session_id),
 
             scheduled_tasks: Vec::new(),
+            which_key: None,
         }
     }
 
@@ -5728,7 +5724,7 @@ impl Workspace {
         div
     }
 
-    pub fn has_active_modal(&self, _: &mut Window, cx: &mut App) -> bool {
+    pub fn has_active_modal(&self, cx: &mut App) -> bool {
         self.modal_layer.read(cx).has_active_modal()
     }
 
@@ -5742,6 +5738,12 @@ impl Workspace {
     {
         self.modal_layer.update(cx, |modal_layer, cx| {
             modal_layer.toggle_modal(window, cx, build)
+        })
+    }
+
+    pub fn hide_modal(&mut self, window: &mut Window, cx: &mut App) {
+        self.modal_layer.update(cx, |modal_layer, cx| {
+            modal_layer.hide_modal(window, cx);
         })
     }
 
@@ -6638,8 +6640,7 @@ impl Render for Workspace {
                         )
                         .child(self.status_bar.clone())
                         .child(self.modal_layer.clone())
-                        .child(self.toast_layer.clone())
-                        .child(self.which_key_layer.clone()),
+                        .child(self.toast_layer.clone()),
                 ),
             window,
             cx,

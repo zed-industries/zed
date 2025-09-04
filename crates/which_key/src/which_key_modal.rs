@@ -1,127 +1,83 @@
-use crate::Workspace;
+//! Modal implementation for the which-key display.
+
 use gpui::{
-    AvailableSpace, FontWeight, KeyBinding, Keystroke, Task, WeakEntity, humanize_action_name,
+    App, AvailableSpace, Context, DismissEvent, EventEmitter, FocusHandle, Focusable, FontWeight,
+    Keystroke, Subscription, WeakEntity, Window, humanize_action_name,
 };
 use settings::Settings;
-use std::time::Duration;
+use std::collections::HashMap;
 use theme::ThemeSettings;
 use ui::{DynamicSpacing, prelude::*, text_for_keystrokes};
 use util::ResultExt;
-use which_key::WhichKeySettings;
+use workspace::{ModalView, Workspace};
 
-// Hard-coded list of keystrokes to filter out from which-key display
-static FILTERED_KEYSTROKES: &[&str] = &[
-    // Modifiers on normal vim commands
-    "g h",
-    "g j",
-    "g k",
-    "g l",
-    "g $",
-    "g ^",
-    // Duplicate keys with "ctrl" held, e.g. "ctrl-w ctrl-a" is duplicate of "ctrl-w a"
-    "ctrl-w ctrl-a",
-    "ctrl-w ctrl-c",
-    "ctrl-w ctrl-h",
-    "ctrl-w ctrl-j",
-    "ctrl-w ctrl-k",
-    "ctrl-w ctrl-l",
-    "ctrl-w ctrl-n",
-    "ctrl-w ctrl-o",
-    "ctrl-w ctrl-p",
-    "ctrl-w ctrl-q",
-    "ctrl-w ctrl-s",
-    "ctrl-w ctrl-v",
-    "ctrl-w ctrl-w",
-    "ctrl-w ctrl-]",
-    "ctrl-w ctrl-shift-w",
-    "ctrl-w ctrl-g t",
-    "ctrl-w ctrl-g shift-t",
-];
+use crate::FILTERED_KEYSTROKES;
 
-pub struct WhichKeyLayer {
-    timer: Option<Task<()>>,
-    show: bool,
-    pending_keys: Option<Vec<Keystroke>>,
-    bindings: Option<Vec<KeyBinding>>,
+pub struct WhichKeyModal {
     workspace: WeakEntity<Workspace>,
-    filtered_keystrokes: Vec<Vec<Keystroke>>,
+    focus_handle: FocusHandle,
+    _pending_input_subscription: Subscription,
+    _focus_out_subscription: Subscription,
 }
 
-impl WhichKeyLayer {
+impl WhichKeyModal {
     pub fn new(
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        cx.observe_pending_input(window, |this: &mut Self, window, cx| {
-            this.update_pending_keys(window, cx);
-            cx.notify();
-        })
-        .detach();
+        // Keep focus where it currently is
+        let focus_handle = window.focused(cx).unwrap_or(cx.focus_handle());
 
         Self {
-            timer: None,
-            pending_keys: None,
-            bindings: None,
-            show: false,
-            workspace,
-            filtered_keystrokes: FILTERED_KEYSTROKES
-                .iter()
-                .filter_map(|s| {
-                    let keystrokes: Result<Vec<_>, _> = s
-                        .split(' ')
-                        .map(|keystroke_str| Keystroke::parse(keystroke_str))
-                        .collect();
-                    keystrokes.ok()
-                })
-                .collect(),
+            workspace: workspace.clone(),
+            focus_handle: focus_handle.clone(),
+            _pending_input_subscription: cx.observe_pending_input(
+                window,
+                |this: &mut Self, window, cx| {
+                    this.update_pending_keys(window, cx);
+                },
+            ),
+            _focus_out_subscription: window.on_focus_out(
+                &focus_handle,
+                cx,
+                move |_, window, cx| {
+                    WhichKeyModal::hide(workspace.clone(), window, cx);
+                },
+            ),
         }
     }
 
-    fn update_pending_keys(&mut self, window: &mut Window, cx: &Context<Self>) {
-        self.pending_keys = window.pending_input_keystrokes().map(|x| x.to_vec());
-
-        if let Some(pending_keys) = &self.pending_keys {
-            self.bindings = Some(window.possible_bindings_for_input(pending_keys));
-        } else {
-            self.show = false;
-            self.bindings = None;
-            if self.timer.is_some() {
-                self.timer = None;
-            }
-            return;
+    fn update_pending_keys(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if window.pending_input_keystrokes().is_none() {
+            WhichKeyModal::hide(self.workspace.clone(), window, cx);
         }
+    }
 
-        let which_key_settings = WhichKeySettings::get_global(cx);
-        let delay_ms = which_key_settings.delay_ms;
+    fn hide(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &mut App) {
+        workspace
+            .update(cx, |workspace, cx| {
+                if workspace.active_modal::<WhichKeyModal>(cx).is_none() {
+                    return;
+                };
 
-        self.timer = Some(cx.spawn(async move |handle, cx| {
-            cx.background_executor()
-                .timer(Duration::from_millis(delay_ms))
-                .await;
-            handle
-                .update(cx, |which_key_layer, cx| {
-                    which_key_layer.show = true;
-                    cx.notify();
-                })
-                .log_err();
-        }));
+                workspace.hide_modal(window, cx);
+            })
+            .log_err();
     }
 }
 
-impl Render for WhichKeyLayer {
+impl Render for WhichKeyModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let which_key_settings = WhichKeySettings::get_global(cx);
-        if !which_key_settings.enabled || !self.show {
-            // All return paths must return the same concrete type, so we convert `div()` into an `AnyElement`.
-            return div().into_any_element();
-        }
-        let (Some(pending_keys), Some(bindings)) = (&self.pending_keys, &self.bindings) else {
-            // All return paths must return the same concrete type, so we convert `div()` into an `AnyElement`.
+        let pending_keys = window.pending_input_keystrokes().map(|x| x.to_vec());
+        let bindings = pending_keys
+            .as_ref()
+            .map(|pending_keys| window.possible_bindings_for_input(pending_keys));
+
+        let (Some(pending_keys), Some(bindings)) = (pending_keys, bindings) else {
             return div().into_any_element();
         };
         if bindings.is_empty() {
-            // All return paths must return the same concrete type, so we convert `div()` into an `AnyElement`.
             return div().into_any_element();
         }
 
@@ -130,7 +86,7 @@ impl Render for WhichKeyLayer {
 
         let is_zoomed = self
             .workspace
-            .read_with(cx, |workspace, _cx| workspace.zoomed.is_some())
+            .read_with(cx, |workspace, _cx| workspace.zoomed_item().is_some())
             .unwrap_or(false);
 
         // Get dock widths and bottom dock height for dynamic padding
@@ -179,7 +135,7 @@ impl Render for WhichKeyLayer {
             })
             .filter(|(keystrokes, _action)| {
                 // Check if this binding matches any filtered keystroke pattern
-                !self.filtered_keystrokes.iter().any(|filtered| {
+                !FILTERED_KEYSTROKES.iter().any(|filtered| {
                     keystrokes.len() >= filtered.len()
                         && keystrokes[..filtered.len()] == filtered[..]
                 })
@@ -364,7 +320,7 @@ impl Render for WhichKeyLayer {
                 v_flex()
                     .gap(content_gap)
                     .child(
-                        Label::new(text_for_keystrokes(pending_keys, cx)).weight(FontWeight::BOLD),
+                        Label::new(text_for_keystrokes(&pending_keys, cx)).weight(FontWeight::BOLD),
                     )
                     .child(
                         h_flex()
@@ -377,9 +333,21 @@ impl Render for WhichKeyLayer {
     }
 }
 
-fn group_bindings(binding_data: Vec<(Vec<Keystroke>, String)>) -> Vec<(Vec<Keystroke>, String)> {
-    use std::collections::HashMap;
+impl EventEmitter<DismissEvent> for WhichKeyModal {}
 
+impl Focusable for WhichKeyModal {
+    fn focus_handle(&self, _cx: &App) -> gpui::FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl ModalView for WhichKeyModal {
+    fn render_bare(&self) -> bool {
+        true
+    }
+}
+
+fn group_bindings(binding_data: Vec<(Vec<Keystroke>, String)>) -> Vec<(Vec<Keystroke>, String)> {
     let mut groups: HashMap<Option<Keystroke>, Vec<(Vec<Keystroke>, String)>> = HashMap::new();
 
     // Group bindings by their first keystroke
@@ -415,7 +383,7 @@ fn create_aligned_binding_element(
     remaining_keystrokes: &[Keystroke],
     action_name: &str,
     keystroke_width: Option<Pixels>,
-    cx: &Context<WhichKeyLayer>,
+    cx: &Context<WhichKeyModal>,
 ) -> impl IntoElement {
     let keystroke = div()
         .when_some(keystroke_width, |div, width| div.w(width))
