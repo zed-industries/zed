@@ -2182,6 +2182,7 @@ mod tests {
         SettingsKey,
         JsonSchema,
     )]
+    #[serde(default)]
     #[settings_key(None)]
     pub struct TurboSettingContent {
         turbo: Option<bool>,
@@ -2191,14 +2192,12 @@ mod tests {
         type FileContent = TurboSettingContent;
 
         fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-            // Because turbo is only used in settings for tests I'm not going to put it in default.json
-            // to get a default value
             Ok(Self(
                 sources
                     .user
-                    .and_then(|mode| mode.turbo)
-                    .or(sources.server.and_then(|mode| mode.turbo))
-                    .or(sources.default.turbo)
+                    .or(sources.server)
+                    .unwrap_or(sources.default)
+                    .turbo
                     .unwrap_or_default(),
             ))
         }
