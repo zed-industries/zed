@@ -2191,7 +2191,16 @@ mod tests {
         type FileContent = TurboSettingContent;
 
         fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-            sources.json_merge()
+            // Because turbo is only used in settings for tests I'm not going to put it in default.json
+            // to get a default value
+            Ok(Self(
+                sources
+                    .user
+                    .and_then(|mode| mode.turbo)
+                    .or(sources.server.and_then(|mode| mode.turbo))
+                    .or(sources.default.turbo)
+                    .unwrap_or_default(),
+            ))
         }
 
         fn import_from_vscode(_vscode: &VsCodeSettings, _current: &mut Self::FileContent) {}
