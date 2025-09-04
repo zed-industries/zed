@@ -12,4 +12,4 @@ For a detailed list of Helix's default keybindings, please visit the [official H
 
 ## Core differences
 
-Text object motions like `mi|` work, even if the cursor is on the `|` itself. Also, any text object that work with `mi` or `ma` also works with `]` and `[`, so for example `](` selects the next pair of parentheses after the cursor.
+Any text object that works with `m i` or `m a` also works with `]` and `[`, so for example `] (` selects the next pair of parentheses after the cursor.

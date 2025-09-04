@@ -30,11 +30,22 @@ trait BoundedObject {
     /// If outer is true it is the end of "a" object (m a) rather than "inner" object (m i).
     fn previous_end(&self, map: &DisplaySnapshot, from: Offset, outer: bool) -> Option<Offset>;
 
-    /// Whether the range inside or outside the object can have be zero characters wide.
+    /// Whether the range inside the object can be zero characters wide.
     /// If so, the trait assumes that these ranges can't be directly adjacent to each other.
-    fn can_be_zero_width(&self, around: bool) -> bool;
+    fn inner_range_can_be_zero_width(&self) -> bool;
     /// Whether the "ma" can exceed the "mi" range on both sides at the same time
     fn surround_on_both_sides(&self) -> bool;
+    /// Whether the outer range of an object could overlap with the outer range of the neighboring
+    /// object. If so, they can't be nested.
+    fn ambiguous_outer(&self) -> bool;
+
+    fn can_be_zero_width(&self, around: bool) -> bool {
+        if around {
+            false
+        } else {
+            self.inner_range_can_be_zero_width()
+        }
+    }
 
     /// Switches from an "mi" range to an "ma" one.
     /// Assumes the inner range is valid.
@@ -88,12 +99,14 @@ trait BoundedObject {
             start.next(map)?
         };
         let mut start_search_start = start.next(map)?;
+
         loop {
             let next_end = self.next_end(map, end_search_start, outer)?;
             let maybe_next_start = self.next_start(map, start_search_start, outer);
             if let Some(next_start) = maybe_next_start
-                && ((*next_start < *next_end)
-                    || (next_start == next_end && self.can_be_zero_width(outer)))
+                && (*next_start < *next_end
+                    || *next_start == *next_end && self.can_be_zero_width(outer))
+                && !self.ambiguous_outer()
             {
                 let closing = self.close_at_end(next_start, map, outer)?;
                 end_search_start = closing.next(map)?;
@@ -102,7 +115,6 @@ trait BoundedObject {
                 } else {
                     closing
                 };
-                continue;
             } else {
                 return Some(next_end);
             }
@@ -110,29 +122,30 @@ trait BoundedObject {
     }
     /// The previous start since `end` (inclusive) on the same nesting level.
     fn close_at_start(&self, end: Offset, map: &DisplaySnapshot, outer: bool) -> Option<Offset> {
-        let mut start_search_start = if self.can_be_zero_width(outer) {
+        let mut start_search_end = if self.can_be_zero_width(outer) {
             end
         } else {
             end.previous(map)?
         };
-        let mut end_search_start = end.previous(map)?;
+        let mut end_search_end = end.previous(map)?;
+
         loop {
-            let prev_start = self.previous_start(map, start_search_start, outer)?;
-            let maybe_prev_end = self.previous_end(map, end_search_start, outer);
-            if let Some(prev_end) = maybe_prev_end
-                && ((*prev_end > *prev_start)
-                    || (prev_end == prev_start && self.can_be_zero_width(outer)))
+            let previous_start = self.previous_start(map, start_search_end, outer)?;
+            let maybe_previous_end = self.previous_end(map, end_search_end, outer);
+            if let Some(previous_end) = maybe_previous_end
+                && (*previous_end > *previous_start
+                    || *previous_end == *previous_start && self.can_be_zero_width(outer))
+                && !self.ambiguous_outer()
             {
-                let closing = self.close_at_start(prev_end, map, outer)?;
-                end_search_start = if self.can_be_zero_width(outer) {
+                let closing = self.close_at_start(previous_end, map, outer)?;
+                start_search_end = closing.previous(map)?;
+                end_search_end = if self.can_be_zero_width(outer) {
                     closing.previous(map)?
                 } else {
                     closing
                 };
-                start_search_start = closing.previous(map)?;
-                continue;
             } else {
-                return Some(prev_start);
+                return Some(previous_start);
             }
         }
     }
@@ -162,6 +175,13 @@ impl Offset {
         }
         Some(Self(map.buffer_snapshot.clip_offset(*self - 1, Bias::Left)))
     }
+    fn range(
+        start: (DisplayPoint, Bias),
+        end: (DisplayPoint, Bias),
+        map: &DisplaySnapshot,
+    ) -> Range<Self> {
+        Self(start.0.to_offset(map, start.1))..Self(end.0.to_offset(map, end.1))
+    }
 }
 
 impl<B: BoundedObject> HelixTextObject for B {
@@ -171,37 +191,26 @@ impl<B: BoundedObject> HelixTextObject for B {
         relative_to: Range<DisplayPoint>,
         around: bool,
     ) -> Option<Range<DisplayPoint>> {
-        let relative_to = Offset(relative_to.start.to_offset(map, Bias::Left))
-            ..Offset(relative_to.end.to_offset(map, Bias::Right));
-        let search_start = if self.can_be_zero_width(true) {
-            relative_to.start
-        } else {
-            // If the objects can be directly next to each other an object start at the
-            // cursor (relative_to) start would not count for close_at_start, so the search
-            // needs to start one character to the left.
-            relative_to.start.next(map)?
-        };
-        let min_start = self.close_at_start(search_start, map, self.surround_on_both_sides())?;
-        let max_end = self.close_at_end(min_start, map, self.surround_on_both_sides())?;
+        let relative_to = Offset::range(
+            (relative_to.start, Bias::Left),
+            (relative_to.end, Bias::Left),
+            map,
+        );
 
-        if *max_end < *relative_to.end {
-            return None;
-        }
+        relative_range(self, around, map, |find_outer| {
+            let search_start = if self.can_be_zero_width(find_outer) {
+                relative_to.end
+            } else {
+                // If the objects can be directly next to each other an object end the
+                // cursor (relative_to) end would not count for close_at_end, so the search
+                // needs to start one character to the left.
+                relative_to.end.previous(map)?
+            };
+            let max_end = self.close_at_end(search_start, map, find_outer)?;
+            let min_start = self.close_at_start(max_end, map, find_outer)?;
 
-        let range = if around && !self.surround_on_both_sides() {
-            // max_end is not yet the outer end
-            self.around(map, min_start..max_end)
-        } else if !around && self.surround_on_both_sides() {
-            // max_end is the outer end, but the final result should have the inner end
-            self.inside(map, min_start..max_end)
-        } else {
-            min_start..max_end
-        };
-
-        let start = range.start.clone().to_display_point(map);
-        let end = range.end.clone().to_display_point(map);
-
-        Some(start..end)
+            (*min_start <= *relative_to.start).then(|| min_start..max_end)
+        })
     }
 
     fn next_range(
@@ -210,25 +219,18 @@ impl<B: BoundedObject> HelixTextObject for B {
         relative_to: Range<DisplayPoint>,
         around: bool,
     ) -> Option<Range<DisplayPoint>> {
-        let relative_to = Offset(relative_to.start.to_offset(map, Bias::Left))
-            ..Offset(relative_to.end.to_offset(map, Bias::Right));
-        let min_start = self.next_start(map, relative_to.end, self.surround_on_both_sides())?;
-        let max_end = self.close_at_end(min_start, map, self.surround_on_both_sides())?;
+        let relative_to = Offset::range(
+            (relative_to.start, Bias::Left),
+            (relative_to.end, Bias::Left),
+            map,
+        );
 
-        let range = if around && !self.surround_on_both_sides() {
-            // max_end is not yet the outer end
-            self.around(map, min_start..max_end)
-        } else if !around && self.surround_on_both_sides() {
-            // max_end is the outer end, but the final result should have the inner end
-            self.inside(map, min_start..max_end)
-        } else {
-            min_start..max_end
-        };
+        relative_range(self, around, map, |find_outer| {
+            let min_start = self.next_start(map, relative_to.end, find_outer)?;
+            let max_end = self.close_at_end(min_start, map, find_outer)?;
 
-        let start = range.start.clone().to_display_point(map);
-        let end = range.end.clone().to_display_point(map);
-
-        Some(start..end)
+            Some(min_start..max_end)
+        })
     }
 
     fn previous_range(
@@ -237,26 +239,48 @@ impl<B: BoundedObject> HelixTextObject for B {
         relative_to: Range<DisplayPoint>,
         around: bool,
     ) -> Option<Range<DisplayPoint>> {
-        let relative_to = Offset(relative_to.start.to_offset(map, Bias::Left))
-            ..Offset(relative_to.end.to_offset(map, Bias::Right));
-        let max_end = self.previous_end(map, relative_to.start, self.surround_on_both_sides())?;
-        let min_start = self.close_at_start(max_end, map, self.surround_on_both_sides())?;
+        let relative_to = Offset::range(
+            (relative_to.start, Bias::Left),
+            (relative_to.end, Bias::Left),
+            map,
+        );
 
-        let range = if around && !self.surround_on_both_sides() {
-            // max_end is not yet the outer end
-            self.around(map, min_start..max_end)
-        } else if !around && self.surround_on_both_sides() {
-            // max_end is the outer end, but the final result should have the inner end
-            self.inside(map, min_start..max_end)
-        } else {
-            min_start..max_end
-        };
+        relative_range(self, around, map, |find_outer| {
+            let max_end = self.previous_end(map, relative_to.start, find_outer)?;
+            let min_start = self.close_at_start(max_end, map, find_outer)?;
 
-        let start = range.start.clone().to_display_point(map);
-        let end = range.end.clone().to_display_point(map);
-
-        Some(start..end)
+            Some(min_start..max_end)
+        })
     }
+}
+
+fn relative_range<B: BoundedObject>(
+    object: &B,
+    outer: bool,
+    map: &DisplaySnapshot,
+    find_range: impl Fn(bool) -> Option<Range<Offset>>,
+) -> Option<Range<DisplayPoint>> {
+    // The cursor could be inside the outer range, but not the inner range.
+    // Whether that should count as found.
+    let find_outer = object.surround_on_both_sides() && !object.ambiguous_outer();
+    let range = find_range(find_outer)?;
+    let min_start = range.start;
+    let max_end = range.end;
+
+    let wanted_range = if outer && !find_outer {
+        // max_end is not yet the outer end
+        object.around(map, min_start..max_end)
+    } else if !outer && find_outer {
+        // max_end is the outer end, but the final result should have the inner end
+        object.inside(map, min_start..max_end)
+    } else {
+        min_start..max_end
+    };
+
+    let start = wanted_range.start.clone().to_display_point(map);
+    let end = wanted_range.end.clone().to_display_point(map);
+
+    Some(start..end)
 }
 
 /// A textobject whose boundaries can easily be found between two chars
@@ -402,16 +426,27 @@ impl BoundedObject for ImmediateBoundary {
             }
         })
     }
-    fn can_be_zero_width(&self, around: bool) -> bool {
+    fn inner_range_can_be_zero_width(&self) -> bool {
         match self {
             Self::Subword { .. } | Self::Word { .. } => false,
-            _ => !around,
+            _ => true,
         }
     }
     fn surround_on_both_sides(&self) -> bool {
         match self {
             Self::Subword { .. } | Self::Word { .. } => false,
             _ => true,
+        }
+    }
+    fn ambiguous_outer(&self) -> bool {
+        match self {
+            Self::BackQuotes
+            | Self::DoubleQuotes
+            | Self::SingleQuotes
+            | Self::VerticalBars
+            | Self::Subword { .. }
+            | Self::Word { .. } => true,
+            _ => false,
         }
     }
 }
@@ -587,10 +622,13 @@ impl BoundedObject for FuzzyBoundary {
     fn previous_end(&self, map: &DisplaySnapshot, from: Offset, outer: bool) -> Option<Offset> {
         self.to_boundary(map, from, outer, true, Boundary::End)
     }
-    fn can_be_zero_width(&self, _: bool) -> bool {
+    fn inner_range_can_be_zero_width(&self) -> bool {
         false
     }
     fn surround_on_both_sides(&self) -> bool {
+        false
+    }
+    fn ambiguous_outer(&self) -> bool {
         false
     }
 }
