@@ -671,12 +671,18 @@ impl PickerDelegate for OpenPathDelegate {
             DirectoryState::None { .. } => Vec::new(),
         };
 
+        let is_current_dir_candidate = candidate.path.string == self.current_dir();
+
         let file_icon = maybe!({
             if !settings.file_icons {
                 return None;
             }
             let icon = if candidate.is_dir {
-                FileIcons::get_folder_icon(false, cx)?
+                if is_current_dir_candidate {
+                    return Some(Icon::new(IconName::ReplyArrowRight).color(Color::Muted));
+                } else {
+                    FileIcons::get_folder_icon(false, cx)?
+                }
             } else {
                 let path = path::Path::new(&candidate.path.string);
                 FileIcons::get_icon(path, cx)?
@@ -694,6 +700,8 @@ impl PickerDelegate for OpenPathDelegate {
                     .child(HighlightedLabel::new(
                         if parent_path == &self.prompt_root {
                             format!("{}{}", self.prompt_root, candidate.path.string)
+                        } else if is_current_dir_candidate {
+                            "open this directory".to_string()
                         } else {
                             candidate.path.string
                         },
@@ -788,6 +796,17 @@ impl PickerDelegate for OpenPathDelegate {
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         Arc::from(format!("[directory{MAIN_SEPARATOR_STR}]filename.ext"))
+    }
+
+    fn separators_after_indices(&self) -> Vec<usize> {
+        let Some(m) = self.string_matches.first() else {
+            return Vec::new();
+        };
+        if m.string == self.current_dir() {
+            vec![0]
+        } else {
+            Vec::new()
+        }
     }
 }
 
