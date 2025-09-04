@@ -9221,6 +9221,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "language_onboarding"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "db",
+ "editor",
+ "gpui",
+ "project",
+ "ui",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "language_selector"
 version = "0.1.0"
 dependencies = [
@@ -12979,20 +12993,6 @@ dependencies = [
  "log",
  "sptr",
  "wasmtime-math",
-]
-
-[[package]]
-name = "python_ui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "db",
- "editor",
- "gpui",
- "project",
- "ui",
- "util",
- "workspace",
 ]
 
 [[package]]
@@ -20485,6 +20485,7 @@ dependencies = [
  "language_extension",
  "language_model",
  "language_models",
+ "language_onboarding",
  "language_selector",
  "language_tools",
  "languages",
@@ -20513,7 +20514,6 @@ dependencies = [
  "project_symbols",
  "prompt_store",
  "proto",
- "python_ui",
  "recent_projects",
  "release_channel",
  "remote",

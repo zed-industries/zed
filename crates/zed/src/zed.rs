@@ -32,6 +32,7 @@ use gpui::{
 };
 use image_viewer::ImageInfo;
 use language::Capability;
+use language_onboarding::BasedPyrightBanner;
 use language_tools::lsp_button::{self, LspButton};
 use language_tools::lsp_log_view::LspLogToolbarItemView;
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
@@ -47,7 +48,6 @@ use paths::{
 use project::{DirectoryLister, ProjectItem};
 use project_panel::ProjectPanel;
 use prompt_store::PromptBuilder;
-use python_ui::BasedPyrightBanner;
 use quick_action_bar::QuickActionBar;
 use recent_projects::open_remote_project;
 use release_channel::{AppCommitSha, ReleaseChannel};

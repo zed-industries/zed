@@ -94,6 +94,7 @@ members = [
     "crates/language_extension",
     "crates/language_model",
     "crates/language_models",
+    "crates/language_onboarding",
     "crates/language_selector",
     "crates/language_tools",
     "crates/languages",
@@ -127,7 +128,6 @@ members = [
     "crates/project_symbols",
     "crates/prompt_store",
     "crates/proto",
-    "crates/python_ui",
     "crates/recent_projects",
     "crates/refineable",
     "crates/refineable/derive_refineable",
@@ -321,6 +321,7 @@ language = { path = "crates/language" }
 language_extension = { path = "crates/language_extension" }
 language_model = { path = "crates/language_model" }
 language_models = { path = "crates/language_models" }
+language_onboarding = { path = "crates/language_onboarding" }
 language_selector = { path = "crates/language_selector" }
 language_tools = { path = "crates/language_tools" }
 languages = { path = "crates/languages" }
@@ -358,7 +359,6 @@ project_panel = { path = "crates/project_panel" }
 project_symbols = { path = "crates/project_symbols" }
 prompt_store = { path = "crates/prompt_store" }
 proto = { path = "crates/proto" }
-python_ui = { path = "crates/python_ui" }
 recent_projects = { path = "crates/recent_projects" }
 refineable = { path = "crates/refineable" }
 release_channel = { path = "crates/release_channel" }
