@@ -1030,8 +1030,10 @@ pub enum Event {
     ItemAdded {
         item: Box<dyn ItemHandle>,
     },
-    ItemRemoved,
     ActiveItemChanged,
+    ItemRemoved {
+        item_id: EntityId,
+    },
     UserSavedItem {
         pane: WeakEntity<Pane>,
         item: Box<dyn WeakItemHandle>,
@@ -3948,6 +3950,9 @@ impl Workspace {
                 {
                     entry.remove();
                 }
+                cx.emit(Event::ItemRemoved {
+                    item_id: item.item_id(),
+                });
             }
             pane::Event::Focus => {
                 window.invalidate_character_coordinates();
