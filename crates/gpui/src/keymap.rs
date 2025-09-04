@@ -169,7 +169,7 @@ impl Keymap {
                 // User keymaps should take highest precedence
                 let source_a = binding_a.meta.map(|m| m.0).unwrap_or(0);
                 let source_b = binding_b.meta.map(|m| m.0).unwrap_or(0);
-                
+
                 // KeybindSource precedence: User (0) > Vim (1) > Base (2) > Default (3)
                 source_a.cmp(&source_b).then(ix_b.cmp(ix_a))
             })
@@ -177,7 +177,7 @@ impl Keymap {
 
         let mut bindings: SmallVec<[_; 1]> = SmallVec::new();
         let mut first_binding_index = None;
-        
+
         for (_, ix, binding) in matched_bindings {
             if is_no_action(&*binding.action) {
                 // Only break if this is a user-defined NoAction binding
