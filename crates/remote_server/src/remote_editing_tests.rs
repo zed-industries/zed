@@ -302,7 +302,7 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
                 .language(None, Some(&"Rust".into()), cx)
                 .language_servers,
             ["from-server-settings".to_string()],
-            "Server language settings should take precedence over user settings"
+            "Server language settings should take precedence over the user settings"
         )
     });
 

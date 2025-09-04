@@ -839,9 +839,13 @@ impl SettingsObserver {
             .with_context(|| {
                 format!("deserializing {} user settings", envelope.payload.contents)
             })?;
-        cx.update_global(|settings_store: &mut SettingsStore, _| {
-            settings_store.set_raw_user_settings(new_settings);
-        })
+        cx.update_global(|settings_store: &mut SettingsStore, cx| {
+            settings_store
+                .set_raw_user_settings(new_settings, cx)
+                .context("setting new user settings")?;
+            anyhow::Ok(())
+        })??;
+        Ok(())
     }
 
     fn on_worktree_store_event(

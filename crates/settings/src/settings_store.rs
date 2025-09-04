@@ -467,14 +467,11 @@ impl SettingsStore {
         &self.raw_user_settings
     }
 
-    /// TODO kb docs
-    pub fn set_raw_user_settings(&mut self, new_settings: Value) {
-        log::warn!(
-            "##################################### old_settings: {:?}, new_settings: {new_settings:?}",
-            self.raw_default_settings
-        );
-        // TODO kb merge?
-        self.raw_default_settings = new_settings;
+    /// Replaces current settings with the values from the given JSON.
+    pub fn set_raw_user_settings(&mut self, new_settings: Value, cx: &mut App) -> Result<()> {
+        self.raw_user_settings = new_settings;
+        self.recompute_values(None, cx)?;
+        Ok(())
     }
 
     /// Get the configured settings profile names.
