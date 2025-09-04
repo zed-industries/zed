@@ -7,7 +7,7 @@ use anyhow::Context as _;
 use command_palette_hooks::CommandPaletteFilter;
 use editor::EditorSettingsControls;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
-use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, ReadGlobal, actions};
+use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, ReadGlobal, ScrollHandle, actions};
 use settings::{
     NumType, SettingsStore, SettingsUiEntry, SettingsUiItem, SettingsUiItemDynamic,
     SettingsUiItemGroup, SettingsUiItemSingle, SettingsValue,
@@ -353,8 +353,8 @@ fn render_content(
     tree: &SettingsUiTree,
     window: &mut Window,
     cx: &mut Context<SettingsPage>,
-) -> impl IntoElement {
-    let content = v_flex().size_full().gap_4().overflow_hidden();
+) -> Div {
+    let content = v_flex().size_full().gap_4();
 
     let mut path = smallvec::smallvec![];
 
@@ -394,7 +394,8 @@ fn render_content(
             if let Some(descendant_index) = selected_descendant {
                 element = render_recursive(&tree, descendant_index, path, element, window, cx);
             }
-        } else if let Some(child_render) = child.render.as_ref() {
+        }
+        if let Some(child_render) = child.render.as_ref() {
             element = element.child(div().child(render_item_single(
                 settings_value,
                 child_render,
@@ -408,7 +409,8 @@ fn render_content(
                 index = tree.entries[sub_child_index].next_sibling;
             }
         } else {
-            element = element.child(div().child(Label::new("// skipped (for now)")))
+            element =
+                element.child(div().child(Label::new("// skipped (for now)").color(Color::Muted)))
         }
 
         if pushed_path {
@@ -429,6 +431,7 @@ fn render_content(
 
 impl Render for SettingsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let scroll_handle = window.use_state(cx, |_, _| ScrollHandle::new());
         div()
             .grid()
             .grid_cols(16)
@@ -437,15 +440,19 @@ impl Render for SettingsPage {
             .size_full()
             .child(
                 div()
+                    .id("settings-ui-nav")
                     .col_span(2)
                     .h_full()
                     .child(render_nav(&self.settings_tree, window, cx)),
             )
-            .child(div().col_span(4).h_full().child(render_content(
-                &self.settings_tree,
-                window,
-                cx,
-            )))
+            .child(
+                div().col_span(4).h_full().child(
+                    render_content(&self.settings_tree, window, cx)
+                        .id("settings-ui-content")
+                        .track_scroll(scroll_handle.read(cx))
+                        .overflow_y_scroll(),
+                ),
+            )
     }
 }
 
