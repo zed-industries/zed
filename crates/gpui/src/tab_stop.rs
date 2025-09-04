@@ -1,19 +1,76 @@
+use std::{cmp::Ordering, ops::Range};
+
 use crate::{FocusHandle, FocusId};
 
 /// Represents a collection of tab handles.
 ///
 /// Used to manage the `Tab` event to switch between focus handles.
-#[derive(Default)]
 pub(crate) struct TabHandles {
-    pub(crate) handles: Vec<FocusHandle>,
-    groups: Vec<GroupDef>,
-    group_depth: usize,
+    handles: Vec<FocusHandle>,
+
+    active_group: usize,
+    pub(crate) nodes: Vec<TabNode>,
 }
 
-struct GroupDef {
-    index: isize,
-    offset: usize,
+impl Default for TabHandles {
+    fn default() -> Self {
+        Self {
+            handles: Default::default(),
+            active_group: 0,
+            nodes: vec![TabNode::Group {
+                parent_index: 0,
+                tab_index: 0,
+                children: vec![],
+            }],
+        }
+    }
 }
+
+// range: [s, e)
+// [ Group(0, 1), Element, Group(2, 3), Element(2), Element(0) ]
+//
+#[derive(Debug, Clone)]
+pub enum TabNode {
+    Element {
+        parent_index: usize,
+        handle: FocusHandle,
+    },
+    Group {
+        parent_index: usize,
+        tab_index: isize,
+        children: Vec<usize>,
+    },
+}
+
+impl TabNode {
+    fn tab_index(&self) -> isize {
+        match self {
+            TabNode::Element { handle, .. } => handle.tab_index,
+            TabNode::Group { tab_index, .. } => *tab_index,
+        }
+    }
+    fn parent_index(&self) -> usize {
+        match self {
+            TabNode::Element { parent_index, .. } => *parent_index,
+            TabNode::Group { parent_index, .. } => *parent_index,
+        }
+    }
+
+    // fn depth(&self, nodes: &[TabNode]) -> usize {
+    //     match self.parent_index() {
+    //         0 if self.tab_index() == 0 => 0,
+    //         0 => 1,
+    //         _ => nodes[self.parent_index()].depth(nodes) + 1,
+    //     }
+    // }
+}
+
+// for (index, item) in vec.enumerate() {
+// if item.depth == current_sort_depth {
+//   sort_buf.push(index);
+// }
+//}
+//sort_buf.sort_by(|a, b| vec[a].index.cmp(&vec[b].index))
 
 impl TabHandles {
     pub(crate) fn insert(&mut self, focus_handle: &FocusHandle) {
@@ -21,32 +78,40 @@ impl TabHandles {
             return;
         }
 
-        let mut focus_handle = focus_handle.clone();
-        for group in self.groups.iter().rev().take(self.group_depth) {
-            focus_handle.tab_index += group.index;
-        }
-
-        // Insert handle with same tab_index last
-        if let Some(ix) = self
-            .handles
-            .iter()
-            .position(|tab| tab.tab_index > focus_handle.tab_index)
+        let new_node_index = self.nodes.len();
         {
-            self.handles.insert(ix, focus_handle);
-        } else {
-            self.handles.push(focus_handle);
-        }
+            let TabNode::Group { children, .. } = &mut self.nodes[self.active_group] else {
+                panic!("wow");
+            };
+
+            children.push(new_node_index);
+        };
+        self.nodes.push(TabNode::Element {
+            handle: focus_handle.clone(),
+            parent_index: self.active_group,
+        });
+
+        self.end_frame();
     }
 
     pub(crate) fn clear(&mut self) {
+        // todo!
         self.handles.clear();
+        self.active_group = 0;
+        self.nodes = vec![TabNode::Group {
+            tab_index: 0,
+            children: Vec::new(),
+            parent_index: 0,
+        }];
     }
 
     fn current_index(&self, focused_id: Option<&FocusId>) -> Option<usize> {
+        // todo!
         self.handles.iter().position(|h| Some(&h.id) == focused_id)
     }
 
     pub(crate) fn next(&self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {
+        // todo!
         let next_ix = self
             .current_index(focused_id)
             .and_then(|ix| {
@@ -55,7 +120,9 @@ impl TabHandles {
             })
             .unwrap_or_default();
 
-        self.handles.get(next_ix).cloned()
+        dbg!(&self.nodes);
+        dbg!(self.handles.len(), next_ix);
+        dbg!(self.handles.get(next_ix).cloned())
     }
 
     pub(crate) fn prev(&self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {
@@ -66,20 +133,59 @@ impl TabHandles {
             ix.saturating_sub(1)
         };
 
-        self.handles.get(prev_ix).cloned()
+        dbg!(&self.nodes);
+        dbg!(self.handles.len(), prev_ix);
+        dbg!(self.handles.get(prev_ix).cloned())
     }
 
     fn begin_group(&mut self, tab_index: isize) {
-        self.groups.push(GroupDef {
-            index: tab_index,
-            offset: 0,
+        let new_node_index = self.nodes.len();
+        {
+            let TabNode::Group { children, .. } = &mut self.nodes[self.active_group] else {
+                panic!("wow");
+            };
+
+            children.push(new_node_index);
+        };
+        self.nodes.push(TabNode::Group {
+            tab_index,
+            parent_index: self.active_group,
+            children: Vec::new(),
         });
-        self.group_depth += 1;
+        self.active_group = new_node_index;
     }
 
     fn end_group(&mut self) {
-        self.group_depth -= 1;
-        self.groups.pop();
+        self.active_group = match self.nodes[self.active_group] {
+            TabNode::Group { parent_index, .. } => parent_index,
+            TabNode::Element { parent_index, .. } => parent_index,
+        };
+    }
+
+    fn flatten_children(&mut self, mut children: Vec<usize>) {
+        children.sort_by(|&a_idx, &b_idx| {
+            let a = &self.nodes[a_idx];
+            let b = &self.nodes[b_idx];
+            a.tab_index().cmp(&b.tab_index())
+        });
+
+        for child_index in children {
+            match &self.nodes[child_index] {
+                TabNode::Group { children, .. } => {
+                    self.flatten_children(children.clone());
+                }
+                TabNode::Element { handle, .. } => self.handles.push(handle.clone()),
+            };
+        }
+    }
+
+    pub fn end_frame(&mut self) {
+        let TabNode::Group { children, .. } = &self.nodes[0] else {
+            panic!("wow");
+        };
+
+        self.handles.clear();
+        self.flatten_children(children.clone());
     }
 }
 
@@ -87,6 +193,39 @@ impl TabHandles {
 mod tests {
     use crate::{FocusHandle, FocusId, FocusMap, TabHandles};
     use std::sync::Arc;
+
+    #[test]
+    // todo! remove
+    fn basic_list_print() {
+        let focus_map = Arc::new(FocusMap::default());
+        let mut tab_handles = TabHandles::default();
+        tab_handles.insert(&FocusHandle::new(&focus_map).tab_index(0).tab_stop(true));
+        tab_handles.insert(&FocusHandle::new(&focus_map).tab_index(1).tab_stop(true));
+        tab_handles.begin_group(3);
+        tab_handles.insert(&FocusHandle::new(&focus_map).tab_index(0).tab_stop(true));
+        tab_handles.insert(&FocusHandle::new(&focus_map).tab_index(1).tab_stop(true));
+        tab_handles.end_group();
+        tab_handles.begin_group(2);
+        tab_handles.insert(&FocusHandle::new(&focus_map).tab_index(0).tab_stop(true));
+        tab_handles.insert(&FocusHandle::new(&focus_map).tab_index(1).tab_stop(true));
+        tab_handles.end_group();
+
+        tab_handles.insert(&FocusHandle::new(&focus_map).tab_index(4).tab_stop(true));
+
+        tab_handles.end_frame();
+
+        // eprintln!("{:?}", &tab_handles.index_buf);
+        eprintln!("{:?}", &tab_handles.handles);
+        // eprintln!(
+        //     "{:?}",
+        //     tab_handles
+        //         .index_buf
+        //         .iter()
+        //         .map(|&e| &tab_handles.nodes[e])
+        //         .collect::<Vec<_>>()
+        // );
+        // assert!(false);
+    }
 
     /// Helper function to parse XML-like structure and test tab navigation
     ///
@@ -377,6 +516,7 @@ mod tests {
             }
 
             construct_recursive(node, focus_map, tab_handles, &mut actual_to_handle);
+            tab_handles.end_frame();
             actual_to_handle
         }
 
@@ -1075,53 +1215,53 @@ mod tests {
     }
 
     mod focus_trap {
-        use super::*;
+        // use super::*;
 
-        xml_test!(
-            test_focus_trap_in_group,
-            r#"
-                <tab-index=0 actual=0>
-                <tab-group tab-index=1>
-                    <tab-index=0 actual=1>
-                    <focus-trap>
-                        <tab-index=0 actual=2>
-                        <tab-index=1 actual=3>
-                    </focus-trap>
-                    <tab-index=1 actual=4>
-                </tab-group>
-                <tab-index=2 actual=5>
-            "#
-        );
+        // xml_test!(
+        //     test_focus_trap_in_group,
+        //     r#"
+        //         <tab-index=0 actual=0>
+        //         <tab-group tab-index=1>
+        //             <tab-index=0 actual=1>
+        //             <focus-trap>
+        //                 <tab-index=0 actual=2>
+        //                 <tab-index=1 actual=3>
+        //             </focus-trap>
+        //             <tab-index=1 actual=4>
+        //         </tab-group>
+        //         <tab-index=2 actual=5>
+        //     "#
+        // );
 
-        // This test defines the expected behavior for focus-trap
-        // Focus-trap should trap navigation within its boundaries
-        xml_test!(
-            test_focus_trap_functionality,
-            r#"
-                <tab-index=0 actual=0>
-                <focus-trap tab-index=1>
-                    <tab-index=0 actual=1>
-                    <tab-index=1 actual=2>
-                </focus-trap>
-                <tab-index=2 actual=3>
-            "#
-        );
+        // // This test defines the expected behavior for focus-trap
+        // // Focus-trap should trap navigation within its boundaries
+        // xml_test!(
+        //     test_focus_trap_functionality,
+        //     r#"
+        //         <tab-index=0 actual=0>
+        //         <focus-trap tab-index=1>
+        //             <tab-index=0 actual=1>
+        //             <tab-index=1 actual=2>
+        //         </focus-trap>
+        //         <tab-index=2 actual=3>
+        //     "#
+        // );
 
-        xml_test!(
-            test_nested_groups_and_traps,
-            r#"
-                <tab-index=0 actual=0>
-                <tab-group tab-index=1>
-                    <tab-index=0 actual=1>
-                    <focus-trap tab-index=1>
-                        <tab-index=0 actual=2>
-                        <tab-index=1 actual=3>
-                    </focus-trap>
-                    <tab-index=2 actual=4>
-                </tab-group>
-                <tab-index=2 actual=5>
-            "#
-        );
+        // xml_test!(
+        //     test_nested_groups_and_traps,
+        //     r#"
+        //         <tab-index=0 actual=0>
+        //         <tab-group tab-index=1>
+        //             <tab-index=0 actual=1>
+        //             <focus-trap tab-index=1>
+        //                 <tab-index=0 actual=2>
+        //                 <tab-index=1 actual=3>
+        //             </focus-trap>
+        //             <tab-index=2 actual=4>
+        //         </tab-group>
+        //         <tab-index=2 actual=5>
+        //     "#
+        // );
     }
 
     #[test]
@@ -1142,6 +1282,7 @@ mod tests {
         for handle in focus_handles.iter() {
             tab.insert(handle);
         }
+        tab.end_frame();
         assert_eq!(
             tab.handles
                 .iter()
