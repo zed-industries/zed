@@ -252,10 +252,6 @@ impl Scheduler for TestScheduler {
         );
     }
 
-    fn is_main_thread(&self) -> bool {
-        thread::current().id() == self.thread_id
-    }
-
     fn timer(&self, duration: Duration) -> Timer {
         let (tx, rx) = oneshot::channel();
         let expiration = self.clock.now() + ChronoDuration::from_std(duration).unwrap();

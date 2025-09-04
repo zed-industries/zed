@@ -64,10 +64,6 @@ impl ForegroundExecutor {
 
 impl ForegroundExecutor {
     pub fn new(session_id: SessionId, scheduler: Arc<dyn Scheduler>) -> Self {
-        assert!(
-            scheduler.is_main_thread(),
-            "ForegroundExecutor must be created on the same thread as the Scheduler"
-        );
         Self {
             session_id,
             scheduler,

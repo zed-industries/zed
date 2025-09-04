@@ -22,7 +22,6 @@ pub trait Scheduler: Send + Sync {
     fn block(&self, session_id: SessionId, future: LocalBoxFuture<()>, timeout: Option<Duration>);
     fn schedule_foreground(&self, session_id: SessionId, runnable: Runnable);
     fn schedule_background(&self, runnable: Runnable);
-    fn is_main_thread(&self) -> bool;
     fn timer(&self, timeout: Duration) -> Timer;
     fn now(&self) -> DateTime<Utc>;
 }
