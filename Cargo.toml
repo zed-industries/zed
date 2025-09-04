@@ -462,9 +462,9 @@ aws-smithy-types = { version = "1.3.0", features = ["http-body-1-x"] }
 base64 = "0.22"
 bincode = "1.2.1"
 bitflags = "2.6.0"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "e0ec4e720957edd51b945b64dd85605ea54bcfe5" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "e0ec4e720957edd51b945b64dd85605ea54bcfe5" }
-blade-util = { git = "https://github.com/kvark/blade", rev = "e0ec4e720957edd51b945b64dd85605ea54bcfe5" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "bfa594e" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "bfa594e" }
+blade-util = { git = "https://github.com/kvark/blade", rev = "bfa594e" }
 blake3 = "1.5.3"
 bytes = "1.0"
 cargo_metadata = "0.19"
