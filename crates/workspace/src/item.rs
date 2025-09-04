@@ -541,7 +541,6 @@ pub trait ItemHandle: 'static + Send {
         cx: &mut Context<Workspace>,
     );
     fn deactivated(&self, window: &mut Window, cx: &mut App);
-    fn discarded(&self, project: Entity<Project>, window: &mut Window, cx: &mut App);
     fn on_removed(&self, cx: &App);
     fn workspace_deactivated(&self, window: &mut Window, cx: &mut App);
     fn navigate(&self, data: Box<dyn Any>, window: &mut Window, cx: &mut App) -> bool;
@@ -973,10 +972,6 @@ impl<T: Item> ItemHandle for Entity<T> {
         cx.defer_in(window, |workspace, window, cx| {
             workspace.serialize_workspace(window, cx);
         });
-    }
-
-    fn discarded(&self, project: Entity<Project>, window: &mut Window, cx: &mut App) {
-        self.update(cx, |this, cx| this.discarded(project, window, cx));
     }
 
     fn deactivated(&self, window: &mut Window, cx: &mut App) {

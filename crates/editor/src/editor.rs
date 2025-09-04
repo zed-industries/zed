@@ -20326,7 +20326,6 @@ impl Editor {
             multi_buffer::Event::FileHandleChanged
             | multi_buffer::Event::Reloaded
             | multi_buffer::Event::BufferDiffChanged => cx.emit(EditorEvent::TitleChanged),
-            multi_buffer::Event::Closed => cx.emit(EditorEvent::Closed),
             multi_buffer::Event::DiagnosticsUpdated => {
                 self.update_diagnostics_state(window, cx);
             }
@@ -23024,7 +23023,6 @@ pub enum EditorEvent {
     DirtyChanged,
     Saved,
     TitleChanged,
-    DiffBaseChanged,
     SelectionsChanged {
         local: bool,
     },
@@ -23032,14 +23030,12 @@ pub enum EditorEvent {
         local: bool,
         autoscroll: bool,
     },
-    Closed,
     TransactionUndone {
         transaction_id: clock::Lamport,
     },
     TransactionBegun {
         transaction_id: clock::Lamport,
     },
-    Reloaded,
     CursorShapeChanged,
     BreadcrumbsChanged,
     PushedToNavHistory {
