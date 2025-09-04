@@ -104,7 +104,7 @@ impl Model {
     pub fn max_output_tokens(&self) -> Option<u64> {
         match self {
             Self::Chat => Some(8_192),
-            Self::Reasoner => Some(8_192),
+            Self::Reasoner => Some(64_000),
             Self::Custom {
                 max_output_tokens, ..
             } => *max_output_tokens,
