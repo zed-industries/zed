@@ -1,3 +1,5 @@
+use std::ops::Not;
+
 use heck::{ToSnakeCase as _, ToTitleCase as _};
 use proc_macro2::TokenStream;
 use quote::{ToTokens, quote};
@@ -63,12 +65,19 @@ pub fn derive_settings_ui(input: proc_macro::TokenStream) -> proc_macro::TokenSt
         }
     }
 
+    let doc_str = parse_documentation_from_attrs(&input.attrs);
+
     let ui_item_fn_body = generate_ui_item_body(group_name.as_ref(), path_name.as_ref(), &input);
 
     // todo(settings_ui): make group name optional, repurpose group as tag indicating item is group, and have "title" tag for custom title
     let title = group_name.unwrap_or(input.ident.to_string().to_title_case());
 
-    let ui_entry_fn_body = map_ui_item_to_entry(path_name.as_deref(), &title, quote! { Self });
+    let ui_entry_fn_body = map_ui_item_to_entry(
+        path_name.as_deref(),
+        &title,
+        doc_str.as_deref(),
+        quote! { Self },
+    );
 
     let expanded = quote! {
         impl #impl_generics settings::SettingsUi for #name #ty_generics #where_clause {
@@ -111,14 +120,22 @@ fn option_inner_type(ty: TokenStream) -> Option<TokenStream> {
     return Some(ty.to_token_stream());
 }
 
-fn map_ui_item_to_entry(path: Option<&str>, title: &str, ty: TokenStream) -> TokenStream {
+fn map_ui_item_to_entry(
+    path: Option<&str>,
+    title: &str,
+    doc_str: Option<&str>,
+    ty: TokenStream,
+) -> TokenStream {
     let ty = extract_type_from_option(ty);
+    // todo(settings_ui): does quote! just work with options?
     let path = path.map_or_else(|| quote! {None}, |path| quote! {Some(#path)});
+    let doc_str = doc_str.map_or_else(|| quote! {None}, |doc_str| quote! {Some(#doc_str)});
     quote! {
         settings::SettingsUiEntry {
             title: #title,
             path: #path,
             item: #ty::settings_ui_item(),
+            documentation: #doc_str,
         }
     }
 }
@@ -134,6 +151,7 @@ fn generate_ui_item_body(
             settings::SettingsUiItem::None
         },
         (Some(_), _, Data::Struct(data_struct)) => {
+            let struct_serde_attrs = parse_serde_attributes(&input.attrs);
             let fields = data_struct
                 .fields
                 .iter()
@@ -153,48 +171,37 @@ fn generate_ui_item_body(
                     })
                 })
                 .map(|field| {
+                    let field_serde_attrs = parse_serde_attributes(&field.attrs);
+                    let name = field.ident.clone().expect("tuple fields").to_string();
+                    let doc_str = parse_documentation_from_attrs(&field.attrs);
+
                     (
-                        field.ident.clone().expect("tuple fields").to_string(),
+                        name.to_title_case(),
+                        doc_str,
+                        field_serde_attrs.flatten.not().then(|| {
+                            struct_serde_attrs.apply_rename_to_field(&field_serde_attrs, &name)
+                        }),
                         field.ty.to_token_stream(),
                     )
                 })
                 // todo(settings_ui): Re-format field name as nice title, and support setting different title with attr
-                .map(|(name, ty)| map_ui_item_to_entry(Some(&name), &name.to_title_case(), ty));
+                .map(|(title, doc_str, path, ty)| {
+                    map_ui_item_to_entry(path.as_deref(), &title, doc_str.as_deref(), ty)
+                });
 
             quote! {
                 settings::SettingsUiItem::Group(settings::SettingsUiItemGroup{ items: vec![#(#fields),*] })
             }
         }
         (None, _, Data::Enum(data_enum)) => {
-            let mut lowercase = false;
-            let mut snake_case = false;
-            for attr in &input.attrs {
-                if attr.path().is_ident("serde") {
-                    attr.parse_nested_meta(|meta| {
-                        if meta.path.is_ident("rename_all") {
-                            meta.input.parse::<Token![=]>()?;
-                            let lit = meta.input.parse::<LitStr>()?.value();
-                            lowercase = lit == "lowercase";
-                            snake_case = lit == "snake_case";
-                        }
-                        Ok(())
-                    })
-                    .ok();
-                }
-            }
+            let serde_attrs = parse_serde_attributes(&input.attrs);
             let length = data_enum.variants.len();
 
             let variants = data_enum.variants.iter().map(|variant| {
                 let string = variant.ident.clone().to_string();
 
                 let title = string.to_title_case();
-                let string = if lowercase {
-                    string.to_lowercase()
-                } else if snake_case {
-                    string.to_snake_case()
-                } else {
-                    string
-                };
+                let string = serde_attrs.rename_all.apply(&string);
 
                 (string, title)
             });
@@ -216,6 +223,113 @@ fn generate_ui_item_body(
             settings::SettingsUiItem::None
         },
     }
+}
+
+struct SerdeOptions {
+    rename_all: SerdeRenameAll,
+    rename: Option<String>,
+    flatten: bool,
+    _alias: Option<String>, // todo(settings_ui)
+}
+
+#[derive(PartialEq)]
+enum SerdeRenameAll {
+    Lowercase,
+    SnakeCase,
+    None,
+}
+
+impl SerdeRenameAll {
+    fn apply(&self, name: &str) -> String {
+        match self {
+            SerdeRenameAll::Lowercase => name.to_lowercase(),
+            SerdeRenameAll::SnakeCase => name.to_snake_case(),
+            SerdeRenameAll::None => name.to_string(),
+        }
+    }
+}
+
+impl SerdeOptions {
+    fn apply_rename_to_field(&self, field_options: &Self, name: &str) -> String {
+        // field renames take precedence over struct rename all cases
+        if let Some(rename) = &field_options.rename {
+            return rename.clone();
+        }
+        return self.rename_all.apply(name);
+    }
+}
+
+fn parse_serde_attributes(attrs: &[syn::Attribute]) -> SerdeOptions {
+    let mut options = SerdeOptions {
+        rename_all: SerdeRenameAll::None,
+        rename: None,
+        flatten: false,
+        _alias: None,
+    };
+
+    for attr in attrs {
+        if !attr.path().is_ident("serde") {
+            continue;
+        }
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("rename_all") {
+                meta.input.parse::<Token![=]>()?;
+                let lit = meta.input.parse::<LitStr>()?.value();
+
+                if options.rename_all != SerdeRenameAll::None {
+                    return Err(meta.error("duplicate `rename_all` attribute"));
+                } else if lit == "lowercase" {
+                    options.rename_all = SerdeRenameAll::Lowercase;
+                } else if lit == "snake_case" {
+                    options.rename_all = SerdeRenameAll::SnakeCase;
+                } else {
+                    return Err(meta.error(format!("invalid `rename_all` attribute: {}", lit)));
+                }
+                // todo(settings_ui): Other options?
+            } else if meta.path.is_ident("flatten") {
+                options.flatten = true;
+            } else if meta.path.is_ident("rename") {
+                if options.rename.is_some() {
+                    return Err(meta.error("Can only have one rename attribute"));
+                }
+
+                meta.input.parse::<Token![=]>()?;
+                let lit = meta.input.parse::<LitStr>()?.value();
+                options.rename = Some(lit);
+            }
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    return options;
+}
+
+fn parse_documentation_from_attrs(attrs: &[syn::Attribute]) -> Option<String> {
+    let mut doc_str = Option::<String>::None;
+    for attr in attrs {
+        if attr.path().is_ident("doc") {
+            // /// ...
+            // becomes
+            // #[doc = "..."]
+            use syn::{Expr::Lit, ExprLit, Lit::Str, Meta, MetaNameValue};
+            if let Meta::NameValue(MetaNameValue {
+                value:
+                    Lit(ExprLit {
+                        lit: Str(ref lit_str),
+                        ..
+                    }),
+                ..
+            }) = attr.meta
+            {
+                let doc = lit_str.value();
+                let doc_str = doc_str.get_or_insert_default();
+                doc_str.push_str(doc.trim());
+                doc_str.push('\n');
+            }
+        }
+    }
+    return doc_str;
 }
 
 struct SettingsKey {
@@ -290,7 +404,7 @@ pub fn derive_settings_key(input: proc_macro::TokenStream) -> proc_macro::TokenS
         if parsed_settings_key.is_some() && settings_key.is_some() {
             panic!("Duplicate #[settings_key] attribute");
         }
-        settings_key = parsed_settings_key;
+        settings_key = settings_key.or(parsed_settings_key);
     }
 
     let Some(SettingsKey { key, fallback_key }) = settings_key else {
