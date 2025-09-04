@@ -432,11 +432,6 @@ impl BackgroundExecutor {
         return num_cpus::get();
     }
 
-    /// Whether we're on the main thread.
-    pub fn is_main_thread(&self) -> bool {
-        self.dispatcher.is_main_thread()
-    }
-
     #[cfg(any(test, feature = "test-support"))]
     /// in tests, control the number of ticks that `block_with_timeout` will run before timing out.
     pub fn set_block_on_ticks(&self, range: std::ops::RangeInclusive<usize>) {

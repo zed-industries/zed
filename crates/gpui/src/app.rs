@@ -603,10 +603,6 @@ impl App {
     ) -> Rc<AppCell> {
         let executor = platform.background_executor();
         let foreground_executor = platform.foreground_executor();
-        assert!(
-            executor.is_main_thread(),
-            "must construct App on main thread"
-        );
 
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
         let entities = EntityMap::new();

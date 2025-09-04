@@ -97,10 +97,6 @@ impl LinuxDispatcher {
 }
 
 impl PlatformDispatcher for LinuxDispatcher {
-    fn is_main_thread(&self) -> bool {
-        thread::current().id() == self.main_thread_id
-    }
-
     fn dispatch(&self, runnable: Runnable, _: Option<TaskLabel>) {
         self.background_sender.send(runnable).unwrap();
     }

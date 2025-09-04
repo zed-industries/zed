@@ -1,6 +1,5 @@
 use crate::App;
 use async_task::Runnable;
-use futures::FutureExt as _;
 use futures::channel::mpsc;
 use scheduler::Timer;
 use smol::prelude::*;
@@ -272,12 +271,6 @@ impl BackgroundExecutor {
     /// How many CPUs are available to the dispatcher.
     pub fn num_cpus(&self) -> usize {
         // self.0.num_cpus()
-        todo!()
-    }
-
-    /// Whether we're on the main thread.
-    pub fn is_main_thread(&self) -> bool {
-        // self.0.is_main_thread()
         todo!()
     }
 

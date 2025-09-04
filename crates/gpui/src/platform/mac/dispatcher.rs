@@ -4,11 +4,6 @@
 
 use crate::{PlatformDispatcher, TaskLabel};
 use async_task::Runnable;
-use objc::{
-    class, msg_send,
-    runtime::{BOOL, YES},
-    sel, sel_impl,
-};
 use parking::{Parker, Unparker};
 use parking_lot::Mutex;
 use std::{
@@ -48,11 +43,6 @@ impl MacDispatcher {
 }
 
 impl PlatformDispatcher for MacDispatcher {
-    fn is_main_thread(&self) -> bool {
-        let is_main_thread: BOOL = unsafe { msg_send![class!(NSThread), isMainThread] };
-        is_main_thread == YES
-    }
-
     fn dispatch(&self, runnable: Runnable, _: Option<TaskLabel>) {
         unsafe {
             dispatch_async_f(

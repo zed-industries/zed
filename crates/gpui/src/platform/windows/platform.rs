@@ -40,6 +40,7 @@ pub(crate) struct WindowsPlatform {
     drop_target_helper: IDropTargetHelper,
     handle: HWND,
     disable_direct_composition: bool,
+    main_thread_id: std::thread::ThreadId,
 }
 
 struct WindowsPlatformInner {
@@ -130,6 +131,7 @@ impl WindowsPlatform {
         };
         let inner = context.inner.take().unwrap()?;
         let handle = result?;
+        let main_thread_id = std::thread::current().id();
         let dispatcher = Arc::new(WindowsDispatcher::new(
             main_sender,
             handle,
@@ -158,6 +160,7 @@ impl WindowsPlatform {
             disable_direct_composition,
             windows_version,
             drop_target_helper,
+            main_thread_id,
         })
     }
 
@@ -270,6 +273,10 @@ impl WindowsPlatform {
 }
 
 impl Platform for WindowsPlatform {
+    fn is_main_thread(&self) -> bool {
+        std::thread::current().id() == self.main_thread_id
+    }
+
     fn background_executor(&self) -> BackgroundExecutor {
         self.background_executor.clone()
     }

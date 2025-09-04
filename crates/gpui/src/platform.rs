@@ -560,7 +560,6 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
 /// be considered part of our public API.
 #[doc(hidden)]
 pub trait PlatformDispatcher: Send + Sync {
-    fn is_main_thread(&self) -> bool;
     fn dispatch(&self, runnable: Runnable, label: Option<TaskLabel>);
     fn dispatch_on_main_thread(&self, runnable: Runnable);
     fn dispatch_after(&self, duration: Duration, runnable: Runnable);

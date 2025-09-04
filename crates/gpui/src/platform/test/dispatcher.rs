@@ -258,10 +258,6 @@ impl Clone for TestDispatcher {
 }
 
 impl PlatformDispatcher for TestDispatcher {
-    fn is_main_thread(&self) -> bool {
-        self.state.lock().is_main_thread
-    }
-
     fn now(&self) -> Instant {
         let state = self.state.lock();
         state.start_time + state.time
