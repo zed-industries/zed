@@ -585,7 +585,7 @@ pub enum HitboxBehavior {
     ///     if phase == DispatchPhase::Capture && hitbox.is_hovered(window) {
     ///         cx.stop_propagation();
     ///     }
-    /// }
+    /// })
     /// ```
     ///
     /// This has effects beyond event handling - any use of hitbox checking, such as hover
@@ -605,11 +605,11 @@ pub enum HitboxBehavior {
     /// bubble-phase handler for every mouse event type **except** `ScrollWheelEvent`:
     ///
     /// ```
-    /// window.on_mouse_event(move |_: &EveryMouseEventTypeExceptScroll, phase, window, _cx| {
+    /// window.on_mouse_event(move |_: &EveryMouseEventTypeExceptScroll, phase, window, cx| {
     ///     if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
     ///         cx.stop_propagation();
     ///     }
-    /// }
+    /// })
     /// ```
     ///
     /// See the documentation of [`Hitbox::is_hovered`] for details of why `ScrollWheelEvent` is
@@ -1909,7 +1909,7 @@ impl Window {
     }
 
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
-    /// the contents of the new [Scene], use [present].
+    /// the contents of the new [`Scene`], use [`Self::present`].
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
         self.invalidate_entities();
@@ -2451,7 +2451,7 @@ impl Window {
     /// Perform prepaint on child elements in a "retryable" manner, so that any side effects
     /// of prepaints can be discarded before prepainting again. This is used to support autoscroll
     /// where we need to prepaint children to detect the autoscroll bounds, then adjust the
-    /// element offset and prepaint again. See [`List`] for an example. This method should only be
+    /// element offset and prepaint again. See [`crate::List`] for an example. This method should only be
     /// called during the prepaint phase of element drawing.
     pub fn transact<T, U>(&mut self, f: impl FnOnce(&mut Self) -> Result<T, U>) -> Result<T, U> {
         self.invalidator.debug_assert_prepaint();
@@ -2476,9 +2476,9 @@ impl Window {
         result
     }
 
-    /// When you call this method during [`prepaint`], containing elements will attempt to
+    /// When you call this method during [`Element::prepaint`], containing elements will attempt to
     /// scroll to cause the specified bounds to become visible. When they decide to autoscroll, they will call
-    /// [`prepaint`] again with a new set of bounds. See [`List`] for an example of an element
+    /// [`Element::prepaint`] again with a new set of bounds. See [`crate::List`] for an example of an element
     /// that supports this method being called on the elements it contains. This method should only be
     /// called during the prepaint phase of element drawing.
     pub fn request_autoscroll(&mut self, bounds: Bounds<Pixels>) {
@@ -2486,8 +2486,8 @@ impl Window {
         self.requested_autoscroll = Some(bounds);
     }
 
-    /// This method can be called from a containing element such as [`List`] to support the autoscroll behavior
-    /// described in [`request_autoscroll`].
+    /// This method can be called from a containing element such as [`crate::List`] to support the autoscroll behavior
+    /// described in [`Self::request_autoscroll`].
     pub fn take_autoscroll(&mut self) -> Option<Bounds<Pixels>> {
         self.invalidator.debug_assert_prepaint();
         self.requested_autoscroll.take()
@@ -2815,7 +2815,7 @@ impl Window {
 
     /// Paint one or more quads into the scene for the next frame at the current stacking context.
     /// Quads are colored rectangular regions with an optional background, border, and corner radius.
-    /// see [`fill`](crate::fill), [`outline`](crate::outline), and [`quad`](crate::quad) to construct this type.
+    /// see [`fill`], [`outline`], and [`quad`] to construct this type.
     ///
     /// This method should only be called as part of the paint phase of element drawing.
     ///
@@ -4821,7 +4821,7 @@ impl HasDisplayHandle for Window {
     }
 }
 
-/// An identifier for an [`Element`](crate::Element).
+/// An identifier for an [`Element`].
 ///
 /// Can be constructed with a string, a number, or both, as well
 /// as other internal representations.

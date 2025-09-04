@@ -293,7 +293,7 @@ impl StatusItemView for CursorPosition {
     }
 }
 
-#[derive(Clone, Copy, Default, PartialEq, JsonSchema, Deserialize, Serialize, SettingsUi)]
+#[derive(Clone, Copy, Default, PartialEq, JsonSchema, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum LineIndicatorFormat {
     Short,
@@ -301,14 +301,14 @@ pub(crate) enum LineIndicatorFormat {
     Long,
 }
 
-#[derive(Clone, Copy, Default, JsonSchema, Deserialize, Serialize)]
+#[derive(Clone, Copy, Default, JsonSchema, Deserialize, Serialize, SettingsUi)]
 #[serde(transparent)]
 pub(crate) struct LineIndicatorFormatContent(LineIndicatorFormat);
 
 impl Settings for LineIndicatorFormat {
     const KEY: Option<&'static str> = Some("line_indicator_format");
 
-    type FileContent = Option<LineIndicatorFormatContent>;
+    type FileContent = LineIndicatorFormatContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
         let format = [
@@ -317,8 +317,8 @@ impl Settings for LineIndicatorFormat {
             sources.user,
         ]
         .into_iter()
-        .find_map(|value| value.copied().flatten())
-        .unwrap_or(sources.default.ok_or_else(Self::missing_default)?);
+        .find_map(|value| value.copied())
+        .unwrap_or(*sources.default);
 
         Ok(format.0)
     }

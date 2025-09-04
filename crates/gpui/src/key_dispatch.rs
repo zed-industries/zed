@@ -552,7 +552,7 @@ impl DispatchTree {
         let mut current_node_id = Some(target);
         while let Some(node_id) = current_node_id {
             dispatch_path.push(node_id);
-            current_node_id = self.nodes[node_id.0].parent;
+            current_node_id = self.nodes.get(node_id.0).and_then(|node| node.parent);
         }
         dispatch_path.reverse(); // Reverse the path so it goes from the root to the focused node.
         dispatch_path

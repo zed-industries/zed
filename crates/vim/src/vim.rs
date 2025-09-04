@@ -1774,7 +1774,7 @@ struct CursorShapeSettings {
     pub insert: Option<CursorShape>,
 }
 
-#[derive(Deserialize, SettingsUi)]
+#[derive(Deserialize)]
 struct VimSettings {
     pub default_mode: Mode,
     pub toggle_relative_line_numbers: bool,
@@ -1785,7 +1785,7 @@ struct VimSettings {
     pub cursor_shape: CursorShapeSettings,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
 struct VimSettingsContent {
     pub default_mode: Option<ModeContent>,
     pub toggle_relative_line_numbers: Option<bool>,

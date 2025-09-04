@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources, SettingsUi};
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct AudioSettings {
     /// Opt into the new audio system.
     #[serde(rename = "experimental.rodio_audio", default)]
@@ -12,7 +12,7 @@ pub struct AudioSettings {
 }
 
 /// Configuration of audio in Zed.
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi)]
 #[serde(default)]
 pub struct AudioSettingsContent {
     /// Whether to use the experimental audio system

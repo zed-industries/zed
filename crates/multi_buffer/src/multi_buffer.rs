@@ -113,15 +113,10 @@ pub enum Event {
         transaction_id: TransactionId,
     },
     Reloaded,
-    ReloadNeeded,
-
     LanguageChanged(BufferId),
-    CapabilityChanged,
     Reparsed(BufferId),
     Saved,
     FileHandleChanged,
-    Closed,
-    Discarded,
     DirtyChanged,
     DiagnosticsUpdated,
     BufferDiffChanged,
@@ -735,7 +730,7 @@ impl MultiBuffer {
 
     pub fn as_singleton(&self) -> Option<Entity<Buffer>> {
         if self.singleton {
-            return Some(
+            Some(
                 self.buffers
                     .borrow()
                     .values()
@@ -743,7 +738,7 @@ impl MultiBuffer {
                     .unwrap()
                     .buffer
                     .clone(),
-            );
+            )
         } else {
             None
         }
@@ -2433,28 +2428,24 @@ impl MultiBuffer {
         event: &language::BufferEvent,
         cx: &mut Context<Self>,
     ) {
+        use language::BufferEvent;
         cx.emit(match event {
-            language::BufferEvent::Edited => Event::Edited {
+            BufferEvent::Edited => Event::Edited {
                 singleton_buffer_edited: true,
                 edited_buffer: Some(buffer),
             },
-            language::BufferEvent::DirtyChanged => Event::DirtyChanged,
-            language::BufferEvent::Saved => Event::Saved,
-            language::BufferEvent::FileHandleChanged => Event::FileHandleChanged,
-            language::BufferEvent::Reloaded => Event::Reloaded,
-            language::BufferEvent::ReloadNeeded => Event::ReloadNeeded,
-            language::BufferEvent::LanguageChanged => {
-                Event::LanguageChanged(buffer.read(cx).remote_id())
-            }
-            language::BufferEvent::Reparsed => Event::Reparsed(buffer.read(cx).remote_id()),
-            language::BufferEvent::DiagnosticsUpdated => Event::DiagnosticsUpdated,
-            language::BufferEvent::Closed => Event::Closed,
-            language::BufferEvent::Discarded => Event::Discarded,
-            language::BufferEvent::CapabilityChanged => {
+            BufferEvent::DirtyChanged => Event::DirtyChanged,
+            BufferEvent::Saved => Event::Saved,
+            BufferEvent::FileHandleChanged => Event::FileHandleChanged,
+            BufferEvent::Reloaded => Event::Reloaded,
+            BufferEvent::LanguageChanged => Event::LanguageChanged(buffer.read(cx).remote_id()),
+            BufferEvent::Reparsed => Event::Reparsed(buffer.read(cx).remote_id()),
+            BufferEvent::DiagnosticsUpdated => Event::DiagnosticsUpdated,
+            BufferEvent::CapabilityChanged => {
                 self.capability = buffer.read(cx).capability();
-                Event::CapabilityChanged
+                return;
             }
-            language::BufferEvent::Operation { .. } => return,
+            BufferEvent::Operation { .. } | BufferEvent::ReloadNeeded => return,
         });
     }
 
@@ -2550,6 +2541,10 @@ impl MultiBuffer {
             .values()
             .map(|state| state.buffer.clone())
             .collect()
+    }
+
+    pub fn all_buffer_ids(&self) -> Vec<BufferId> {
+        self.buffers.borrow().keys().copied().collect()
     }
 
     pub fn buffer(&self, buffer_id: BufferId) -> Option<Entity<Buffer>> {

@@ -498,7 +498,7 @@ pub async fn new_test_thread(
     current_dir: impl AsRef<Path>,
     cx: &mut TestAppContext,
 ) -> Entity<AcpThread> {
-    let delegate = AgentServerDelegate::new(project.clone(), None);
+    let delegate = AgentServerDelegate::new(project.clone(), None, None);
 
     let connection = cx
         .update(|cx| server.connect(current_dir.as_ref(), delegate, cx))
