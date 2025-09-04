@@ -213,16 +213,25 @@ impl PickerDelegate for LanguageSelectorDelegate {
                         .project_path(cx)
                         .and_then(|path| project.absolute_path(&path, cx));
                     if let Some(absolute_path) = absolute_path {
+                        let absolute_path = absolute_path.to_string_lossy().to_string();
                         if let Some(fs) = <dyn Fs>::try_global(cx) {
                             settings::update_settings_file::<AllLanguageSettings>(
                                 fs,
                                 cx,
                                 move |language_settings, _| {
+                                    for paths in language_settings.file_types.values_mut() {
+                                        if let Some(ix) =
+                                            paths.iter().position(|path| path == &absolute_path)
+                                        {
+                                            paths.swap_remove(ix);
+                                        }
+                                    }
+
                                     language_settings
                                         .file_types
                                         .entry(Arc::from(language_name.as_str()))
                                         .or_default()
-                                        .push(absolute_path.to_string_lossy().to_string());
+                                        .push(absolute_path);
                                 },
                             );
                         }
