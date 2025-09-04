@@ -646,9 +646,10 @@ impl WaylandWindowStatePtr {
         }
     }
 
-    pub fn get_ime_area(&self) -> Option<Bounds<Pixels>> {
+    pub fn get_ime_area(&self) -> Option<Bounds<ScaledPixels>> {
         let mut state = self.state.borrow_mut();
         let mut bounds: Option<Bounds<Pixels>> = None;
+        let scale_factor = state.scale;
         if let Some(mut input_handler) = state.input_handler.take() {
             drop(state);
             if let Some(selection) = input_handler.marked_text_range() {
@@ -656,7 +657,7 @@ impl WaylandWindowStatePtr {
             }
             self.state.borrow_mut().input_handler = Some(input_handler);
         }
-        bounds
+        bounds.map(|b| b.scale(scale_factor))
     }
 
     pub fn set_size_and_scale(&self, size: Option<Size<Pixels>>, scale: Option<f32>) {

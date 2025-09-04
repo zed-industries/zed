@@ -1019,9 +1019,10 @@ impl X11WindowStatePtr {
         }
     }
 
-    pub fn get_ime_area(&self) -> Option<Bounds<Pixels>> {
+    pub fn get_ime_area(&self) -> Option<Bounds<ScaledPixels>> {
         let mut state = self.state.borrow_mut();
         let mut bounds: Option<Bounds<Pixels>> = None;
+        let scale_factor = state.scale_factor;
         if let Some(mut input_handler) = state.input_handler.take() {
             drop(state);
             if let Some(selection) = input_handler.selected_text_range(true) {
@@ -1030,7 +1031,7 @@ impl X11WindowStatePtr {
             let mut state = self.state.borrow_mut();
             state.input_handler = Some(input_handler);
         };
-        bounds
+        bounds.map(|b| b.scale(scale_factor))
     }
 
     pub fn set_bounds(&self, bounds: Bounds<i32>) -> anyhow::Result<()> {
