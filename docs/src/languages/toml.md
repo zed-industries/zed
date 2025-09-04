@@ -1,6 +1,6 @@
 # TOML
 
-TOML support is available through the [TOML extension](https://github.com/zed-industries/zed/tree/main/extensions/toml).
+TOML support is available through the [TOML extension](https://github.com/zed-extensions/toml).
 
 - Tree-sitter: [tree-sitter/tree-sitter-toml](https://github.com/tree-sitter/tree-sitter-toml)
 - Language Server: [tamasfe/taplo](https://github.com/tamasfe/taplo)
