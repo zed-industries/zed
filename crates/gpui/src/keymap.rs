@@ -162,15 +162,36 @@ impl Keymap {
             }
         }
 
-        matched_bindings.sort_by(|(depth_a, ix_a, _), (depth_b, ix_b, _)| {
-            depth_b.cmp(depth_a).then(ix_b.cmp(ix_a))
+        matched_bindings.sort_by(|(depth_a, ix_a, binding_a), (depth_b, ix_b, binding_b)| {
+            // Sort by context depth
+            depth_b.cmp(depth_a).then_with(|| {
+                // If context depths are equal, sort by source precedence
+                // User keymaps should take highest precedence
+                let source_a = binding_a.meta.map(|m| m.0).unwrap_or(0);
+                let source_b = binding_b.meta.map(|m| m.0).unwrap_or(0);
+                
+                // KeybindSource precedence: User (0) > Vim (1) > Base (2) > Default (3)
+                source_a.cmp(&source_b).then(ix_b.cmp(ix_a))
+            })
         });
 
         let mut bindings: SmallVec<[_; 1]> = SmallVec::new();
         let mut first_binding_index = None;
+        
         for (_, ix, binding) in matched_bindings {
             if is_no_action(&*binding.action) {
-                break;
+                // Only break if this is a user-defined NoAction binding
+                // This allows user keymaps to override base keymap NoAction bindings
+                if let Some(meta) = binding.meta {
+                    if meta.0 == 0 {
+                        break;
+                    }
+                } else {
+                    // If no meta is set, assume it's a user binding for safety
+                    break;
+                }
+                // For non-user NoAction bindings, continue searching for user overrides
+                continue;
             }
             bindings.push(binding.clone());
             first_binding_index.get_or_insert(ix);
