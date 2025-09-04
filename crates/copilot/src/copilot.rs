@@ -1095,7 +1095,7 @@ impl Copilot {
                 _ => {
                     filter.hide_action_types(&signed_in_actions);
                     filter.hide_action_types(&auth_actions);
-                    filter.show_action_types(no_auth_actions.iter());
+                    filter.show_action_types(&no_auth_actions);
                 }
             }
         }
