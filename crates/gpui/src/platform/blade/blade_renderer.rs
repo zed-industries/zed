@@ -369,9 +369,9 @@ impl BladeRenderer {
             .ok()
             .and_then(|v| v.parse().ok())
             .or_else(|| {
-                [4, 2, 1].into_iter().find(|count| {
-                    context.gpu.capabilities().sample_count_mask & (1 << (*count - 1)) != 0
-                })
+                [4, 2, 1]
+                    .into_iter()
+                    .find(|&n| (context.gpu.capabilities().sample_count_mask & n) != 0)
             })
             .unwrap_or(1);
         let pipelines = BladePipelines::new(&context.gpu, surface.info(), path_sample_count);
