@@ -115,6 +115,10 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
+    fn merge_base(&self, _commit_a: String, _commit_b: String) -> BoxFuture<'_, Option<String>> {
+        unimplemented!()
+    }
+
     fn load_commit(
         &self,
         _commit: String,

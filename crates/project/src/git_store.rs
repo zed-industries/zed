@@ -3467,6 +3467,26 @@ impl Repository {
         })
     }
 
+    pub fn merge_base(
+        &mut self,
+        commit_a: String,
+        commit_b: String,
+    ) -> oneshot::Receiver<Option<String>> {
+        let id = self.id;
+        self.send_job(None, move |git_repo, cx| async move {
+            match git_repo {
+                RepositoryState::Local { backend, .. } => {
+                    backend.merge_base(commit_a, commit_b).await
+                }
+                RepositoryState::Remote {
+                    client, project_id, ..
+                } => {
+                    todo!();
+                }
+            }
+        })
+    }
+
     pub fn diff_to_commit(&mut self, commit: String) -> oneshot::Receiver<Result<CommitDiff>> {
         let id = self.id;
         self.send_job(None, move |git_repo, cx| async move {

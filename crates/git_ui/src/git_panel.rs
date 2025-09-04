@@ -3,7 +3,7 @@ use crate::commit_modal::CommitModal;
 use crate::commit_tooltip::CommitTooltip;
 use crate::commit_view::CommitView;
 use crate::git_panel_settings::StatusStyle;
-use crate::project_diff::{self, Diff, ProjectDiff};
+use crate::project_diff::{self, Diff, DiffBaseKind, ProjectDiff};
 use crate::remote_output::{self, RemoteAction, SuccessMessage};
 use crate::{branch_picker, picker_prompt, render_remote_button};
 use crate::{
@@ -937,7 +937,13 @@ impl GitPanel {
 
             self.workspace
                 .update(cx, |workspace, cx| {
-                    ProjectDiff::deploy_at(workspace, Some(entry.clone()), window, cx);
+                    ProjectDiff::deploy_at(
+                        workspace,
+                        DiffBaseKind::Head,
+                        Some(entry.clone()),
+                        window,
+                        cx,
+                    );
                 })
                 .ok();
             self.focus_handle.focus(window);

@@ -30,8 +30,11 @@ use project::{
     git_store::{GitStore, GitStoreEvent, RepositoryEvent},
 };
 use settings::{Settings, SettingsStore};
-use std::any::{Any, TypeId};
 use std::ops::Range;
+use std::{
+    any::{Any, TypeId},
+    sync::Arc,
+};
 use theme::ActiveTheme;
 use ui::{KeyBinding, Tooltip, prelude::*, vertical_divider};
 use util::ResultExt as _;
@@ -48,7 +51,9 @@ actions!(
         /// Shows the diff between the working directory and the index.
         Diff,
         /// Adds files to the git staging area.
-        Add
+        Add,
+        /// Shows the diff between the working directory and the default branch.
+        DiffToDefaultBranch,
     ]
 );
 
@@ -61,8 +66,15 @@ pub struct ProjectDiff {
     focus_handle: FocusHandle,
     update_needed: postage::watch::Sender<()>,
     pending_scroll: Option<PathKey>,
+    diff_base_kind: DiffBaseKind,
     _task: Task<Result<()>>,
     _subscription: Subscription,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum DiffBaseKind {
+    Head,
+    MergeBaseOfDefaultBranch,
 }
 
 #[derive(Debug)]
@@ -80,6 +92,7 @@ const NEW_NAMESPACE: u32 = 3;
 impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
         workspace.register_action(Self::deploy);
+        workspace.register_action(Self::diff_to_default_branch);
         workspace.register_action(|workspace, _: &Add, window, cx| {
             Self::deploy(workspace, &Diff, window, cx);
         });
@@ -92,44 +105,81 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        Self::deploy_at(workspace, None, window, cx)
+        Self::deploy_at(workspace, DiffBaseKind::Head, None, window, cx)
+    }
+
+    fn diff_to_default_branch(
+        workspace: &mut Workspace,
+        _: &DiffToDefaultBranch,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        Self::deploy_at(
+            workspace,
+            DiffBaseKind::MergeBaseOfDefaultBranch,
+            None,
+            window,
+            cx,
+        );
     }
 
     pub fn deploy_at(
         workspace: &mut Workspace,
+        diff_base_kind: DiffBaseKind,
         entry: Option<GitStatusEntry>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
         telemetry::event!(
-            "Git Diff Opened",
+            match diff_base_kind {
+                DiffBaseKind::MergeBaseOfDefaultBranch => "Git Branch Diff Opened",
+                DiffBaseKind::Head => "Git Diff Opened",
+            },
             source = if entry.is_some() {
                 "Git Panel"
             } else {
                 "Action"
             }
         );
-        let project_diff = if let Some(existing) = workspace.item_of_type::<Self>(cx) {
-            workspace.activate_item(&existing, true, true, window, cx);
-            existing
-        } else {
-            let workspace_handle = cx.entity();
-            let project_diff =
-                cx.new(|cx| Self::new(workspace.project().clone(), workspace_handle, window, cx));
-            workspace.add_item_to_active_pane(
-                Box::new(project_diff.clone()),
-                None,
-                true,
-                window,
-                cx,
-            );
-            project_diff
-        };
+        let project_diff =
+            if let Some(existing) = Self::existing_project_diff(workspace, diff_base_kind, cx) {
+                workspace.activate_item(&existing, true, true, window, cx);
+                existing
+            } else {
+                let workspace_handle = cx.entity();
+                let project_diff = cx.new(|cx| {
+                    Self::new(
+                        workspace.project().clone(),
+                        workspace_handle,
+                        diff_base_kind,
+                        window,
+                        cx,
+                    )
+                });
+                workspace.add_item_to_active_pane(
+                    Box::new(project_diff.clone()),
+                    None,
+                    true,
+                    window,
+                    cx,
+                );
+                project_diff
+            };
         if let Some(entry) = entry {
             project_diff.update(cx, |project_diff, cx| {
                 project_diff.move_to_entry(entry, window, cx);
             })
         }
+    }
+
+    pub fn existing_project_diff(
+        workspace: &mut Workspace,
+        diff_base_kind: DiffBaseKind,
+        cx: &mut Context<Workspace>,
+    ) -> Option<Entity<Self>> {
+        workspace
+            .items_of_type::<Self>(cx)
+            .find(|item| item.read(cx).diff_base_kind == diff_base_kind)
     }
 
     pub fn autoscroll(&self, cx: &mut Context<Self>) {
@@ -141,6 +191,7 @@ impl ProjectDiff {
     fn new(
         project: Entity<Project>,
         workspace: Entity<Workspace>,
+        diff_base_kind: DiffBaseKind,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -152,9 +203,20 @@ impl ProjectDiff {
                 Editor::for_multibuffer(multibuffer.clone(), Some(project.clone()), window, cx);
             diff_display_editor.disable_diagnostics(cx);
             diff_display_editor.set_expand_all_diff_hunks(cx);
-            diff_display_editor.register_addon(GitPanelAddon {
-                workspace: workspace.downgrade(),
-            });
+            match diff_base_kind {
+                DiffBaseKind::Head => {
+                    diff_display_editor.register_addon(GitPanelAddon {
+                        workspace: workspace.downgrade(),
+                    });
+                }
+                DiffBaseKind::MergeBaseOfDefaultBranch => {
+                    diff_display_editor.set_render_diff_hunk_controls(
+                        Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
+                        cx,
+                    );
+                    //
+                }
+            }
             diff_display_editor
         });
         window.defer(cx, {
@@ -205,7 +267,7 @@ impl ProjectDiff {
         let (mut send, recv) = postage::watch::channel::<()>();
         let worker = window.spawn(cx, {
             let this = cx.weak_entity();
-            async |cx| Self::handle_status_updates(this, recv, cx).await
+            async |cx| Self::handle_status_updates(this, diff_base_kind, recv, cx).await
         });
         // Kick off a refresh immediately
         *send.borrow_mut() = ();
@@ -214,6 +276,7 @@ impl ProjectDiff {
             project,
             git_store: git_store.clone(),
             workspace: workspace.downgrade(),
+            diff_base_kind,
             focus_handle,
             editor,
             multibuffer,
@@ -351,6 +414,9 @@ impl ProjectDiff {
             let Some(project_path) = self.active_path(cx) else {
                 return;
             };
+            if self.diff_base_kind != DiffBaseKind::Head {
+                return;
+            }
             self.workspace
                 .update(cx, |workspace, cx| {
                     if let Some(git_panel) = workspace.panel::<GitPanel>(cx) {
@@ -506,21 +572,65 @@ impl ProjectDiff {
         }
     }
 
+    fn refresh_merge_base_of_default_branch(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
+        let Some(repo) = self.git_store.read(cx).active_repository() else {
+            self.multibuffer.update(cx, |multibuffer, cx| {
+                multibuffer.clear(cx);
+            });
+            return;
+        };
+        let default_branch = repo.read(cx).default_branch();
+        let task = cx.spawn(async move |this, cx| {
+            let Some(default_branch) = default_branch.await else {
+                return;
+            };
+            let merge_base = repo
+                .update(cx, |repo, cx| {
+                    repo.merge_base("HEAD".to_string(), default_branch)
+                })
+                .await?;
+            let diff = repo
+                .update(cx, |repo, cx| repo.diff_to_commit(merge_base))
+                .await?;
+        });
+
+        cx.foreground_executor()
+            .spawn(async move |this, cx| task.await.log_err())
+    }
+
     pub async fn handle_status_updates(
         this: WeakEntity<Self>,
+        diff_base_kind: DiffBaseKind,
         mut recv: postage::watch::Receiver<()>,
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
         while (recv.next().await).is_some() {
-            let buffers_to_load = this.update(cx, |this, cx| this.load_buffers(cx))?;
-            for buffer_to_load in buffers_to_load {
-                if let Some(buffer) = buffer_to_load.await.log_err() {
-                    cx.update(|window, cx| {
-                        this.update(cx, |this, cx| this.register_buffer(buffer, window, cx))
-                            .ok();
-                    })?;
+            match diff_base_kind {
+                DiffBaseKind::Head => {
+                    let buffers_to_load = this.update(cx, |this, cx| this.load_buffers(cx))?;
+                    for buffer_to_load in buffers_to_load {
+                        if let Some(buffer) = buffer_to_load.await.log_err() {
+                            cx.update(|window, cx| {
+                                this.update(cx, |this, cx| {
+                                    this.register_buffer(buffer, window, cx)
+                                })
+                                .ok();
+                            })?;
+                        }
+                    }
                 }
-            }
+                DiffBaseKind::MergeBaseOfDefaultBranch => {
+                    this.update_in(cx, |this, window, cx| {
+                        this.refresh_merge_base_of_default_branch(window, cx)
+                    })?
+                    .await;
+                }
+            };
+
             this.update(cx, |this, cx| {
                 this.pending_scroll.take();
                 cx.notify();
@@ -637,7 +747,15 @@ impl Item for ProjectDiff {
         Self: Sized,
     {
         let workspace = self.workspace.upgrade()?;
-        Some(cx.new(|cx| ProjectDiff::new(self.project.clone(), workspace, window, cx)))
+        Some(cx.new(|cx| {
+            ProjectDiff::new(
+                self.project.clone(),
+                workspace,
+                self.diff_base_kind,
+                window,
+                cx,
+            )
+        }))
     }
 
     fn is_dirty(&self, cx: &App) -> bool {
@@ -805,7 +923,16 @@ impl SerializableItem for ProjectDiff {
         window.spawn(cx, async move |cx| {
             workspace.update_in(cx, |workspace, window, cx| {
                 let workspace_handle = cx.entity();
-                cx.new(|cx| Self::new(workspace.project().clone(), workspace_handle, window, cx))
+                // todo!()
+                cx.new(|cx| {
+                    Self::new(
+                        workspace.project().clone(),
+                        workspace_handle,
+                        DiffBaseKind::Head,
+                        window,
+                        cx,
+                    )
+                })
             })
         })
     }
@@ -1399,7 +1526,7 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace, window, cx)
+            ProjectDiff::new(project.clone(), workspace, DiffBaseKind::Head, window, cx)
         });
         cx.run_until_parked();
 
@@ -1454,7 +1581,7 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace, window, cx)
+            ProjectDiff::new(project.clone(), workspace, DiffBaseKind::Head, window, cx)
         });
         cx.run_until_parked();
 
@@ -1536,7 +1663,7 @@ mod tests {
             Editor::for_buffer(buffer, Some(project.clone()), window, cx)
         });
         let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace, window, cx)
+            ProjectDiff::new(project.clone(), workspace, DiffBaseKind::Head, window, cx)
         });
         cx.run_until_parked();
 
@@ -1827,7 +1954,7 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace, window, cx)
+            ProjectDiff::new(project.clone(), workspace, DiffBaseKind::Head, window, cx)
         });
         cx.run_until_parked();
 
