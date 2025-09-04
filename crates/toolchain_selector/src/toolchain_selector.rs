@@ -21,8 +21,8 @@ use std::{
     time::Duration,
 };
 use ui::{
-    ContextMenu, Divider, DropdownMenu, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing,
-    Tooltip, prelude::*,
+    Divider, HighlightedLabel, KeyBinding, List, ListItem, ListItemSpacing, Navigable,
+    NavigableEntry, prelude::*,
 };
 use util::{ResultExt, maybe, paths::PathStyle};
 use workspace::{ModalView, Workspace};
@@ -64,6 +64,11 @@ struct AddToolchainState {
     weak: WeakEntity<ToolchainSelector>,
 }
 
+struct ScopePickerState {
+    entries: [NavigableEntry; 3],
+    selected_scope: ToolchainScope,
+}
+
 #[expect(
     dead_code,
     reason = "These tasks have to be kept alive to run to completion"
@@ -83,7 +88,7 @@ enum AddState {
     Name {
         toolchain: Toolchain,
         editor: Entity<Editor>,
-        scope: ToolchainScope,
+        scope_picker: ScopePickerState,
     },
 }
 
@@ -249,6 +254,10 @@ impl AddToolchainState {
                 };
 
                 _ = this.update_in(cx, |this, window, cx| {
+                    let scope_picker = ScopePickerState {
+                        entries: std::array::from_fn(|_| NavigableEntry::focusable(cx)),
+                        selected_scope: scope,
+                    };
                     this.state = AddState::Name {
                         editor: cx.new(|cx| {
                             let mut editor = Editor::single_line(window, cx);
@@ -256,7 +265,7 @@ impl AddToolchainState {
                             editor
                         }),
                         toolchain,
-                        scope,
+                        scope_picker,
                     };
                     this.focus_handle(cx).focus(window);
                 });
@@ -314,7 +323,7 @@ impl AddToolchainState {
         let AddState::Name {
             toolchain,
             editor,
-            scope,
+            scope_picker,
         } = &mut self.state
         else {
             return;
@@ -327,7 +336,7 @@ impl AddToolchainState {
 
         toolchain.name = SharedString::from(text);
         self.project.update(cx, |this, cx| {
-            this.add_toolchain(toolchain.clone(), scope.clone(), cx);
+            this.add_toolchain(toolchain.clone(), scope_picker.selected_scope.clone(), cx);
         });
         _ = self.weak.update(cx, |this, cx| {
             this.state = State::Search((this.create_search_state)(window, cx));
@@ -341,6 +350,15 @@ impl Focusable for AddToolchainState {
         match &self.state {
             AddState::Path { picker, .. } => picker.focus_handle(cx),
             AddState::Name { editor, .. } => editor.focus_handle(cx),
+        }
+    }
+}
+
+impl AddToolchainState {
+    fn select_scope(&mut self, scope: ToolchainScope, cx: &mut Context<Self>) {
+        if let AddState::Name { scope_picker, .. } = &mut self.state {
+            scope_picker.selected_scope = scope;
+            cx.notify();
         }
     }
 }
@@ -361,8 +379,12 @@ impl Render for AddToolchainState {
 
         v_flex()
             .size_full()
-            .rounded_md()
-            .gap_1()
+            // todo: These modal styles shouldn't be needed as the modal picker already has `elevation_3`
+            // They get duplicated in the middle state of adding a virtual env, but then are needed for this last state
+            .bg(cx.theme().colors().elevated_surface_background)
+            .border_1()
+            .border_color(cx.theme().colors().border_variant)
+            .rounded_lg()
             .when_some(weak, |this, weak| {
                 this.on_action(window.listener_for(
                     &weak,
@@ -374,122 +396,141 @@ impl Render for AddToolchainState {
                 ))
             })
             .on_action(cx.listener(Self::confirm_toolchain))
-            .bg(theme.colors().background)
             .map(|this| match &self.state {
                 AddState::Path { picker, .. } => this.child(picker.clone()),
-                AddState::Name { editor, scope, .. } => this
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .gap_1()
-                            .pl_1()
-                            .child(h_flex().p_1().child(Label::new("Name")))
+                AddState::Name {
+                    editor,
+                    scope_picker,
+                    ..
+                } => {
+                    let scope_options = [
+                        ToolchainScope::Global,
+                        ToolchainScope::Project,
+                        ToolchainScope::Subproject(
+                            self.root_path.worktree_id,
+                            self.root_path.path.clone(),
+                        ),
+                    ];
+
+                    let mut navigable_scope_picker = Navigable::new(
+                        v_flex()
                             .child(
                                 h_flex()
                                     .w_full()
-                                    .bg(theme.colors().editor_background)
                                     .p_2()
-                                    .rounded_sm()
-                                    .border_1()
+                                    .border_b_1()
                                     .border_color(theme.colors().border)
                                     .child(editor.clone()),
-                            ),
-                    )
-                    .child(
-                        h_flex()
-                            .rounded_md()
-                            .w_full()
-                            .bg(theme.colors().background)
-                            .p_2()
-                            .justify_between()
-                            .child({
-                                let weak = cx.weak_entity();
-                                let menu = DropdownMenu::new(
-                                    "toolchain-creator-scope-picker",
-                                    scope.label(),
-                                    ContextMenu::build(window, cx, |mut menu, window, cx| {
-                                        for s in [
-                                            ToolchainScope::Global,
-                                            ToolchainScope::Project,
-                                            ToolchainScope::Subproject(
-                                                self.root_path.worktree_id,
-                                                self.root_path.path.clone(),
-                                            ),
-                                        ] {
-                                            let weak = weak.clone();
-                                            let description = s.description();
-                                            let label = s.label();
+                            )
+                            .child(
+                                v_flex()
+                                    .child(
+                                        Label::new("Scope")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted)
+                                            .mt_1()
+                                            .ml_2(),
+                                    )
+                                    .child(List::new().children(
+                                        scope_options.iter().enumerate().map(|(i, scope)| {
+                                            let is_selected = *scope == scope_picker.selected_scope;
+                                            let label = scope.label();
+                                            let description = scope.description();
+                                            let scope_clone_for_action = scope.clone();
+                                            let scope_clone_for_click = scope.clone();
 
-                                            let is_selected = s == *scope;
-                                            menu = menu.custom_entry(
-                                                move |_, _| {
-                                                    h_flex()
-                                                        .id(SharedString::from(format!(
-                                                            "toolchain-selector-dropdown-{label}"
-                                                        )))
-                                                        .gap_2()
-                                                        .child(Label::new(label))
-                                                        .child(
-                                                            Label::new(description)
-                                                                .size(LabelSize::Small)
-                                                                .color(Color::Disabled),
-                                                        )
-                                                        .tooltip(Tooltip::text(description))
-                                                        .into_any()
-                                                },
-                                                move |_, cx| {
-                                                    weak.update(cx, |this, cx| {
-                                                        if let AddState::Name { scope, .. } =
-                                                            &mut this.state
-                                                        {
-                                                            *scope = s.clone();
-                                                            cx.notify();
-                                                        };
-                                                    })
-                                                    .ok();
-                                                },
-                                            );
-                                            if is_selected {
-                                                menu.select_last(window, cx);
-                                            }
-                                        }
-                                        menu
-                                    }),
-                                );
-                                h_flex().gap_1().child(Label::new("Scope")).child(menu)
-                            })
-                            .map(|this| {
-                                let is_disabled = editor.read(cx).is_empty(cx);
-                                let handle = self.focus_handle(cx);
-                                this.child(
-                                    Button::new("add-toolchain", label)
-                                        .key_binding(KeyBinding::for_action_in(
-                                            &menu::Confirm,
-                                            &handle,
-                                            window,
-                                            cx,
-                                        ))
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.confirm_toolchain(&menu::Confirm, window, cx);
-                                        }))
-                                        .disabled(is_disabled)
-                                        .map(|this| {
-                                            if false {
-                                                this.with_animation(
-                                                    "inspecting-user-toolchain",
-                                                    Animation::new(Duration::from_millis(500))
-                                                        .repeat()
-                                                        .with_easing(pulsating_between(0.4, 0.8)),
-                                                    |label, delta| label.alpha(delta),
+                                            div()
+                                                .id(SharedString::from(format!("scope-option-{i}")))
+                                                .track_focus(&scope_picker.entries[i].focus_handle)
+                                                .on_action(cx.listener(
+                                                    move |this, _: &menu::Confirm, _, cx| {
+                                                        this.select_scope(
+                                                            scope_clone_for_action.clone(),
+                                                            cx,
+                                                        );
+                                                    },
+                                                ))
+                                                .child(
+                                                    ListItem::new(SharedString::from(format!(
+                                                        "scope-{i}"
+                                                    )))
+                                                    .toggle_state(
+                                                        is_selected
+                                                            || scope_picker.entries[i]
+                                                                .focus_handle
+                                                                .contains_focused(window, cx),
+                                                    )
+                                                    .inset(true)
+                                                    .spacing(ListItemSpacing::Sparse)
+                                                    .child(
+                                                        h_flex()
+                                                            .gap_2()
+                                                            .child(Label::new(label))
+                                                            .child(
+                                                                Label::new(description)
+                                                                    .size(LabelSize::Small)
+                                                                    .color(Color::Muted),
+                                                            ),
+                                                    )
+                                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                                        this.select_scope(
+                                                            scope_clone_for_click.clone(),
+                                                            cx,
+                                                        );
+                                                    })),
                                                 )
-                                                .into_any()
-                                            } else {
-                                                this.into_any_element()
-                                            }
                                         }),
-                                )
-                            }),
-                    ),
+                                    ))
+                                    .child(Divider::horizontal())
+                                    .child(h_flex().p_1p5().justify_end().map(|this| {
+                                        let is_disabled = editor.read(cx).is_empty(cx);
+                                        let handle = self.focus_handle(cx);
+                                        this.child(
+                                            Button::new("add-toolchain", label)
+                                                .disabled(is_disabled)
+                                                .key_binding(KeyBinding::for_action_in(
+                                                    &menu::Confirm,
+                                                    &handle,
+                                                    window,
+                                                    cx,
+                                                ))
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    this.confirm_toolchain(
+                                                        &menu::Confirm,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                }))
+                                                .map(|this| {
+                                                    if false {
+                                                        this.with_animation(
+                                                            "inspecting-user-toolchain",
+                                                            Animation::new(Duration::from_millis(
+                                                                500,
+                                                            ))
+                                                            .repeat()
+                                                            .with_easing(pulsating_between(
+                                                                0.4, 0.8,
+                                                            )),
+                                                            |label, delta| label.alpha(delta),
+                                                        )
+                                                        .into_any()
+                                                    } else {
+                                                        this.into_any_element()
+                                                    }
+                                                }),
+                                        )
+                                    })),
+                            )
+                            .into_any_element(),
+                    );
+
+                    for entry in &scope_picker.entries {
+                        navigable_scope_picker = navigable_scope_picker.entry(entry.clone());
+                    }
+
+                    this.child(navigable_scope_picker.render(window, cx))
+                }
             })
     }
 }
@@ -704,7 +745,6 @@ pub struct ToolchainSelectorDelegate {
     placeholder_text: Arc<str>,
     add_toolchain_text: Arc<str>,
     project: Entity<Project>,
-    language_name: LanguageName,
     focus_handle: FocusHandle,
     _fetch_candidates_task: Task<Option<()>>,
 }
@@ -722,7 +762,6 @@ impl ToolchainSelectorDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Self {
-        let language = language_name.clone();
         let _project = project.clone();
 
         let _fetch_candidates_task = cx.spawn_in(window, {
@@ -822,7 +861,6 @@ impl ToolchainSelectorDelegate {
             relative_path,
             _fetch_candidates_task,
             project,
-            language_name: language,
             focus_handle: cx.focus_handle(),
             add_toolchain_text: Arc::from("Add Toolchain"),
         }
