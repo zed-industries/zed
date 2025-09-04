@@ -350,7 +350,7 @@ impl LspAdapter for TyLspAdapter {
                     Value::String(interpreter_path),
                 );
             }
-            dbg!(&user_settings);
+
             serde_json::Value::Object(Map::from_iter([(
                 "ty".to_owned(),
                 serde_json::Value::Object(Map::from_iter([(
