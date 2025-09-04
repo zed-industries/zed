@@ -280,7 +280,8 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
             AllLanguageSettings::get_global(cx)
                 .language(None, Some(&"Rust".into()), cx)
                 .language_servers,
-            ["..."] // local settings are ignored
+            ["from-local-settings"],
+            "User language settings should be synchronized with the server settings"
         )
     });
 
@@ -300,7 +301,8 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
             AllLanguageSettings::get_global(cx)
                 .language(None, Some(&"Rust".into()), cx)
                 .language_servers,
-            ["from-server-settings".to_string()]
+            ["from-server-settings".to_string()],
+            "Server language settings should take precedence over the user settings"
         )
     });
 
