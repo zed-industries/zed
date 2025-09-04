@@ -1271,6 +1271,7 @@ impl Project {
                     fs.clone(),
                     worktree_store.clone(),
                     task_store.clone(),
+                    Some(remote_proto.clone()),
                     cx,
                 )
             });
@@ -1521,7 +1522,13 @@ impl Project {
         })?;
 
         let settings_observer = cx.new(|cx| {
-            SettingsObserver::new_remote(fs.clone(), worktree_store.clone(), task_store.clone(), cx)
+            SettingsObserver::new_remote(
+                fs.clone(),
+                worktree_store.clone(),
+                task_store.clone(),
+                None,
+                cx,
+            )
         })?;
 
         let git_store = cx.new(|cx| {
