@@ -400,10 +400,27 @@ impl TerminalBuilder {
                 program,
                 args,
                 title_override,
-            } => Some(ShellParams {
-                program,
-                args: Some(args),
-                title_override,
+            } => Some({
+                #[cfg(target_os = "windows")]
+                {
+                    ShellParams {
+                        program: util::get_windows_system_shell(),
+                        args: {
+                            let mut args = args;
+                            args.insert(0, program);
+                            Some(args)
+                        },
+                        title_override,
+                    }
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    ShellParams {
+                        program,
+                        args: Some(args),
+                        title_override,
+                    }
+                }
             }),
         };
         let terminal_title_override = shell_params.as_ref().and_then(|e| e.title_override.clone());
