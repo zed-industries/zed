@@ -5,7 +5,7 @@ use crate::{
     remote_button::{render_publish_button, render_push_button},
 };
 use anyhow::Result;
-use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
+use buffer_diff::{BufferDiff, BufferDiffSnapshot, DiffHunkSecondaryStatus};
 use collections::HashSet;
 use editor::{
     Editor, EditorEvent, SelectionEffects,
@@ -17,7 +17,7 @@ use futures::StreamExt;
 use git::{
     Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext,
     repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
-    status::FileStatus,
+    status::{FileStatus, TrackedStatus},
 };
 use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, Entity, EventEmitter,
@@ -210,6 +210,7 @@ impl ProjectDiff {
                     });
                 }
                 DiffBaseKind::MergeBaseOfDefaultBranch => {
+                    diff_display_editor.start_temporary_diff_override();
                     diff_display_editor.set_render_diff_hunk_controls(
                         Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
                         cx,
@@ -267,7 +268,7 @@ impl ProjectDiff {
         let (mut send, recv) = postage::watch::channel::<()>();
         let worker = window.spawn(cx, {
             let this = cx.weak_entity();
-            async |cx| Self::handle_status_updates(this, diff_base_kind, recv, cx).await
+            async move |cx| Self::handle_status_updates(this, diff_base_kind, recv, cx).await
         });
         // Kick off a refresh immediately
         *send.borrow_mut() = ();
@@ -576,30 +577,113 @@ impl ProjectDiff {
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<()> {
+    ) -> Task<Result<()>> {
+        let project = self.project.clone();
+        let language_registry = project.read(cx).languages().clone();
         let Some(repo) = self.git_store.read(cx).active_repository() else {
             self.multibuffer.update(cx, |multibuffer, cx| {
                 multibuffer.clear(cx);
             });
-            return;
+            return Task::ready(Ok(()));
         };
-        let default_branch = repo.read(cx).default_branch();
-        let task = cx.spawn(async move |this, cx| {
-            let Some(default_branch) = default_branch.await else {
-                return;
+        let default_branch = repo.update(cx, |repo, _| repo.default_branch());
+        cx.spawn_in(window, async move |this, cx| {
+            let Some(default_branch) = default_branch.await?? else {
+                return Ok(());
             };
-            let merge_base = repo
-                .update(cx, |repo, cx| {
-                    repo.merge_base("HEAD".to_string(), default_branch)
-                })
-                .await?;
+            let Some(merge_base) = repo
+                .update(cx, |repo, _| {
+                    repo.merge_base("HEAD".to_string(), default_branch.into())
+                })?
+                .await?
+            else {
+                return Ok(());
+            };
             let diff = repo
-                .update(cx, |repo, cx| repo.diff_to_commit(merge_base))
-                .await?;
-        });
+                .update(cx, |repo, _| repo.diff_to_commit(merge_base))?
+                .await??;
 
-        cx.foreground_executor()
-            .spawn(async move |this, cx| task.await.log_err())
+            for file in diff.files {
+                let Some(path) = repo.update(cx, |repo, cx| {
+                    repo.repo_path_to_project_path(&file.path, cx)
+                })?
+                else {
+                    continue;
+                };
+                let open_buffer = project
+                    .update(cx, |project, cx| project.open_buffer(path.clone(), cx))?
+                    .await;
+
+                let mut status = FileStatus::Tracked(TrackedStatus {
+                    index_status: git::status::StatusCode::Unmodified,
+                    worktree_status: git::status::StatusCode::Modified,
+                });
+                let buffer = match open_buffer {
+                    Ok(buffer) => buffer,
+                    Err(err) => {
+                        let exists = project.read_with(cx, |project, cx| {
+                            project.entry_for_path(&path, cx).is_some()
+                        })?;
+                        if exists {
+                            return Err(err);
+                        }
+                        status = FileStatus::Tracked(TrackedStatus {
+                            index_status: git::status::StatusCode::Unmodified,
+                            worktree_status: git::status::StatusCode::Deleted,
+                        });
+                        cx.new(|cx| Buffer::local("", cx))?
+                    }
+                };
+
+                let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+                let namespace = if file.old_text.is_none() {
+                    NEW_NAMESPACE
+                } else {
+                    TRACKED_NAMESPACE
+                };
+
+                let buffer_diff = cx.new(|cx| BufferDiff::new(&buffer_snapshot, cx))?;
+                buffer_diff
+                    .update(cx, |buffer_diff, cx| {
+                        buffer_diff.set_base_text(
+                            file.old_text.map(Arc::new),
+                            buffer_snapshot.language().cloned(),
+                            Some(language_registry.clone()),
+                            buffer_snapshot.text,
+                            cx,
+                        )
+                    })?
+                    .await?;
+
+                this.read_with(cx, |this, cx| {
+                    BufferDiffSnapshot::new_with_base_buffer(
+                        buffer.clone(),
+                        base_text,
+                        this.base_text().clone(),
+                        cx,
+                    )
+                })?
+                .await;
+
+                this.update_in(cx, |this, window, cx| {
+                    this.multibuffer.update(cx, |multibuffer, cx| {
+                        multibuffer.add_diff(buffer_diff.clone(), cx);
+                    });
+                    this.register_buffer(
+                        DiffBuffer {
+                            path_key: PathKey::namespaced(namespace, file.path.0),
+                            buffer,
+                            diff: buffer_diff,
+                            file_status: status,
+                        },
+                        window,
+                        cx,
+                    );
+                })?;
+            }
+
+            Ok(())
+        })
     }
 
     pub async fn handle_status_updates(
@@ -627,7 +711,8 @@ impl ProjectDiff {
                     this.update_in(cx, |this, window, cx| {
                         this.refresh_merge_base_of_default_branch(window, cx)
                     })?
-                    .await;
+                    .await
+                    .log_err();
                 }
             };
 

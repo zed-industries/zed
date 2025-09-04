@@ -1249,15 +1249,6 @@ impl BufferStore {
                         .log_err();
                 }
 
-                // TODO(max): do something
-                // client
-                //     .send(proto::UpdateStagedText {
-                //         project_id,
-                //         buffer_id: buffer_id.into(),
-                //         diff_base: buffer.diff_base().map(ToString::to_string),
-                //     })
-                //     .log_err();
-
                 client
                     .send(proto::BufferReloaded {
                         project_id,

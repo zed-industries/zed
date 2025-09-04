@@ -91,6 +91,7 @@ struct SharedDiffs {
 struct BufferGitState {
     unstaged_diff: Option<WeakEntity<BufferDiff>>,
     uncommitted_diff: Option<WeakEntity<BufferDiff>>,
+    branch_diff: Option<WeakEntity<BufferDiff>>,
     conflict_set: Option<WeakEntity<ConflictSet>>,
     recalculate_diff_task: Option<Task<Result<()>>>,
     reparse_conflict_markers_task: Option<Task<Result<()>>>,
@@ -592,6 +593,12 @@ impl GitStore {
         cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
     }
 
+    pub fn open_diff_from_default_branch(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<(Entity<Buffer>, Entity<BufferDiff>)>>> {
+    }
+
     pub fn open_uncommitted_diff(
         &mut self,
         buffer: Entity<Buffer>,
@@ -670,11 +677,10 @@ impl GitStore {
             let text_snapshot = buffer.text_snapshot();
             this.loading_diffs.remove(&(buffer_id, kind));
 
-            let git_store = cx.weak_entity();
             let diff_state = this
                 .diffs
                 .entry(buffer_id)
-                .or_insert_with(|| cx.new(|_| BufferGitState::new(git_store)));
+                .or_insert_with(|| cx.new(|_| BufferGitState::new()));
 
             let diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
 
@@ -755,11 +761,10 @@ impl GitStore {
         let is_unmerged = self
             .repository_and_path_for_buffer_id(buffer_id, cx)
             .is_some_and(|(repo, path)| repo.read(cx).snapshot.has_conflict(&path));
-        let git_store = cx.weak_entity();
         let buffer_git_state = self
             .diffs
             .entry(buffer_id)
-            .or_insert_with(|| cx.new(|_| BufferGitState::new(git_store)));
+            .or_insert_with(|| cx.new(|_| BufferGitState::new()));
         let conflict_set = cx.new(|cx| ConflictSet::new(buffer_id, is_unmerged, cx));
 
         self._subscriptions
@@ -2347,10 +2352,11 @@ impl GitStore {
 }
 
 impl BufferGitState {
-    fn new(_git_store: WeakEntity<GitStore>) -> Self {
+    fn new() -> Self {
         Self {
             unstaged_diff: Default::default(),
             uncommitted_diff: Default::default(),
+            branch_diff: Default::default(),
             recalculate_diff_task: Default::default(),
             language: Default::default(),
             language_registry: Default::default(),

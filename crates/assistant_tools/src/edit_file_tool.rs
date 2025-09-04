@@ -636,8 +636,11 @@ impl EditFileToolCard {
         // Create a buffer diff with the current text as the base
         let buffer_diff = cx.new(|cx| {
             let mut diff = BufferDiff::new(&text_snapshot, cx);
+            let base_text = buffer_snapshot.text();
+            let language = buffer_snapshot.language().cloned();
             let _ = diff.set_base_text(
-                buffer_snapshot.clone(),
+                Some(Arc::new(base_text)),
+                language,
                 language_registry,
                 text_snapshot,
                 cx,

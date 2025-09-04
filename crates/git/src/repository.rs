@@ -661,6 +661,7 @@ impl GitRepository for RealGitRepository {
                 .context("starting git show process")?;
 
             let diff_stdout = String::from_utf8_lossy(&diff_output.stdout);
+            dbg!(&diff_stdout);
             let changes = parse_git_diff_name_status(&diff_stdout);
 
             let mut cat_file_process = util::command::new_std_command("git")
@@ -683,7 +684,14 @@ impl GitRepository for RealGitRepository {
                     StatusCode::Modified => {
                         writeln!(&mut stdin, "{commit}:{}", path.display())?;
                     }
-                    StatusCode::Added => {}
+                    StatusCode::Added => {
+                        files.push(CommitFile {
+                            path: path.into(),
+                            old_text: None,
+                            new_text: None,
+                        });
+                        continue;
+                    }
                     StatusCode::Deleted => {
                         writeln!(&mut stdin, "{commit}:{}", path.display())?;
                     }
@@ -694,34 +702,21 @@ impl GitRepository for RealGitRepository {
                 info_line.clear();
                 stdout.read_line(&mut info_line)?;
 
+                dbg!(&info_line);
+
                 let len = info_line.trim_end().parse().with_context(|| {
                     format!("invalid object size output from cat-file {info_line}")
                 })?;
                 let mut text = vec![0; len];
                 stdout.read_exact(&mut text)?;
                 stdout.read_exact(&mut newline)?;
-                let text = String::from_utf8_lossy(&text).to_string();
 
-                let old_text = match status_code {
-                    StatusCode::Modified => {
-                        info_line.clear();
-                        stdout.read_line(&mut info_line)?;
-                        let len = info_line.trim_end().parse().with_context(|| {
-                            format!("invalid object size output from cat-file {}", info_line)
-                        })?;
-                        let mut parent_text = vec![0; len];
-                        stdout.read_exact(&mut parent_text)?;
-                        stdout.read_exact(&mut newline)?;
-                        Some(String::from_utf8_lossy(&parent_text).to_string())
-                    }
-                    StatusCode::Added => None,
-                    StatusCode::Deleted => Some(text),
-                    _ => continue,
-                };
+                let text = String::from_utf8_lossy(&text).to_string();
+                dbg!(&text);
 
                 files.push(CommitFile {
                     path: path.into(),
-                    old_text,
+                    old_text: Some(text),
                     new_text: None,
                 })
             }
