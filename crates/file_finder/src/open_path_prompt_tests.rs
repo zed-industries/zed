@@ -48,7 +48,7 @@ async fn test_open_path_prompt(cx: &mut TestAppContext) {
     insert_query(query, &picker, cx).await;
     assert_eq!(
         collect_match_candidates(&picker, cx),
-        vec!["a1", "a2", "a3", "dir1", "dir2"]
+        vec!["./", "a1", "a2", "a3", "dir1", "dir2"]
     );
 
     // Show candidates for the query "a".
@@ -56,7 +56,7 @@ async fn test_open_path_prompt(cx: &mut TestAppContext) {
     insert_query(query, &picker, cx).await;
     assert_eq!(
         collect_match_candidates(&picker, cx),
-        vec!["a1", "a2", "a3"]
+        vec!["./", "a1", "a2", "a3"]
     );
 
     // Show candidates for the query "d".

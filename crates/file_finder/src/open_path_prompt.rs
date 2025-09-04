@@ -1,7 +1,7 @@
 use crate::file_finder_settings::FileFinderSettings;
 use file_icons::FileIcons;
 use futures::channel::oneshot;
-use fuzzy::{StringMatch, StringMatchCandidate};
+use fuzzy::{CharBag, StringMatch, StringMatchCandidate};
 use gpui::{HighlightStyle, StyledText, Task};
 use picker::{Picker, PickerDelegate};
 use project::{DirectoryItem, DirectoryLister};
@@ -22,6 +22,11 @@ use util::{
 use workspace::Workspace;
 
 pub(crate) struct OpenPathPrompt;
+
+#[cfg(not(windows))]
+const CURRENT_DIR: &str = "./";
+#[cfg(windows)]
+const CURRENT_DIR: &str = ".\\";
 
 #[derive(Debug)]
 pub struct OpenPathDelegate {
@@ -233,8 +238,10 @@ impl PickerDelegate for OpenPathDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
         let lister = &self.lister;
+        let input_is_empty = query.is_empty();
         let (dir, suffix) = get_dir_and_suffix(query, self.path_style);
 
+        // TODO kb handle `/` case better: now it shows `/` as a child when listing
         let query = match &self.directory_state {
             DirectoryState::List { parent_path, .. } => {
                 if parent_path == &dir {
@@ -353,10 +360,29 @@ impl PickerDelegate for OpenPathDelegate {
                 return;
             };
 
+            let mut max_id = 0;
             if !suffix.starts_with('.') {
-                new_entries.retain(|entry| !entry.path.string.starts_with('.'));
+                new_entries.retain(|entry| {
+                    max_id = max_id.max(entry.path.id);
+                    !entry.path.string.starts_with('.')
+                });
             }
+
             if suffix.is_empty() {
+                if !input_is_empty {
+                    new_entries.insert(
+                        0,
+                        CandidateInfo {
+                            path: StringMatchCandidate {
+                                id: max_id + 1,
+                                string: CURRENT_DIR.to_string(),
+                                char_bag: CharBag::from(CURRENT_DIR),
+                            },
+                            is_dir: true,
+                        },
+                    );
+                }
+
                 this.update(cx, |this, cx| {
                     this.delegate.selected_index = 0;
                     this.delegate.string_matches = new_entries
@@ -376,6 +402,7 @@ impl PickerDelegate for OpenPathDelegate {
                                 entries: new_entries,
                                 error: None,
                             },
+                            // TODO kb for this state, should we omit ./ ?
                             DirectoryState::None { create: true }
                             | DirectoryState::Create { .. } => DirectoryState::Create {
                                 parent_path: dir.clone(),
@@ -485,6 +512,12 @@ impl PickerDelegate for OpenPathDelegate {
         _: &mut Context<Picker<Self>>,
     ) -> Option<String> {
         let candidate = self.get_entry(self.selected_index)?;
+        // TODO kb unit test
+        // TODO kb consider windows ssh client -> linux ssh server case, need a PathStyle!
+        if candidate.path.string == CURRENT_DIR {
+            return None;
+        }
+
         let path_style = self.path_style;
         Some(
             maybe!({
