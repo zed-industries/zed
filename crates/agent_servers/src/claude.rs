@@ -3,7 +3,7 @@ use std::path::Path;
 use std::rc::Rc;
 use std::{any::Any, path::PathBuf};
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use gpui::{App, AppContext as _, SharedString, Task};
 
 use crate::{AgentServer, AgentServerDelegate, AllAgentServersSettings};
@@ -25,20 +25,23 @@ impl ClaudeCode {
         delegate: AgentServerDelegate,
         cx: &mut App,
     ) -> Task<Result<ClaudeCodeLoginCommand>> {
-        let settings = cx.read_global(|settings: &SettingsStore, _| {
-            settings.get::<AllAgentServersSettings>(None).claude.clone()
+        let custom_command = cx.read_global(|settings: &SettingsStore, _| {
+            settings
+                .get::<AllAgentServersSettings>(None)
+                .get("claude")
+                .cloned()
         });
 
         cx.spawn(async move |cx| {
-            let mut command = if let Some(settings) = settings {
-                settings.command
+            let mut command = if custom_command.is_some() {
+                bail!("Cannot construct login command because a custom command was specified for claude-code-acp in settings")
             } else {
                 cx.update(|cx| {
                     delegate.get_or_npm_install_builtin_agent(
                         Self::BINARY_NAME.into(),
                         Self::PACKAGE_NAME.into(),
                         "node_modules/@anthropic-ai/claude-code/cli.js".into(),
-                        true,
+                        false,
                         Some("0.2.5".parse().unwrap()),
                         cx,
                     )
@@ -77,20 +80,23 @@ impl AgentServer for ClaudeCode {
         let root_dir = root_dir.to_path_buf();
         let fs = delegate.project().read(cx).fs().clone();
         let server_name = self.name();
-        let settings = cx.read_global(|settings: &SettingsStore, _| {
-            settings.get::<AllAgentServersSettings>(None).claude.clone()
+        let custom_command = cx.read_global(|settings: &SettingsStore, _| {
+            settings
+                .get::<AllAgentServersSettings>(None)
+                .get("claude")
+                .cloned()
         });
 
         cx.spawn(async move |cx| {
-            let mut command = if let Some(settings) = settings {
-                settings.command
+            let mut command = if let Some(custom_command) = custom_command {
+                custom_command
             } else {
                 cx.update(|cx| {
                     delegate.get_or_npm_install_builtin_agent(
                         Self::BINARY_NAME.into(),
                         Self::PACKAGE_NAME.into(),
                         format!("node_modules/{}/dist/index.js", Self::PACKAGE_NAME).into(),
-                        true,
+                        false,
                         None,
                         cx,
                     )

@@ -70,7 +70,7 @@ impl AgentServerDelegate {
         binary_name: SharedString,
         package_name: SharedString,
         entrypoint_path: PathBuf,
-        ignore_system_version: bool,
+        search_path: bool,
         minimum_version: Option<Version>,
         cx: &mut App,
     ) -> Task<Result<AgentServerCommand>> {
@@ -85,7 +85,7 @@ impl AgentServerDelegate {
         let new_version_available = self.new_version_available;
 
         cx.spawn(async move |cx| {
-            if !ignore_system_version {
+            if search_path {
                 if let Some(bin) = find_bin_in_path(binary_name.clone(), &project, cx).await {
                     return Ok(AgentServerCommand {
                         path: bin,

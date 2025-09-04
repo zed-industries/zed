@@ -8,6 +8,7 @@ use acp_thread::AcpThread;
 use agent_servers::AgentServerCommand;
 use agent2::{DbThreadMetadata, HistoryEntry};
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use zed_actions::OpenBrowser;
 use zed_actions::agent::{OpenClaudeCodeOnboardingModal, ReauthenticateAgent};
@@ -2683,7 +2684,13 @@ impl AgentPanel {
                                 // Add custom agents from settings
                                 let settings =
                                     agent_servers::AllAgentServersSettings::get_global(cx);
-                                for (agent_name, agent_settings) in &settings.custom {
+                                for (agent_name, command) in
+                                    settings.iter().sorted_by(|(l, _), (r, _)| l.cmp(r))
+                                {
+                                    if agent_name == "gemini" || agent_name == "claude" {
+                                        continue;
+                                    }
+
                                     menu = menu.item(
                                         ContextMenuEntry::new(format!("New {} Thread", agent_name))
                                             .icon(IconName::Terminal)
@@ -2692,7 +2699,7 @@ impl AgentPanel {
                                             .handler({
                                                 let workspace = workspace.clone();
                                                 let agent_name = agent_name.clone();
-                                                let agent_settings = agent_settings.clone();
+                                                let command = command.clone();
                                                 move |window, cx| {
                                                     if let Some(workspace) = workspace.upgrade() {
                                                         workspace.update(cx, |workspace, cx| {
@@ -2704,8 +2711,7 @@ impl AgentPanel {
                                                                         AgentType::Custom {
                                                                             name: agent_name
                                                                                 .clone(),
-                                                                            command: agent_settings
-                                                                                .command
+                                                                            command: command
                                                                                 .clone(),
                                                                         },
                                                                         window,

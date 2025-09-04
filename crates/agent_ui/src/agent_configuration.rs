@@ -5,7 +5,7 @@ mod tool_picker;
 
 use std::{ops::Range, sync::Arc};
 
-use agent_servers::{AgentServerCommand, AllAgentServersSettings, CustomAgentServerSettings};
+use agent_servers::{AgentServerCommand, AllAgentServersSettings};
 use agent_settings::AgentSettings;
 use anyhow::Result;
 use assistant_tool::{ToolSource, ToolWorkingSet};
@@ -20,6 +20,7 @@ use gpui::{
     Action, AnyView, App, AsyncWindowContext, Corner, Entity, EventEmitter, FocusHandle, Focusable,
     Hsla, ScrollHandle, Subscription, Task, WeakEntity,
 };
+use itertools::Itertools as _;
 use language::LanguageRegistry;
 use language_model::{
     LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID,
@@ -993,15 +994,16 @@ impl AgentConfiguration {
     fn render_agent_servers_section(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = AllAgentServersSettings::get_global(cx).clone();
         let user_defined_agents = settings
-            .custom
             .iter()
-            .map(|(name, settings)| {
+            .filter(|(name, _)| *name != "gemini" && *name != "claude")
+            .sorted_by(|(l, _), (r, _)| l.cmp(r))
+            .map(|(name, command)| {
                 self.render_agent_server(
                     IconName::Ai,
                     name.clone(),
                     ExternalAgent::Custom {
                         name: name.clone(),
-                        command: settings.command.clone(),
+                        command: command.clone(),
                     },
                     cx,
                 )
@@ -1280,6 +1282,7 @@ async fn open_new_agent_servers_entry_in_settings_editor(
             let settings = cx.global::<SettingsStore>();
 
             let mut unique_server_name = None;
+            // FIXME test that this still works
             let edits = settings.edits_for_update::<AllAgentServersSettings>(&text, |file| {
                 let server_name: Option<SharedString> = (0..u8::MAX)
                     .map(|i| {
@@ -1294,12 +1297,10 @@ async fn open_new_agent_servers_entry_in_settings_editor(
                     unique_server_name = Some(server_name.clone());
                     file.custom.insert(
                         server_name,
-                        CustomAgentServerSettings {
-                            command: AgentServerCommand {
-                                path: "path_to_executable".into(),
-                                args: vec![],
-                                env: Some(HashMap::default()),
-                            },
+                        AgentServerCommand {
+                            path: "path_to_executable".into(),
+                            args: vec![],
+                            env: Some(HashMap::default()),
                         },
                     );
                 }

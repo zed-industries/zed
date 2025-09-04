@@ -14,13 +14,48 @@ pub fn init(cx: &mut App) {
 
 #[derive(Default, Deserialize, Serialize, Clone, JsonSchema, Debug, SettingsUi, SettingsKey)]
 #[settings_key(key = "agent_servers")]
-pub struct AllAgentServersSettings {
-    pub gemini: Option<BuiltinAgentServerSettings>,
-    pub claude: Option<CustomAgentServerSettings>,
-
+pub struct AllAgentServersSettingsContent {
+    gemini: Option<GeminiSettingsContent>,
+    claude: Option<AgentServerCommand>,
     /// Custom agent servers configured by the user
     #[serde(flatten)]
-    pub custom: HashMap<SharedString, CustomAgentServerSettings>,
+    pub custom: HashMap<SharedString, AgentServerCommand>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct AllAgentServersSettings {
+    pub commands: HashMap<SharedString, AgentServerCommand>,
+    pub gemini_is_system: bool,
+}
+
+impl AllAgentServersSettings {
+    pub fn is_system(this: &Self, name: &str) -> bool {
+        if name == "gemini" {
+            this.gemini_is_system
+        } else {
+            false
+        }
+    }
+}
+
+impl std::ops::Deref for AllAgentServersSettings {
+    type Target = HashMap<SharedString, AgentServerCommand>;
+    fn deref(&self) -> &Self::Target {
+        &self.commands
+    }
+}
+
+impl std::ops::DerefMut for AllAgentServersSettings {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.commands
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema, PartialEq)]
+pub struct GeminiSettingsContent {
+    ignore_system_version: Option<bool>,
+    #[serde(flatten)]
+    inner: Option<AgentServerCommand>,
 }
 
 #[derive(Default, Deserialize, Serialize, Clone, JsonSchema, Debug, PartialEq)]
@@ -70,35 +105,40 @@ impl From<AgentServerCommand> for BuiltinAgentServerSettings {
 }
 
 #[derive(Deserialize, Serialize, Clone, JsonSchema, Debug, PartialEq)]
-pub struct CustomAgentServerSettings {
+pub struct AgentServerSettings {
     #[serde(flatten)]
     pub command: AgentServerCommand,
 }
 
 impl settings::Settings for AllAgentServersSettings {
-    type FileContent = Self;
+    type FileContent = AllAgentServersSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         let mut settings = AllAgentServersSettings::default();
 
-        for AllAgentServersSettings {
+        for AllAgentServersSettingsContent {
             gemini,
             claude,
             custom,
         } in sources.defaults_and_customizations()
         {
-            if gemini.is_some() {
-                settings.gemini = gemini.clone();
+            if let Some(gemini) = gemini {
+                if let Some(ignore) = gemini.ignore_system_version {
+                    settings.gemini_is_system = !ignore;
+                }
+                if let Some(gemini) = gemini.inner.as_ref() {
+                    settings.insert("gemini".into(), gemini.clone());
+                }
             }
-            if claude.is_some() {
-                settings.claude = claude.clone();
+            if let Some(claude) = claude.clone() {
+                settings.insert("claude".into(), claude);
             }
 
             // Merge custom agents
-            for (name, config) in custom {
+            for (name, command) in custom {
                 // Skip built-in agent names to avoid conflicts
                 if name != "gemini" && name != "claude" {
-                    settings.custom.insert(name.clone(), config.clone());
+                    settings.commands.insert(name.clone(), command.clone());
                 }
             }
         }
@@ -107,4 +147,32 @@ impl settings::Settings for AllAgentServersSettings {
     }
 
     fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use crate::{AgentServerCommand, GeminiSettingsContent};
+
+    #[test]
+    fn test_deserialization() {
+        let value = json!({
+            "command": "foo",
+            "args": ["bar"],
+            "ignore_system_version": false
+        });
+        let settings = serde_json::from_value::<GeminiSettingsContent>(value).unwrap();
+        assert_eq!(
+            settings,
+            GeminiSettingsContent {
+                ignore_system_version: Some(false),
+                inner: Some(AgentServerCommand {
+                    path: "foo".into(),
+                    args: vec!["bar".into()],
+                    env: Default::default(),
+                })
+            }
+        )
+    }
 }

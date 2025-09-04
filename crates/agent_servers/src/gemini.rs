@@ -2,14 +2,12 @@ use std::rc::Rc;
 use std::{any::Any, path::Path};
 
 use crate::acp::AcpConnection;
-use crate::{AgentServer, AgentServerDelegate};
+use crate::{AgentServer, AgentServerDelegate, AllAgentServersSettings};
 use acp_thread::{AgentConnection, LoadError};
 use anyhow::Result;
 use gpui::{App, AppContext as _, SharedString, Task};
 use language_models::provider::google::GoogleLanguageModelProvider;
 use settings::SettingsStore;
-
-use crate::AllAgentServersSettings;
 
 #[derive(Clone)]
 pub struct Gemini;
@@ -38,26 +36,25 @@ impl AgentServer for Gemini {
         let root_dir = root_dir.to_path_buf();
         let fs = delegate.project().read(cx).fs().clone();
         let server_name = self.name();
-        let settings = cx.read_global(|settings: &SettingsStore, _| {
-            settings.get::<AllAgentServersSettings>(None).gemini.clone()
+        let (custom_command, is_system) = cx.read_global(|settings: &SettingsStore, _| {
+            let s = settings.get::<AllAgentServersSettings>(None);
+            (
+                s.get("gemini").cloned(),
+                AllAgentServersSettings::is_system(s, "gemini"),
+            )
         });
 
         cx.spawn(async move |cx| {
-            let ignore_system_version = settings
-                .as_ref()
-                .and_then(|settings| settings.ignore_system_version)
-                .unwrap_or(true);
-            let mut command = if let Some(settings) = settings
-                && let Some(command) = settings.custom_command()
+            let mut command = if let Some(custom_command) = custom_command
             {
-                command
+                custom_command
             } else {
                 cx.update(|cx| {
                     delegate.get_or_npm_install_builtin_agent(
                         Self::BINARY_NAME.into(),
                         Self::PACKAGE_NAME.into(),
                         format!("node_modules/{}/dist/index.js", Self::PACKAGE_NAME).into(),
-                        ignore_system_version,
+                        is_system,
                         Some(Self::MINIMUM_VERSION.parse().unwrap()),
                         cx,
                     )
