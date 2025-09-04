@@ -89,7 +89,7 @@ If you'd like to bind this to a keyboard shortcut, you can do so by editing your
 
 As of version `0.202.7` (stable) and `0.203.2` (preview), authentication to Zed's Claude Code installation is decoupled entirely from Zed's agent. That is to say, an Anthropic API key added via the [Zed Agent's settings](./llm-providers.md#anthropic) will _not_ be utilized by Claude Code for authentication and billing.
 
-To ensure you're using your billing method of choice, [open a new Claude Code thread](./agent-panel.md#new-thread)`. Then, run `/login`, and authenticate either via API key, or via `Log in with Claude Code` to use a Claude Pro/Max subscription.
+To ensure you're using your billing method of choice, [open a new Claude Code thread](./agent-panel.md#new-thread). Then, run `/login`, and authenticate either via API key, or via `Log in with Claude Code` to use a Claude Pro/Max subscription.
 
 #### Installation
 
