@@ -594,6 +594,7 @@ impl Pane {
                 self.last_focus_handle_by_item
                     .insert(active_item.item_id(), focused.downgrade());
             }
+            self.update_active_tab(self.active_item_index);
         }
     }
 
@@ -607,6 +608,7 @@ impl Pane {
         self.toolbar.update(cx, |toolbar, cx| {
             toolbar.focus_changed(false, window, cx);
         });
+        self.update_active_tab(self.active_item_index);
         cx.notify();
     }
 
@@ -1113,6 +1115,7 @@ impl Pane {
             }
         } else {
             self.items.insert(insertion_index, item.clone());
+            cx.notify();
 
             if activate {
                 if insertion_index <= self.active_item_index
@@ -1123,7 +1126,6 @@ impl Pane {
 
                 self.activate_item(insertion_index, activate_pane, focus_item, window, cx);
             }
-            cx.notify();
         }
 
         cx.emit(Event::AddItem { item });
@@ -1261,13 +1263,15 @@ impl Pane {
                 focus_changed: focus_item,
             });
 
-            if !self.is_tab_pinned(index) {
-                self.tab_bar_scroll_handle
-                    .scroll_to_item(index - self.pinned_tab_count);
-            }
-
+            self.update_active_tab(index);
             cx.notify();
         }
+    }
+    
+    fn update_active_tab(&mut self, index: usize) {
+        if !self.is_tab_pinned(index) {
+            self.tab_bar_scroll_handle.update_active_item(index);
+        } 
     }
 
     fn update_history(&mut self, index: usize) {
@@ -4049,7 +4053,7 @@ mod tests {
 
     use super::*;
     use crate::item::test::{TestItem, TestProjectItem};
-    use gpui::{TestAppContext, VisualTestContext};
+    use gpui::{size, TestAppContext, VisualTestContext};
     use project::FakeFs;
     use settings::SettingsStore;
     use theme::LoadThemes;
@@ -6262,6 +6266,44 @@ mod tests {
             assert!(!c.read(cx).is_dirty);
         });
     }
+
+    #[gpui::test]
+    async fn test_new_tab_scrolls_into_view_completely(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| {
+                Workspace::test_new(project, window, cx)
+            });
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        
+        cx.simulate_resize(size(px(300.), px(300.)));
+
+        add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        add_labeled_item(&pane, "C", false, cx);
+        add_labeled_item(&pane, "D", false, cx);
+
+        let tab_bar_scroll_handle = pane.update_in(cx, |pane, window, cx| {
+            pane.tab_bar_scroll_handle.clone()
+        });
+        assert_eq!(tab_bar_scroll_handle.children_count(), 5);
+        
+        let tab_bounds = cx.debug_bounds("TAB-3").unwrap();
+        let new_tab_button_bounds = cx.debug_bounds("ICON-Plus").unwrap();
+        
+        let scroll_bounds = tab_bar_scroll_handle.bounds();
+        let scroll_offset = tab_bar_scroll_handle.offset();
+        
+        assert!(tab_bounds.right() <= scroll_bounds.right() + scroll_offset.x);
+        assert!(
+            !tab_bounds.intersects(&new_tab_button_bounds),
+            "Tab should overlap with the new tab button, if this is failing check if there's been a redesign!"
+        );
+    }
+
 
     #[gpui::test]
     async fn test_close_all_items_including_pinned(cx: &mut TestAppContext) {
