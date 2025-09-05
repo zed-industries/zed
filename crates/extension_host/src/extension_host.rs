@@ -331,7 +331,7 @@ impl ExtensionStore {
                 load_initial_extensions.await;
 
                 let mut index_changed = false;
-                let mut debounce_timer = cx.background_executor().timer(Duration::default()).fuse();
+                let mut debounce_timer = cx.background_executor().timer(Duration::MAX).fuse();
                 loop {
                     select_biased! {
                         _ = debounce_timer => {
