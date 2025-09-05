@@ -4,9 +4,6 @@ use crate::{FocusHandle, FocusId};
 ///
 /// Used to manage the `Tab` event to switch between focus handles.
 pub(crate) struct TabHandles {
-    // todo! remove this and fix reuse_paint logic
-    pub handles: Vec<FocusHandle>,
-
     active_group: usize,
     pub(crate) nodes: Vec<TabNode>,
 }
@@ -14,7 +11,6 @@ pub(crate) struct TabHandles {
 impl Default for TabHandles {
     fn default() -> Self {
         Self {
-            handles: Default::default(),
             active_group: 0,
             nodes: vec![TabNode::ROOT.clone()],
         }
@@ -91,9 +87,9 @@ impl TabHandles {
     }
 
     pub fn clear(&mut self) {
-        self.handles.clear();
         self.active_group = 0;
-        self.nodes = vec![TabNode::ROOT.clone()];
+        self.nodes.clear();
+        self.nodes.push(TabNode::ROOT.clone());
     }
 
     fn current_index(&self, focused_id: &FocusId) -> Option<usize> {
