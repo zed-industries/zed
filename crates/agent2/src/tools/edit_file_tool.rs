@@ -197,19 +197,25 @@ impl AgentTool for EditFileTool {
 
     fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString {
         match input {
-            Ok(input) => input.display_description.into(),
+            Ok(input) => input
+                .path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string()
+                .into(),
             Err(raw_input) => {
                 if let Some(input) =
                     serde_json::from_value::<EditFileToolPartialInput>(raw_input).ok()
                 {
-                    let description = input.display_description.trim();
-                    if !description.is_empty() {
-                        return description.to_string().into();
-                    }
-
                     let path = input.path.trim().to_string();
                     if !path.is_empty() {
                         return path.into();
+                    }
+
+                    let description = input.display_description.trim();
+                    if !description.is_empty() {
+                        return description.to_string().into();
                     }
                 }
 
