@@ -4,7 +4,7 @@ use editor::EditorSettings;
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsUi};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 
 #[derive(Debug, Default)]
 pub struct JupyterSettings {
@@ -20,7 +20,8 @@ impl JupyterSettings {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize, JsonSchema, Debug, SettingsUi)]
+#[derive(Clone, Serialize, Deserialize, JsonSchema, Debug, SettingsUi, SettingsKey)]
+#[settings_key(key = "jupyter")]
 pub struct JupyterSettingsContent {
     /// Default kernels to select for each language.
     ///
@@ -37,8 +38,6 @@ impl Default for JupyterSettingsContent {
 }
 
 impl Settings for JupyterSettings {
-    const KEY: Option<&'static str> = Some("jupyter");
-
     type FileContent = JupyterSettingsContent;
 
     fn load(

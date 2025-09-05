@@ -4480,6 +4480,7 @@ mod tests {
                 "keymap_editor",
                 "keystroke_input",
                 "language_selector",
+                "line_ending",
                 "lsp_tool",
                 "markdown",
                 "menu",
@@ -4502,6 +4503,7 @@ mod tests {
                 "snippets",
                 "supermaven",
                 "svg",
+                "syntax_tree_view",
                 "tab_switcher",
                 "task",
                 "terminal",
@@ -4511,11 +4513,11 @@ mod tests {
                 "toolchain",
                 "variable_list",
                 "vim",
+                "window",
                 "workspace",
                 "zed",
                 "zed_predict_onboarding",
                 "zeta",
-                "window",
             ];
             assert_eq!(
                 all_namespaces,

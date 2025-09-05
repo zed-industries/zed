@@ -337,8 +337,7 @@ fn update_command_palette_filter(cx: &mut App) {
             ];
             filter.show_action_types(edit_prediction_actions.iter());
 
-            filter
-                .show_action_types([TypeId::of::<zed_actions::OpenZedPredictOnboarding>()].iter());
+            filter.show_action_types(&[TypeId::of::<zed_actions::OpenZedPredictOnboarding>()]);
         }
     });
 }

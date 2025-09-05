@@ -26,7 +26,7 @@ dependencies = [
  "portable-pty",
  "project",
  "prompt_store",
- "rand 0.8.5",
+ "rand 0.9.1",
  "serde",
  "serde_json",
  "settings",
@@ -79,7 +79,7 @@ dependencies = [
  "log",
  "pretty_assertions",
  "project",
- "rand 0.8.5",
+ "rand 0.9.1",
  "serde_json",
  "settings",
  "text",
@@ -172,7 +172,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "prompt_store",
- "rand 0.8.5",
+ "rand 0.9.1",
  "ref-cast",
  "rope",
  "schemars",
@@ -408,7 +408,7 @@ dependencies = [
  "project",
  "prompt_store",
  "proto",
- "rand 0.8.5",
+ "rand 0.9.1",
  "release_channel",
  "rope",
  "rules_library",
@@ -834,7 +834,7 @@ dependencies = [
  "project",
  "prompt_store",
  "proto",
- "rand 0.8.5",
+ "rand 0.9.1",
  "regex",
  "rpc",
  "serde",
@@ -933,7 +933,7 @@ dependencies = [
  "parking_lot",
  "pretty_assertions",
  "project",
- "rand 0.8.5",
+ "rand 0.9.1",
  "regex",
  "serde",
  "serde_json",
@@ -985,7 +985,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "prompt_store",
- "rand 0.8.5",
+ "rand 0.9.1",
  "regex",
  "reqwest_client",
  "rust-embed",
@@ -2291,7 +2291,7 @@ dependencies = [
 [[package]]
 name = "blade-graphics"
 version = "0.6.0"
-source = "git+https://github.com/kvark/blade?rev=e0ec4e720957edd51b945b64dd85605ea54bcfe5#e0ec4e720957edd51b945b64dd85605ea54bcfe5"
+source = "git+https://github.com/kvark/blade?rev=bfa594ea697d4b6326ea29f747525c85ecf933b9#bfa594ea697d4b6326ea29f747525c85ecf933b9"
 dependencies = [
  "ash",
  "ash-window",
@@ -2324,7 +2324,7 @@ dependencies = [
 [[package]]
 name = "blade-macros"
 version = "0.3.0"
-source = "git+https://github.com/kvark/blade?rev=e0ec4e720957edd51b945b64dd85605ea54bcfe5#e0ec4e720957edd51b945b64dd85605ea54bcfe5"
+source = "git+https://github.com/kvark/blade?rev=bfa594ea697d4b6326ea29f747525c85ecf933b9#bfa594ea697d4b6326ea29f747525c85ecf933b9"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2334,7 +2334,7 @@ dependencies = [
 [[package]]
 name = "blade-util"
 version = "0.2.0"
-source = "git+https://github.com/kvark/blade?rev=e0ec4e720957edd51b945b64dd85605ea54bcfe5#e0ec4e720957edd51b945b64dd85605ea54bcfe5"
+source = "git+https://github.com/kvark/blade?rev=bfa594ea697d4b6326ea29f747525c85ecf933b9#bfa594ea697d4b6326ea29f747525c85ecf933b9"
 dependencies = [
  "blade-graphics",
  "bytemuck",
@@ -2478,7 +2478,7 @@ dependencies = [
  "language",
  "log",
  "pretty_assertions",
- "rand 0.8.5",
+ "rand 0.9.1",
  "rope",
  "serde_json",
  "sum_tree",
@@ -2899,7 +2899,7 @@ dependencies = [
  "language",
  "log",
  "postage",
- "rand 0.8.5",
+ "rand 0.9.1",
  "release_channel",
  "rpc",
  "settings",
@@ -3070,7 +3070,6 @@ dependencies = [
  "clock",
  "cloud_api_client",
  "cloud_llm_client",
- "cocoa 0.26.0",
  "collections",
  "credentials_provider",
  "derive_more",
@@ -3083,10 +3082,11 @@ dependencies = [
  "http_client_tls",
  "httparse",
  "log",
+ "objc2-foundation",
  "parking_lot",
  "paths",
  "postage",
- "rand 0.8.5",
+ "rand 0.9.1",
  "regex",
  "release_channel",
  "rpc",
@@ -3335,7 +3335,7 @@ dependencies = [
  "prometheus",
  "prompt_store",
  "prost 0.9.0",
- "rand 0.8.5",
+ "rand 0.9.1",
  "recent_projects",
  "release_channel",
  "remote",
@@ -4697,7 +4697,7 @@ dependencies = [
  "markdown",
  "pretty_assertions",
  "project",
- "rand 0.8.5",
+ "rand 0.9.1",
  "serde",
  "serde_json",
  "settings",
@@ -5068,7 +5068,7 @@ dependencies = [
  "parking_lot",
  "pretty_assertions",
  "project",
- "rand 0.8.5",
+ "rand 0.9.1",
  "regex",
  "release_channel",
  "rpc",
@@ -5563,7 +5563,7 @@ dependencies = [
  "parking_lot",
  "paths",
  "project",
- "rand 0.8.5",
+ "rand 0.9.1",
  "release_channel",
  "remote",
  "reqwest_client",
@@ -6412,7 +6412,7 @@ dependencies = [
  "log",
  "parking_lot",
  "pretty_assertions",
- "rand 0.8.5",
+ "rand 0.9.1",
  "regex",
  "rope",
  "schemars",
@@ -7465,7 +7465,7 @@ dependencies = [
  "pathfinder_geometry",
  "postage",
  "profiling",
- "rand 0.8.5",
+ "rand 0.9.1",
  "raw-window-handle",
  "refineable",
  "reqwest_client",
@@ -9078,7 +9078,7 @@ dependencies = [
  "parking_lot",
  "postage",
  "pretty_assertions",
- "rand 0.8.5",
+ "rand 0.9.1",
  "regex",
  "rpc",
  "schemars",
@@ -9247,6 +9247,7 @@ dependencies = [
  "anyhow",
  "client",
  "collections",
+ "command_palette_hooks",
  "copilot",
  "editor",
  "futures 0.3.31",
@@ -9515,6 +9516,21 @@ dependencies = [
  "libc",
  "pkg-config",
  "vcpkg",
+]
+
+[[package]]
+name = "line_ending_selector"
+version = "0.1.0"
+dependencies = [
+ "editor",
+ "gpui",
+ "language",
+ "picker",
+ "project",
+ "ui",
+ "util",
+ "workspace",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -10392,7 +10408,7 @@ dependencies = [
  "parking_lot",
  "pretty_assertions",
  "project",
- "rand 0.8.5",
+ "rand 0.9.1",
  "rope",
  "serde",
  "settings",
@@ -12618,7 +12634,7 @@ dependencies = [
  "postage",
  "prettier",
  "pretty_assertions",
- "rand 0.8.5",
+ "rand 0.9.1",
  "regex",
  "release_channel",
  "remote",
@@ -13892,7 +13908,7 @@ dependencies = [
  "ctor",
  "gpui",
  "log",
- "rand 0.8.5",
+ "rand 0.9.1",
  "rayon",
  "smallvec",
  "sum_tree",
@@ -13921,7 +13937,7 @@ dependencies = [
  "gpui",
  "parking_lot",
  "proto",
- "rand 0.8.5",
+ "rand 0.9.1",
  "rsa",
  "serde",
  "serde_json",
@@ -14354,6 +14370,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f29ebaa345f945cec9fbbc532eb307f0fdad8161f281b6369539c8d84876b3d"
 dependencies = [
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "scheduler"
+version = "0.1.0"
+dependencies = [
+ "async-task",
+ "chrono",
+ "futures 0.3.31",
+ "parking",
+ "parking_lot",
+ "rand 0.9.1",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -15655,7 +15684,7 @@ name = "streaming_diff"
 version = "0.1.0"
 dependencies = [
  "ordered-float 2.10.1",
- "rand 0.8.5",
+ "rand 0.9.1",
  "rope",
  "util",
  "workspace-hack",
@@ -15769,7 +15798,7 @@ dependencies = [
  "arrayvec",
  "ctor",
  "log",
- "rand 0.8.5",
+ "rand 0.9.1",
  "rayon",
  "workspace-hack",
  "zlog",
@@ -16360,7 +16389,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "libc",
- "rand 0.8.5",
+ "rand 0.9.1",
  "regex",
  "release_channel",
  "schemars",
@@ -16408,7 +16437,7 @@ dependencies = [
  "language",
  "log",
  "project",
- "rand 0.8.5",
+ "rand 0.9.1",
  "regex",
  "schemars",
  "search",
@@ -16440,7 +16469,7 @@ dependencies = [
  "log",
  "parking_lot",
  "postage",
- "rand 0.8.5",
+ "rand 0.9.1",
  "regex",
  "rope",
  "smallvec",
@@ -17802,7 +17831,7 @@ dependencies = [
  "libc",
  "log",
  "nix 0.29.0",
- "rand 0.8.5",
+ "rand 0.9.1",
  "regex",
  "rust-embed",
  "schemars",
@@ -17987,6 +18016,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "gpui",
+ "schemars",
+ "serde",
  "settings",
  "workspace-hack",
 ]
@@ -18593,7 +18624,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "parking_lot",
- "rand 0.8.5",
+ "rand 0.9.1",
  "workspace-hack",
  "zlog",
 ]
@@ -20052,7 +20083,7 @@ dependencies = [
  "paths",
  "postage",
  "pretty_assertions",
- "rand 0.8.5",
+ "rand 0.9.1",
  "rpc",
  "schemars",
  "serde",
@@ -20481,6 +20512,7 @@ dependencies = [
  "language_tools",
  "languages",
  "libc",
+ "line_ending_selector",
  "livekit_client",
  "log",
  "markdown",
@@ -20632,7 +20664,7 @@ dependencies = [
 
 [[package]]
 name = "zed_snippets"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "serde_json",
  "zed_extension_api 0.1.0",
@@ -20643,13 +20675,6 @@ name = "zed_test_extension"
 version = "0.1.0"
 dependencies = [
  "zed_extension_api 0.6.0",
-]
-
-[[package]]
-name = "zed_toml"
-version = "0.1.4"
-dependencies = [
- "zed_extension_api 0.1.0",
 ]
 
 [[package]]
@@ -20817,7 +20842,7 @@ dependencies = [
  "menu",
  "postage",
  "project",
- "rand 0.8.5",
+ "rand 0.9.1",
  "regex",
  "release_channel",
  "reqwest_client",

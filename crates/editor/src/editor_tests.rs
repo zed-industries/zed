@@ -5363,6 +5363,20 @@ async fn test_manipulate_text(cx: &mut TestAppContext) {
     cx.assert_editor_state(indoc! {"
         «HeLlO, wOrLD!ˇ»
     "});
+
+    // Test selections with `line_mode = true`.
+    cx.update_editor(|editor, _window, _cx| editor.selections.line_mode = true);
+    cx.set_state(indoc! {"
+        «The quick brown
+        fox jumps over
+        tˇ»he lazy dog
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_upper_case(&ConvertToUpperCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «THE QUICK BROWN
+        FOX JUMPS OVER
+        THE LAZY DOGˇ»
+    "});
 }
 
 #[gpui::test]

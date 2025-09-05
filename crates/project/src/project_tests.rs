@@ -7661,7 +7661,7 @@ async fn test_staging_random_hunks(
         .unwrap_or(20);
 
     // Try to induce races between diff recalculation and index writes.
-    if rng.gen_bool(0.5) {
+    if rng.random_bool(0.5) {
         executor.deprioritize(*CALCULATE_DIFF_TASK);
     }
 
@@ -7717,7 +7717,7 @@ async fn test_staging_random_hunks(
     assert_eq!(hunks.len(), 6);
 
     for _i in 0..operations {
-        let hunk_ix = rng.gen_range(0..hunks.len());
+        let hunk_ix = rng.random_range(0..hunks.len());
         let hunk = &mut hunks[hunk_ix];
         let row = hunk.range.start.row;
 
@@ -7735,7 +7735,7 @@ async fn test_staging_random_hunks(
             hunk.secondary_status = SecondaryHunkAdditionPending;
         }
 
-        for _ in 0..rng.gen_range(0..10) {
+        for _ in 0..rng.random_range(0..10) {
             log::info!("yielding");
             cx.executor().simulate_random_delay().await;
         }

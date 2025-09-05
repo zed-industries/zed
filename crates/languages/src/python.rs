@@ -889,6 +889,13 @@ impl ToolchainLister for PythonToolchainProvider {
                 let env = toolchain.name.as_deref().unwrap_or("default");
                 activation_script.push(format!("pixi shell -e {env}"))
             }
+            Some(PythonEnvironmentKind::Conda) => {
+                if let Some(name) = &toolchain.name {
+                    activation_script.push(format!("conda activate {name}"));
+                } else {
+                    activation_script.push("conda activate".to_string());
+                }
+            }
             Some(PythonEnvironmentKind::Venv | PythonEnvironmentKind::VirtualEnv) => {
                 if let Some(prefix) = &toolchain.prefix {
                     let activate_keyword = match shell {

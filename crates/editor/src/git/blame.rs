@@ -1107,7 +1107,7 @@ mod tests {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
-        let buffer_initial_text_len = rng.gen_range(5..15);
+        let buffer_initial_text_len = rng.random_range(5..15);
         let mut buffer_initial_text = Rope::from(
             RandomCharIter::new(&mut rng)
                 .take(buffer_initial_text_len)
@@ -1159,7 +1159,7 @@ mod tests {
         git_blame.update(cx, |blame, cx| blame.check_invariants(cx));
 
         for _ in 0..operations {
-            match rng.gen_range(0..100) {
+            match rng.random_range(0..100) {
                 0..=19 => {
                     log::info!("quiescing");
                     cx.executor().run_until_parked();
@@ -1202,8 +1202,8 @@ mod tests {
         let mut blame_entries = Vec::new();
         for ix in 0..5 {
             if last_row < max_row {
-                let row_start = rng.gen_range(last_row..max_row);
-                let row_end = rng.gen_range(row_start + 1..cmp::min(row_start + 3, max_row) + 1);
+                let row_start = rng.random_range(last_row..max_row);
+                let row_end = rng.random_range(row_start + 1..cmp::min(row_start + 3, max_row) + 1);
                 blame_entries.push(blame_entry(&ix.to_string(), row_start..row_end));
                 last_row = row_end;
             } else {

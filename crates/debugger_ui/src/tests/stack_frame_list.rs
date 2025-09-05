@@ -1,6 +1,6 @@
 use crate::{
     debugger_panel::DebugPanel,
-    session::running::stack_frame_list::StackFrameEntry,
+    session::running::stack_frame_list::{StackFrameEntry, StackFrameFilter},
     tests::{active_debug_session_panel, init_test, init_test_workspace, start_debug_session},
 };
 use dap::{
@@ -867,6 +867,28 @@ async fn test_stack_frame_filter(executor: BackgroundExecutor, cx: &mut TestAppC
         },
         StackFrame {
             id: 4,
+            name: "node:internal/modules/run_main2".into(),
+            source: Some(dap::Source {
+                name: Some("run_main.js".into()),
+                path: Some(path!("/usr/lib/node/internal/modules/run_main2.js").into()),
+                source_reference: None,
+                presentation_hint: None,
+                origin: None,
+                sources: None,
+                adapter_data: None,
+                checksums: None,
+            }),
+            line: 50,
+            column: 1,
+            end_line: None,
+            end_column: None,
+            can_restart: None,
+            instruction_pointer_reference: None,
+            module_id: None,
+            presentation_hint: Some(dap::StackFramePresentationHint::Deemphasize),
+        },
+        StackFrame {
+            id: 5,
             name: "doSomething".into(),
             source: Some(dap::Source {
                 name: Some("test.js".into()),
@@ -957,83 +979,119 @@ async fn test_stack_frame_filter(executor: BackgroundExecutor, cx: &mut TestAppC
 
     cx.run_until_parked();
 
-    active_debug_session_panel(workspace, cx).update_in(cx, |debug_panel_item, window, cx| {
-        let stack_frame_list = debug_panel_item
-            .running_state()
-            .update(cx, |state, _| state.stack_frame_list().clone());
+    let stack_frame_list =
+        active_debug_session_panel(workspace, cx).update_in(cx, |debug_panel_item, window, cx| {
+            let stack_frame_list = debug_panel_item
+                .running_state()
+                .update(cx, |state, _| state.stack_frame_list().clone());
 
-        stack_frame_list.update(cx, |stack_frame_list, cx| {
-            stack_frame_list.build_entries(true, window, cx);
+            stack_frame_list.update(cx, |stack_frame_list, cx| {
+                stack_frame_list.build_entries(true, window, cx);
 
-            // Verify we have the expected collapsed structure
-            assert_eq!(
-                stack_frame_list.entries(),
-                &vec![
-                    StackFrameEntry::Normal(stack_frames_for_assertions[0].clone()),
-                    StackFrameEntry::Collapsed(vec![
-                        stack_frames_for_assertions[1].clone(),
-                        stack_frames_for_assertions[2].clone()
-                    ]),
-                    StackFrameEntry::Normal(stack_frames_for_assertions[3].clone()),
-                ]
-            );
+                // Verify we have the expected collapsed structure
+                assert_eq!(
+                    stack_frame_list.entries(),
+                    &vec![
+                        StackFrameEntry::Normal(stack_frames_for_assertions[0].clone()),
+                        StackFrameEntry::Collapsed(vec![
+                            stack_frames_for_assertions[1].clone(),
+                            stack_frames_for_assertions[2].clone(),
+                            stack_frames_for_assertions[3].clone()
+                        ]),
+                        StackFrameEntry::Normal(stack_frames_for_assertions[4].clone()),
+                    ]
+                );
+            });
 
-            // Test 1: Verify filtering works
-            let all_frames = stack_frame_list.flatten_entries(true, false);
-            assert_eq!(all_frames.len(), 4, "Should see all 4 frames initially");
-
-            // Toggle to user frames only
             stack_frame_list
-                .toggle_frame_filter(Some(project::debugger::session::ThreadStatus::Stopped), cx);
-
-            let user_frames = stack_frame_list.dap_stack_frames(cx);
-            assert_eq!(user_frames.len(), 2, "Should only see 2 user frames");
-            assert_eq!(user_frames[0].name, "main");
-            assert_eq!(user_frames[1].name, "doSomething");
-
-            // Test 2: Verify filtering toggles correctly
-            // Check we can toggle back and see all frames again
-
-            // Toggle back to all frames
-            stack_frame_list
-                .toggle_frame_filter(Some(project::debugger::session::ThreadStatus::Stopped), cx);
-
-            let all_frames_again = stack_frame_list.flatten_entries(true, false);
-            assert_eq!(
-                all_frames_again.len(),
-                4,
-                "Should see all 4 frames after toggling back"
-            );
-
-            // Test 3: Verify collapsed entries stay expanded
-            stack_frame_list.expand_collapsed_entry(1, cx);
-            assert_eq!(
-                stack_frame_list.entries(),
-                &vec![
-                    StackFrameEntry::Normal(stack_frames_for_assertions[0].clone()),
-                    StackFrameEntry::Normal(stack_frames_for_assertions[1].clone()),
-                    StackFrameEntry::Normal(stack_frames_for_assertions[2].clone()),
-                    StackFrameEntry::Normal(stack_frames_for_assertions[3].clone()),
-                ]
-            );
-
-            // Toggle filter twice
-            stack_frame_list
-                .toggle_frame_filter(Some(project::debugger::session::ThreadStatus::Stopped), cx);
-            stack_frame_list
-                .toggle_frame_filter(Some(project::debugger::session::ThreadStatus::Stopped), cx);
-
-            // Verify entries remain expanded
-            assert_eq!(
-                stack_frame_list.entries(),
-                &vec![
-                    StackFrameEntry::Normal(stack_frames_for_assertions[0].clone()),
-                    StackFrameEntry::Normal(stack_frames_for_assertions[1].clone()),
-                    StackFrameEntry::Normal(stack_frames_for_assertions[2].clone()),
-                    StackFrameEntry::Normal(stack_frames_for_assertions[3].clone()),
-                ],
-                "Expanded entries should remain expanded after toggling filter"
-            );
         });
+
+    stack_frame_list.update(cx, |stack_frame_list, cx| {
+        let all_frames = stack_frame_list.flatten_entries(true, false);
+        assert_eq!(all_frames.len(), 5, "Should see all 5 frames initially");
+
+        stack_frame_list
+            .toggle_frame_filter(Some(project::debugger::session::ThreadStatus::Stopped), cx);
+        assert_eq!(
+            stack_frame_list.list_filter(),
+            StackFrameFilter::OnlyUserFrames
+        );
+    });
+
+    stack_frame_list.update(cx, |stack_frame_list, cx| {
+        let user_frames = stack_frame_list.dap_stack_frames(cx);
+        assert_eq!(user_frames.len(), 2, "Should only see 2 user frames");
+        assert_eq!(user_frames[0].name, "main");
+        assert_eq!(user_frames[1].name, "doSomething");
+
+        // Toggle back to all frames
+        stack_frame_list
+            .toggle_frame_filter(Some(project::debugger::session::ThreadStatus::Stopped), cx);
+        assert_eq!(stack_frame_list.list_filter(), StackFrameFilter::All);
+    });
+
+    stack_frame_list.update(cx, |stack_frame_list, cx| {
+        let all_frames_again = stack_frame_list.flatten_entries(true, false);
+        assert_eq!(
+            all_frames_again.len(),
+            5,
+            "Should see all 5 frames after toggling back"
+        );
+
+        // Test 3: Verify collapsed entries stay expanded
+        stack_frame_list.expand_collapsed_entry(1, cx);
+        assert_eq!(
+            stack_frame_list.entries(),
+            &vec![
+                StackFrameEntry::Normal(stack_frames_for_assertions[0].clone()),
+                StackFrameEntry::Normal(stack_frames_for_assertions[1].clone()),
+                StackFrameEntry::Normal(stack_frames_for_assertions[2].clone()),
+                StackFrameEntry::Normal(stack_frames_for_assertions[3].clone()),
+                StackFrameEntry::Normal(stack_frames_for_assertions[4].clone()),
+            ]
+        );
+
+        stack_frame_list
+            .toggle_frame_filter(Some(project::debugger::session::ThreadStatus::Stopped), cx);
+        assert_eq!(
+            stack_frame_list.list_filter(),
+            StackFrameFilter::OnlyUserFrames
+        );
+    });
+
+    stack_frame_list.update(cx, |stack_frame_list, cx| {
+        stack_frame_list
+            .toggle_frame_filter(Some(project::debugger::session::ThreadStatus::Stopped), cx);
+        assert_eq!(stack_frame_list.list_filter(), StackFrameFilter::All);
+    });
+
+    stack_frame_list.update(cx, |stack_frame_list, cx| {
+        stack_frame_list
+            .toggle_frame_filter(Some(project::debugger::session::ThreadStatus::Stopped), cx);
+        assert_eq!(
+            stack_frame_list.list_filter(),
+            StackFrameFilter::OnlyUserFrames
+        );
+
+        assert_eq!(
+            stack_frame_list.dap_stack_frames(cx).as_slice(),
+            &[
+                stack_frames_for_assertions[0].clone(),
+                stack_frames_for_assertions[4].clone()
+            ]
+        );
+
+        // Verify entries remain expanded
+        assert_eq!(
+            stack_frame_list.entries(),
+            &vec![
+                StackFrameEntry::Normal(stack_frames_for_assertions[0].clone()),
+                StackFrameEntry::Normal(stack_frames_for_assertions[1].clone()),
+                StackFrameEntry::Normal(stack_frames_for_assertions[2].clone()),
+                StackFrameEntry::Normal(stack_frames_for_assertions[3].clone()),
+                StackFrameEntry::Normal(stack_frames_for_assertions[4].clone()),
+            ],
+            "Expanded entries should remain expanded after toggling filter"
+        );
     });
 }

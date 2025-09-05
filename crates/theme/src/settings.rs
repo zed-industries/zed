@@ -13,7 +13,7 @@ use gpui::{
 use refineable::Refineable;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
-use settings::{ParameterizedJsonSchema, Settings, SettingsSources, SettingsUi};
+use settings::{ParameterizedJsonSchema, Settings, SettingsKey, SettingsSources, SettingsUi};
 use std::sync::Arc;
 use util::ResultExt as _;
 use util::schemars::replace_subschema;
@@ -253,8 +253,9 @@ pub(crate) struct UiFontSize(Pixels);
 
 impl Global for UiFontSize {}
 
+/// In-memory override for the font size in the agent panel.
 #[derive(Default)]
-pub(crate) struct AgentFontSize(Pixels);
+pub struct AgentFontSize(Pixels);
 
 impl Global for AgentFontSize {}
 
@@ -365,7 +366,8 @@ impl IconThemeSelection {
 }
 
 /// Settings for rendering text in UI and text buffers.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
+#[settings_key(None)]
 pub struct ThemeSettingsContent {
     /// The default font size for text in the UI.
     #[serde(default)]
@@ -817,8 +819,6 @@ fn clamp_font_weight(weight: f32) -> FontWeight {
 }
 
 impl settings::Settings for ThemeSettings {
-    const KEY: Option<&'static str> = None;
-
     type FileContent = ThemeSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, cx: &mut App) -> Result<Self> {

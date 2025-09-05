@@ -1032,6 +1032,9 @@ pub enum Event {
         item: Box<dyn ItemHandle>,
     },
     ActiveItemChanged,
+    ItemRemoved {
+        item_id: EntityId,
+    },
     UserSavedItem {
         pane: WeakEntity<Pane>,
         item: Box<dyn WeakItemHandle>,
@@ -3114,6 +3117,16 @@ impl Workspace {
         }
     }
 
+    pub fn close_panel<T: Panel>(&self, window: &mut Window, cx: &mut Context<Self>) {
+        for dock in self.all_docks().iter() {
+            dock.update(cx, |dock, cx| {
+                if dock.panel::<T>().is_some() {
+                    dock.set_open(false, window, cx)
+                }
+            })
+        }
+    }
+
     pub fn panel<T: Panel>(&self, cx: &App) -> Option<Entity<T>> {
         self.all_docks()
             .iter()
@@ -3969,6 +3982,9 @@ impl Workspace {
                 {
                     entry.remove();
                 }
+                cx.emit(Event::ItemRemoved {
+                    item_id: item.item_id(),
+                });
             }
             pane::Event::Focus => {
                 window.invalidate_character_coordinates();

@@ -1,4 +1,3 @@
-use language_models::provider::anthropic::AnthropicLanguageModelProvider;
 use settings::SettingsStore;
 use std::path::Path;
 use std::rc::Rc;
@@ -81,8 +80,15 @@ impl AgentServer for ClaudeCode {
         let settings = cx.read_global(|settings: &SettingsStore, _| {
             settings.get::<AllAgentServersSettings>(None).claude.clone()
         });
+        let project = delegate.project().clone();
 
         cx.spawn(async move |cx| {
+            let mut project_env = project
+                .update(cx, |project, cx| {
+                    project.directory_environment(root_dir.as_path().into(), cx)
+                })?
+                .await
+                .unwrap_or_default();
             let mut command = if let Some(settings) = settings {
                 settings.command
             } else {
@@ -98,17 +104,13 @@ impl AgentServer for ClaudeCode {
                 })?
                 .await?
             };
+            project_env.extend(command.env.take().unwrap_or_default());
+            command.env = Some(project_env);
 
-            if let Some(api_key) = cx
-                .update(AnthropicLanguageModelProvider::api_key)?
-                .await
-                .ok()
-            {
-                command
-                    .env
-                    .get_or_insert_default()
-                    .insert("ANTHROPIC_API_KEY".to_owned(), api_key.key);
-            }
+            command
+                .env
+                .get_or_insert_default()
+                .insert("ANTHROPIC_API_KEY".to_owned(), "".to_owned());
 
             let root_dir_exists = fs.is_dir(&root_dir).await;
             anyhow::ensure!(

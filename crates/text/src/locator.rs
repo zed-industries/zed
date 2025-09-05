@@ -106,13 +106,13 @@ mod tests {
         let mut rhs = Default::default();
         while lhs == rhs {
             lhs = Locator(
-                (0..rng.gen_range(1..=5))
-                    .map(|_| rng.gen_range(0..=100))
+                (0..rng.random_range(1..=5))
+                    .map(|_| rng.random_range(0..=100))
                     .collect(),
             );
             rhs = Locator(
-                (0..rng.gen_range(1..=5))
-                    .map(|_| rng.gen_range(0..=100))
+                (0..rng.random_range(1..=5))
+                    .map(|_| rng.random_range(0..=100))
                     .collect(),
             );
         }

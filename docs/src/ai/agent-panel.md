@@ -23,7 +23,7 @@ From this point on, you can interact with the many supported features outlined b
 
 > Note that for external agents, like [Gemini CLI](./external-agents.md#gemini-cli) or [Claude Code](./external-agents.md#claude-code), some of the features outlined below are _not_ currently supported—for example, _restoring threads from history_, _checkpoints_, _token usage display_, _model selection_, and others. All of them should hopefully be supported in the future.
 
-### Creating New Threads
+### Creating New Threads {#new-thread}
 
 By default, the Agent Panel uses Zed's first-party agent.
 

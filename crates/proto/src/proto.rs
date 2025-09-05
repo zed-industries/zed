@@ -104,6 +104,8 @@ messages!(
     (GetPathMetadata, Background),
     (GetPathMetadataResponse, Background),
     (GetPermalinkToLine, Foreground),
+    (GetProcesses, Background),
+    (GetProcessesResponse, Background),
     (GetPermalinkToLineResponse, Foreground),
     (GetProjectSymbols, Background),
     (GetProjectSymbolsResponse, Background),
@@ -280,6 +282,7 @@ messages!(
     (UpdateUserChannels, Foreground),
     (UpdateWorktree, Foreground),
     (UpdateWorktreeSettings, Foreground),
+    (UpdateUserSettings, Background),
     (UpdateRepository, Foreground),
     (RemoveRepository, Foreground),
     (UsersResponse, Foreground),
@@ -487,6 +490,7 @@ request_messages!(
     (GetDefaultBranch, GetDefaultBranchResponse),
     (GitClone, GitCloneResponse),
     (ToggleLspLogs, Ack),
+    (GetProcesses, GetProcessesResponse),
 );
 
 lsp_messages!(
@@ -586,6 +590,7 @@ entity_messages!(
     UpdateRepository,
     RemoveRepository,
     UpdateWorktreeSettings,
+    UpdateUserSettings,
     LspExtExpandMacro,
     LspExtOpenDocs,
     LspExtRunnables,
@@ -612,6 +617,7 @@ entity_messages!(
     ActiveToolchain,
     ResolveToolchain,
     GetPathMetadata,
+    GetProcesses,
     CancelLanguageServerWork,
     RegisterBufferWithLanguageServers,
     GitShow,

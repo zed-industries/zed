@@ -1025,43 +1025,31 @@ impl SlashCommandCompletion {
             return None;
         }
 
-        let last_command_start = line.rfind('/')?;
-        if last_command_start >= line.len() {
-            return Some(Self::default());
-        }
-        if last_command_start > 0
-            && line
-                .chars()
-                .nth(last_command_start - 1)
-                .is_some_and(|c| !c.is_whitespace())
+        let (prefix, last_command) = line.rsplit_once('/')?;
+        if prefix.chars().last().is_some_and(|c| !c.is_whitespace())
+            || last_command.starts_with(char::is_whitespace)
         {
             return None;
         }
 
-        let rest_of_line = &line[last_command_start + 1..];
-
-        let mut command = None;
         let mut argument = None;
-        let mut end = last_command_start + 1;
-
-        if let Some(command_text) = rest_of_line.split_whitespace().next() {
-            command = Some(command_text.to_string());
-            end += command_text.len();
-
-            // Find the start of arguments after the command
-            if let Some(args_start) =
-                rest_of_line[command_text.len()..].find(|c: char| !c.is_whitespace())
-            {
-                let args = &rest_of_line[command_text.len() + args_start..].trim_end();
-                if !args.is_empty() {
-                    argument = Some(args.to_string());
-                    end += args.len() + 1;
-                }
+        let mut command = None;
+        if let Some((command_text, args)) = last_command.split_once(char::is_whitespace) {
+            if !args.is_empty() {
+                argument = Some(args.trim_end().to_string());
             }
-        }
+            command = Some(command_text.to_string());
+        } else if !last_command.is_empty() {
+            command = Some(last_command.to_string());
+        };
 
         Some(Self {
-            source_range: last_command_start + offset_to_line..end + offset_to_line,
+            source_range: prefix.len() + offset_to_line
+                ..line
+                    .rfind(|c: char| !c.is_whitespace())
+                    .unwrap_or_else(|| line.len())
+                    + 1
+                    + offset_to_line,
             command,
             argument,
         })
@@ -1180,6 +1168,15 @@ mod tests {
             })
         );
 
+        assert_eq!(
+            SlashCommandCompletion::try_parse("/拿不到命令 拿不到命令 ", 0),
+            Some(SlashCommandCompletion {
+                source_range: 0..30,
+                command: Some("拿不到命令".to_string()),
+                argument: Some("拿不到命令".to_string()),
+            })
+        );
+
         assert_eq!(SlashCommandCompletion::try_parse("Lorem Ipsum", 0), None);
 
         assert_eq!(SlashCommandCompletion::try_parse("Lorem /", 0), None);
@@ -1187,6 +1184,8 @@ mod tests {
         assert_eq!(SlashCommandCompletion::try_parse("Lorem /help", 0), None);
 
         assert_eq!(SlashCommandCompletion::try_parse("Lorem/", 0), None);
+
+        assert_eq!(SlashCommandCompletion::try_parse("/ ", 0), None);
     }
 
     #[test]
