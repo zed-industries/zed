@@ -50,7 +50,17 @@ fn zed_dispatcher(cx: &mut App) -> impl Dispatcher {
         }
 
         fn dispatch_after(&self, duration: Duration, runnable: Runnable) {
-            self.scheduler.schedule_after(duration, runnable);
+            let timer = self.scheduler.timer(duration);
+            let future = async move {
+                timer.await;
+                runnable.run();
+            };
+            let (runnable, task) = async_task::spawn(future, {
+                let scheduler = self.scheduler.clone();
+                move |runnable| scheduler.schedule_background(runnable)
+            });
+            runnable.schedule();
+            task.detach();
         }
     }
 
