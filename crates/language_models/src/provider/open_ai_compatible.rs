@@ -180,7 +180,7 @@ impl OpenAiCompatibleLanguageModelProvider {
                         spawn_task.detach();
                     }
 
-                    this.settings = settings.clone();
+                    this.settings = settings;
                     cx.notify();
                 }
             }),
