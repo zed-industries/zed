@@ -14,7 +14,10 @@ use language::{
     DiagnosticSeverity, LanguageServerId, Point, ToOffset as _, ToPoint as _,
 };
 use project::lsp_store::CompletionDocumentation;
-use project::{Completion, CompletionResponse, CompletionSource, Project, ProjectPath};
+use project::{
+    Completion, CompletionDisplayOptions, CompletionResponse, CompletionSource, Project,
+    ProjectPath,
+};
 use std::fmt::Write as _;
 use std::ops::Range;
 use std::path::Path;
@@ -25,7 +28,7 @@ use util::split_str_with_ranges;
 
 /// Path used for unsaved buffer that contains style json. To support the json language server, this
 /// matches the name used in the generated schemas.
-const ZED_INSPECTOR_STYLE_JSON: &str = "/zed-inspector-style.json";
+const ZED_INSPECTOR_STYLE_JSON: &str = util_macros::path!("/zed-inspector-style.json");
 
 pub(crate) struct DivInspector {
     state: State,
@@ -664,6 +667,7 @@ impl CompletionProvider for RustStyleCompletionProvider {
                     confirm: None,
                 })
                 .collect(),
+            display_options: CompletionDisplayOptions::default(),
             is_incomplete: false,
         }]))
     }

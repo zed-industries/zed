@@ -197,7 +197,7 @@ impl AnthropicLanguageModelProvider {
         })
     }
 
-    pub fn api_key(cx: &mut App) -> Task<Result<ApiKey>> {
+    pub fn api_key(cx: &mut App) -> Task<Result<ApiKey, AuthenticateError>> {
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
         let api_url = AllLanguageModelSettings::get_global(cx)
             .anthropic
@@ -424,14 +424,21 @@ impl AnthropicModel {
             return futures::future::ready(Err(anyhow!("App state dropped").into())).boxed();
         };
 
+        let beta_headers = self.model.beta_headers();
+
         async move {
             let Some(api_key) = api_key else {
                 return Err(LanguageModelCompletionError::NoApiKey {
                     provider: PROVIDER_NAME,
                 });
             };
-            let request =
-                anthropic::stream_completion(http_client.as_ref(), &api_url, &api_key, request);
+            let request = anthropic::stream_completion(
+                http_client.as_ref(),
+                &api_url,
+                &api_key,
+                request,
+                beta_headers,
+            );
             request.await.map_err(Into::into)
         }
         .boxed()
@@ -1041,9 +1048,9 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new(format!("To use {}, you need to add an API key. Follow these steps:", match self.target_agent {
-                    ConfigurationViewTargetAgent::ZedAgent => "Zed's agent with Anthropic",
-                    ConfigurationViewTargetAgent::Other(agent) => agent,
+                .child(Label::new(format!("To use {}, you need to add an API key. Follow these steps:", match &self.target_agent {
+                    ConfigurationViewTargetAgent::ZedAgent => "Zed's agent with Anthropic".into(),
+                    ConfigurationViewTargetAgent::Other(agent) => agent.clone(),
                 })))
                 .child(
                     List::new()

@@ -2,9 +2,9 @@ use dap_types::SteppingGranularity;
 use gpui::{App, Global};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, SettingsUi)]
 #[serde(rename_all = "snake_case")]
 pub enum DebugPanelDockPosition {
     Left,
@@ -12,12 +12,17 @@ pub enum DebugPanelDockPosition {
     Right,
 }
 
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, SettingsUi, SettingsKey)]
 #[serde(default)]
+// todo(settings_ui) @ben: I'm pretty sure not having the fields be optional here is a bug,
+// it means the defaults will override previously set values if a single key is missing
+#[settings_ui(group = "Debugger")]
+#[settings_key(key = "debugger")]
 pub struct DebuggerSettings {
     /// Determines the stepping granularity.
     ///
     /// Default: line
+    #[settings_ui(skip)]
     pub stepping_granularity: SteppingGranularity,
     /// Whether the breakpoints should be reused across Zed sessions.
     ///
@@ -60,8 +65,6 @@ impl Default for DebuggerSettings {
 }
 
 impl Settings for DebuggerSettings {
-    const KEY: Option<&'static str> = Some("debugger");
-
     type FileContent = Self;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {

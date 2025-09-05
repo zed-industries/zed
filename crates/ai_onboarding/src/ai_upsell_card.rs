@@ -1,22 +1,19 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use client::{Client, UserStore, zed_urls};
 use cloud_llm_client::Plan;
-use gpui::{
-    Animation, AnimationExt, AnyElement, App, Entity, IntoElement, RenderOnce, Transformation,
-    Window, percentage,
-};
-use ui::{Divider, Vector, VectorName, prelude::*};
+use gpui::{AnyElement, App, Entity, IntoElement, RenderOnce, Window};
+use ui::{CommonAnimationExt, Divider, Vector, VectorName, prelude::*};
 
 use crate::{SignInStatus, YoungAccountBanner, plan_definitions::PlanDefinitions};
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct AiUpsellCard {
-    pub sign_in_status: SignInStatus,
-    pub sign_in: Arc<dyn Fn(&mut Window, &mut App)>,
-    pub account_too_young: bool,
-    pub user_plan: Option<Plan>,
-    pub tab_index: Option<isize>,
+    sign_in_status: SignInStatus,
+    sign_in: Arc<dyn Fn(&mut Window, &mut App)>,
+    account_too_young: bool,
+    user_plan: Option<Plan>,
+    tab_index: Option<isize>,
 }
 
 impl AiUpsellCard {
@@ -42,6 +39,11 @@ impl AiUpsellCard {
             account_too_young: store.account_too_young(),
             tab_index: None,
         }
+    }
+
+    pub fn tab_index(mut self, tab_index: Option<isize>) -> Self {
+        self.tab_index = tab_index;
+        self
     }
 }
 
@@ -84,10 +86,16 @@ impl RenderOnce for AiUpsellCard {
             )
             .child(plan_definitions.free_plan());
 
-        let grid_bg = h_flex().absolute().inset_0().w_full().h(px(240.)).child(
-            Vector::new(VectorName::Grid, rems_from_px(500.), rems_from_px(240.))
-                .color(Color::Custom(cx.theme().colors().border.opacity(0.05))),
-        );
+        let grid_bg = h_flex()
+            .absolute()
+            .inset_0()
+            .w_full()
+            .h(px(240.))
+            .bg(gpui::pattern_slash(
+                cx.theme().colors().border.opacity(0.1),
+                2.,
+                25.,
+            ));
 
         let gradient_bg = div()
             .absolute()
@@ -142,11 +150,7 @@ impl RenderOnce for AiUpsellCard {
                     rems_from_px(72.),
                 )
                 .color(Color::Custom(cx.theme().colors().text_accent.alpha(0.3)))
-                .with_animation(
-                    "loading_stamp",
-                    Animation::new(Duration::from_secs(10)).repeat(),
-                    |this, delta| this.transform(Transformation::rotate(percentage(delta))),
-                ),
+                .with_rotate_animation(10),
             );
 
         let pro_trial_stamp = div()

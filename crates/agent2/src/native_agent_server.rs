@@ -1,10 +1,9 @@
 use std::{any::Any, path::Path, rc::Rc, sync::Arc};
 
-use agent_servers::AgentServer;
+use agent_servers::{AgentServer, AgentServerDelegate};
 use anyhow::Result;
 use fs::Fs;
-use gpui::{App, Entity, Task};
-use project::Project;
+use gpui::{App, Entity, SharedString, Task};
 use prompt_store::PromptStore;
 
 use crate::{HistoryStore, NativeAgent, NativeAgentConnection, templates::Templates};
@@ -22,16 +21,12 @@ impl NativeAgentServer {
 }
 
 impl AgentServer for NativeAgentServer {
-    fn name(&self) -> &'static str {
-        "Zed Agent"
+    fn telemetry_id(&self) -> &'static str {
+        "zed"
     }
 
-    fn empty_state_headline(&self) -> &'static str {
-        self.name()
-    }
-
-    fn empty_state_message(&self) -> &'static str {
-        ""
+    fn name(&self) -> SharedString {
+        "Zed Agent".into()
     }
 
     fn logo(&self) -> ui::IconName {
@@ -41,14 +36,14 @@ impl AgentServer for NativeAgentServer {
     fn connect(
         &self,
         _root_dir: &Path,
-        project: &Entity<Project>,
+        delegate: AgentServerDelegate,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn acp_thread::AgentConnection>>> {
-        log::info!(
+        log::debug!(
             "NativeAgentServer::connect called for path: {:?}",
             _root_dir
         );
-        let project = project.clone();
+        let project = delegate.project().clone();
         let fs = self.fs.clone();
         let history = self.history.clone();
         let prompt_store = PromptStore::global(cx);
@@ -63,7 +58,7 @@ impl AgentServer for NativeAgentServer {
 
             // Create the connection wrapper
             let connection = NativeAgentConnection(agent);
-            log::info!("NativeAgentServer connection established successfully");
+            log::debug!("NativeAgentServer connection established successfully");
 
             Ok(Rc::new(connection) as Rc<dyn acp_thread::AgentConnection>)
         })

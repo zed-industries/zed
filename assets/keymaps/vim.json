@@ -337,7 +337,7 @@
       "ctrl-x ctrl-z": "editor::Cancel",
       "ctrl-x ctrl-e": "vim::LineDown",
       "ctrl-x ctrl-y": "vim::LineUp",
-      "ctrl-w": "editor::DeleteToPreviousWordStart",
+      "ctrl-w": ["editor::DeleteToPreviousWordStart", { "ignore_newlines": false, "ignore_brackets": false }],
       "ctrl-u": "editor::DeleteToBeginningOfLine",
       "ctrl-t": "vim::Indent",
       "ctrl-d": "vim::Outdent",
@@ -352,6 +352,15 @@
       "insert": "vim::ToggleReplace",
       "ctrl-o": "vim::TemporaryNormal",
       "ctrl-s": "editor::ShowSignatureHelp"
+    }
+  },
+  {
+    "context": "showing_completions",
+    "bindings": {
+      "ctrl-d": "vim::ScrollDown",
+      "ctrl-u": "vim::ScrollUp",
+      "ctrl-e": "vim::LineDown",
+      "ctrl-y": "vim::LineUp"
     }
   },
   {
@@ -428,12 +437,14 @@
       "g h": "vim::StartOfLine",
       "g s": "vim::FirstNonWhitespace", // "g s" default behavior is "space s"
       "g e": "vim::EndOfDocument",
+      "g .": "vim::HelixGotoLastModification", // go to last modification
       "g r": "editor::FindAllReferences", // zed specific
       "g t": "vim::WindowTop",
       "g c": "vim::WindowMiddle",
       "g b": "vim::WindowBottom",
 
-      "x": "editor::SelectLine",
+      "shift-r": "editor::Paste",
+      "x": "vim::HelixSelectLine",
       "shift-x": "editor::SelectLine",
       "%": "editor::SelectAll",
       // Window mode

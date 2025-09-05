@@ -147,11 +147,16 @@ impl LspAdapter for RustLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
+        cx: &AsyncApp,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         let release = latest_github_release(
             "rust-lang/rust-analyzer",
             true,
-            false,
+            ProjectSettings::try_read_global(cx, |s| {
+                s.lsp.get(&SERVER_NAME)?.fetch.as_ref()?.pre_release
+            })
+            .flatten()
+            .unwrap_or(false),
             delegate.http_client(),
         )
         .await?;
@@ -507,20 +512,6 @@ impl LspAdapter for RustLspAdapter {
                 merge_json_value_into(experimental, original_experimental);
             } else {
                 original.capabilities.experimental = Some(experimental);
-            }
-        }
-
-        let cargo_diagnostics_fetched_separately = ProjectSettings::get_global(cx)
-            .diagnostics
-            .fetch_cargo_diagnostics();
-        if cargo_diagnostics_fetched_separately {
-            let disable_check_on_save = json!({
-                "checkOnSave": false,
-            });
-            if let Some(initialization_options) = &mut original.initialization_options {
-                merge_json_value_into(disable_check_on_save, initialization_options);
-            } else {
-                original.initialization_options = Some(disable_check_on_save);
             }
         }
 
@@ -1072,7 +1063,7 @@ mod tests {
     #[gpui::test]
     async fn test_process_rust_diagnostics() {
         let mut params = lsp::PublishDiagnosticsParams {
-            uri: lsp::Url::from_file_path(path!("/a")).unwrap(),
+            uri: lsp::Uri::from_file_path(path!("/a")).unwrap(),
             version: None,
             diagnostics: vec![
                 // no newlines

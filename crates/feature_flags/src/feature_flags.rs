@@ -98,12 +98,20 @@ impl FeatureFlag for GeminiAndNativeFeatureFlag {
     // integration too, and we'd like to turn Gemini/Native on in new builds
     // without enabling Claude Code in old builds.
     const NAME: &'static str = "gemini-and-native";
+
+    fn enabled_for_all() -> bool {
+        true
+    }
 }
 
 pub struct ClaudeCodeFeatureFlag;
 
 impl FeatureFlag for ClaudeCodeFeatureFlag {
     const NAME: &'static str = "claude-code";
+
+    fn enabled_for_all() -> bool {
+        true
+    }
 }
 
 pub trait FeatureFlagViewExt<V: 'static> {
@@ -201,7 +209,7 @@ impl FeatureFlagAppExt for App {
     fn has_flag<T: FeatureFlag>(&self) -> bool {
         self.try_global::<FeatureFlags>()
             .map(|flags| flags.has_flag::<T>())
-            .unwrap_or(false)
+            .unwrap_or(T::enabled_for_all())
     }
 
     fn is_staff(&self) -> bool {

@@ -7,7 +7,7 @@ const DEFS_PATH: &str = "#/$defs/";
 ///
 /// This asserts that JsonSchema::schema_name() + "2" does not exist because this indicates that
 /// there are multiple types that use this name, and unfortunately schemars APIs do not support
-/// resolving this ambiguity - see https://github.com/GREsau/schemars/issues/449
+/// resolving this ambiguity - see <https://github.com/GREsau/schemars/issues/449>
 ///
 /// This takes a closure for `schema` because some settings types are not available on the remote
 /// server, and so will crash when attempting to access e.g. GlobalThemeRegistry.

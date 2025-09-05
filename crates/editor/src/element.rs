@@ -43,10 +43,10 @@ use gpui::{
     Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle,
     DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable as _, FontId,
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero,
-    Keystroke, Length, ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta, ScrollHandle,
-    ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled,
-    TextRun, TextStyleRefinement, WeakEntity, Window, anchored, deferred, div, fill,
+    KeybindingKeystroke, Length, ModifiersChangedEvent, MouseButton, MouseClickEvent,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta,
+    ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement,
+    Style, Styled, TextRun, TextStyleRefinement, WeakEntity, Window, anchored, deferred, div, fill,
     linear_color_stop, linear_gradient, outline, point, px, quad, relative, size, solid_background,
     transparent_black,
 };
@@ -74,7 +74,7 @@ use std::{
     fmt::{self, Write},
     iter, mem,
     ops::{Deref, Range},
-    path::Path,
+    path::{self, Path},
     rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
@@ -82,6 +82,7 @@ use std::{
 use sum_tree::Bias;
 use text::{BufferId, SelectionGoal};
 use theme::{ActiveTheme, Appearance, BufferLineHeight, PlayerColor};
+use ui::utils::ensure_minimum_contrast;
 use ui::{
     ButtonLike, ContextMenu, Indicator, KeyBinding, POPOVER_Y_PADDING, Tooltip, h_flex, prelude::*,
     right_click_menu,
@@ -90,8 +91,8 @@ use unicode_segmentation::UnicodeSegmentation;
 use util::post_inc;
 use util::{RangeExt, ResultExt, debug_panic};
 use workspace::{
-    CollaboratorId, OpenInTerminal, OpenTerminal, RevealInProjectPanel, Workspace, item::Item,
-    notifications::NotifyTaskExt,
+    CollaboratorId, ItemSettings, OpenInTerminal, OpenTerminal, RevealInProjectPanel, Workspace,
+    item::Item, notifications::NotifyTaskExt,
 };
 
 /// Determines what kinds of highlights should be applied to a lines background.
@@ -116,6 +117,7 @@ struct SelectionLayout {
 struct InlineBlameLayout {
     element: AnyElement,
     bounds: Bounds<Pixels>,
+    buffer_id: BufferId,
     entry: BlameEntry,
 }
 
@@ -585,6 +587,9 @@ impl EditorElement {
         register_action(editor, window, Editor::edit_log_breakpoint);
         register_action(editor, window, Editor::enable_breakpoint);
         register_action(editor, window, Editor::disable_breakpoint);
+        if editor.read(cx).enable_wrap_selections_in_tag(cx) {
+            register_action(editor, window, Editor::wrap_selections_in_tag);
+        }
     }
 
     fn register_key_listeners(&self, window: &mut Window, _: &mut App, layout: &EditorLayout) {
@@ -1153,7 +1158,7 @@ impl EditorElement {
             cx.notify();
         }
 
-        if let Some((bounds, blame_entry)) = &position_map.inline_blame_bounds {
+        if let Some((bounds, buffer_id, blame_entry)) = &position_map.inline_blame_bounds {
             let mouse_over_inline_blame = bounds.contains(&event.position);
             let mouse_over_popover = editor
                 .inline_blame_popover
@@ -1166,7 +1171,7 @@ impl EditorElement {
                 .is_some_and(|state| state.keyboard_grace);
 
             if mouse_over_inline_blame || mouse_over_popover {
-                editor.show_blame_popover(blame_entry, event.position, false, cx);
+                editor.show_blame_popover(*buffer_id, blame_entry, event.position, false, cx);
             } else if !keyboard_grace {
                 editor.hide_blame_popover(cx);
             }
@@ -2450,7 +2455,7 @@ impl EditorElement {
             padding * em_width
         };
 
-        let entry = blame
+        let (buffer_id, entry) = blame
             .update(cx, |blame, cx| {
                 blame.blame_for_rows(&[*row_info], cx).next()
             })
@@ -2485,13 +2490,22 @@ impl EditorElement {
         let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
         let bounds = Bounds::new(absolute_offset, size);
 
-        self.layout_blame_entry_popover(entry.clone(), blame, line_height, text_hitbox, window, cx);
+        self.layout_blame_entry_popover(
+            entry.clone(),
+            blame,
+            line_height,
+            text_hitbox,
+            row_info.buffer_id?,
+            window,
+            cx,
+        );
 
         element.prepaint_as_root(absolute_offset, AvailableSpace::min_size(), window, cx);
 
         Some(InlineBlameLayout {
             element,
             bounds,
+            buffer_id,
             entry,
         })
     }
@@ -2502,6 +2516,7 @@ impl EditorElement {
         blame: Entity<GitBlame>,
         line_height: Pixels,
         text_hitbox: &Hitbox,
+        buffer: BufferId,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -2526,6 +2541,7 @@ impl EditorElement {
                 popover_state.markdown,
                 workspace,
                 &blame,
+                buffer,
                 window,
                 cx,
             )
@@ -2600,14 +2616,16 @@ impl EditorElement {
             .into_iter()
             .enumerate()
             .flat_map(|(ix, blame_entry)| {
+                let (buffer_id, blame_entry) = blame_entry?;
                 let mut element = render_blame_entry(
                     ix,
                     &blame,
-                    blame_entry?,
+                    blame_entry,
                     &self.style,
                     &mut last_used_color,
                     self.editor.clone(),
                     workspace.clone(),
+                    buffer_id,
                     blame_renderer.clone(),
                     cx,
                 )?;
@@ -3257,12 +3275,165 @@ impl EditorElement {
             .collect()
     }
 
+    fn bg_segments_per_row(
+        rows: Range<DisplayRow>,
+        selections: &[(PlayerColor, Vec<SelectionLayout>)],
+        highlight_ranges: &[(Range<DisplayPoint>, Hsla)],
+        base_background: Hsla,
+    ) -> Vec<Vec<(Range<DisplayPoint>, Hsla)>> {
+        if rows.start >= rows.end {
+            return Vec::new();
+        }
+        if !base_background.is_opaque() {
+            // We don't actually know what color is behind this editor.
+            return Vec::new();
+        }
+        let highlight_iter = highlight_ranges.iter().cloned();
+        let selection_iter = selections.iter().flat_map(|(player_color, layouts)| {
+            let color = player_color.selection;
+            layouts.iter().filter_map(move |selection_layout| {
+                if selection_layout.range.start != selection_layout.range.end {
+                    Some((selection_layout.range.clone(), color))
+                } else {
+                    None
+                }
+            })
+        });
+        let mut per_row_map = vec![Vec::new(); rows.len()];
+        for (range, color) in highlight_iter.chain(selection_iter) {
+            let covered_rows = if range.end.column() == 0 {
+                cmp::max(range.start.row(), rows.start)..cmp::min(range.end.row(), rows.end)
+            } else {
+                cmp::max(range.start.row(), rows.start)
+                    ..cmp::min(range.end.row().next_row(), rows.end)
+            };
+            for row in covered_rows.iter_rows() {
+                let seg_start = if row == range.start.row() {
+                    range.start
+                } else {
+                    DisplayPoint::new(row, 0)
+                };
+                let seg_end = if row == range.end.row() && range.end.column() != 0 {
+                    range.end
+                } else {
+                    DisplayPoint::new(row, u32::MAX)
+                };
+                let ix = row.minus(rows.start) as usize;
+                debug_assert!(row >= rows.start && row < rows.end);
+                debug_assert!(ix < per_row_map.len());
+                per_row_map[ix].push((seg_start..seg_end, color));
+            }
+        }
+        for row_segments in per_row_map.iter_mut() {
+            if row_segments.is_empty() {
+                continue;
+            }
+            let segments = mem::take(row_segments);
+            let merged = Self::merge_overlapping_ranges(segments, base_background);
+            *row_segments = merged;
+        }
+        per_row_map
+    }
+
+    /// Merge overlapping ranges by splitting at all range boundaries and blending colors where
+    /// multiple ranges overlap. The result contains non-overlapping ranges ordered from left to right.
+    ///
+    /// Expects `start.row() == end.row()` for each range.
+    fn merge_overlapping_ranges(
+        ranges: Vec<(Range<DisplayPoint>, Hsla)>,
+        base_background: Hsla,
+    ) -> Vec<(Range<DisplayPoint>, Hsla)> {
+        struct Boundary {
+            pos: DisplayPoint,
+            is_start: bool,
+            index: usize,
+            color: Hsla,
+        }
+
+        let mut boundaries: SmallVec<[Boundary; 16]> = SmallVec::with_capacity(ranges.len() * 2);
+        for (index, (range, color)) in ranges.iter().enumerate() {
+            debug_assert!(
+                range.start.row() == range.end.row(),
+                "expects single-row ranges"
+            );
+            if range.start < range.end {
+                boundaries.push(Boundary {
+                    pos: range.start,
+                    is_start: true,
+                    index,
+                    color: *color,
+                });
+                boundaries.push(Boundary {
+                    pos: range.end,
+                    is_start: false,
+                    index,
+                    color: *color,
+                });
+            }
+        }
+
+        if boundaries.is_empty() {
+            return Vec::new();
+        }
+
+        boundaries
+            .sort_unstable_by(|a, b| a.pos.cmp(&b.pos).then_with(|| a.is_start.cmp(&b.is_start)));
+
+        let mut processed_ranges: Vec<(Range<DisplayPoint>, Hsla)> = Vec::new();
+        let mut active_ranges: SmallVec<[(usize, Hsla); 8]> = SmallVec::new();
+
+        let mut i = 0;
+        let mut start_pos = boundaries[0].pos;
+
+        let boundaries_len = boundaries.len();
+        while i < boundaries_len {
+            let current_boundary_pos = boundaries[i].pos;
+            if start_pos < current_boundary_pos {
+                if !active_ranges.is_empty() {
+                    let mut color = base_background;
+                    for &(_, c) in &active_ranges {
+                        color = Hsla::blend(color, c);
+                    }
+                    if let Some((last_range, last_color)) = processed_ranges.last_mut() {
+                        if *last_color == color && last_range.end == start_pos {
+                            last_range.end = current_boundary_pos;
+                        } else {
+                            processed_ranges.push((start_pos..current_boundary_pos, color));
+                        }
+                    } else {
+                        processed_ranges.push((start_pos..current_boundary_pos, color));
+                    }
+                }
+            }
+            while i < boundaries_len && boundaries[i].pos == current_boundary_pos {
+                let active_range = &boundaries[i];
+                if active_range.is_start {
+                    let idx = active_range.index;
+                    let pos = active_ranges
+                        .binary_search_by_key(&idx, |(i, _)| *i)
+                        .unwrap_or_else(|p| p);
+                    active_ranges.insert(pos, (idx, active_range.color));
+                } else {
+                    let idx = active_range.index;
+                    if let Ok(pos) = active_ranges.binary_search_by_key(&idx, |(i, _)| *i) {
+                        active_ranges.remove(pos);
+                    }
+                }
+                i += 1;
+            }
+            start_pos = current_boundary_pos;
+        }
+
+        processed_ranges
+    }
+
     fn layout_lines(
         rows: Range<DisplayRow>,
         snapshot: &EditorSnapshot,
         style: &EditorStyle,
         editor_width: Pixels,
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
+        bg_segments_per_row: &[Vec<(Range<DisplayPoint>, Hsla)>],
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<LineWithInvisibles> {
@@ -3318,6 +3489,7 @@ impl EditorElement {
                 &snapshot.mode,
                 editor_width,
                 is_row_soft_wrapped,
+                bg_segments_per_row,
                 window,
                 cx,
             )
@@ -3603,176 +3775,187 @@ impl EditorElement {
         let focus_handle = editor.focus_handle(cx);
         let colors = cx.theme().colors();
 
-        let header =
-            div()
-                .p_1()
-                .w_full()
-                .h(FILE_HEADER_HEIGHT as f32 * window.line_height())
-                .child(
-                    h_flex()
-                        .size_full()
-                        .gap_2()
-                        .flex_basis(Length::Definite(DefiniteLength::Fraction(0.667)))
-                        .pl_0p5()
-                        .pr_5()
-                        .rounded_sm()
-                        .when(is_sticky, |el| el.shadow_md())
-                        .border_1()
-                        .map(|div| {
-                            let border_color = if is_selected
-                                && is_folded
-                                && focus_handle.contains_focused(window, cx)
-                            {
-                                colors.border_focused
-                            } else {
-                                colors.border
-                            };
-                            div.border_color(border_color)
-                        })
-                        .bg(colors.editor_subheader_background)
-                        .hover(|style| style.bg(colors.element_hover))
-                        .map(|header| {
-                            let editor = self.editor.clone();
-                            let buffer_id = for_excerpt.buffer_id;
-                            let toggle_chevron_icon =
-                                FileIcons::get_chevron_icon(!is_folded, cx).map(Icon::from_path);
-                            header.child(
-                                div()
-                                    .hover(|style| style.bg(colors.element_selected))
-                                    .rounded_xs()
-                                    .child(
-                                        ButtonLike::new("toggle-buffer-fold")
-                                            .style(ui::ButtonStyle::Transparent)
-                                            .height(px(28.).into())
-                                            .width(px(28.))
-                                            .children(toggle_chevron_icon)
-                                            .tooltip({
-                                                let focus_handle = focus_handle.clone();
-                                                move |window, cx| {
-                                                    Tooltip::with_meta_in(
-                                                        "Toggle Excerpt Fold",
-                                                        Some(&ToggleFold),
-                                                        "Alt+click to toggle all",
-                                                        &focus_handle,
+        let header = div()
+            .p_1()
+            .w_full()
+            .h(FILE_HEADER_HEIGHT as f32 * window.line_height())
+            .child(
+                h_flex()
+                    .size_full()
+                    .gap_2()
+                    .flex_basis(Length::Definite(DefiniteLength::Fraction(0.667)))
+                    .pl_0p5()
+                    .pr_5()
+                    .rounded_sm()
+                    .when(is_sticky, |el| el.shadow_md())
+                    .border_1()
+                    .map(|div| {
+                        let border_color = if is_selected
+                            && is_folded
+                            && focus_handle.contains_focused(window, cx)
+                        {
+                            colors.border_focused
+                        } else {
+                            colors.border
+                        };
+                        div.border_color(border_color)
+                    })
+                    .bg(colors.editor_subheader_background)
+                    .hover(|style| style.bg(colors.element_hover))
+                    .map(|header| {
+                        let editor = self.editor.clone();
+                        let buffer_id = for_excerpt.buffer_id;
+                        let toggle_chevron_icon =
+                            FileIcons::get_chevron_icon(!is_folded, cx).map(Icon::from_path);
+                        header.child(
+                            div()
+                                .hover(|style| style.bg(colors.element_selected))
+                                .rounded_xs()
+                                .child(
+                                    ButtonLike::new("toggle-buffer-fold")
+                                        .style(ui::ButtonStyle::Transparent)
+                                        .height(px(28.).into())
+                                        .width(px(28.))
+                                        .children(toggle_chevron_icon)
+                                        .tooltip({
+                                            let focus_handle = focus_handle.clone();
+                                            move |window, cx| {
+                                                Tooltip::with_meta_in(
+                                                    "Toggle Excerpt Fold",
+                                                    Some(&ToggleFold),
+                                                    "Alt+click to toggle all",
+                                                    &focus_handle,
+                                                    window,
+                                                    cx,
+                                                )
+                                            }
+                                        })
+                                        .on_click(move |event, window, cx| {
+                                            if event.modifiers().alt {
+                                                // Alt+click toggles all buffers
+                                                editor.update(cx, |editor, cx| {
+                                                    editor.toggle_fold_all(
+                                                        &ToggleFoldAll,
                                                         window,
                                                         cx,
-                                                    )
-                                                }
-                                            })
-                                            .on_click(move |event, window, cx| {
-                                                if event.modifiers().alt {
-                                                    // Alt+click toggles all buffers
+                                                    );
+                                                });
+                                            } else {
+                                                // Regular click toggles single buffer
+                                                if is_folded {
                                                     editor.update(cx, |editor, cx| {
-                                                        editor.toggle_fold_all(
-                                                            &ToggleFoldAll,
-                                                            window,
-                                                            cx,
-                                                        );
+                                                        editor.unfold_buffer(buffer_id, cx);
                                                     });
                                                 } else {
-                                                    // Regular click toggles single buffer
-                                                    if is_folded {
-                                                        editor.update(cx, |editor, cx| {
-                                                            editor.unfold_buffer(buffer_id, cx);
-                                                        });
-                                                    } else {
-                                                        editor.update(cx, |editor, cx| {
-                                                            editor.fold_buffer(buffer_id, cx);
-                                                        });
-                                                    }
+                                                    editor.update(cx, |editor, cx| {
+                                                        editor.fold_buffer(buffer_id, cx);
+                                                    });
                                                 }
-                                            }),
-                                    ),
-                            )
-                        })
-                        .children(
-                            editor
-                                .addons
-                                .values()
-                                .filter_map(|addon| {
-                                    addon.render_buffer_header_controls(for_excerpt, window, cx)
-                                })
-                                .take(1),
+                                            }
+                                        }),
+                                ),
                         )
-                        .child(
-                            h_flex()
-                                .size(Pixels(12.0))
-                                .justify_center()
-                                .children(indicator),
-                        )
-                        .child(
-                            h_flex()
-                                .cursor_pointer()
-                                .id("path header block")
-                                .size_full()
-                                .justify_between()
-                                .overflow_hidden()
-                                .child(
-                                    h_flex()
-                                        .gap_2()
-                                        .child(
-                                            Label::new(
-                                                filename
-                                                    .map(SharedString::from)
-                                                    .unwrap_or_else(|| "untitled".into()),
-                                            )
-                                            .single_line()
-                                            .when_some(file_status, |el, status| {
-                                                el.color(if status.is_conflicted() {
-                                                    Color::Conflict
-                                                } else if status.is_modified() {
-                                                    Color::Modified
-                                                } else if status.is_deleted() {
-                                                    Color::Disabled
-                                                } else {
-                                                    Color::Created
-                                                })
-                                                .when(status.is_deleted(), |el| el.strikethrough())
-                                            }),
-                                        )
-                                        .when_some(parent_path, |then, path| {
-                                            then.child(div().child(path).text_color(
-                                                if file_status.is_some_and(FileStatus::is_deleted) {
-                                                    colors.text_disabled
-                                                } else {
-                                                    colors.text_muted
+                    })
+                    .children(
+                        editor
+                            .addons
+                            .values()
+                            .filter_map(|addon| {
+                                addon.render_buffer_header_controls(for_excerpt, window, cx)
+                            })
+                            .take(1),
+                    )
+                    .child(
+                        h_flex()
+                            .size(Pixels(12.0))
+                            .justify_center()
+                            .children(indicator),
+                    )
+                    .child(
+                        h_flex()
+                            .cursor_pointer()
+                            .id("path header block")
+                            .size_full()
+                            .justify_between()
+                            .overflow_hidden()
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .map(|path_header| {
+                                        let filename = filename
+                                            .map(SharedString::from)
+                                            .unwrap_or_else(|| "untitled".into());
+
+                                        path_header
+                                            .when(ItemSettings::get_global(cx).file_icons, |el| {
+                                                let path = path::Path::new(filename.as_str());
+                                                let icon = FileIcons::get_icon(path, cx)
+                                                    .unwrap_or_default();
+                                                let icon =
+                                                    Icon::from_path(icon).color(Color::Muted);
+                                                el.child(icon)
+                                            })
+                                            .child(Label::new(filename).single_line().when_some(
+                                                file_status,
+                                                |el, status| {
+                                                    el.color(if status.is_conflicted() {
+                                                        Color::Conflict
+                                                    } else if status.is_modified() {
+                                                        Color::Modified
+                                                    } else if status.is_deleted() {
+                                                        Color::Disabled
+                                                    } else {
+                                                        Color::Created
+                                                    })
+                                                    .when(status.is_deleted(), |el| {
+                                                        el.strikethrough()
+                                                    })
                                                 },
                                             ))
-                                        }),
-                                )
-                                .when(
-                                    can_open_excerpts && is_selected && relative_path.is_some(),
-                                    |el| {
-                                        el.child(
-                                            h_flex()
-                                                .id("jump-to-file-button")
-                                                .gap_2p5()
-                                                .child(Label::new("Jump To File"))
-                                                .children(
-                                                    KeyBinding::for_action_in(
-                                                        &OpenExcerpts,
-                                                        &focus_handle,
-                                                        window,
-                                                        cx,
-                                                    )
-                                                    .map(|binding| binding.into_any_element()),
-                                                ),
-                                        )
-                                    },
-                                )
-                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                                .on_click(window.listener_for(&self.editor, {
-                                    move |editor, e: &ClickEvent, window, cx| {
-                                        editor.open_excerpts_common(
-                                            Some(jump_data.clone()),
-                                            e.modifiers().secondary(),
-                                            window,
-                                            cx,
-                                        );
-                                    }
-                                })),
-                        ),
-                );
+                                    })
+                                    .when_some(parent_path, |then, path| {
+                                        then.child(div().child(path).text_color(
+                                            if file_status.is_some_and(FileStatus::is_deleted) {
+                                                colors.text_disabled
+                                            } else {
+                                                colors.text_muted
+                                            },
+                                        ))
+                                    }),
+                            )
+                            .when(
+                                can_open_excerpts && is_selected && relative_path.is_some(),
+                                |el| {
+                                    el.child(
+                                        h_flex()
+                                            .id("jump-to-file-button")
+                                            .gap_2p5()
+                                            .child(Label::new("Jump To File"))
+                                            .children(
+                                                KeyBinding::for_action_in(
+                                                    &OpenExcerpts,
+                                                    &focus_handle,
+                                                    window,
+                                                    cx,
+                                                )
+                                                .map(|binding| binding.into_any_element()),
+                                            ),
+                                    )
+                                },
+                            )
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_click(window.listener_for(&self.editor, {
+                                move |editor, e: &ClickEvent, window, cx| {
+                                    editor.open_excerpts_common(
+                                        Some(jump_data.clone()),
+                                        e.modifiers().secondary(),
+                                        window,
+                                        cx,
+                                    );
+                                }
+                            })),
+                    ),
+            );
 
         let file = for_excerpt.buffer.file().cloned();
         let editor = self.editor.clone();
@@ -5898,7 +6081,7 @@ impl EditorElement {
                 };
 
                 self.paint_lines_background(layout, window, cx);
-                let invisible_display_ranges = self.paint_highlights(layout, window);
+                let invisible_display_ranges = self.paint_highlights(layout, window, cx);
                 self.paint_document_colors(layout, window);
                 self.paint_lines(&invisible_display_ranges, layout, window, cx);
                 self.paint_redactions(layout, window);
@@ -5920,6 +6103,7 @@ impl EditorElement {
         &mut self,
         layout: &mut EditorLayout,
         window: &mut Window,
+        cx: &mut App,
     ) -> SmallVec<[Range<DisplayPoint>; 32]> {
         window.paint_layer(layout.position_map.text_hitbox.bounds, |window| {
             let mut invisible_display_ranges = SmallVec::<[Range<DisplayPoint>; 32]>::new();
@@ -5936,7 +6120,11 @@ impl EditorElement {
                 );
             }
 
-            let corner_radius = 0.15 * layout.position_map.line_height;
+            let corner_radius = if EditorSettings::get_global(cx).rounded_selection {
+                0.15 * layout.position_map.line_height
+            } else {
+                Pixels::ZERO
+            };
 
             for (player_color, selections) in &layout.selections {
                 for selection in selections.iter() {
@@ -7139,7 +7327,7 @@ fn header_jump_data(
 pub struct AcceptEditPredictionBinding(pub(crate) Option<gpui::KeyBinding>);
 
 impl AcceptEditPredictionBinding {
-    pub fn keystroke(&self) -> Option<&Keystroke> {
+    pub fn keystroke(&self) -> Option<&KeybindingKeystroke> {
         if let Some(binding) = self.0.as_ref() {
             match &binding.keystrokes() {
                 [keystroke, ..] => Some(keystroke),
@@ -7224,12 +7412,13 @@ fn render_blame_entry_popover(
     markdown: Entity<Markdown>,
     workspace: WeakEntity<Workspace>,
     blame: &Entity<GitBlame>,
+    buffer: BufferId,
     window: &mut Window,
     cx: &mut App,
 ) -> Option<AnyElement> {
     let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
     let blame = blame.read(cx);
-    let repository = blame.repository(cx)?;
+    let repository = blame.repository(cx, buffer)?;
     renderer.render_blame_entry_popover(
         blame_entry,
         scroll_handle,
@@ -7250,6 +7439,7 @@ fn render_blame_entry(
     last_used_color: &mut Option<(PlayerColor, Oid)>,
     editor: Entity<Editor>,
     workspace: Entity<Workspace>,
+    buffer: BufferId,
     renderer: Arc<dyn BlameRenderer>,
     cx: &mut App,
 ) -> Option<AnyElement> {
@@ -7270,8 +7460,8 @@ fn render_blame_entry(
     last_used_color.replace((sha_color, blame_entry.sha));
 
     let blame = blame.read(cx);
-    let details = blame.details_for_entry(&blame_entry);
-    let repository = blame.repository(cx)?;
+    let details = blame.details_for_entry(buffer, &blame_entry);
+    let repository = blame.repository(cx, buffer)?;
     renderer.render_blame_entry(
         &style.text,
         blame_entry,
@@ -7326,6 +7516,7 @@ impl LineWithInvisibles {
         editor_mode: &EditorMode,
         text_width: Pixels,
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
+        bg_segments_per_row: &[Vec<(Range<DisplayPoint>, Hsla)>],
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<Self> {
@@ -7341,6 +7532,7 @@ impl LineWithInvisibles {
         let mut row = 0;
         let mut line_exceeded_max_len = false;
         let font_size = text_style.font_size.to_pixels(window.rem_size());
+        let min_contrast = EditorSettings::get_global(cx).minimum_contrast_for_highlights;
 
         let ellipsis = SharedString::from("⋯");
 
@@ -7353,10 +7545,16 @@ impl LineWithInvisibles {
         }]) {
             if let Some(replacement) = highlighted_chunk.replacement {
                 if !line.is_empty() {
+                    let segments = bg_segments_per_row.get(row).map(|v| &v[..]).unwrap_or(&[]);
+                    let text_runs: &[TextRun] = if segments.is_empty() {
+                        &styles
+                    } else {
+                        &Self::split_runs_by_bg_segments(&styles, segments, min_contrast)
+                    };
                     let shaped_line = window.text_system().shape_line(
                         line.clone().into(),
                         font_size,
-                        &styles,
+                        text_runs,
                         None,
                     );
                     width += shaped_line.width;
@@ -7434,10 +7632,16 @@ impl LineWithInvisibles {
             } else {
                 for (ix, mut line_chunk) in highlighted_chunk.text.split('\n').enumerate() {
                     if ix > 0 {
+                        let segments = bg_segments_per_row.get(row).map(|v| &v[..]).unwrap_or(&[]);
+                        let text_runs = if segments.is_empty() {
+                            &styles
+                        } else {
+                            &Self::split_runs_by_bg_segments(&styles, segments, min_contrast)
+                        };
                         let shaped_line = window.text_system().shape_line(
                             line.clone().into(),
                             font_size,
-                            &styles,
+                            text_runs,
                             None,
                         );
                         width += shaped_line.width;
@@ -7523,6 +7727,81 @@ impl LineWithInvisibles {
         }
 
         layouts
+    }
+
+    /// Takes text runs and non-overlapping left-to-right background ranges with color.
+    /// Returns new text runs with adjusted contrast as per background ranges.
+    fn split_runs_by_bg_segments(
+        text_runs: &[TextRun],
+        bg_segments: &[(Range<DisplayPoint>, Hsla)],
+        min_contrast: f32,
+    ) -> Vec<TextRun> {
+        let mut output_runs: Vec<TextRun> = Vec::with_capacity(text_runs.len());
+        let mut line_col = 0usize;
+        let mut segment_ix = 0usize;
+
+        for text_run in text_runs.iter() {
+            let run_start_col = line_col;
+            let run_end_col = run_start_col + text_run.len;
+            while segment_ix < bg_segments.len()
+                && (bg_segments[segment_ix].0.end.column() as usize) <= run_start_col
+            {
+                segment_ix += 1;
+            }
+            let mut cursor_col = run_start_col;
+            let mut local_segment_ix = segment_ix;
+            while local_segment_ix < bg_segments.len() {
+                let (range, segment_color) = &bg_segments[local_segment_ix];
+                let segment_start_col = range.start.column() as usize;
+                let segment_end_col = range.end.column() as usize;
+                if segment_start_col >= run_end_col {
+                    break;
+                }
+                if segment_start_col > cursor_col {
+                    let span_len = segment_start_col - cursor_col;
+                    output_runs.push(TextRun {
+                        len: span_len,
+                        font: text_run.font.clone(),
+                        color: text_run.color,
+                        background_color: text_run.background_color,
+                        underline: text_run.underline,
+                        strikethrough: text_run.strikethrough,
+                    });
+                    cursor_col = segment_start_col;
+                }
+                let segment_slice_end_col = segment_end_col.min(run_end_col);
+                if segment_slice_end_col > cursor_col {
+                    let new_text_color =
+                        ensure_minimum_contrast(text_run.color, *segment_color, min_contrast);
+                    output_runs.push(TextRun {
+                        len: segment_slice_end_col - cursor_col,
+                        font: text_run.font.clone(),
+                        color: new_text_color,
+                        background_color: text_run.background_color,
+                        underline: text_run.underline,
+                        strikethrough: text_run.strikethrough,
+                    });
+                    cursor_col = segment_slice_end_col;
+                }
+                if segment_end_col >= run_end_col {
+                    break;
+                }
+                local_segment_ix += 1;
+            }
+            if cursor_col < run_end_col {
+                output_runs.push(TextRun {
+                    len: run_end_col - cursor_col,
+                    font: text_run.font.clone(),
+                    color: text_run.color,
+                    background_color: text_run.background_color,
+                    underline: text_run.underline,
+                    strikethrough: text_run.strikethrough,
+                });
+            }
+            line_col = run_end_col;
+            segment_ix = local_segment_ix;
+        }
+        output_runs
     }
 
     fn prepaint(
@@ -8438,12 +8717,20 @@ impl Element for EditorElement {
                         cx,
                     );
 
+                    let bg_segments_per_row = Self::bg_segments_per_row(
+                        start_row..end_row,
+                        &selections,
+                        &highlighted_ranges,
+                        self.style.background,
+                    );
+
                     let mut line_layouts = Self::layout_lines(
                         start_row..end_row,
                         &snapshot,
                         &self.style,
                         editor_width,
                         is_row_soft_wrapped,
+                        &bg_segments_per_row,
                         window,
                         cx,
                     );
@@ -8477,7 +8764,7 @@ impl Element for EditorElement {
                                 return None;
                             }
                             let blame = editor.blame.as_ref()?;
-                            let blame_entry = blame
+                            let (_, blame_entry) = blame
                                 .update(cx, |blame, cx| {
                                     let row_infos =
                                         snapshot.row_infos(snapshot.longest_row()).next()?;
@@ -9027,7 +9314,7 @@ impl Element for EditorElement {
                         text_hitbox: text_hitbox.clone(),
                         inline_blame_bounds: inline_blame_layout
                             .as_ref()
-                            .map(|layout| (layout.bounds, layout.entry.clone())),
+                            .map(|layout| (layout.bounds, layout.buffer_id, layout.entry.clone())),
                         display_hunks: display_hunks.clone(),
                         diff_hunk_control_bounds,
                     });
@@ -9687,7 +9974,7 @@ pub(crate) struct PositionMap {
     pub snapshot: EditorSnapshot,
     pub text_hitbox: Hitbox,
     pub gutter_hitbox: Hitbox,
-    pub inline_blame_bounds: Option<(Bounds<Pixels>, BlameEntry)>,
+    pub inline_blame_bounds: Option<(Bounds<Pixels>, BufferId, BlameEntry)>,
     pub display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
     pub diff_hunk_control_bounds: Vec<(DisplayRow, Bounds<Pixels>)>,
 }
@@ -9803,6 +10090,7 @@ pub fn layout_line(
         &snapshot.mode,
         text_width,
         is_row_soft_wrapped,
+        &[],
         window,
         cx,
     )
@@ -10702,5 +10990,290 @@ mod tests {
             .flat_map(|line_with_invisibles| &line_with_invisibles.invisibles)
             .cloned()
             .collect()
+    }
+
+    #[gpui::test]
+    fn test_merge_overlapping_ranges() {
+        let base_bg = Hsla::white();
+        let color1 = Hsla {
+            h: 0.0,
+            s: 0.5,
+            l: 0.5,
+            a: 0.5,
+        };
+        let color2 = Hsla {
+            h: 120.0,
+            s: 0.5,
+            l: 0.5,
+            a: 0.5,
+        };
+
+        let display_point = |col| DisplayPoint::new(DisplayRow(0), col);
+        let cols = |v: &Vec<(Range<DisplayPoint>, Hsla)>| -> Vec<(u32, u32)> {
+            v.iter()
+                .map(|(r, _)| (r.start.column(), r.end.column()))
+                .collect()
+        };
+
+        // Test overlapping ranges blend colors
+        let overlapping = vec![
+            (display_point(5)..display_point(15), color1),
+            (display_point(10)..display_point(20), color2),
+        ];
+        let result = EditorElement::merge_overlapping_ranges(overlapping, base_bg);
+        assert_eq!(cols(&result), vec![(5, 10), (10, 15), (15, 20)]);
+
+        // Test middle segment should have blended color
+        let blended = Hsla::blend(Hsla::blend(base_bg, color1), color2);
+        assert_eq!(result[1].1, blended);
+
+        // Test adjacent same-color ranges merge
+        let adjacent_same = vec![
+            (display_point(5)..display_point(10), color1),
+            (display_point(10)..display_point(15), color1),
+        ];
+        let result = EditorElement::merge_overlapping_ranges(adjacent_same, base_bg);
+        assert_eq!(cols(&result), vec![(5, 15)]);
+
+        // Test contained range splits
+        let contained = vec![
+            (display_point(5)..display_point(20), color1),
+            (display_point(10)..display_point(15), color2),
+        ];
+        let result = EditorElement::merge_overlapping_ranges(contained, base_bg);
+        assert_eq!(cols(&result), vec![(5, 10), (10, 15), (15, 20)]);
+
+        // Test multiple overlaps split at every boundary
+        let color3 = Hsla {
+            h: 240.0,
+            s: 0.5,
+            l: 0.5,
+            a: 0.5,
+        };
+        let complex = vec![
+            (display_point(5)..display_point(12), color1),
+            (display_point(8)..display_point(16), color2),
+            (display_point(10)..display_point(14), color3),
+        ];
+        let result = EditorElement::merge_overlapping_ranges(complex, base_bg);
+        assert_eq!(
+            cols(&result),
+            vec![(5, 8), (8, 10), (10, 12), (12, 14), (14, 16)]
+        );
+    }
+
+    #[gpui::test]
+    fn test_bg_segments_per_row() {
+        let base_bg = Hsla::white();
+
+        // Case A: selection spans three display rows: row 1 [5, end), full row 2, row 3 [0, 7)
+        {
+            let selection_color = Hsla {
+                h: 200.0,
+                s: 0.5,
+                l: 0.5,
+                a: 0.5,
+            };
+            let player_color = PlayerColor {
+                cursor: selection_color,
+                background: selection_color,
+                selection: selection_color,
+            };
+
+            let spanning_selection = SelectionLayout {
+                head: DisplayPoint::new(DisplayRow(3), 7),
+                cursor_shape: CursorShape::Bar,
+                is_newest: true,
+                is_local: true,
+                range: DisplayPoint::new(DisplayRow(1), 5)..DisplayPoint::new(DisplayRow(3), 7),
+                active_rows: DisplayRow(1)..DisplayRow(4),
+                user_name: None,
+            };
+
+            let selections = vec![(player_color, vec![spanning_selection])];
+            let result = EditorElement::bg_segments_per_row(
+                DisplayRow(0)..DisplayRow(5),
+                &selections,
+                &[],
+                base_bg,
+            );
+
+            assert_eq!(result.len(), 5);
+            assert!(result[0].is_empty());
+            assert_eq!(result[1].len(), 1);
+            assert_eq!(result[2].len(), 1);
+            assert_eq!(result[3].len(), 1);
+            assert!(result[4].is_empty());
+
+            assert_eq!(result[1][0].0.start, DisplayPoint::new(DisplayRow(1), 5));
+            assert_eq!(result[1][0].0.end.row(), DisplayRow(1));
+            assert_eq!(result[1][0].0.end.column(), u32::MAX);
+            assert_eq!(result[2][0].0.start, DisplayPoint::new(DisplayRow(2), 0));
+            assert_eq!(result[2][0].0.end.row(), DisplayRow(2));
+            assert_eq!(result[2][0].0.end.column(), u32::MAX);
+            assert_eq!(result[3][0].0.start, DisplayPoint::new(DisplayRow(3), 0));
+            assert_eq!(result[3][0].0.end, DisplayPoint::new(DisplayRow(3), 7));
+        }
+
+        // Case B: selection ends exactly at the start of row 3, excluding row 3
+        {
+            let selection_color = Hsla {
+                h: 120.0,
+                s: 0.5,
+                l: 0.5,
+                a: 0.5,
+            };
+            let player_color = PlayerColor {
+                cursor: selection_color,
+                background: selection_color,
+                selection: selection_color,
+            };
+
+            let selection = SelectionLayout {
+                head: DisplayPoint::new(DisplayRow(2), 0),
+                cursor_shape: CursorShape::Bar,
+                is_newest: true,
+                is_local: true,
+                range: DisplayPoint::new(DisplayRow(1), 5)..DisplayPoint::new(DisplayRow(3), 0),
+                active_rows: DisplayRow(1)..DisplayRow(3),
+                user_name: None,
+            };
+
+            let selections = vec![(player_color, vec![selection])];
+            let result = EditorElement::bg_segments_per_row(
+                DisplayRow(0)..DisplayRow(4),
+                &selections,
+                &[],
+                base_bg,
+            );
+
+            assert_eq!(result.len(), 4);
+            assert!(result[0].is_empty());
+            assert_eq!(result[1].len(), 1);
+            assert_eq!(result[2].len(), 1);
+            assert!(result[3].is_empty());
+
+            assert_eq!(result[1][0].0.start, DisplayPoint::new(DisplayRow(1), 5));
+            assert_eq!(result[1][0].0.end.row(), DisplayRow(1));
+            assert_eq!(result[1][0].0.end.column(), u32::MAX);
+            assert_eq!(result[2][0].0.start, DisplayPoint::new(DisplayRow(2), 0));
+            assert_eq!(result[2][0].0.end.row(), DisplayRow(2));
+            assert_eq!(result[2][0].0.end.column(), u32::MAX);
+        }
+    }
+
+    #[cfg(test)]
+    fn generate_test_run(len: usize, color: Hsla) -> TextRun {
+        TextRun {
+            len,
+            font: gpui::font(".SystemUIFont"),
+            color,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        }
+    }
+
+    #[gpui::test]
+    fn test_split_runs_by_bg_segments(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let text_color = Hsla {
+            h: 210.0,
+            s: 0.1,
+            l: 0.4,
+            a: 1.0,
+        };
+        let bg1 = Hsla {
+            h: 30.0,
+            s: 0.6,
+            l: 0.8,
+            a: 1.0,
+        };
+        let bg2 = Hsla {
+            h: 200.0,
+            s: 0.6,
+            l: 0.2,
+            a: 1.0,
+        };
+        let min_contrast = 45.0;
+
+        // Case A: single run; disjoint segments inside the run
+        let runs = vec![generate_test_run(20, text_color)];
+        let segs = vec![
+            (
+                DisplayPoint::new(DisplayRow(0), 5)..DisplayPoint::new(DisplayRow(0), 10),
+                bg1,
+            ),
+            (
+                DisplayPoint::new(DisplayRow(0), 12)..DisplayPoint::new(DisplayRow(0), 16),
+                bg2,
+            ),
+        ];
+        let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, min_contrast);
+        // Expected slices: [0,5) [5,10) [10,12) [12,16) [16,20)
+        assert_eq!(
+            out.iter().map(|r| r.len).collect::<Vec<_>>(),
+            vec![5, 5, 2, 4, 4]
+        );
+        assert_eq!(out[0].color, text_color);
+        assert_eq!(
+            out[1].color,
+            ensure_minimum_contrast(text_color, bg1, min_contrast)
+        );
+        assert_eq!(out[2].color, text_color);
+        assert_eq!(
+            out[3].color,
+            ensure_minimum_contrast(text_color, bg2, min_contrast)
+        );
+        assert_eq!(out[4].color, text_color);
+
+        // Case B: multiple runs; segment extends to end of line (u32::MAX)
+        let runs = vec![
+            generate_test_run(8, text_color),
+            generate_test_run(7, text_color),
+        ];
+        let segs = vec![(
+            DisplayPoint::new(DisplayRow(0), 6)..DisplayPoint::new(DisplayRow(0), u32::MAX),
+            bg1,
+        )];
+        let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, min_contrast);
+        // Expected slices across runs: [0,6) [6,8) | [0,7)
+        assert_eq!(out.iter().map(|r| r.len).collect::<Vec<_>>(), vec![6, 2, 7]);
+        let adjusted = ensure_minimum_contrast(text_color, bg1, min_contrast);
+        assert_eq!(out[0].color, text_color);
+        assert_eq!(out[1].color, adjusted);
+        assert_eq!(out[2].color, adjusted);
+
+        // Case C: multi-byte characters
+        // for text: "Hello 🌍 世界!"
+        let runs = vec![
+            generate_test_run(5, text_color), // "Hello"
+            generate_test_run(6, text_color), // " 🌍 "
+            generate_test_run(6, text_color), // "世界"
+            generate_test_run(1, text_color), // "!"
+        ];
+        // selecting "🌍 世"
+        let segs = vec![(
+            DisplayPoint::new(DisplayRow(0), 6)..DisplayPoint::new(DisplayRow(0), 14),
+            bg1,
+        )];
+        let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, min_contrast);
+        // "Hello" | " " | "🌍 " | "世" | "界" | "!"
+        assert_eq!(
+            out.iter().map(|r| r.len).collect::<Vec<_>>(),
+            vec![5, 1, 5, 3, 3, 1]
+        );
+        assert_eq!(out[0].color, text_color); // "Hello"
+        assert_eq!(
+            out[2].color,
+            ensure_minimum_contrast(text_color, bg1, min_contrast)
+        ); // "🌍 "
+        assert_eq!(
+            out[3].color,
+            ensure_minimum_contrast(text_color, bg1, min_contrast)
+        ); // "世"
+        assert_eq!(out[4].color, text_color); // "界"
+        assert_eq!(out[5].color, text_color); // "!"
     }
 }

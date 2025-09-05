@@ -38,12 +38,10 @@ pub trait AgentConnection {
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>>;
 
-    fn prompt_capabilities(&self) -> acp::PromptCapabilities;
-
     fn resume(
         &self,
         _session_id: &acp::SessionId,
-        _cx: &mut App,
+        _cx: &App,
     ) -> Option<Rc<dyn AgentSessionResume>> {
         None
     }
@@ -53,7 +51,7 @@ pub trait AgentConnection {
     fn truncate(
         &self,
         _session_id: &acp::SessionId,
-        _cx: &mut App,
+        _cx: &App,
     ) -> Option<Rc<dyn AgentSessionTruncate>> {
         None
     }
@@ -61,7 +59,7 @@ pub trait AgentConnection {
     fn set_title(
         &self,
         _session_id: &acp::SessionId,
-        _cx: &mut App,
+        _cx: &App,
     ) -> Option<Rc<dyn AgentSessionSetTitle>> {
         None
     }
@@ -77,7 +75,6 @@ pub trait AgentConnection {
     fn telemetry(&self) -> Option<Rc<dyn AgentTelemetry>> {
         None
     }
-
     fn into_any(self: Rc<Self>) -> Rc<dyn Any>;
 }
 
@@ -329,13 +326,19 @@ mod test_support {
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             let session_id = acp::SessionId(self.sessions.lock().len().to_string().into());
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
-            let thread = cx.new(|_cx| {
+            let thread = cx.new(|cx| {
                 AcpThread::new(
                     "Test",
                     self.clone(),
                     project,
                     action_log,
                     session_id.clone(),
+                    watch::Receiver::constant(acp::PromptCapabilities {
+                        image: true,
+                        audio: true,
+                        embedded_context: true,
+                    }),
+                    cx,
                 )
             });
             self.sessions.lock().insert(
@@ -346,14 +349,6 @@ mod test_support {
                 },
             );
             Task::ready(Ok(thread))
-        }
-
-        fn prompt_capabilities(&self) -> acp::PromptCapabilities {
-            acp::PromptCapabilities {
-                image: true,
-                audio: true,
-                embedded_context: true,
-            }
         }
 
         fn authenticate(
@@ -397,14 +392,15 @@ mod test_support {
                     };
                     let task = cx.spawn(async move |cx| {
                         if let Some((tool_call, options)) = permission_request {
-                            let permission = thread.update(cx, |thread, cx| {
-                                thread.request_tool_call_authorization(
-                                    tool_call.clone().into(),
-                                    options.clone(),
-                                    cx,
-                                )
-                            })?;
-                            permission?.await?;
+                            thread
+                                .update(cx, |thread, cx| {
+                                    thread.request_tool_call_authorization(
+                                        tool_call.clone().into(),
+                                        options.clone(),
+                                        cx,
+                                    )
+                                })??
+                                .await;
                         }
                         thread.update(cx, |thread, cx| {
                             thread.handle_session_update(update.clone(), cx).unwrap();
@@ -439,7 +435,7 @@ mod test_support {
         fn truncate(
             &self,
             _session_id: &agent_client_protocol::SessionId,
-            _cx: &mut App,
+            _cx: &App,
         ) -> Option<Rc<dyn AgentSessionTruncate>> {
             Some(Rc::new(StubAgentSessionEditor))
         }

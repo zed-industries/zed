@@ -610,11 +610,36 @@ message ServerMetadataUpdated {
 message LanguageServerLog {
     uint64 project_id = 1;
     uint64 language_server_id = 2;
+    string message = 3;
     oneof log_type {
-        uint32 log_message_type = 3;
-        LspLogTrace log_trace = 4;
+        LogMessage log = 4;
+        TraceMessage trace = 5;
+        RpcMessage rpc = 6;
     }
-    string message = 5;
+}
+
+message LogMessage {
+    LogLevel level = 1;
+
+    enum LogLevel {
+        LOG = 0;
+        INFO = 1;
+        WARNING = 2;
+        ERROR = 3;
+    }
+}
+
+message TraceMessage {
+    optional string verbose_info = 1;
+}
+
+message RpcMessage {
+    Kind kind = 1;
+
+    enum Kind {
+        RECEIVED = 0;
+        SENT = 1;
+    }
 }
 
 message LspLogTrace {
@@ -931,4 +956,17 @@ message MultiLspQuery {
 
 message MultiLspQueryResponse {
     repeated LspResponse responses = 1;
+}
+
+message ToggleLspLogs {
+    uint64 project_id = 1;
+    LogType log_type = 2;
+    uint64 server_id = 3;
+    bool enabled = 4;
+
+    enum LogType {
+        LOG = 0;
+        TRACE = 1;
+        RPC = 2;
+    }
 }
