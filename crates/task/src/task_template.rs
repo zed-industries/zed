@@ -898,7 +898,10 @@ mod tests {
     fn test_variable_default_values() {
         let task_with_defaults = TaskTemplate {
             label: "test with defaults".to_string(),
-            command: format!("echo ${{{}}}", VariableName::File.to_string() + ":fallback.txt"),
+            command: format!(
+                "echo ${{{}}}",
+                VariableName::File.to_string() + ":fallback.txt"
+            ),
             args: vec![
                 "${ZED_MISSING_VAR:default_value}".to_string(),
                 format!("${{{}}}", VariableName::Row.to_string() + ":42"),
@@ -934,9 +937,7 @@ mod tests {
         // Test 2: When ZED_FILE doesn't exist, should use default value
         let context_without_file = TaskContext {
             cwd: None,
-            task_variables: TaskVariables::from_iter(vec![
-                (VariableName::Row, "456".to_string()),
-            ]),
+            task_variables: TaskVariables::from_iter(vec![(VariableName::Row, "456".to_string())]),
             project_env: HashMap::default(),
         };
 
@@ -963,7 +964,9 @@ mod tests {
         };
 
         assert!(
-            task_no_default.resolve_task(TEST_ID_BASE, &TaskContext::default()).is_none(),
+            task_no_default
+                .resolve_task(TEST_ID_BASE, &TaskContext::default())
+                .is_none(),
             "Should fail when ZED variable has no default and doesn't exist"
         );
     }
