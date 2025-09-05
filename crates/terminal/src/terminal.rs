@@ -26,6 +26,8 @@ use alacritty_terminal::{
     },
 };
 use anyhow::{Result, bail};
+#[cfg(target_os = "windows")]
+use base64::Engine;
 
 use futures::{
     FutureExt,
@@ -408,7 +410,17 @@ impl TerminalBuilder {
                         args: {
                             let mut args = args;
                             args.insert(0, program);
-                            Some(args)
+                            Some(vec![
+                                "-EncodedCommand".to_string(),
+                                base64::prelude::BASE64_STANDARD.encode(
+                                    args.join(" ")
+                                        .encode_utf16()
+                                        .chain([0])
+                                        .flat_map(u16::to_le_bytes)
+                                        .collect::<Vec<_>>()
+                                        .as_slice(),
+                                ),
+                            ])
                         },
                         title_override,
                     }
@@ -447,7 +459,7 @@ impl TerminalBuilder {
                 drain_on_exit: true,
                 env: env.clone().into_iter().collect(),
                 #[cfg(target_os = "windows")]
-                escape_args: true,
+                escape_args: false,
             }
         };
 
