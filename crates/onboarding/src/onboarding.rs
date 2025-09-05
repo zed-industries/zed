@@ -12,7 +12,7 @@ use notifications::status_toast::{StatusToast, ToastIcon};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{SettingsStore, VsCodeSettingsSource};
-use std::{sync::Arc, time::Instant};
+use std::sync::Arc;
 use ui::{
     Avatar, ButtonLike, FluentBuilder, Headline, KeyBinding, ParentElement as _,
     StatefulInteractiveElement, Vector, VectorName, prelude::*, rems_from_px,
