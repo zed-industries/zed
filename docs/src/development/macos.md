@@ -33,7 +33,7 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
 
 ### Backend Dependencies (optional) {#backend-dependencies}
 
-If you are looking to develop Zed collaboration features using a local collabortation server, please see: [Local Collaboration](./local-collaboration.md) docs.
+If you are looking to develop Zed collaboration features using a local collaboration server, please see: [Local Collaboration](./local-collaboration.md) docs.
 
 ## Building Zed from Source
 
