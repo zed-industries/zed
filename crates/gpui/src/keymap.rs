@@ -704,7 +704,7 @@ mod tests {
         keymap.add_bindings([default_binding]);
 
         // Add a user keymap binding
-        let mut user_binding = KeyBinding::new( "cmd-r", ActionBeta {}, Some("Editor"));
+        let mut user_binding = KeyBinding::new("cmd-r", ActionBeta {}, Some("Editor"));
         user_binding.set_meta(KeyBindingMetaIndex(0)); // User source
         keymap.add_bindings([user_binding]);
 
