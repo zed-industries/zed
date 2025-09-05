@@ -1,7 +1,6 @@
 use crate::{
     Anchor, Editor, EditorSettings, EditorSnapshot, FindAllReferences, GoToDefinition,
     GoToTypeDefinition, GotoDefinitionKind, InlayId, Navigated, PointForPosition, SelectPhase,
-    display_map::InlayOffset,
     editor_settings::GoToDefinitionFallback,
     hover_popover::{self, InlayHover},
     scroll::ScrollAmount,
@@ -16,7 +15,7 @@ use project::{
 };
 use settings::Settings;
 use std::ops::Range;
-use text;
+use text::{self, Point};
 use theme::ActiveTheme as _;
 use util::{ResultExt, TryFutureExt as _, maybe};
 
@@ -445,8 +444,8 @@ pub fn update_inlay_link_and_hover_points(
                                             let location = location.clone();
 
                                             get_docs_then_show_hover(
-                                                window, cx, highlight, hint_value, location,
-                                                project,
+                                                editor, window, cx, highlight, hint_value,
+                                                location, project,
                                             );
                                         }
 
@@ -486,7 +485,20 @@ pub fn update_inlay_link_and_hover_points(
     }
 }
 
+/// todo dvdsk: This extracts doc comments and shows them, a fine fallback
+/// though maybe we should instead alsk the LSP for info on the type?. Lets figure
+/// out what normal hoverdocs do.
+///
+/// issue with Entity<Markdown>. Needs one more (expensive) step before rendering
+/// which we need to cache.
+///
+/// --- PLAN ---
+/// - use location to call hover_popover and extract the text
+/// - then use claude written 'existing' hover method to see if that works
+/// - try use or adapt InfoPopover to get scrollbar/nice rendering (note issue above)
+/// - get the unwraps and as_refs out of here
 fn get_docs_then_show_hover(
+    editor: &mut Editor,
     window: &mut Window,
     cx: &mut Context<'_, Editor>,
     highlight: InlayHighlight,
@@ -494,128 +506,62 @@ fn get_docs_then_show_hover(
     location: lsp::Location,
     project: Entity<Project>,
 ) {
+    let provider = editor.semantics_provider.clone().unwrap();
     cx.spawn_in(window, async move |editor, cx| {
         async move {
-            // Small delay to show the loading message first
-            cx.background_executor()
-                .timer(std::time::Duration::from_millis(50))
-                .await;
-
             // Convert LSP URL to file path
             let file_path = location
                 .uri
                 .to_file_path()
                 .map_err(|_| anyhow::anyhow!("Invalid file URL"))?;
-
             // Open the definition file
             let definition_buffer = project
                 .update(cx, |project, cx| project.open_local_buffer(file_path, cx))?
                 .await?;
+            let location = Point::new(location.range.start.line, location.range.start.character);
+            let buffer_position = definition_buffer
+                .update(cx, |buffer, _| buffer.snapshot().anchor_after(location))
+                .unwrap();
 
-            // Extract documentation directly from the source
-            let documentation = definition_buffer.update(cx, |buffer, _| {
-                let line_number = location.range.start.line as usize;
-
-                // Get the text of the buffer
-                let text = buffer.text();
-                let lines: Vec<&str> = text.lines().collect();
-
-                // Look backwards from the definition line to find doc comments
-                let mut doc_lines = Vec::new();
-                let mut current_line = line_number.saturating_sub(1);
-
-                // Skip any attributes like #[derive(...)]
-                while current_line > 0
-                    && lines.get(current_line).map_or(false, |line| {
-                        let trimmed = line.trim();
-                        trimmed.starts_with("#[") || trimmed.is_empty()
-                    })
-                {
-                    current_line = current_line.saturating_sub(1);
-                }
-
-                // Collect doc comments
-                while current_line > 0 {
-                    if let Some(line) = lines.get(current_line) {
-                        let trimmed = line.trim();
-                        if trimmed.starts_with("///") {
-                            // Remove the /// and any leading space
-                            let doc_text = trimmed
-                                .strip_prefix("///")
-                                .unwrap_or("")
-                                .strip_prefix(" ")
-                                .unwrap_or_else(|| trimmed.strip_prefix("///").unwrap_or(""));
-                            doc_lines.push(doc_text.to_string());
-                        } else if !trimmed.is_empty() {
-                            // Stop at the first non-doc, non-empty line
-                            break;
-                        }
-                    }
-                    current_line = current_line.saturating_sub(1);
-                }
-
-                // Reverse to get correct order
-                doc_lines.reverse();
-
-                // Also get the actual definition line
-                let definition = lines
-                    .get(line_number)
-                    .map(|s| s.trim().to_string())
-                    .unwrap_or_else(|| hint_value.clone());
-
-                if doc_lines.is_empty() {
-                    None
-                } else {
-                    let docs = doc_lines.join("\n");
-                    Some((definition, docs))
-                }
-            })?;
-
-            if let Some((definition, docs)) = documentation {
-                // Format as markdown with the definition as a code block
-                let formatted_docs = format!("```rust\n{}\n```\n\n{}", definition, docs);
-
-                editor
-                    .update_in(cx, |editor, window, cx| {
-                        hover_popover::hover_at_inlay(
-                            editor,
-                            InlayHover {
-                                tooltip: HoverBlock {
-                                    text: formatted_docs,
-                                    kind: HoverBlockKind::Markdown,
-                                },
-                                range: highlight,
-                            },
-                            window,
-                            cx,
-                        );
-                    })
-                    .log_err();
+            // debounce the lsp request
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(50))
+                .await;
+            let hover_request =
+                cx.update(|_, cx| provider.hover(&definition_buffer, buffer_position, cx))?;
+            let hovers_response = if let Some(hover_request) = hover_request {
+                hover_request.await.unwrap_or_default()
             } else {
-                // Fallback to showing just the location info
-                let fallback_text = format!(
-                    "{}\n\nDefined in at line {}",
-                    hint_value.trim(),
-                    // filename, // TODO
-                    location.range.start.line + 1
-                );
-                editor
-                    .update_in(cx, |editor, window, cx| {
-                        hover_popover::hover_at_inlay(
-                            editor,
-                            InlayHover {
-                                tooltip: HoverBlock {
-                                    text: fallback_text,
-                                    kind: HoverBlockKind::PlainText,
-                                },
-                                range: highlight,
+                Vec::new()
+            };
+
+            let text = hovers_response
+                .first()
+                .as_ref()
+                .unwrap()
+                .contents
+                .first()
+                .as_ref()
+                .unwrap()
+                .text
+                .clone();
+
+            editor
+                .update_in(cx, |editor, window, cx| {
+                    hover_popover::hover_at_inlay(
+                        editor,
+                        InlayHover {
+                            tooltip: HoverBlock {
+                                text,
+                                kind: HoverBlockKind::Markdown,
                             },
-                            window,
-                            cx,
-                        );
-                    })
-                    .log_err();
-            }
+                            range: highlight,
+                        },
+                        window,
+                        cx,
+                    );
+                })
+                .log_err();
 
             anyhow::Ok(())
         }
