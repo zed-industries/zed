@@ -52,4 +52,36 @@ impl FontFamilyCache {
 
         lock.font_families.clone()
     }
+
+    /// Prefetch all font names
+    pub async fn fetch_font_names(&self, cx: &gpui::AsyncApp) {
+        if self
+            .state
+            .try_read()
+            .is_none_or(|state| state.loaded_at.is_some())
+        {
+            return;
+        }
+        let mut lock = self.state.write();
+
+        let Ok(text_system) = cx.update(|cx| App::text_system(cx).clone()) else {
+            return;
+        };
+
+        // We take the lock early to block any synchronous calls to `list_font_families` to this struct until fonts are loaded
+        // this won't affect performance because the struct would have to load the font families anyway
+        let task = cx
+            .background_executor()
+            .spawn(async move {
+                text_system
+                    .all_font_names()
+                    .into_iter()
+                    .map(SharedString::from)
+                    .collect()
+            })
+            .await;
+
+        lock.font_families = task;
+        lock.loaded_at = Some(Instant::now());
+    }
 }

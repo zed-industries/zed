@@ -237,12 +237,17 @@ struct Onboarding {
     focus_handle: FocusHandle,
     selected_page: SelectedPage,
     user_store: Entity<UserStore>,
-    last_frame_time: Instant,
     _settings_subscription: Subscription,
 }
 
 impl Onboarding {
     fn new(workspace: &Workspace, cx: &mut App) -> Entity<Self> {
+        let font_family_cache = theme::FontFamilyCache::global(cx);
+        cx.spawn(async move |cx| {
+            font_family_cache.fetch_font_names(cx).await;
+        })
+        .detach();
+
         cx.new(|cx| Self {
             workspace: workspace.weak_handle(),
             focus_handle: cx.focus_handle(),
@@ -259,7 +264,6 @@ impl Onboarding {
         clicked: Option<&'static str>,
         cx: &mut Context<Self>,
     ) {
-        dbg!(("set_page", self.last_frame_time.elapsed()));
         if let Some(click) = clicked {
             telemetry::event!(
                 "Welcome Tab Clicked",
@@ -532,13 +536,6 @@ impl Onboarding {
 
 impl Render for Onboarding {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // 1. flexes in flexes are making Mikayla nervous
-        // 2. Something is waiting for something else, e.g. settings to load
-        // 2.1 while I think it could be settings the basics page also reads from settings so it should already be initialized
-        // 3.
-
-        dbg!(("render_start", self.last_frame_time.elapsed()));
-        self.last_frame_time = Instant::now();
         let result = h_flex()
             .image_cache(gpui::retain_all("onboarding-page"))
             .key_context({
@@ -594,7 +591,6 @@ impl Render for Onboarding {
                             .child(self.render_page(window, cx)),
                     ),
             );
-        dbg!(("render_end", self.last_frame_time.elapsed()));
         result
     }
 }

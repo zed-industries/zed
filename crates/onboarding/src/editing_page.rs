@@ -449,33 +449,26 @@ impl FontPickerDelegate {
     ) -> Self {
         let font_family_cache = FontFamilyCache::global(cx);
 
-        // 1. Load font families in a task on tab open
-        // 2. Store state of that in the onboarding page
-        // 3. When rendering the editing page, use that state (whether it's empty or not)
-        // 4. Don't re-create these pickers every frame.
-        let start_time = Instant::now();
-        let fonts: Vec<SharedString> = font_family_cache
-            .list_font_families(cx)
-            .into_iter()
-            .collect();
-        dbg!(start_time.elapsed());
+        let fonts = font_family_cache.list_font_families(cx);
         let selected_index = fonts
             .iter()
             .position(|font| *font == current_font)
             .unwrap_or(0);
 
+        let filtered_fonts = fonts
+            .iter()
+            .enumerate()
+            .map(|(index, font)| StringMatch {
+                candidate_id: index,
+                string: font.to_string(),
+                positions: Vec::new(),
+                score: 0.0,
+            })
+            .collect();
+
         Self {
-            fonts: fonts.clone(),
-            filtered_fonts: fonts
-                .iter()
-                .enumerate()
-                .map(|(index, font)| StringMatch {
-                    candidate_id: index,
-                    string: font.to_string(),
-                    positions: Vec::new(),
-                    score: 0.0,
-                })
-                .collect(),
+            fonts,
+            filtered_fonts,
             selected_index,
             current_font,
             on_font_changed: Arc::new(on_font_changed),
