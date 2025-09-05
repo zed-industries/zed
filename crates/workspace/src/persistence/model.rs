@@ -33,6 +33,7 @@ pub(crate) enum RemoteConnectionKind {
     Ssh,
     Wsl,
     Docker,
+    Iroh,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -77,6 +78,7 @@ impl RemoteConnectionKind {
             RemoteConnectionKind::Ssh => "ssh",
             RemoteConnectionKind::Wsl => "wsl",
             RemoteConnectionKind::Docker => "docker",
+            RemoteConnectionKind::Iroh => "iroh",
         }
     }
 
@@ -85,6 +87,7 @@ impl RemoteConnectionKind {
             "ssh" => Some(Self::Ssh),
             "wsl" => Some(Self::Wsl),
             "docker" => Some(Self::Docker),
+            "iroh" => Some(Self::Iroh),
             _ => None,
         }
     }

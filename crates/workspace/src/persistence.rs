@@ -21,7 +21,8 @@ use project::debugger::breakpoint_store::{BreakpointState, SourceBreakpoint};
 use language::{LanguageName, Toolchain, ToolchainScope};
 use project::WorktreeId;
 use remote::{
-    DockerConnectionOptions, RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions,
+    DockerConnectionOptions, IrohConnectionOptions, RemoteConnectionOptions, SshConnectionOptions,
+    WslConnectionOptions, ZedIrohTicket,
 };
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -1150,6 +1151,11 @@ impl WorkspaceDb {
                 container_id = Some(options.container_id);
                 name = Some(options.name);
             }
+            RemoteConnectionOptions::Iroh(options) => {
+                kind = RemoteConnectionKind::Iroh;
+                host = Some(options.ticket.to_string());
+                user = options.nickname;
+            }
         }
         Self::get_or_create_remote_connection_query(
             this,
@@ -1359,6 +1365,14 @@ impl WorkspaceDb {
                     container_id: container_id?,
                     name: name?,
                     upload_binary_over_docker_exec: false,
+                }))
+            }
+            RemoteConnectionKind::Iroh => {
+                let ticket = ZedIrohTicket::from_str(&host?).ok()?;
+                Some(RemoteConnectionOptions::Iroh(IrohConnectionOptions {
+                    ticket,
+                    port_forwards: None,
+                    nickname: user,
                 }))
             }
         }

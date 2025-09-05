@@ -21,16 +21,15 @@ use paths::{global_ssh_config_file, user_ssh_config_file};
 use picker::Picker;
 use project::{Fs, Project};
 use remote::{
-    RemoteClient, RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions,
-    remote_client::ConnectionIdentifier,
+    IrohConnectionOptions, RemoteClient, RemoteConnectionOptions, SshConnectionOptions,
+    WslConnectionOptions, remote_client::ConnectionIdentifier,
 };
 use settings::{
-    RemoteProject, RemoteSettingsContent, Settings as _, SettingsStore, update_settings_file,
-    watch_config_file,
+    DevContainerConnection, P2pConnection, RemoteProject, RemoteSettingsContent, Settings as _,
+    SettingsStore, WslConnection, update_settings_file, watch_config_file,
 };
 use smol::stream::StreamExt as _;
 use std::{
-    borrow::Cow,
     collections::BTreeSet,
     path::PathBuf,
     rc::Rc,
@@ -61,6 +60,7 @@ pub struct RemoteServerProjects {
     retained_connections: Vec<Entity<RemoteClient>>,
     ssh_config_updates: Task<()>,
     ssh_config_servers: BTreeSet<SharedString>,
+    p2p_config_servers: BTreeSet<SharedString>,
     create_new_window: bool,
     _subscription: Subscription,
 }
@@ -161,6 +161,28 @@ impl AddWslDistro {
     }
 }
 
+struct CreateP2pRemote {
+    address_editor: Entity<Editor>,
+    address_error: Option<SharedString>,
+    p2p_prompt: Option<Entity<RemoteConnectionPrompt>>,
+    _creating: Option<Task<Option<()>>>,
+}
+
+impl CreateP2pRemote {
+    fn new(window: &mut Window, cx: &mut App) -> Self {
+        let address_editor = cx.new(|cx| Editor::single_line(window, cx));
+        address_editor.update(cx, |this, cx| {
+            this.focus_handle(cx).focus(window);
+        });
+        Self {
+            address_editor,
+            address_error: None,
+            p2p_prompt: None,
+            _creating: None,
+        }
+    }
+}
+
 enum ProjectPickerData {
     Ssh {
         connection_string: SharedString,
@@ -168,6 +190,10 @@ enum ProjectPickerData {
     },
     Wsl {
         distro_name: SharedString,
+    },
+    P2p {
+        connection_string: SharedString,
+        nickname: Option<SharedString>,
     },
 }
 
@@ -195,6 +221,33 @@ impl EditNicknameState {
             .filter(|text| !text.is_empty());
         this.editor.update(cx, |this, cx| {
             this.set_placeholder_text("Add a nickname for this server", window, cx);
+            if let Some(starting_text) = starting_text {
+                this.set_text(starting_text, window, cx);
+            }
+        });
+        this.editor.focus_handle(cx).focus(window);
+        this
+    }
+}
+
+struct EditP2pNicknameState {
+    index: P2pServerIndex,
+    editor: Entity<Editor>,
+}
+
+impl EditP2pNicknameState {
+    fn new(index: P2pServerIndex, window: &mut Window, cx: &mut App) -> Self {
+        let this = Self {
+            index,
+            editor: cx.new(|cx| Editor::single_line(window, cx)),
+        };
+        let starting_text = SshSettings::get_global(cx)
+            .p2p_connections()
+            .nth(index.0)
+            .and_then(|state| state.nickname)
+            .filter(|text| !text.is_empty());
+        this.editor.update(cx, |this, cx| {
+            this.set_placeholder_text("Add a nickname for this connection", window, cx);
             if let Some(starting_text) = starting_text {
                 this.set_text(starting_text, window, cx);
             }
@@ -246,6 +299,10 @@ impl ProjectPicker {
                 // Not implemented as a project picker at this time
                 connection_string: "".into(),
                 nickname: None,
+            },
+            RemoteConnectionOptions::Iroh(connection) => ProjectPickerData::P2p {
+                connection_string: connection.connection_string().into(),
+                nickname: connection.nickname.clone().map(|nick| nick.into()),
             },
         };
         let _path_task = cx
@@ -306,6 +363,16 @@ impl ProjectPicker {
                                     if let Some(server) = settings
                                         .remote
                                         .wsl_connections
+                                        .as_mut()
+                                        .and_then(|connections| connections.get_mut(index.0))
+                                    {
+                                        server.projects.insert(RemoteProject { paths });
+                                    };
+                                }
+                                ServerIndex::P2p(index) => {
+                                    if let Some(server) = settings
+                                        .remote
+                                        .p2p_connections
                                         .as_mut()
                                         .and_then(|connections| connections.get_mut(index.0))
                                     {
@@ -400,6 +467,17 @@ impl gpui::Render for ProjectPicker {
                     is_devcontainer: false,
                 }
                 .render(window, cx),
+                ProjectPickerData::P2p {
+                    connection_string,
+                    nickname,
+                } => SshConnectionHeader {
+                    connection_string: connection_string.clone(),
+                    paths: Default::default(),
+                    nickname: nickname.clone(),
+                    is_wsl: false,
+                    is_devcontainer: false,
+                }
+                .render(window, cx),
             })
             .child(
                 div()
@@ -428,10 +506,20 @@ impl std::fmt::Display for WslServerIndex {
     }
 }
 
+#[repr(transparent)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+struct P2pServerIndex(usize);
+impl std::fmt::Display for P2pServerIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 enum ServerIndex {
     Ssh(SshServerIndex),
     Wsl(WslServerIndex),
+    P2p(P2pServerIndex),
 }
 impl From<SshServerIndex> for ServerIndex {
     fn from(index: SshServerIndex) -> Self {
@@ -441,6 +529,12 @@ impl From<SshServerIndex> for ServerIndex {
 impl From<WslServerIndex> for ServerIndex {
     fn from(index: WslServerIndex) -> Self {
         Self::Wsl(index)
+    }
+}
+
+impl From<P2pServerIndex> for ServerIndex {
+    fn from(index: P2pServerIndex) -> Self {
+        Self::P2p(index)
     }
 }
 
@@ -457,6 +551,29 @@ enum RemoteEntry {
         open_folder: NavigableEntry,
         host: SharedString,
     },
+    P2pConfig {
+        open_folder: NavigableEntry,
+        ticket: SharedString,
+    },
+}
+
+#[derive(Clone)]
+enum RemoteConnection {
+    Ssh(SshConnection),
+    DevContainer(DevContainerConnection),
+    Wsl(WslConnection),
+    P2p(P2pConnection),
+}
+
+impl From<RemoteConnection> for RemoteConnectionOptions {
+    fn from(value: RemoteConnection) -> Self {
+        match value {
+            RemoteConnection::Ssh(conn) => RemoteConnectionOptions::Ssh(conn.into()),
+            RemoteConnection::Wsl(conn) => RemoteConnectionOptions::Wsl(conn.into()),
+            RemoteConnection::DevContainer(conn) => RemoteConnectionOptions::Docker(conn.into()),
+            RemoteConnection::P2p(conn) => RemoteConnectionOptions::Iroh(conn.into()),
+        }
+    }
 }
 
 impl RemoteEntry {
@@ -464,16 +581,24 @@ impl RemoteEntry {
         matches!(self, Self::Project { .. })
     }
 
-    fn connection(&self) -> Cow<'_, Connection> {
+    fn connection(&self) -> RemoteConnection {
         match self {
-            Self::Project { connection, .. } => Cow::Borrowed(connection),
-            Self::SshConfig { host, .. } => Cow::Owned(
-                SshConnection {
-                    host: host.clone(),
-                    ..SshConnection::default()
+            Self::Project { connection, .. } => match connection {
+                Connection::Ssh(connection) => RemoteConnection::Ssh(connection.clone()),
+                Connection::Wsl(connection) => RemoteConnection::Wsl(connection.clone()),
+                Connection::DevContainer(connection) => {
+                    RemoteConnection::DevContainer(connection.clone())
                 }
-                .into(),
-            ),
+                Connection::P2p(connection) => RemoteConnection::P2p(connection.clone()),
+            },
+            Self::SshConfig { host, .. } => RemoteConnection::Ssh(SshConnection {
+                host: host.clone(),
+                ..SshConnection::default()
+            }),
+            Self::P2pConfig { ticket, .. } => RemoteConnection::P2p(P2pConnection {
+                ticket: ticket.clone(),
+                ..P2pConnection::default()
+            }),
         }
     }
 }
@@ -484,15 +609,21 @@ struct DefaultState {
     add_new_server: NavigableEntry,
     add_new_devcontainer: NavigableEntry,
     add_new_wsl: NavigableEntry,
+    add_new_p2p_remote: NavigableEntry,
     servers: Vec<RemoteEntry>,
 }
 
 impl DefaultState {
-    fn new(ssh_config_servers: &BTreeSet<SharedString>, cx: &mut App) -> Self {
+    fn new(
+        ssh_config_servers: &BTreeSet<SharedString>,
+        p2p_config_servers: &BTreeSet<SharedString>,
+        cx: &mut App,
+    ) -> Self {
         let handle = ScrollHandle::new();
         let add_new_server = NavigableEntry::new(&handle, cx);
         let add_new_devcontainer = NavigableEntry::new(&handle, cx);
         let add_new_wsl = NavigableEntry::new(&handle, cx);
+        let add_new_p2p_remote = NavigableEntry::new(&handle, cx);
 
         let ssh_settings = SshSettings::get_global(cx);
         let read_ssh_config = ssh_settings.read_ssh_config;
@@ -537,23 +668,64 @@ impl DefaultState {
                 }
             });
 
-        let mut servers = ssh_servers.chain(wsl_servers).collect::<Vec<RemoteEntry>>();
+        let p2p_servers = ssh_settings
+            .p2p_connections()
+            .enumerate()
+            .map(|(index, connection)| {
+                let open_folder = NavigableEntry::new(&handle, cx);
+                let configure = NavigableEntry::new(&handle, cx);
+                let projects = connection
+                    .projects
+                    .iter()
+                    .map(|project| (NavigableEntry::new(&handle, cx), project.clone()))
+                    .collect();
+                RemoteEntry::Project {
+                    open_folder,
+                    configure,
+                    projects,
+                    index: ServerIndex::P2p(P2pServerIndex(index)),
+                    connection: connection.into(),
+                }
+            });
+
+        let mut servers = ssh_servers
+            .chain(wsl_servers)
+            .chain(p2p_servers)
+            .collect::<Vec<RemoteEntry>>();
 
         if read_ssh_config {
             let mut extra_servers_from_config = ssh_config_servers.clone();
             for server in &servers {
                 if let RemoteEntry::Project {
-                    connection: Connection::Ssh(ssh_options),
+                    connection: Connection::Ssh(connection),
                     ..
                 } = server
                 {
-                    extra_servers_from_config.remove(&SharedString::new(ssh_options.host.clone()));
+                    extra_servers_from_config.remove(&connection.host);
                 }
             }
             servers.extend(extra_servers_from_config.into_iter().map(|host| {
                 RemoteEntry::SshConfig {
                     open_folder: NavigableEntry::new(&handle, cx),
                     host,
+                }
+            }));
+
+            let mut extra_servers_from_config = p2p_config_servers.clone();
+            for server in &servers {
+                if let RemoteEntry::Project { connection, .. } = server {
+                    match connection {
+                        Connection::P2p(connection) => {
+                            extra_servers_from_config.remove(&connection.ticket);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            servers.extend(extra_servers_from_config.into_iter().map(|ticket| {
+                RemoteEntry::P2pConfig {
+                    open_folder: NavigableEntry::new(&handle, cx),
+                    ticket,
                 }
             }));
         }
@@ -563,6 +735,7 @@ impl DefaultState {
             add_new_server,
             add_new_devcontainer,
             add_new_wsl,
+            add_new_p2p_remote,
             servers,
         }
     }
@@ -580,6 +753,11 @@ enum ViewServerOptionsState {
         server_index: WslServerIndex,
         entries: [NavigableEntry; 2],
     },
+    P2p {
+        connection: IrohConnectionOptions,
+        server_index: P2pServerIndex,
+        entries: [NavigableEntry; 2],
+    },
 }
 
 impl ViewServerOptionsState {
@@ -587,6 +765,7 @@ impl ViewServerOptionsState {
         match self {
             Self::Ssh { entries, .. } => entries,
             Self::Wsl { entries, .. } => entries,
+            Self::P2p { entries, .. } => entries,
         }
     }
 }
@@ -595,16 +774,26 @@ enum Mode {
     Default(DefaultState),
     ViewServerOptions(ViewServerOptionsState),
     EditNickname(EditNicknameState),
+    EditP2pNickname(EditP2pNicknameState),
     ProjectPicker(Entity<ProjectPicker>),
     CreateRemoteServer(CreateRemoteServer),
     CreateRemoteDevContainer(CreateRemoteDevContainer),
     #[cfg(target_os = "windows")]
     AddWslDistro(AddWslDistro),
+    CreateP2pRemote(CreateP2pRemote),
 }
 
 impl Mode {
-    fn default_mode(ssh_config_servers: &BTreeSet<SharedString>, cx: &mut App) -> Self {
-        Self::Default(DefaultState::new(ssh_config_servers, cx))
+    fn default_mode(
+        ssh_config_servers: &BTreeSet<SharedString>,
+        p2p_config_servers: &BTreeSet<SharedString>,
+        cx: &mut App,
+    ) -> Self {
+        Self::Default(DefaultState::new(
+            ssh_config_servers,
+            p2p_config_servers,
+            cx,
+        ))
     }
 }
 
@@ -635,7 +824,7 @@ impl RemoteServerProjects {
         cx: &mut Context<Self>,
     ) -> Self {
         Self::new_inner(
-            Mode::default_mode(&BTreeSet::new(), cx),
+            Mode::default_mode(&BTreeSet::new(), &BTreeSet::new(), cx),
             create_new_window,
             fs,
             window,
@@ -708,6 +897,7 @@ impl RemoteServerProjects {
             retained_connections: Vec::new(),
             ssh_config_updates,
             ssh_config_servers: BTreeSet::new(),
+            p2p_config_servers: BTreeSet::new(),
             create_new_window,
             _subscription,
         }
@@ -794,7 +984,11 @@ impl RemoteServerProjects {
                         telemetry::event!("SSH Server Created");
                         this.retained_connections.push(client);
                         this.add_ssh_server(connection_options, cx);
-                        this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
+                        this.mode = Mode::default_mode(
+                            &this.ssh_config_servers,
+                            &this.p2p_config_servers,
+                            cx,
+                        );
                         this.focus_handle(cx).focus(window);
                         cx.notify()
                     })
@@ -877,7 +1071,7 @@ impl RemoteServerProjects {
                     };
 
                     crate::add_wsl_distro(fs, &connection_options, cx);
-                    this.mode = Mode::default_mode(&BTreeSet::new(), cx);
+                    this.mode = Mode::default_mode(&BTreeSet::new(), &BTreeSet::new(), cx);
                     this.focus_handle(cx).focus(window);
                     cx.notify();
                 }),
@@ -896,6 +1090,97 @@ impl RemoteServerProjects {
         self.mode = Mode::AddWslDistro(AddWslDistro {
             picker,
             connection_prompt: Some(prompt),
+            _creating: Some(creating),
+        });
+    }
+
+    fn create_p2p_server(
+        &mut self,
+        editor: Entity<Editor>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let input = get_text(&editor, cx);
+        if input.is_empty() {
+            return;
+        }
+
+        let connection_options = match IrohConnectionOptions::parse_command_line(&input) {
+            Ok(c) => c,
+            Err(e) => {
+                self.mode = Mode::CreateP2pRemote(CreateP2pRemote {
+                    address_editor: editor,
+                    address_error: Some(format!("could not parse: {:?}", e).into()),
+                    p2p_prompt: None,
+                    _creating: None,
+                });
+                return;
+            }
+        };
+        let p2p_prompt = cx.new(|cx| {
+            RemoteConnectionPrompt::new(
+                connection_options.ticket.addr().id.fmt_short().to_string(),
+                connection_options.nickname.clone(),
+                false,
+                false,
+                window,
+                cx,
+            )
+        });
+
+        let connection = connect(
+            ConnectionIdentifier::setup(),
+            RemoteConnectionOptions::Iroh(connection_options.clone()),
+            p2p_prompt.clone(),
+            window,
+            cx,
+        )
+        .prompt_err("Failed to connect", window, cx, |_, _, _| None);
+
+        let address_editor = editor.clone();
+        let creating = cx.spawn_in(window, async move |this, cx| {
+            log::info!("P2P waiting for connection");
+            match connection.await {
+                Some(Some(client)) => this
+                    .update_in(cx, |this, window, cx| {
+                        info!("P2P server created");
+                        telemetry::event!("P2P Server Created");
+                        this.retained_connections.push(client);
+                        this.add_p2p_server(connection_options, cx);
+                        this.mode = Mode::default_mode(
+                            &this.ssh_config_servers,
+                            &this.p2p_config_servers,
+                            cx,
+                        );
+                        this.focus_handle(cx).focus(window);
+                        cx.notify()
+                    })
+                    .log_err(),
+                _ => this
+                    .update(cx, |this, cx| {
+                        address_editor.update(cx, |this, _| {
+                            this.set_read_only(false);
+                        });
+                        this.mode = Mode::CreateP2pRemote(CreateP2pRemote {
+                            address_editor,
+                            address_error: None,
+                            p2p_prompt: None,
+                            _creating: None,
+                        });
+                        cx.notify()
+                    })
+                    .log_err(),
+            };
+            None
+        });
+
+        editor.update(cx, |this, _| {
+            this.set_read_only(true);
+        });
+        self.mode = Mode::CreateP2pRemote(CreateP2pRemote {
+            address_editor: editor,
+            address_error: None,
+            p2p_prompt: Some(p2p_prompt),
             _creating: Some(creating),
         });
     }
@@ -921,9 +1206,16 @@ impl RemoteServerProjects {
                     entries: std::array::from_fn(|_| NavigableEntry::focusable(cx)),
                 }
             }
+            (ServerIndex::P2p(server_index), RemoteConnectionOptions::Iroh(connection)) => {
+                ViewServerOptionsState::P2p {
+                    connection,
+                    server_index,
+                    entries: std::array::from_fn(|_| NavigableEntry::focusable(cx)),
+                }
+            }
             _ => {
                 log::error!("server index and connection options mismatch");
-                self.mode = Mode::default_mode(&BTreeSet::default(), cx);
+                self.mode = Mode::default_mode(&BTreeSet::default(), &BTreeSet::default(), cx);
                 return;
             }
         });
@@ -1060,6 +1352,15 @@ impl RemoteServerProjects {
                 self.create_ssh_server(state.address_editor.clone(), window, cx);
             }
             Mode::CreateRemoteDevContainer(_) => {}
+            Mode::CreateP2pRemote(state) => {
+                if let Some(prompt) = state.p2p_prompt.as_ref() {
+                    prompt.update(cx, |prompt, cx| {
+                        prompt.confirm(window, cx);
+                    });
+                    return;
+                }
+                self.create_p2p_server(state.address_editor.clone(), window, cx);
+            }
             Mode::EditNickname(state) => {
                 let text = Some(state.editor.read(cx).text(cx)).filter(|text| !text.is_empty());
                 let index = state.index;
@@ -1070,7 +1371,22 @@ impl RemoteServerProjects {
                         connection.nickname = text;
                     }
                 });
-                self.mode = Mode::default_mode(&self.ssh_config_servers, cx);
+                self.mode =
+                    Mode::default_mode(&self.ssh_config_servers, &self.p2p_config_servers, cx);
+                self.focus_handle.focus(window);
+            }
+            Mode::EditP2pNickname(state) => {
+                let text = Some(state.editor.read(cx).text(cx)).filter(|text| !text.is_empty());
+                let index = state.index;
+                self.update_settings_file(cx, move |setting, _| {
+                    if let Some(connections) = setting.p2p_connections.as_mut()
+                        && let Some(connection) = connections.get_mut(index.0)
+                    {
+                        connection.nickname = text;
+                    }
+                });
+                self.mode =
+                    Mode::default_mode(&self.ssh_config_servers, &self.p2p_config_servers, cx);
                 self.focus_handle.focus(window);
             }
             #[cfg(target_os = "windows")]
@@ -1096,7 +1412,8 @@ impl RemoteServerProjects {
                 cx.notify();
             }
             _ => {
-                self.mode = Mode::default_mode(&self.ssh_config_servers, cx);
+                self.mode =
+                    Mode::default_mode(&self.ssh_config_servers, &self.p2p_config_servers, cx);
                 self.focus_handle(cx).focus(window);
                 cx.notify();
             }
@@ -1110,22 +1427,32 @@ impl RemoteServerProjects {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let connection = remote_server.connection().into_owned();
+        let connection = remote_server.connection();
 
         let (main_label, aux_label, is_wsl) = match &connection {
-            Connection::Ssh(connection) => {
-                if let Some(nickname) = connection.nickname.clone() {
-                    let aux_label = SharedString::from(format!("({})", connection.host));
+            RemoteConnection::Ssh(conn) => {
+                if let Some(nickname) = conn.nickname.clone() {
+                    let aux_label = SharedString::from(format!("({})", conn.host));
                     (nickname.into(), Some(aux_label), false)
                 } else {
-                    (connection.host.clone(), None, false)
+                    (conn.host.clone(), None, false)
                 }
             }
-            Connection::Wsl(wsl_connection_options) => {
+            RemoteConnection::Wsl(wsl_connection_options) => {
                 (wsl_connection_options.distro_name.clone(), None, true)
             }
-            Connection::DevContainer(dev_container_options) => {
+            RemoteConnection::DevContainer(dev_container_options) => {
                 (dev_container_options.name.clone(), None, false)
+            }
+            RemoteConnection::P2p(conn) => {
+                let short_ticket = conn.ticket.chars().take(32).collect::<String>();
+
+                if let Some(nickname) = conn.nickname.clone() {
+                    let aux_label = SharedString::from(format!("({})", short_ticket));
+                    (nickname.into(), Some(aux_label), false)
+                } else {
+                    (short_ticket.into(), None, false)
+                }
             }
         };
         v_flex()
@@ -1301,7 +1628,168 @@ impl RemoteServerProjects {
                                 })),
                         ),
                 ),
+                RemoteEntry::P2pConfig {
+                    open_folder,
+                    ticket,
+                } => List::new().child(
+                    h_flex()
+                        .id(("new-p2p-project-container", ix))
+                        .track_focus(&open_folder.focus_handle)
+                        .anchor_scroll(open_folder.scroll_anchor.clone())
+                        .on_action(cx.listener({
+                            let RemoteConnection::P2p(p2p_connection) = connection.clone() else {
+                                panic!("invalid conn");
+                            };
+                            let ticket = ticket.clone();
+                            move |this, _: &menu::Confirm, window, cx| {
+                                let new_ix = this.create_host_from_p2p_config(&ticket, cx);
+                                this.create_p2p_project(
+                                    new_ix.into(),
+                                    p2p_connection.clone(),
+                                    window,
+                                    cx,
+                                );
+                            }
+                        }))
+                        .child(
+                            ListItem::new(("new-p2p-project", ix))
+                                .toggle_state(open_folder.focus_handle.contains_focused(window, cx))
+                                .inset(true)
+                                .spacing(ui::ListItemSpacing::Sparse)
+                                .start_slot(Icon::new(IconName::Plus).color(Color::Muted))
+                                .child(Label::new("Open Folder"))
+                                .on_click(cx.listener({
+                                    let RemoteConnection::P2p(p2p_connection) = connection else {
+                                        panic!("invalid conn");
+                                    };
+                                    let ticket = ticket.clone();
+                                    move |this, _, window, cx| {
+                                        let new_ix = this.create_host_from_p2p_config(&ticket, cx);
+                                        this.create_p2p_project(
+                                            new_ix.into(),
+                                            p2p_connection.clone(),
+                                            window,
+                                            cx,
+                                        );
+                                    }
+                                })),
+                        ),
+                ),
             })
+    }
+
+    fn create_p2p_project(
+        &mut self,
+        index: ServerIndex,
+        conn: P2pConnection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        let create_new_window = self.create_new_window;
+        let connection_options: IrohConnectionOptions = conn.into();
+
+        workspace.update(cx, |_, cx| {
+            cx.defer_in(window, move |workspace, window, cx| {
+                let app_state = workspace.app_state().clone();
+                workspace.toggle_modal(window, cx, |window, cx| {
+                    RemoteConnectionModal::new(
+                        &RemoteConnectionOptions::Iroh(connection_options.clone()),
+                        Vec::new(),
+                        window,
+                        cx,
+                    )
+                });
+                let prompt = workspace
+                    .active_modal::<RemoteConnectionModal>(cx)
+                    .unwrap()
+                    .read(cx)
+                    .prompt
+                    .clone();
+
+                let connect = connect(
+                    ConnectionIdentifier::setup(),
+                    RemoteConnectionOptions::Iroh(connection_options.clone()),
+                    prompt,
+                    window,
+                    cx,
+                )
+                .prompt_err("Failed to connect", window, cx, |_, _, _| None);
+
+                cx.spawn_in(window, async move |workspace, cx| {
+                    let session = connect.await;
+                    log::info!("CONNECTED");
+
+                    workspace.update(cx, |workspace, cx| {
+                        if let Some(prompt) = workspace.active_modal::<RemoteConnectionModal>(cx) {
+                            prompt.update(cx, |prompt, cx| prompt.finished(cx))
+                        }
+                    })?;
+
+                    let Some(Some(session)) = session else {
+                        return workspace.update_in(cx, |workspace, window, cx| {
+                            let weak = cx.entity().downgrade();
+                            let fs = workspace.project().read(cx).fs().clone();
+                            workspace.toggle_modal(window, cx, |window, cx| {
+                                RemoteServerProjects::new(create_new_window, fs, window, weak, cx)
+                            });
+                        });
+                    };
+
+                    log::info!("opening remote project");
+                    let (path_style, project) = cx.update(|_, cx| {
+                        (
+                            session.read(cx).path_style(),
+                            project::Project::remote(
+                                session,
+                                app_state.client.clone(),
+                                app_state.node_runtime.clone(),
+                                app_state.user_store.clone(),
+                                app_state.languages.clone(),
+                                app_state.fs.clone(),
+                                cx,
+                            ),
+                        )
+                    })?;
+
+                    let home_dir = project
+                        .read_with(cx, |project, cx| project.resolve_abs_path("~", cx))?
+                        .await
+                        .and_then(|path| path.into_abs_path())
+                        .map(|path| RemotePathBuf::new(path, path_style))
+                        .unwrap_or_else(|| match path_style {
+                            PathStyle::Posix => RemotePathBuf::from_str("/", PathStyle::Posix),
+                            PathStyle::Windows => {
+                                RemotePathBuf::from_str("C:\\", PathStyle::Windows)
+                            }
+                        });
+
+                    workspace
+                        .update_in(cx, |workspace, window, cx| {
+                            let weak = cx.entity().downgrade();
+                            workspace.toggle_modal(window, cx, |window, cx| {
+                                RemoteServerProjects::project_picker(
+                                    create_new_window,
+                                    index,
+                                    RemoteConnectionOptions::Iroh(connection_options),
+                                    project,
+                                    home_dir,
+                                    path_style,
+                                    window,
+                                    cx,
+                                    weak,
+                                )
+                            });
+                        })
+                        .ok();
+                    Ok(())
+                })
+                .detach();
+            })
+        })
     }
 
     fn render_remote_project(
@@ -1320,6 +1808,7 @@ impl RemoteServerProjects {
             match server_ix {
                 ServerIndex::Ssh(index) => format!("ssh-{index}"),
                 ServerIndex::Wsl(index) => format!("wsl-{index}"),
+                ServerIndex::P2p(index) => format!("p2p-{index}"),
             }
         ));
         let container_element_id_base =
@@ -1339,7 +1828,7 @@ impl RemoteServerProjects {
                     return;
                 };
                 let project = project.clone();
-                let server = server.connection().into_owned();
+                let server = server.connection();
                 cx.emit(DismissEvent);
 
                 let replace_window = match (create_new_window, secondary_confirm) {
@@ -1464,7 +1953,18 @@ impl RemoteServerProjects {
             ServerIndex::Wsl(server) => {
                 self.delete_wsl_project(server, project, cx);
             }
+            ServerIndex::P2p(server) => {
+                self.delete_p2p_project(server, project, cx);
+            }
         }
+    }
+
+    fn delete_p2p_server(&mut self, server: P2pServerIndex, cx: &mut Context<Self>) {
+        self.update_settings_file(cx, move |setting, _| {
+            if let Some(connections) = setting.p2p_connections.as_mut() {
+                connections.remove(server.0);
+            }
+        });
     }
 
     fn delete_ssh_project(
@@ -1507,6 +2007,24 @@ impl RemoteServerProjects {
         self.update_settings_file(cx, move |setting, _| {
             if let Some(connections) = setting.wsl_connections.as_mut() {
                 connections.remove(server.0);
+            }
+        });
+    }
+
+    fn delete_p2p_project(
+        &mut self,
+        server: P2pServerIndex,
+        project: &RemoteProject,
+        cx: &mut Context<Self>,
+    ) {
+        let project = project.clone();
+        self.update_settings_file(cx, move |setting, _| {
+            if let Some(server) = setting
+                .p2p_connections
+                .as_mut()
+                .and_then(|connections| connections.get_mut(server.0))
+            {
+                server.projects.remove(&project);
             }
         });
     }
@@ -1665,8 +2183,11 @@ impl RemoteServerProjects {
                                     .track_focus(&state.entries[0].focus_handle)
                                     .on_action(cx.listener(
                                         |this, _: &menu::Confirm, window, cx| {
-                                            this.mode =
-                                                Mode::default_mode(&this.ssh_config_servers, cx);
+                                            this.mode = Mode::default_mode(
+                                                &this.ssh_config_servers,
+                                                &this.p2p_config_servers,
+                                                cx,
+                                            );
                                             cx.focus_self(window);
                                             cx.notify();
                                         },
@@ -1825,7 +2346,11 @@ impl RemoteServerProjects {
                                 .id("devcontainer-go-back")
                                 .track_focus(&state.entries[2].focus_handle)
                                 .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
-                                    this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
+                                    this.mode = Mode::default_mode(
+                                        &this.ssh_config_servers,
+                                        &this.p2p_config_servers,
+                                        cx,
+                                    );
                                     cx.focus_self(window);
                                     cx.notify();
                                 }))
@@ -1851,8 +2376,11 @@ impl RemoteServerProjects {
                                             .size(rems_from_px(12.)),
                                         )
                                         .on_click(cx.listener(|this, _, window, cx| {
-                                            this.mode =
-                                                Mode::default_mode(&this.ssh_config_servers, cx);
+                                            this.mode = Mode::default_mode(
+                                                &this.ssh_config_servers,
+                                                &this.p2p_config_servers,
+                                                cx,
+                                            );
                                             cx.focus_self(window);
                                             cx.notify()
                                         })),
@@ -1867,6 +2395,23 @@ impl RemoteServerProjects {
         view = view.entry(state.entries[2].clone());
 
         view.render(window, cx).into_any_element()
+    }
+
+    fn add_p2p_server(
+        &mut self,
+        connection_options: remote::IrohConnectionOptions,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_settings_file(cx, move |setting, _| {
+            setting
+                .p2p_connections
+                .get_or_insert(Default::default())
+                .push(P2pConnection {
+                    ticket: connection_options.ticket.to_string().into(),
+                    projects: BTreeSet::new(),
+                    nickname: None,
+                })
+        });
     }
 
     fn render_create_remote_server(
@@ -1971,6 +2516,82 @@ impl RemoteServerProjects {
             })
     }
 
+    fn render_create_p2p_remote(
+        &self,
+        state: &CreateP2pRemote,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let ssh_prompt = state.p2p_prompt.clone();
+
+        state.address_editor.update(cx, |editor, cx| {
+            if editor.text(cx).is_empty() {
+                editor.set_placeholder_text("zedLongTicketStringHere", window, cx);
+            }
+        });
+
+        let theme = cx.theme();
+
+        v_flex()
+            .track_focus(&self.focus_handle(cx))
+            .id("create-p2p-remote")
+            .overflow_hidden()
+            .size_full()
+            .flex_1()
+            .child(
+                div()
+                    .p_2()
+                    .border_b_1()
+                    .border_color(theme.colors().border_variant)
+                    .child(state.address_editor.clone()),
+            )
+            .child(
+                h_flex()
+                    .bg(theme.colors().editor_background)
+                    .rounded_b_sm()
+                    .w_full()
+                    .map(|this| {
+                        if let Some(ssh_prompt) = ssh_prompt {
+                            this.child(h_flex().w_full().child(ssh_prompt))
+                        } else if let Some(address_error) = &state.address_error {
+                            this.child(
+                                h_flex().p_2().w_full().gap_2().child(
+                                    Label::new(address_error.clone())
+                                        .size(LabelSize::Small)
+                                        .color(Color::Error),
+                                ),
+                            )
+                        } else {
+                            this.child(
+                                h_flex()
+                                    .p_2()
+                                    .w_full()
+                                    .gap_1()
+                                    .child(
+                                        Label::new(
+                                            "Paste the p2p connection string shared with you here",
+                                        )
+                                        .color(Color::Muted)
+                                        .size(LabelSize::Small),
+                                    )
+                                    .child(
+                                        Button::new("learn-more", "Learn More")
+                                            .label_size(LabelSize::Small)
+                                            .icon(IconName::ArrowUpRight)
+                                            .icon_size(IconSize::XSmall)
+                                            .on_click(|_, _, cx| {
+                                                // TODO(b5): Documentation!
+                                                cx.open_url(
+                                                    "https://zed.dev/docs/p2p-collaboration",
+                                                );
+                                            }),
+                                    ),
+                            )
+                        }
+                    }),
+            )
+    }
+
     fn render_view_options(
         &mut self,
         options: ViewServerOptionsState,
@@ -1998,6 +2619,21 @@ impl RemoteServerProjects {
                         paths: Default::default(),
                         nickname: None,
                         is_wsl: true,
+                        is_devcontainer: false,
+                    }
+                    .render(window, cx)
+                    .into_any_element(),
+                    ViewServerOptionsState::P2p { connection, .. } => SshConnectionHeader {
+                        connection_string: connection
+                            .ticket
+                            .addr()
+                            .id
+                            .fmt_short()
+                            .to_string()
+                            .into(),
+                        paths: Default::default(),
+                        nickname: connection.nickname.clone().map(|s| s.into()),
+                        is_wsl: false,
                         is_devcontainer: false,
                     }
                     .render(window, cx)
@@ -2030,6 +2666,17 @@ impl RemoteServerProjects {
                                 window,
                                 cx,
                             )),
+                            ViewServerOptionsState::P2p {
+                                connection,
+                                entries,
+                                server_index,
+                            } => this.child(self.render_edit_p2p(
+                                connection,
+                                *server_index,
+                                entries,
+                                window,
+                                cx,
+                            )),
                         })
                         .child(ListSeparator)
                         .child({
@@ -2037,7 +2684,11 @@ impl RemoteServerProjects {
                                 .id("ssh-options-copy-server-address")
                                 .track_focus(&last_entry.focus_handle)
                                 .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
-                                    this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
+                                    this.mode = Mode::default_mode(
+                                        &this.ssh_config_servers,
+                                        &this.p2p_config_servers,
+                                        cx,
+                                    );
                                     cx.focus_self(window);
                                     cx.notify();
                                 }))
@@ -2053,8 +2704,11 @@ impl RemoteServerProjects {
                                         )
                                         .child(Label::new("Go Back"))
                                         .on_click(cx.listener(|this, _, window, cx| {
-                                            this.mode =
-                                                Mode::default_mode(&this.ssh_config_servers, cx);
+                                            this.mode = Mode::default_mode(
+                                                &this.ssh_config_servers,
+                                                &this.p2p_config_servers,
+                                                cx,
+                                            );
                                             cx.focus_self(window);
                                             cx.notify()
                                         })),
@@ -2108,7 +2762,11 @@ impl RemoteServerProjects {
                             .ok();
                         remote_servers
                             .update(cx, |this, cx| {
-                                this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
+                                this.mode = Mode::default_mode(
+                                    &this.ssh_config_servers,
+                                    &this.p2p_config_servers,
+                                    cx,
+                                );
                                 cx.notify();
                             })
                             .ok();
@@ -2264,7 +2922,11 @@ impl RemoteServerProjects {
                                 .ok();
                             remote_servers
                                 .update(cx, |this, cx| {
-                                    this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
+                                    this.mode = Mode::default_mode(
+                                        &this.ssh_config_servers,
+                                        &this.p2p_config_servers,
+                                        cx,
+                                    );
                                     cx.notify();
                                 })
                                 .ok();
@@ -2298,6 +2960,187 @@ impl RemoteServerProjects {
                             .child(Label::new("Remove Server").color(Color::Error))
                             .on_click(cx.listener(move |_, _, window, cx| {
                                 remove_ssh_server(
+                                    cx.entity(),
+                                    index,
+                                    connection_string.clone(),
+                                    window,
+                                    cx,
+                                );
+                                cx.focus_self(window);
+                            })),
+                    )
+            })
+    }
+
+    fn render_edit_p2p(
+        &self,
+        connection: &IrohConnectionOptions,
+        index: P2pServerIndex,
+        entries: &[NavigableEntry],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let connection_string = SharedString::new(connection.ticket.to_string());
+
+        v_flex()
+            .child({
+                let label = if connection.nickname.is_some() {
+                    "Edit Nickname"
+                } else {
+                    "Add Nickname to Server"
+                };
+                div()
+                    .id("p2p-options-add-nickname")
+                    .track_focus(&entries[0].focus_handle)
+                    .on_action(cx.listener(move |this, _: &menu::Confirm, window, cx| {
+                        this.mode =
+                            Mode::EditP2pNickname(EditP2pNicknameState::new(index, window, cx));
+                        cx.notify();
+                    }))
+                    .child(
+                        ListItem::new("add-nickname")
+                            .toggle_state(entries[0].focus_handle.contains_focused(window, cx))
+                            .inset(true)
+                            .spacing(ui::ListItemSpacing::Sparse)
+                            .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
+                            .child(Label::new(label))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.mode = Mode::EditP2pNickname(EditP2pNicknameState::new(
+                                    index, window, cx,
+                                ));
+                                cx.notify();
+                            })),
+                    )
+            })
+            .child({
+                let workspace = self.workspace.clone();
+                fn callback(
+                    workspace: WeakEntity<Workspace>,
+                    connection_string: SharedString,
+                    cx: &mut App,
+                ) {
+                    cx.write_to_clipboard(ClipboardItem::new_string(connection_string.to_string()));
+                    workspace
+                        .update(cx, |this, cx| {
+                            struct SshServerAddressCopiedToClipboard;
+                            let notification = format!(
+                                "Copied server address ({}) to clipboard",
+                                connection_string
+                            );
+
+                            this.show_toast(
+                                Toast::new(
+                                    NotificationId::composite::<SshServerAddressCopiedToClipboard>(
+                                        connection_string.clone(),
+                                    ),
+                                    notification,
+                                )
+                                .autohide(),
+                                cx,
+                            );
+                        })
+                        .ok();
+                }
+                div()
+                    .id("p2p-options-copy-server-address")
+                    .track_focus(&entries[1].focus_handle)
+                    .on_action({
+                        let connection_string = connection_string.clone();
+                        let workspace = self.workspace.clone();
+                        move |_: &menu::Confirm, _, cx| {
+                            callback(workspace.clone(), connection_string.clone(), cx);
+                        }
+                    })
+                    .child(
+                        ListItem::new("copy-ticket")
+                            .toggle_state(entries[1].focus_handle.contains_focused(window, cx))
+                            .inset(true)
+                            .spacing(ui::ListItemSpacing::Sparse)
+                            .start_slot(Icon::new(IconName::Copy).color(Color::Muted))
+                            .child(Label::new("Copy Ticket"))
+                            .end_hover_slot(
+                                Label::new(
+                                    connection_string
+                                        .as_str()
+                                        .chars()
+                                        .take(16)
+                                        .collect::<String>(),
+                                )
+                                .color(Color::Muted),
+                            )
+                            .on_click({
+                                let connection_string = connection_string.clone();
+                                move |_, _, cx| {
+                                    callback(workspace.clone(), connection_string.clone(), cx);
+                                }
+                            }),
+                    )
+            })
+            .child({
+                fn remove_p2p_server(
+                    remote_servers: Entity<RemoteServerProjects>,
+                    index: P2pServerIndex,
+                    connection_string: SharedString,
+                    window: &mut Window,
+                    cx: &mut App,
+                ) {
+                    let prompt_message = format!("Remove server `{}`?", connection_string);
+
+                    let confirmation = window.prompt(
+                        PromptLevel::Warning,
+                        &prompt_message,
+                        None,
+                        &["Yes, remove it", "No, keep it"],
+                        cx,
+                    );
+
+                    cx.spawn(async move |cx| {
+                        if confirmation.await.ok() == Some(0) {
+                            remote_servers
+                                .update(cx, |this, cx| {
+                                    this.delete_p2p_server(index, cx);
+                                })
+                                .ok();
+                            remote_servers
+                                .update(cx, |this, cx| {
+                                    this.mode = Mode::default_mode(
+                                        &this.ssh_config_servers,
+                                        &this.p2p_config_servers,
+                                        cx,
+                                    );
+                                    cx.notify();
+                                })
+                                .ok();
+                        }
+                        anyhow::Ok(())
+                    })
+                    .detach_and_log_err(cx);
+                }
+                div()
+                    .id("p2p-options-copy-server-address")
+                    .track_focus(&entries[2].focus_handle)
+                    .on_action(cx.listener({
+                        let connection_string = connection_string.clone();
+                        move |_, _: &menu::Confirm, window, cx| {
+                            remove_p2p_server(
+                                cx.entity(),
+                                index,
+                                connection_string.clone(),
+                                window,
+                                cx,
+                            );
+                            cx.focus_self(window);
+                        }
+                    }))
+                    .child(
+                        ListItem::new("remove-server")
+                            .toggle_state(entries[2].focus_handle.contains_focused(window, cx))
+                            .inset(true)
+                            .spacing(ui::ListItemSpacing::Sparse)
+                            .start_slot(Icon::new(IconName::Trash).color(Color::Error))
+                            .child(Label::new("Remove Server").color(Color::Error))
+                            .on_click(cx.listener(move |_, _, window, cx| {
+                                remove_p2p_server(
                                     cx.entity(),
                                     index,
                                     connection_string.clone(),
@@ -2350,6 +3193,46 @@ impl RemoteServerProjects {
             )
     }
 
+    fn render_edit_p2p_nickname(
+        &self,
+        state: &EditP2pNicknameState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let Some(connection) = SshSettings::get_global(cx)
+            .p2p_connections()
+            .nth(state.index.0)
+        else {
+            return v_flex()
+                .id("p2p-edit-nickname")
+                .track_focus(&self.focus_handle(cx));
+        };
+
+        let connection_string = connection.ticket.clone();
+        let nickname = connection.nickname.map(|s| s.into());
+
+        v_flex()
+            .id("p2p-edit-nickname")
+            .track_focus(&self.focus_handle(cx))
+            .child(
+                SshConnectionHeader {
+                    connection_string,
+                    paths: Default::default(),
+                    nickname,
+                    is_wsl: false,
+                    is_devcontainer: false,
+                }
+                .render(window, cx),
+            )
+            .child(
+                h_flex()
+                    .p_2()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(state.editor.clone()),
+            )
+    }
+
     fn render_default(
         &mut self,
         mut state: DefaultState,
@@ -2381,7 +3264,18 @@ impl RemoteServerProjects {
                 _ => None,
             }));
 
-        if ssh_connections_changed || wsl_connections_changed {
+        let p2p_connections_changed = ssh_settings.p2p_connections.0.iter().ne(state
+            .servers
+            .iter()
+            .filter_map(|server| match server {
+                RemoteEntry::Project {
+                    connection: Connection::P2p(connection),
+                    ..
+                } => Some(connection),
+                _ => None,
+            }));
+
+        if ssh_connections_changed || wsl_connections_changed || p2p_connections_changed {
             should_rebuild = true;
         };
 
@@ -2408,13 +3302,13 @@ impl RemoteServerProjects {
         }
 
         if should_rebuild {
-            self.mode = Mode::default_mode(&self.ssh_config_servers, cx);
+            self.mode = Mode::default_mode(&self.ssh_config_servers, &self.p2p_config_servers, cx);
             if let Mode::Default(new_state) = &self.mode {
                 state = new_state.clone();
             }
         }
 
-        let connect_button = div()
+        let connect_ssh_button = div()
             .id("ssh-connect-new-server-container")
             .track_focus(&state.add_new_server.focus_handle)
             .anchor_scroll(state.add_new_server.scroll_anchor.clone())
@@ -2514,13 +3408,42 @@ impl RemoteServerProjects {
             })
             .unwrap_or(false);
 
+        let connect_p2p_button = div()
+            .id("p2p-connect-new-server-container")
+            .track_focus(&state.add_new_p2p_remote.focus_handle)
+            .anchor_scroll(state.add_new_p2p_remote.scroll_anchor.clone())
+            .child(
+                ListItem::new("p2p-register-remove-server-button")
+                    .toggle_state(
+                        state
+                            .add_new_p2p_remote
+                            .focus_handle
+                            .contains_focused(window, cx),
+                    )
+                    .inset(true)
+                    .spacing(ui::ListItemSpacing::Sparse)
+                    .start_slot(Icon::new(IconName::Plus).color(Color::Muted))
+                    .child(Label::new("Connect New Iroh Server"))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        let state = CreateP2pRemote::new(window, cx);
+                        this.mode = Mode::CreateP2pRemote(state);
+                        cx.notify();
+                    })),
+            )
+            .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+                let state = CreateP2pRemote::new(window, cx);
+                this.mode = Mode::CreateP2pRemote(state);
+
+                cx.notify();
+            }));
+
         let modal_section = v_flex()
             .track_focus(&self.focus_handle(cx))
             .id("ssh-server-list")
             .overflow_y_scroll()
             .track_scroll(&state.scroll_handle)
             .size_full()
-            .child(connect_button)
+            .child(List::new().children([connect_ssh_button, connect_p2p_button]))
             .when(has_open_project, |this| {
                 this.child(connect_dev_container_button)
             });
@@ -2580,6 +3503,9 @@ impl RemoteServerProjects {
                         .entry(configure.clone());
                 }
                 RemoteEntry::SshConfig { open_folder, .. } => {
+                    modal_section = modal_section.entry(open_folder.clone());
+                }
+                RemoteEntry::P2pConfig { open_folder, .. } => {
                     modal_section = modal_section.entry(open_folder.clone());
                 }
             }
@@ -2666,8 +3592,38 @@ impl RemoteServerProjects {
             },
             cx,
         );
-        self.mode = Mode::default_mode(&self.ssh_config_servers, cx);
+        self.mode = Mode::default_mode(&self.ssh_config_servers, &self.p2p_config_servers, cx);
         SshServerIndex(new_ix.load(atomic::Ordering::Acquire))
+    }
+
+    fn create_host_from_p2p_config(
+        &mut self,
+        ticket: &SharedString,
+        cx: &mut Context<'_, Self>,
+    ) -> P2pServerIndex {
+        let new_ix = Arc::new(AtomicUsize::new(0));
+
+        let update_new_ix = new_ix.clone();
+        self.update_settings_file(cx, move |settings, _| {
+            update_new_ix.store(
+                settings
+                    .p2p_connections
+                    .as_ref()
+                    .map_or(0, |connections| connections.len()),
+                atomic::Ordering::Release,
+            );
+        });
+
+        self.add_p2p_server(
+            IrohConnectionOptions {
+                ticket: ticket.to_string().parse().expect("invalid ticket"),
+                port_forwards: None,
+                nickname: None,
+            },
+            cx,
+        );
+        self.mode = Mode::default_mode(&self.ssh_config_servers, &self.p2p_config_servers, cx);
+        P2pServerIndex(new_ix.load(atomic::Ordering::Acquire))
     }
 }
 
@@ -2775,8 +3731,14 @@ impl Render for RemoteServerProjects {
                 Mode::CreateRemoteDevContainer(state) => self
                     .render_create_dev_container(state, window, cx)
                     .into_any_element(),
+                Mode::CreateP2pRemote(state) => self
+                    .render_create_p2p_remote(state, window, cx)
+                    .into_any_element(),
                 Mode::EditNickname(state) => self
                     .render_edit_nickname(state, window, cx)
+                    .into_any_element(),
+                Mode::EditP2pNickname(state) => self
+                    .render_edit_p2p_nickname(state, window, cx)
                     .into_any_element(),
                 #[cfg(target_os = "windows")]
                 Mode::AddWslDistro(state) => self

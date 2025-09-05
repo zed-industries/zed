@@ -11,5 +11,8 @@ pub use remote_client::{
     RemoteConnection, RemoteConnectionOptions, RemotePlatform, connect,
 };
 pub use transport::docker::DockerConnectionOptions;
+pub use transport::iroh::{
+    IrohConnectionOptions, IrohZedRemote, MAX_MESSAGE_SIZE, Message, ZED_ALPN, ZedIrohTicket,
+};
 pub use transport::ssh::{SshConnectionOptions, SshPortForwardOption};
 pub use transport::wsl::WslConnectionOptions;

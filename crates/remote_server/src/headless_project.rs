@@ -796,17 +796,19 @@ impl HeadlessProject {
     async fn handle_shutdown_remote_server(
         _this: Entity<Self>,
         _envelope: TypedEnvelope<proto::ShutdownRemoteServer>,
-        cx: AsyncApp,
+        _cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        cx.spawn(async move |cx| {
-            cx.update(|cx| {
-                // TODO: This is a hack, because in a headless project, shutdown isn't executed
-                // when calling quit, but it should be.
-                cx.shutdown();
-                cx.quit();
-            })
-        })
-        .detach();
+        // TODO: disabled because it breaks the p2p server
+
+        // cx.spawn(async move |cx| {
+        //     cx.update(|cx| {
+        //         // TODO: This is a hack, because in a headless project, shutdown isn't executed
+        //         // when calling quit, but it should be.
+        //         cx.shutdown();
+        //         cx.quit();
+        //     })
+        // })
+        // .detach();
 
         Ok(proto::Ack {})
     }

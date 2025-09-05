@@ -703,6 +703,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                         RemoteConnectionOptions::Ssh { .. } => IconName::Server,
                                         RemoteConnectionOptions::Wsl { .. } => IconName::Linux,
                                         RemoteConnectionOptions::Docker(_) => IconName::Box,
+                                        RemoteConnectionOptions::Iroh { .. } => IconName::Server,
                                     })
                                     .color(Color::Muted)
                                     .into_any_element()

@@ -20,8 +20,8 @@ use util::command::new_smol_command;
 
 use proto::CrashReport;
 use release_channel::{AppCommitSha, AppVersion, RELEASE_CHANNEL, ReleaseChannel};
-use remote::RemoteClient;
 use remote::{
+    RemoteClient,
     json_log::LogRecord,
     protocol::{read_message, write_message},
     proxy::ProxyLaunchError,
@@ -30,10 +30,9 @@ use reqwest_client::ReqwestClient;
 use rpc::proto::{self, Envelope, REMOTE_SERVER_PROJECT_ID};
 use rpc::{AnyProtoClient, TypedEnvelope};
 use settings::{Settings, SettingsStore, watch_config_file};
-use smol::Async;
 use smol::channel::{Receiver, Sender};
 use smol::io::AsyncReadExt;
-use smol::{net::unix::UnixListener, stream::StreamExt as _};
+use smol::{Async, net::unix::UnixListener, stream::StreamExt as _};
 use std::{
     env,
     ffi::OsStr,
@@ -60,6 +59,8 @@ pub static VERSION: LazyLock<String> = LazyLock::new(|| match *RELEASE_CHANNEL {
         }
     }
 });
+
+pub(crate) mod p2p;
 
 fn init_logging_proxy() {
     env_logger::builder()

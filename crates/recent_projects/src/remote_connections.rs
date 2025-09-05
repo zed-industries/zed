@@ -18,12 +18,14 @@ use language::{CursorShape, Point};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use release_channel::ReleaseChannel;
 use remote::{
-    ConnectionIdentifier, DockerConnectionOptions, RemoteClient, RemoteConnection,
-    RemoteConnectionOptions, RemotePlatform, SshConnectionOptions,
+    ConnectionIdentifier, RemoteClient, RemoteConnection, RemoteConnectionOptions, RemotePlatform,
+    SshConnectionOptions,
 };
 use semver::Version;
 pub use settings::SshConnection;
-use settings::{DevContainerConnection, ExtendingVec, RegisterSetting, Settings, WslConnection};
+use settings::{
+    DevContainerConnection, ExtendingVec, P2pConnection, RegisterSetting, Settings, WslConnection,
+};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Color, CommonAnimationExt, Context, InteractiveElement, IntoElement, KeyBinding,
@@ -36,6 +38,7 @@ use workspace::{AppState, ModalView, Workspace};
 pub struct SshSettings {
     pub ssh_connections: ExtendingVec<SshConnection>,
     pub wsl_connections: ExtendingVec<WslConnection>,
+    pub p2p_connections: ExtendingVec<P2pConnection>,
     /// Whether to read ~/.ssh/config for ssh connection sources.
     pub read_ssh_config: bool,
 }
@@ -47,6 +50,10 @@ impl SshSettings {
 
     pub fn wsl_connections(&self) -> impl Iterator<Item = WslConnection> + use<> {
         self.wsl_connections.clone().0.into_iter()
+    }
+
+    pub fn p2p_connections(&self) -> impl Iterator<Item = P2pConnection> + use<> {
+        self.p2p_connections.clone().0.into_iter()
     }
 
     pub fn fill_connection_options_from_settings(&self, options: &mut SshConnectionOptions) {
@@ -86,6 +93,7 @@ pub enum Connection {
     Ssh(SshConnection),
     Wsl(WslConnection),
     DevContainer(DevContainerConnection),
+    P2p(P2pConnection),
 }
 
 impl From<Connection> for RemoteConnectionOptions {
@@ -93,13 +101,8 @@ impl From<Connection> for RemoteConnectionOptions {
         match val {
             Connection::Ssh(conn) => RemoteConnectionOptions::Ssh(conn.into()),
             Connection::Wsl(conn) => RemoteConnectionOptions::Wsl(conn.into()),
-            Connection::DevContainer(conn) => {
-                RemoteConnectionOptions::Docker(DockerConnectionOptions {
-                    name: conn.name.to_string(),
-                    container_id: conn.container_id.to_string(),
-                    upload_binary_over_docker_exec: false,
-                })
-            }
+            Connection::DevContainer(conn) => RemoteConnectionOptions::Docker(conn.into()),
+            Connection::P2p(conn) => RemoteConnectionOptions::Iroh(conn.into()),
         }
     }
 }
@@ -116,12 +119,19 @@ impl From<WslConnection> for Connection {
     }
 }
 
+impl From<P2pConnection> for Connection {
+    fn from(val: P2pConnection) -> Self {
+        Connection::P2p(val)
+    }
+}
+
 impl Settings for SshSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let remote = &content.remote;
         Self {
             ssh_connections: remote.ssh_connections.clone().unwrap_or_default().into(),
             wsl_connections: remote.wsl_connections.clone().unwrap_or_default().into(),
+            p2p_connections: remote.p2p_connections.clone().unwrap_or_default().into(),
             read_ssh_config: remote.read_ssh_config.unwrap(),
         }
     }
@@ -308,6 +318,12 @@ impl RemoteConnectionModal {
                 (options.distro_name.clone(), None, true, false)
             }
             RemoteConnectionOptions::Docker(options) => (options.name.clone(), None, false, true),
+            RemoteConnectionOptions::Iroh(options) => (
+                options.ticket.addr().id.fmt_short().to_string(),
+                options.nickname.clone(),
+                false,
+                false,
+            ),
         };
         Self {
             prompt: cx.new(|cx| {
@@ -718,6 +734,9 @@ pub async fn open_remote_project(
                                     RemoteConnectionOptions::Docker(_) => {
                                         "Failed to connect to Dev Container"
                                     }
+                                    RemoteConnectionOptions::Iroh(_) => {
+                                        "Failed to connect over Iroh"
+                                    }
                                 },
                                 Some(&format!("{e:#}")),
                                 &["Retry", "Cancel"],
@@ -777,6 +796,7 @@ pub async fn open_remote_project(
                                 RemoteConnectionOptions::Docker(_) => {
                                     "Failed to connect to Dev Container"
                                 }
+                                RemoteConnectionOptions::Iroh(_) => "Failed to connect over Iroh",
                             },
                             Some(&format!("{e:#}")),
                             &["Retry", "Cancel"],

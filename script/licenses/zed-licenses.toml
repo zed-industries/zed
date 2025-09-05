@@ -26,6 +26,8 @@ accepted = [
     "OpenSSL",
     "Zlib",
     "BSL-1.0",
+    "Unlicense",
+    "CDLA-Permissive-2.0",
 ]
 
 [procinfo.clarify]

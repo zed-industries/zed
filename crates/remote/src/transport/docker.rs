@@ -35,6 +35,16 @@ pub struct DockerConnectionOptions {
     pub upload_binary_over_docker_exec: bool,
 }
 
+impl From<settings::DevContainerConnection> for DockerConnectionOptions {
+    fn from(val: settings::DevContainerConnection) -> Self {
+        DockerConnectionOptions {
+            name: val.name.to_string(),
+            container_id: val.container_id.to_string(),
+            upload_binary_over_docker_exec: val.upload_binary_over_docker_exec.unwrap_or_default(),
+        }
+    }
+}
+
 pub(crate) struct DockerExecConnection {
     proxy_process: Mutex<Option<u32>>,
     remote_dir_for_server: String,

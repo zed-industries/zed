@@ -895,6 +895,7 @@ pub struct RemoteSettingsContent {
     pub ssh_connections: Option<Vec<SshConnection>>,
     pub wsl_connections: Option<Vec<WslConnection>>,
     pub dev_container_connections: Option<Vec<DevContainerConnection>>,
+    pub p2p_connections: Option<Vec<P2pConnection>>,
     pub read_ssh_config: Option<bool>,
 }
 
@@ -905,6 +906,7 @@ pub struct RemoteSettingsContent {
 pub struct DevContainerConnection {
     pub name: SharedString,
     pub container_id: SharedString,
+    pub upload_binary_over_docker_exec: Option<bool>,
 }
 
 #[with_fallible_options]
@@ -934,6 +936,15 @@ pub struct WslConnection {
     pub user: Option<String>,
     #[serde(default)]
     pub projects: BTreeSet<RemoteProject>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct P2pConnection {
+    pub ticket: SharedString,
+    #[serde(default)]
+    pub projects: BTreeSet<RemoteProject>,
+    /// Name to use for this server in UI.
+    pub nickname: Option<String>,
 }
 
 #[with_fallible_options]

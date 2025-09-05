@@ -13,6 +13,7 @@ use rpc::proto::Envelope;
 use smol::process::Child;
 
 pub mod docker;
+pub mod iroh;
 pub mod ssh;
 pub mod wsl;
 
