@@ -1,14 +1,13 @@
 mod appearance_settings_controls;
 
 use std::any::TypeId;
-use std::collections::VecDeque;
 use std::ops::{Not, Range};
 
 use anyhow::Context as _;
 use command_palette_hooks::CommandPaletteFilter;
 use editor::EditorSettingsControls;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
-use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, ReadGlobal, actions};
+use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, ReadGlobal, ScrollHandle, actions};
 use settings::{
     NumType, SettingsStore, SettingsUiEntry, SettingsUiItem, SettingsUiItemDynamic,
     SettingsUiItemGroup, SettingsUiItemSingle, SettingsValue,
@@ -71,7 +70,7 @@ pub fn init(cx: &mut App) {
             move |is_enabled, _workspace, _, cx| {
                 if is_enabled {
                     CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                        filter.show_action_types(settings_ui_actions.iter());
+                        filter.show_action_types(&settings_ui_actions);
                     });
                 } else {
                     CommandPaletteFilter::update_global(cx, |filter, _cx| {
@@ -138,6 +137,7 @@ impl Item for SettingsPage {
 struct UiEntry {
     title: &'static str,
     path: Option<&'static str>,
+    documentation: Option<&'static str>,
     _depth: usize,
     // a
     //  b     < a descendant range < a total descendant range
@@ -195,6 +195,7 @@ fn build_tree_item(
     tree.push(UiEntry {
         title: entry.title,
         path: entry.path,
+        documentation: entry.documentation,
         _depth: depth,
         descendant_range: index + 1..index + 1,
         total_descendant_range: index + 1..index + 1,
@@ -354,32 +355,29 @@ fn render_content(
     tree: &SettingsUiTree,
     window: &mut Window,
     cx: &mut Context<SettingsPage>,
-) -> impl IntoElement {
-    let Some(active_entry) = tree.entries.get(tree.active_entry_index) else {
-        return div()
-            .size_full()
-            .child(Label::new(SharedString::new_static("No settings found")).color(Color::Error));
-    };
-    let mut content = v_flex().size_full().gap_4().overflow_hidden();
+) -> Div {
+    let content = v_flex().size_full().gap_4();
 
     let mut path = smallvec::smallvec![];
-    if let Some(active_entry_path) = active_entry.path {
-        path.push(active_entry_path);
-    }
-    let mut entry_index_queue = VecDeque::new();
 
-    if let Some(child_index) = active_entry.first_descendant_index() {
-        entry_index_queue.push_back(child_index);
-        let mut index = child_index;
-        while let Some(next_sibling_index) = tree.entries[index].next_sibling {
-            entry_index_queue.push_back(next_sibling_index);
-            index = next_sibling_index;
-        }
-    };
+    fn render_recursive(
+        tree: &SettingsUiTree,
+        index: usize,
+        path: &mut SmallVec<[&'static str; 1]>,
+        mut element: Div,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Div {
+        let Some(child) = tree.entries.get(index) else {
+            return element.child(
+                Label::new(SharedString::new_static("No settings found")).color(Color::Error),
+            );
+        };
 
-    while let Some(index) = entry_index_queue.pop_front() {
+        element =
+            element.child(Label::new(SharedString::new_static(child.title)).size(LabelSize::Large));
+
         // todo(settings_ui): subgroups?
-        let child = &tree.entries[index];
         let mut pushed_path = false;
         if let Some(child_path) = child.path {
             path.push(child_path);
@@ -388,37 +386,56 @@ fn render_content(
         let settings_value = settings_value_from_settings_and_path(
             path.clone(),
             child.title,
+            child.documentation,
             // PERF: how to structure this better? There feels like there's a way to avoid the clone
             // and every value lookup
             SettingsStore::global(cx).raw_user_settings(),
             SettingsStore::global(cx).raw_default_settings(),
         );
         if let Some(select_descendant) = child.select_descendant {
-            let selected_descendant = select_descendant(settings_value.read(), cx);
-            if let Some(descendant_index) =
-                child.nth_descendant_index(&tree.entries, selected_descendant)
-            {
-                entry_index_queue.push_front(descendant_index);
+            let selected_descendant = child
+                .nth_descendant_index(&tree.entries, select_descendant(settings_value.read(), cx));
+            if let Some(descendant_index) = selected_descendant {
+                element = render_recursive(&tree, descendant_index, path, element, window, cx);
             }
         }
+        if let Some(child_render) = child.render.as_ref() {
+            element = element.child(div().child(render_item_single(
+                settings_value,
+                child_render,
+                window,
+                cx,
+            )));
+        } else if let Some(child_index) = child.first_descendant_index() {
+            let mut index = Some(child_index);
+            while let Some(sub_child_index) = index {
+                element = render_recursive(tree, sub_child_index, path, element, window, cx);
+                index = tree.entries[sub_child_index].next_sibling;
+            }
+        } else {
+            element =
+                element.child(div().child(Label::new("// skipped (for now)").color(Color::Muted)))
+        }
+
         if pushed_path {
             path.pop();
         }
-        let Some(child_render) = child.render.as_ref() else {
-            continue;
-        };
-        content = content.child(
-            div()
-                .child(Label::new(SharedString::new_static(child.title)).size(LabelSize::Large))
-                .child(render_item_single(settings_value, child_render, window, cx)),
-        );
+        return element;
     }
 
-    return content;
+    return render_recursive(
+        tree,
+        tree.active_entry_index,
+        &mut path,
+        content,
+        window,
+        cx,
+    );
 }
 
 impl Render for SettingsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let scroll_handle = window.use_state(cx, |_, _| ScrollHandle::new());
         div()
             .grid()
             .grid_cols(16)
@@ -427,15 +444,19 @@ impl Render for SettingsPage {
             .size_full()
             .child(
                 div()
+                    .id("settings-ui-nav")
                     .col_span(2)
                     .h_full()
                     .child(render_nav(&self.settings_tree, window, cx)),
             )
-            .child(div().col_span(4).h_full().child(render_content(
-                &self.settings_tree,
-                window,
-                cx,
-            )))
+            .child(
+                div().col_span(6).h_full().child(
+                    render_content(&self.settings_tree, window, cx)
+                        .id("settings-ui-content")
+                        .track_scroll(scroll_handle.read(cx))
+                        .overflow_y_scroll(),
+                ),
+            )
     }
 }
 
@@ -530,6 +551,7 @@ fn downcast_any_item<T: serde::de::DeserializeOwned>(
     let deserialized_setting_value = SettingsValue {
         title: settings_value.title,
         path: settings_value.path,
+        documentation: settings_value.documentation,
         value,
         default_value,
     };
@@ -582,6 +604,17 @@ fn render_any_numeric_stepper(
             |n| {
                 serde_json::Number::from_f64(n as f64)
                     .context("Failed to convert f32 to serde_json::Number")
+            },
+            window,
+            cx,
+        ),
+        NumType::USIZE => render_numeric_stepper::<usize>(
+            downcast_any_item(settings_value),
+            usize::saturating_sub,
+            usize::saturating_add,
+            |n| {
+                serde_json::Number::try_from(n)
+                    .context("Failed to convert usize to serde_json::Number")
             },
             window,
             cx,
@@ -640,7 +673,7 @@ fn render_switch_field(
     SwitchField::new(
         id,
         SharedString::new_static(value.title),
-        None,
+        value.documentation.map(SharedString::new_static),
         match value.read() {
             true => ToggleState::Selected,
             false => ToggleState::Unselected,
@@ -731,6 +764,7 @@ fn render_toggle_button_group(
 fn settings_value_from_settings_and_path(
     path: SmallVec<[&'static str; 1]>,
     title: &'static str,
+    documentation: Option<&'static str>,
     user_settings: &serde_json::Value,
     default_settings: &serde_json::Value,
 ) -> SettingsValue<serde_json::Value> {
@@ -743,6 +777,7 @@ fn settings_value_from_settings_and_path(
     let settings_value = SettingsValue {
         default_value,
         value,
+        documentation,
         path: path.clone(),
         // todo(settings_ui) is title required inside SettingsValue?
         title,

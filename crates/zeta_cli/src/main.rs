@@ -10,7 +10,7 @@ use language::Bias;
 use language::Buffer;
 use language::Point;
 use language_model::LlmApiToken;
-use project::{Project, ProjectPath};
+use project::{Project, ProjectPath, Worktree};
 use release_channel::AppVersion;
 use reqwest_client::ReqwestClient;
 use std::path::{Path, PathBuf};
@@ -129,15 +129,33 @@ async fn get_context(
         return Err(anyhow!("Absolute paths are not supported in --cursor"));
     }
 
-    let (project, _lsp_open_handle, buffer) = if use_language_server {
-        let (project, lsp_open_handle, buffer) =
-            open_buffer_with_language_server(&worktree_path, &cursor.path, app_state, cx).await?;
-        (Some(project), Some(lsp_open_handle), buffer)
+    let project = cx.update(|cx| {
+        Project::local(
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            None,
+            cx,
+        )
+    })?;
+
+    let worktree = project
+        .update(cx, |project, cx| {
+            project.create_worktree(&worktree_path, true, cx)
+        })?
+        .await?;
+
+    let (_lsp_open_handle, buffer) = if use_language_server {
+        let (lsp_open_handle, buffer) =
+            open_buffer_with_language_server(&project, &worktree, &cursor.path, cx).await?;
+        (Some(lsp_open_handle), buffer)
     } else {
         let abs_path = worktree_path.join(&cursor.path);
         let content = smol::fs::read_to_string(&abs_path).await?;
         let buffer = cx.new(|cx| Buffer::local(content, cx))?;
-        (None, None, buffer)
+        (None, buffer)
     };
 
     let worktree_name = worktree_path
@@ -177,7 +195,7 @@ async fn get_context(
     let mut gather_context_output = cx
         .update(|cx| {
             gather_context(
-                project.as_ref(),
+                &project,
                 full_path_str,
                 &snapshot,
                 clipped_cursor,
@@ -198,29 +216,11 @@ async fn get_context(
 }
 
 pub async fn open_buffer_with_language_server(
-    worktree_path: &Path,
+    project: &Entity<Project>,
+    worktree: &Entity<Worktree>,
     path: &Path,
-    app_state: &Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
-) -> Result<(Entity<Project>, Entity<Entity<Buffer>>, Entity<Buffer>)> {
-    let project = cx.update(|cx| {
-        Project::local(
-            app_state.client.clone(),
-            app_state.node_runtime.clone(),
-            app_state.user_store.clone(),
-            app_state.languages.clone(),
-            app_state.fs.clone(),
-            None,
-            cx,
-        )
-    })?;
-
-    let worktree = project
-        .update(cx, |project, cx| {
-            project.create_worktree(worktree_path, true, cx)
-        })?
-        .await?;
-
+) -> Result<(Entity<Entity<Buffer>>, Entity<Buffer>)> {
     let project_path = worktree.read_with(cx, |worktree, _cx| ProjectPath {
         worktree_id: worktree.id(),
         path: path.to_path_buf().into(),
@@ -237,7 +237,7 @@ pub async fn open_buffer_with_language_server(
     let log_prefix = path.to_string_lossy().to_string();
     wait_for_lang_server(&project, &buffer, log_prefix, cx).await?;
 
-    Ok((project, lsp_open_handle, buffer))
+    Ok((lsp_open_handle, buffer))
 }
 
 // TODO: Dedupe with similar function in crates/eval/src/instance.rs

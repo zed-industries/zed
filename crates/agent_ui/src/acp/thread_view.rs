@@ -43,7 +43,7 @@ use std::{collections::BTreeMap, rc::Rc, time::Duration};
 use task::SpawnInTerminal;
 use terminal_view::terminal_panel::TerminalPanel;
 use text::Anchor;
-use theme::ThemeSettings;
+use theme::{AgentFontSize, ThemeSettings};
 use ui::{
     Callout, CommonAnimationExt, Disclosure, Divider, DividerColor, ElevationIndex, KeyBinding,
     PopoverMenuHandle, Scrollbar, ScrollbarState, SpinnerLabel, TintColor, Tooltip, prelude::*,
@@ -290,7 +290,7 @@ pub struct AcpThreadView {
     is_loading_contents: bool,
     new_server_version_available: Option<SharedString>,
     _cancel_task: Option<Task<()>>,
-    _subscriptions: [Subscription; 3],
+    _subscriptions: [Subscription; 4],
 }
 
 enum ThreadState {
@@ -380,7 +380,8 @@ impl AcpThreadView {
         });
 
         let subscriptions = [
-            cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
+            cx.observe_global_in::<SettingsStore>(window, Self::agent_font_size_changed),
+            cx.observe_global_in::<AgentFontSize>(window, Self::agent_font_size_changed),
             cx.subscribe_in(&message_editor, window, Self::handle_message_editor_event),
             cx.subscribe_in(&entry_view_state, window, Self::handle_entry_view_event),
         ];
@@ -4069,15 +4070,15 @@ impl AcpThreadView {
                 MentionUri::PastedImage => {}
                 MentionUri::Directory { abs_path } => {
                     let project = workspace.project();
-                    let Some(entry) = project.update(cx, |project, cx| {
+                    let Some(entry_id) = project.update(cx, |project, cx| {
                         let path = project.find_project_path(abs_path, cx)?;
-                        project.entry_for_path(&path, cx)
+                        project.entry_for_path(&path, cx).map(|entry| entry.id)
                     }) else {
                         return;
                     };
 
                     project.update(cx, |_, cx| {
-                        cx.emit(project::Event::RevealInProjectPanel(entry.id));
+                        cx.emit(project::Event::RevealInProjectPanel(entry_id));
                     });
                 }
                 MentionUri::Symbol {
@@ -4090,11 +4091,9 @@ impl AcpThreadView {
                     line_range,
                 } => {
                     let project = workspace.project();
-                    let Some((path, _)) = project.update(cx, |project, cx| {
-                        let path = project.find_project_path(path, cx)?;
-                        let entry = project.entry_for_path(&path, cx)?;
-                        Some((path, entry))
-                    }) else {
+                    let Some(path) =
+                        project.update(cx, |project, cx| project.find_project_path(path, cx))
+                    else {
                         return;
                     };
 
@@ -4735,9 +4734,9 @@ impl AcpThreadView {
         )
     }
 
-    fn settings_changed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    fn agent_font_size_changed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.entry_view_state.update(cx, |entry_view_state, cx| {
-            entry_view_state.settings_changed(cx);
+            entry_view_state.agent_font_size_changed(cx);
         });
     }
 

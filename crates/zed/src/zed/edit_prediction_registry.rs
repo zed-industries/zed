@@ -207,9 +207,10 @@ fn assign_edit_prediction_provider(
 
                 if let Some(buffer) = &singleton_buffer
                     && buffer.read(cx).file().is_some()
+                    && let Some(project) = editor.project()
                 {
                     zeta.update(cx, |zeta, cx| {
-                        zeta.register_buffer(buffer, cx);
+                        zeta.register_buffer(buffer, project, cx);
                     });
                 }
 

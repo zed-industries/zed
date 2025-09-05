@@ -2,7 +2,7 @@ use editor::{Editor, EditorSettings, MultiBufferSnapshot};
 use gpui::{App, Entity, FocusHandle, Focusable, Subscription, Task, WeakEntity};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsUi};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 use std::{fmt::Write, num::NonZeroU32, time::Duration};
 use text::{Point, Selection};
 use ui::{
@@ -301,13 +301,12 @@ pub(crate) enum LineIndicatorFormat {
     Long,
 }
 
-#[derive(Clone, Copy, Default, JsonSchema, Deserialize, Serialize, SettingsUi)]
+#[derive(Clone, Copy, Default, JsonSchema, Deserialize, Serialize, SettingsUi, SettingsKey)]
 #[serde(transparent)]
+#[settings_key(key = "line_indicator_format")]
 pub(crate) struct LineIndicatorFormatContent(LineIndicatorFormat);
 
 impl Settings for LineIndicatorFormat {
-    const KEY: Option<&'static str> = Some("line_indicator_format");
-
     type FileContent = LineIndicatorFormatContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {

@@ -388,7 +388,7 @@ fn render_vim_mode_switch(tab_index: &mut isize, cx: &mut App) -> impl IntoEleme
                     }
                 };
                 update_settings_file::<VimModeSetting>(fs.clone(), cx, move |setting, _| {
-                    *setting = Some(vim_mode);
+                    setting.vim_mode = Some(vim_mode);
                 });
 
                 telemetry::event!(

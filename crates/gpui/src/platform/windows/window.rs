@@ -839,7 +839,7 @@ impl PlatformWindow for WindowsWindow {
         self.0.state.borrow().renderer.gpu_specs().log_err()
     }
 
-    fn update_ime_position(&self, _bounds: Bounds<ScaledPixels>) {
+    fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
         // There is no such thing on Windows.
     }
 }
