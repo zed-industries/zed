@@ -1311,7 +1311,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_highlight_style_combination() {
+    fn test_basic_highlight_style_combination() {
         let mut style_a = HighlightStyle::default();
         let style_b = HighlightStyle::default();
         style_a.highlight(style_b);
@@ -1322,18 +1322,18 @@ mod tests {
         );
 
         let mut style_b = HighlightStyle {
-            color: Some(crate::red()),
+            color: Some(red()),
             strikethrough: Some(StrikethroughStyle {
                 thickness: px(2.),
-                color: Some(crate::blue()),
+                color: Some(blue()),
             }),
             fade_out: Some(0.),
             font_style: Some(FontStyle::Italic),
             font_weight: Some(FontWeight(300.)),
-            background_color: Some(crate::yellow()),
+            background_color: Some(yellow()),
             underline: Some(UnderlineStyle {
                 thickness: px(2.),
-                color: Some(crate::red()),
+                color: Some(red()),
                 wavy: true,
             }),
         };
@@ -1354,7 +1354,7 @@ mod tests {
         let mut style_c = expected_style;
 
         let style_d = HighlightStyle {
-            color: Some(crate::blue().alpha(0.7)),
+            color: Some(blue().alpha(0.7)),
             strikethrough: Some(StrikethroughStyle {
                 thickness: px(4.),
                 color: Some(crate::red()),
@@ -1362,7 +1362,7 @@ mod tests {
             fade_out: Some(0.),
             font_style: Some(FontStyle::Oblique),
             font_weight: Some(FontWeight(800.)),
-            background_color: Some(crate::green()),
+            background_color: Some(green()),
             underline: Some(UnderlineStyle {
                 thickness: px(4.),
                 color: None,
@@ -1371,16 +1371,16 @@ mod tests {
         };
 
         let expected_style = HighlightStyle {
-            color: Some(crate::red().blend(crate::blue().alpha(0.7))),
+            color: Some(red().blend(blue().alpha(0.7))),
             strikethrough: Some(StrikethroughStyle {
                 thickness: px(4.),
-                color: Some(crate::red()),
+                color: Some(red()),
             }),
             // TODO this does not seem right
             fade_out: Some(0.),
             font_style: Some(FontStyle::Oblique),
             font_weight: Some(FontWeight(800.)),
-            background_color: Some(crate::green()),
+            background_color: Some(green()),
             underline: Some(UnderlineStyle {
                 thickness: px(4.),
                 color: None,
@@ -1422,14 +1422,14 @@ mod tests {
                 (
                     1..2,
                     HighlightStyle {
-                        color: Some(green()),
+                        color: Some(blue()),
                         ..Default::default()
                     }
                 ),
                 (
                     2..3,
                     HighlightStyle {
-                        color: Some(green()),
+                        color: Some(blue()),
                         font_style: Some(FontStyle::Italic),
                         ..Default::default()
                     }
