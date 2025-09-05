@@ -92,7 +92,7 @@ impl RmcpAdapter {
         let url = url.into();
 
         // Create HTTP transport using the confirmed working API
-        let transport = StreamableHttpClientTransport::from_uri(&url);
+        let transport = StreamableHttpClientTransport::from_uri(url);
 
         // Create client info as shown in the working example
         let client_info = ClientInfo {
