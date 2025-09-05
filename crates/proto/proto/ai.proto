@@ -173,6 +173,8 @@ message GetAgentServerCommand {
     string settings_key = 5;
     optional string minimum_version = 6;
     string root_dir = 7;
+    repeated string extra_args = 8;
+    map<string, string> extra_env = 9;
 }
 
 message AgentServerCommand {

@@ -160,6 +160,8 @@ impl AgentServerStore {
                         envelope.payload.package_name.into(),
                         envelope.payload.entrypoint_path.into(),
                         envelope.payload.settings_key.into(),
+                        envelope.payload.extra_args,
+                        envelope.payload.extra_env.into_iter().collect(),
                         envelope
                             .payload
                             .minimum_version
@@ -182,6 +184,8 @@ impl AgentServerStore {
         package_name: SharedString,
         entrypoint_path: PathBuf,
         settings_key: SharedString,
+        extra_args: Vec<String>,
+        extra_env: HashMap<String, String>,
         minimum_version: Option<semver::Version>,
         status_tx: Option<watch::Sender<SharedString>>,
         new_version_available: Option<watch::Sender<Option<String>>>,
@@ -216,7 +220,12 @@ impl AgentServerStore {
                         .unwrap_or_default();
 
                     if let Some(mut command) = custom_command {
-                        // Environment variables specified by the user's settings override the directory environment.
+                        command.args.extend(extra_args);
+                        // The project environment is overridden by the
+                        // agent-specific environment, which is overridden by
+                        // any custom environment variables the user has
+                        // specified.
+                        env.extend(extra_env);
                         env.extend(command.env.unwrap_or_default());
                         command.env = Some(env);
                         return Ok(command);
@@ -350,10 +359,12 @@ impl AgentServerStore {
                             "Missing entrypoint path {} after installation",
                             agent_server_path.to_string_lossy()
                         );
+                        let mut args = extra_args;
+                        args.insert(0, agent_server_path.to_string_lossy().to_string());
 
                         anyhow::Ok(AgentServerCommand {
                             path: node_path,
-                            args: vec![agent_server_path.to_string_lossy().to_string()],
+                            args,
                             env: Some(env),
                         })
                     })
@@ -374,6 +385,8 @@ impl AgentServerStore {
                     settings_key: settings_key.to_string(),
                     minimum_version: minimum_version.map(|version| version.to_string()),
                     root_dir: root_dir.to_proto(),
+                    extra_args,
+                    extra_env: extra_env.into_iter().collect(),
                 });
                 cx.spawn(async move |_| {
                     let command = command.await?;
