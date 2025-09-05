@@ -2,11 +2,14 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::{BackgroundExecutor, ForegroundExecutor, PlatformDispatcher, TaskLabel};
+use crate::{BackgroundExecutor, ForegroundExecutor};
 use async_task::Runnable;
-use parking::{Parker, Unparker};
-use parking_lot::Mutex;
-use scheduler::Scheduler;
+use chrono::{DateTime, Utc};
+use futures::{
+    channel::oneshot,
+    future::{self, LocalBoxFuture},
+};
+use scheduler::{Scheduler, SessionId, Timer};
 use std::{
     ffi::c_void,
     ptr::{NonNull, addr_of},
@@ -44,68 +47,22 @@ impl MacScheduler {
     }
 
     pub fn foreground(self: &Arc<Self>) -> ForegroundExecutor {
-        let session_id = scheduler::SessionId::new(self.next_session_id.fetch_add(1, SeqCst));
+        let session_id = SessionId::new(self.next_session_id.fetch_add(1, SeqCst));
         ForegroundExecutor::new(scheduler::ForegroundExecutor::new(session_id, self.clone()))
     }
 }
 
 impl Scheduler for MacScheduler {
-    fn block(
-        &self,
-        session_id: scheduler::SessionId,
-        future: futures::future::LocalBoxFuture<()>,
-        timeout: Option<Duration>,
-    ) {
-        todo!()
-    }
-
-    fn schedule_foreground(&self, session_id: scheduler::SessionId, runnable: Runnable) {
-        todo!()
-    }
-
-    fn schedule_background(&self, runnable: Runnable) {
-        todo!()
-    }
-
-    fn timer(&self, timeout: Duration) -> scheduler::Timer {
-        todo!()
-    }
-
-    fn now(&self) -> chrono::DateTime<chrono::Utc> {
-        todo!()
-    }
-}
-
-pub(crate) struct MacDispatcher {
-    parker: Arc<Mutex<Parker>>,
-}
-
-impl Default for MacDispatcher {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl MacDispatcher {
-    pub fn new() -> Self {
-        MacDispatcher {
-            parker: Arc::new(Mutex::new(Parker::new())),
-        }
-    }
-}
-
-impl PlatformDispatcher for MacDispatcher {
-    fn dispatch(&self, runnable: Runnable, _: Option<TaskLabel>) {
-        unsafe {
-            dispatch_async_f(
-                dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH.try_into().unwrap(), 0),
-                runnable.into_raw().as_ptr() as *mut c_void,
-                Some(trampoline),
-            );
+    fn block(&self, _session_id: SessionId, future: LocalBoxFuture<()>, timeout: Option<Duration>) {
+        if let Some(timeout) = timeout {
+            let timer = self.timer(timeout);
+            futures::executor::block_on(future::select(timer, future));
+        } else {
+            futures::executor::block_on(future);
         }
     }
 
-    fn dispatch_on_main_thread(&self, runnable: Runnable) {
+    fn schedule_foreground(&self, _session_id: SessionId, runnable: Runnable) {
         unsafe {
             dispatch_async_f(
                 dispatch_get_main_queue(),
@@ -115,31 +72,42 @@ impl PlatformDispatcher for MacDispatcher {
         }
     }
 
-    fn dispatch_after(&self, duration: Duration, runnable: Runnable) {
+    fn schedule_background(&self, runnable: Runnable) {
         unsafe {
-            let queue =
-                dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH.try_into().unwrap(), 0);
-            let when = dispatch_time(DISPATCH_TIME_NOW as u64, duration.as_nanos() as i64);
-            dispatch_after_f(
-                when,
-                queue,
+            dispatch_async_f(
+                dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH.try_into().unwrap(), 0),
                 runnable.into_raw().as_ptr() as *mut c_void,
                 Some(trampoline),
             );
         }
     }
 
-    fn park(&self, timeout: Option<Duration>) -> bool {
-        if let Some(timeout) = timeout {
-            self.parker.lock().park_timeout(timeout)
-        } else {
-            self.parker.lock().park();
-            true
-        }
+    fn timer(&self, timeout: Duration) -> Timer {
+        let (tx, rx) = oneshot::channel();
+        let (runnable, task) = async_task::spawn(
+            async move {
+                tx.send(()).ok();
+            },
+            move |runnable: Runnable| unsafe {
+                let queue =
+                    dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH.try_into().unwrap(), 0);
+                let when = dispatch_time(DISPATCH_TIME_NOW as u64, timeout.as_nanos() as i64);
+                dispatch_after_f(
+                    when,
+                    queue,
+                    runnable.into_raw().as_ptr() as *mut c_void,
+                    Some(trampoline),
+                );
+            },
+        );
+        runnable.schedule();
+        task.detach();
+
+        Timer::new(rx)
     }
 
-    fn unparker(&self) -> Unparker {
-        self.parker.lock().unparker()
+    fn now(&self) -> DateTime<Utc> {
+        Utc::now()
     }
 }
 

@@ -37,6 +37,12 @@ impl SessionId {
 
 pub struct Timer(oneshot::Receiver<()>);
 
+impl Timer {
+    pub fn new(rx: oneshot::Receiver<()>) -> Self {
+        Timer(rx)
+    }
+}
+
 impl Future for Timer {
     type Output = ();
 
