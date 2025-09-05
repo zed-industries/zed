@@ -11,7 +11,7 @@ mod session;
 use std::{sync::Arc, time::Duration};
 
 use async_dispatcher::{Dispatcher, Runnable, set_dispatcher};
-use gpui::{App, PlatformDispatcher};
+use gpui::{App, Scheduler};
 use project::Fs;
 pub use runtimelib::ExecutionState;
 use settings::Settings as _;
@@ -37,7 +37,7 @@ pub fn init(fs: Arc<dyn Fs>, cx: &mut App) {
 
 fn zed_dispatcher(cx: &mut App) -> impl Dispatcher {
     struct ZedDispatcher {
-        dispatcher: Arc<dyn PlatformDispatcher>,
+        scheduler: Arc<dyn Scheduler>,
     }
 
     // PlatformDispatcher is _super_ close to the same interface we put in
@@ -46,15 +46,15 @@ fn zed_dispatcher(cx: &mut App) -> impl Dispatcher {
     // other crates in Zed.
     impl Dispatcher for ZedDispatcher {
         fn dispatch(&self, runnable: Runnable) {
-            self.dispatcher.dispatch(runnable, None)
+            self.scheduler.schedule_background(runnable)
         }
 
         fn dispatch_after(&self, duration: Duration, runnable: Runnable) {
-            self.dispatcher.dispatch_after(duration, runnable);
+            self.scheduler.schedule_after(duration, runnable);
         }
     }
 
     ZedDispatcher {
-        dispatcher: cx.background_executor().dispatcher.clone(),
+        scheduler: cx.background_executor().scheduler().clone(),
     }
 }

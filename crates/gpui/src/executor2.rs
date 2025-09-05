@@ -5,6 +5,7 @@ use scheduler::Timer;
 use smol::prelude::*;
 use std::mem::ManuallyDrop;
 use std::panic::Location;
+use std::sync::Arc;
 use std::thread::{self, ThreadId};
 use std::{
     fmt::Debug,
@@ -17,6 +18,8 @@ use std::{
     time::{Duration, Instant},
 };
 use util::TryFutureExt;
+
+pub use scheduler::Scheduler;
 
 #[cfg(any(test, feature = "test-support"))]
 use rand::rngs::StdRng;
@@ -191,6 +194,11 @@ impl BackgroundExecutor {
     /// than requested.
     pub fn timer(&self, duration: Duration) -> Timer {
         self.0.timer(duration)
+    }
+
+    /// Get the underlying scheduler.
+    pub fn scheduler(&self) -> &Arc<dyn Scheduler> {
+        &self.0.scheduler()
     }
 
     /// in tests, start_waiting lets you indicate which task is waiting (for debugging only)

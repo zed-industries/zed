@@ -11,7 +11,7 @@ use client::{Client, UserStore};
 use collections::HashMap;
 use fs::FakeFs;
 use futures::{FutureExt, future::LocalBoxFuture};
-use gpui::{AppContext, TestAppContext, Timer};
+use gpui::{AppContext, TestAppContext, TestScheduler, TestSchedulerConfig, Timer};
 use http_client::StatusCode;
 use indoc::{formatdoc, indoc};
 use language_model::{
@@ -1399,8 +1399,8 @@ fn eval(
 }
 
 fn run_eval(eval: EvalInput, tx: mpsc::Sender<Result<EvalOutput>>) {
-    let dispatcher = gpui::TestDispatcher::new(StdRng::from_os_rng());
-    let mut cx = TestAppContext::build(dispatcher, None);
+    let scheduler = Arc::new(TestScheduler::new(TestSchedulerConfig::default()));
+    let mut cx = TestAppContext::build(scheduler, None);
     let output = cx.executor().block_test(async {
         let test = EditAgentTest::new(&mut cx).await;
         test.eval(eval, &mut cx).await

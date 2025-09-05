@@ -104,6 +104,10 @@ impl BackgroundExecutor {
     pub fn timer(&self, duration: Duration) -> Timer {
         self.scheduler.timer(duration)
     }
+
+    pub fn scheduler(&self) -> &Arc<dyn Scheduler> {
+        &self.scheduler
+    }
 }
 
 /// Task is a primitive that allows work to happen in the background.
