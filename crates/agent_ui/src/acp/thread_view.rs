@@ -29,7 +29,7 @@ use gpui::{
 };
 use language::Buffer;
 
-use language_model::LanguageModelRegistry;
+use language_model::{ANTHROPIC_PROVIDER_ID, LanguageModelRegistry};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use project::{Project, ProjectEntryId};
 use prompt_store::{PromptId, PromptStore};
@@ -672,7 +672,9 @@ impl AcpThreadView {
         cx: &mut App,
     ) {
         let agent_name = agent.name();
-        let (configuration_view, subscription) = if let Some(provider_id) = err.provider_id {
+        let (configuration_view, subscription) = if let Some(provider_id) = err.provider_id
+            && provider_id != ANTHROPIC_PROVIDER_ID
+        {
             let registry = LanguageModelRegistry::global(cx);
 
             let sub = window.subscribe(&registry, cx, {
