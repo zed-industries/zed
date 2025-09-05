@@ -62,7 +62,6 @@ impl FontFamilyCache {
         {
             return;
         }
-        let mut lock = self.state.write();
 
         let Ok(text_system) = cx.update(|cx| App::text_system(cx).clone()) else {
             return;
@@ -81,6 +80,7 @@ impl FontFamilyCache {
             })
             .await;
 
+        let mut lock = self.state.write();
         lock.font_families = task;
         lock.loaded_at = Some(Instant::now());
     }
