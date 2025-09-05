@@ -230,7 +230,7 @@ impl RmcpAdapter {
             // Use the confirmed working approach from the example
             let response = client
                 .call_tool(CallToolRequestParam {
-                    name: tool_name.clone(),
+                    name: tool_name.into(),
                     arguments: rmcp_arguments,
                 })
                 .await
