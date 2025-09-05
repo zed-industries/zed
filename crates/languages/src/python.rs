@@ -299,7 +299,7 @@ impl LspAdapter for TyLspAdapter {
                     .and_then(|s| s.settings.clone())
                     .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
 
-            // If we have a detected toolchain, configure Pyright to use it
+            // If we have a detected toolchain, configure ty to use it
             if let Some(toolchain) = toolchain
                 && let Ok(env) = serde_json::from_value::<
                     pet_core::python_environment::PythonEnvironment,
