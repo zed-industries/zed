@@ -305,6 +305,10 @@ impl RemoteConnectionModal {
                 (options.connection_string(), options.nickname.clone())
             }
             RemoteConnectionOptions::Wsl(options) => (options.distro_name.clone(), None),
+            RemoteConnectionOptions::Iroh(options) => (
+                options.ticket.node_addr().node_id.fmt_short(),
+                options.nickname.clone(),
+            ),
         };
         Self {
             prompt: cx
@@ -669,6 +673,7 @@ pub async fn open_remote_project(
                         match connection_options {
                             RemoteConnectionOptions::Ssh(_) => "Failed to connect over SSH",
                             RemoteConnectionOptions::Wsl(_) => "Failed to connect to WSL",
+                            RemoteConnectionOptions::Iroh(_) => "Failed to connect over Iroh",
                         },
                         Some(&e.to_string()),
                         &["Retry", "Ok"],

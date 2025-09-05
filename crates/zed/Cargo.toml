@@ -169,6 +169,7 @@ zed_env_vars.workspace = true
 zeta.workspace = true
 zlog.workspace = true
 zlog_settings.workspace = true
+postcard = "1.1.3"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true

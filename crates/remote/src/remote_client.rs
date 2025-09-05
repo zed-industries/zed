@@ -1,8 +1,9 @@
 use crate::{
-    SshConnectionOptions,
+    IrohConnectionOptions, SshConnectionOptions,
     protocol::MessageId,
     proxy::ProxyLaunchError,
     transport::{
+        iroh::IrohZedRemote,
         ssh::SshRemoteConnection,
         wsl::{WslConnectionOptions, WslRemoteConnection},
     },
@@ -974,6 +975,11 @@ impl ConnectionPool {
                                 .await
                                 .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
                         }
+                        RemoteConnectionOptions::Iroh(opts) => {
+                            IrohZedRemote::new(opts, delegate, cx)
+                                .await
+                                .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
+                        }
                     };
 
                     cx.update_global(|pool: &mut Self, _| {
@@ -1009,6 +1015,7 @@ impl ConnectionPool {
 pub enum RemoteConnectionOptions {
     Ssh(SshConnectionOptions),
     Wsl(WslConnectionOptions),
+    Iroh(IrohConnectionOptions),
 }
 
 impl RemoteConnectionOptions {
@@ -1016,6 +1023,7 @@ impl RemoteConnectionOptions {
         match self {
             RemoteConnectionOptions::Ssh(opts) => opts.host.clone(),
             RemoteConnectionOptions::Wsl(opts) => opts.distro_name.clone(),
+            RemoteConnectionOptions::Iroh(opts) => opts.ticket.node_addr().node_id.fmt_short(),
         }
     }
 }

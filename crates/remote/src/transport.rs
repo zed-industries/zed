@@ -11,6 +11,7 @@ use gpui::{AppContext as _, AsyncApp, Task};
 use rpc::proto::Envelope;
 use smol::process::Child;
 
+pub mod iroh;
 pub mod ssh;
 pub mod wsl;
 

@@ -510,6 +510,8 @@ http = "1.1"
 http-body = "1.0"
 hyper = "0.14"
 ignore = "0.4.22"
+iroh = "0.91"
+iroh-base = "0.91"
 image = "0.25.1"
 imara-diff = "0.1.8"
 indexmap = { version = "2.7.0", features = ["serde"] }
@@ -555,6 +557,7 @@ pet-pixi = { git = "https://github.com/microsoft/python-environment-tools.git", 
 pet-poetry = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
 pet-reporter = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
 portable-pty = "0.9.0"
+postcard = "1.1.3"
 postage = { version = "0.5", features = ["futures-traits"] }
 pretty_assertions = { version = "1.3.0", features = ["unstable"] }
 proc-macro2 = "1.0.93"
@@ -628,6 +631,7 @@ time = { version = "0.3", features = [
 tiny_http = "0.8"
 tokio = { version = "1" }
 tokio-tungstenite = { version = "0.26", features = ["__rustls-tls"] }
+tokio-util = { version = "0.7", features = ["codec"] }
 toml = "0.8"
 tower-http = "0.4.4"
 tree-sitter = { version = "0.25.6", features = ["wasm"] }

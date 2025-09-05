@@ -20,7 +20,10 @@ use project::debugger::breakpoint_store::{BreakpointState, SourceBreakpoint};
 
 use language::{LanguageName, Toolchain};
 use project::WorktreeId;
-use remote::{RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions};
+use remote::{
+    IrohConnectionOptions, RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions,
+    ZedIrohTicket,
+};
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::{SqlType, Statement},
@@ -1042,6 +1045,12 @@ impl WorkspaceDb {
                 distro = Some(options.distro_name);
                 user = options.user;
             }
+            RemoteConnectionOptions::Iroh(options) => {
+                kind = RemoteConnectionKind::Iroh;
+                // TODO(b5) - hacking ticket string into host value to avoid messing with the db schema
+                host = Some(options.ticket.to_string());
+                user = options.nickname;
+            }
         }
         Self::get_or_create_remote_connection_query(this, kind, host, port, user, distro)
     }
@@ -1211,6 +1220,14 @@ impl WorkspaceDb {
                 username: user,
                 ..Default::default()
             })),
+            RemoteConnectionKind::Iroh => {
+                let ticket = ZedIrohTicket::from_str(&host?).unwrap();
+                Some(RemoteConnectionOptions::Iroh(IrohConnectionOptions {
+                    ticket,
+                    port_forwards: None,
+                    nickname: user,
+                }))
+            }
         }
     }
 
