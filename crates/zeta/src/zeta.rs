@@ -1225,7 +1225,7 @@ struct PendingCompletion {
     _task: Task<()>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CanCollectData {
     Yes,
     No,
@@ -1629,6 +1629,7 @@ mod tests {
     use indoc::indoc;
     use language::Point;
     use parking_lot::Mutex;
+    use serde_json::json;
     use settings::SettingsStore;
     use util::path;
 
@@ -1832,12 +1833,168 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_edit_prediction_data_collection(cx: &mut TestAppContext) {}
+    async fn test_can_collect_data(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({ "LICENSE": BSD_0_TXT }))
+            .await;
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer("/project/src/main.rs", cx)
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            check_can_collect_data(DataCollectionChoice::Enabled, &project, &buffer, cx).await,
+            CanCollectData::Yes
+        );
+    }
+
+    #[gpui::test]
+    async fn test_no_data_collection_for_remote_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = project::FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [], cx).await;
+
+        let buffer = cx.new(|_cx| {
+            Buffer::remote(
+                language::BufferId::new(1).unwrap(),
+                1,
+                language::Capability::ReadWrite,
+                "fn main() {\n    println!(\"Hello\");\n}",
+            )
+        });
+
+        assert_eq!(
+            check_can_collect_data(DataCollectionChoice::Enabled, &project, &buffer, cx).await,
+            CanCollectData::No
+        );
+    }
+
+    #[gpui::test]
+    async fn test_no_data_collection_for_private_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                "LICENSE": BSD_0_TXT,
+                ".env": "SECRET_KEY=secret"
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer("/project/.env", cx)
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            check_can_collect_data(DataCollectionChoice::Enabled, &project, &buffer, cx).await,
+            CanCollectData::No
+        );
+    }
+
+    #[gpui::test]
+    async fn test_no_data_collection_for_projectless_buffer(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = project::FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [], cx).await;
+        let buffer = cx.new(|cx| Buffer::local("", cx));
+
+        assert_eq!(
+            check_can_collect_data(DataCollectionChoice::Enabled, &project, &buffer, cx).await,
+            CanCollectData::No
+        );
+    }
+
+    #[gpui::test]
+    async fn test_no_data_collection_when_not_opensource(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({ "main.rs": "fn main() {}" }))
+            .await;
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer("/project/main.rs", cx)
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            check_can_collect_data(DataCollectionChoice::Enabled, &project, &buffer, cx).await,
+            CanCollectData::No
+        );
+    }
+
+    #[gpui::test]
+    async fn test_data_collection_status_can_changes_on_move(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree("/worktree1", json!({ "LICENSE": BSD_0_TXT, "main.rs": "" }))
+            .await;
+        fs.insert_tree("/worktree2", json!({ "main.rs": "" })).await;
+
+        let project = Project::test(
+            fs.clone(),
+            [path!("/worktree1").as_ref(), path!("/worktree2").as_ref()],
+            cx,
+        )
+        .await;
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer("/worktree1/main.rs", cx)
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            check_can_collect_data(DataCollectionChoice::Enabled, &project, &buffer, cx).await,
+            CanCollectData::Yes
+        );
+
+        let file2 = project
+            .update(cx, |project, cx| {
+                let worktree2 = project.worktree_for_root_name("worktree2", cx).unwrap();
+                worktree2.update(cx, |worktree2, cx| {
+                    worktree2.load_file(Path::new("main.rs"), cx)
+                })
+            })
+            .await
+            .unwrap()
+            .file;
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.file_updated(file2, cx);
+        });
+
+        // moving the file to a worktree that has no license causes it to no longer be collectable
+        assert_eq!(
+            check_can_collect_data(DataCollectionChoice::Enabled, &project, &buffer, cx).await,
+            CanCollectData::No
+        );
+    }
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
+            language::init(cx);
             client::init_settings(cx);
             Project::init_settings(cx);
         });
@@ -1862,13 +2019,73 @@ mod tests {
         completion_response: &str,
         cx: &mut TestAppContext,
     ) -> (PredictEditsBody, EditPrediction) {
+        let fs = project::FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (zeta, captured_request) = make_test_zeta(&project, completion_response, cx).await;
+        let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 0)));
+        let completion_task = zeta.update(cx, |zeta, cx| {
+            zeta.register_buffer(buffer, &project, cx);
+            zeta.request_completion(&project, buffer, cursor, cx)
+        });
+        let edit_prediction = completion_task.await.unwrap().unwrap();
+        let request = captured_request.lock().clone().unwrap();
+        (request, edit_prediction)
+    }
+
+    async fn check_can_collect_data(
+        data_collection_choice: DataCollectionChoice,
+        project: &Entity<Project>,
+        buffer: &Entity<Buffer>,
+        cx: &mut TestAppContext,
+    ) -> CanCollectData {
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..buffer.len(), "hello")], None, cx)
+        });
+
+        let completion_response = indoc! {"
+            ```main.rs
+            <|start_of_file|>
+            <|editable_region_start|>
+            hello world
+            <|editable_region_end|>
+            ```"
+        };
+
+        let (zeta, captured_request) = make_test_zeta(project, completion_response, cx).await;
+        zeta.update(cx, |zeta, cx| {
+            zeta.register_buffer(buffer, project, cx);
+            zeta.data_collection_choice = data_collection_choice;
+        });
+
+        // wait for license detection to update
+        cx.background_executor.run_until_parked();
+
+        let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(0, 0)));
+        let completion_task = zeta.update(cx, |zeta, cx| {
+            zeta.request_completion(project, buffer, cursor, cx)
+        });
+
+        let _edit_prediction = completion_task.await.unwrap().unwrap();
+        let request = captured_request.lock().clone().unwrap();
+        if request.can_collect_data {
+            CanCollectData::Yes
+        } else {
+            CanCollectData::No
+        }
+    }
+
+    async fn make_test_zeta(
+        project: &Entity<Project>,
+        completion_response: &str,
+        cx: &mut TestAppContext,
+    ) -> (Entity<Zeta>, Arc<Mutex<Option<PredictEditsBody>>>) {
         let captured_request: Arc<Mutex<Option<PredictEditsBody>>> = Arc::new(Mutex::new(None));
-        let completion_response = completion_response.to_string();
         let http_client = FakeHttpClient::create({
+            let completion_response = completion_response.to_string();
             let captured_request = captured_request.clone();
             move |req| {
+                let completion_response = completion_response.clone();
                 let captured_request = captured_request.clone();
-                let completion = completion_response.clone();
                 async move {
                     match (req.method(), req.uri().path()) {
                         (&Method::POST, "/client/llm_tokens") => {
@@ -1893,7 +2110,7 @@ mod tests {
                                 .body(
                                     serde_json::to_string(&PredictEditsResponse {
                                         request_id: Uuid::new_v4(),
-                                        output_excerpt: completion,
+                                        output_excerpt: completion_response.clone(),
                                     })
                                     .unwrap()
                                     .into(),
@@ -1913,20 +2130,23 @@ mod tests {
         cx.update(|cx| {
             RefreshLlmTokenListener::register(client.clone(), cx);
         });
-        // Construct the fake server to authenticate.
         let _server = FakeServer::for_client(42, &client, cx).await;
-        let fs = project::FakeFs::new(cx.executor());
-        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 0)));
 
-        let zeta = cx.new(|cx| Zeta::new(client, project.read(cx).user_store(), cx));
-        let completion_task = zeta.update(cx, |zeta, cx| {
-            zeta.request_completion(&project, buffer, cursor, cx)
+        let zeta = cx.new(|cx| {
+            let mut zeta = Zeta::new(client, project.read(cx).user_store(), cx);
+
+            let worktrees = project.read(cx).worktrees(cx).collect::<Vec<_>>();
+            for worktree in worktrees {
+                let worktree_id = worktree.read(cx).id();
+                zeta.license_detection_watchers
+                    .entry(worktree_id)
+                    .or_insert_with(|| Rc::new(LicenseDetectionWatcher::new(&worktree, cx)));
+            }
+
+            zeta
         });
 
-        let edit_prediction = completion_task.await.unwrap().unwrap();
-        let request = captured_request.lock().clone().unwrap();
-        (request, edit_prediction)
+        (zeta, captured_request)
     }
 
     fn to_completion_edits(
