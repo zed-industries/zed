@@ -62,8 +62,7 @@ use crate::{
     AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
     LinuxKeyboardLayout, Modifiers, ModifiersChangedEvent, MouseButton, Pixels, Platform,
     PlatformDisplay, PlatformInput, PlatformKeyboardLayout, Point, RequestFrameOptions,
-    ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
-    modifiers_from_xinput_info, point, px,
+    ScrollDelta, Size, TouchPhase, WindowParams, X11Window, modifiers_from_xinput_info, point, px,
 };
 
 /// Value for DeviceId parameters which selects all devices.
@@ -270,6 +269,7 @@ impl X11ClientStatePtr {
             state.ximc = Some(ximc);
             return;
         };
+        let scaled_bounds = bounds.scale(state.scale_factor);
         let ic_attributes = ximc
             .build_ic_attributes()
             .push(
@@ -282,8 +282,8 @@ impl X11ClientStatePtr {
                 b.push(
                     xim::AttributeName::SpotLocation,
                     xim::Point {
-                        x: u32::from(bounds.origin.x + bounds.size.width) as i16,
-                        y: u32::from(bounds.origin.y + bounds.size.height) as i16,
+                        x: u32::from(scaled_bounds.origin.x) as i16,
+                        y: u32::from(scaled_bounds.origin.y) as i16,
                     },
                 );
             })
@@ -709,8 +709,8 @@ impl X11Client {
                         b.push(
                             xim::AttributeName::SpotLocation,
                             xim::Point {
-                                x: u32::from(area.origin.x + area.size.width) as i16,
-                                y: u32::from(area.origin.y + area.size.height) as i16,
+                                x: u32::from(area.origin.x) as i16,
+                                y: u32::from(area.origin.y) as i16,
                             },
                         );
                     });
@@ -1364,8 +1364,8 @@ impl X11Client {
                     b.push(
                         xim::AttributeName::SpotLocation,
                         xim::Point {
-                            x: u32::from(area.origin.x + area.size.width) as i16,
-                            y: u32::from(area.origin.y + area.size.height) as i16,
+                            x: u32::from(area.origin.x) as i16,
+                            y: u32::from(area.origin.y) as i16,
                         },
                     );
                 })

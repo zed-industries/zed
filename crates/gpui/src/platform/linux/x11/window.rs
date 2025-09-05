@@ -5,7 +5,7 @@ use crate::platform::blade::{BladeContext, BladeRenderer, BladeSurfaceConfig};
 use crate::{
     AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, GpuSpecs, Modifiers,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
-    Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, Tiling,
+    Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size, Tiling,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
     WindowDecorations, WindowKind, WindowParams, X11ClientStatePtr, px, size,
 };
@@ -1019,8 +1019,9 @@ impl X11WindowStatePtr {
         }
     }
 
-    pub fn get_ime_area(&self) -> Option<Bounds<Pixels>> {
+    pub fn get_ime_area(&self) -> Option<Bounds<ScaledPixels>> {
         let mut state = self.state.borrow_mut();
+        let scale_factor = state.scale_factor;
         let mut bounds: Option<Bounds<Pixels>> = None;
         if let Some(mut input_handler) = state.input_handler.take() {
             drop(state);
@@ -1030,7 +1031,7 @@ impl X11WindowStatePtr {
             let mut state = self.state.borrow_mut();
             state.input_handler = Some(input_handler);
         };
-        bounds
+        bounds.map(|b| b.scale(scale_factor))
     }
 
     pub fn set_bounds(&self, bounds: Bounds<i32>) -> anyhow::Result<()> {
