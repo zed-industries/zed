@@ -39,6 +39,7 @@ git2 = { workspace = true, features = ["vendored-libgit2"] }
 gpui.workspace = true
 gpui_tokio.workspace = true
 http_client.workspace = true
+iroh.workspace = true
 json_schema_store.workspace = true
 language.workspace = true
 language_extension.workspace = true
@@ -49,6 +50,7 @@ node_runtime.workspace = true
 paths.workspace = true
 project.workspace = true
 proto.workspace = true
+postcard.workspace = true
 release_channel.workspace = true
 remote.workspace = true
 reqwest_client.workspace = true
@@ -61,6 +63,8 @@ shellexpand.workspace = true
 smol.workspace = true
 sysinfo.workspace = true
 task.workspace = true
+tokio = { workspace = true, features = ["full", "rt-multi-thread"] }
+tokio-util.workspace = true
 util.workspace = true
 watch.workspace = true
 worktree.workspace = true

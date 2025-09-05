@@ -1,8 +1,9 @@
 use crate::{
-    SshConnectionOptions,
+    IrohConnectionOptions, SshConnectionOptions,
     protocol::MessageId,
     proxy::ProxyLaunchError,
     transport::{
+        iroh::IrohZedRemote,
         ssh::SshRemoteConnection,
         wsl::{WslConnectionOptions, WslRemoteConnection},
     },
@@ -311,6 +312,22 @@ impl RemoteClient {
         )
     }
 
+    pub fn p2p(
+        unique_identifier: ConnectionIdentifier,
+        connection_options: IrohConnectionOptions,
+        cancellation: oneshot::Receiver<()>,
+        delegate: Arc<dyn RemoteClientDelegate>,
+        cx: &mut App,
+    ) -> Task<Result<Option<Entity<Self>>>> {
+        Self::new(
+            unique_identifier,
+            RemoteConnectionOptions::Iroh(connection_options),
+            cancellation,
+            delegate,
+            cx,
+        )
+    }
+
     pub fn new(
         unique_identifier: ConnectionIdentifier,
         connection_options: RemoteConnectionOptions,
@@ -319,6 +336,7 @@ impl RemoteClient {
         cx: &mut App,
     ) -> Task<Result<Option<Entity<Self>>>> {
         let unique_identifier = unique_identifier.to_string(cx);
+        log::info!("CONNECT: {}", unique_identifier);
         cx.spawn(async move |cx| {
             let success = Box::pin(async move {
                 let (outgoing_tx, outgoing_rx) = mpsc::unbounded::<Envelope>();
@@ -470,6 +488,7 @@ impl RemoteClient {
     }
 
     fn reconnect(&mut self, cx: &mut Context<Self>) -> Result<()> {
+        log::info!("RECONNECT");
         let can_reconnect = self
             .state
             .as_ref()
@@ -990,6 +1009,7 @@ impl ConnectionPool {
         delegate: Arc<dyn RemoteClientDelegate>,
         cx: &mut App,
     ) -> Shared<Task<Result<Arc<dyn RemoteConnection>, Arc<anyhow::Error>>>> {
+        log::info!("connect {:?}", opts);
         let connection = self.connections.get(&opts);
         match connection {
             Some(ConnectionPoolEntry::Connecting(task)) => {
@@ -1015,6 +1035,7 @@ impl ConnectionPool {
             .spawn({
                 let opts = opts.clone();
                 let delegate = delegate.clone();
+
                 async move |cx| {
                     let connection = match opts.clone() {
                         RemoteConnectionOptions::Ssh(opts) => {
@@ -1024,6 +1045,11 @@ impl ConnectionPool {
                         }
                         RemoteConnectionOptions::Wsl(opts) => {
                             WslRemoteConnection::new(opts, delegate, cx)
+                                .await
+                                .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
+                        }
+                        RemoteConnectionOptions::Iroh(opts) => {
+                            IrohZedRemote::new(opts, delegate, cx)
                                 .await
                                 .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
                         }
@@ -1062,6 +1088,7 @@ impl ConnectionPool {
 pub enum RemoteConnectionOptions {
     Ssh(SshConnectionOptions),
     Wsl(WslConnectionOptions),
+    Iroh(IrohConnectionOptions),
 }
 
 impl RemoteConnectionOptions {
@@ -1069,6 +1096,7 @@ impl RemoteConnectionOptions {
         match self {
             RemoteConnectionOptions::Ssh(opts) => opts.host.clone(),
             RemoteConnectionOptions::Wsl(opts) => opts.distro_name.clone(),
+            RemoteConnectionOptions::Iroh(opts) => opts.ticket.node_addr().node_id.fmt_short(),
         }
     }
 }
