@@ -244,7 +244,7 @@ impl Onboarding {
     fn new(workspace: &Workspace, cx: &mut App) -> Entity<Self> {
         let font_family_cache = theme::FontFamilyCache::global(cx);
         cx.spawn(async move |cx| {
-            font_family_cache.fetch_font_names(cx).await;
+            font_family_cache.prefetch(cx).await;
         })
         .detach();
 
@@ -253,7 +253,6 @@ impl Onboarding {
             focus_handle: cx.focus_handle(),
             selected_page: SelectedPage::Basics,
             user_store: workspace.user_store().clone(),
-            last_frame_time: Instant::now(),
             _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
         })
     }
@@ -519,7 +518,6 @@ impl Onboarding {
         match self.selected_page {
             SelectedPage::Basics => crate::basics_page::render_basics_page(cx).into_any_element(),
             SelectedPage::Editing => {
-                // div().into_any_element()
                 crate::editing_page::render_editing_page(window, cx).into_any_element()
             }
             SelectedPage::AiSetup => crate::ai_setup_page::render_ai_setup_page(
@@ -536,7 +534,7 @@ impl Onboarding {
 
 impl Render for Onboarding {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let result = h_flex()
+        h_flex()
             .image_cache(gpui::retain_all("onboarding-page"))
             .key_context({
                 let mut ctx = KeyContext::new_with_defaults();
@@ -590,8 +588,7 @@ impl Render for Onboarding {
                             .overflow_y_scroll()
                             .child(self.render_page(window, cx)),
                     ),
-            );
-        result
+            )
     }
 }
 

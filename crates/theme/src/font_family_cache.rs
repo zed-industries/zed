@@ -53,8 +53,8 @@ impl FontFamilyCache {
         lock.font_families.clone()
     }
 
-    /// Prefetch all font names
-    pub async fn fetch_font_names(&self, cx: &gpui::AsyncApp) {
+    /// Prefetch all font names in the background
+    pub async fn prefetch(&self, cx: &gpui::AsyncApp) {
         if self
             .state
             .try_read()
