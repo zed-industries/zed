@@ -15,7 +15,7 @@ use std::{
 };
 use util::TryFutureExt;
 
-pub use scheduler::Scheduler;
+pub use scheduler::{Scheduler, Yield};
 
 #[cfg(any(test, feature = "test-support"))]
 use rand::rngs::StdRng;
@@ -205,16 +205,15 @@ impl BackgroundExecutor {
 
     /// in tests, run an arbitrary number of tasks (determined by the SEED environment variable)
     #[cfg(any(test, feature = "test-support"))]
-    pub fn simulate_random_delay(&self) -> impl Future<Output = ()> + use<> {
-        // todo!()
-        std::future::pending()
+    pub fn simulate_random_delay(&self) -> Yield {
+        self.0.scheduler().as_test().yield_random()
     }
 
     /// in tests, indicate that a given task from `spawn_labeled` should run after everything else
     #[cfg(any(test, feature = "test-support"))]
-    pub fn deprioritize(&self, task_label: TaskLabel) {
+    pub fn deprioritize(&self, _task_label: TaskLabel) {
         // self.0.deprioritize(task_label)
-        todo!()
+        todo!("Fuzz test what's calling this")
     }
 
     /// in tests, move time forward. This does not run any tasks, but does make `timer`s ready.

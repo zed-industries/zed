@@ -281,6 +281,10 @@ impl Scheduler for TestScheduler {
     fn now(&self) -> DateTime<Utc> {
         self.clock.now()
     }
+
+    fn as_test(&self) -> &TestScheduler {
+        self
+    }
 }
 
 #[derive(Clone, Debug)]

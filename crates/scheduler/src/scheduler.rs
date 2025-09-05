@@ -24,6 +24,9 @@ pub trait Scheduler: Send + Sync {
     fn schedule_background(&self, runnable: Runnable);
     fn timer(&self, timeout: Duration) -> Timer;
     fn now(&self) -> DateTime<Utc>;
+    fn as_test(&self) -> &TestScheduler {
+        panic!("this is not a test scheduler")
+    }
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
