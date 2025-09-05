@@ -41,14 +41,12 @@ use crate::{
     ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
     Point, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, ScaledPixels, Scene,
     ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SvgSize, SystemWindowTab, Task,
-    TaskLabel, Window, WindowControlArea, hash, point, px, size,
+    Window, WindowControlArea, hash, point, px, size,
 };
 use anyhow::Result;
-use async_task::Runnable;
 use futures::channel::oneshot;
 use image::codecs::gif::GifDecoder;
 use image::{AnimationDecoder as _, Frame};
-use parking::Unparker;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use schemars::JsonSchema;
 use seahash::SeaHasher;
@@ -58,7 +56,6 @@ use std::borrow::Cow;
 use std::hash::{Hash, Hasher};
 use std::io::Cursor;
 use std::ops;
-use std::time::{Duration, Instant};
 use std::{
     fmt::{self, Debug},
     ops::Range,
@@ -84,7 +81,7 @@ pub(crate) use test::*;
 pub(crate) use windows::*;
 
 #[cfg(any(test, feature = "test-support"))]
-pub use test::{TestDispatcher, TestScheduler, TestSchedulerConfig, TestScreenCaptureSource};
+pub use test::{TestScheduler, TestSchedulerConfig, TestScreenCaptureSource};
 
 /// Returns a background executor for the current platform.
 pub fn background_executor() -> BackgroundExecutor {
@@ -552,25 +549,6 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {
-        None
-    }
-}
-
-/// This type is public so that our test macro can generate and use it, but it should not
-/// be considered part of our public API.
-#[doc(hidden)]
-pub trait PlatformDispatcher: Send + Sync {
-    fn dispatch(&self, runnable: Runnable, label: Option<TaskLabel>);
-    fn dispatch_on_main_thread(&self, runnable: Runnable);
-    fn dispatch_after(&self, duration: Duration, runnable: Runnable);
-    fn park(&self, timeout: Option<Duration>) -> bool;
-    fn unparker(&self) -> Unparker;
-    fn now(&self) -> Instant {
-        Instant::now()
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    fn as_test(&self) -> Option<&TestDispatcher> {
         None
     }
 }

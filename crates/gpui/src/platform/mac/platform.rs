@@ -504,7 +504,7 @@ impl Platform for MacPlatform {
         // this, we make quitting the application asynchronous so that we aren't holding borrows to
         // the app state on the stack when we actually terminate the app.
 
-        use super::dispatcher::{dispatch_get_main_queue, dispatch_sys::dispatch_async_f};
+        use super::scheduler::{dispatch_get_main_queue, dispatch_sys::dispatch_async_f};
 
         unsafe {
             dispatch_async_f(dispatch_get_main_queue(), ptr::null_mut(), Some(quit));
