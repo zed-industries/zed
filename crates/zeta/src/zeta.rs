@@ -1752,77 +1752,65 @@ mod tests {
 
     #[gpui::test]
     async fn test_clean_up_diff(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            client::init_settings(cx);
-            Project::init_settings(cx);
-        });
+        init_test(cx);
 
-        let edits = edits_for_prediction(
+        assert_eq!(
+            apply_edit_prediction(
+                indoc! {"
+                    fn main() {
+                        let word_1 = \"lorem\";
+                        let range = word.len()..word.len();
+                    }
+                "},
+                indoc! {"
+                    <|editable_region_start|>
+                    fn main() {
+                        let word_1 = \"lorem\";
+                        let range = word_1.len()..word_1.len();
+                    }
+
+                    <|editable_region_end|>
+                "},
+                cx,
+            )
+            .await,
             indoc! {"
-                fn main() {
-                    let word_1 = \"lorem\";
-                    let range = word.len()..word.len();
-                }
-            "},
-            indoc! {"
-                <|editable_region_start|>
                 fn main() {
                     let word_1 = \"lorem\";
                     let range = word_1.len()..word_1.len();
                 }
-
-                <|editable_region_end|>
             "},
-            cx,
-        )
-        .await;
-        assert_eq!(
-            edits,
-            [
-                (Point::new(2, 20)..Point::new(2, 20), "_1".to_string()),
-                (Point::new(2, 32)..Point::new(2, 32), "_1".to_string()),
-            ]
         );
 
-        let edits = edits_for_prediction(
+        assert_eq!(
+            apply_edit_prediction(
+                indoc! {"
+                    fn main() {
+                        let story = \"the quick\"
+                    }
+                "},
+                indoc! {"
+                    <|editable_region_start|>
+                    fn main() {
+                        let story = \"the quick brown fox jumps over the lazy dog\";
+                    }
+
+                    <|editable_region_end|>
+                "},
+                cx,
+            )
+            .await,
             indoc! {"
-                fn main() {
-                    let story = \"the quick\"
-                }
-            "},
-            indoc! {"
-                <|editable_region_start|>
                 fn main() {
                     let story = \"the quick brown fox jumps over the lazy dog\";
                 }
-
-                <|editable_region_end|>
             "},
-            cx,
-        )
-        .await;
-        assert_eq!(
-            edits,
-            [
-                (
-                    Point::new(1, 26)..Point::new(1, 26),
-                    " brown fox jumps over the lazy dog".to_string()
-                ),
-                (Point::new(1, 27)..Point::new(1, 27), ";".to_string()),
-            ]
         );
     }
 
     #[gpui::test]
     async fn test_edit_prediction_end_of_buffer(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            client::init_settings(cx);
-            Project::init_settings(cx);
-        });
+        init_test(cx);
 
         let buffer_content = "lorem\n";
         let completion_response = indoc! {"
@@ -1834,68 +1822,39 @@ mod tests {
             <|editable_region_end|>
             ```"};
 
-        let http_client = FakeHttpClient::create(move |req| async move {
-            match (req.method(), req.uri().path()) {
-                (&Method::POST, "/client/llm_tokens") => Ok(http_client::Response::builder()
-                    .status(200)
-                    .body(
-                        serde_json::to_string(&CreateLlmTokenResponse {
-                            token: LlmToken("the-llm-token".to_string()),
-                        })
-                        .unwrap()
-                        .into(),
-                    )
-                    .unwrap()),
-                (&Method::POST, "/predict_edits/v2") => Ok(http_client::Response::builder()
-                    .status(200)
-                    .body(
-                        serde_json::to_string(&PredictEditsResponse {
-                            request_id: Uuid::parse_str("7e86480f-3536-4d2c-9334-8213e3445d45")
-                                .unwrap(),
-                            output_excerpt: completion_response.to_string(),
-                        })
-                        .unwrap()
-                        .into(),
-                    )
-                    .unwrap()),
-                _ => Ok(http_client::Response::builder()
-                    .status(404)
-                    .body("Not Found".into())
-                    .unwrap()),
-            }
-        });
-
-        let client = cx.update(|cx| Client::new(Arc::new(FakeSystemClock::new()), http_client, cx));
-        cx.update(|cx| {
-            RefreshLlmTokenListener::register(client.clone(), cx);
-        });
-        // Construct the fake server to authenticate.
-        let _server = FakeServer::for_client(42, &client, cx).await;
-        let fs = project::FakeFs::new(cx.executor());
-        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let buffer = cx.new(|cx| Buffer::local(buffer_content, cx));
-        let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 0)));
-
-        let zeta = cx.new(|cx| Zeta::new(client, project.read(cx).user_store(), cx));
-        let completion_task = zeta.update(cx, |zeta, cx| {
-            zeta.request_completion(&project, &buffer, cursor, cx)
-        });
-
-        let completion = completion_task.await.unwrap().unwrap();
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit(completion.edits.iter().cloned(), None, cx)
-        });
         assert_eq!(
-            buffer.read_with(cx, |buffer, _| buffer.text()),
+            apply_edit_prediction(buffer_content, completion_response, cx).await,
             "lorem\nipsum"
         );
     }
 
-    async fn edits_for_prediction(
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            client::init_settings(cx);
+            Project::init_settings(cx);
+        });
+    }
+
+    async fn apply_edit_prediction(
         buffer_content: &str,
         completion_response: &str,
         cx: &mut TestAppContext,
-    ) -> Vec<(Range<Point>, String)> {
+    ) -> String {
+        let buffer = cx.new(|cx| Buffer::local(buffer_content, cx));
+        let edit_prediction = simulate_edit_prediction(&buffer, completion_response, cx).await;
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(edit_prediction.edits.iter().cloned(), None, cx)
+        });
+        buffer.read_with(cx, |buffer, _| buffer.text())
+    }
+
+    async fn simulate_edit_prediction(
+        buffer: &Entity<Buffer>,
+        completion_response: &str,
+        cx: &mut TestAppContext,
+    ) -> EditPrediction {
         let completion_response = completion_response.to_string();
         let http_client = FakeHttpClient::create(move |req| {
             let completion = completion_response.clone();
@@ -1938,21 +1897,14 @@ mod tests {
         let _server = FakeServer::for_client(42, &client, cx).await;
         let fs = project::FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let buffer = cx.new(|cx| Buffer::local(buffer_content, cx));
-        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
         let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 0)));
 
         let zeta = cx.new(|cx| Zeta::new(client, project.read(cx).user_store(), cx));
         let completion_task = zeta.update(cx, |zeta, cx| {
-            zeta.request_completion(&project, &buffer, cursor, cx)
+            zeta.request_completion(&project, buffer, cursor, cx)
         });
 
-        let completion = completion_task.await.unwrap().unwrap();
-        completion
-            .edits
-            .iter()
-            .map(|(old_range, new_text)| (old_range.to_point(&snapshot), new_text.clone()))
-            .collect::<Vec<_>>()
+        completion_task.await.unwrap().unwrap()
     }
 
     fn to_completion_edits(
