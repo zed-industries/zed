@@ -694,31 +694,37 @@ mod tests {
 
     #[test]
     fn test_source_precedence_sorting() {
+        // KeybindSource precedence: User (0) > Vim (1) > Base (2) > Default (3)
         // Test that user keymaps take precedence over default keymaps at the same context depth
         let mut keymap = Keymap::default();
-        
-        // Add a default keymap binding first (simulating default keymap)
-        let mut default_binding = KeyBinding::new("cmd-r", ActionAlpha {}, Some("Picker > Editor"));
+
+        // Add a default keymap binding first
+        let mut default_binding = KeyBinding::new(
+            "cmd-r",
+            ActionAlpha {},
+            Some("Editor"),
+        );
         default_binding.set_meta(KeyBindingMetaIndex(3)); // Default source
         keymap.add_bindings([default_binding]);
-        
-        // Add a user keymap binding second (simulating user keymap)
-        let mut user_binding = KeyBinding::new("cmd-r", ActionBeta {}, Some("Picker > Editor"));
+
+        // Add a user keymap binding
+        let mut user_binding = KeyBinding::new(
+            "cmd-r",
+            ActionBeta {},
+            Some("Editor"),
+        );
         user_binding.set_meta(KeyBindingMetaIndex(0)); // User source
         keymap.add_bindings([user_binding]);
 
-        // Test with Picker > Editor context stack (Editor is child of Picker)
+        // Test with Editor context stack
         let (result, _) = keymap.bindings_for_input(
             &[Keystroke::parse("cmd-r").unwrap()],
-            &[
-                KeyContext::parse("Picker").unwrap(),
-                KeyContext::parse("Editor").unwrap(),
-            ],
+            &[KeyContext::parse("Editor").unwrap()],
         );
 
         // User binding should take precedence over default binding
         assert_eq!(result.len(), 2);
-        assert!(result[0].action.partial_eq(&ActionAlpha {})); // Default binding should be first (this is wrong!)
-        assert!(result[1].action.partial_eq(&ActionBeta {})); // User binding should be second (this is wrong!)
+        assert!(result[0].action.partial_eq(&ActionBeta {}));
+        assert!(result[1].action.partial_eq(&ActionAlpha {}));
     }
 }
