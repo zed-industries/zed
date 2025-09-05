@@ -10,7 +10,10 @@ use fs::{Fs, RemoveOptions, RenameOptions};
 use futures::StreamExt as _;
 use gpui::{App, AppContext as _, AsyncApp, Entity, SemanticVersion, SharedString, Task};
 use node_runtime::NodeRuntime;
-use remote::RemoteClient;
+use rpc::{
+    AnyProtoClient, TypedEnvelope,
+    proto::{self, ToProto},
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
@@ -52,6 +55,27 @@ impl std::fmt::Debug for AgentServerCommand {
     }
 }
 
+impl AgentServerCommand {
+    fn from_proto(proto: proto::AgentServerCommand) -> Self {
+        Self {
+            path: proto.path.into(),
+            args: proto.args,
+            env: Some(proto.env.into_iter().collect()),
+        }
+    }
+
+    fn to_proto(self) -> proto::AgentServerCommand {
+        proto::AgentServerCommand {
+            path: self.path.to_string_lossy().to_string(),
+            args: self.args,
+            env: self
+                .env
+                .map(|env| env.into_iter().collect())
+                .unwrap_or_default(),
+        }
+    }
+}
+
 enum AgentServerStoreState {
     Local {
         node_runtime: NodeRuntime,
@@ -60,7 +84,8 @@ enum AgentServerStoreState {
         project_environment: Entity<ProjectEnvironment>,
     },
     Remote {
-        client: Entity<RemoteClient>,
+        project_id: u64,
+        upstream_client: AnyProtoClient,
     },
 }
 
@@ -69,6 +94,34 @@ pub struct AgentServerStore {
 }
 
 impl AgentServerStore {
+    async fn handle_get_agent_server_command(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GetAgentServerCommand>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::AgentServerCommand> {
+        let command = this
+            .update(&mut cx, |this, cx| {
+                anyhow::Ok(
+                    this.get_agent_server_command(
+                        envelope.payload.binary_name.into(),
+                        envelope.payload.package_name.into(),
+                        envelope.payload.entrypoint_path.into(),
+                        envelope.payload.settings_key.into(),
+                        envelope
+                            .payload
+                            .minimum_version
+                            .map(|version| semver::Version::from_str(&version))
+                            .transpose()?,
+                        None,
+                        None,
+                        cx,
+                    ),
+                )
+            })??
+            .await?;
+        Ok(command.to_proto())
+    }
+
     fn get_agent_server_command(
         &self,
         binary_name: SharedString,
@@ -242,8 +295,22 @@ impl AgentServerStore {
                     // .map_err(|e| LoadError::FailedToInstall(e.to_string().into()).into())
                 })
             }
-            AgentServerStoreState::Remote { client } => {
-                todo!()
+            AgentServerStoreState::Remote {
+                project_id,
+                upstream_client,
+            } => {
+                let command = upstream_client.request(proto::GetAgentServerCommand {
+                    project_id: *project_id,
+                    binary_name: binary_name.to_string(),
+                    package_name: package_name.to_string(),
+                    entrypoint_path: entrypoint_path.to_proto(),
+                    settings_key: settings_key.to_string(),
+                    minimum_version: minimum_version.map(|version| version.to_string()),
+                });
+                cx.spawn(async move |_| {
+                    let command = command.await?;
+                    Ok(AgentServerCommand::from_proto(command))
+                })
             }
         }
     }

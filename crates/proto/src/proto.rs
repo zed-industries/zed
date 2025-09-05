@@ -315,6 +315,8 @@ messages!(
     (GitClone, Background),
     (GitCloneResponse, Background),
     (ToggleLspLogs, Background),
+    (GetAgentServerCommand, Background),
+    (AgentServerCommand, Background),
 );
 
 request_messages!(
@@ -485,6 +487,7 @@ request_messages!(
     (GetDefaultBranch, GetDefaultBranchResponse),
     (GitClone, GitCloneResponse),
     (ToggleLspLogs, Ack),
+    (GetAgentServerCommand, AgentServerCommand)
 );
 
 lsp_messages!(
@@ -636,7 +639,8 @@ entity_messages!(
     GetDocumentDiagnostics,
     PullWorkspaceDiagnostics,
     GetDefaultBranch,
-    GitClone
+    GitClone,
+    GetAgentServerCommand
 );
 
 entity_messages!(

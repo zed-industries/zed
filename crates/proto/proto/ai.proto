@@ -164,3 +164,18 @@ enum LanguageModelRole {
     LanguageModelSystem = 2;
     reserved 3;
 }
+
+message GetAgentServerCommand {
+    uint64 project_id = 1;
+    string binary_name = 2;
+    string package_name = 3;
+    string entrypoint_path = 4;
+    string settings_key = 5;
+    optional string minimum_version = 6;
+}
+
+message AgentServerCommand {
+    string path = 1;
+    repeated string args = 2;
+    map<string, string> env = 3;
+}
