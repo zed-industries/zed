@@ -35,6 +35,7 @@ impl<'a> CustomHighlightsChunks<'a> {
         range: Range<usize>,
         language_aware: bool,
         text_highlights: Option<&'a TextHighlights>,
+        bracket_highlights: Option<&'a TextHighlights>,
         multibuffer_snapshot: &'a MultiBufferSnapshot,
     ) -> Self {
         Self {
@@ -46,6 +47,7 @@ impl<'a> CustomHighlightsChunks<'a> {
             highlight_endpoints: create_highlight_endpoints(
                 &range,
                 text_highlights,
+                bracket_highlights,
                 multibuffer_snapshot,
             ),
             active_highlights: Default::default(),
@@ -66,6 +68,7 @@ impl<'a> CustomHighlightsChunks<'a> {
 fn create_highlight_endpoints(
     range: &Range<usize>,
     text_highlights: Option<&TextHighlights>,
+    bracket_highlights: Option<&TextHighlights>,
     buffer: &MultiBufferSnapshot,
 ) -> iter::Peekable<vec::IntoIter<HighlightEndpoint>> {
     let mut highlight_endpoints = Vec::new();
@@ -101,6 +104,7 @@ fn create_highlight_endpoints(
                 highlight_endpoints.push(HighlightEndpoint {
                     offset: range.end.to_offset(buffer),
                     is_start: false,
+                    is_special_case: true,
                     tag,
                     style,
                 });
