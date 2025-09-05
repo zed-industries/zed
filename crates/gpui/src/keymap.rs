@@ -699,20 +699,12 @@ mod tests {
         let mut keymap = Keymap::default();
 
         // Add a default keymap binding first
-        let mut default_binding = KeyBinding::new(
-            "cmd-r",
-            ActionAlpha {},
-            Some("Editor"),
-        );
+        let mut default_binding = KeyBinding::new("cmd-r", ActionAlpha {}, Some("Editor"));
         default_binding.set_meta(KeyBindingMetaIndex(3)); // Default source
         keymap.add_bindings([default_binding]);
 
         // Add a user keymap binding
-        let mut user_binding = KeyBinding::new(
-            "cmd-r",
-            ActionBeta {},
-            Some("Editor"),
-        );
+        let mut user_binding = KeyBinding::new( "cmd-r", ActionBeta {}, Some("Editor"));
         user_binding.set_meta(KeyBindingMetaIndex(0)); // User source
         keymap.add_bindings([user_binding]);
 
