@@ -93,8 +93,8 @@ impl<T: 'static> Render for PromptEditor<T> {
         };
 
         let bottom_padding = match &self.mode {
-            PromptEditorMode::Buffer { .. } => Pixels::from(0.),
-            PromptEditorMode::Terminal { .. } => Pixels::from(8.0),
+            PromptEditorMode::Buffer { .. } => rems_from_px(2.0),
+            PromptEditorMode::Terminal { .. } => rems_from_px(8.0),
         };
 
         buttons.extend(self.render_buttons(window, cx));
@@ -762,20 +762,22 @@ impl<T: 'static> PromptEditor<T> {
         )
     }
 
-    fn render_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let font_size = TextSize::Default.rems(cx);
-        let line_height = font_size.to_pixels(window.rem_size()) * 1.3;
+    fn render_editor(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let colors = cx.theme().colors();
 
         div()
             .key_context("InlineAssistEditor")
             .size_full()
             .p_2()
             .pl_1()
-            .bg(cx.theme().colors().editor_background)
+            .bg(colors.editor_background)
             .child({
                 let settings = ThemeSettings::get_global(cx);
+                let font_size = settings.buffer_font_size(cx);
+                let line_height = font_size * 1.2;
+
                 let text_style = TextStyle {
-                    color: cx.theme().colors().editor_foreground,
+                    color: colors.editor_foreground,
                     font_family: settings.buffer_font.family.clone(),
                     font_features: settings.buffer_font.features.clone(),
                     font_size: font_size.into(),
@@ -786,7 +788,7 @@ impl<T: 'static> PromptEditor<T> {
                 EditorElement::new(
                     &self.editor,
                     EditorStyle {
-                        background: cx.theme().colors().editor_background,
+                        background: colors.editor_background,
                         local_player: cx.theme().players().local(),
                         text: text_style,
                         ..Default::default()

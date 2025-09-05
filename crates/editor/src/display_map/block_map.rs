@@ -128,10 +128,10 @@ impl<T> BlockPlacement<T> {
         }
     }
 
-    fn sort_order(&self) -> u8 {
+    fn tie_break(&self) -> u8 {
         match self {
-            BlockPlacement::Above(_) => 0,
-            BlockPlacement::Replace(_) => 1,
+            BlockPlacement::Replace(_) => 0,
+            BlockPlacement::Above(_) => 1,
             BlockPlacement::Near(_) => 2,
             BlockPlacement::Below(_) => 3,
         }
@@ -143,7 +143,7 @@ impl BlockPlacement<Anchor> {
         self.start()
             .cmp(other.start(), buffer)
             .then_with(|| other.end().cmp(self.end(), buffer))
-            .then_with(|| self.sort_order().cmp(&other.sort_order()))
+            .then_with(|| self.tie_break().cmp(&other.tie_break()))
     }
 
     fn to_wrap_row(&self, wrap_snapshot: &WrapSnapshot) -> Option<BlockPlacement<WrapRow>> {
@@ -847,6 +847,7 @@ impl BlockMap {
                 .start()
                 .cmp(placement_b.start())
                 .then_with(|| placement_b.end().cmp(placement_a.end()))
+                .then_with(|| placement_a.tie_break().cmp(&placement_b.tie_break()))
                 .then_with(|| {
                     if block_a.is_header() {
                         Ordering::Less
@@ -856,7 +857,6 @@ impl BlockMap {
                         Ordering::Equal
                     }
                 })
-                .then_with(|| placement_a.sort_order().cmp(&placement_b.sort_order()))
                 .then_with(|| match (block_a, block_b) {
                     (
                         Block::ExcerptBoundary {
@@ -2922,21 +2922,21 @@ mod tests {
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
 
-        let wrap_width = if rng.gen_bool(0.2) {
+        let wrap_width = if rng.random_bool(0.2) {
             None
         } else {
-            Some(px(rng.gen_range(0.0..=100.0)))
+            Some(px(rng.random_range(0.0..=100.0)))
         };
         let tab_size = 1.try_into().unwrap();
         let font_size = px(14.0);
-        let buffer_start_header_height = rng.gen_range(1..=5);
-        let excerpt_header_height = rng.gen_range(1..=5);
+        let buffer_start_header_height = rng.random_range(1..=5);
+        let excerpt_header_height = rng.random_range(1..=5);
 
         log::info!("Wrap width: {:?}", wrap_width);
         log::info!("Excerpt Header Height: {:?}", excerpt_header_height);
-        let is_singleton = rng.r#gen();
+        let is_singleton = rng.random();
         let buffer = if is_singleton {
-            let len = rng.gen_range(0..10);
+            let len = rng.random_range(0..10);
             let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
             log::info!("initial singleton buffer text: {:?}", text);
             cx.update(|cx| MultiBuffer::build_simple(&text, cx))
@@ -2966,30 +2966,30 @@ mod tests {
 
         for _ in 0..operations {
             let mut buffer_edits = Vec::new();
-            match rng.gen_range(0..=100) {
+            match rng.random_range(0..=100) {
                 0..=19 => {
-                    let wrap_width = if rng.gen_bool(0.2) {
+                    let wrap_width = if rng.random_bool(0.2) {
                         None
                     } else {
-                        Some(px(rng.gen_range(0.0..=100.0)))
+                        Some(px(rng.random_range(0.0..=100.0)))
                     };
                     log::info!("Setting wrap width to {:?}", wrap_width);
                     wrap_map.update(cx, |map, cx| map.set_wrap_width(wrap_width, cx));
                 }
                 20..=39 => {
-                    let block_count = rng.gen_range(1..=5);
+                    let block_count = rng.random_range(1..=5);
                     let block_properties = (0..block_count)
                         .map(|_| {
                             let buffer = cx.update(|cx| buffer.read(cx).read(cx).clone());
                             let offset =
-                                buffer.clip_offset(rng.gen_range(0..=buffer.len()), Bias::Left);
+                                buffer.clip_offset(rng.random_range(0..=buffer.len()), Bias::Left);
                             let mut min_height = 0;
-                            let placement = match rng.gen_range(0..3) {
+                            let placement = match rng.random_range(0..3) {
                                 0 => {
                                     min_height = 1;
                                     let start = buffer.anchor_after(offset);
                                     let end = buffer.anchor_after(buffer.clip_offset(
-                                        rng.gen_range(offset..=buffer.len()),
+                                        rng.random_range(offset..=buffer.len()),
                                         Bias::Left,
                                     ));
                                     BlockPlacement::Replace(start..=end)
@@ -2998,7 +2998,7 @@ mod tests {
                                 _ => BlockPlacement::Below(buffer.anchor_after(offset)),
                             };
 
-                            let height = rng.gen_range(min_height..5);
+                            let height = rng.random_range(min_height..5);
                             BlockProperties {
                                 style: BlockStyle::Fixed,
                                 placement,
@@ -3040,7 +3040,7 @@ mod tests {
                     }
                 }
                 40..=59 if !block_map.custom_blocks.is_empty() => {
-                    let block_count = rng.gen_range(1..=4.min(block_map.custom_blocks.len()));
+                    let block_count = rng.random_range(1..=4.min(block_map.custom_blocks.len()));
                     let block_ids_to_remove = block_map
                         .custom_blocks
                         .choose_multiple(&mut rng, block_count)
@@ -3095,8 +3095,8 @@ mod tests {
                     let mut folded_count = folded_buffers.len();
                     let mut unfolded_count = unfolded_buffers.len();
 
-                    let fold = !unfolded_buffers.is_empty() && rng.gen_bool(0.5);
-                    let unfold = !folded_buffers.is_empty() && rng.gen_bool(0.5);
+                    let fold = !unfolded_buffers.is_empty() && rng.random_bool(0.5);
+                    let unfold = !folded_buffers.is_empty() && rng.random_bool(0.5);
                     if !fold && !unfold {
                         log::info!(
                             "Noop fold/unfold operation. Unfolded buffers: {unfolded_count}, folded buffers: {folded_count}"
@@ -3107,7 +3107,7 @@ mod tests {
                     buffer.update(cx, |buffer, cx| {
                         if fold {
                             let buffer_to_fold =
-                                unfolded_buffers[rng.gen_range(0..unfolded_buffers.len())];
+                                unfolded_buffers[rng.random_range(0..unfolded_buffers.len())];
                             log::info!("Folding {buffer_to_fold:?}");
                             let related_excerpts = buffer_snapshot
                                 .excerpts()
@@ -3133,7 +3133,7 @@ mod tests {
                         }
                         if unfold {
                             let buffer_to_unfold =
-                                folded_buffers[rng.gen_range(0..folded_buffers.len())];
+                                folded_buffers[rng.random_range(0..folded_buffers.len())];
                             log::info!("Unfolding {buffer_to_unfold:?}");
                             unfolded_count += 1;
                             folded_count -= 1;
@@ -3146,7 +3146,7 @@ mod tests {
                 }
                 _ => {
                     buffer.update(cx, |buffer, cx| {
-                        let mutation_count = rng.gen_range(1..=5);
+                        let mutation_count = rng.random_range(1..=5);
                         let subscription = buffer.subscribe();
                         buffer.randomly_mutate(&mut rng, mutation_count, cx);
                         buffer_snapshot = buffer.snapshot(cx);
@@ -3331,7 +3331,7 @@ mod tests {
             );
 
             for start_row in 0..expected_row_count {
-                let end_row = rng.gen_range(start_row + 1..=expected_row_count);
+                let end_row = rng.random_range(start_row + 1..=expected_row_count);
                 let mut expected_text = expected_lines[start_row..end_row].join("\n");
                 if end_row < expected_row_count {
                     expected_text.push('\n');
@@ -3426,8 +3426,8 @@ mod tests {
             );
 
             for _ in 0..10 {
-                let end_row = rng.gen_range(1..=expected_lines.len());
-                let start_row = rng.gen_range(0..end_row);
+                let end_row = rng.random_range(1..=expected_lines.len());
+                let start_row = rng.random_range(0..end_row);
 
                 let mut expected_longest_rows_in_range = vec![];
                 let mut longest_line_len_in_range = 0;

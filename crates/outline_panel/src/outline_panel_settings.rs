@@ -2,7 +2,7 @@ use editor::EditorSettings;
 use gpui::{App, Pixels};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsUi};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 use ui::scrollbars::{ScrollbarVisibilitySetting, ShowScrollbar};
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Copy, PartialEq)]
@@ -62,7 +62,8 @@ pub struct IndentGuidesSettingsContent {
     pub show: Option<ShowIndentGuides>,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi, SettingsKey)]
+#[settings_key(key = "outline_panel")]
 pub struct OutlinePanelSettingsContent {
     /// Whether to show the outline panel button in the status bar.
     ///
@@ -125,8 +126,6 @@ impl ScrollbarVisibilitySetting for OutlinePanelSettings {
 }
 
 impl Settings for OutlinePanelSettings {
-    const KEY: Option<&'static str> = Some("outline_panel");
-
     type FileContent = OutlinePanelSettingsContent;
 
     fn load(

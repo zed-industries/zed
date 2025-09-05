@@ -321,6 +321,7 @@ impl LspAdapter for JsonLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
+        _: &AsyncApp,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         Ok(Box::new(
             self.node
@@ -494,6 +495,7 @@ impl LspAdapter for NodeVersionAdapter {
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
+        _: &AsyncApp,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         let release = latest_github_release(
             "zed-industries/package-version-server",

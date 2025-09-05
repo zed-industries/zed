@@ -11,7 +11,7 @@ use collections::HashMap;
 use editor::{Editor, EditorMode, MinimapVisibility};
 use gpui::{
     AnyEntity, App, AppContext as _, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    ScrollHandle, TextStyleRefinement, WeakEntity, Window,
+    ScrollHandle, SharedString, TextStyleRefinement, WeakEntity, Window,
 };
 use language::language_settings::SoftWrap;
 use project::Project;
@@ -32,6 +32,7 @@ pub struct EntryViewState {
     entries: Vec<Entry>,
     prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
     available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
+    agent_name: SharedString,
 }
 
 impl EntryViewState {
@@ -42,6 +43,7 @@ impl EntryViewState {
         prompt_store: Option<Entity<PromptStore>>,
         prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
         available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
+        agent_name: SharedString,
     ) -> Self {
         Self {
             workspace,
@@ -51,6 +53,7 @@ impl EntryViewState {
             entries: Vec::new(),
             prompt_capabilities,
             available_commands,
+            agent_name,
         }
     }
 
@@ -90,6 +93,7 @@ impl EntryViewState {
                             self.prompt_store.clone(),
                             self.prompt_capabilities.clone(),
                             self.available_commands.clone(),
+                            self.agent_name.clone(),
                             "Edit message － @ to include context",
                             editor::EditorMode::AutoHeight {
                                 min_lines: 1,
@@ -203,7 +207,7 @@ impl EntryViewState {
         self.entries.drain(range);
     }
 
-    pub fn settings_changed(&mut self, cx: &mut App) {
+    pub fn agent_font_size_changed(&mut self, cx: &mut App) {
         for entry in self.entries.iter() {
             match entry {
                 Entry::UserMessage { .. } | Entry::AssistantMessage { .. } => {}
@@ -476,6 +480,7 @@ mod tests {
                 None,
                 Default::default(),
                 Default::default(),
+                "Test Agent".into(),
             )
         });
 

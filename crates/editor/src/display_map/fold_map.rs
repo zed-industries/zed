@@ -1771,9 +1771,9 @@ mod tests {
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
 
-        let len = rng.gen_range(0..10);
+        let len = rng.random_range(0..10);
         let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
-        let buffer = if rng.r#gen() {
+        let buffer = if rng.random() {
             MultiBuffer::build_simple(&text, cx)
         } else {
             MultiBuffer::build_random(&mut rng, cx)
@@ -1790,7 +1790,7 @@ mod tests {
             log::info!("text: {:?}", buffer_snapshot.text());
             let mut buffer_edits = Vec::new();
             let mut inlay_edits = Vec::new();
-            match rng.gen_range(0..=100) {
+            match rng.random_range(0..=100) {
                 0..=39 => {
                     snapshot_edits.extend(map.randomly_mutate(&mut rng));
                 }
@@ -1800,7 +1800,7 @@ mod tests {
                 }
                 _ => buffer.update(cx, |buffer, cx| {
                     let subscription = buffer.subscribe();
-                    let edit_count = rng.gen_range(1..=5);
+                    let edit_count = rng.random_range(1..=5);
                     buffer.randomly_mutate(&mut rng, edit_count, cx);
                     buffer_snapshot = buffer.snapshot(cx);
                     let edits = subscription.consume().into_inner();
@@ -1917,10 +1917,14 @@ mod tests {
             }
 
             for _ in 0..5 {
-                let mut start = snapshot
-                    .clip_offset(FoldOffset(rng.gen_range(0..=snapshot.len().0)), Bias::Left);
-                let mut end = snapshot
-                    .clip_offset(FoldOffset(rng.gen_range(0..=snapshot.len().0)), Bias::Right);
+                let mut start = snapshot.clip_offset(
+                    FoldOffset(rng.random_range(0..=snapshot.len().0)),
+                    Bias::Left,
+                );
+                let mut end = snapshot.clip_offset(
+                    FoldOffset(rng.random_range(0..=snapshot.len().0)),
+                    Bias::Right,
+                );
                 if start > end {
                     mem::swap(&mut start, &mut end);
                 }
@@ -1975,8 +1979,8 @@ mod tests {
 
             for _ in 0..5 {
                 let end =
-                    buffer_snapshot.clip_offset(rng.gen_range(0..=buffer_snapshot.len()), Right);
-                let start = buffer_snapshot.clip_offset(rng.gen_range(0..=end), Left);
+                    buffer_snapshot.clip_offset(rng.random_range(0..=buffer_snapshot.len()), Right);
+                let start = buffer_snapshot.clip_offset(rng.random_range(0..=end), Left);
                 let expected_folds = map
                     .snapshot
                     .folds
@@ -2001,10 +2005,10 @@ mod tests {
 
             let text = snapshot.text();
             for _ in 0..5 {
-                let start_row = rng.gen_range(0..=snapshot.max_point().row());
-                let start_column = rng.gen_range(0..=snapshot.line_len(start_row));
-                let end_row = rng.gen_range(0..=snapshot.max_point().row());
-                let end_column = rng.gen_range(0..=snapshot.line_len(end_row));
+                let start_row = rng.random_range(0..=snapshot.max_point().row());
+                let start_column = rng.random_range(0..=snapshot.line_len(start_row));
+                let end_row = rng.random_range(0..=snapshot.max_point().row());
+                let end_column = rng.random_range(0..=snapshot.line_len(end_row));
                 let mut start =
                     snapshot.clip_point(FoldPoint::new(start_row, start_column), Bias::Left);
                 let mut end = snapshot.clip_point(FoldPoint::new(end_row, end_column), Bias::Right);
@@ -2109,17 +2113,17 @@ mod tests {
             rng: &mut impl Rng,
         ) -> Vec<(FoldSnapshot, Vec<FoldEdit>)> {
             let mut snapshot_edits = Vec::new();
-            match rng.gen_range(0..=100) {
+            match rng.random_range(0..=100) {
                 0..=39 if !self.snapshot.folds.is_empty() => {
                     let inlay_snapshot = self.snapshot.inlay_snapshot.clone();
                     let buffer = &inlay_snapshot.buffer;
                     let mut to_unfold = Vec::new();
-                    for _ in 0..rng.gen_range(1..=3) {
-                        let end = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Right);
-                        let start = buffer.clip_offset(rng.gen_range(0..=end), Left);
+                    for _ in 0..rng.random_range(1..=3) {
+                        let end = buffer.clip_offset(rng.random_range(0..=buffer.len()), Right);
+                        let start = buffer.clip_offset(rng.random_range(0..=end), Left);
                         to_unfold.push(start..end);
                     }
-                    let inclusive = rng.r#gen();
+                    let inclusive = rng.random();
                     log::info!("unfolding {:?} (inclusive: {})", to_unfold, inclusive);
                     let (mut writer, snapshot, edits) = self.write(inlay_snapshot, vec![]);
                     snapshot_edits.push((snapshot, edits));
@@ -2130,9 +2134,9 @@ mod tests {
                     let inlay_snapshot = self.snapshot.inlay_snapshot.clone();
                     let buffer = &inlay_snapshot.buffer;
                     let mut to_fold = Vec::new();
-                    for _ in 0..rng.gen_range(1..=2) {
-                        let end = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Right);
-                        let start = buffer.clip_offset(rng.gen_range(0..=end), Left);
+                    for _ in 0..rng.random_range(1..=2) {
+                        let end = buffer.clip_offset(rng.random_range(0..=buffer.len()), Right);
+                        let start = buffer.clip_offset(rng.random_range(0..=end), Left);
                         to_fold.push((start..end, FoldPlaceholder::test()));
                     }
                     log::info!("folding {:?}", to_fold);

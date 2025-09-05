@@ -4480,6 +4480,7 @@ mod tests {
                 "keymap_editor",
                 "keystroke_input",
                 "language_selector",
+                "line_ending",
                 "lsp_tool",
                 "markdown",
                 "menu",
@@ -4502,6 +4503,7 @@ mod tests {
                 "snippets",
                 "supermaven",
                 "svg",
+                "syntax_tree_view",
                 "tab_switcher",
                 "task",
                 "terminal",
@@ -4511,11 +4513,11 @@ mod tests {
                 "toolchain",
                 "variable_list",
                 "vim",
+                "window",
                 "workspace",
                 "zed",
                 "zed_predict_onboarding",
                 "zeta",
-                "window",
             ];
             assert_eq!(
                 all_namespaces,
@@ -4854,5 +4856,35 @@ mod tests {
             new_content_str.contains("UNIQUEVALUE"),
             "BUG FOUND: Project settings were overwritten when opening via command - original custom content was lost"
         );
+    }
+
+    #[gpui::test]
+    fn test_settings_defaults(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            settings::init(cx);
+            workspace::init_settings(cx);
+            title_bar::init(cx);
+            editor::init_settings(cx);
+            debugger_ui::init(cx);
+        });
+        let default_json =
+            cx.read(|cx| cx.global::<SettingsStore>().raw_default_settings().clone());
+
+        let all_paths = cx.read(|cx| settings_ui::SettingsUiTree::new(cx).all_paths(cx));
+        let mut failures = Vec::new();
+        for path in all_paths {
+            if settings_ui::read_settings_value_from_path(&default_json, &path).is_none() {
+                failures.push(path);
+            }
+        }
+        if !failures.is_empty() {
+            panic!(
+                "No default value found for paths: {:#?}",
+                failures
+                    .into_iter()
+                    .map(|path| path.join("."))
+                    .collect::<Vec<_>>()
+            );
+        }
     }
 }

@@ -28,8 +28,8 @@ pub enum StackFrameListEvent {
 }
 
 /// Represents the filter applied to the stack frame list
-#[derive(PartialEq, Eq, Copy, Clone)]
-enum StackFrameFilter {
+#[derive(PartialEq, Eq, Copy, Clone, Debug)]
+pub(crate) enum StackFrameFilter {
     /// Show all frames
     All,
     /// Show only frames from the user's code
@@ -171,19 +171,29 @@ impl StackFrameList {
 
     #[cfg(test)]
     pub(crate) fn dap_stack_frames(&self, cx: &mut App) -> Vec<dap::StackFrame> {
-        self.stack_frames(cx)
-            .unwrap_or_default()
-            .into_iter()
-            .enumerate()
-            .filter(|(ix, _)| {
-                self.list_filter == StackFrameFilter::All
-                    || self
-                        .filter_entries_indices
-                        .binary_search_by_key(&ix, |ix| ix)
-                        .is_ok()
-            })
-            .map(|(_, stack_frame)| stack_frame.dap)
-            .collect()
+        match self.list_filter {
+            StackFrameFilter::All => self
+                .stack_frames(cx)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|stack_frame| stack_frame.dap)
+                .collect(),
+            StackFrameFilter::OnlyUserFrames => self
+                .filter_entries_indices
+                .iter()
+                .map(|ix| match &self.entries[*ix] {
+                    StackFrameEntry::Label(label) => label,
+                    StackFrameEntry::Collapsed(_) => panic!("Collapsed tabs should not be visible"),
+                    StackFrameEntry::Normal(frame) => frame,
+                })
+                .cloned()
+                .collect(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn list_filter(&self) -> StackFrameFilter {
+        self.list_filter
     }
 
     pub fn opened_stack_frame_id(&self) -> Option<StackFrameId> {
@@ -243,6 +253,7 @@ impl StackFrameList {
                 self.entries.clear();
                 self.selected_ix = None;
                 self.list_state.reset(0);
+                self.filter_entries_indices.clear();
                 cx.emit(StackFrameListEvent::BuiltEntries);
                 cx.notify();
                 return;
@@ -260,7 +271,7 @@ impl StackFrameList {
             .unwrap_or_default();
 
         let mut filter_entries_indices = Vec::default();
-        for (ix, stack_frame) in stack_frames.iter().enumerate() {
+        for stack_frame in stack_frames.iter() {
             let frame_in_visible_worktree = stack_frame.dap.source.as_ref().is_some_and(|source| {
                 source.path.as_ref().is_some_and(|path| {
                     worktree_prefixes
@@ -269,10 +280,6 @@ impl StackFrameList {
                         .any(|tree| path.starts_with(tree))
                 })
             });
-
-            if frame_in_visible_worktree {
-                filter_entries_indices.push(ix);
-            }
 
             match stack_frame.dap.presentation_hint {
                 Some(dap::StackFramePresentationHint::Deemphasize)
@@ -299,6 +306,9 @@ impl StackFrameList {
                         first_stack_frame_with_path.get_or_insert(entries.len());
                     }
                     entries.push(StackFrameEntry::Normal(stack_frame.dap.clone()));
+                    if frame_in_visible_worktree {
+                        filter_entries_indices.push(entries.len() - 1);
+                    }
                 }
             }
         }
@@ -306,7 +316,6 @@ impl StackFrameList {
         let collapsed_entries = std::mem::take(&mut collapsed_entries);
         if !collapsed_entries.is_empty() {
             entries.push(StackFrameEntry::Collapsed(collapsed_entries));
-            self.filter_entries_indices.push(entries.len() - 1);
         }
         self.entries = entries;
         self.filter_entries_indices = filter_entries_indices;
@@ -609,7 +618,16 @@ impl StackFrameList {
         let entries = std::mem::take(stack_frames)
             .into_iter()
             .map(StackFrameEntry::Normal);
+        // HERE
+        let entries_len = entries.len();
         self.entries.splice(ix..ix + 1, entries);
+        let (Ok(filtered_indices_start) | Err(filtered_indices_start)) =
+            self.filter_entries_indices.binary_search(&ix);
+
+        for idx in &mut self.filter_entries_indices[filtered_indices_start..] {
+            *idx += entries_len - 1;
+        }
+
         self.selected_ix = Some(ix);
         self.list_state.reset(self.entries.len());
         cx.emit(StackFrameListEvent::BuiltEntries);

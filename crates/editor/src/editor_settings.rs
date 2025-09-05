@@ -6,7 +6,7 @@ use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsUi, VsCodeSettings};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi, VsCodeSettings};
 use ui::scrollbars::{ScrollbarVisibilitySetting, ShowScrollbar};
 use util::serde::default_true;
 
@@ -415,8 +415,9 @@ pub enum SnippetSortOrder {
     None,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
 #[settings_ui(group = "Editor")]
+#[settings_key(None)]
 pub struct EditorSettingsContent {
     /// Whether the cursor blinks in the editor.
     ///
@@ -731,6 +732,7 @@ pub struct ScrollbarAxesContent {
 #[derive(
     Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq, SettingsUi,
 )]
+#[settings_ui(group = "Gutter")]
 pub struct GutterContent {
     /// Whether to show line numbers in the gutter.
     ///
@@ -767,8 +769,6 @@ impl ScrollbarVisibilitySetting for EditorSettings {
 }
 
 impl Settings for EditorSettings {
-    const KEY: Option<&'static str> = None;
-
     type FileContent = EditorSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {

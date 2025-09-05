@@ -68,6 +68,78 @@ fn test_line_endings(cx: &mut gpui::App) {
 }
 
 #[gpui::test]
+fn test_set_line_ending(cx: &mut TestAppContext) {
+    let base = cx.new(|cx| Buffer::local("one\ntwo\nthree\n", cx));
+    let base_replica = cx.new(|cx| {
+        Buffer::from_proto(1, Capability::ReadWrite, base.read(cx).to_proto(cx), None).unwrap()
+    });
+    base.update(cx, |_buffer, cx| {
+        cx.subscribe(&base_replica, |this, _, event, cx| {
+            if let BufferEvent::Operation {
+                operation,
+                is_local: true,
+            } = event
+            {
+                this.apply_ops([operation.clone()], cx);
+            }
+        })
+        .detach();
+    });
+    base_replica.update(cx, |_buffer, cx| {
+        cx.subscribe(&base, |this, _, event, cx| {
+            if let BufferEvent::Operation {
+                operation,
+                is_local: true,
+            } = event
+            {
+                this.apply_ops([operation.clone()], cx);
+            }
+        })
+        .detach();
+    });
+
+    // Base
+    base_replica.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.line_ending(), LineEnding::Unix);
+    });
+    base.update(cx, |buffer, cx| {
+        assert_eq!(buffer.line_ending(), LineEnding::Unix);
+        buffer.set_line_ending(LineEnding::Windows, cx);
+        assert_eq!(buffer.line_ending(), LineEnding::Windows);
+    });
+    base_replica.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.line_ending(), LineEnding::Windows);
+    });
+    base.update(cx, |buffer, cx| {
+        buffer.set_line_ending(LineEnding::Unix, cx);
+        assert_eq!(buffer.line_ending(), LineEnding::Unix);
+    });
+    base_replica.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.line_ending(), LineEnding::Unix);
+    });
+
+    // Replica
+    base.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.line_ending(), LineEnding::Unix);
+    });
+    base_replica.update(cx, |buffer, cx| {
+        assert_eq!(buffer.line_ending(), LineEnding::Unix);
+        buffer.set_line_ending(LineEnding::Windows, cx);
+        assert_eq!(buffer.line_ending(), LineEnding::Windows);
+    });
+    base.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.line_ending(), LineEnding::Windows);
+    });
+    base_replica.update(cx, |buffer, cx| {
+        buffer.set_line_ending(LineEnding::Unix, cx);
+        assert_eq!(buffer.line_ending(), LineEnding::Unix);
+    });
+    base.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.line_ending(), LineEnding::Unix);
+    });
+}
+
+#[gpui::test]
 fn test_select_language(cx: &mut App) {
     init_settings(cx, |_| {});
 
@@ -3013,7 +3085,7 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
         .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
         .unwrap_or(10);
 
-    let base_text_len = rng.gen_range(0..10);
+    let base_text_len = rng.random_range(0..10);
     let base_text = RandomCharIter::new(&mut rng)
         .take(base_text_len)
         .collect::<String>();
@@ -3022,7 +3094,7 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
     let network = Arc::new(Mutex::new(Network::new(rng.clone())));
     let base_buffer = cx.new(|cx| Buffer::local(base_text.as_str(), cx));
 
-    for i in 0..rng.gen_range(min_peers..=max_peers) {
+    for i in 0..rng.random_range(min_peers..=max_peers) {
         let buffer = cx.new(|cx| {
             let state = base_buffer.read(cx).to_proto(cx);
             let ops = cx
@@ -3035,7 +3107,7 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
                     .map(|op| proto::deserialize_operation(op).unwrap()),
                 cx,
             );
-            buffer.set_group_interval(Duration::from_millis(rng.gen_range(0..=200)));
+            buffer.set_group_interval(Duration::from_millis(rng.random_range(0..=200)));
             let network = network.clone();
             cx.subscribe(&cx.entity(), move |buffer, _, event, _| {
                 if let BufferEvent::Operation {
@@ -3066,11 +3138,11 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
     let mut next_diagnostic_id = 0;
     let mut active_selections = BTreeMap::default();
     loop {
-        let replica_index = rng.gen_range(0..replica_ids.len());
+        let replica_index = rng.random_range(0..replica_ids.len());
         let replica_id = replica_ids[replica_index];
         let buffer = &mut buffers[replica_index];
         let mut new_buffer = None;
-        match rng.gen_range(0..100) {
+        match rng.random_range(0..100) {
             0..=29 if mutation_count != 0 => {
                 buffer.update(cx, |buffer, cx| {
                     buffer.start_transaction_at(now);
@@ -3082,13 +3154,13 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
             }
             30..=39 if mutation_count != 0 => {
                 buffer.update(cx, |buffer, cx| {
-                    if rng.gen_bool(0.2) {
+                    if rng.random_bool(0.2) {
                         log::info!("peer {} clearing active selections", replica_id);
                         active_selections.remove(&replica_id);
                         buffer.remove_active_selections(cx);
                     } else {
                         let mut selections = Vec::new();
-                        for id in 0..rng.gen_range(1..=5) {
+                        for id in 0..rng.random_range(1..=5) {
                             let range = buffer.random_byte_range(0, &mut rng);
                             selections.push(Selection {
                                 id,
@@ -3111,7 +3183,7 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
                 mutation_count -= 1;
             }
             40..=49 if mutation_count != 0 && replica_id == 0 => {
-                let entry_count = rng.gen_range(1..=5);
+                let entry_count = rng.random_range(1..=5);
                 buffer.update(cx, |buffer, cx| {
                     let diagnostics = DiagnosticSet::new(
                         (0..entry_count).map(|_| {
@@ -3166,7 +3238,7 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
                         new_buffer.replica_id(),
                         new_buffer.text()
                     );
-                    new_buffer.set_group_interval(Duration::from_millis(rng.gen_range(0..=200)));
+                    new_buffer.set_group_interval(Duration::from_millis(rng.random_range(0..=200)));
                     let network = network.clone();
                     cx.subscribe(&cx.entity(), move |buffer, _, event, _| {
                         if let BufferEvent::Operation {
@@ -3238,7 +3310,7 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
             _ => {}
         }
 
-        now += Duration::from_millis(rng.gen_range(0..=200));
+        now += Duration::from_millis(rng.random_range(0..=200));
         buffers.extend(new_buffer);
 
         for buffer in &buffers {
@@ -3320,23 +3392,23 @@ fn test_trailing_whitespace_ranges(mut rng: StdRng) {
     // Generate a random multi-line string containing
     // some lines with trailing whitespace.
     let mut text = String::new();
-    for _ in 0..rng.gen_range(0..16) {
-        for _ in 0..rng.gen_range(0..36) {
-            text.push(match rng.gen_range(0..10) {
+    for _ in 0..rng.random_range(0..16) {
+        for _ in 0..rng.random_range(0..36) {
+            text.push(match rng.random_range(0..10) {
                 0..=1 => ' ',
                 3 => '\t',
-                _ => rng.gen_range('a'..='z'),
+                _ => rng.random_range('a'..='z'),
             });
         }
         text.push('\n');
     }
 
-    match rng.gen_range(0..10) {
+    match rng.random_range(0..10) {
         // sometimes remove the last newline
         0..=1 => drop(text.pop()), //
 
         // sometimes add extra newlines
-        2..=3 => text.push_str(&"\n".repeat(rng.gen_range(1..5))),
+        2..=3 => text.push_str(&"\n".repeat(rng.random_range(1..5))),
         _ => {}
     }
 

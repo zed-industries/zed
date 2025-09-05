@@ -1,7 +1,7 @@
 use std::{borrow::Cow, sync::Arc};
 
 use ::util::ResultExt;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use collections::HashMap;
 use itertools::Itertools;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
@@ -70,7 +70,7 @@ struct FontIdentifier {
 }
 
 impl DirectWriteComponent {
-    pub fn new(gpu_context: &DirectXDevices) -> Result<Self> {
+    pub fn new(directx_devices: &DirectXDevices) -> Result<Self> {
         // todo: ideally this would not be a large unsafe block but smaller isolated ones for easier auditing
         unsafe {
             let factory: IDWriteFactory5 = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
@@ -85,7 +85,7 @@ impl DirectWriteComponent {
             let locale = String::from_utf16_lossy(&locale_vec);
             let text_renderer = Arc::new(TextRendererWrapper::new(&locale));
 
-            let gpu_state = GPUState::new(gpu_context)?;
+            let gpu_state = GPUState::new(directx_devices)?;
 
             Ok(DirectWriteComponent {
                 locale,
@@ -100,9 +100,9 @@ impl DirectWriteComponent {
 }
 
 impl GPUState {
-    fn new(gpu_context: &DirectXDevices) -> Result<Self> {
-        let device = gpu_context.device.clone();
-        let device_context = gpu_context.device_context.clone();
+    fn new(directx_devices: &DirectXDevices) -> Result<Self> {
+        let device = directx_devices.device.clone();
+        let device_context = directx_devices.device_context.clone();
 
         let blend_state = {
             let mut blend_state = None;
@@ -183,8 +183,8 @@ impl GPUState {
 }
 
 impl DirectWriteTextSystem {
-    pub(crate) fn new(gpu_context: &DirectXDevices) -> Result<Self> {
-        let components = DirectWriteComponent::new(gpu_context)?;
+    pub(crate) fn new(directx_devices: &DirectXDevices) -> Result<Self> {
+        let components = DirectWriteComponent::new(directx_devices)?;
         let system_font_collection = unsafe {
             let mut result = std::mem::zeroed();
             components
@@ -209,6 +209,10 @@ impl DirectWriteTextSystem {
             font_selections: HashMap::default(),
             font_id_by_identifier: HashMap::default(),
         })))
+    }
+
+    pub(crate) fn handle_gpu_lost(&self, directx_devices: &DirectXDevices) {
+        self.0.write().handle_gpu_lost(directx_devices);
     }
 }
 
@@ -742,6 +746,10 @@ impl DirectWriteState {
                 &mut grid_fit_mode,
             )?;
         }
+        let rendering_mode = match rendering_mode {
+            DWRITE_RENDERING_MODE1_OUTLINE => DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC,
+            m => m,
+        };
 
         let glyph_analysis = unsafe {
             self.components.factory.CreateGlyphRunAnalysis(
@@ -1207,6 +1215,20 @@ impl DirectWriteState {
         ));
         result
     }
+
+    fn handle_gpu_lost(&mut self, directx_devices: &DirectXDevices) {
+        try_to_recover_from_device_lost(
+            || GPUState::new(directx_devices).context("Recreating GPU state for DirectWrite"),
+            |gpu_state| self.components.gpu_state = gpu_state,
+            || {
+                log::error!(
+                    "Failed to recreate GPU state for DirectWrite after multiple attempts."
+                );
+                // Do something here?
+                // At this point, the device loss is considered unrecoverable.
+            },
+        );
+    }
 }
 
 impl Drop for DirectWriteState {
@@ -1249,7 +1271,7 @@ impl GlyphLayerTexture {
             },
             Usage: D3D11_USAGE_DEFAULT,
             BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
-            CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
+            CPUAccessFlags: 0,
             MiscFlags: 0,
         };
 

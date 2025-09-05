@@ -3425,16 +3425,16 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         assert_eq!(
             entries,
             vec![
-                Some(blame_entry("1b1b1b", 0..1)),
-                Some(blame_entry("0d0d0d", 1..2)),
-                Some(blame_entry("3a3a3a", 2..3)),
-                Some(blame_entry("4c4c4c", 3..4)),
+                Some((buffer_id_b, blame_entry("1b1b1b", 0..1))),
+                Some((buffer_id_b, blame_entry("0d0d0d", 1..2))),
+                Some((buffer_id_b, blame_entry("3a3a3a", 2..3))),
+                Some((buffer_id_b, blame_entry("4c4c4c", 3..4))),
             ]
         );
 
         blame.update(cx, |blame, _| {
-            for (idx, entry) in entries.iter().flatten().enumerate() {
-                let details = blame.details_for_entry(entry).unwrap();
+            for (idx, (buffer, entry)) in entries.iter().flatten().enumerate() {
+                let details = blame.details_for_entry(*buffer, entry).unwrap();
                 assert_eq!(details.message, format!("message for idx-{}", idx));
                 assert_eq!(
                     details.permalink.unwrap().to_string(),
@@ -3474,9 +3474,9 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
             entries,
             vec![
                 None,
-                Some(blame_entry("0d0d0d", 1..2)),
-                Some(blame_entry("3a3a3a", 2..3)),
-                Some(blame_entry("4c4c4c", 3..4)),
+                Some((buffer_id_b, blame_entry("0d0d0d", 1..2))),
+                Some((buffer_id_b, blame_entry("3a3a3a", 2..3))),
+                Some((buffer_id_b, blame_entry("4c4c4c", 3..4))),
             ]
         );
     });
@@ -3511,8 +3511,8 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
             vec![
                 None,
                 None,
-                Some(blame_entry("3a3a3a", 2..3)),
-                Some(blame_entry("4c4c4c", 3..4)),
+                Some((buffer_id_b, blame_entry("3a3a3a", 2..3))),
+                Some((buffer_id_b, blame_entry("4c4c4c", 3..4))),
             ]
         );
     });
