@@ -41,4 +41,12 @@ workspace-hack.workspace = true
 tokio = { workspace = true, optional = true }
 rand = { workspace = true }
 settings = { workspace = true }
-rmcp = { version = "0.6.2", optional = true }
+rmcp = { version = "0.6.2", optional = true, features = [
+    "client",
+    "transport-sse-client-reqwest",
+    "reqwest",
+    "transport-streamable-http-client-reqwest",
+    "transport-child-process",
+    "tower",
+    "auth"
+] }

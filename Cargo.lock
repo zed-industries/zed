@@ -3596,11 +3596,15 @@ dependencies = [
  "net",
  "parking_lot",
  "postage",
+ "rand 0.9.1",
+ "rmcp",
  "schemars",
  "serde",
  "serde_json",
+ "settings",
  "smol",
  "tempfile",
+ "tokio",
  "url",
  "util",
  "workspace-hack",
@@ -4429,6 +4433,41 @@ dependencies = [
  "task",
  "util",
  "workspace-hack",
+]
+
+[[package]]
+name = "darling"
+version = "0.21.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9cdf337090841a411e2a7f3deb9187445851f91b309c0c0a29e05f74a00a48c0"
+dependencies = [
+ "darling_core",
+ "darling_macro",
+]
+
+[[package]]
+name = "darling_core"
+version = "0.21.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1247195ecd7e3c85f83c8d2a366e4210d588e802133e1e355180a9870b517ea4"
+dependencies = [
+ "fnv",
+ "ident_case",
+ "proc-macro2",
+ "quote",
+ "strsim",
+ "syn 2.0.101",
+]
+
+[[package]]
+name = "darling_macro"
+version = "0.21.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d38308df82d1080de0afee5d069fa14b0326a88c14f15c5ccda35b4a6c414c81"
+dependencies = [
+ "darling_core",
+ "quote",
+ "syn 2.0.101",
 ]
 
 [[package]]
@@ -8081,6 +8120,7 @@ dependencies = [
  "tokio",
  "tokio-rustls 0.26.2",
  "tower-service",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -8272,6 +8312,12 @@ name = "id-arena"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "25a2bc672d1148e28034f176e01fffebb08b35768468cc954630da77a1449005"
+
+[[package]]
+name = "ident_case"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 
 [[package]]
 name = "idna"
@@ -10919,6 +10965,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "oauth2"
+version = "5.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "51e219e79014df21a225b1860a479e2dcd7cbd9130f4defd4bd0e191ea31d67d"
+dependencies = [
+ "base64 0.21.7",
+ "chrono",
+ "getrandom 0.2.15",
+ "http 1.3.1",
+ "rand 0.8.5",
+ "reqwest 0.12.15 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde",
+ "serde_json",
+ "serde_path_to_error",
+ "sha2",
+ "thiserror 1.0.69",
+ "url",
+]
+
+[[package]]
 name = "objc"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12539,6 +12605,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "process-wrap"
+version = "8.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3ef4f2f0422f23a82ec9f628ea2acd12871c81a9362b02c43c1aa86acfc3ba1"
+dependencies = [
+ "futures 0.3.31",
+ "indexmap",
+ "nix 0.30.1",
+ "tokio",
+ "tracing",
+ "windows 0.61.1",
+]
+
+[[package]]
 name = "procfs-core"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13668,6 +13748,7 @@ dependencies = [
  "http-body 1.0.1",
  "http-body-util",
  "hyper 1.6.0",
+ "hyper-rustls 0.27.5",
  "hyper-util",
  "ipnet",
  "js-sys",
@@ -13676,17 +13757,25 @@ dependencies = [
  "once_cell",
  "percent-encoding",
  "pin-project-lite",
+ "quinn",
+ "rustls 0.23.26",
+ "rustls-pemfile 2.2.0",
+ "rustls-pki-types",
  "serde",
  "serde_json",
  "serde_urlencoded",
  "sync_wrapper 1.0.2",
  "tokio",
+ "tokio-rustls 0.26.2",
+ "tokio-util",
  "tower 0.5.2",
  "tower-service",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "wasm-streams",
  "web-sys",
+ "webpki-roots",
  "windows-registry 0.4.0",
 ]
 
@@ -13847,6 +13936,48 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "rmcp"
+version = "0.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7dd163d26e254725137b7933e4ba042ea6bf2d756a4260559aaea8b6ad4c27e"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "futures 0.3.31",
+ "http 1.3.1",
+ "oauth2",
+ "paste",
+ "pin-project-lite",
+ "process-wrap",
+ "reqwest 0.12.15 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rmcp-macros",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sse-stream",
+ "thiserror 2.0.12",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tower-service",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "rmcp-macros"
+version = "0.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a43bb4c90a0d4b12f7315eb681a73115d335a2cee81322eca96f3467fe4cd06f"
+dependencies = [
+ "darling",
+ "proc-macro2",
+ "quote",
+ "serde_json",
+ "syn 2.0.101",
 ]
 
 [[package]]
@@ -14390,6 +14521,7 @@ version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fe8c9d1c68d67dd9f97ecbc6f932b60eb289c5dbddd8aa1405484a8fd2fcd984"
 dependencies = [
+ "chrono",
  "dyn-clone",
  "indexmap",
  "ref-cast",
@@ -15569,6 +15701,19 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "sse-stream"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb4dc4d33c68ec1f27d386b5610a351922656e1fdf5c05bbaad930cd1519479a"
+dependencies = [
+ "bytes 1.10.1",
+ "futures-util",
+ "http-body 1.0.1",
+ "http-body-util",
+ "pin-project-lite",
 ]
 
 [[package]]
