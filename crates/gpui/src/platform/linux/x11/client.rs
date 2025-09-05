@@ -62,7 +62,7 @@ use crate::{
     AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
     LinuxKeyboardLayout, Modifiers, ModifiersChangedEvent, MouseButton, Pixels, Platform,
     PlatformDisplay, PlatformInput, PlatformKeyboardLayout, Point, RequestFrameOptions,
-    ScaledPixels, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
+    ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
     modifiers_from_xinput_info, point, px,
 };
 

@@ -75,7 +75,7 @@ use crate::{
     FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, LinuxCommon,
     LinuxKeyboardLayout, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
     MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
-    PlatformInput, PlatformKeyboardLayout, Point, SCROLL_LINES, ScaledPixels, ScrollDelta,
+    PlatformInput, PlatformKeyboardLayout, Point, SCROLL_LINES, ScrollDelta,
     ScrollWheelEvent, Size, TouchPhase, WindowParams, point, px, size,
 };
 use crate::{
