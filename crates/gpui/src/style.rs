@@ -1337,7 +1337,7 @@ mod tests {
                 wavy: true,
             }),
         };
-        let expected_style = style_b.clone();
+        let expected_style = style_b;
 
         style_a.highlight(style_b);
         assert_eq!(
