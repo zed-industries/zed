@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 use editor::{EditorSettings, ShowMinimap};
 use fs::Fs;
@@ -449,11 +449,16 @@ impl FontPickerDelegate {
     ) -> Self {
         let font_family_cache = FontFamilyCache::global(cx);
 
+        // 1. Load font families in a task on tab open
+        // 2. Store state of that in the onboarding page
+        // 3. When rendering the editing page, use that state (whether it's empty or not)
+        // 4. Don't re-create these pickers every frame.
+        let start_time = Instant::now();
         let fonts: Vec<SharedString> = font_family_cache
             .list_font_families(cx)
             .into_iter()
             .collect();
-
+        dbg!(start_time.elapsed());
         let selected_index = fonts
             .iter()
             .position(|font| *font == current_font)

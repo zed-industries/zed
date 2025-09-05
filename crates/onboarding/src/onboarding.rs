@@ -12,7 +12,7 @@ use notifications::status_toast::{StatusToast, ToastIcon};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{SettingsStore, VsCodeSettingsSource};
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 use ui::{
     Avatar, ButtonLike, FluentBuilder, Headline, KeyBinding, ParentElement as _,
     StatefulInteractiveElement, Vector, VectorName, prelude::*, rems_from_px,
@@ -237,6 +237,7 @@ struct Onboarding {
     focus_handle: FocusHandle,
     selected_page: SelectedPage,
     user_store: Entity<UserStore>,
+    last_frame_time: Instant,
     _settings_subscription: Subscription,
 }
 
@@ -247,6 +248,7 @@ impl Onboarding {
             focus_handle: cx.focus_handle(),
             selected_page: SelectedPage::Basics,
             user_store: workspace.user_store().clone(),
+            last_frame_time: Instant::now(),
             _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
         })
     }
@@ -257,6 +259,7 @@ impl Onboarding {
         clicked: Option<&'static str>,
         cx: &mut Context<Self>,
     ) {
+        dbg!(("set_page", self.last_frame_time.elapsed()));
         if let Some(click) = clicked {
             telemetry::event!(
                 "Welcome Tab Clicked",
@@ -512,6 +515,7 @@ impl Onboarding {
         match self.selected_page {
             SelectedPage::Basics => crate::basics_page::render_basics_page(cx).into_any_element(),
             SelectedPage::Editing => {
+                // div().into_any_element()
                 crate::editing_page::render_editing_page(window, cx).into_any_element()
             }
             SelectedPage::AiSetup => crate::ai_setup_page::render_ai_setup_page(
@@ -528,7 +532,14 @@ impl Onboarding {
 
 impl Render for Onboarding {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        h_flex()
+        // 1. flexes in flexes are making Mikayla nervous
+        // 2. Something is waiting for something else, e.g. settings to load
+        // 2.1 while I think it could be settings the basics page also reads from settings so it should already be initialized
+        // 3.
+
+        dbg!(("render_start", self.last_frame_time.elapsed()));
+        self.last_frame_time = Instant::now();
+        let result = h_flex()
             .image_cache(gpui::retain_all("onboarding-page"))
             .key_context({
                 let mut ctx = KeyContext::new_with_defaults();
@@ -582,7 +593,9 @@ impl Render for Onboarding {
                             .overflow_y_scroll()
                             .child(self.render_page(window, cx)),
                     ),
-            )
+            );
+        dbg!(("render_end", self.last_frame_time.elapsed()));
+        result
     }
 }
 
@@ -620,6 +633,7 @@ impl Item for Onboarding {
             user_store: self.user_store.clone(),
             selected_page: self.selected_page,
             focus_handle: cx.focus_handle(),
+            last_frame_time: Instant::now(),
             _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
         }))
     }
