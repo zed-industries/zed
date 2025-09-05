@@ -11,6 +11,7 @@ use editor::{
     Anchor, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN, MultiBuffer, SelectionEffects,
     actions::{Backtab, SelectAll, Tab},
     items::active_match_index,
+    multibuffer_context_lines,
 };
 use futures::{StreamExt, stream::FuturesOrdered};
 use gpui::{
@@ -345,7 +346,7 @@ impl ProjectSearch {
                                     excerpts.set_anchored_excerpts_for_path(
                                         buffer,
                                         ranges,
-                                        editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                                        multibuffer_context_lines(cx),
                                         cx,
                                     )
                                 })
@@ -1139,7 +1140,7 @@ impl ProjectSearchView {
 
     fn build_search_query(&mut self, cx: &mut Context<Self>) -> Option<SearchQuery> {
         // Do not bail early in this function, as we want to fill out `self.panels_with_errors`.
-        let text = self.query_editor.read(cx).text(cx);
+        let text = self.search_query_text(cx);
         let open_buffers = if self.included_opened_only {
             Some(self.open_buffers(cx))
         } else {
@@ -1383,6 +1384,9 @@ impl ProjectSearchView {
         let match_ranges = self.entity.read(cx).match_ranges.clone();
         if match_ranges.is_empty() {
             self.active_match_index = None;
+            self.results_editor.update(cx, |editor, cx| {
+                editor.clear_background_highlights::<Self>(cx);
+            });
         } else {
             self.active_match_index = Some(0);
             self.update_match_index(cx);
@@ -2337,7 +2341,7 @@ pub fn perform_project_search(
 
 #[cfg(test)]
 pub mod tests {
-    use std::{ops::Deref as _, sync::Arc};
+    use std::{ops::Deref as _, sync::Arc, time::Duration};
 
     use super::*;
     use editor::{DisplayPoint, display_map::DisplayRow};
@@ -2380,6 +2384,7 @@ pub mod tests {
                 "\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\nconst TWO: usize = one::ONE + one::ONE;"
             );
             let match_background_color = cx.theme().colors().search_match_background;
+            let selection_background_color = cx.theme().colors().editor_document_highlight_bracket_background;
             assert_eq!(
                 search_view
                     .results_editor
@@ -2391,12 +2396,21 @@ pub mod tests {
                     ),
                     (
                         DisplayPoint::new(DisplayRow(2), 37)..DisplayPoint::new(DisplayRow(2), 40),
+                        selection_background_color
+                    ),
+                    (
+                        DisplayPoint::new(DisplayRow(2), 37)..DisplayPoint::new(DisplayRow(2), 40),
                         match_background_color
                     ),
                     (
                         DisplayPoint::new(DisplayRow(5), 6)..DisplayPoint::new(DisplayRow(5), 9),
+                        selection_background_color
+                    ),
+                    (
+                        DisplayPoint::new(DisplayRow(5), 6)..DisplayPoint::new(DisplayRow(5), 9),
                         match_background_color
-                    )
+                    ),
+
                 ]
             );
             assert_eq!(search_view.active_match_index, Some(0));
@@ -3187,6 +3201,7 @@ pub mod tests {
                 .read(cx)
                 .entry_for_path(&(worktree_id, "a").into(), cx)
                 .expect("no entry for /a/ directory")
+                .clone()
         });
         assert!(a_dir_entry.is_dir());
         window
@@ -4155,6 +4170,10 @@ pub mod tests {
                 search_view.search(cx);
             })
             .unwrap();
+        // Ensure editor highlights appear after the search is done
+        cx.executor().advance_clock(
+            editor::SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT + Duration::from_millis(100),
+        );
         cx.background_executor.run_until_parked();
     }
 }

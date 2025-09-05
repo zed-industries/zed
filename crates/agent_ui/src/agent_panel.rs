@@ -5,16 +5,16 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use acp_thread::AcpThread;
-use agent_servers::AgentServerSettings;
+use agent_servers::AgentServerCommand;
 use agent2::{DbThreadMetadata, HistoryEntry};
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use serde::{Deserialize, Serialize};
 use zed_actions::OpenBrowser;
-use zed_actions::agent::ReauthenticateAgent;
+use zed_actions::agent::{OpenClaudeCodeOnboardingModal, ReauthenticateAgent};
 
 use crate::acp::{AcpThreadHistory, ThreadHistoryEvent};
 use crate::agent_diff::AgentDiffThread;
-use crate::ui::AcpOnboardingModal;
+use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal};
 use crate::{
     AddContextServer, AgentDiffPane, ContinueThread, ContinueWithBurnMode,
     DeleteRecentlyOpenThread, ExpandMessageEditor, Follow, InlineAssistant, NewTextThread,
@@ -86,7 +86,7 @@ use zed_actions::{
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct SerializedAgentPanel {
     width: Option<Pixels>,
     selected_agent: Option<AgentType>,
@@ -207,6 +207,9 @@ pub fn init(cx: &mut App) {
                 .register_action(|workspace, _: &OpenAcpOnboardingModal, window, cx| {
                     AcpOnboardingModal::toggle(workspace, window, cx)
                 })
+                .register_action(|workspace, _: &OpenClaudeCodeOnboardingModal, window, cx| {
+                    ClaudeCodeOnboardingModal::toggle(workspace, window, cx)
+                })
                 .register_action(|_workspace, _: &ResetOnboarding, window, cx| {
                     window.dispatch_action(workspace::RestoreBanner.boxed_clone(), cx);
                     window.refresh();
@@ -259,7 +262,7 @@ pub enum AgentType {
     NativeAgent,
     Custom {
         name: SharedString,
-        settings: AgentServerSettings,
+        command: AgentServerCommand,
     },
 }
 
@@ -280,6 +283,17 @@ impl AgentType {
             Self::Gemini => Some(IconName::AiGemini),
             Self::ClaudeCode => Some(IconName::AiClaude),
             Self::Custom { .. } => Some(IconName::Terminal),
+        }
+    }
+}
+
+impl From<ExternalAgent> for AgentType {
+    fn from(value: ExternalAgent) -> Self {
+        match value {
+            ExternalAgent::Gemini => Self::Gemini,
+            ExternalAgent::ClaudeCode => Self::ClaudeCode,
+            ExternalAgent::Custom { name, command } => Self::Custom { name, command },
+            ExternalAgent::NativeAgent => Self::NativeAgent,
         }
     }
 }
@@ -592,7 +606,7 @@ impl AgentPanel {
                 .log_err()
                 .flatten()
             {
-                Some(serde_json::from_str::<SerializedAgentPanel>(&panel)?)
+                serde_json::from_str::<SerializedAgentPanel>(&panel).log_err()
             } else {
                 None
             };
@@ -1049,6 +1063,11 @@ impl AgentPanel {
             editor
         });
 
+        if self.selected_agent != AgentType::TextThread {
+            self.selected_agent = AgentType::TextThread;
+            self.serialize(cx);
+        }
+
         self.set_active_view(
             ActiveView::prompt_editor(
                 context_editor.clone(),
@@ -1075,6 +1094,7 @@ impl AgentPanel {
         let workspace = self.workspace.clone();
         let project = self.project.clone();
         let fs = self.fs.clone();
+        let is_not_local = !self.project.read(cx).is_local();
 
         const LAST_USED_EXTERNAL_AGENT_KEY: &str = "agent_panel__last_used_external_agent";
 
@@ -1106,17 +1126,21 @@ impl AgentPanel {
                     agent
                 }
                 None => {
-                    cx.background_spawn(async move {
-                        KEY_VALUE_STORE.read_kvp(LAST_USED_EXTERNAL_AGENT_KEY)
-                    })
-                    .await
-                    .log_err()
-                    .flatten()
-                    .and_then(|value| {
-                        serde_json::from_str::<LastUsedExternalAgent>(&value).log_err()
-                    })
-                    .unwrap_or_default()
-                    .agent
+                    if is_not_local {
+                        ExternalAgent::NativeAgent
+                    } else {
+                        cx.background_spawn(async move {
+                            KEY_VALUE_STORE.read_kvp(LAST_USED_EXTERNAL_AGENT_KEY)
+                        })
+                        .await
+                        .log_err()
+                        .flatten()
+                        .and_then(|value| {
+                            serde_json::from_str::<LastUsedExternalAgent>(&value).log_err()
+                        })
+                        .unwrap_or_default()
+                        .agent
+                    }
                 }
             };
 
@@ -1138,6 +1162,12 @@ impl AgentPanel {
                             return;
                         }
                     }
+                }
+
+                let selected_agent = ext_agent.into();
+                if this.selected_agent != selected_agent {
+                    this.selected_agent = selected_agent;
+                    this.serialize(cx);
                 }
 
                 let thread_view = cx.new(|cx| {
@@ -1235,6 +1265,12 @@ impl AgentPanel {
                 cx,
             )
         });
+
+        if self.selected_agent != AgentType::TextThread {
+            self.selected_agent = AgentType::TextThread;
+            self.serialize(cx);
+        }
+
         self.set_active_view(
             ActiveView::prompt_editor(
                 editor,
@@ -1479,7 +1515,6 @@ impl AgentPanel {
                 tools,
                 self.language_registry.clone(),
                 self.workspace.clone(),
-                self.project.downgrade(),
                 window,
                 cx,
             )
@@ -1861,11 +1896,6 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.selected_agent != agent {
-            self.selected_agent = agent.clone();
-            self.serialize(cx);
-        }
-
         match agent {
             AgentType::Zed => {
                 window.dispatch_action(
@@ -1889,15 +1919,19 @@ impl AgentPanel {
             AgentType::Gemini => {
                 self.external_thread(Some(crate::ExternalAgent::Gemini), None, None, window, cx)
             }
-            AgentType::ClaudeCode => self.external_thread(
-                Some(crate::ExternalAgent::ClaudeCode),
-                None,
-                None,
-                window,
-                cx,
-            ),
-            AgentType::Custom { name, settings } => self.external_thread(
-                Some(crate::ExternalAgent::Custom { name, settings }),
+            AgentType::ClaudeCode => {
+                self.selected_agent = AgentType::ClaudeCode;
+                self.serialize(cx);
+                self.external_thread(
+                    Some(crate::ExternalAgent::ClaudeCode),
+                    None,
+                    None,
+                    window,
+                    cx,
+                )
+            }
+            AgentType::Custom { name, command } => self.external_thread(
+                Some(crate::ExternalAgent::Custom { name, command }),
                 None,
                 None,
                 window,
@@ -2115,7 +2149,7 @@ impl AgentPanel {
                         .child(title_editor)
                         .into_any_element()
                 } else {
-                    Label::new(thread_view.read(cx).title())
+                    Label::new(thread_view.read(cx).title(cx))
                         .color(Color::Muted)
                         .truncate()
                         .into_any_element()
@@ -2501,6 +2535,9 @@ impl AgentPanel {
             .with_handle(self.new_thread_menu_handle.clone())
             .menu({
                 let workspace = self.workspace.clone();
+                let is_not_local = workspace
+                    .update(cx, |workspace, cx| !workspace.project().read(cx).is_local())
+                    .unwrap_or_default();
 
                 move |window, cx| {
                     telemetry::event!("New Thread Clicked");
@@ -2591,6 +2628,7 @@ impl AgentPanel {
                                     ContextMenuEntry::new("New Gemini CLI Thread")
                                         .icon(IconName::AiGemini)
                                         .icon_color(Color::Muted)
+                                        .disabled(is_not_local)
                                         .handler({
                                             let workspace = workspace.clone();
                                             move |window, cx| {
@@ -2617,6 +2655,7 @@ impl AgentPanel {
                                 menu.item(
                                     ContextMenuEntry::new("New Claude Code Thread")
                                         .icon(IconName::AiClaude)
+                                        .disabled(is_not_local)
                                         .icon_color(Color::Muted)
                                         .handler({
                                             let workspace = workspace.clone();
@@ -2649,6 +2688,7 @@ impl AgentPanel {
                                         ContextMenuEntry::new(format!("New {} Thread", agent_name))
                                             .icon(IconName::Terminal)
                                             .icon_color(Color::Muted)
+                                            .disabled(is_not_local)
                                             .handler({
                                                 let workspace = workspace.clone();
                                                 let agent_name = agent_name.clone();
@@ -2664,9 +2704,9 @@ impl AgentPanel {
                                                                         AgentType::Custom {
                                                                             name: agent_name
                                                                                 .clone(),
-                                                                            settings:
-                                                                                agent_settings
-                                                                                    .clone(),
+                                                                            command: agent_settings
+                                                                                .command
+                                                                                .clone(),
                                                                         },
                                                                         window,
                                                                         cx,
@@ -2924,6 +2964,20 @@ impl AgentPanel {
 
     fn should_render_onboarding(&self, cx: &mut Context<Self>) -> bool {
         if OnboardingUpsell::dismissed() {
+            return false;
+        }
+
+        let user_store = self.user_store.read(cx);
+
+        if user_store
+            .plan()
+            .is_some_and(|plan| matches!(plan, Plan::ZedPro))
+            && user_store
+                .subscription_period()
+                .and_then(|period| period.0.checked_add_days(chrono::Days::new(1)))
+                .is_some_and(|date| date < chrono::Utc::now())
+        {
+            OnboardingUpsell::set_dismissed(true, cx);
             return false;
         }
 
@@ -3495,6 +3549,11 @@ impl AgentPanel {
     ) -> AnyElement {
         let message_with_header = format!("{}\n{}", header, message);
 
+        // Don't show Retry button for refusals
+        let is_refusal = header == "Request Refused";
+        let retry_button = self.render_retry_button(thread);
+        let copy_button = self.create_copy_button(message_with_header);
+
         Callout::new()
             .severity(Severity::Error)
             .icon(IconName::XCircle)
@@ -3503,8 +3562,8 @@ impl AgentPanel {
             .actions_slot(
                 h_flex()
                     .gap_0p5()
-                    .child(self.render_retry_button(thread))
-                    .child(self.create_copy_button(message_with_header)),
+                    .when(!is_refusal, |this| this.child(retry_button))
+                    .child(copy_button),
             )
             .dismiss_action(self.dismiss_error_button(thread, cx))
             .into_any_element()

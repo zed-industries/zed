@@ -28,12 +28,13 @@ use context_server_store::ContextServerStore;
 pub use environment::{EnvironmentErrorMessage, ProjectEnvironmentEvent};
 use git::repository::get_git_committer;
 use git_store::{Repository, RepositoryId};
+use schemars::JsonSchema;
 pub mod search_history;
 mod yarn;
 
 use dap::inline_value::{InlineValueLocation, VariableLookupKind, VariableScope};
 
-use crate::git_store::GitStore;
+use crate::{git_store::GitStore, lsp_store::log_store::LogKind};
 pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
@@ -87,14 +88,17 @@ use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 pub use prettier_store::PrettierStore;
 use project_settings::{ProjectSettings, SettingsObserver, SettingsObserverEvent};
-use remote::{RemoteClient, SshConnectionOptions};
+use remote::{RemoteClient, RemoteConnectionOptions};
 use rpc::{
     AnyProtoClient, ErrorCode,
     proto::{FromProto, LanguageServerPromptResponse, REMOTE_SERVER_PROJECT_ID, ToProto},
 };
 use search::{SearchInputKind, SearchQuery, SearchResult};
 use search_history::SearchHistory;
-use settings::{InvalidSettingsError, Settings, SettingsLocation, SettingsSources, SettingsStore};
+use settings::{
+    InvalidSettingsError, Settings, SettingsKey, SettingsLocation, SettingsSources, SettingsStore,
+    SettingsUi,
+};
 use smol::channel::Receiver;
 use snippet::Snippet;
 use snippet_provider::SnippetProvider;
@@ -285,6 +289,7 @@ pub enum Event {
     ToggleLspLogs {
         server_id: LanguageServerId,
         enabled: bool,
+        toggled_log_kind: LogKind,
     },
     Toast {
         notification_id: SharedString,
@@ -573,9 +578,21 @@ impl std::fmt::Debug for Completion {
 /// Response from a source of completions.
 pub struct CompletionResponse {
     pub completions: Vec<Completion>,
+    pub display_options: CompletionDisplayOptions,
     /// When false, indicates that the list is complete and so does not need to be re-queried if it
     /// can be filtered instead.
     pub is_incomplete: bool,
+}
+
+#[derive(Default)]
+pub struct CompletionDisplayOptions {
+    pub dynamic_width: bool,
+}
+
+impl CompletionDisplayOptions {
+    pub fn merge(&mut self, other: &CompletionDisplayOptions) {
+        self.dynamic_width = self.dynamic_width && other.dynamic_width;
+    }
 }
 
 /// Response from language server completion request.
@@ -665,7 +682,6 @@ pub enum ResolveState {
     CanResolve(LanguageServerId, Option<lsp::LSPAny>),
     Resolving,
 }
-
 impl InlayHint {
     pub fn text(&self) -> Rope {
         match &self.label {
@@ -929,7 +945,7 @@ pub enum LspPullDiagnostics {
         /// The id of the language server that produced diagnostics.
         server_id: LanguageServerId,
         /// URI of the resource,
-        uri: lsp::Url,
+        uri: lsp::Uri,
         /// The diagnostics produced by this language server.
         diagnostics: PulledDiagnostics,
     },
@@ -951,15 +967,31 @@ pub enum PulledDiagnostics {
 /// Whether to disable all AI features in Zed.
 ///
 /// Default: false
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, settings::SettingsUi)]
 pub struct DisableAiSettings {
     pub disable_ai: bool,
 }
 
-impl settings::Settings for DisableAiSettings {
-    const KEY: Option<&'static str> = Some("disable_ai");
+#[derive(
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    Debug,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    SettingsUi,
+    SettingsKey,
+    JsonSchema,
+)]
+#[settings_key(None)]
+pub struct DisableAiSettingContent {
+    pub disable_ai: Option<bool>,
+}
 
-    type FileContent = Option<bool>;
+impl settings::Settings for DisableAiSettings {
+    type FileContent = DisableAiSettingContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         // For security reasons, settings can only make AI restrictions MORE strict, not less.
@@ -972,7 +1004,7 @@ impl settings::Settings for DisableAiSettings {
             .iter()
             .chain(sources.user.iter())
             .chain(sources.server.iter())
-            .any(|disabled| **disabled == Some(true));
+            .any(|disabled| disabled.disable_ai == Some(true));
 
         Ok(Self { disable_ai })
     }
@@ -1259,6 +1291,7 @@ impl Project {
                     fs.clone(),
                     worktree_store.clone(),
                     task_store.clone(),
+                    Some(remote_proto.clone()),
                     cx,
                 )
             });
@@ -1481,7 +1514,7 @@ impl Project {
         })?;
 
         let lsp_store = cx.new(|cx| {
-            let mut lsp_store = LspStore::new_remote(
+            LspStore::new_remote(
                 buffer_store.clone(),
                 worktree_store.clone(),
                 languages.clone(),
@@ -1489,12 +1522,7 @@ impl Project {
                 remote_id,
                 fs.clone(),
                 cx,
-            );
-            lsp_store.set_language_server_statuses_from_proto(
-                response.payload.language_servers,
-                response.payload.language_server_capabilities,
-            );
-            lsp_store
+            )
         })?;
 
         let task_store = cx.new(|cx| {
@@ -1514,7 +1542,13 @@ impl Project {
         })?;
 
         let settings_observer = cx.new(|cx| {
-            SettingsObserver::new_remote(fs.clone(), worktree_store.clone(), task_store.clone(), cx)
+            SettingsObserver::new_remote(
+                fs.clone(),
+                worktree_store.clone(),
+                task_store.clone(),
+                None,
+                cx,
+            )
         })?;
 
         let git_store = cx.new(|cx| {
@@ -1528,7 +1562,7 @@ impl Project {
             )
         })?;
 
-        let this = cx.new(|cx| {
+        let project = cx.new(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
 
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
@@ -1559,7 +1593,7 @@ impl Project {
 
             cx.subscribe(&dap_store, Self::on_dap_store_event).detach();
 
-            let mut this = Self {
+            let mut project = Self {
                 buffer_ordered_messages_tx: tx,
                 buffer_store: buffer_store.clone(),
                 image_store,
@@ -1602,12 +1636,24 @@ impl Project {
                 toolchain_store: None,
                 agent_location: None,
             };
-            this.set_role(role, cx);
+            project.set_role(role, cx);
             for worktree in worktrees {
-                this.add_worktree(&worktree, cx);
+                project.add_worktree(&worktree, cx);
             }
-            this
+            project
         })?;
+
+        let weak_project = project.downgrade();
+        lsp_store
+            .update(&mut cx, |lsp_store, cx| {
+                lsp_store.set_language_server_statuses_from_proto(
+                    weak_project,
+                    response.payload.language_servers,
+                    response.payload.language_server_capabilities,
+                    cx,
+                );
+            })
+            .ok();
 
         let subscriptions = subscriptions
             .into_iter()
@@ -1624,7 +1670,7 @@ impl Project {
                 EntitySubscription::SettingsObserver(subscription) => {
                     subscription.set_entity(&settings_observer, &cx)
                 }
-                EntitySubscription::Project(subscription) => subscription.set_entity(&this, &cx),
+                EntitySubscription::Project(subscription) => subscription.set_entity(&project, &cx),
                 EntitySubscription::LspStore(subscription) => {
                     subscription.set_entity(&lsp_store, &cx)
                 }
@@ -1644,13 +1690,13 @@ impl Project {
             .update(&mut cx, |user_store, cx| user_store.get_users(user_ids, cx))?
             .await?;
 
-        this.update(&mut cx, |this, cx| {
+        project.update(&mut cx, |this, cx| {
             this.set_collaborators_from_proto(response.payload.collaborators, cx)?;
             this.client_subscriptions.extend(subscriptions);
             anyhow::Ok(())
         })??;
 
-        Ok(this)
+        Ok(project)
     }
 
     fn new_search_history() -> SearchHistory {
@@ -1908,7 +1954,7 @@ impl Project {
             .map(|remote| remote.read(cx).connection_state())
     }
 
-    pub fn remote_connection_options(&self, cx: &App) -> Option<SshConnectionOptions> {
+    pub fn remote_connection_options(&self, cx: &App) -> Option<RemoteConnectionOptions> {
         self.remote_client
             .as_ref()
             .map(|remote| remote.read(cx).connection_options())
@@ -2054,13 +2100,12 @@ impl Project {
         exclude_sub_dirs: bool,
         cx: &App,
     ) -> Option<bool> {
-        let sanitized_path = SanitizedPath::from(path);
-        let path = sanitized_path.as_path();
+        let path = SanitizedPath::new(path).as_path();
         self.worktrees(cx)
             .filter_map(|worktree| {
                 let worktree = worktree.read(cx);
                 let abs_path = worktree.as_local()?.abs_path();
-                let contains = path == abs_path
+                let contains = path == abs_path.as_ref()
                     || (path.starts_with(abs_path) && (!exclude_sub_dirs || !metadata.is_dir));
                 contains.then(|| worktree.is_visible())
             })
@@ -2321,10 +2366,14 @@ impl Project {
         self.join_project_response_message_id = message_id;
         self.set_worktrees_from_proto(message.worktrees, cx)?;
         self.set_collaborators_from_proto(message.collaborators, cx)?;
-        self.lsp_store.update(cx, |lsp_store, _| {
+
+        let project = cx.weak_entity();
+        self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.set_language_server_statuses_from_proto(
+                project,
                 message.language_servers,
                 message.language_server_capabilities,
+                cx,
             )
         });
         self.enqueue_buffer_ordered_message(BufferOrderedMessage::Resync)
@@ -3588,7 +3637,7 @@ impl Project {
 
     pub fn open_local_buffer_via_lsp(
         &mut self,
-        abs_path: lsp::Url,
+        abs_path: lsp::Uri,
         language_server_id: LanguageServerId,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
@@ -4303,7 +4352,7 @@ impl Project {
         self.active_entry
     }
 
-    pub fn entry_for_path(&self, path: &ProjectPath, cx: &App) -> Option<Entry> {
+    pub fn entry_for_path<'a>(&'a self, path: &ProjectPath, cx: &'a App) -> Option<&'a Entry> {
         self.worktree_store.read(cx).entry_for_path(path, cx)
     }
 
@@ -4709,10 +4758,19 @@ impl Project {
         envelope: TypedEnvelope<proto::ToggleLspLogs>,
         mut cx: AsyncApp,
     ) -> Result<()> {
+        let toggled_log_kind =
+            match proto::toggle_lsp_logs::LogType::from_i32(envelope.payload.log_type)
+                .context("invalid log type")?
+            {
+                proto::toggle_lsp_logs::LogType::Log => LogKind::Logs,
+                proto::toggle_lsp_logs::LogType::Trace => LogKind::Trace,
+                proto::toggle_lsp_logs::LogType::Rpc => LogKind::Rpc,
+            };
         project.update(&mut cx, |_, cx| {
             cx.emit(Event::ToggleLspLogs {
                 server_id: LanguageServerId::from_proto(envelope.payload.server_id),
                 enabled: envelope.payload.enabled,
+                toggled_log_kind,
             })
         })?;
         Ok(())
@@ -5512,10 +5570,15 @@ mod disable_ai_settings_tests {
 
     #[gpui::test]
     async fn test_disable_ai_settings_security(cx: &mut TestAppContext) {
+        fn disable_setting(value: Option<bool>) -> DisableAiSettingContent {
+            DisableAiSettingContent { disable_ai: value }
+        }
         cx.update(|cx| {
             // Test 1: Default is false (AI enabled)
             let sources = SettingsSources {
-                default: &Some(false),
+                default: &DisableAiSettingContent {
+                    disable_ai: Some(false),
+                },
                 global: None,
                 extensions: None,
                 user: None,
@@ -5529,10 +5592,10 @@ mod disable_ai_settings_tests {
             assert!(!settings.disable_ai, "Default should allow AI");
 
             // Test 2: Global true, local false -> still disabled (local cannot re-enable)
-            let global_true = Some(true);
-            let local_false = Some(false);
+            let global_true = disable_setting(Some(true));
+            let local_false = disable_setting(Some(false));
             let sources = SettingsSources {
-                default: &Some(false),
+                default: &disable_setting(Some(false)),
                 global: None,
                 extensions: None,
                 user: Some(&global_true),
@@ -5549,10 +5612,10 @@ mod disable_ai_settings_tests {
             );
 
             // Test 3: Global false, local true -> disabled (local can make more restrictive)
-            let global_false = Some(false);
-            let local_true = Some(true);
+            let global_false = disable_setting(Some(false));
+            let local_true = disable_setting(Some(true));
             let sources = SettingsSources {
-                default: &Some(false),
+                default: &disable_setting(Some(false)),
                 global: None,
                 extensions: None,
                 user: Some(&global_false),
@@ -5566,10 +5629,10 @@ mod disable_ai_settings_tests {
             assert!(settings.disable_ai, "Local true can override global false");
 
             // Test 4: Server can only make more restrictive (set to true)
-            let user_false = Some(false);
-            let server_true = Some(true);
+            let user_false = disable_setting(Some(false));
+            let server_true = disable_setting(Some(true));
             let sources = SettingsSources {
-                default: &Some(false),
+                default: &disable_setting(Some(false)),
                 global: None,
                 extensions: None,
                 user: Some(&user_false),
@@ -5586,10 +5649,10 @@ mod disable_ai_settings_tests {
             );
 
             // Test 5: Server false cannot override user true
-            let user_true = Some(true);
-            let server_false = Some(false);
+            let user_true = disable_setting(Some(true));
+            let server_false = disable_setting(Some(false));
             let sources = SettingsSources {
-                default: &Some(false),
+                default: &disable_setting(Some(false)),
                 global: None,
                 extensions: None,
                 user: Some(&user_true),
@@ -5606,12 +5669,12 @@ mod disable_ai_settings_tests {
             );
 
             // Test 6: Multiple local settings, any true disables AI
-            let global_false = Some(false);
-            let local_false3 = Some(false);
-            let local_true2 = Some(true);
-            let local_false4 = Some(false);
+            let global_false = disable_setting(Some(false));
+            let local_false3 = disable_setting(Some(false));
+            let local_true2 = disable_setting(Some(true));
+            let local_false4 = disable_setting(Some(false));
             let sources = SettingsSources {
-                default: &Some(false),
+                default: &disable_setting(Some(false)),
                 global: None,
                 extensions: None,
                 user: Some(&global_false),
@@ -5625,11 +5688,11 @@ mod disable_ai_settings_tests {
             assert!(settings.disable_ai, "Any local true should disable AI");
 
             // Test 7: All three sources can independently disable AI
-            let user_false2 = Some(false);
-            let server_false2 = Some(false);
-            let local_true3 = Some(true);
+            let user_false2 = disable_setting(Some(false));
+            let server_false2 = disable_setting(Some(false));
+            let local_true3 = disable_setting(Some(true));
             let sources = SettingsSources {
-                default: &Some(false),
+                default: &disable_setting(Some(false)),
                 global: None,
                 extensions: None,
                 user: Some(&user_false2),

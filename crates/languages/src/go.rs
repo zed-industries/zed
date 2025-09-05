@@ -59,6 +59,7 @@ impl super::LspAdapter for GoLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
+        _: &AsyncApp,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         let release =
             latest_github_release("golang/tools", false, false, delegate.http_client()).await?;
@@ -764,6 +765,7 @@ mod tests {
         let highlight_type = grammar.highlight_id_for_name("type").unwrap();
         let highlight_keyword = grammar.highlight_id_for_name("keyword").unwrap();
         let highlight_number = grammar.highlight_id_for_name("number").unwrap();
+        let highlight_field = grammar.highlight_id_for_name("property").unwrap();
 
         assert_eq!(
             adapter
@@ -828,7 +830,7 @@ mod tests {
             Some(CodeLabel {
                 text: "two.Three a.Bcd".to_string(),
                 filter_range: 0..9,
-                runs: vec![(12..15, highlight_type)],
+                runs: vec![(4..9, highlight_field), (12..15, highlight_type)],
             })
         );
     }

@@ -11,18 +11,22 @@
 //! Most of the interesting work happens at the local layer, as bulk of the complexity is with managing the lifecycle of language servers. The actual implementation of the LSP protocol is handled by [`lsp`] crate.
 pub mod clangd_ext;
 pub mod json_language_server_ext;
+pub mod log_store;
 pub mod lsp_ext_command;
 pub mod rust_analyzer_ext;
 
 use crate::{
-    CodeAction, ColorPresentation, Completion, CompletionResponse, CompletionSource,
-    CoreCompletion, DocumentColor, Hover, InlayHint, LocationLink, LspAction, LspPullDiagnostics,
-    ManifestProvidersStore, ProjectItem, ProjectPath, ProjectTransaction, PulledDiagnostics,
-    ResolveState, Symbol,
+    CodeAction, ColorPresentation, Completion, CompletionDisplayOptions, CompletionResponse,
+    CompletionSource, CoreCompletion, DocumentColor, Hover, InlayHint, LocationLink, LspAction,
+    LspPullDiagnostics, ManifestProvidersStore, Project, ProjectItem, ProjectPath,
+    ProjectTransaction, PulledDiagnostics, ResolveState, Symbol,
     buffer_store::{BufferStore, BufferStoreEvent},
     environment::ProjectEnvironment,
     lsp_command::{self, *},
-    lsp_store,
+    lsp_store::{
+        self,
+        log_store::{GlobalLogStore, LanguageServerKind},
+    },
     manifest_tree::{
         LanguageServerTree, LanguageServerTreeNode, LaunchDisposition, ManifestQueryDelegate,
         ManifestTree,
@@ -75,7 +79,7 @@ use lsp::{
     LSP_REQUEST_TIMEOUT, LanguageServer, LanguageServerBinary, LanguageServerBinaryOptions,
     LanguageServerId, LanguageServerName, LanguageServerSelector, LspRequestFuture,
     MessageActionItem, MessageType, OneOf, RenameFilesParams, SymbolKind,
-    TextDocumentSyncSaveOptions, TextEdit, WillRenameFiles, WorkDoneProgressCancelParams,
+    TextDocumentSyncSaveOptions, TextEdit, Uri, WillRenameFiles, WorkDoneProgressCancelParams,
     WorkspaceFolder, notification::DidRenameFiles,
 };
 use node_runtime::read_package_installed_version;
@@ -110,7 +114,7 @@ use std::{
 };
 use sum_tree::Dimensions;
 use text::{Anchor, BufferId, LineEnding, OffsetRangeExt};
-use url::Url;
+
 use util::{
     ConnectionResult, ResultExt as _, debug_panic, defer, maybe, merge_json_value_into,
     paths::{PathExt, SanitizedPath},
@@ -310,7 +314,7 @@ impl LocalLspStore {
             true,
             cx,
         );
-        let pending_workspace_folders: Arc<Mutex<BTreeSet<Url>>> = Default::default();
+        let pending_workspace_folders: Arc<Mutex<BTreeSet<Uri>>> = Default::default();
 
         let pending_server = cx.spawn({
             let adapter = adapter.clone();
@@ -2401,7 +2405,7 @@ impl LocalLspStore {
 
                     {
                         let uri =
-                            Url::from_file_path(worktree.read(cx).abs_path().join(&path.path));
+                            Uri::from_file_path(worktree.read(cx).abs_path().join(&path.path));
 
                         let server_id = self.get_or_insert_language_server(
                             &worktree,
@@ -2561,11 +2565,8 @@ impl LocalLspStore {
             None => return,
         };
 
-        let Ok(file_url) = lsp::Url::from_file_path(old_path.as_path()) else {
-            debug_panic!(
-                "`{}` is not parseable as an URI",
-                old_path.to_string_lossy()
-            );
+        let Ok(file_url) = lsp::Uri::from_file_path(old_path.as_path()) else {
+            debug_panic!("{old_path:?} is not parseable as an URI");
             return;
         };
         self.unregister_buffer_from_language_servers(buffer, &file_url, cx);
@@ -2574,7 +2575,7 @@ impl LocalLspStore {
     pub(crate) fn unregister_buffer_from_language_servers(
         &mut self,
         buffer: &Entity<Buffer>,
-        file_url: &lsp::Url,
+        file_url: &lsp::Uri,
         cx: &mut App,
     ) {
         buffer.update(cx, |buffer, cx| {
@@ -3182,7 +3183,7 @@ impl LocalLspStore {
             } else {
                 let (path, pattern) = match &watcher.glob_pattern {
                     lsp::GlobPattern::String(s) => {
-                        let watcher_path = SanitizedPath::from(s);
+                        let watcher_path = SanitizedPath::new(s);
                         let path = glob_literal_prefix(watcher_path.as_path());
                         let pattern = watcher_path
                             .as_path()
@@ -3274,7 +3275,7 @@ impl LocalLspStore {
             let worktree_root_path = tree.abs_path();
             match &watcher.glob_pattern {
                 lsp::GlobPattern::String(s) => {
-                    let watcher_path = SanitizedPath::from(s);
+                    let watcher_path = SanitizedPath::new(s);
                     let relative = watcher_path
                         .as_path()
                         .strip_prefix(&worktree_root_path)
@@ -3760,7 +3761,7 @@ impl LspStore {
             worktree_store,
             languages: languages.clone(),
             language_server_statuses: Default::default(),
-            nonce: StdRng::from_entropy().r#gen(),
+            nonce: StdRng::from_os_rng().random(),
             diagnostic_summaries: HashMap::default(),
             lsp_server_capabilities: HashMap::default(),
             lsp_document_colors: HashMap::default(),
@@ -3822,7 +3823,7 @@ impl LspStore {
             worktree_store,
             languages: languages.clone(),
             language_server_statuses: Default::default(),
-            nonce: StdRng::from_entropy().r#gen(),
+            nonce: StdRng::from_os_rng().random(),
             diagnostic_summaries: HashMap::default(),
             lsp_server_capabilities: HashMap::default(),
             lsp_document_colors: HashMap::default(),
@@ -4690,7 +4691,7 @@ impl LspStore {
                     for node in nodes {
                         let server_id = node.server_id_or_init(|disposition| {
                             let path = &disposition.path;
-                            let uri = Url::from_file_path(worktree_root.join(&path.path));
+                            let uri = Uri::from_file_path(worktree_root.join(&path.path));
                             let key = LanguageServerSeed {
                                 worktree_id,
                                 name: disposition.server_name.clone(),
@@ -5824,6 +5825,7 @@ impl LspStore {
                 .await;
                 Ok(vec![CompletionResponse {
                     completions,
+                    display_options: CompletionDisplayOptions::default(),
                     is_incomplete: completion_response.is_incomplete,
                 }])
             })
@@ -5916,6 +5918,7 @@ impl LspStore {
                         .await;
                     Some(CompletionResponse {
                         completions,
+                        display_options: CompletionDisplayOptions::default(),
                         is_incomplete: completion_response.is_incomplete,
                     })
                 });
@@ -6574,7 +6577,7 @@ impl LspStore {
                                 File::from_dyn(buffer.file())
                                     .and_then(|file| {
                                         let abs_path = file.as_local()?.abs_path(cx);
-                                        lsp::Url::from_file_path(abs_path).ok()
+                                        lsp::Uri::from_file_path(abs_path).ok()
                                     })
                                     .is_none_or(|buffer_uri| {
                                         unchanged_buffers.contains(&buffer_uri)
@@ -7175,7 +7178,7 @@ impl LspStore {
         let buffer = buffer.read(cx);
         let file = File::from_dyn(buffer.file())?;
         let abs_path = file.as_local()?.abs_path(cx);
-        let uri = lsp::Url::from_file_path(abs_path).unwrap();
+        let uri = lsp::Uri::from_file_path(abs_path).unwrap();
         let next_snapshot = buffer.text_snapshot();
         for language_server in language_servers {
             let language_server = language_server.clone();
@@ -7511,9 +7514,15 @@ impl LspStore {
 
     pub(crate) fn set_language_server_statuses_from_proto(
         &mut self,
+        project: WeakEntity<Project>,
         language_servers: Vec<proto::LanguageServer>,
         server_capabilities: Vec<String>,
+        cx: &mut Context<Self>,
     ) {
+        let lsp_logs = cx
+            .try_global::<GlobalLogStore>()
+            .map(|lsp_store| lsp_store.0.clone());
+
         self.language_server_statuses = language_servers
             .into_iter()
             .zip(server_capabilities)
@@ -7523,14 +7532,34 @@ impl LspStore {
                     self.lsp_server_capabilities
                         .insert(server_id, server_capabilities);
                 }
+
+                let name = LanguageServerName::from_proto(server.name);
+                let worktree = server.worktree_id.map(WorktreeId::from_proto);
+
+                if let Some(lsp_logs) = &lsp_logs {
+                    lsp_logs.update(cx, |lsp_logs, cx| {
+                        lsp_logs.add_language_server(
+                            // Only remote clients get their language servers set from proto
+                            LanguageServerKind::Remote {
+                                project: project.clone(),
+                            },
+                            server_id,
+                            Some(name.clone()),
+                            worktree,
+                            None,
+                            cx,
+                        );
+                    });
+                }
+
                 (
                     server_id,
                     LanguageServerStatus {
-                        name: LanguageServerName::from_proto(server.name),
+                        name,
                         pending_work: Default::default(),
                         has_pending_diagnostic_updates: false,
                         progress_tokens: Default::default(),
-                        worktree: server.worktree_id.map(WorktreeId::from_proto),
+                        worktree,
                     },
                 )
             })
@@ -7786,7 +7815,7 @@ impl LspStore {
             };
 
             let symbol_abs_path = resolve_path(&worktree_abs_path, &symbol.path.path);
-            let symbol_uri = if let Ok(uri) = lsp::Url::from_file_path(symbol_abs_path) {
+            let symbol_uri = if let Ok(uri) = lsp::Uri::from_file_path(symbol_abs_path) {
                 uri
             } else {
                 return Task::ready(Err(anyhow!("invalid symbol path")));
@@ -7800,14 +7829,14 @@ impl LspStore {
 
     pub(crate) fn open_local_buffer_via_lsp(
         &mut self,
-        mut abs_path: lsp::Url,
+        abs_path: lsp::Uri,
         language_server_id: LanguageServerId,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
         cx.spawn(async move |lsp_store, cx| {
             // Escape percent-encoded string.
             let current_scheme = abs_path.scheme().to_owned();
-            let _ = abs_path.set_scheme("file");
+            // Uri is immutable, so we can't modify the scheme
 
             let abs_path = abs_path
                 .to_file_path()
@@ -9200,8 +9229,12 @@ impl LspStore {
         maybe!({
             let local_store = self.as_local()?;
 
-            let old_uri = lsp::Url::from_file_path(old_path).ok().map(String::from)?;
-            let new_uri = lsp::Url::from_file_path(new_path).ok().map(String::from)?;
+            let old_uri = lsp::Uri::from_file_path(old_path)
+                .ok()
+                .map(|uri| uri.to_string())?;
+            let new_uri = lsp::Uri::from_file_path(new_path)
+                .ok()
+                .map(|uri| uri.to_string())?;
 
             for language_server in local_store.language_servers_for_worktree(worktree_id) {
                 let Some(filter) = local_store
@@ -9234,8 +9267,12 @@ impl LspStore {
         is_dir: bool,
         cx: AsyncApp,
     ) -> Task<ProjectTransaction> {
-        let old_uri = lsp::Url::from_file_path(old_path).ok().map(String::from);
-        let new_uri = lsp::Url::from_file_path(new_path).ok().map(String::from);
+        let old_uri = lsp::Uri::from_file_path(old_path)
+            .ok()
+            .map(|uri| uri.to_string());
+        let new_uri = lsp::Uri::from_file_path(new_path)
+            .ok()
+            .map(|uri| uri.to_string());
         cx.spawn(async move |cx| {
             let mut tasks = vec![];
             this.update(cx, |this, cx| {
@@ -10848,7 +10885,7 @@ impl LspStore {
         language_server: Arc<LanguageServer>,
         server_id: LanguageServerId,
         key: LanguageServerSeed,
-        workspace_folders: Arc<Mutex<BTreeSet<Url>>>,
+        workspace_folders: Arc<Mutex<BTreeSet<Uri>>>,
         cx: &mut Context<Self>,
     ) {
         let Some(local) = self.as_local_mut() else {
@@ -11008,7 +11045,7 @@ impl LspStore {
                     let snapshot = versions.last().unwrap();
                     let version = snapshot.version;
                     let initial_snapshot = &snapshot.snapshot;
-                    let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
+                    let uri = lsp::Uri::from_file_path(file.abs_path(cx)).unwrap();
                     language_server.register_buffer(
                         uri,
                         adapter.language_id(&language.name()),
@@ -11247,7 +11284,7 @@ impl LspStore {
                                 PathChange::AddedOrUpdated => lsp::FileChangeType::CHANGED,
                             };
                             Some(lsp::FileEvent {
-                                uri: lsp::Url::from_file_path(abs_path.join(path)).unwrap(),
+                                uri: lsp::Uri::from_file_path(abs_path.join(path)).unwrap(),
                                 typ,
                             })
                         })
@@ -11659,7 +11696,7 @@ impl LspStore {
                     File::from_dyn(buffer.file())
                         .and_then(|file| {
                             let abs_path = file.as_local()?.abs_path(cx);
-                            lsp::Url::from_file_path(abs_path).ok()
+                            lsp::Uri::from_file_path(abs_path).ok()
                         })
                         .is_none_or(|buffer_uri| {
                             unchanged_buffers.contains(&buffer_uri)
@@ -12791,7 +12828,7 @@ pub enum LanguageServerState {
     Starting {
         startup: Task<Option<Arc<LanguageServer>>>,
         /// List of language servers that will be added to the workspace once it's initialization completes.
-        pending_workspace_folders: Arc<Mutex<BTreeSet<Url>>>,
+        pending_workspace_folders: Arc<Mutex<BTreeSet<Uri>>>,
     },
 
     Running {
@@ -12803,7 +12840,7 @@ pub enum LanguageServerState {
 }
 
 impl LanguageServerState {
-    fn add_workspace_folder(&self, uri: Url) {
+    fn add_workspace_folder(&self, uri: Uri) {
         match self {
             LanguageServerState::Starting {
                 pending_workspace_folders,
@@ -12816,7 +12853,7 @@ impl LanguageServerState {
             }
         }
     }
-    fn _remove_workspace_folder(&self, uri: Url) {
+    fn _remove_workspace_folder(&self, uri: Uri) {
         match self {
             LanguageServerState::Starting {
                 pending_workspace_folders,
@@ -12912,6 +12949,21 @@ pub enum CompletionDocumentation {
         single_line: SharedString,
         plain_text: Option<SharedString>,
     },
+}
+
+impl CompletionDocumentation {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn text(&self) -> SharedString {
+        match self {
+            CompletionDocumentation::Undocumented => "".into(),
+            CompletionDocumentation::SingleLine(s) => s.clone(),
+            CompletionDocumentation::MultiLinePlainText(s) => s.clone(),
+            CompletionDocumentation::MultiLineMarkdown(s) => s.clone(),
+            CompletionDocumentation::SingleLineAndMultiLinePlainText { single_line, .. } => {
+                single_line.clone()
+            }
+        }
+    }
 }
 
 impl From<lsp::Documentation> for CompletionDocumentation {
@@ -13018,6 +13070,7 @@ impl LspAdapter for SshLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
+        _: &AsyncApp,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         anyhow::bail!("SshLspAdapter does not support fetch_latest_server_version")
     }

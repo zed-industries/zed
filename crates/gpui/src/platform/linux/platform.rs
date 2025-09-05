@@ -848,6 +848,7 @@ impl crate::Keystroke {
             Keysym::Down => "down".to_owned(),
             Keysym::Home => "home".to_owned(),
             Keysym::End => "end".to_owned(),
+            Keysym::Insert => "insert".to_owned(),
 
             _ => {
                 let name = xkb::keysym_get_name(key_sym).to_lowercase();

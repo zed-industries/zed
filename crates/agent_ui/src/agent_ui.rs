@@ -28,7 +28,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use agent::{Thread, ThreadId};
-use agent_servers::AgentServerSettings;
+use agent_servers::AgentServerCommand;
 use agent_settings::{AgentProfileId, AgentSettings, LanguageModelSelection};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
@@ -170,7 +170,7 @@ enum ExternalAgent {
     NativeAgent,
     Custom {
         name: SharedString,
-        settings: AgentServerSettings,
+        command: AgentServerCommand,
     },
 }
 
@@ -193,9 +193,9 @@ impl ExternalAgent {
             Self::Gemini => Rc::new(agent_servers::Gemini),
             Self::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
             Self::NativeAgent => Rc::new(agent2::NativeAgentServer::new(fs, history)),
-            Self::Custom { name, settings } => Rc::new(agent_servers::CustomAgentServer::new(
+            Self::Custom { name, command } => Rc::new(agent_servers::CustomAgentServer::new(
                 name.clone(),
-                settings,
+                command.clone(),
             )),
         }
     }
@@ -337,8 +337,7 @@ fn update_command_palette_filter(cx: &mut App) {
             ];
             filter.show_action_types(edit_prediction_actions.iter());
 
-            filter
-                .show_action_types([TypeId::of::<zed_actions::OpenZedPredictOnboarding>()].iter());
+            filter.show_action_types(&[TypeId::of::<zed_actions::OpenZedPredictOnboarding>()]);
         }
     });
 }

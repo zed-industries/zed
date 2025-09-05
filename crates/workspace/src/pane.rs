@@ -254,9 +254,6 @@ pub enum Event {
     Remove {
         focus_on_pane: Option<Entity<Pane>>,
     },
-    RemoveItem {
-        idx: usize,
-    },
     RemovedItem {
         item: Box<dyn ItemHandle>,
     },
@@ -287,7 +284,6 @@ impl fmt::Debug for Event {
                 .field("local", local)
                 .finish(),
             Event::Remove { .. } => f.write_str("Remove"),
-            Event::RemoveItem { idx } => f.debug_struct("RemoveItem").field("idx", idx).finish(),
             Event::RemovedItem { item } => f
                 .debug_struct("RemovedItem")
                 .field("item", &item.item_id())
@@ -2096,11 +2092,10 @@ impl Pane {
                             Ok(0) => {}
                             Ok(1) => {
                                 // Don't save this file
-                                pane.update_in(cx, |pane, window, cx| {
+                                pane.update_in(cx, |pane, _, cx| {
                                     if pane.is_tab_pinned(item_ix) && !item.can_save(cx) {
                                         pane.pinned_tab_count -= 1;
                                     }
-                                    item.discarded(project, window, cx)
                                 })
                                 .log_err();
                                 return Ok(true);

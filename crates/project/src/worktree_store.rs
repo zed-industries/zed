@@ -61,7 +61,7 @@ pub struct WorktreeStore {
     worktrees_reordered: bool,
     #[allow(clippy::type_complexity)]
     loading_worktrees:
-        HashMap<SanitizedPath, Shared<Task<Result<Entity<Worktree>, Arc<anyhow::Error>>>>>,
+        HashMap<Arc<SanitizedPath>, Shared<Task<Result<Entity<Worktree>, Arc<anyhow::Error>>>>>,
     state: WorktreeStoreState,
 }
 
@@ -153,10 +153,10 @@ impl WorktreeStore {
 
     pub fn find_worktree(
         &self,
-        abs_path: impl Into<SanitizedPath>,
+        abs_path: impl AsRef<Path>,
         cx: &App,
     ) -> Option<(Entity<Worktree>, PathBuf)> {
-        let abs_path: SanitizedPath = abs_path.into();
+        let abs_path = SanitizedPath::new(&abs_path);
         for tree in self.worktrees() {
             if let Ok(relative_path) = abs_path.as_path().strip_prefix(tree.read(cx).abs_path()) {
                 return Some((tree.clone(), relative_path.into()));
@@ -203,20 +203,19 @@ impl WorktreeStore {
         })
     }
 
-    pub fn entry_for_path(&self, path: &ProjectPath, cx: &App) -> Option<Entry> {
+    pub fn entry_for_path<'a>(&'a self, path: &ProjectPath, cx: &'a App) -> Option<&'a Entry> {
         self.worktree_for_id(path.worktree_id, cx)?
             .read(cx)
             .entry_for_path(&path.path)
-            .cloned()
     }
 
     pub fn create_worktree(
         &mut self,
-        abs_path: impl Into<SanitizedPath>,
+        abs_path: impl AsRef<Path>,
         visible: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Worktree>>> {
-        let abs_path: SanitizedPath = abs_path.into();
+        let abs_path: Arc<SanitizedPath> = SanitizedPath::new_arc(&abs_path);
         if !self.loading_worktrees.contains_key(&abs_path) {
             let task = match &self.state {
                 WorktreeStoreState::Remote {
@@ -227,9 +226,8 @@ impl WorktreeStore {
                     if upstream_client.is_via_collab() {
                         Task::ready(Err(Arc::new(anyhow!("cannot create worktrees via collab"))))
                     } else {
-                        let abs_path =
-                            RemotePathBuf::new(abs_path.as_path().to_path_buf(), *path_style);
-                        self.create_ssh_worktree(upstream_client.clone(), abs_path, visible, cx)
+                        let abs_path = RemotePathBuf::new(abs_path.to_path_buf(), *path_style);
+                        self.create_remote_worktree(upstream_client.clone(), abs_path, visible, cx)
                     }
                 }
                 WorktreeStoreState::Local { fs } => {
@@ -252,7 +250,7 @@ impl WorktreeStore {
         })
     }
 
-    fn create_ssh_worktree(
+    fn create_remote_worktree(
         &mut self,
         client: AnyProtoClient,
         abs_path: RemotePathBuf,
@@ -321,15 +319,21 @@ impl WorktreeStore {
     fn create_local_worktree(
         &mut self,
         fs: Arc<dyn Fs>,
-        abs_path: impl Into<SanitizedPath>,
+        abs_path: Arc<SanitizedPath>,
         visible: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Worktree>, Arc<anyhow::Error>>> {
         let next_entry_id = self.next_entry_id.clone();
-        let path: SanitizedPath = abs_path.into();
 
         cx.spawn(async move |this, cx| {
-            let worktree = Worktree::local(path.clone(), visible, fs, next_entry_id, cx).await;
+            let worktree = Worktree::local(
+                SanitizedPath::cast_arc(abs_path.clone()),
+                visible,
+                fs,
+                next_entry_id,
+                cx,
+            )
+            .await;
 
             let worktree = worktree?;
 
@@ -337,7 +341,7 @@ impl WorktreeStore {
 
             if visible {
                 cx.update(|cx| {
-                    cx.add_recent_document(path.as_path());
+                    cx.add_recent_document(abs_path.as_path());
                 })
                 .log_err();
             }

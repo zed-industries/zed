@@ -188,8 +188,8 @@
   //  4. A box drawn around the following character
   //     "hollow"
   //
-  // Default: not set, defaults to "bar"
-  "cursor_shape": null,
+  // Default: "bar"
+  "cursor_shape": "bar",
   // Determines when the mouse cursor should be hidden in an editor or input box.
   //
   // 1. Never hide the mouse cursor:
@@ -223,9 +223,25 @@
   "current_line_highlight": "all",
   // Whether to highlight all occurrences of the selected text in an editor.
   "selection_highlight": true,
+  // Whether the text selection should have rounded corners.
+  "rounded_selection": true,
   // The debounce delay before querying highlights from the language
   // server based on the current cursor location.
   "lsp_highlight_debounce": 75,
+  // The minimum APCA perceptual contrast between foreground and background colors.
+  // APCA (Accessible Perceptual Contrast Algorithm) is more accurate than WCAG 2.x,
+  // especially for dark mode. Values range from 0 to 106.
+  //
+  // Based on APCA Readability Criterion (ARC) Bronze Simple Mode:
+  // https://readtech.org/ARC/tests/bronze-simple-mode/
+  // - 0: No contrast adjustment
+  // - 45: Minimum for large fluent text (36px+)
+  // - 60: Minimum for other content text
+  // - 75: Minimum for body text
+  // - 90: Preferred for body text
+  //
+  // This only affects text drawn over highlight backgrounds in the editor.
+  "minimum_contrast_for_highlights": 45,
   // Whether to pop the completions menu while typing in an editor without
   // explicitly requesting it.
   "show_completions_on_input": true,
@@ -266,8 +282,8 @@
   //  - "warning"
   //  - "info"
   //  - "hint"
-  //  - null — allow all diagnostics (default)
-  "diagnostics_max_severity": null,
+  //  - "all" — allow all diagnostics (default)
+  "diagnostics_max_severity": "all",
   // Whether to show wrap guides (vertical rulers) in the editor.
   // Setting this to true will show a guide at the 'preferred_line_length' value
   // if 'soft_wrap' is set to 'preferred_line_length', and will show any
@@ -279,6 +295,8 @@
   "redact_private_values": false,
   // The default number of lines to expand excerpts in the multibuffer by.
   "expand_excerpt_lines": 5,
+  // The default number of context lines shown in multibuffer excerpts.
+  "excerpt_context_lines": 2,
   // Globs to match against file paths to determine if a file is private.
   "private_files": ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"],
   // Whether to use additional LSP queries to format (and amend) the code after
@@ -363,6 +381,8 @@
     // Whether to show code action buttons in the editor toolbar.
     "code_actions": false
   },
+  // Whether to allow windows to tab together based on the user’s tabbing preference (macOS only).
+  "use_system_window_tabs": false,
   // Titlebar related settings
   "title_bar": {
     // Whether to show the branch icon beside branch switcher in the titlebar.
@@ -1583,7 +1603,7 @@
       "ensure_final_newline_on_save": false
     },
     "Elixir": {
-      "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
+      "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."]
     },
     "Elm": {
       "tab_size": 4
@@ -1608,7 +1628,7 @@
       }
     },
     "HEEX": {
-      "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
+      "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."]
     },
     "HTML": {
       "prettier": {
@@ -1756,7 +1776,7 @@
       "api_url": "http://localhost:1234/api/v0"
     },
     "deepseek": {
-      "api_url": "https://api.deepseek.com"
+      "api_url": "https://api.deepseek.com/v1"
     },
     "mistral": {
       "api_url": "https://api.mistral.ai/v1"
@@ -1904,7 +1924,10 @@
   "debugger": {
     "stepping_granularity": "line",
     "save_breakpoints": true,
+    "timeout": 2000,
     "dock": "bottom",
+    "log_dap_communications": true,
+    "format_dap_log_messages": true,
     "button": true
   },
   // Configures any number of settings profiles that are temporarily applied on

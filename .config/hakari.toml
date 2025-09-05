@@ -41,5 +41,4 @@ workspace-members = [
     "slash_commands_example",
     "zed_snippets",
     "zed_test_extension",
-    "zed_toml",
 ]
