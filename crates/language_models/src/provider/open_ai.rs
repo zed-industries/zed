@@ -104,11 +104,7 @@ impl State {
         })
     }
 
-    fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
-        if self.is_authenticated() {
-            return Task::ready(Ok(()));
-        }
-
+    fn get_api_key(&self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
         let api_url = AllLanguageModelSettings::get_global(cx)
             .openai
@@ -136,6 +132,14 @@ impl State {
             Ok(())
         })
     }
+
+    fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+        if self.is_authenticated() {
+            return Task::ready(Ok(()));
+        }
+
+        self.get_api_key(cx)
+    }
 }
 
 impl OpenAiLanguageModelProvider {
@@ -157,8 +161,9 @@ impl OpenAiLanguageModelProvider {
 
                 if this.last_api_url != current_api_url {
                     this.last_api_url = current_api_url;
+                    this.api_key = None;
                     let spawn_task = cx.spawn(async move |handle, cx| {
-                        if let Ok(task) = handle.update(cx, |this, cx| this.authenticate(cx)) {
+                        if let Ok(task) = handle.update(cx, |this, cx| this.get_api_key(cx)) {
                             if let Err(_) = task.await {
                                 handle
                                     .update(cx, |this, _| {
