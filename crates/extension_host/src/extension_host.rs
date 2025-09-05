@@ -47,6 +47,7 @@ use remote::{RemoteClient, RemoteConnectionOptions};
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
+use std::future;
 use std::ops::RangeInclusive;
 use std::str::FromStr;
 use std::{
@@ -331,7 +332,7 @@ impl ExtensionStore {
                 load_initial_extensions.await;
 
                 let mut index_changed = false;
-                let mut debounce_timer = cx.background_executor().timer(Duration::MAX).fuse();
+                let mut debounce_timer = future::pending().boxed().fuse();
                 loop {
                     select_biased! {
                         _ = debounce_timer => {
@@ -350,6 +351,7 @@ impl ExtensionStore {
                             debounce_timer = cx
                                 .background_executor()
                                 .timer(RELOAD_DEBOUNCE_DURATION)
+                                .boxed()
                                 .fuse();
                         }
                         extension_id = reload_rx.next() => {
@@ -361,6 +363,7 @@ impl ExtensionStore {
                             debounce_timer = cx
                                 .background_executor()
                                 .timer(RELOAD_DEBOUNCE_DURATION)
+                                .boxed()
                                 .fuse();
                         }
                     }
