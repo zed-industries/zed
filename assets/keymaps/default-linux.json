@@ -16,6 +16,7 @@
       "up": "menu::SelectPrevious",
       "enter": "menu::Confirm",
       "ctrl-enter": "menu::SecondaryConfirm",
+      "ctrl-escape": "menu::Cancel",
       "ctrl-c": "menu::Cancel",
       "escape": "menu::Cancel",
       "alt-shift-enter": "menu::Restart",
