@@ -94,6 +94,8 @@ impl Connection {
                 store_completed_migration((domain, index, migration))?;
             }
 
+            self.exec("PRAGMA foreign_key_check;")?()?;
+
             Ok(())
         })
     }

@@ -95,6 +95,8 @@ impl<M: Migrator> ThreadSafeConnectionBuilder<M> {
                 let mut migration_result =
                     anyhow::Result::<()>::Err(anyhow::anyhow!("Migration never run"));
 
+                connection.exec("PRAGMA foreign_keys = OFF;")?()?;
+
                 for _ in 0..MIGRATION_RETRIES {
                     migration_result = connection
                         .with_savepoint("thread_safe_multi_migration", || M::migrate(connection));
@@ -103,6 +105,8 @@ impl<M: Migrator> ThreadSafeConnectionBuilder<M> {
                         break;
                     }
                 }
+
+                connection.exec("PRAGMA foreign_keys = ON;")?()?;
 
                 migration_result
             })
