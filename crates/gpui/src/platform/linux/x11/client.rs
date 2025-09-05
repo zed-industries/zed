@@ -282,8 +282,8 @@ impl X11ClientStatePtr {
                 b.push(
                     xim::AttributeName::SpotLocation,
                     xim::Point {
-                        x: u32::from(scaled_bounds.origin.x) as i16,
-                        y: u32::from(scaled_bounds.origin.y) as i16,
+                        x: u32::from(scaled_bounds.origin.x + scaled_bounds.size.width) as i16,
+                        y: u32::from(scaled_bounds.origin.y + scaled_bounds.size.height) as i16,
                     },
                 );
             })
@@ -703,14 +703,14 @@ impl X11Client {
                 state.xim_handler = Some(xim_handler);
                 return;
             };
-            if let Some(area) = window.get_ime_area() {
+            if let Some(scaled_area) = window.get_ime_area() {
                 ic_attributes =
                     ic_attributes.nested_list(xim::AttributeName::PreeditAttributes, |b| {
                         b.push(
                             xim::AttributeName::SpotLocation,
                             xim::Point {
-                                x: u32::from(area.origin.x) as i16,
-                                y: u32::from(area.origin.y) as i16,
+                                x: u32::from(scaled_area.origin.x + scaled_area.size.width) as i16,
+                                y: u32::from(scaled_area.origin.y + scaled_area.size.height) as i16,
                             },
                         );
                     });
@@ -1351,7 +1351,7 @@ impl X11Client {
         drop(state);
         window.handle_ime_preedit(text);
 
-        if let Some(area) = window.get_ime_area() {
+        if let Some(scaled_area) = window.get_ime_area() {
             let ic_attributes = ximc
                 .build_ic_attributes()
                 .push(
@@ -1364,8 +1364,8 @@ impl X11Client {
                     b.push(
                         xim::AttributeName::SpotLocation,
                         xim::Point {
-                            x: u32::from(area.origin.x) as i16,
-                            y: u32::from(area.origin.y) as i16,
+                            x: u32::from(scaled_area.origin.x + scaled_area.size.width) as i16,
+                            y: u32::from(scaled_area.origin.y + scaled_area.size.height) as i16,
                         },
                     );
                 })
