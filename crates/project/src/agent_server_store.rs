@@ -4,11 +4,11 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use collections::HashMap;
 use fs::{Fs, RemoveOptions, RenameOptions};
 use futures::StreamExt as _;
-use gpui::{App, AppContext as _, AsyncApp, Entity, SemanticVersion, SharedString, Task};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, SharedString, Task};
 use node_runtime::NodeRuntime;
 use rpc::{
     AnyProtoClient, TypedEnvelope,
@@ -82,11 +82,13 @@ enum AgentServerStoreState {
         fs: Arc<dyn Fs>,
         worktree_store: Entity<WorktreeStore>,
         project_environment: Entity<ProjectEnvironment>,
+        downstream_client: Option<(u64, AnyProtoClient)>,
     },
     Remote {
         project_id: u64,
         upstream_client: AnyProtoClient,
     },
+    Collab,
 }
 
 pub struct AgentServerStore {
@@ -94,6 +96,57 @@ pub struct AgentServerStore {
 }
 
 impl AgentServerStore {
+    pub fn init(session: &AnyProtoClient) {
+        session.add_entity_request_handler(Self::handle_get_agent_server_command);
+    }
+
+    pub fn local(
+        node_runtime: NodeRuntime,
+        fs: Arc<dyn Fs>,
+        worktree_store: Entity<WorktreeStore>,
+        project_environment: Entity<ProjectEnvironment>,
+        _cx: &mut Context<Self>,
+    ) -> Self {
+        Self {
+            state: AgentServerStoreState::Local {
+                node_runtime,
+                fs,
+                worktree_store,
+                project_environment,
+                downstream_client: None,
+            },
+        }
+    }
+
+    pub(crate) fn remote(
+        project_id: u64,
+        upstream_client: AnyProtoClient,
+        _cx: &mut Context<Self>,
+    ) -> Self {
+        Self {
+            state: AgentServerStoreState::Remote {
+                project_id,
+                upstream_client,
+            },
+        }
+    }
+
+    pub(crate) fn collab(_cx: &mut Context<Self>) -> Self {
+        Self {
+            state: AgentServerStoreState::Collab,
+        }
+    }
+
+    pub fn shared(&mut self, project_id: u64, client: AnyProtoClient) {
+        match &mut self.state {
+            AgentServerStoreState::Local {
+                downstream_client, ..
+            } => *downstream_client = Some((project_id, client)),
+            AgentServerStoreState::Remote { .. } => {}
+            AgentServerStoreState::Collab => {}
+        }
+    }
+
     async fn handle_get_agent_server_command(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GetAgentServerCommand>,
@@ -139,6 +192,8 @@ impl AgentServerStore {
                 fs,
                 worktree_store,
                 project_environment,
+                // TODO: report progress via downstream client
+                downstream_client: _,
             } => {
                 let (custom_command, ignore_system_version) =
                     cx.read_global(|settings: &SettingsStore, _| {
@@ -312,6 +367,9 @@ impl AgentServerStore {
                     Ok(AgentServerCommand::from_proto(command))
                 })
             }
+            AgentServerStoreState::Collab => Task::ready(Err(anyhow!(
+                "External agents are not supported in projects shared via collab"
+            ))),
         }
     }
 }

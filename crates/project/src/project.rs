@@ -1176,6 +1176,16 @@ impl Project {
                 )
             });
 
+            let agent_server_store = cx.new(|cx| {
+                AgentServerStore::local(
+                    node.clone(),
+                    fs.clone(),
+                    worktree_store.clone(),
+                    environment.clone(),
+                    cx,
+                )
+            });
+
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
             Self {
@@ -1202,6 +1212,7 @@ impl Project {
                 remote_client: None,
                 breakpoint_store,
                 dap_store,
+                agent_server_store,
 
                 buffers_needing_diff: Default::default(),
                 git_diff_debouncer: DebouncedDelay::new(),
@@ -1340,6 +1351,10 @@ impl Project {
                 )
             });
 
+            let agent_server_store = cx.new(|cx| {
+                AgentServerStore::remote(REMOTE_SERVER_PROJECT_ID, remote_proto.clone(), cx)
+            });
+
             cx.subscribe(&remote, Self::on_remote_client_event).detach();
 
             let this = Self {
@@ -1355,6 +1370,7 @@ impl Project {
                 join_project_response_message_id: 0,
                 client_state: ProjectClientState::Local,
                 git_store,
+                agent_server_store,
                 client_subscriptions: Vec::new(),
                 _subscriptions: vec![
                     cx.on_release(Self::release),
@@ -1566,6 +1582,8 @@ impl Project {
             )
         })?;
 
+        let agent_server_store = cx.new(|cx| AgentServerStore::collab(cx))?;
+
         let project = cx.new(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
 
@@ -1626,6 +1644,7 @@ impl Project {
                 breakpoint_store,
                 dap_store: dap_store.clone(),
                 git_store: git_store.clone(),
+                agent_server_store,
                 buffers_needing_diff: Default::default(),
                 git_diff_debouncer: DebouncedDelay::new(),
                 terminals: Terminals {
