@@ -2211,7 +2211,7 @@ impl Window {
             input_handlers_index: self.next_frame.input_handlers.len(),
             cursor_styles_index: self.next_frame.cursor_styles.len(),
             accessed_element_states_index: self.next_frame.accessed_element_states.len(),
-            tab_handle_index: self.next_frame.tab_handles.handles.len(),
+            tab_handle_index: self.next_frame.tab_handles.nodes.len(),
             line_layout_index: self.text_system.layout_index(),
         }
     }
@@ -2241,8 +2241,8 @@ impl Window {
                 .iter()
                 .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
         );
-        self.next_frame.tab_handles.handles.extend(
-            self.rendered_frame.tab_handles.handles
+        self.next_frame.tab_handles.nodes.extend(
+            self.rendered_frame.tab_handles.nodes
                 [range.start.tab_handle_index..range.end.tab_handle_index]
                 .iter()
                 .cloned(),
