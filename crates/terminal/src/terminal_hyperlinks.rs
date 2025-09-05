@@ -11,8 +11,10 @@ use std::{ops::Index, sync::LazyLock};
 const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`']+"#;
 // Optional suffix matches MSBuild diagnostic suffixes for path parsing in PathLikeWithPosition
 // https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks
-const WORD_REGEX: &str =
-    r#"[\$\+\w.\[\]:/\\@\-~()]+(?:\((?:\d+|\d+,\d+)\))|[\$\+\w.\[\]:/\\@\-~()]+"#;
+// It is not important for this to match the specification for valid file names on various operating
+// systems. It is used to identify something that might be a path--invalid paths will be filtered
+// out later.
+const WORD_REGEX: &str = r#"\S+(?:\((?:\d+|\d+,\d+)\))|\S+"#;
 
 const PYTHON_FILE_LINE_REGEX: &str = r#"File "(?P<file>[^"]+)", line (?P<line>\d+)"#;
 
@@ -91,23 +93,34 @@ pub(super) fn find_from_grid_point<T: EventListener>(
         let file_path = term.bounds_to_string(*word_match.start(), *word_match.end());
 
         let (sanitized_match, sanitized_word) = 'sanitize: {
-            let mut word_match = word_match;
-            let mut file_path = file_path;
+            let shrink_by =
+                |left: usize, right: usize, word_match: &mut Match, file_path: &mut &str| {
+                    *word_match = Match::new(
+                        word_match.start().add(term, Boundary::Grid, left),
+                        word_match.end().sub(term, Boundary::Grid, right),
+                    );
+                    *file_path = &file_path[left..file_path.len() - right];
+                };
 
-            if is_path_surrounded_by_common_symbols(&file_path) {
-                word_match = Match::new(
-                    word_match.start().add(term, Boundary::Grid, 1),
-                    word_match.end().sub(term, Boundary::Grid, 1),
-                );
-                file_path = file_path[1..file_path.len() - 1].to_owned();
+            let mut word_match = word_match;
+            let mut file_path = file_path.as_str();
+
+            if is_path_surrounded_by_common_symbols(file_path) {
+                shrink_by(1, 1, &mut word_match, &mut file_path);
+                if is_path_surrounded_by_quotes(file_path) {
+                    shrink_by(1, 1, &mut word_match, &mut file_path);
+                }
+            }
+
+            if is_path_surrounded_by_quotes(file_path) {
+                shrink_by(1, 1, &mut word_match, &mut file_path);
+                if is_path_surrounded_by_common_symbols(file_path) {
+                    shrink_by(1, 1, &mut word_match, &mut file_path);
+                }
             }
 
             while file_path.ends_with(':') {
-                file_path.pop();
-                word_match = Match::new(
-                    *word_match.start(),
-                    word_match.end().sub(term, Boundary::Grid, 1),
-                );
+                shrink_by(0, 1, &mut word_match, &mut file_path);
             }
             let mut colon_count = 0;
             for c in file_path.chars() {
@@ -131,16 +144,16 @@ pub(super) fn find_from_grid_point<T: EventListener>(
                         .nth(last_index + 1)
                         .is_none_or(|c| c.is_ascii_digit());
                 if prev_is_digit && !next_is_digit {
-                    let stripped_len = file_path.len() - last_index;
-                    word_match = Match::new(
-                        *word_match.start(),
-                        word_match.end().sub(term, Boundary::Grid, stripped_len),
+                    shrink_by(
+                        0,
+                        file_path.len() - last_index,
+                        &mut word_match,
+                        &mut file_path,
                     );
-                    file_path = file_path[0..last_index].to_owned();
                 }
             }
 
-            break 'sanitize (word_match, file_path);
+            break 'sanitize (word_match, file_path.to_owned());
         };
 
         Some((sanitized_word, false, sanitized_match))
@@ -164,12 +177,36 @@ pub(super) fn find_from_grid_point<T: EventListener>(
     })
 }
 
+/// Check if path is surrounded by quotes: `""` or `''` or ````
+fn is_path_surrounded_by_quotes(path: &str) -> bool {
+    let mut chars = path.chars();
+    if let Some(first_char) = chars.next()
+        && let Some(last_char) = chars.next_back()
+        && chars.next().is_some()
+    {
+        match (first_char, last_char) {
+            ('"', '"') | ('\'', '\'') | ('`', '`') => true,
+            _ => false,
+        }
+    } else {
+        false
+    }
+}
+
+/// Check if path is surrounded by brackets: `[]` or `()` or `{}` or `<>`
 fn is_path_surrounded_by_common_symbols(path: &str) -> bool {
-    // Avoid detecting `[]` or `()` strings as paths, surrounded by common symbols
-    path.len() > 2
-        // The rest of the brackets and various quotes cannot be matched by the [`WORD_REGEX`] hence not checked for.
-        && (path.starts_with('[') && path.ends_with(']')
-            || path.starts_with('(') && path.ends_with(')'))
+    let mut chars = path.chars();
+    if let Some(first_char) = chars.next()
+        && let Some(last_char) = chars.next_back()
+        && chars.next().is_some()
+    {
+        match (first_char, last_char) {
+            ('[', ']') | ('(', ')') | ('{', '}') | ('<', '>') => true,
+            _ => false,
+        }
+    } else {
+        false
+    }
 }
 
 /// Based on alacritty/src/display/hint.rs > regex_match_at
@@ -238,7 +275,7 @@ mod tests {
         re_test(
             WORD_REGEX,
             "hello, world! \"What\" is this?",
-            vec!["hello", "world", "What", "is", "this"],
+            vec!["hello,", "world!", "\"What\"", "is", "this?"],
         );
     }
 
@@ -325,17 +362,6 @@ mod tests {
             )
         } };
 
-        ($($columns:literal),+; $($lines:expr),+; $hyperlink_kind:ident) => { {
-            use crate::terminal_hyperlinks::tests::line_cells_count;
-
-            let test_lines = vec![$($lines),+];
-            let total_cells = test_lines.iter().copied().map(line_cells_count).sum();
-
-            test_hyperlink!(
-                [ $($columns),+ ]; total_cells; test_lines.iter().copied(); $hyperlink_kind
-            )
-        } };
-
         ([ $($columns:expr),+ ]; $total_cells:expr; $lines:expr; $hyperlink_kind:ident) => { {
             use crate::terminal_hyperlinks::tests::{ test_hyperlink, HyperlinkKind };
 
@@ -361,9 +387,6 @@ mod tests {
         ///
         macro_rules! test_path {
             ($($lines:literal),+) => { test_hyperlink!($($lines),+; Path) };
-            ($($columns:literal),+; $($lines:literal),+) => {
-                test_hyperlink!($($columns),+; $($lines),+; Path)
-            };
         }
 
         #[test]
@@ -430,38 +453,51 @@ mod tests {
         }
 
         #[test]
+        fn quotes_and_brackets() {
+            test_path!("\"‹«/test/co👉ol.rs»:«4»›\"");
+            test_path!("'‹«/test/co👉ol.rs»:«4»›'");
+            test_path!("`‹«/test/co👉ol.rs»:«4»›`");
+
+            test_path!("[‹«/test/co👉ol.rs»:«4»›]");
+            test_path!("(‹«/test/co👉ol.rs»:«4»›)");
+            test_path!("{‹«/test/co👉ol.rs»:«4»›}");
+            test_path!("<‹«/test/co👉ol.rs»:«4»›>");
+
+            test_path!("[\"‹«/test/co👉ol.rs»:«4»›\"]");
+            test_path!("'(‹«/test/co👉ol.rs»:«4»›)'");
+        }
+
+        #[test]
         fn word_wide_chars() {
             // Rust paths
-            test_path!(4, 6, 12; "‹«/👉例/cool.rs»›");
-            test_path!(4, 6, 12; "‹«/例👈/cool.rs»›");
-            test_path!(4, 8, 16; "‹«/例/cool.rs»:«👉4»›");
-            test_path!(4, 8, 16; "‹«/例/cool.rs»:«4»:«👉2»›");
+            test_path!("‹«/👉例/cool.rs»›");
+            test_path!("‹«/例👈/cool.rs»›");
+            test_path!("‹«/例/cool.rs»:«👉4»›");
+            test_path!("‹«/例/cool.rs»:«4»:«👉2»›");
 
             // Cargo output
-            test_path!(4, 27, 30; "    Compiling Cool (‹«/👉例/Cool»›)");
-            test_path!(4, 27, 30; "    Compiling Cool (‹«/例👈/Cool»›)");
+            test_path!("    Compiling Cool (‹«/👉例/Cool»›)");
+            test_path!("    Compiling Cool (‹«/例👈/Cool»›)");
 
             // Python
-            test_path!(4, 11; "‹«👉例wesome.py»›");
-            test_path!(4, 11; "‹«例👈wesome.py»›");
-            test_path!(6, 17, 40; "    ‹File \"«/👉例wesome.py»\", line «42»›: Wat?");
-            test_path!(6, 17, 40; "    ‹File \"«/例👈wesome.py»\", line «42»›: Wat?");
+            test_path!("‹«👉例wesome.py»›");
+            test_path!("‹«例👈wesome.py»›");
+            test_path!("    ‹File \"«/👉例wesome.py»\", line «42»›: Wat?");
+            test_path!("    ‹File \"«/例👈wesome.py»\", line «42»›: Wat?");
         }
 
         #[test]
         fn non_word_wide_chars() {
             // Mojo diagnostic message
-            test_path!(4, 18, 38; "    ‹File \"«/awe👉some.🔥»\", line «42»›: Wat?");
-            test_path!(4, 18, 38; "    ‹File \"«/awesome👉.🔥»\", line «42»›: Wat?");
-            test_path!(4, 18, 38; "    ‹File \"«/awesome.👉🔥»\", line «42»›: Wat?");
-            test_path!(4, 18, 38; "    ‹File \"«/awesome.🔥👈»\", line «42»›: Wat?");
+            test_path!("    ‹File \"«/awe👉some.🔥»\", line «42»›: Wat?");
+            test_path!("    ‹File \"«/awesome👉.🔥»\", line «42»›: Wat?");
+            test_path!("    ‹File \"«/awesome.👉🔥»\", line «42»›: Wat?");
+            test_path!("    ‹File \"«/awesome.🔥👈»\", line «42»›: Wat?");
         }
 
         /// These likely rise to the level of being worth fixing.
         mod issues {
             #[test]
-            #[cfg_attr(not(target_os = "windows"), should_panic(expected = "Path = «例»"))]
-            #[cfg_attr(target_os = "windows", should_panic(expected = r#"Path = «C:\\例»"#))]
             // <https://github.com/alacritty/alacritty/issues/8586>
             fn issue_alacritty_8586() {
                 // Rust paths
@@ -482,7 +518,6 @@ mod tests {
             }
 
             #[test]
-            #[should_panic(expected = "No hyperlink found")]
             // <https://github.com/zed-industries/zed/issues/12338>
             fn issue_12338() {
                 // Issue #12338
@@ -546,21 +581,13 @@ mod tests {
         /// Minor issues arguably not important enough to fix/workaround...
         mod nits {
             #[test]
-            #[cfg_attr(
-                not(target_os = "windows"),
-                should_panic(expected = "Path = «/test/cool.rs(4»")
-            )]
-            #[cfg_attr(
-                target_os = "windows",
-                should_panic(expected = r#"Path = «C:\\test\\cool.rs(4»"#)
-            )]
             fn alacritty_bugs_with_two_columns() {
-                test_path!(2; "‹«/👉test/cool.rs»(«4»)›");
-                test_path!(2; "‹«/test/cool.rs»(«👉4»)›");
-                test_path!(2; "‹«/test/cool.rs»(«4»,«👉2»)›");
+                test_path!("‹«/👉test/cool.rs»(«4»)›");
+                test_path!("‹«/test/cool.rs»(«👉4»)›");
+                test_path!("‹«/test/cool.rs»(«4»,«👉2»)›");
 
                 // Python
-                test_path!(2; "‹«awe👉some.py»›");
+                test_path!("‹«awe👉some.py»›");
             }
 
             #[test]
@@ -648,9 +675,6 @@ mod tests {
         ///
         macro_rules! test_file_iri {
             ($file_iri:literal) => { { test_hyperlink!(concat!("‹«👉", $file_iri, "»›"); FileIri) } };
-            ($($columns:literal),+; $file_iri:literal) => { {
-                test_hyperlink!($($columns),+; concat!("‹«👉", $file_iri, "»›"); FileIri)
-            } };
         }
 
         #[cfg(not(target_os = "windows"))]
@@ -722,9 +746,6 @@ mod tests {
         ///
         macro_rules! test_iri {
             ($iri:literal) => { { test_hyperlink!(concat!("‹«👉", $iri, "»›"); Iri) } };
-            ($($columns:literal),+; $iri:literal) => { {
-                test_hyperlink!($($columns),+; concat!("‹«👉", $iri, "»›"); Iri)
-            } };
         }
 
         #[test]
@@ -755,26 +776,26 @@ mod tests {
         #[test]
         fn wide_chars() {
             // In the order they appear in URL_REGEX, except 'file://' which is treated as a path
-            test_iri!(4, 20; "ipfs://例🏃🦀/cool.ipfs");
-            test_iri!(4, 20; "ipns://例🏃🦀/cool.ipns");
-            test_iri!(6, 20; "magnet://例🏃🦀/cool.git");
-            test_iri!(4, 20; "mailto:someone@somewhere.here");
-            test_iri!(4, 20; "gemini://somewhere.here");
-            test_iri!(4, 20; "gopher://somewhere.here");
-            test_iri!(4, 20; "http://例🏃🦀/cool/index.html");
-            test_iri!(4, 20; "http://10.10.10.10:1111/cool.html");
-            test_iri!(4, 20; "http://例🏃🦀/cool/index.html?amazing=1");
-            test_iri!(4, 20; "http://例🏃🦀/cool/index.html#right%20here");
-            test_iri!(4, 20; "http://例🏃🦀/cool/index.html?amazing=1#right%20here");
-            test_iri!(4, 20; "https://例🏃🦀/cool/index.html");
-            test_iri!(4, 20; "https://10.10.10.10:1111/cool.html");
-            test_iri!(4, 20; "https://例🏃🦀/cool/index.html?amazing=1");
-            test_iri!(4, 20; "https://例🏃🦀/cool/index.html#right%20here");
-            test_iri!(4, 20; "https://例🏃🦀/cool/index.html?amazing=1#right%20here");
-            test_iri!(4, 20; "news://例🏃🦀/cool.news");
-            test_iri!(5, 20; "git://例/cool.git");
-            test_iri!(5, 20; "ssh://user@somewhere.over.here:12345/例🏃🦀/cool.git");
-            test_iri!(7, 20; "ftp://例🏃🦀/cool.ftp");
+            test_iri!("ipfs://例🏃🦀/cool.ipfs");
+            test_iri!("ipns://例🏃🦀/cool.ipns");
+            test_iri!("magnet://例🏃🦀/cool.git");
+            test_iri!("mailto:someone@somewhere.here");
+            test_iri!("gemini://somewhere.here");
+            test_iri!("gopher://somewhere.here");
+            test_iri!("http://例🏃🦀/cool/index.html");
+            test_iri!("http://10.10.10.10:1111/cool.html");
+            test_iri!("http://例🏃🦀/cool/index.html?amazing=1");
+            test_iri!("http://例🏃🦀/cool/index.html#right%20here");
+            test_iri!("http://例🏃🦀/cool/index.html?amazing=1#right%20here");
+            test_iri!("https://例🏃🦀/cool/index.html");
+            test_iri!("https://10.10.10.10:1111/cool.html");
+            test_iri!("https://例🏃🦀/cool/index.html?amazing=1");
+            test_iri!("https://例🏃🦀/cool/index.html#right%20here");
+            test_iri!("https://例🏃🦀/cool/index.html?amazing=1#right%20here");
+            test_iri!("news://例🏃🦀/cool.news");
+            test_iri!("git://例/cool.git");
+            test_iri!("ssh://user@somewhere.over.here:12345/例🏃🦀/cool.git");
+            test_iri!("ftp://例🏃🦀/cool.ftp");
         }
 
         // There are likely more tests needed for IRI vs URI
@@ -863,6 +884,22 @@ mod tests {
             point
         }
 
+        fn end_point_from_prev_input_point(
+            term: &Term<VoidListener>,
+            prev_input_point: AlacPoint,
+        ) -> AlacPoint {
+            if term
+                .grid()
+                .index(prev_input_point)
+                .flags
+                .contains(Flags::WIDE_CHAR)
+            {
+                prev_input_point.add(term, Boundary::Grid, 1)
+            } else {
+                prev_input_point
+            }
+        }
+
         let mut hovered_grid_point: Option<AlacPoint> = None;
         let mut hyperlink_match = AlacPoint::default()..=AlacPoint::default();
         let mut iri_or_path = String::default();
@@ -897,7 +934,10 @@ mod tests {
                                 panic!("Should have been handled by char input")
                             }
                             CapturesState::Path(start_point) => {
-                                iri_or_path = term.bounds_to_string(start_point, prev_input_point);
+                                iri_or_path = term.bounds_to_string(
+                                    start_point,
+                                    end_point_from_prev_input_point(&term, prev_input_point),
+                                );
                                 CapturesState::RowScan
                             }
                             CapturesState::RowScan => CapturesState::Row(String::new()),
@@ -922,7 +962,8 @@ mod tests {
                                 panic!("Should have been handled by char input")
                             }
                             MatchState::Match(start_point) => {
-                                hyperlink_match = start_point..=prev_input_point;
+                                hyperlink_match = start_point
+                                    ..=end_point_from_prev_input_point(&term, prev_input_point);
                                 MatchState::Done
                             }
                             MatchState::Done => {
