@@ -1,0 +1,330 @@
+use std::{
+    path::{Path, PathBuf},
+    str::FromStr as _,
+    sync::Arc,
+};
+
+use anyhow::{Context as _, Result};
+use collections::HashMap;
+use fs::{Fs, RemoveOptions, RenameOptions};
+use futures::StreamExt as _;
+use gpui::{App, AppContext as _, AsyncApp, Entity, SemanticVersion, SharedString, Task};
+use node_runtime::NodeRuntime;
+use remote::RemoteClient;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use settings::SettingsStore;
+use util::ResultExt as _;
+
+use crate::{Project, ProjectEnvironment, worktree_store::WorktreeStore};
+
+#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
+pub struct AgentServerCommand {
+    #[serde(rename = "command")]
+    pub path: PathBuf,
+    #[serde(default)]
+    pub args: Vec<String>,
+    pub env: Option<HashMap<String, String>>,
+}
+
+impl std::fmt::Debug for AgentServerCommand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let filtered_env = self.env.as_ref().map(|env| {
+            env.iter()
+                .map(|(k, v)| {
+                    (
+                        k,
+                        if util::redact::should_redact(k) {
+                            "[REDACTED]"
+                        } else {
+                            v
+                        },
+                    )
+                })
+                .collect::<Vec<_>>()
+        });
+
+        f.debug_struct("AgentServerCommand")
+            .field("path", &self.path)
+            .field("args", &self.args)
+            .field("env", &filtered_env)
+            .finish()
+    }
+}
+
+enum AgentServerStoreState {
+    Local {
+        node_runtime: NodeRuntime,
+        fs: Arc<dyn Fs>,
+        worktree_store: Entity<WorktreeStore>,
+        project_environment: Entity<ProjectEnvironment>,
+    },
+    Remote {
+        client: Entity<RemoteClient>,
+    },
+}
+
+pub struct AgentServerStore {
+    state: AgentServerStoreState,
+}
+
+impl AgentServerStore {
+    fn get_agent_server_command(
+        &self,
+        binary_name: SharedString,
+        package_name: SharedString,
+        entrypoint_path: PathBuf,
+        settings_key: SharedString,
+        minimum_version: Option<semver::Version>,
+        status_tx: Option<watch::Sender<SharedString>>,
+        new_version_available: Option<watch::Sender<Option<String>>>,
+        cx: &mut App,
+    ) -> Task<Result<AgentServerCommand>> {
+        match &self.state {
+            AgentServerStoreState::Local {
+                node_runtime,
+                fs,
+                worktree_store,
+                project_environment,
+            } => {
+                let (custom_command, ignore_system_version) =
+                    cx.read_global(|settings: &SettingsStore, _| {
+                        // FIXME read settings
+                        (None::<AgentServerCommand>, true)
+                    });
+                let node_runtime = node_runtime.clone();
+                let fs = fs.clone();
+                let worktree_store = worktree_store.clone();
+                let project_environment = project_environment.clone();
+
+                cx.spawn(async move |cx| {
+                    if let Some(command) = custom_command {
+                        return Ok(command);
+                    } else if !ignore_system_version {
+                        if let Some(bin) = find_bin_in_path(
+                            binary_name.clone(),
+                            &worktree_store,
+                            &project_environment,
+                            cx,
+                        )
+                        .await
+                        {
+                            return Ok(AgentServerCommand {
+                                path: bin,
+                                args: Vec::new(),
+                                env: Default::default(),
+                            });
+                        }
+                    }
+
+                    cx.spawn(async move |cx| {
+                        let node_path = node_runtime.binary_path().await?;
+                        let dir = paths::data_dir()
+                            .join("external_agents")
+                            .join(binary_name.as_str());
+                        fs.create_dir(&dir).await?;
+
+                        let mut stream = fs.read_dir(&dir).await?;
+                        let mut versions = Vec::new();
+                        let mut to_delete = Vec::new();
+                        while let Some(entry) = stream.next().await {
+                            let Ok(entry) = entry else { continue };
+                            let Some(file_name) = entry.file_name() else {
+                                continue;
+                            };
+
+                            if let Some(name) = file_name.to_str()
+                                && let Some(version) = semver::Version::from_str(name).ok()
+                                && fs
+                                    .is_file(&dir.join(file_name).join(&entrypoint_path))
+                                    .await
+                            {
+                                versions.push((version, file_name.to_owned()));
+                            } else {
+                                to_delete.push(file_name.to_owned())
+                            }
+                        }
+
+                        versions.sort();
+                        let newest_version = if let Some((version, file_name)) =
+                            versions.last().cloned()
+                            && minimum_version
+                                .is_none_or(|minimum_version| version >= minimum_version)
+                        {
+                            versions.pop();
+                            Some(file_name)
+                        } else {
+                            None
+                        };
+                        log::debug!("existing version of {package_name}: {newest_version:?}");
+                        to_delete.extend(versions.into_iter().map(|(_, file_name)| file_name));
+
+                        cx.background_spawn({
+                            let fs = fs.clone();
+                            let dir = dir.clone();
+                            async move {
+                                for file_name in to_delete {
+                                    fs.remove_dir(
+                                        &dir.join(file_name),
+                                        RemoveOptions {
+                                            recursive: true,
+                                            ignore_if_not_exists: false,
+                                        },
+                                    )
+                                    .await
+                                    .ok();
+                                }
+                            }
+                        })
+                        .detach();
+
+                        let version = if let Some(file_name) = newest_version {
+                            cx.background_spawn({
+                                let file_name = file_name.clone();
+                                let dir = dir.clone();
+                                let fs = fs.clone();
+                                async move {
+                                    let latest_version = node_runtime
+                                        .npm_package_latest_version(&package_name)
+                                        .await;
+                                    if let Ok(latest_version) = latest_version
+                                        && &latest_version != &file_name.to_string_lossy()
+                                    {
+                                        download_latest_version(
+                                            fs,
+                                            dir.clone(),
+                                            node_runtime,
+                                            package_name,
+                                        )
+                                        .await
+                                        .log_err();
+                                        if let Some(mut new_version_available) =
+                                            new_version_available
+                                        {
+                                            new_version_available.send(Some(latest_version)).ok();
+                                        }
+                                    }
+                                }
+                            })
+                            .detach();
+                            file_name
+                        } else {
+                            if let Some(mut status_tx) = status_tx {
+                                status_tx.send("Installing…".into()).ok();
+                            }
+                            let dir = dir.clone();
+                            cx.background_spawn(download_latest_version(
+                                fs.clone(),
+                                dir.clone(),
+                                node_runtime,
+                                package_name,
+                            ))
+                            .await?
+                            .into()
+                        };
+
+                        let agent_server_path = dir.join(version).join(entrypoint_path);
+                        let agent_server_path_exists = fs.is_file(&agent_server_path).await;
+                        anyhow::ensure!(
+                            agent_server_path_exists,
+                            "Missing entrypoint path {} after installation",
+                            agent_server_path.to_string_lossy()
+                        );
+
+                        anyhow::Ok(AgentServerCommand {
+                            path: node_path,
+                            args: vec![agent_server_path.to_string_lossy().to_string()],
+                            env: Default::default(),
+                        })
+                    })
+                    .await
+                    // FIXME restore this at a higher level
+                    // .map_err(|e| LoadError::FailedToInstall(e.to_string().into()).into())
+                })
+            }
+            AgentServerStoreState::Remote { client } => {
+                todo!()
+            }
+        }
+    }
+}
+
+async fn find_bin_in_path(
+    bin_name: SharedString,
+    worktree_store: &Entity<WorktreeStore>,
+    project_environment: &Entity<ProjectEnvironment>,
+    cx: &mut AsyncApp,
+) -> Option<PathBuf> {
+    let (env_task, root_dir) = worktree_store
+        .update(cx, |worktree_store, cx| {
+            let worktree = worktree_store.visible_worktrees(cx).next();
+            match worktree {
+                Some(worktree) => {
+                    let env_task = project_environment.update(cx, |env, cx| {
+                        env.get_worktree_environment(worktree.clone(), cx)
+                    });
+
+                    let path = worktree.read(cx).abs_path();
+                    (env_task, path)
+                }
+                None => {
+                    let path: Arc<Path> = paths::home_dir().as_path().into();
+                    let env_task = project_environment.update(cx, |env, cx| {
+                        env.get_directory_environment(path.clone(), cx)
+                    });
+                    (env_task, path)
+                }
+            }
+        })
+        .log_err()?;
+
+    cx.background_executor()
+        .spawn(async move {
+            let which_result = if cfg!(windows) {
+                which::which(bin_name.as_str())
+            } else {
+                let env = env_task.await.unwrap_or_default();
+                let shell_path = env.get("PATH").cloned();
+                which::which_in(bin_name.as_str(), shell_path.as_ref(), root_dir.as_ref())
+            };
+
+            if let Err(which::Error::CannotFindBinaryPath) = which_result {
+                return None;
+            }
+
+            which_result.log_err()
+        })
+        .await
+}
+
+async fn download_latest_version(
+    fs: Arc<dyn Fs>,
+    dir: PathBuf,
+    node_runtime: NodeRuntime,
+    package_name: SharedString,
+) -> Result<String> {
+    log::debug!("downloading latest version of {package_name}");
+
+    let tmp_dir = tempfile::tempdir_in(&dir)?;
+
+    node_runtime
+        .npm_install_packages(tmp_dir.path(), &[(&package_name, "latest")])
+        .await?;
+
+    let version = node_runtime
+        .npm_package_installed_version(tmp_dir.path(), &package_name)
+        .await?
+        .context("expected package to be installed")?;
+
+    fs.rename(
+        &tmp_dir.keep(),
+        &dir.join(&version),
+        RenameOptions {
+            ignore_if_exists: true,
+            overwrite: false,
+        },
+    )
+    .await?;
+
+    anyhow::Ok(version)
+}

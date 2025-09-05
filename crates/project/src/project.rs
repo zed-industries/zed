@@ -1,3 +1,4 @@
+pub mod agent_server_store;
 pub mod buffer_store;
 mod color_extractor;
 pub mod connection_manager;
@@ -34,7 +35,9 @@ mod yarn;
 
 use dap::inline_value::{InlineValueLocation, VariableLookupKind, VariableScope};
 
-use crate::{git_store::GitStore, lsp_store::log_store::LogKind};
+use crate::{
+    agent_server_store::AgentServerStore, git_store::GitStore, lsp_store::log_store::LogKind,
+};
 pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
@@ -177,6 +180,7 @@ pub struct Project {
     buffer_ordered_messages_tx: mpsc::UnboundedSender<BufferOrderedMessage>,
     languages: Arc<LanguageRegistry>,
     dap_store: Entity<DapStore>,
+    agent_server_store: Entity<AgentServerStore>,
 
     breakpoint_store: Entity<BreakpointStore>,
     collab_client: Arc<client::Client>,
