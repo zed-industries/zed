@@ -93,8 +93,6 @@ impl AgentConfiguration {
         cx.subscribe(&context_server_store, |_, _, _, cx| cx.notify())
             .detach();
 
-        let scroll_handle = ScrollHandle::new();
-
         let mut this = Self {
             fs,
             language_registry,
@@ -106,7 +104,7 @@ impl AgentConfiguration {
             expanded_provider_configurations: HashMap::default(),
             tools,
             _registry_subscription: registry_subscription,
-            scroll_handle,
+            scroll_handle: ScrollHandle::new(),
             _check_for_gemini: Task::ready(()),
         };
         this.build_provider_configuration_views(window, cx);
@@ -1138,7 +1136,7 @@ impl Render for AgentConfiguration {
                     .child(self.render_context_servers_section(window, cx))
                     .child(self.render_provider_configuration_section(cx)),
             )
-            .vertical_scrollbar(window, cx)
+            .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx)
     }
 }
 

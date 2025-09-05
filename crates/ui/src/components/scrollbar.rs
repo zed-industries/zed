@@ -411,8 +411,8 @@ impl<Setting: ScrollbarVisibilitySetting, ScrollHandle: ScrollableHandle>
     }
 
     /// Set a parent model which should be notified whenever this scrollbar gets a scroll event.
-    pub fn tracked_entity<E: 'static>(mut self, entity: &Entity<E>) -> Self {
-        self.tracked_entity = Some(Some(entity.entity_id()));
+    pub fn tracked_entity(mut self, entity_id: EntityId) -> Self {
+        self.tracked_entity = Some(Some(entity_id));
         self
     }
 
