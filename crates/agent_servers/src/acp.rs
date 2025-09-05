@@ -1,4 +1,3 @@
-use crate::AgentServerCommand;
 use acp_thread::AgentConnection;
 use acp_tools::AcpConnectionRegistry;
 use action_log::ActionLog;
@@ -8,6 +7,7 @@ use collections::HashMap;
 use futures::AsyncBufReadExt as _;
 use futures::io::BufReader;
 use project::Project;
+use project::agent_server_store::AgentServerCommand;
 use serde::Deserialize;
 
 use std::{any::Any, cell::RefCell};

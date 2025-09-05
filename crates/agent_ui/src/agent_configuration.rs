@@ -5,7 +5,7 @@ mod tool_picker;
 
 use std::{ops::Range, sync::Arc};
 
-use agent_servers::{AgentServerCommand, AllAgentServersSettings, CustomAgentServerSettings};
+use agent_servers::{AllAgentServersSettings, CustomAgentServerSettings};
 use agent_settings::AgentSettings;
 use anyhow::Result;
 use assistant_tool::{ToolSource, ToolWorkingSet};
@@ -26,6 +26,7 @@ use language_model::{
 };
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{
+    agent_server_store::AgentServerCommand,
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
     project_settings::{ContextServerSettings, ProjectSettings},
 };

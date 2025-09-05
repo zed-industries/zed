@@ -1,7 +1,8 @@
-use crate::{AgentServerCommand, AgentServerDelegate};
+use crate::AgentServerDelegate;
 use acp_thread::AgentConnection;
 use anyhow::Result;
 use gpui::{App, SharedString, Task};
+use project::agent_server_store::AgentServerCommand;
 use std::{path::Path, rc::Rc};
 use ui::IconName;
 

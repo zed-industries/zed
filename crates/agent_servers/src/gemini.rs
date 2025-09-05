@@ -5,6 +5,7 @@ use crate::acp::AcpConnection;
 use crate::{AgentServer, AgentServerDelegate, AgentServerLoginCommand};
 use acp_thread::{AgentConnection, LoadError};
 use anyhow::Result;
+use collections::HashMap;
 use gpui::{App, AppContext as _, SharedString, Task};
 use language_models::provider::google::GoogleLanguageModelProvider;
 use settings::SettingsStore;
@@ -35,60 +36,32 @@ impl AgentServer for Gemini {
         delegate: AgentServerDelegate,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn AgentConnection>>> {
+        let name = self.name();
         let root_dir = root_dir.to_path_buf();
-        let fs = delegate.project().read(cx).fs().clone();
-        let server_name = self.name();
-        let settings = cx.read_global(|settings: &SettingsStore, _| {
-            settings.get::<AllAgentServersSettings>(None).gemini.clone()
-        });
-        let project = delegate.project().clone();
 
         cx.spawn(async move |cx| {
-            let ignore_system_version = settings
-                .as_ref()
-                .and_then(|settings| settings.ignore_system_version)
-                .unwrap_or(true);
-            let mut project_env = project
-                .update(cx, |project, cx| {
-                    project.directory_environment(root_dir.as_path().into(), cx)
-                })?
-                .await
-                .unwrap_or_default();
-            let mut command = if let Some(settings) = settings
-                && let Some(command) = settings.custom_command()
-            {
-                command
-            } else {
-                cx.update(|cx| {
-                    delegate.get_or_npm_install_builtin_agent(
-                        Self::BINARY_NAME.into(),
-                        Self::PACKAGE_NAME.into(),
-                        format!("node_modules/{}/dist/index.js", Self::PACKAGE_NAME).into(),
-                        ignore_system_version,
-                        Some(Self::MINIMUM_VERSION.parse().unwrap()),
-                        cx,
-                    )
-                })?
-                .await?
-            };
-            if !command.args.contains(&ACP_ARG.into()) {
-                command.args.push(ACP_ARG.into());
-            }
+            let mut extra_env = HashMap::default();
             if let Some(api_key) = cx.update(GoogleLanguageModelProvider::api_key)?.await.ok() {
-                project_env
+                extra_env
                     .insert("GEMINI_API_KEY".to_owned(), api_key.key);
             }
-            project_env.extend(command.env.take().unwrap_or_default());
-            command.env = Some(project_env);
+            let command = delegate.store.update(cx, |store, cx| {
+                store.get_agent_server_command(
+                    Self::BINARY_NAME.into(),
+                    Self::PACKAGE_NAME.into(),
+                    format!("node_modules/{}/dist/index.js", Self::PACKAGE_NAME).into(),
+                    "gemini".into(),
+                    vec![ACP_ARG.into()],
+                    extra_env,
+                    Some(Self::MINIMUM_VERSION.parse().unwrap()),
+                    delegate.status_tx,
+                    delegate.new_version_available,
+                    root_dir.as_path().into(),
+                    cx,
+                )
+            })?.await?;
 
-            let root_dir_exists = fs.is_dir(&root_dir).await;
-            anyhow::ensure!(
-                root_dir_exists,
-                "Session root {} does not exist or is not a directory",
-                root_dir.to_string_lossy()
-            );
-
-            let result = crate::acp::connect(server_name, command.clone(), &root_dir, cx).await;
+            let result = crate::acp::connect(name, command.clone(), &root_dir, cx).await;
             match &result {
                 Ok(connection) => {
                     if let Some(connection) = connection.clone().downcast::<AcpConnection>()
@@ -170,44 +143,19 @@ impl Gemini {
         delegate: AgentServerDelegate,
         cx: &mut App,
     ) -> Task<Result<AgentServerLoginCommand>> {
-        let settings = cx.read_global(|settings: &SettingsStore, _| {
-            settings.get::<AllAgentServersSettings>(None).gemini.clone()
-        });
-
-        cx.spawn(async move |cx| {
-            let command = if let Some(command) = settings
-                .clone()
-                .and_then(|settings| settings.custom_command())
-            {
-                command
-            } else {
-                cx.update(|cx| {
-                    delegate.get_or_npm_install_builtin_agent(
-                        Self::BINARY_NAME.into(),
-                        Self::PACKAGE_NAME.into(),
-                        format!("node_modules/{}/dist/index.js", Self::PACKAGE_NAME).into(),
-                        settings
-                            .and_then(|settings| settings.ignore_system_version)
-                            .unwrap_or(true),
-                        Some(Self::MINIMUM_VERSION.parse().unwrap()),
-                        cx,
-                    )
-                })?
-                .await?
-            };
-
-            Ok(AgentServerLoginCommand {
-                path: command.path,
-                arguments: command.args,
-            })
-        })
+        // FIXME
+        Task::ready(Ok(AgentServerLoginCommand {
+            path: "gemini".into(),
+            arguments: vec![],
+        }))
     }
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use project::agent_server_store::AgentServerCommand;
+
     use super::*;
-    use crate::AgentServerCommand;
     use std::path::Path;
 
     crate::common_e2e_tests!(async |_, _, _| Gemini, allow_option_id = "proceed_once");

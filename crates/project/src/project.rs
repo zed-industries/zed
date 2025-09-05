@@ -5136,6 +5136,10 @@ impl Project {
         &self.git_store
     }
 
+    pub fn agent_server_store(&self) -> &Entity<AgentServerStore> {
+        &self.agent_server_store
+    }
+
     #[cfg(test)]
     fn git_scans_complete(&self, cx: &Context<Self>) -> Task<()> {
         cx.spawn(async move |this, cx| {

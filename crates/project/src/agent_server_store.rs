@@ -178,7 +178,7 @@ impl AgentServerStore {
         Ok(command.to_proto())
     }
 
-    fn get_agent_server_command(
+    pub fn get_agent_server_command(
         &self,
         binary_name: SharedString,
         package_name: SharedString,

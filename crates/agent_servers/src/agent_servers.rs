@@ -17,6 +17,7 @@ use futures::StreamExt as _;
 pub use gemini::*;
 use gpui::AppContext;
 use node_runtime::NodeRuntime;
+use project::agent_server_store::AgentServerStore;
 pub use settings::*;
 
 use acp_thread::AgentConnection;
@@ -43,6 +44,7 @@ pub fn init(cx: &mut App) {
 }
 
 pub struct AgentServerDelegate {
+    store: Entity<AgentServerStore>,
     project: Entity<Project>,
     status_tx: Option<watch::Sender<SharedString>>,
     new_version_available: Option<watch::Sender<Option<String>>>,
@@ -50,11 +52,13 @@ pub struct AgentServerDelegate {
 
 impl AgentServerDelegate {
     pub fn new(
+        store: Entity<AgentServerStore>,
         project: Entity<Project>,
         status_tx: Option<watch::Sender<SharedString>>,
         new_version_tx: Option<watch::Sender<Option<String>>>,
     ) -> Self {
         Self {
+            store,
             project,
             status_tx,
             new_version_available: new_version_tx,
@@ -63,156 +67,6 @@ impl AgentServerDelegate {
 
     pub fn project(&self) -> &Entity<Project> {
         &self.project
-    }
-
-    fn get_or_npm_install_builtin_agent(
-        self,
-        binary_name: SharedString,
-        package_name: SharedString,
-        entrypoint_path: PathBuf,
-        ignore_system_version: bool,
-        minimum_version: Option<Version>,
-        cx: &mut App,
-    ) -> Task<Result<AgentServerCommand>> {
-        let project = self.project;
-        let fs = project.read(cx).fs().clone();
-        let Some(node_runtime) = project.read(cx).node_runtime().cloned() else {
-            return Task::ready(Err(anyhow!(
-                "External agents are not yet available in remote projects."
-            )));
-        };
-        let status_tx = self.status_tx;
-        let new_version_available = self.new_version_available;
-
-        cx.spawn(async move |cx| {
-            if !ignore_system_version {
-                if let Some(bin) = find_bin_in_path(binary_name.clone(), &project, cx).await {
-                    return Ok(AgentServerCommand {
-                        path: bin,
-                        args: Vec::new(),
-                        env: Default::default(),
-                    });
-                }
-            }
-
-            cx.spawn(async move |cx| {
-                let node_path = node_runtime.binary_path().await?;
-                let dir = paths::data_dir()
-                    .join("external_agents")
-                    .join(binary_name.as_str());
-                fs.create_dir(&dir).await?;
-
-                let mut stream = fs.read_dir(&dir).await?;
-                let mut versions = Vec::new();
-                let mut to_delete = Vec::new();
-                while let Some(entry) = stream.next().await {
-                    let Ok(entry) = entry else { continue };
-                    let Some(file_name) = entry.file_name() else {
-                        continue;
-                    };
-
-                    if let Some(name) = file_name.to_str()
-                        && let Some(version) = semver::Version::from_str(name).ok()
-                        && fs
-                            .is_file(&dir.join(file_name).join(&entrypoint_path))
-                            .await
-                    {
-                        versions.push((version, file_name.to_owned()));
-                    } else {
-                        to_delete.push(file_name.to_owned())
-                    }
-                }
-
-                versions.sort();
-                let newest_version = if let Some((version, file_name)) = versions.last().cloned()
-                    && minimum_version.is_none_or(|minimum_version| version >= minimum_version)
-                {
-                    versions.pop();
-                    Some(file_name)
-                } else {
-                    None
-                };
-                log::debug!("existing version of {package_name}: {newest_version:?}");
-                to_delete.extend(versions.into_iter().map(|(_, file_name)| file_name));
-
-                cx.background_spawn({
-                    let fs = fs.clone();
-                    let dir = dir.clone();
-                    async move {
-                        for file_name in to_delete {
-                            fs.remove_dir(
-                                &dir.join(file_name),
-                                RemoveOptions {
-                                    recursive: true,
-                                    ignore_if_not_exists: false,
-                                },
-                            )
-                            .await
-                            .ok();
-                        }
-                    }
-                })
-                .detach();
-
-                let version = if let Some(file_name) = newest_version {
-                    cx.background_spawn({
-                        let file_name = file_name.clone();
-                        let dir = dir.clone();
-                        let fs = fs.clone();
-                        async move {
-                            let latest_version =
-                                node_runtime.npm_package_latest_version(&package_name).await;
-                            if let Ok(latest_version) = latest_version
-                                && &latest_version != &file_name.to_string_lossy()
-                            {
-                                Self::download_latest_version(
-                                    fs,
-                                    dir.clone(),
-                                    node_runtime,
-                                    package_name,
-                                )
-                                .await
-                                .log_err();
-                                if let Some(mut new_version_available) = new_version_available {
-                                    new_version_available.send(Some(latest_version)).ok();
-                                }
-                            }
-                        }
-                    })
-                    .detach();
-                    file_name
-                } else {
-                    if let Some(mut status_tx) = status_tx {
-                        status_tx.send("Installing…".into()).ok();
-                    }
-                    let dir = dir.clone();
-                    cx.background_spawn(Self::download_latest_version(
-                        fs.clone(),
-                        dir.clone(),
-                        node_runtime,
-                        package_name,
-                    ))
-                    .await?
-                    .into()
-                };
-
-                let agent_server_path = dir.join(version).join(entrypoint_path);
-                let agent_server_path_exists = fs.is_file(&agent_server_path).await;
-                anyhow::ensure!(
-                    agent_server_path_exists,
-                    "Missing entrypoint path {} after installation",
-                    agent_server_path.to_string_lossy()
-                );
-
-                anyhow::Ok(AgentServerCommand {
-                    path: node_path,
-                    args: vec![agent_server_path.to_string_lossy().to_string()],
-                    env: Default::default(),
-                })
-            })
-            .await
-            .map_err(|e| LoadError::FailedToInstall(e.to_string().into()).into())
-        })
     }
 }
 

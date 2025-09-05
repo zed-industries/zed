@@ -444,9 +444,12 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ThreadState {
-        if !project.read(cx).is_local() && agent.clone().downcast::<NativeAgentServer>().is_none() {
+        // FIXME find the other places where we're filtering on is_local
+        if project.read(cx).is_via_collab()
+            && agent.clone().downcast::<NativeAgentServer>().is_none()
+        {
             return ThreadState::LoadError(LoadError::Other(
-                "External agents are not yet supported for remote projects.".into(),
+                "External agents are not yet supported in shared projects.".into(),
             ));
         }
         let mut worktrees = project.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
@@ -471,6 +474,7 @@ impl AcpThreadView {
         let (status_tx, mut status_rx) = watch::channel("Loading…".into());
         let (new_version_available_tx, mut new_version_available_rx) = watch::channel(None);
         let delegate = AgentServerDelegate::new(
+            project.read(cx).agent_server_store().clone(),
             project.clone(),
             Some(status_tx),
             Some(new_version_available_tx),
@@ -1530,7 +1534,12 @@ impl AcpThreadView {
         let cwd = project.first_project_directory(cx);
         let shell = project.terminal_settings(&cwd, cx).shell.clone();
 
-        let delegate = AgentServerDelegate::new(project_entity.clone(), None, None);
+        let delegate = AgentServerDelegate::new(
+            project_entity.read(cx).agent_server_store().clone(),
+            project_entity.clone(),
+            None,
+            None,
+        );
         let command = Gemini::login_command(delegate, cx);
 
         window.spawn(cx, async move |cx| {
@@ -1621,7 +1630,12 @@ impl AcpThreadView {
         let cwd = project.first_project_directory(cx);
         let shell = project.terminal_settings(&cwd, cx).shell.clone();
 
-        let delegate = AgentServerDelegate::new(project_entity.clone(), None, None);
+        let delegate = AgentServerDelegate::new(
+            project_entity.read(cx).agent_server_store().clone(),
+            project_entity.clone(),
+            None,
+            None,
+        );
         let command = ClaudeCode::login_command(delegate, cx);
 
         window.spawn(cx, async move |cx| {

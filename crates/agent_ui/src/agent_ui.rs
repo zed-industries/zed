@@ -28,7 +28,6 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use agent::{Thread, ThreadId};
-use agent_servers::AgentServerCommand;
 use agent_settings::{AgentProfileId, AgentSettings, LanguageModelSelection};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
@@ -170,7 +169,7 @@ enum ExternalAgent {
     NativeAgent,
     Custom {
         name: SharedString,
-        command: AgentServerCommand,
+        command: project::agent_server_store::AgentServerCommand,
     },
 }
 

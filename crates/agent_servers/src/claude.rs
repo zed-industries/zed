@@ -3,7 +3,7 @@ use std::path::Path;
 use std::rc::Rc;
 use std::{any::Any, path::PathBuf};
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use gpui::{App, AppContext as _, SharedString, Task};
 
 use crate::{AgentServer, AgentServerDelegate, AllAgentServersSettings};
@@ -25,33 +25,35 @@ impl ClaudeCode {
         delegate: AgentServerDelegate,
         cx: &mut App,
     ) -> Task<Result<AgentServerLoginCommand>> {
-        let settings = cx.read_global(|settings: &SettingsStore, _| {
-            settings.get::<AllAgentServersSettings>(None).claude.clone()
-        });
+        Task::ready(Err(anyhow!("WIP")))
 
-        cx.spawn(async move |cx| {
-            let mut command = if let Some(settings) = settings {
-                settings.command
-            } else {
-                cx.update(|cx| {
-                    delegate.get_or_npm_install_builtin_agent(
-                        Self::BINARY_NAME.into(),
-                        Self::PACKAGE_NAME.into(),
-                        "node_modules/@anthropic-ai/claude-code/cli.js".into(),
-                        true,
-                        Some("0.2.5".parse().unwrap()),
-                        cx,
-                    )
-                })?
-                .await?
-            };
-            command.args.push("/login".into());
+        // let settings = cx.read_global(|settings: &SettingsStore, _| {
+        //     settings.get::<AllAgentServersSettings>(None).claude.clone()
+        // });
 
-            Ok(AgentServerLoginCommand {
-                path: command.path,
-                arguments: command.args,
-            })
-        })
+        // cx.spawn(async move |cx| {
+        //     let mut command = if let Some(settings) = settings {
+        //         settings.command
+        //     } else {
+        //         cx.update(|cx| {
+        //             delegate.get_or_npm_install_builtin_agent(
+        //                 Self::BINARY_NAME.into(),
+        //                 Self::PACKAGE_NAME.into(),
+        //                 "node_modules/@anthropic-ai/claude-code/cli.js".into(),
+        //                 true,
+        //                 Some("0.2.5".parse().unwrap()),
+        //                 cx,
+        //             )
+        //         })?
+        //         .await?
+        //     };
+        //     command.args.push("/login".into());
+
+        //     Ok(AgentServerLoginCommand {
+        //         path: command.path,
+        //         arguments: command.args,
+        //     })
+        // })
     }
 }
 
@@ -74,53 +76,54 @@ impl AgentServer for ClaudeCode {
         delegate: AgentServerDelegate,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn AgentConnection>>> {
-        let root_dir = root_dir.to_path_buf();
-        let fs = delegate.project().read(cx).fs().clone();
-        let server_name = self.name();
-        let settings = cx.read_global(|settings: &SettingsStore, _| {
-            settings.get::<AllAgentServersSettings>(None).claude.clone()
-        });
-        let project = delegate.project().clone();
+        Task::ready(Err(anyhow!("WIP")))
+        // let root_dir = root_dir.to_path_buf();
+        // let fs = delegate.project().read(cx).fs().clone();
+        // let server_name = self.name();
+        // let settings = cx.read_global(|settings: &SettingsStore, _| {
+        //     settings.get::<AllAgentServersSettings>(None).claude.clone()
+        // });
+        // let project = delegate.project().clone();
 
-        cx.spawn(async move |cx| {
-            let mut project_env = project
-                .update(cx, |project, cx| {
-                    project.directory_environment(root_dir.as_path().into(), cx)
-                })?
-                .await
-                .unwrap_or_default();
-            let mut command = if let Some(settings) = settings {
-                settings.command
-            } else {
-                cx.update(|cx| {
-                    delegate.get_or_npm_install_builtin_agent(
-                        Self::BINARY_NAME.into(),
-                        Self::PACKAGE_NAME.into(),
-                        format!("node_modules/{}/dist/index.js", Self::PACKAGE_NAME).into(),
-                        true,
-                        None,
-                        cx,
-                    )
-                })?
-                .await?
-            };
-            project_env.extend(command.env.take().unwrap_or_default());
-            command.env = Some(project_env);
+        // cx.spawn(async move |cx| {
+        //     let mut project_env = project
+        //         .update(cx, |project, cx| {
+        //             project.directory_environment(root_dir.as_path().into(), cx)
+        //         })?
+        //         .await
+        //         .unwrap_or_default();
+        //     let mut command = if let Some(settings) = settings {
+        //         settings.command
+        //     } else {
+        //         cx.update(|cx| {
+        //             delegate.get_or_npm_install_builtin_agent(
+        //                 Self::BINARY_NAME.into(),
+        //                 Self::PACKAGE_NAME.into(),
+        //                 format!("node_modules/{}/dist/index.js", Self::PACKAGE_NAME).into(),
+        //                 true,
+        //                 None,
+        //                 cx,
+        //             )
+        //         })?
+        //         .await?
+        //     };
+        //     project_env.extend(command.env.take().unwrap_or_default());
+        //     command.env = Some(project_env);
 
-            command
-                .env
-                .get_or_insert_default()
-                .insert("ANTHROPIC_API_KEY".to_owned(), "".to_owned());
+        //     command
+        //         .env
+        //         .get_or_insert_default()
+        //         .insert("ANTHROPIC_API_KEY".to_owned(), "".to_owned());
 
-            let root_dir_exists = fs.is_dir(&root_dir).await;
-            anyhow::ensure!(
-                root_dir_exists,
-                "Session root {} does not exist or is not a directory",
-                root_dir.to_string_lossy()
-            );
+        //     let root_dir_exists = fs.is_dir(&root_dir).await;
+        //     anyhow::ensure!(
+        //         root_dir_exists,
+        //         "Session root {} does not exist or is not a directory",
+        //         root_dir.to_string_lossy()
+        //     );
 
-            crate::acp::connect(server_name, command.clone(), &root_dir, cx).await
-        })
+        //     crate::acp::connect(server_name, command.clone(), &root_dir, cx).await
+        // })
     }
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {

@@ -5,9 +5,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use acp_thread::AcpThread;
-use agent_servers::AgentServerCommand;
 use agent2::{DbThreadMetadata, HistoryEntry};
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
+use project::agent_server_store::AgentServerCommand;
 use serde::{Deserialize, Serialize};
 use zed_actions::OpenBrowser;
 use zed_actions::agent::{OpenClaudeCodeOnboardingModal, ReauthenticateAgent};

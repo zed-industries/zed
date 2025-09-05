@@ -1,11 +1,13 @@
-use crate::{AgentServer, AgentServerDelegate};
 #[cfg(test)]
-use crate::{AgentServerCommand, CustomAgentServerSettings};
+use crate::CustomAgentServerSettings;
+use crate::{AgentServer, AgentServerDelegate};
 use acp_thread::{AcpThread, AgentThreadEntry, ToolCall, ToolCallStatus};
 use agent_client_protocol as acp;
 use futures::{FutureExt, StreamExt, channel::mpsc, select};
 use gpui::{AppContext, Entity, TestAppContext};
 use indoc::indoc;
+#[cfg(test)]
+use project::agent_server_store::AgentServerCommand;
 use project::{FakeFs, Project};
 use std::{
     path::{Path, PathBuf},
@@ -498,7 +500,8 @@ pub async fn new_test_thread(
     current_dir: impl AsRef<Path>,
     cx: &mut TestAppContext,
 ) -> Entity<AcpThread> {
-    let delegate = AgentServerDelegate::new(project.clone(), None, None);
+    let store = project.read_with(cx, |project, cx| project.agent_server_store().clone());
+    let delegate = AgentServerDelegate::new(store, project.clone(), None, None);
 
     let connection = cx
         .update(|cx| server.connect(current_dir.as_ref(), delegate, cx))
