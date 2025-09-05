@@ -364,7 +364,6 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
 
     // Receive a completion request as the host's language server.
     // Return some completions from the host's language server.
-    cx_a.executor().start_waiting();
     fake_language_server
         .set_request_handler::<lsp::request::Completion, _, _>(|params, _| async move {
             assert_eq!(
@@ -408,7 +407,6 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         .next()
         .await
         .unwrap();
-    cx_a.executor().finish_waiting();
 
     // Open the buffer on the host.
     let buffer_a = project_a
@@ -1712,7 +1710,6 @@ async fn test_on_input_format_from_guest_to_host(
 
     // Receive an OnTypeFormatting request as the host's language server.
     // Return some formatting from the host's language server.
-    executor.start_waiting();
     fake_language_server
         .set_request_handler::<lsp::request::OnTypeFormatting, _, _>(|params, _| async move {
             assert_eq!(
@@ -1732,7 +1729,6 @@ async fn test_on_input_format_from_guest_to_host(
         .next()
         .await
         .unwrap();
-    executor.finish_waiting();
 
     // Open the buffer on the host and see that the formatting worked
     let buffer_a = project_a
@@ -1872,7 +1868,6 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         .unwrap();
 
     let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
-    executor.start_waiting();
 
     // The host opens a rust file.
     let _buffer_a = project_a
@@ -2122,8 +2117,6 @@ async fn test_inlay_hint_refresh_is_forwarded(
     let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
 
-    cx_a.background_executor.start_waiting();
-
     let editor_a = workspace_a
         .update_in(cx_a, |workspace, window, cx| {
             workspace.open_path((worktree_id, "main.rs"), None, true, window, cx)
@@ -2175,7 +2168,6 @@ async fn test_inlay_hint_refresh_is_forwarded(
         .next()
         .await
         .unwrap();
-    executor.finish_waiting();
 
     executor.run_until_parked();
     editor_a.update(cx_a, |editor, _| {
@@ -2583,7 +2575,6 @@ async fn test_lsp_pull_diagnostics(
         .unwrap();
 
     let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
-    executor.start_waiting();
 
     // The host opens a rust file.
     let _buffer_a = project_a

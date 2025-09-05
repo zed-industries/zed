@@ -181,8 +181,6 @@ impl FakeServer {
 
     #[allow(clippy::await_holding_lock)]
     pub async fn receive<M: proto::EnvelopedMessage>(&self) -> Result<TypedEnvelope<M>> {
-        self.executor.start_waiting();
-
         let message = self
             .state
             .lock()
@@ -192,7 +190,6 @@ impl FakeServer {
             .next()
             .await
             .context("other half hung up")?;
-        self.executor.finish_waiting();
         let type_name = message.payload_type_name();
         let message = message.into_any();
 

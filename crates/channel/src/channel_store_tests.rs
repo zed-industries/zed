@@ -294,8 +294,6 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
         },
     );
 
-    cx.executor().start_waiting();
-
     // Client requests all users for the received messages
     let mut get_users = server.receive::<proto::GetUsers>().await.unwrap();
     get_users.payload.user_ids.sort();

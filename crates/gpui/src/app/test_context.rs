@@ -646,11 +646,9 @@ impl<V> Entity<V> {
                         }
                     }
 
-                    cx.borrow().background_executor().start_waiting();
                     rx.recv()
                         .await
                         .expect("view dropped with pending condition");
-                    cx.borrow().background_executor().finish_waiting();
                 }
             })
             .await

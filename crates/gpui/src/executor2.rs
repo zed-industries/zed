@@ -203,20 +203,6 @@ impl BackgroundExecutor {
         &self.0.scheduler()
     }
 
-    /// in tests, start_waiting lets you indicate which task is waiting (for debugging only)
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn start_waiting(&self) {
-        // self.0.start_waiting()
-        todo!()
-    }
-
-    /// in tests, removes the debugging data added by start_waiting
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn finish_waiting(&self) {
-        // self.0.finish_waiting()
-        todo!()
-    }
-
     /// in tests, run an arbitrary number of tasks (determined by the SEED environment variable)
     #[cfg(any(test, feature = "test-support"))]
     pub fn simulate_random_delay(&self) -> impl Future<Output = ()> + use<> {
@@ -266,13 +252,6 @@ impl BackgroundExecutor {
     #[cfg(any(test, feature = "test-support"))]
     pub fn forbid_parking(&self) {
         // self.0.forbid_parking()
-        todo!()
-    }
-
-    /// adds detail to the "parked with nothing let to run" message.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn set_waiting_hint(&self, msg: Option<String>) {
-        // self.0.set_waiting_hint(msg)
         todo!()
     }
 
