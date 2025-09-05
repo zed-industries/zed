@@ -681,10 +681,10 @@ impl ToolchainSelector {
             state: State::Search(create_search_state(window, cx)),
             create_search_state,
             language: None,
-            project: project.clone(),
-            language_name: language_name.clone(),
+            project,
+            language_name,
             worktree_id,
-            relative_path: relative_path.clone(),
+            relative_path,
         }
     }
 

@@ -106,7 +106,7 @@ pub fn python_env_kernel_specifications(
         let kernelspecs = user_toolchains
             .into_values()
             .flatten()
-            .chain(toolchains.toolchains.into_iter())
+            .chain(toolchains.toolchains)
             .map(|toolchain| {
                 background_executor.spawn(async move {
                     let python_path = toolchain.path.to_string();
