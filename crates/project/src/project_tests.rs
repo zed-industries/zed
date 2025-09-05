@@ -730,7 +730,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
 
     let Toolchains {
         toolchains: available_toolchains_for_b,
-        root_path: root_path,
+        root_path,
         ..
     } = project
         .update(cx, |this, cx| {
