@@ -11391,14 +11391,17 @@ impl Editor {
         let mut edits = Vec::new();
         let mut selection_adjustment = 0i32;
 
-        for selection in self.selections.all::<usize>(cx) {
+        for selection in self.selections.all_adjusted(cx) {
             let selection_is_empty = selection.is_empty();
 
             let (start, end) = if selection_is_empty {
                 let (word_range, _) = buffer.surrounding_word(selection.start, false);
                 (word_range.start, word_range.end)
             } else {
-                (selection.start, selection.end)
+                (
+                    buffer.point_to_offset(selection.start),
+                    buffer.point_to_offset(selection.end),
+                )
             };
 
             let text = buffer.text_for_range(start..end).collect::<String>();
@@ -11409,7 +11412,8 @@ impl Editor {
                 start: (start as i32 - selection_adjustment) as usize,
                 end: ((start + text.len()) as i32 - selection_adjustment) as usize,
                 goal: SelectionGoal::None,
-                ..selection
+                id: selection.id,
+                reversed: selection.reversed,
             });
 
             selection_adjustment += old_length - text.len() as i32;
