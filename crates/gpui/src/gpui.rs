@@ -121,6 +121,14 @@ mod seal {
     pub trait Sealed {}
 }
 
+// This allows r-a to skip expanding the gpui test macro which should
+// reduce resource usage a bit as the test attribute is special cased
+// to be treated as a no-op.
+#[cfg(rust_analyzer)]
+pub use core::prelude::v1::test;
+#[cfg(not(rust_analyzer))]
+pub use gpui_macros::test;
+
 pub use action::*;
 pub use anyhow::Result;
 pub use app::*;
@@ -134,7 +142,7 @@ pub use elements::*;
 pub use executor::*;
 pub use geometry::*;
 pub use global::*;
-pub use gpui_macros::{AppContext, IntoElement, Render, VisualContext, register_action, test};
+pub use gpui_macros::{AppContext, IntoElement, Render, VisualContext, register_action};
 pub use http_client;
 pub use input::*;
 pub use inspector::*;
