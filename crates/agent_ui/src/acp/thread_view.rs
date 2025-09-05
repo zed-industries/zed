@@ -43,7 +43,7 @@ use std::{collections::BTreeMap, rc::Rc, time::Duration};
 use task::SpawnInTerminal;
 use terminal_view::terminal_panel::TerminalPanel;
 use text::Anchor;
-use theme::ThemeSettings;
+use theme::{AgentFontSize, ThemeSettings};
 use ui::{
     Callout, CommonAnimationExt, Disclosure, Divider, DividerColor, ElevationIndex, KeyBinding,
     PopoverMenuHandle, Scrollbar, ScrollbarState, SpinnerLabel, TintColor, Tooltip, prelude::*,
@@ -290,7 +290,7 @@ pub struct AcpThreadView {
     is_loading_contents: bool,
     new_server_version_available: Option<SharedString>,
     _cancel_task: Option<Task<()>>,
-    _subscriptions: [Subscription; 3],
+    _subscriptions: [Subscription; 4],
 }
 
 enum ThreadState {
@@ -380,7 +380,8 @@ impl AcpThreadView {
         });
 
         let subscriptions = [
-            cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
+            cx.observe_global_in::<SettingsStore>(window, Self::agent_font_size_changed),
+            cx.observe_global_in::<AgentFontSize>(window, Self::agent_font_size_changed),
             cx.subscribe_in(&message_editor, window, Self::handle_message_editor_event),
             cx.subscribe_in(&entry_view_state, window, Self::handle_entry_view_event),
         ];
@@ -983,7 +984,7 @@ impl AcpThreadView {
                     this,
                     AuthRequired {
                         description: None,
-                        provider_id: Some(language_model::ANTHROPIC_PROVIDER_ID),
+                        provider_id: None,
                     },
                     agent,
                     connection,
@@ -3010,6 +3011,8 @@ impl AcpThreadView {
         let show_description =
             configuration_view.is_none() && description.is_none() && pending_auth_method.is_none();
 
+        let auth_methods = connection.auth_methods();
+
         v_flex().flex_1().size_full().justify_end().child(
             v_flex()
                 .p_2()
@@ -3040,21 +3043,23 @@ impl AcpThreadView {
                         .cloned()
                         .map(|view| div().w_full().child(view)),
                 )
-                .when(
-                    show_description,
-                    |el| {
-                        el.child(
-                            Label::new(format!(
-                                "You are not currently authenticated with {}. Please choose one of the following options:",
-                                self.agent.name()
-                            ))
-                            .size(LabelSize::Small)
-                            .color(Color::Muted)
-                            .mb_1()
-                            .ml_5(),
-                        )
-                    },
-                )
+                .when(show_description, |el| {
+                    el.child(
+                        Label::new(format!(
+                            "You are not currently authenticated with {}.{}",
+                            self.agent.name(),
+                            if auth_methods.len() > 1 {
+                                " Please choose one of the following options:"
+                            } else {
+                                ""
+                            }
+                        ))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                        .mb_1()
+                        .ml_5(),
+                    )
+                })
                 .when_some(pending_auth_method, |el, _| {
                     el.child(
                         h_flex()
@@ -3066,12 +3071,12 @@ impl AcpThreadView {
                                 Icon::new(IconName::ArrowCircle)
                                     .size(IconSize::Small)
                                     .color(Color::Muted)
-                                    .with_rotate_animation(2)
+                                    .with_rotate_animation(2),
                             )
                             .child(Label::new("Authenticating…").size(LabelSize::Small)),
                     )
                 })
-                .when(!connection.auth_methods().is_empty(), |this| {
+                .when(!auth_methods.is_empty(), |this| {
                     this.child(
                         h_flex()
                             .justify_end()
@@ -3083,38 +3088,32 @@ impl AcpThreadView {
                                     .pt_2()
                                     .border_color(cx.theme().colors().border.opacity(0.8))
                             })
-                            .children(
-                                connection
-                                    .auth_methods()
-                                    .iter()
-                                    .enumerate()
-                                    .rev()
-                                    .map(|(ix, method)| {
-                                        Button::new(
-                                            SharedString::from(method.id.0.clone()),
-                                            method.name.clone(),
-                                        )
-                                        .when(ix == 0, |el| {
-                                            el.style(ButtonStyle::Tinted(ui::TintColor::Warning))
-                                        })
-                                        .label_size(LabelSize::Small)
-                                        .on_click({
-                                            let method_id = method.id.clone();
-                                            cx.listener(move |this, _, window, cx| {
-                                                telemetry::event!(
-                                                    "Authenticate Agent Started",
-                                                    agent = this.agent.telemetry_id(),
-                                                    method = method_id
-                                                );
+                            .children(connection.auth_methods().iter().enumerate().rev().map(
+                                |(ix, method)| {
+                                    Button::new(
+                                        SharedString::from(method.id.0.clone()),
+                                        method.name.clone(),
+                                    )
+                                    .when(ix == 0, |el| {
+                                        el.style(ButtonStyle::Tinted(ui::TintColor::Warning))
+                                    })
+                                    .label_size(LabelSize::Small)
+                                    .on_click({
+                                        let method_id = method.id.clone();
+                                        cx.listener(move |this, _, window, cx| {
+                                            telemetry::event!(
+                                                "Authenticate Agent Started",
+                                                agent = this.agent.telemetry_id(),
+                                                method = method_id
+                                            );
 
-                                                this.authenticate(method_id.clone(), window, cx)
-                                            })
+                                            this.authenticate(method_id.clone(), window, cx)
                                         })
-                                    }),
-                            ),
+                                    })
+                                },
+                            )),
                     )
-                })
-
+                }),
         )
     }
 
@@ -4737,9 +4736,9 @@ impl AcpThreadView {
         )
     }
 
-    fn settings_changed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    fn agent_font_size_changed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.entry_view_state.update(cx, |entry_view_state, cx| {
-            entry_view_state.settings_changed(cx);
+            entry_view_state.agent_font_size_changed(cx);
         });
     }
 

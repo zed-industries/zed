@@ -1,6 +1,6 @@
 [package]
 name = "zed_snippets"
-version = "0.0.5"
+version = "0.0.6"
 edition.workspace = true
 publish.workspace = true
 license = "Apache-2.0"

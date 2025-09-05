@@ -43,10 +43,9 @@ pub fn derive_settings_ui(input: proc_macro::TokenStream) -> proc_macro::TokenSt
                     let lit: LitStr = meta.input.parse()?;
                     group_name = Some(lit.value());
                 } else if meta.path.is_ident("path") {
-                    // todo(settings_ui) try get KEY from Settings if possible, and once we do,
-                    // if can get key from settings, throw error if path also passed
+                    // todo(settings_ui) rely entirely on settings_key, remove path attribute
                     if path_name.is_some() {
-                        return Err(meta.error("Only one 'path' can be specified"));
+                        return Err(meta.error("Only one 'path' can be specified, either with `path` in `settings_ui` or with `settings_key`"));
                     }
                     meta.input.parse::<Token![=]>()?;
                     let lit: LitStr = meta.input.parse()?;
@@ -55,6 +54,12 @@ pub fn derive_settings_ui(input: proc_macro::TokenStream) -> proc_macro::TokenSt
                 Ok(())
             })
             .unwrap_or_else(|e| panic!("in #[settings_ui] attribute: {}", e));
+        } else if let Some(settings_key) = parse_setting_key_attr(attr) {
+            // todo(settings_ui) either remove fallback key or handle it here
+            if path_name.is_some() && settings_key.key.is_some() {
+                panic!("Both 'path' and 'settings_key' are specified. Must specify only one");
+            }
+            path_name = settings_key.key;
         }
     }
 
@@ -210,5 +215,128 @@ fn generate_ui_item_body(
         (_, _, Data::Enum(_)) => quote! {
             settings::SettingsUiItem::None
         },
+    }
+}
+
+struct SettingsKey {
+    key: Option<String>,
+    fallback_key: Option<String>,
+}
+
+fn parse_setting_key_attr(attr: &syn::Attribute) -> Option<SettingsKey> {
+    if !attr.path().is_ident("settings_key") {
+        return None;
+    }
+
+    let mut settings_key = SettingsKey {
+        key: None,
+        fallback_key: None,
+    };
+
+    let mut found_none = false;
+
+    attr.parse_nested_meta(|meta| {
+        if meta.path.is_ident("None") {
+            found_none = true;
+        } else if meta.path.is_ident("key") {
+            if settings_key.key.is_some() {
+                return Err(meta.error("Only one 'group' path can be specified"));
+            }
+            meta.input.parse::<Token![=]>()?;
+            let lit: LitStr = meta.input.parse()?;
+            settings_key.key = Some(lit.value());
+        } else if meta.path.is_ident("fallback_key") {
+            if found_none {
+                return Err(meta.error("Cannot specify 'fallback_key' and 'None'"));
+            }
+
+            if settings_key.fallback_key.is_some() {
+                return Err(meta.error("Only one 'fallback_key' can be specified"));
+            }
+
+            meta.input.parse::<Token![=]>()?;
+            let lit: LitStr = meta.input.parse()?;
+            settings_key.fallback_key = Some(lit.value());
+        }
+        Ok(())
+    })
+    .unwrap_or_else(|e| panic!("in #[settings_key] attribute: {}", e));
+
+    if found_none && settings_key.fallback_key.is_some() {
+        panic!("in #[settings_key] attribute: Cannot specify 'None' and 'fallback_key'");
+    }
+    if found_none && settings_key.key.is_some() {
+        panic!("in #[settings_key] attribute: Cannot specify 'None' and 'key'");
+    }
+    if !found_none && settings_key.key.is_none() {
+        panic!("in #[settings_key] attribute: 'key' must be specified");
+    }
+
+    return Some(settings_key);
+}
+
+#[proc_macro_derive(SettingsKey, attributes(settings_key))]
+pub fn derive_settings_key(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    let name = &input.ident;
+
+    // Handle generic parameters if present
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+
+    let mut settings_key = Option::<SettingsKey>::None;
+
+    for attr in &input.attrs {
+        let parsed_settings_key = parse_setting_key_attr(attr);
+        if parsed_settings_key.is_some() && settings_key.is_some() {
+            panic!("Duplicate #[settings_key] attribute");
+        }
+        settings_key = parsed_settings_key;
+    }
+
+    let Some(SettingsKey { key, fallback_key }) = settings_key else {
+        panic!("Missing #[settings_key] attribute");
+    };
+
+    let key = key.map_or_else(|| quote! {None}, |key| quote! {Some(#key)});
+    let fallback_key = fallback_key.map_or_else(
+        || quote! {None},
+        |fallback_key| quote! {Some(#fallback_key)},
+    );
+
+    let expanded = quote! {
+        impl #impl_generics settings::SettingsKey for #name #ty_generics #where_clause {
+            const KEY: Option<&'static str> = #key;
+
+            const FALLBACK_KEY: Option<&'static str> = #fallback_key;
+        };
+    };
+
+    proc_macro::TokenStream::from(expanded)
+}
+
+#[cfg(test)]
+mod tests {
+    use syn::{Attribute, parse_quote};
+
+    use super::*;
+
+    #[test]
+    fn test_extract_key() {
+        let input: Attribute = parse_quote!(
+            #[settings_key(key = "my_key")]
+        );
+        let settings_key = parse_setting_key_attr(&input).unwrap();
+        assert_eq!(settings_key.key, Some("my_key".to_string()));
+        assert_eq!(settings_key.fallback_key, None);
+    }
+
+    #[test]
+    fn test_empty_key() {
+        let input: Attribute = parse_quote!(
+            #[settings_key(None)]
+        );
+        let settings_key = parse_setting_key_attr(&input).unwrap();
+        assert_eq!(settings_key.key, None);
+        assert_eq!(settings_key.fallback_key, None);
     }
 }
