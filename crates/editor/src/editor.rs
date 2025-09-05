@@ -20664,6 +20664,20 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let aa = multibuffer.read(cx).snapshot(cx);
+        if aa.len() > 0 {
+            self.highlight_text::<Self>(
+                vec![aa.anchor_before(0)..aa.anchor_after(1)],
+                HighlightStyle {
+                    font_weight: Some(FontWeight::BOLD),
+                    color: Some(gpui::blue()),
+                    // background_color: Some(gpui::blue()),
+                    ..Default::default()
+                },
+                cx,
+            )
+        }
+
         match event {
             multi_buffer::Event::Edited {
                 singleton_buffer_edited,

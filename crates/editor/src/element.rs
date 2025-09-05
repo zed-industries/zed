@@ -1,3 +1,5 @@
+mod brackets;
+
 use crate::{
     ActiveDiagnostic, BlockId, CURSORS_VISIBLE_FOR, ChunkRendererContext, ChunkReplacement,
     CodeActionSource, ColumnarMode, ConflictsOurs, ConflictsOursMarker, ConflictsOuter,
@@ -20,6 +22,7 @@ use crate::{
         MinimapThumb, MinimapThumbBorder, ScrollBeyondLastLine, ScrollbarAxes,
         ScrollbarDiagnostics, ShowMinimap,
     },
+    element::brackets::BracketLayout,
     git::blame::{BlameRenderer, GitBlame, GlobalBlameRenderer},
     hover_popover::{
         self, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
@@ -9074,6 +9077,9 @@ impl Element for EditorElement {
                         max_scroll_top,
                     );
 
+                    let brackets =
+                        self.layout_brackets(start_buffer_row..end_buffer_row, &snapshot, cx);
+
                     self.editor.update(cx, |editor, cx| {
                         if editor.scroll_manager.clamp_scroll_left(scroll_max.x) {
                             scroll_position.x = scroll_position.x.min(scroll_max.x);
@@ -9573,6 +9579,7 @@ impl Element for EditorElement {
                         space_invisible,
                         sticky_buffer_header,
                         expand_toggles,
+                        brackets,
                     }
                 })
             })
@@ -9751,6 +9758,7 @@ pub struct EditorLayout {
     space_invisible: ShapedLine,
     sticky_buffer_header: Option<AnyElement>,
     document_colors: Option<(DocumentColorsRenderMode, Vec<(Range<DisplayPoint>, Hsla)>)>,
+    brackets: Vec<BracketLayout>,
 }
 
 impl EditorLayout {

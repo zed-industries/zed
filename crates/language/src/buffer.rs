@@ -4047,6 +4047,10 @@ impl BufferSnapshot {
         self.syntax.matches(range, self, query)
     }
 
+    // async query this (with debounce) on each singleton edit (same as inlays), per whole buffer??
+    // store that in the editor
+    // during editor/element's layout, take the applicable range within the stored data
+    // paint that
     pub fn all_bracket_ranges(
         &self,
         range: Range<usize>,
