@@ -459,6 +459,7 @@ aws-sdk-bedrockruntime = { version = "1.80.0", features = [
 ] }
 aws-smithy-runtime-api = { version = "1.7.4", features = ["http-1x", "client"] }
 aws-smithy-types = { version = "1.3.0", features = ["http-body-1-x"] }
+backtrace = "0.3"
 base64 = "0.22"
 bincode = "1.2.1"
 bitflags = "2.6.0"

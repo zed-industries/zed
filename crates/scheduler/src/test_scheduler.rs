@@ -2,12 +2,14 @@ use crate::{
     BackgroundExecutor, Clock as _, ForegroundExecutor, Scheduler, SessionId, TestClock, Timer,
 };
 use async_task::Runnable;
+use backtrace::Backtrace;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use futures::{FutureExt as _, channel::oneshot, future::LocalBoxFuture};
 use parking_lot::Mutex;
 use rand::prelude::*;
 use std::{
-    collections::VecDeque,
+    collections::{BTreeMap, VecDeque},
+    fmt::Write,
     future::Future,
     panic::{self, AssertUnwindSafe},
     pin::Pin,
@@ -15,7 +17,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering::SeqCst},
     },
-    task::{Context, Poll, Wake, Waker},
+    task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
     thread,
     time::{Duration, Instant},
 };
@@ -23,7 +25,7 @@ use std::{
 pub struct TestScheduler {
     clock: Arc<TestClock>,
     rng: Arc<Mutex<StdRng>>,
-    state: Mutex<SchedulerState>,
+    state: Arc<Mutex<SchedulerState>>,
     pub thread_id: thread::ThreadId,
     pub config: TestSchedulerConfig,
 }
@@ -62,14 +64,16 @@ impl TestScheduler {
     pub fn new(config: TestSchedulerConfig) -> Self {
         Self {
             rng: Arc::new(Mutex::new(StdRng::seed_from_u64(config.seed))),
-            state: Mutex::new(SchedulerState {
+            state: Arc::new(Mutex::new(SchedulerState {
                 runnables: VecDeque::new(),
                 timers: Vec::new(),
                 blocked_sessions: Vec::new(),
                 randomize_order: config.randomize_order,
                 allow_parking: config.allow_parking,
                 next_session_id: SessionId(0),
-            }),
+                pending_traces: BTreeMap::new(),
+                next_trace_id: TraceId(0),
+            })),
             thread_id: thread::current().id(),
             clock: Arc::new(TestClock::new()),
             config,
@@ -173,13 +177,13 @@ impl Scheduler for TestScheduler {
         let (parker, unparker) = parking::pair();
         let deadline = timeout.map(|timeout| Instant::now() + timeout);
         let awoken = Arc::new(AtomicBool::new(false));
-        let waker = Waker::from(Arc::new(WakerFn::new({
-            let awoken = awoken.clone();
-            move || {
-                awoken.store(true, SeqCst);
-                unparker.unpark();
-            }
-        })));
+        let waker = Box::new(TracingWaker {
+            id: None,
+            awoken: awoken.clone(),
+            unparker: unparker.clone(),
+            state: self.state.clone(),
+        });
+        let waker = unsafe { Waker::new(Box::into_raw(waker) as *const (), &WAKER_VTABLE) };
         let max_ticks = if timeout.is_some() {
             self.rng
                 .lock()
@@ -209,7 +213,13 @@ impl Scheduler for TestScheduler {
                 } else if deadline.is_some() {
                     break;
                 } else {
-                    panic!("Parking forbidden");
+                    let mut pending_traces = String::new();
+                    for trace in self.state.lock().pending_traces.values_mut() {
+                        trace.resolve();
+                        // todo!(cole): Exclude <std::task::Waker as Clone>::clone and everything above it.
+                        writeln!(pending_traces, "{:?}", trace).unwrap();
+                    }
+                    panic!("Parking forbidden. Pending traces:\n{}", pending_traces);
                 }
             }
         }
@@ -324,25 +334,86 @@ struct SchedulerState {
     randomize_order: bool,
     allow_parking: bool,
     next_session_id: SessionId,
+    next_trace_id: TraceId,
+    pending_traces: BTreeMap<TraceId, Backtrace>,
 }
 
-struct WakerFn<F> {
-    f: F,
+const WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(
+    TracingWaker::clone_raw,
+    TracingWaker::wake_raw,
+    TracingWaker::wake_by_ref_raw,
+    TracingWaker::drop_raw,
+);
+
+#[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord)]
+struct TraceId(usize);
+
+struct TracingWaker {
+    id: Option<TraceId>,
+    awoken: Arc<AtomicBool>,
+    unparker: parking::Unparker,
+    state: Arc<Mutex<SchedulerState>>,
 }
 
-impl<F: Fn()> WakerFn<F> {
-    fn new(f: F) -> Self {
-        Self { f }
+impl Clone for TracingWaker {
+    fn clone(&self) -> Self {
+        let mut state = self.state.lock();
+        let id = state.next_trace_id;
+        state.next_trace_id.0 += 1;
+        state.pending_traces.insert(id, Backtrace::new_unresolved());
+        Self {
+            id: Some(id),
+            awoken: self.awoken.clone(),
+            unparker: self.unparker.clone(),
+            state: self.state.clone(),
+        }
     }
 }
 
-impl<F: Fn()> Wake for WakerFn<F> {
-    fn wake(self: Arc<Self>) {
-        (self.f)();
+impl Drop for TracingWaker {
+    fn drop(&mut self) {
+        if let Some(id) = self.id {
+            self.state.lock().pending_traces.remove(&id);
+        }
+    }
+}
+
+impl TracingWaker {
+    fn wake(self) {
+        self.wake_by_ref();
     }
 
-    fn wake_by_ref(self: &Arc<Self>) {
-        (self.f)();
+    fn wake_by_ref(&self) {
+        if let Some(id) = self.id {
+            self.state.lock().pending_traces.remove(&id);
+        }
+        self.awoken.store(true, SeqCst);
+        self.unparker.unpark();
+    }
+
+    fn clone_raw(waker: *const ()) -> RawWaker {
+        let waker = waker as *const TracingWaker;
+        let waker = unsafe { &*waker };
+        RawWaker::new(
+            Box::into_raw(Box::new(waker.clone())) as *const (),
+            &WAKER_VTABLE,
+        )
+    }
+
+    fn wake_raw(waker: *const ()) {
+        let waker = unsafe { Box::from_raw(waker as *mut TracingWaker) };
+        waker.wake();
+    }
+
+    fn wake_by_ref_raw(waker: *const ()) {
+        let waker = waker as *const TracingWaker;
+        let waker = unsafe { &*waker };
+        waker.wake_by_ref();
+    }
+
+    fn drop_raw(waker: *const ()) {
+        let waker = unsafe { Box::from_raw(waker as *mut TracingWaker) };
+        drop(waker);
     }
 }
 

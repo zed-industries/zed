@@ -17,6 +17,7 @@ test-support = []
 
 [dependencies]
 async-task.workspace = true
+backtrace.workspace = true
 chrono.workspace = true
 futures.workspace = true
 parking.workspace = true

@@ -240,8 +240,10 @@ fn test_block() {
 #[test]
 #[should_panic(expected = "Parking forbidden")]
 fn test_parking_panics() {
-    let scheduler = Arc::new(TestScheduler::new(TestSchedulerConfig::default()));
-    scheduler.foreground().block_on(future::pending::<()>());
+    TestScheduler::once(async |_scheduler| {
+        let (_tx, rx) = oneshot::channel::<()>();
+        rx.await.unwrap(); // This will never complete
+    });
 }
 
 #[test]
