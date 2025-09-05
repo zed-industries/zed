@@ -2,7 +2,7 @@ use std::rc::Rc;
 use std::{any::Any, path::Path};
 
 use crate::acp::AcpConnection;
-use crate::{AgentServer, AgentServerDelegate};
+use crate::{AgentServer, AgentServerDelegate, AgentServerLoginCommand};
 use acp_thread::{AgentConnection, LoadError};
 use anyhow::Result;
 use gpui::{App, AppContext as _, SharedString, Task};
@@ -165,6 +165,43 @@ impl Gemini {
     const MINIMUM_VERSION: &str = "0.2.1";
 
     const BINARY_NAME: &str = "gemini";
+
+    pub fn login_command(
+        delegate: AgentServerDelegate,
+        cx: &mut App,
+    ) -> Task<Result<AgentServerLoginCommand>> {
+        let settings = cx.read_global(|settings: &SettingsStore, _| {
+            settings.get::<AllAgentServersSettings>(None).gemini.clone()
+        });
+
+        cx.spawn(async move |cx| {
+            let command = if let Some(command) = settings
+                .clone()
+                .and_then(|settings| settings.custom_command())
+            {
+                command
+            } else {
+                cx.update(|cx| {
+                    delegate.get_or_npm_install_builtin_agent(
+                        Self::BINARY_NAME.into(),
+                        Self::PACKAGE_NAME.into(),
+                        format!("node_modules/{}/dist/index.js", Self::PACKAGE_NAME).into(),
+                        settings
+                            .and_then(|settings| settings.ignore_system_version)
+                            .unwrap_or(true),
+                        Some(Self::MINIMUM_VERSION.parse().unwrap()),
+                        cx,
+                    )
+                })?
+                .await?
+            };
+
+            Ok(AgentServerLoginCommand {
+                path: command.path,
+                arguments: command.args,
+            })
+        })
+    }
 }
 
 #[cfg(test)]

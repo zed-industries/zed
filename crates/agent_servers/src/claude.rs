@@ -12,7 +12,7 @@ use acp_thread::AgentConnection;
 #[derive(Clone)]
 pub struct ClaudeCode;
 
-pub struct ClaudeCodeLoginCommand {
+pub struct AgentServerLoginCommand {
     pub path: PathBuf,
     pub arguments: Vec<String>,
 }
@@ -24,7 +24,7 @@ impl ClaudeCode {
     pub fn login_command(
         delegate: AgentServerDelegate,
         cx: &mut App,
-    ) -> Task<Result<ClaudeCodeLoginCommand>> {
+    ) -> Task<Result<AgentServerLoginCommand>> {
         let settings = cx.read_global(|settings: &SettingsStore, _| {
             settings.get::<AllAgentServersSettings>(None).claude.clone()
         });
@@ -47,7 +47,7 @@ impl ClaudeCode {
             };
             command.args.push("/login".into());
 
-            Ok(ClaudeCodeLoginCommand {
+            Ok(AgentServerLoginCommand {
                 path: command.path,
                 arguments: command.args,
             })
