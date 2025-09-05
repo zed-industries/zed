@@ -197,8 +197,6 @@ dependencies = [
 [[package]]
 name = "agent-client-protocol"
 version = "0.2.0-alpha.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d02292efd75080932b6466471d428c70e2ac06908ae24792fc7c36ecbaf67ca"
 dependencies = [
  "anyhow",
  "async-broadcast",

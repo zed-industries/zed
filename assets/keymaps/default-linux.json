@@ -334,7 +334,8 @@
       "enter": "agent::Chat",
       "shift-ctrl-r": "agent::OpenAgentDiff",
       "ctrl-shift-y": "agent::KeepAll",
-      "ctrl-shift-n": "agent::RejectAll"
+      "ctrl-shift-n": "agent::RejectAll",
+      "shift-tab": "agent::CycleModeSelector"
     }
   },
   {
@@ -344,7 +345,8 @@
       "ctrl-enter": "agent::Chat",
       "shift-ctrl-r": "agent::OpenAgentDiff",
       "ctrl-shift-y": "agent::KeepAll",
-      "ctrl-shift-n": "agent::RejectAll"
+      "ctrl-shift-n": "agent::RejectAll",
+      "shift-tab": "agent::CycleModeSelector"
     }
   },
   {
