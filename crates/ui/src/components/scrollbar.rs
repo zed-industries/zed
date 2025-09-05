@@ -6,7 +6,7 @@ use gpui::{
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero,
     LayoutId, ListState, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Negate,
     ParentElement, Pixels, Point, Position, Render, ScrollHandle, ScrollWheelEvent, Size, Stateful,
-    StatefulInteractiveElement, Style, Styled, Task, UniformList, UniformListDecoration,
+    StatefulInteractiveElement, Style, Styled, Task, UniformListDecoration,
     UniformListScrollHandle, Window, prelude::FluentBuilder as _, px, quad, relative, size,
 };
 use settings::SettingsStore;
@@ -268,34 +268,34 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> UniformListDecoration
     }
 }
 
-impl WithScrollbar for UniformList {
-    type Output = Self;
+// impl WithScrollbar for UniformList {
+//     type Output = Self;
 
-    #[track_caller]
-    fn custom_scrollbars<S, T>(
-        self,
-        config: Scrollbars<S, T>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Self::Output
-    where
-        S: ScrollbarVisibilitySetting,
-        T: ScrollableHandle,
-    {
-        let scrollbar = get_scrollbar_state(config, std::panic::Location::caller(), window, cx);
-        self.when_some(
-            scrollbar.read_with(cx, |wrapper, cx| {
-                wrapper
-                    .0
-                    .read(cx)
-                    .handle_to_track::<UniformListScrollHandle>()
-                    .cloned()
-            }),
-            |this, handle| this.track_scroll(handle),
-        )
-        .with_decoration(scrollbar)
-    }
-}
+//     #[track_caller]
+//     fn custom_scrollbars<S, T>(
+//         self,
+//         config: Scrollbars<S, T>,
+//         window: &mut Window,
+//         cx: &mut App,
+//     ) -> Self::Output
+//     where
+//         S: ScrollbarVisibilitySetting,
+//         T: ScrollableHandle,
+//     {
+//         let scrollbar = get_scrollbar_state(config, std::panic::Location::caller(), window, cx);
+//         self.when_some(
+//             scrollbar.read_with(cx, |wrapper, cx| {
+//                 wrapper
+//                     .0
+//                     .read(cx)
+//                     .handle_to_track::<UniformListScrollHandle>()
+//                     .cloned()
+//             }),
+//             |this, handle| this.track_scroll(handle),
+//         )
+//         .with_decoration(scrollbar)
+//     }
+// }
 
 pub enum ScrollAxes {
     Horizontal,

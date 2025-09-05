@@ -500,23 +500,20 @@ impl Render for AcpThreadHistory {
                         ),
                     )
                 } else {
-                    view.pr_5().child(
-                        uniform_list(
-                            "thread-history",
-                            self.visible_items.len(),
-                            cx.processor(|this, range: Range<usize>, window, cx| {
-                                this.render_list_items(range, window, cx)
-                            }),
+                    view.pr_5()
+                        .child(
+                            uniform_list(
+                                "thread-history",
+                                self.visible_items.len(),
+                                cx.processor(|this, range: Range<usize>, window, cx| {
+                                    this.render_list_items(range, window, cx)
+                                }),
+                            )
+                            .p_1()
+                            .track_scroll(self.scroll_handle.clone())
+                            .flex_grow(),
                         )
-                        .p_1()
-                        .track_scroll(self.scroll_handle.clone())
-                        .flex_grow()
-                        .vertical_scrollbar_for(
-                            self.scroll_handle.clone(),
-                            window,
-                            cx,
-                        ),
-                    )
+                        .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx)
                 }
             })
     }
