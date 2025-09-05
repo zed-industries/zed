@@ -1,5 +1,6 @@
 use std::{
     path::{Path, PathBuf},
+    rc::Rc,
     str::FromStr as _,
     sync::Arc,
 };
@@ -10,6 +11,7 @@ use fs::{Fs, RemoveOptions, RenameOptions};
 use futures::StreamExt as _;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, SharedString, Task};
 use node_runtime::NodeRuntime;
+use remote::RemoteClient;
 use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self, ToProto},
@@ -76,6 +78,18 @@ impl AgentServerCommand {
     }
 }
 
+pub struct ExternalAgentServerName(pub SharedString);
+
+pub trait ExternalAgentServer {
+    // FIXME status_tx et al
+    fn get_command(
+        &self,
+        root_dir: &str,
+        extra_env: HashMap<String, String>,
+        cx: &mut App,
+    ) -> Task<Result<AgentServerCommand>>;
+}
+
 enum AgentServerStoreState {
     Local {
         node_runtime: NodeRuntime,
@@ -93,6 +107,7 @@ enum AgentServerStoreState {
 
 pub struct AgentServerStore {
     state: AgentServerStoreState,
+    external_agents: HashMap<ExternalAgentServerName, Rc<dyn ExternalAgentServer>>,
 }
 
 impl AgentServerStore {
@@ -200,179 +215,22 @@ impl AgentServerStore {
                 project_environment,
                 // TODO: report progress via downstream client
                 downstream_client: _,
-            } => {
-                let (custom_command, ignore_system_version) =
-                    cx.read_global(|settings: &SettingsStore, _| {
-                        // FIXME read settings
-                        (None::<AgentServerCommand>, true)
-                    });
-                let node_runtime = node_runtime.clone();
-                let fs = fs.clone();
-                let worktree_store = worktree_store.clone();
-                let project_environment = project_environment.clone();
-
-                cx.spawn(async move |cx| {
-                    let mut env = project_environment
-                        .update(cx, |project_environment, cx| {
-                            project_environment.get_directory_environment(root_dir, cx)
-                        })?
-                        .await
-                        .unwrap_or_default();
-
-                    if let Some(mut command) = custom_command {
-                        command.args.extend(extra_args);
-                        // The project environment is overridden by the
-                        // agent-specific environment, which is overridden by
-                        // any custom environment variables the user has
-                        // specified.
-                        env.extend(extra_env);
-                        env.extend(command.env.unwrap_or_default());
-                        command.env = Some(env);
-                        return Ok(command);
-                    } else if !ignore_system_version {
-                        if let Some(bin) = find_bin_in_path(
-                            binary_name.clone(),
-                            &worktree_store,
-                            &project_environment,
-                            cx,
-                        )
-                        .await
-                        {
-                            return Ok(AgentServerCommand {
-                                path: bin,
-                                args: Vec::new(),
-                                env: Some(env),
-                            });
-                        }
-                    }
-
-                    cx.spawn(async move |cx| {
-                        let node_path = node_runtime.binary_path().await?;
-                        let dir = paths::data_dir()
-                            .join("external_agents")
-                            .join(binary_name.as_str());
-                        fs.create_dir(&dir).await?;
-
-                        let mut stream = fs.read_dir(&dir).await?;
-                        let mut versions = Vec::new();
-                        let mut to_delete = Vec::new();
-                        while let Some(entry) = stream.next().await {
-                            let Ok(entry) = entry else { continue };
-                            let Some(file_name) = entry.file_name() else {
-                                continue;
-                            };
-
-                            if let Some(name) = file_name.to_str()
-                                && let Some(version) = semver::Version::from_str(name).ok()
-                                && fs
-                                    .is_file(&dir.join(file_name).join(&entrypoint_path))
-                                    .await
-                            {
-                                versions.push((version, file_name.to_owned()));
-                            } else {
-                                to_delete.push(file_name.to_owned())
-                            }
-                        }
-
-                        versions.sort();
-                        let newest_version = if let Some((version, file_name)) =
-                            versions.last().cloned()
-                            && minimum_version
-                                .is_none_or(|minimum_version| version >= minimum_version)
-                        {
-                            versions.pop();
-                            Some(file_name)
-                        } else {
-                            None
-                        };
-                        log::debug!("existing version of {package_name}: {newest_version:?}");
-                        to_delete.extend(versions.into_iter().map(|(_, file_name)| file_name));
-
-                        cx.background_spawn({
-                            let fs = fs.clone();
-                            let dir = dir.clone();
-                            async move {
-                                for file_name in to_delete {
-                                    fs.remove_dir(
-                                        &dir.join(file_name),
-                                        RemoveOptions {
-                                            recursive: true,
-                                            ignore_if_not_exists: false,
-                                        },
-                                    )
-                                    .await
-                                    .ok();
-                                }
-                            }
-                        })
-                        .detach();
-
-                        let version = if let Some(file_name) = newest_version {
-                            cx.background_spawn({
-                                let file_name = file_name.clone();
-                                let dir = dir.clone();
-                                let fs = fs.clone();
-                                async move {
-                                    let latest_version = node_runtime
-                                        .npm_package_latest_version(&package_name)
-                                        .await;
-                                    if let Ok(latest_version) = latest_version
-                                        && &latest_version != &file_name.to_string_lossy()
-                                    {
-                                        download_latest_version(
-                                            fs,
-                                            dir.clone(),
-                                            node_runtime,
-                                            package_name,
-                                        )
-                                        .await
-                                        .log_err();
-                                        if let Some(mut new_version_available) =
-                                            new_version_available
-                                        {
-                                            new_version_available.send(Some(latest_version)).ok();
-                                        }
-                                    }
-                                }
-                            })
-                            .detach();
-                            file_name
-                        } else {
-                            if let Some(mut status_tx) = status_tx {
-                                status_tx.send("Installing…".into()).ok();
-                            }
-                            let dir = dir.clone();
-                            cx.background_spawn(download_latest_version(
-                                fs.clone(),
-                                dir.clone(),
-                                node_runtime,
-                                package_name,
-                            ))
-                            .await?
-                            .into()
-                        };
-
-                        let agent_server_path = dir.join(version).join(entrypoint_path);
-                        let agent_server_path_exists = fs.is_file(&agent_server_path).await;
-                        anyhow::ensure!(
-                            agent_server_path_exists,
-                            "Missing entrypoint path {} after installation",
-                            agent_server_path.to_string_lossy()
-                        );
-                        let mut args = extra_args;
-                        args.insert(0, agent_server_path.to_string_lossy().to_string());
-
-                        anyhow::Ok(AgentServerCommand {
-                            path: node_path,
-                            args,
-                            env: Some(env),
-                        })
-                    })
-                    .await
-                    // FIXME restore this at a higher level
-                    // .map_err(|e| LoadError::FailedToInstall(e.to_string().into()).into())
-                })
-            }
+            } => fun_name(
+                &binary_name,
+                &package_name,
+                &entrypoint_path,
+                &extra_args,
+                &extra_env,
+                &minimum_version,
+                status_tx,
+                new_version_available,
+                &root_dir,
+                cx,
+                node_runtime,
+                fs,
+                worktree_store,
+                project_environment,
+            ),
             AgentServerStoreState::Remote {
                 project_id,
                 upstream_client,
@@ -400,35 +258,184 @@ impl AgentServerStore {
     }
 }
 
+fn get_or_npm_install_builtin_agent(
+    binary_name: SharedString,
+    package_name: SharedString,
+    entrypoint_path: PathBuf,
+    extra_args: Vec<String>,
+    minimum_version: Option<semver::Version>,
+    root_dir: Arc<Path>,
+    status_tx: Option<watch::Sender<SharedString>>,
+    new_version_available: Option<watch::Sender<Option<String>>>,
+    fs: Arc<dyn Fs>,
+    node_runtime: NodeRuntime,
+    project_environment: Entity<ProjectEnvironment>,
+    cx: &mut App,
+) -> Task<std::result::Result<AgentServerCommand, anyhow::Error>> {
+    let (custom_command, ignore_system_version) = cx.read_global(|settings: &SettingsStore, _| {
+        // FIXME read settings
+        (None::<AgentServerCommand>, true)
+    });
+
+    cx.spawn(async move |cx| {
+        let mut env = project_environment
+            .update(cx, |project_environment, cx| {
+                project_environment.get_directory_environment(root_dir.clone(), cx)
+            })?
+            .await
+            .unwrap_or_default();
+
+        if let Some(mut command) = custom_command {
+            command.args.extend(extra_args);
+            env.extend(command.env.unwrap_or_default());
+            command.env = Some(env);
+            return Ok(command);
+        } else if !ignore_system_version {
+            if let Some(bin) =
+                find_bin_in_path(binary_name.clone(), &root_dir, &project_environment, cx).await
+            {
+                return Ok(AgentServerCommand {
+                    path: bin,
+                    args: Vec::new(),
+                    env: Some(env),
+                });
+            }
+        }
+
+        cx.spawn(async move |cx| {
+            let node_path = node_runtime.binary_path().await?;
+            let dir = paths::data_dir()
+                .join("external_agents")
+                .join(binary_name.as_str());
+            fs.create_dir(&dir).await?;
+
+            let mut stream = fs.read_dir(&dir).await?;
+            let mut versions = Vec::new();
+            let mut to_delete = Vec::new();
+            while let Some(entry) = stream.next().await {
+                let Ok(entry) = entry else { continue };
+                let Some(file_name) = entry.file_name() else {
+                    continue;
+                };
+
+                if let Some(name) = file_name.to_str()
+                    && let Some(version) = semver::Version::from_str(name).ok()
+                    && fs.is_file(&dir.join(file_name).join(entrypoint_path)).await
+                {
+                    versions.push((version, file_name.to_owned()));
+                } else {
+                    to_delete.push(file_name.to_owned())
+                }
+            }
+
+            versions.sort();
+            let newest_version = if let Some((version, file_name)) = versions.last().cloned()
+                && minimum_version.is_none_or(|minimum_version| version >= minimum_version)
+            {
+                versions.pop();
+                Some(file_name)
+            } else {
+                None
+            };
+            log::debug!("existing version of {package_name}: {newest_version:?}");
+            to_delete.extend(versions.into_iter().map(|(_, file_name)| file_name));
+
+            cx.background_spawn({
+                let fs = fs.clone();
+                let dir = dir.clone();
+                async move {
+                    for file_name in to_delete {
+                        fs.remove_dir(
+                            &dir.join(file_name),
+                            RemoveOptions {
+                                recursive: true,
+                                ignore_if_not_exists: false,
+                            },
+                        )
+                        .await
+                        .ok();
+                    }
+                }
+            })
+            .detach();
+
+            let version = if let Some(file_name) = newest_version {
+                cx.background_spawn({
+                    let file_name = file_name.clone();
+                    let dir = dir.clone();
+                    let fs = fs.clone();
+                    async move {
+                        let latest_version =
+                            node_runtime.npm_package_latest_version(&package_name).await;
+                        if let Ok(latest_version) = latest_version
+                            && &latest_version != &file_name.to_string_lossy()
+                        {
+                            download_latest_version(
+                                fs,
+                                dir.clone(),
+                                node_runtime,
+                                package_name.clone(),
+                            )
+                            .await
+                            .log_err();
+                            if let Some(mut new_version_available) = new_version_available {
+                                new_version_available.send(Some(latest_version)).ok();
+                            }
+                        }
+                    }
+                })
+                .detach();
+                file_name
+            } else {
+                if let Some(mut status_tx) = status_tx {
+                    status_tx.send("Installing…".into()).ok();
+                }
+                let dir = dir.clone();
+                cx.background_spawn(download_latest_version(
+                    fs.clone(),
+                    dir.clone(),
+                    node_runtime,
+                    package_name.clone(),
+                ))
+                .await?
+                .into()
+            };
+
+            let agent_server_path = dir.join(version).join(entrypoint_path);
+            let agent_server_path_exists = fs.is_file(&agent_server_path).await;
+            anyhow::ensure!(
+                agent_server_path_exists,
+                "Missing entrypoint path {} after installation",
+                agent_server_path.to_string_lossy()
+            );
+            let mut args = extra_args;
+            args.insert(0, agent_server_path.to_string_lossy().to_string());
+
+            anyhow::Ok(AgentServerCommand {
+                path: node_path,
+                args,
+                env: Some(env),
+            })
+        })
+        .await
+        // FIXME restore this at a higher level
+        // .map_err(|e| LoadError::FailedToInstall(e.to_string().into()).into())
+    })
+}
+
 async fn find_bin_in_path(
     bin_name: SharedString,
-    worktree_store: &Entity<WorktreeStore>,
+    root_dir: &Path,
     project_environment: &Entity<ProjectEnvironment>,
     cx: &mut AsyncApp,
 ) -> Option<PathBuf> {
-    let (env_task, root_dir) = worktree_store
-        .update(cx, |worktree_store, cx| {
-            let worktree = worktree_store.visible_worktrees(cx).next();
-            match worktree {
-                Some(worktree) => {
-                    let env_task = project_environment.update(cx, |env, cx| {
-                        env.get_worktree_environment(worktree.clone(), cx)
-                    });
-
-                    let path = worktree.read(cx).abs_path();
-                    (env_task, path)
-                }
-                None => {
-                    let path: Arc<Path> = paths::home_dir().as_path().into();
-                    let env_task = project_environment.update(cx, |env, cx| {
-                        env.get_directory_environment(path.clone(), cx)
-                    });
-                    (env_task, path)
-                }
-            }
+    let env_task = project_environment
+        .update(cx, |environment, cx| {
+            environment.get_directory_environment(root_dir.into(), cx)
         })
         .log_err()?;
 
+    let root_dir = root_dir.to_path_buf();
     cx.background_executor()
         .spawn(async move {
             let which_result = if cfg!(windows) {
@@ -436,7 +443,7 @@ async fn find_bin_in_path(
             } else {
                 let env = env_task.await.unwrap_or_default();
                 let shell_path = env.get("PATH").cloned();
-                which::which_in(bin_name.as_str(), shell_path.as_ref(), root_dir.as_ref())
+                which::which_in(bin_name.as_str(), shell_path.as_ref(), &root_dir)
             };
 
             if let Err(which::Error::CannotFindBinaryPath) = which_result {
@@ -479,3 +486,90 @@ async fn download_latest_version(
 
     anyhow::Ok(version)
 }
+
+struct RemoteExternalAgentServer {
+    project_id: u64,
+    upstream_client: Entity<RemoteClient>,
+    name: ExternalAgentServerName,
+}
+
+impl ExternalAgentServer for RemoteExternalAgentServer {
+    fn get_command(
+        &self,
+        root_dir: &str,
+        extra_env: HashMap<String, String>,
+        cx: &mut App,
+    ) -> Task<Result<AgentServerCommand>> {
+        // FIXME need to get fallback path (when no suitable worktrees) on the remote
+
+        let command =
+            self.upstream_client
+                .read(cx)
+                .proto_client()
+                .request(proto::GetAgentServerCommand {
+                    project_id: self.project_id,
+                    name: self.name.to_string(),
+                    root_dir: root_dir.to_string(),
+                });
+
+        let upstream_client = self.upstream_client.downgrade();
+        let root_dir = root_dir.to_string();
+        cx.spawn(async move |cx| {
+            let mut command = command.await?;
+            command.env.extend(extra_env);
+            let command = upstream_client.update(cx, |client, cx| {
+                client.build_command(
+                    Some(command.path),
+                    &command.args,
+                    &command.env.into_iter().collect(),
+                    Some(root_dir),
+                    None,
+                )
+            })??;
+            Ok(AgentServerCommand {
+                path: command.program.into(),
+                args: command.args,
+                env: Some(command.env),
+            })
+        })
+    }
+}
+
+struct LocalGemini {
+    fs: Arc<dyn Fs>,
+    node_runtime: NodeRuntime,
+    project_environment: Entity<ProjectEnvironment>,
+}
+
+impl ExternalAgentServer for LocalGemini {
+    fn get_command(
+        &self,
+        root_dir: &str,
+        extra_env: HashMap<String, String>,
+        cx: &mut App,
+    ) -> Task<Result<AgentServerCommand>> {
+        let command = get_or_npm_install_builtin_agent(
+            "gemini".into(),
+            "@google/gemini-cli".into(),
+            "node_modules/@google/gemini-cli/dist/index.js".into(),
+            vec!["--experimental-acp".into()],
+            Some("0.2.1".parse().unwrap()),
+            Path::new(root_dir).into(),
+            // FIXME
+            None,
+            None,
+            self.fs.clone(),
+            self.node_runtime.clone(),
+            self.project_environment.clone(),
+            cx,
+        );
+
+        cx.spawn(async move |_| {
+            let mut command = command.await?;
+            command.env.get_or_insert_default().extend(extra_env);
+            Ok(command)
+        })
+    }
+}
+
+// FIXME claude
