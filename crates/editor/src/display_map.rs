@@ -111,6 +111,7 @@ pub struct DisplayMap {
     block_map: BlockMap,
     /// Regions of text that should be highlighted.
     text_highlights: TextHighlights,
+    bracket_highlights: BracketHighlights,
     /// Regions of inlays that should be highlighted.
     inlay_highlights: InlayHighlights,
     /// A container for explicitly foldable ranges, which supersede indentation based fold range suggestions.
@@ -969,18 +970,30 @@ impl DisplaySnapshot {
             if let Some(chunk_highlight) = chunk.highlight_style {
                 // For color inlays, blend the color with the editor background
                 let mut processed_highlight = chunk_highlight;
-                if chunk.is_inlay
-                    && let Some(inlay_color) = chunk_highlight.color
-                {
-                    // Only blend if the color has transparency (alpha < 1.0)
-                    if inlay_color.a < 1.0 {
-                        let blended_color = editor_style.background.blend(inlay_color);
-                        processed_highlight.color = Some(blended_color);
+                if inlay && let Some(inlay_color) = chunk_highlight.color {
+                    if inlay_color == gpui::blue() {
+                        dbg!("@@@@@@@@@@@@@@@@@@@@@@@@");
                     }
+                    // Only blend if the color has transparency (alpha < 1.0)
+                    // if inlay_color.a < 1.0 {
+                    //     let blended_color = editor_style.background.blend(inlay_color);
+                    //     processed_highlight.color = Some(blended_color);
+                    // }
+                    processed_highlight.color = Some(inlay_color);
+                } else if special_case {
+                    // all starts at inlay_map, where `CustomHighlightsChunks::new` is constructed
+                    processed_highlight.highlight_but_not_blend(i_highlight_style);
                 }
 
-                if let Some(highlight_style) = highlight_style.as_mut() {
-                    highlight_style.highlight(processed_highlight);
+                if let Some(i_highlight_style) = highlight_style.take() {
+                    if chunk_highlight.color.is_some() {
+                        dbg!(chunk.text, i_highlight_style.color);
+                    }
+                    // TODO kb
+                    // we store the bracket data (populated async with debounce) in a special field
+                    // then, we add replace_highlight method here, that will do the magic??
+                    processed_highlight.highlight(i_highlight_style);
+                    highlight_style = Some(processed_highlight);
                 } else {
                     highlight_style = Some(processed_highlight);
                 }
@@ -1009,11 +1022,11 @@ impl DisplaySnapshot {
                 }
             }
 
-            if let Some(highlight_style) = highlight_style.as_mut() {
-                highlight_style.highlight(diagnostic_highlight);
-            } else {
-                highlight_style = Some(diagnostic_highlight);
-            }
+            // if let Some(highlight_style) = highlight_style.as_mut() {
+            //     highlight_style.highlight(diagnostic_highlight);
+            // } else {
+            //     highlight_style = Some(diagnostic_highlight);
+            // }
 
             HighlightedChunk {
                 text: chunk.text,
