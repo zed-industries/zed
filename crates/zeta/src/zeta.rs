@@ -29,7 +29,7 @@ use gpui::{
 use http_client::{AsyncBody, HttpClient, Method, Request, Response};
 use input_excerpt::excerpt_for_cursor_position;
 use language::{
-    Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, ToOffset, ToPoint, text_diff,
+    Anchor, Buffer, BufferSnapshot, EditPreview, File, OffsetRangeExt, ToOffset, ToPoint, text_diff,
 };
 use language_model::{LlmApiToken, RefreshLlmTokenListener};
 use project::{Project, ProjectPath};
@@ -216,7 +216,7 @@ pub struct Zeta {
     client: Arc<Client>,
     shown_completions: VecDeque<EditPrediction>,
     rated_completions: HashSet<EditPredictionId>,
-    data_collection_choice: Entity<DataCollectionChoice>,
+    data_collection_choice: DataCollectionChoice,
     llm_token: LlmApiToken,
     _llm_token_subscription: Subscription,
     /// Whether an update to a newer version of Zed is required to continue using Zeta.
@@ -271,10 +271,7 @@ impl Zeta {
 
     fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
         let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
-
-        let data_collection_choice = Self::load_data_collection_choices();
-        let data_collection_choice = cx.new(|_| data_collection_choice);
-
+        let data_collection_choice = Self::load_data_collection_choice();
         Self {
             projects: HashMap::default(),
             client,
@@ -408,7 +405,6 @@ impl Zeta {
         project: &Entity<Project>,
         buffer: &Entity<Buffer>,
         cursor: language::Anchor,
-        can_collect_data: bool,
         cx: &mut Context<Self>,
         perform_predict_edits: F,
     ) -> Task<Result<Option<EditPrediction>>>
@@ -427,7 +423,12 @@ impl Zeta {
         let llm_token = self.llm_token.clone();
         let app_version = AppVersion::global(cx);
 
-        let git_info = if let (true, Some(file)) = (can_collect_data, snapshot.file()) {
+        let can_collect_data = snapshot.file().map_or(CanCollectData::No, |file| {
+            self.can_collect_data_from_file(file, cx)
+        });
+        let git_info = if let CanCollectData::Yes = can_collect_data
+            && let Some(file) = snapshot.file()
+        {
             git_info_for_file(project, &ProjectPath::from_file(file.as_ref(), cx), cx)
         } else {
             None
@@ -563,10 +564,8 @@ impl Zeta {
         response: PredictEditsResponse,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<EditPrediction>>> {
-        use std::future::ready;
-
-        self.request_completion_impl(project, buffer, position, false, cx, |_params| {
-            ready(Ok((response, None)))
+        self.request_completion_impl(project, buffer, position, cx, |_params| {
+            std::future::ready(Ok((response, None)))
         })
     }
 
@@ -575,17 +574,9 @@ impl Zeta {
         project: &Entity<Project>,
         buffer: &Entity<Buffer>,
         position: language::Anchor,
-        can_collect_data: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<EditPrediction>>> {
-        self.request_completion_impl(
-            project,
-            buffer,
-            position,
-            can_collect_data,
-            cx,
-            Self::perform_predict_edits,
-        )
+        self.request_completion_impl(project, buffer, position, cx, Self::perform_predict_edits)
     }
 
     pub fn perform_predict_edits(
@@ -954,7 +945,28 @@ impl Zeta {
         new_snapshot
     }
 
-    fn load_data_collection_choices() -> DataCollectionChoice {
+    fn can_collect_data_from_file(
+        &self,
+        file: &Arc<dyn File>,
+        cx: &Context<Self>,
+    ) -> CanCollectData {
+        if self.data_collection_choice.is_enabled() && self.is_file_open_source(file, cx) {
+            CanCollectData::Yes
+        } else {
+            CanCollectData::No
+        }
+    }
+
+    fn is_file_open_source(&self, file: &Arc<dyn File>, cx: &App) -> bool {
+        if !file.is_local() || file.is_private() {
+            return false;
+        }
+        self.license_detection_watchers
+            .get(&file.worktree_id(cx))
+            .is_some_and(|watcher| watcher.is_project_open_source())
+    }
+
+    fn load_data_collection_choice() -> DataCollectionChoice {
         let choice = KEY_VALUE_STORE
             .read_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE)
             .log_err()
@@ -969,6 +981,17 @@ impl Zeta {
             }
             None => DataCollectionChoice::NotAnswered,
         }
+    }
+
+    fn toggle_data_collection_choice(&mut self, cx: &mut Context<Self>) {
+        self.data_collection_choice = self.data_collection_choice.toggle();
+        let new_choice = self.data_collection_choice;
+        db::write_and_log(cx, move || {
+            KEY_VALUE_STORE.write_kvp(
+                ZED_PREDICT_DATA_COLLECTION_CHOICE.into(),
+                new_choice.is_enabled().to_string(),
+            )
+        });
     }
 }
 
@@ -1034,28 +1057,30 @@ pub fn gather_context(
     snapshot: &BufferSnapshot,
     cursor_point: language::Point,
     make_events_prompt: impl FnOnce() -> String + Send + 'static,
-    can_collect_data: bool,
+    can_collect_data: CanCollectData,
     git_info: Option<PredictEditsGitInfo>,
     cx: &App,
 ) -> Task<Result<GatherContextOutput>> {
     let local_lsp_store = project.read(cx).lsp_store().read(cx).as_local();
-    let diagnostic_groups: Vec<(String, serde_json::Value)> =
-        if can_collect_data && let Some(local_lsp_store) = local_lsp_store {
-            snapshot
-                .diagnostic_groups(None)
-                .into_iter()
-                .filter_map(|(language_server_id, diagnostic_group)| {
-                    let language_server =
-                        local_lsp_store.running_language_server_for_id(language_server_id)?;
-                    let diagnostic_group = diagnostic_group.resolve::<usize>(snapshot);
-                    let language_server_name = language_server.name().to_string();
-                    let serialized = serde_json::to_value(diagnostic_group).unwrap();
-                    Some((language_server_name, serialized))
-                })
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
+    let diagnostic_groups: Vec<(String, serde_json::Value)> = if let CanCollectData::Yes =
+        can_collect_data
+        && let Some(local_lsp_store) = local_lsp_store
+    {
+        snapshot
+            .diagnostic_groups(None)
+            .into_iter()
+            .filter_map(|(language_server_id, diagnostic_group)| {
+                let language_server =
+                    local_lsp_store.running_language_server_for_id(language_server_id)?;
+                let diagnostic_group = diagnostic_group.resolve::<usize>(snapshot);
+                let language_server_name = language_server.name().to_string();
+                let serialized = serde_json::to_value(diagnostic_group).unwrap();
+                Some((language_server_name, serialized))
+            })
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
 
     cx.background_spawn({
         let snapshot = snapshot.clone();
@@ -1081,7 +1106,7 @@ pub fn gather_context(
             let body = PredictEditsBody {
                 input_events,
                 input_excerpt: input_excerpt.prompt,
-                can_collect_data,
+                can_collect_data: can_collect_data.into(),
                 diagnostic_groups,
                 git_info,
                 outline: None,
@@ -1201,6 +1226,21 @@ struct PendingCompletion {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub enum CanCollectData {
+    Yes,
+    No,
+}
+
+impl From<CanCollectData> for bool {
+    fn from(value: CanCollectData) -> Self {
+        match value {
+            CanCollectData::Yes => true,
+            CanCollectData::No => false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub enum DataCollectionChoice {
     NotAnswered,
     Enabled,
@@ -1222,6 +1262,7 @@ impl DataCollectionChoice {
         }
     }
 
+    #[must_use]
     pub fn toggle(&self) -> DataCollectionChoice {
         match self {
             Self::Enabled => Self::Disabled,
@@ -1236,79 +1277,6 @@ impl From<bool> for DataCollectionChoice {
         match value {
             true => DataCollectionChoice::Enabled,
             false => DataCollectionChoice::Disabled,
-        }
-    }
-}
-
-pub struct ProviderDataCollection {
-    /// When set to None, data collection is not possible in the provider buffer
-    choice: Option<Entity<DataCollectionChoice>>,
-    license_detection_watcher: Option<Rc<LicenseDetectionWatcher>>,
-}
-
-impl ProviderDataCollection {
-    pub fn new(zeta: Entity<Zeta>, buffer: Option<Entity<Buffer>>, cx: &mut App) -> Self {
-        let choice_and_watcher = buffer.and_then(|buffer| {
-            let file = buffer.read(cx).file()?;
-
-            if !file.is_local() || file.is_private() {
-                return None;
-            }
-
-            let zeta = zeta.read(cx);
-            let choice = zeta.data_collection_choice.clone();
-
-            let license_detection_watcher = zeta
-                .license_detection_watchers
-                .get(&file.worktree_id(cx))
-                .cloned()?;
-
-            Some((choice, license_detection_watcher))
-        });
-
-        if let Some((choice, watcher)) = choice_and_watcher {
-            ProviderDataCollection {
-                choice: Some(choice),
-                license_detection_watcher: Some(watcher),
-            }
-        } else {
-            ProviderDataCollection {
-                choice: None,
-                license_detection_watcher: None,
-            }
-        }
-    }
-
-    pub fn can_collect_data(&self, cx: &App) -> bool {
-        self.is_data_collection_enabled(cx) && self.is_project_open_source()
-    }
-
-    pub fn is_data_collection_enabled(&self, cx: &App) -> bool {
-        self.choice
-            .as_ref()
-            .is_some_and(|choice| choice.read(cx).is_enabled())
-    }
-
-    fn is_project_open_source(&self) -> bool {
-        self.license_detection_watcher
-            .as_ref()
-            .is_some_and(|watcher| watcher.is_project_open_source())
-    }
-
-    pub fn toggle(&mut self, cx: &mut App) {
-        if let Some(choice) = self.choice.as_mut() {
-            let new_choice = choice.update(cx, |choice, _cx| {
-                let new_choice = choice.toggle();
-                *choice = new_choice;
-                new_choice
-            });
-
-            db::write_and_log(cx, move || {
-                KEY_VALUE_STORE.write_kvp(
-                    ZED_PREDICT_DATA_COLLECTION_CHOICE.into(),
-                    new_choice.is_enabled().to_string(),
-                )
-            });
         }
     }
 }
@@ -1343,24 +1311,23 @@ async fn llm_token_retry(
 
 pub struct ZetaEditPredictionProvider {
     zeta: Entity<Zeta>,
+    singleton_buffer: Option<Entity<Buffer>>,
     pending_completions: ArrayVec<PendingCompletion, 2>,
     next_pending_completion_id: usize,
     current_completion: Option<CurrentEditPrediction>,
-    /// None if this is entirely disabled for this provider
-    provider_data_collection: ProviderDataCollection,
     last_request_timestamp: Instant,
 }
 
 impl ZetaEditPredictionProvider {
     pub const THROTTLE_TIMEOUT: Duration = Duration::from_millis(300);
 
-    pub fn new(zeta: Entity<Zeta>, provider_data_collection: ProviderDataCollection) -> Self {
+    pub fn new(zeta: Entity<Zeta>, singleton_buffer: Option<Entity<Buffer>>) -> Self {
         Self {
             zeta,
+            singleton_buffer,
             pending_completions: ArrayVec::new(),
             next_pending_completion_id: 0,
             current_completion: None,
-            provider_data_collection,
             last_request_timestamp: Instant::now(),
         }
     }
@@ -1384,21 +1351,29 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
     }
 
     fn data_collection_state(&self, cx: &App) -> DataCollectionState {
-        let is_project_open_source = self.provider_data_collection.is_project_open_source();
-
-        if self.provider_data_collection.is_data_collection_enabled(cx) {
-            DataCollectionState::Enabled {
-                is_project_open_source,
+        if let Some(buffer) = &self.singleton_buffer
+            && let Some(file) = buffer.read(cx).file()
+        {
+            let is_project_open_source = self.zeta.read(cx).is_file_open_source(file, cx);
+            if self.zeta.read(cx).data_collection_choice.is_enabled() {
+                DataCollectionState::Enabled {
+                    is_project_open_source,
+                }
+            } else {
+                DataCollectionState::Disabled {
+                    is_project_open_source,
+                }
             }
         } else {
-            DataCollectionState::Disabled {
-                is_project_open_source,
-            }
+            return DataCollectionState::Disabled {
+                is_project_open_source: false,
+            };
         }
     }
 
     fn toggle_data_collection(&mut self, cx: &mut App) {
-        self.provider_data_collection.toggle(cx);
+        self.zeta
+            .update(cx, |zeta, cx| zeta.toggle_data_collection_choice(cx));
     }
 
     fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
@@ -1456,7 +1431,6 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
 
         let pending_completion_id = self.next_pending_completion_id;
         self.next_pending_completion_id += 1;
-        let can_collect_data = self.provider_data_collection.can_collect_data(cx);
         let last_request_timestamp = self.last_request_timestamp;
 
         let task = cx.spawn(async move |this, cx| {
@@ -1469,7 +1443,7 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
             let completion_request = this.update(cx, |this, cx| {
                 this.last_request_timestamp = Instant::now();
                 this.zeta.update(cx, |zeta, cx| {
-                    zeta.request_completion(&project, &buffer, position, can_collect_data, cx)
+                    zeta.request_completion(&project, &buffer, position, cx)
                 })
             });
 
@@ -1904,7 +1878,7 @@ mod tests {
 
         let zeta = cx.new(|cx| Zeta::new(client, project.read(cx).user_store(), cx));
         let completion_task = zeta.update(cx, |zeta, cx| {
-            zeta.request_completion(&project, &buffer, cursor, false, cx)
+            zeta.request_completion(&project, &buffer, cursor, cx)
         });
 
         let completion = completion_task.await.unwrap().unwrap();
@@ -1970,7 +1944,7 @@ mod tests {
 
         let zeta = cx.new(|cx| Zeta::new(client, project.read(cx).user_store(), cx));
         let completion_task = zeta.update(cx, |zeta, cx| {
-            zeta.request_completion(&project, &buffer, cursor, false, cx)
+            zeta.request_completion(&project, &buffer, cursor, cx)
         });
 
         let completion = completion_task.await.unwrap().unwrap();
