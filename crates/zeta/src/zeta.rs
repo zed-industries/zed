@@ -1628,10 +1628,13 @@ mod tests {
     use http_client::FakeHttpClient;
     use indoc::indoc;
     use language::Point;
+    use parking_lot::Mutex;
     use settings::SettingsStore;
     use util::path;
 
     use super::*;
+
+    const BSD_0_TXT: &str = include_str!("../license_examples/0bsd.txt");
 
     #[gpui::test]
     async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
@@ -1828,6 +1831,9 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_edit_prediction_data_collection(cx: &mut TestAppContext) {}
+
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
@@ -1843,7 +1849,8 @@ mod tests {
         cx: &mut TestAppContext,
     ) -> String {
         let buffer = cx.new(|cx| Buffer::local(buffer_content, cx));
-        let edit_prediction = simulate_edit_prediction(&buffer, completion_response, cx).await;
+        let (_request, edit_prediction) =
+            simulate_edit_prediction(&buffer, completion_response, cx).await;
         buffer.update(cx, |buffer, cx| {
             buffer.edit(edit_prediction.edits.iter().cloned(), None, cx)
         });
@@ -1854,37 +1861,50 @@ mod tests {
         buffer: &Entity<Buffer>,
         completion_response: &str,
         cx: &mut TestAppContext,
-    ) -> EditPrediction {
+    ) -> (PredictEditsBody, EditPrediction) {
+        let captured_request: Arc<Mutex<Option<PredictEditsBody>>> = Arc::new(Mutex::new(None));
         let completion_response = completion_response.to_string();
-        let http_client = FakeHttpClient::create(move |req| {
-            let completion = completion_response.clone();
-            async move {
-                match (req.method(), req.uri().path()) {
-                    (&Method::POST, "/client/llm_tokens") => Ok(http_client::Response::builder()
-                        .status(200)
-                        .body(
-                            serde_json::to_string(&CreateLlmTokenResponse {
-                                token: LlmToken("the-llm-token".to_string()),
-                            })
-                            .unwrap()
-                            .into(),
-                        )
-                        .unwrap()),
-                    (&Method::POST, "/predict_edits/v2") => Ok(http_client::Response::builder()
-                        .status(200)
-                        .body(
-                            serde_json::to_string(&PredictEditsResponse {
-                                request_id: Uuid::new_v4(),
-                                output_excerpt: completion,
-                            })
-                            .unwrap()
-                            .into(),
-                        )
-                        .unwrap()),
-                    _ => Ok(http_client::Response::builder()
-                        .status(404)
-                        .body("Not Found".into())
-                        .unwrap()),
+        let http_client = FakeHttpClient::create({
+            let captured_request = captured_request.clone();
+            move |req| {
+                let captured_request = captured_request.clone();
+                let completion = completion_response.clone();
+                async move {
+                    match (req.method(), req.uri().path()) {
+                        (&Method::POST, "/client/llm_tokens") => {
+                            Ok(http_client::Response::builder()
+                                .status(200)
+                                .body(
+                                    serde_json::to_string(&CreateLlmTokenResponse {
+                                        token: LlmToken("the-llm-token".to_string()),
+                                    })
+                                    .unwrap()
+                                    .into(),
+                                )
+                                .unwrap())
+                        }
+                        (&Method::POST, "/predict_edits/v2") => {
+                            let mut request_body = String::new();
+                            req.into_body().read_to_string(&mut request_body).await?;
+                            *captured_request.lock() =
+                                Some(serde_json::from_str(&request_body).unwrap());
+                            Ok(http_client::Response::builder()
+                                .status(200)
+                                .body(
+                                    serde_json::to_string(&PredictEditsResponse {
+                                        request_id: Uuid::new_v4(),
+                                        output_excerpt: completion,
+                                    })
+                                    .unwrap()
+                                    .into(),
+                                )
+                                .unwrap())
+                        }
+                        _ => Ok(http_client::Response::builder()
+                            .status(404)
+                            .body("Not Found".into())
+                            .unwrap()),
+                    }
                 }
             }
         });
@@ -1904,7 +1924,9 @@ mod tests {
             zeta.request_completion(&project, buffer, cursor, cx)
         });
 
-        completion_task.await.unwrap().unwrap()
+        let edit_prediction = completion_task.await.unwrap().unwrap();
+        let request = captured_request.lock().clone().unwrap();
+        (request, edit_prediction)
     }
 
     fn to_completion_edits(
