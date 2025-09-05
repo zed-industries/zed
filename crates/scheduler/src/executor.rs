@@ -22,6 +22,14 @@ pub struct ForegroundExecutor {
 }
 
 impl ForegroundExecutor {
+    pub fn new(session_id: SessionId, scheduler: Arc<dyn Scheduler>) -> Self {
+        Self {
+            session_id,
+            scheduler,
+            not_send: PhantomData,
+        }
+    }
+
     #[track_caller]
     pub fn spawn<F>(&self, future: F) -> Task<F::Output>
     where
@@ -66,28 +74,16 @@ impl ForegroundExecutor {
     }
 }
 
-impl ForegroundExecutor {
-    pub fn new(session_id: SessionId, scheduler: Arc<dyn Scheduler>) -> Self {
-        Self {
-            session_id,
-            scheduler,
-            not_send: PhantomData,
-        }
-    }
-}
-
-impl BackgroundExecutor {
-    pub fn new(scheduler: Arc<dyn Scheduler>) -> Self {
-        Self { scheduler }
-    }
-}
-
 #[derive(Clone)]
 pub struct BackgroundExecutor {
     scheduler: Arc<dyn Scheduler>,
 }
 
 impl BackgroundExecutor {
+    pub fn new(scheduler: Arc<dyn Scheduler>) -> Self {
+        Self { scheduler }
+    }
+
     pub fn now(&self) -> DateTime<Utc> {
         self.scheduler.now()
     }
