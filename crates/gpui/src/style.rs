@@ -889,7 +889,7 @@ impl HighlightStyle {
     pub fn highlight(&mut self, other: HighlightStyle) {
         match (self.color, other.color) {
             (Some(self_color), Some(other_color)) => {
-                self.color = Some(Hsla::blend(self_color, other_color));
+                self.color = Some(self_color.blend(other_color));
             }
             (None, Some(other_color)) => {
                 self.color = Some(other_color);
