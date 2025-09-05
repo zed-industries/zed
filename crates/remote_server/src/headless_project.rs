@@ -276,7 +276,7 @@ impl HeadlessProject {
         // todo(debugger): Re init breakpoint store when we set it up for collab
         // BreakpointStore::init(&client);
         GitStore::init(&session);
-        AgentServerStore::init(&session);
+        AgentServerStore::init_headless(&session);
 
         HeadlessProject {
             next_entry_id: Default::default(),

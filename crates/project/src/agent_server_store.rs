@@ -5,7 +5,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result, anyhow, bail};
 use collections::HashMap;
 use fs::{Fs, RemoveOptions, RenameOptions};
 use futures::StreamExt as _;
@@ -19,7 +19,7 @@ use rpc::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
-use util::ResultExt as _;
+use util::{ResultExt as _, debug_panic};
 
 use crate::{Project, ProjectEnvironment, worktree_store::WorktreeStore};
 
@@ -78,7 +78,14 @@ impl AgentServerCommand {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ExternalAgentServerName(pub SharedString);
+
+impl std::fmt::Display for ExternalAgentServerName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 pub trait ExternalAgentServer {
     // FIXME status_tx et al
@@ -100,7 +107,7 @@ enum AgentServerStoreState {
     },
     Remote {
         project_id: u64,
-        upstream_client: AnyProtoClient,
+        upstream_client: Entity<RemoteClient>,
     },
     Collab,
 }
@@ -111,7 +118,11 @@ pub struct AgentServerStore {
 }
 
 impl AgentServerStore {
-    pub fn init(session: &AnyProtoClient) {
+    pub fn init_remote(session: &AnyProtoClient) {
+        session.add_entity_message_handler(Self::handle_external_agents_updated);
+    }
+
+    pub fn init_headless(session: &AnyProtoClient) {
         session.add_entity_request_handler(Self::handle_get_agent_server_command);
     }
 
@@ -122,6 +133,23 @@ impl AgentServerStore {
         project_environment: Entity<ProjectEnvironment>,
         _cx: &mut Context<Self>,
     ) -> Self {
+        // FIXME need to subscribe to settings changed and send ExternalAgentsUpdated
+
+        let external_agents = [
+            (
+                gemini(),
+                Rc::new(LocalGemini {
+                    fs: fs.clone(),
+                    node_runtime: node_runtime.clone(),
+                    project_environment: project_environment.clone(),
+                }) as Rc<dyn ExternalAgentServer>,
+            ),
+            // FIXME claude
+        ]
+        .into_iter()
+        .collect();
+        // FIXME read settings at start too
+
         Self {
             state: AgentServerStoreState::Local {
                 node_runtime,
@@ -130,25 +158,45 @@ impl AgentServerStore {
                 project_environment,
                 downstream_client: None,
             },
+            external_agents,
         }
     }
 
     pub(crate) fn remote(
         project_id: u64,
-        upstream_client: AnyProtoClient,
+        upstream_client: Entity<RemoteClient>,
         _cx: &mut Context<Self>,
     ) -> Self {
+        // Set up the builtin agents here so they're immediately available in
+        // remote projects--we know that the HeadlessProject on the other end
+        // will have them.
+        let external_agents = [
+            (
+                gemini(),
+                Rc::new(RemoteExternalAgentServer {
+                    project_id,
+                    upstream_client: upstream_client.clone(),
+                    name: gemini(),
+                }) as Rc<dyn ExternalAgentServer>,
+            ),
+            // FIXME claude
+        ]
+        .into_iter()
+        .collect();
+
         Self {
             state: AgentServerStoreState::Remote {
                 project_id,
-                upstream_client,
+                upstream_client: upstream_client.clone(),
             },
+            external_agents,
         }
     }
 
     pub(crate) fn collab(_cx: &mut Context<Self>) -> Self {
         Self {
             state: AgentServerStoreState::Collab,
+            external_agents: Default::default(),
         }
     }
 
@@ -156,10 +204,20 @@ impl AgentServerStore {
         match &mut self.state {
             AgentServerStoreState::Local {
                 downstream_client, ..
-            } => *downstream_client = Some((project_id, client)),
+            } => {
+                // FIXME need a subscription for settings changed so that we can send down the new servers
+                *downstream_client = Some((project_id, client));
+            }
             AgentServerStoreState::Remote { .. } => {}
             AgentServerStoreState::Collab => {}
         }
+    }
+
+    pub fn get_external_agent(
+        &self,
+        name: &ExternalAgentServerName,
+    ) -> Option<Rc<dyn ExternalAgentServer>> {
+        self.external_agents.get(name).cloned()
     }
 
     async fn handle_get_agent_server_command(
@@ -169,92 +227,56 @@ impl AgentServerStore {
     ) -> Result<proto::AgentServerCommand> {
         let command = this
             .update(&mut cx, |this, cx| {
-                anyhow::Ok(
-                    this.get_agent_server_command(
-                        envelope.payload.binary_name.into(),
-                        envelope.payload.package_name.into(),
-                        envelope.payload.entrypoint_path.into(),
-                        envelope.payload.settings_key.into(),
-                        envelope.payload.extra_args,
-                        envelope.payload.extra_env.into_iter().collect(),
-                        envelope
-                            .payload
-                            .minimum_version
-                            .map(|version| semver::Version::from_str(&version))
-                            .transpose()?,
-                        None,
-                        None,
-                        Path::new(&envelope.payload.root_dir).into(),
-                        cx,
-                    ),
-                )
-            })??
+                let Some(agent) = this.external_agents.get(&ExternalAgentServerName(
+                    envelope.payload.name.clone().into(),
+                )) else {
+                    return Task::ready(Err(anyhow!(
+                        "agent `{}` not found",
+                        envelope.payload.name
+                    )));
+                };
+                agent.get_command(&envelope.payload.root_dir, HashMap::default(), cx)
+            })?
             .await?;
         Ok(command.to_proto())
     }
 
-    pub fn get_agent_server_command(
-        &self,
-        binary_name: SharedString,
-        package_name: SharedString,
-        entrypoint_path: PathBuf,
-        settings_key: SharedString,
-        extra_args: Vec<String>,
-        extra_env: HashMap<String, String>,
-        minimum_version: Option<semver::Version>,
-        status_tx: Option<watch::Sender<SharedString>>,
-        new_version_available: Option<watch::Sender<Option<String>>>,
-        root_dir: Arc<Path>,
-        cx: &mut App,
-    ) -> Task<Result<AgentServerCommand>> {
-        match &self.state {
-            AgentServerStoreState::Local {
-                node_runtime,
-                fs,
-                worktree_store,
-                project_environment,
-                // TODO: report progress via downstream client
-                downstream_client: _,
-            } => fun_name(
-                &binary_name,
-                &package_name,
-                &entrypoint_path,
-                &extra_args,
-                &extra_env,
-                &minimum_version,
-                status_tx,
-                new_version_available,
-                &root_dir,
-                cx,
-                node_runtime,
-                fs,
-                worktree_store,
-                project_environment,
-            ),
-            AgentServerStoreState::Remote {
+    async fn handle_external_agents_updated(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::ExternalAgentsUpdated>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, _cx| {
+            let AgentServerStoreState::Remote {
                 project_id,
                 upstream_client,
-            } => {
-                let command = upstream_client.request(proto::GetAgentServerCommand {
-                    project_id: *project_id,
-                    binary_name: binary_name.to_string(),
-                    package_name: package_name.to_string(),
-                    entrypoint_path: entrypoint_path.to_proto(),
-                    settings_key: settings_key.to_string(),
-                    minimum_version: minimum_version.map(|version| version.to_string()),
-                    root_dir: root_dir.to_proto(),
-                    extra_args,
-                    extra_env: extra_env.into_iter().collect(),
-                });
-                cx.spawn(async move |_| {
-                    let command = command.await?;
-                    Ok(AgentServerCommand::from_proto(command))
+            } = &this.state
+            else {
+                debug_panic!(
+                    "handle_external_agents_updated should not be called for a non-remote project"
+                );
+                bail!("unexpected ExternalAgentsUpdated message")
+            };
+
+            this.external_agents = envelope
+                .payload
+                .names
+                .into_iter()
+                .map(|name| {
+                    let agent = RemoteExternalAgentServer {
+                        project_id: *project_id,
+                        upstream_client: upstream_client.clone(),
+                        name: ExternalAgentServerName(name.clone().into()),
+                    };
+                    (
+                        ExternalAgentServerName(name.into()),
+                        Rc::new(agent) as Rc<dyn ExternalAgentServer>,
+                    )
                 })
-            }
-            AgentServerStoreState::Collab => Task::ready(Err(anyhow!(
-                "External agents are not supported in projects shared via collab"
-            ))),
-        }
+                .collect();
+            Ok(())
+            // FIXME emit an event
+        })?
     }
 }
 
@@ -570,6 +592,34 @@ impl ExternalAgentServer for LocalGemini {
             Ok(command)
         })
     }
+}
+
+struct LocalCustomAgent {
+    command: AgentServerCommand,
+}
+
+impl ExternalAgentServer for LocalCustomAgent {
+    fn get_command(
+        &self,
+        _root_dir: &str,
+        extra_env: HashMap<String, String>,
+        cx: &mut App,
+    ) -> Task<Result<AgentServerCommand>> {
+        let command = self.command.clone();
+        cx.spawn(async move |_| {
+            let mut command = command;
+            command.env.get_or_insert_default().extend(extra_env);
+            Ok(command)
+        })
+    }
+}
+
+pub fn gemini() -> ExternalAgentServerName {
+    ExternalAgentServerName("gemini".into())
+}
+
+pub fn claude_code() -> ExternalAgentServerName {
+    ExternalAgentServerName("claude".into())
 }
 
 // FIXME claude
