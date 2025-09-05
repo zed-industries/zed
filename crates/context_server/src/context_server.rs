@@ -6,6 +6,11 @@ pub mod test;
 pub mod transport;
 pub mod types;
 
+// Add the new modules
+#[cfg(feature = "rmcp")]
+pub mod rmcp_adapter;
+pub mod settings;
+
 use std::path::Path;
 use std::sync::Arc;
 use std::{fmt::Display, path::PathBuf};
