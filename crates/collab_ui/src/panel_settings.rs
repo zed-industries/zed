@@ -44,14 +44,6 @@ pub struct ChatPanelSettingsContent {
     pub default_width: Option<f32>,
 }
 
-#[derive(Deserialize, Debug, SettingsKey)]
-#[settings_key(key = "notification_panel")]
-pub struct NotificationPanelSettings {
-    pub button: bool,
-    pub dock: DockPosition,
-    pub default_width: Pixels,
-}
-
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi, SettingsKey)]
 #[settings_key(key = "collaboration_panel")]
 pub struct PanelSettingsContent {
@@ -66,6 +58,30 @@ pub struct PanelSettingsContent {
     /// Default width of the panel in pixels.
     ///
     /// Default: 240
+    pub default_width: Option<f32>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct NotificationPanelSettings {
+    pub button: bool,
+    pub dock: DockPosition,
+    pub default_width: Pixels,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi, SettingsKey)]
+#[settings_key(key = "notification_panel")]
+pub struct NotificationPanelSettingsContent {
+    /// Whether to show the panel button in the status bar.
+    ///
+    /// Default: true
+    pub button: Option<bool>,
+    /// Where to dock the panel.
+    ///
+    /// Default: right
+    pub dock: Option<DockPosition>,
+    /// Default width of the panel in pixels.
+    ///
+    /// Default: 300
     pub default_width: Option<f32>,
 }
 
@@ -106,7 +122,7 @@ impl Settings for ChatPanelSettings {
 }
 
 impl Settings for NotificationPanelSettings {
-    type FileContent = PanelSettingsContent;
+    type FileContent = NotificationPanelSettingsContent;
 
     fn load(
         sources: SettingsSources<Self::FileContent>,
