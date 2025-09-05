@@ -1280,6 +1280,7 @@ pub struct Chunk<'a> {
     pub is_tab: bool,
     /// Whether this chunk of text was originally a tab character.
     pub is_inlay: bool,
+    pub is_special_bracket_to_replace: bool,
     /// An optional recipe for how the chunk should be presented.
     pub renderer: Option<ChunkRenderer>,
     /// Bitmap of tab character locations in chunk
