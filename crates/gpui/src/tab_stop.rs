@@ -6,7 +6,7 @@ use crate::{FocusHandle, FocusId};
 ///
 /// Used to manage the `Tab` event to switch between focus handles.
 pub(crate) struct TabHandles {
-    handles: Vec<FocusHandle>,
+    pub handles: Vec<FocusHandle>,
 
     active_group: usize,
     pub(crate) nodes: Vec<TabNode>,
@@ -17,42 +17,37 @@ impl Default for TabHandles {
         Self {
             handles: Default::default(),
             active_group: 0,
-            nodes: vec![TabNode::Group {
-                parent_index: 0,
-                tab_index: 0,
-                children: vec![],
-            }],
+            nodes: vec![TabNode::ROOT.clone()],
         }
     }
 }
 
-// range: [s, e)
-// [ Group(0, 1), Element, Group(2, 3), Element(2), Element(0) ]
-//
 #[derive(Debug, Clone)]
-pub enum TabNode {
-    Element {
-        parent_index: usize,
-        handle: FocusHandle,
-    },
-    Group {
-        parent_index: usize,
-        tab_index: isize,
-        children: Vec<usize>,
-    },
+pub struct TabNode {
+    parent_index: usize,
+    tab_index: isize,
+    depth: usize,
+    kind: TabNodeKind,
+}
+
+#[derive(Clone, Debug)]
+enum TabNodeKind {
+    Element { handle: FocusHandle },
+    Group,
 }
 
 impl TabNode {
-    fn tab_index(&self) -> isize {
-        match self {
-            TabNode::Element { handle, .. } => handle.tab_index,
-            TabNode::Group { tab_index, .. } => *tab_index,
-        }
-    }
-    fn parent_index(&self) -> usize {
-        match self {
-            TabNode::Element { parent_index, .. } => *parent_index,
-            TabNode::Group { parent_index, .. } => *parent_index,
+    pub const ROOT: TabNode = TabNode {
+        parent_index: 0,
+        tab_index: 0,
+        depth: 0,
+        kind: TabNodeKind::Group,
+    };
+
+    pub fn focus_handle(&self) -> Option<&FocusHandle> {
+        match &self.kind {
+            TabNodeKind::Element { handle } => Some(handle),
+            TabNodeKind::Group => None,
         }
     }
 
@@ -78,120 +73,151 @@ impl TabHandles {
             return;
         }
 
-        let new_node_index = self.nodes.len();
-        {
-            let TabNode::Group { children, .. } = &mut self.nodes[self.active_group] else {
-                panic!("wow");
-            };
-
-            children.push(new_node_index);
-        };
-        self.nodes.push(TabNode::Element {
-            handle: focus_handle.clone(),
+        let node = TabNode {
+            kind: TabNodeKind::Element {
+                handle: focus_handle.clone(),
+            },
+            depth: self.nodes[self.active_group].depth + 1,
             parent_index: self.active_group,
-        });
+            tab_index: focus_handle.tab_index,
+        };
+        self.insert_node(node);
+    }
 
-        self.end_frame();
+    fn insert_node(&mut self, node: TabNode) {
+        let result = self.nodes.binary_search_by(|b| {
+            let a = &node;
+            let mut a_parent = a;
+            let mut b_parent = b;
+            while a_parent.depth > b_parent.depth {
+                a_parent = &self.nodes[a_parent.parent_index];
+            }
+            while b_parent.depth > a_parent.depth {
+                b_parent = &self.nodes[b_parent.parent_index];
+            }
+            while a_parent.parent_index != b_parent.parent_index {
+                a_parent = &self.nodes[a_parent.parent_index];
+                b_parent = &self.nodes[b_parent.parent_index];
+            }
+            return b_parent.tab_index.cmp(&a_parent.tab_index);
+        });
+        match result {
+            Ok(index) => {
+                // found node at same place, insert after
+                self.nodes.insert(index + 1, node);
+            }
+            Err(index) => {
+                // not found, insert at index
+                self.nodes.insert(index, node);
+            }
+        }
     }
 
     pub(crate) fn clear(&mut self) {
         // todo!
         self.handles.clear();
         self.active_group = 0;
-        self.nodes = vec![TabNode::Group {
-            tab_index: 0,
-            children: Vec::new(),
-            parent_index: 0,
-        }];
+        self.nodes = vec![TabNode::ROOT.clone()];
     }
 
-    fn current_index(&self, focused_id: Option<&FocusId>) -> Option<usize> {
+    fn current_index(&self, focused_id: &FocusId) -> Option<usize> {
         // todo!
-        self.handles.iter().position(|h| Some(&h.id) == focused_id)
+        for (index, node) in self.nodes.iter().enumerate() {
+            if matches!(&node.kind, TabNodeKind::Element { handle } if &handle.id == focused_id) {
+                return Some(index);
+            }
+        }
+        return None;
     }
 
     pub(crate) fn next(&self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {
         // todo!
-        let next_ix = self
-            .current_index(focused_id)
-            .and_then(|ix| {
-                let next_ix = ix + 1;
-                (next_ix < self.handles.len()).then_some(next_ix)
-            })
-            .unwrap_or_default();
-
-        dbg!(&self.nodes);
-        dbg!(self.handles.len(), next_ix);
-        dbg!(self.handles.get(next_ix).cloned())
+        let cur_idx = focused_id
+            .and_then(|focused_id| self.current_index(focused_id))
+            .unwrap_or(self.nodes.len());
+        let mut idx = cur_idx + 1;
+        while idx < self.nodes.len() {
+            if let TabNodeKind::Element { handle } = &self.nodes[idx].kind {
+                return Some(handle.clone());
+            }
+            idx += 1;
+        }
+        idx = 0;
+        while idx < cur_idx {
+            if let TabNodeKind::Element { handle } = &self.nodes[idx].kind {
+                return Some(handle.clone());
+            }
+            idx += 1;
+        }
+        return None;
     }
 
     pub(crate) fn prev(&self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {
-        let ix = self.current_index(focused_id).unwrap_or_default();
-        let prev_ix = if ix == 0 {
-            self.handles.len().saturating_sub(1)
-        } else {
-            ix.saturating_sub(1)
-        };
-
-        dbg!(&self.nodes);
-        dbg!(self.handles.len(), prev_ix);
-        dbg!(self.handles.get(prev_ix).cloned())
+        let cur_idx = focused_id
+            .and_then(|focused_id| self.current_index(focused_id))
+            .unwrap_or(self.nodes.len());
+        let mut idx = cur_idx;
+        while idx > 0 {
+            idx = idx.saturating_sub(1);
+            if let TabNodeKind::Element { handle } = &self.nodes[idx].kind {
+                return Some(handle.clone());
+            }
+        }
+        idx = self.nodes.len().saturating_sub(1);
+        while idx > cur_idx && idx > 0 {
+            if let TabNodeKind::Element { handle } = &self.nodes[idx].kind {
+                return Some(handle.clone());
+            }
+            idx = idx.saturating_sub(1);
+        }
+        return None;
     }
 
     fn begin_group(&mut self, tab_index: isize) {
         let new_node_index = self.nodes.len();
-        {
-            let TabNode::Group { children, .. } = &mut self.nodes[self.active_group] else {
-                panic!("wow");
-            };
-
-            children.push(new_node_index);
-        };
-        self.nodes.push(TabNode::Group {
+        self.insert_node(TabNode {
+            kind: TabNodeKind::Group,
             tab_index,
+            depth: self.nodes[self.active_group].depth + 1,
             parent_index: self.active_group,
-            children: Vec::new(),
         });
         self.active_group = new_node_index;
     }
 
     fn end_group(&mut self) {
-        self.active_group = match self.nodes[self.active_group] {
-            TabNode::Group { parent_index, .. } => parent_index,
-            TabNode::Element { parent_index, .. } => parent_index,
-        };
+        self.active_group = self.nodes[self.active_group].parent_index;
     }
 
     fn flatten_children(&mut self, mut children: Vec<usize>) {
         children.sort_by(|&a_idx, &b_idx| {
             let a = &self.nodes[a_idx];
             let b = &self.nodes[b_idx];
-            a.tab_index().cmp(&b.tab_index())
+            a.tab_index.cmp(&b.tab_index)
         });
 
         for child_index in children {
-            match &self.nodes[child_index] {
-                TabNode::Group { children, .. } => {
-                    self.flatten_children(children.clone());
-                }
-                TabNode::Element { handle, .. } => self.handles.push(handle.clone()),
-            };
+            // match &self.nodes[child_index] {
+            //     TabNode::Group { children, .. } => {
+            //         self.flatten_children(children.clone());
+            //     }
+            //     TabNode::Element { handle, .. } => self.handles.push(handle.clone()),
+            // };
         }
     }
 
     pub fn end_frame(&mut self) {
-        let TabNode::Group { children, .. } = &self.nodes[0] else {
-            panic!("wow");
-        };
+        // let TabNode::Group { children, .. } = &self.nodes[0] else {
+        //     panic!("wow");
+        // };
 
-        self.handles.clear();
-        self.flatten_children(children.clone());
+        // self.handles.clear();
+        // self.flatten_children(children.clone());
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{FocusHandle, FocusId, FocusMap, TabHandles};
+    use crate::{FocusHandle, FocusId, FocusMap, TabHandles, tab_stop::TabNodeKind};
     use std::sync::Arc;
 
     #[test]
@@ -521,96 +547,139 @@ mod tests {
         }
 
         // Phase 3: Eval - Verify TabHandles matches expected tree traversal
-        // This tests that focus traps create proper closed loops and that
-        // navigation respects trap boundaries.
         fn eval(
             tree: &TreeNode,
             tab_handles: &TabHandles,
             actual_to_handle: &HashMap<usize, FocusHandle>,
         ) {
-            // First, collect information about which handles are in focus traps
-            #[derive(Debug, Clone)]
-            struct HandleContext {
-                handle: FocusHandle,
-                actual: usize,
-                focus_trap_members: Option<Vec<FocusHandle>>,
+            // Build an array of handles sorted by their actual values
+            // First, find the max actual value to size our array
+            let max_actual = actual_to_handle.keys().max().copied().unwrap_or(0);
+
+            // Create an array of Option<FocusHandle> indexed by actual value
+            let mut handles_by_actual: Vec<Option<FocusHandle>> = vec![None; max_actual + 1];
+
+            // Insert each handle at its actual position
+            for (actual, handle) in actual_to_handle.iter() {
+                if *actual > max_actual {
+                    panic!("Actual value {} exceeds maximum {}", actual, max_actual);
+                }
+                handles_by_actual[*actual] = Some(handle.clone());
             }
 
-            fn collect_handle_contexts(
-                node: &TreeNode,
-                contexts: &mut Vec<HandleContext>,
-                current_trap: Option<Vec<FocusHandle>>,
-            ) {
-                match &node.node_type {
-                    NodeType::TabStop { actual, .. } => {
-                        if let Some(handle) = &node.handle {
-                            contexts.push(HandleContext {
-                                handle: handle.clone(),
-                                actual: *actual,
-                                focus_trap_members: current_trap.clone(),
-                            });
-                        }
-                    }
-                    NodeType::NonTabStop { .. } => {
-                        // Non-tab stops don't participate in navigation
-                    }
-                    NodeType::Group { children, .. } => {
-                        // Groups are transparent - just recurse with same trap context
-                        for child in children {
-                            collect_handle_contexts(child, contexts, current_trap.clone());
-                        }
-                    }
-                    NodeType::FocusTrap { children } => {
-                        // Start collecting handles for this focus trap
-                        let mut trap_handles = Vec::new();
-
-                        // First pass: collect all handles in this trap
-                        fn collect_trap_handles(node: &TreeNode, handles: &mut Vec<FocusHandle>) {
-                            match &node.node_type {
-                                NodeType::TabStop { .. } => {
-                                    if let Some(handle) = &node.handle {
-                                        handles.push(handle.clone());
-                                    }
-                                }
-                                NodeType::NonTabStop { .. } => {
-                                    // Non-tab stops don't participate in tab navigation
-                                }
-                                NodeType::Group { children, .. } => {
-                                    for child in children {
-                                        collect_trap_handles(child, handles);
-                                    }
-                                }
-                                NodeType::FocusTrap { children } => {
-                                    // Nested traps create their own context
-                                    for child in children {
-                                        collect_trap_handles(child, handles);
-                                    }
-                                }
-                            }
-                        }
-
-                        for child in children {
-                            collect_trap_handles(child, &mut trap_handles);
-                        }
-
-                        // Second pass: add contexts with trap information
-                        for child in children {
-                            collect_handle_contexts(child, contexts, Some(trap_handles.clone()));
-                        }
-                    }
+            // Check for holes (None values) in the array
+            for (index, handle_opt) in handles_by_actual.iter().enumerate() {
+                if handle_opt.is_none() {
+                    panic!(
+                        "Missing handle at actual={} position. Expected sequential actual values from 0 to {}",
+                        index, max_actual
+                    );
                 }
             }
 
-            let mut handle_contexts = Vec::new();
-            // Skip the root node
-            if let NodeType::Group { children, .. } = &tree.node_type {
-                for child in children {
-                    collect_handle_contexts(child, &mut handle_contexts, None);
+            // Convert to Vec<FocusHandle> now that we know there are no holes
+            let expected_order: Vec<FocusHandle> = handles_by_actual
+                .into_iter()
+                .map(|opt| opt.expect("Already checked for None values"))
+                .collect();
+
+            // If there are no handles, nothing to test
+            if expected_order.is_empty() {
+                return;
+            }
+
+            // Now verify that tab_handles.next() and .prev() produce the expected navigation order
+            for (index, handle) in expected_order.iter().enumerate() {
+                let current_id = handle.id;
+
+                // Calculate expected next and prev indices with wrapping
+                let next_index = (index + 1) % expected_order.len();
+                let prev_index = if index == 0 {
+                    expected_order.len() - 1
+                } else {
+                    index - 1
+                };
+
+                let expected_next = &expected_order[next_index];
+                let expected_prev = &expected_order[prev_index];
+
+                // Test next navigation
+                let actual_next = tab_handles.next(Some(&current_id));
+                if actual_next.as_ref().map(|h| h.id) != Some(expected_next.id) {
+                    panic!(
+                        "Tab navigation error at position {}!\n\
+                        Expected next() to return handle at actual={} but got {:?}\n\
+                        Full expected order: {:?}",
+                        index,
+                        next_index,
+                        actual_next.as_ref().map(|h| {
+                            // Find the actual value for this handle
+                            actual_to_handle
+                                .iter()
+                                .find(|(_, handle)| handle.id == h.id)
+                                .map(|(actual, _)| *actual)
+                                .unwrap_or(999)
+                        }),
+                        (0..expected_order.len()).collect::<Vec<_>>()
+                    );
+                }
+
+                // Test prev navigation
+                let actual_prev = tab_handles.prev(Some(&current_id));
+                if actual_prev.as_ref().map(|h| h.id) != Some(expected_prev.id) {
+                    panic!(
+                        "Tab navigation error at position {}!\n\
+                        Expected prev() to return handle at actual={} but got {:?}\n\
+                        Full expected order: {:?}",
+                        index,
+                        prev_index,
+                        actual_prev.as_ref().map(|h| {
+                            // Find the actual value for this handle
+                            actual_to_handle
+                                .iter()
+                                .find(|(_, handle)| handle.id == h.id)
+                                .map(|(actual, _)| *actual)
+                                .unwrap_or(999)
+                        }),
+                        (0..expected_order.len()).collect::<Vec<_>>()
+                    );
                 }
             }
 
-            // Sort by actual position to get expected order
-            handle_contexts.sort_by_key(|c| c.actual);
+            // Also test navigation from None (no current focus)
+            if !expected_order.is_empty() {
+                let first_handle = &expected_order[0];
+                let last_handle = expected_order.last().unwrap();
+
+                let actual_next_from_none = tab_handles.next(None);
+                if actual_next_from_none.as_ref().map(|h| h.id) != Some(first_handle.id) {
+                    panic!(
+                        "Expected next(None) to return first handle (actual=0) but got {:?}",
+                        actual_next_from_none.as_ref().map(|h| {
+                            actual_to_handle
+                                .iter()
+                                .find(|(_, handle)| handle.id == h.id)
+                                .map(|(actual, _)| *actual)
+                                .unwrap_or(999)
+                        })
+                    );
+                }
+
+                let actual_prev_from_none = tab_handles.prev(None);
+                if actual_prev_from_none.as_ref().map(|h| h.id) != Some(last_handle.id) {
+                    panic!(
+                        "Expected prev(None) to return last handle (actual={}) but got {:?}",
+                        expected_order.len() - 1,
+                        actual_prev_from_none.as_ref().map(|h| {
+                            actual_to_handle
+                                .iter()
+                                .find(|(_, handle)| handle.id == h.id)
+                                .map(|(actual, _)| *actual)
+                                .unwrap_or(999)
+                        })
+                    );
+                }
+            }
 
             // Helper function to format tree structure as XML for error messages
             fn format_tree_structure(node: &TreeNode, tab_handles: &TabHandles) -> String {
@@ -625,7 +694,7 @@ mod tests {
                             let actual = node
                                 .handle
                                 .as_ref()
-                                .and_then(|handle| tab_handles.current_index(Some(&handle.id)))
+                                .and_then(|handle| tab_handles.current_index(&handle.id))
                                 .unwrap_or(*actual);
                             let actual_str = format!(" actual={}", actual);
 
@@ -674,341 +743,6 @@ mod tests {
                 }
 
                 result
-            }
-
-            // Helper function to check navigation and panic with formatted error if it doesn't match
-            fn check_navigation(
-                tree: &TreeNode,
-                error_label: &str,
-                current_id: FocusId,
-                actual_id: Option<FocusId>,
-                expected_id: FocusId,
-                tab_handles: &TabHandles,
-            ) {
-                if actual_id != Some(expected_id) {
-                    panic!(
-                        "Tab navigation error!\n\n{}\n\n{}\n\n{}",
-                        error_label,
-                        format_tree_with_navigation(tree, current_id, actual_id, expected_id),
-                        pretty_assertions::StrComparison::new(
-                            &format_tree_structure(tree, tab_handles),
-                            &format_tree_structure(tree, &TabHandles::default()),
-                        ),
-                    );
-                }
-            }
-
-            // Helper function to format tree with navigation annotations
-            fn format_tree_with_navigation(
-                node: &TreeNode,
-                current_id: FocusId,
-                went_to_id: Option<FocusId>,
-                expected_id: FocusId,
-            ) -> String {
-                let mut result = String::new();
-
-                fn format_node_with_nav(
-                    node: &TreeNode,
-                    indent: usize,
-                    current_id: FocusId,
-                    went_to_id: Option<FocusId>,
-                    expected_id: FocusId,
-                ) -> String {
-                    let mut result = String::new();
-                    let indent_str = "  ".repeat(indent);
-
-                    match &node.node_type {
-                        NodeType::TabStop { tab_index, actual } => {
-                            let actual_str = format!(" actual={}", actual);
-
-                            // Add navigation annotations
-                            let nav_comment = if let Some(handle) = &node.handle {
-                                if handle.id == current_id && current_id != expected_id {
-                                    " // <- Started here"
-                                } else if Some(handle.id) == went_to_id {
-                                    " // <- Actually went here"
-                                } else if handle.id == expected_id {
-                                    if went_to_id.is_none() {
-                                        " // <- Expected to go here (but got None)"
-                                    } else {
-                                        " // <- Expected to go here"
-                                    }
-                                } else {
-                                    ""
-                                }
-                            } else {
-                                ""
-                            };
-
-                            result.push_str(&format!(
-                                "{}<tab-index={}{}>{}\n",
-                                indent_str, tab_index, actual_str, nav_comment
-                            ));
-                        }
-                        NodeType::NonTabStop { tab_index } => {
-                            // Format non-tab stops without actual value
-                            let nav_comment = String::new(); // Non-tab stops don't participate in navigation
-
-                            result.push_str(&format!(
-                                "{}<tab-index={} tab-stop=false>{}\n",
-                                indent_str,
-                                tab_index.map_or("None".to_string(), |v| v.to_string()),
-                                nav_comment
-                            ));
-                        }
-                        NodeType::Group {
-                            tab_index,
-                            children,
-                        } => {
-                            result.push_str(&format!(
-                                "{}<tab-group tab-index={}>\n",
-                                indent_str, tab_index
-                            ));
-                            for child in children {
-                                result.push_str(&format_node_with_nav(
-                                    child,
-                                    indent + 1,
-                                    current_id,
-                                    went_to_id,
-                                    expected_id,
-                                ));
-                            }
-                            result.push_str(&format!("{}</tab-group>\n", indent_str));
-                        }
-                        NodeType::FocusTrap { children } => {
-                            result.push_str(&format!("{}<focus-trap>\n", indent_str));
-                            for child in children {
-                                result.push_str(&format_node_with_nav(
-                                    child,
-                                    indent + 1,
-                                    current_id,
-                                    went_to_id,
-                                    expected_id,
-                                ));
-                            }
-                            result.push_str(&format!("{}</focus-trap>\n", indent_str));
-                        }
-                    }
-
-                    result
-                }
-
-                // Skip the root node and format its children
-                if let NodeType::Group { children, .. } = &node.node_type {
-                    for child in children {
-                        result.push_str(&format_node_with_nav(
-                            child,
-                            0,
-                            current_id,
-                            went_to_id,
-                            expected_id,
-                        ));
-                    }
-                }
-
-                result
-            }
-
-            // Check that we have the expected number of tab stops
-            if handle_contexts.len() != actual_to_handle.len() {
-                // Build maps for error display
-                let mut actual_map = HashMap::new();
-                let mut current = None;
-                for i in 0..tab_handles.handles.len() {
-                    if let Some(next_handle) =
-                        tab_handles.next(current.as_ref().map(|h: &FocusHandle| &h.id))
-                    {
-                        if i > 0
-                            && current.as_ref().map(|h: &FocusHandle| h.id) == Some(next_handle.id)
-                        {
-                            break;
-                        }
-                        actual_map.insert(next_handle.id, i);
-                        current = Some(next_handle);
-                    } else {
-                        break;
-                    }
-                }
-
-                let mut expected_map = HashMap::new();
-                for (pos, handle) in actual_to_handle.iter() {
-                    expected_map.insert(handle.id, *pos);
-                }
-
-                panic!(
-                    "Number of tab stops doesn't match! Expected {} but found {}\n\n{}",
-                    actual_to_handle.len(),
-                    handle_contexts.len(),
-                    pretty_assertions::StrComparison::new(
-                        &format_tree_structure(tree, tab_handles),
-                        &format_tree_structure(tree, &TabHandles::default()),
-                    ),
-                );
-            }
-
-            // Check if there are any focus traps at all
-            let has_focus_traps = handle_contexts
-                .iter()
-                .any(|c| c.focus_trap_members.is_some());
-
-            // If there are no focus traps, use the simpler validation
-            if !has_focus_traps {
-                // Build the actual navigation order from TabHandles
-                let mut tab_order: Vec<FocusHandle> = Vec::new();
-                let mut current = None;
-
-                for _ in 0..tab_handles.handles.len() {
-                    if let Some(next_handle) =
-                        tab_handles.next(current.as_ref().map(|h: &FocusHandle| &h.id))
-                    {
-                        // Check if we've cycled back to the beginning
-                        if !tab_order.is_empty() && tab_order[0].id == next_handle.id {
-                            break;
-                        }
-                        current = Some(next_handle.clone());
-                        tab_order.push(next_handle);
-                    } else {
-                        break;
-                    }
-                }
-
-                // Check each position matches the expected handle
-                for (position, handle) in tab_order.iter().enumerate() {
-                    let expected_handle = actual_to_handle.get(&position).unwrap_or_else(|| {
-                        panic!(
-                            "No element specified with actual={}, but tab order has {} elements",
-                            position,
-                            tab_order.len()
-                        )
-                    });
-
-                    if handle.id != expected_handle.id {
-                        // Use navigation-style error formatting
-                        // For position 0, we're testing what should come first
-                        // For other positions, we show the previous position as "started"
-                        let (started_id, went_to_id) = if position > 0 {
-                            // Normal case: show where we started (previous position) and where we went
-                            (tab_order[position - 1].id, Some(handle.id))
-                        } else {
-                            // Position 0: we're testing what should be first
-                            // Don't show "Started here" since we haven't started anywhere yet
-                            // Show the actual first element as "Actually went here"
-                            (expected_handle.id, Some(handle.id))
-                        };
-
-                        check_navigation(
-                            tree,
-                            &format!("Tab order mismatch at position {}", position),
-                            started_id,
-                            went_to_id,
-                            expected_handle.id,
-                            tab_handles,
-                        );
-                    }
-                }
-
-                // Test that navigation wraps correctly
-                if !tab_order.is_empty() {
-                    // Test next wraps from last to first
-                    let last_id = tab_order.last().unwrap().id;
-                    let first_id = tab_order.first().unwrap().id;
-                    // Test next wraps from last to first
-                    let actual_next_from_last = tab_handles.next(Some(&last_id));
-                    let actual_next_id = actual_next_from_last.as_ref().map(|h| h.id);
-                    check_navigation(
-                        tree,
-                        "Expected wrap from last to first (testing next() wrap-around):",
-                        last_id,
-                        actual_next_id,
-                        first_id,
-                        tab_handles,
-                    );
-
-                    // Test prev wraps from first to last
-                    let actual_prev_from_first = tab_handles.prev(Some(&first_id));
-                    let actual_prev_id = actual_prev_from_first.as_ref().map(|h| h.id);
-                    check_navigation(
-                        tree,
-                        "Expected wrap from first to last (testing prev() wrap-around):",
-                        first_id,
-                        actual_prev_id,
-                        last_id,
-                        tab_handles,
-                    );
-                }
-
-                return; // Early return for non-focus-trap case
-            }
-
-            // Now test navigation for each handle (focus-trap aware)
-            for context in &handle_contexts {
-                let current_id = context.handle.id;
-
-                // Determine expected next and prev based on context
-                let (expected_next, expected_prev) =
-                    if let Some(trap_members) = &context.focus_trap_members {
-                        // We're in a focus trap - navigation should stay within the trap
-                        let trap_position = trap_members
-                            .iter()
-                            .position(|h| h.id == current_id)
-                            .expect("Handle should be in its own trap");
-
-                        let next_idx = (trap_position + 1) % trap_members.len();
-                        let prev_idx = if trap_position == 0 {
-                            trap_members.len() - 1
-                        } else {
-                            trap_position - 1
-                        };
-
-                        (trap_members[next_idx].id, trap_members[prev_idx].id)
-                    } else {
-                        // Not in a focus trap - normal navigation through all non-trapped elements
-                        let non_trapped: Vec<&HandleContext> = handle_contexts
-                            .iter()
-                            .filter(|c| c.focus_trap_members.is_none())
-                            .collect();
-
-                        let non_trapped_position = non_trapped
-                            .iter()
-                            .position(|c| c.handle.id == current_id)
-                            .expect("Non-trapped handle should be in non-trapped list");
-
-                        let next_idx = (non_trapped_position + 1) % non_trapped.len();
-                        let prev_idx = if non_trapped_position == 0 {
-                            non_trapped.len() - 1
-                        } else {
-                            non_trapped_position - 1
-                        };
-
-                        (
-                            non_trapped[next_idx].handle.id,
-                            non_trapped[prev_idx].handle.id,
-                        )
-                    };
-
-                // Test next navigation
-                let actual_next = tab_handles.next(Some(&current_id));
-                let actual_next_id = actual_next.as_ref().map(|h| h.id);
-                check_navigation(
-                    tree,
-                    "Expected (testing next()):",
-                    current_id,
-                    actual_next_id,
-                    expected_next,
-                    tab_handles,
-                );
-
-                // Test prev navigation
-                let actual_prev = tab_handles.prev(Some(&current_id));
-                let actual_prev_id = actual_prev.as_ref().map(|h| h.id);
-                check_navigation(
-                    tree,
-                    "Expected (testing prev()):",
-                    current_id,
-                    actual_prev_id,
-                    expected_prev,
-                    tab_handles,
-                );
             }
         }
 
@@ -1095,7 +829,7 @@ mod tests {
         }
 
         #[test]
-        #[should_panic(expected = "Tab order mismatch at position")]
+        #[should_panic(expected = "Tab navigation error at position")]
         fn test_incorrect_tab_order_shows_xml_format() {
             // This test intentionally has wrong expected order to demonstrate error reporting
             // The actual tab order will be: tab-index=-1, 0, 1, 2 (positions 0, 1, 2, 3)
@@ -1185,11 +919,55 @@ mod tests {
                         <tab-index=0 actual=2>
                         <tab-index=1 actual=3>
                     </tab-group>
+                    <tab-index=1 actual=4>
+                </tab-group>
+                <tab-index=3 actual=5>
+                <tab-index=4 actual=6>
+            "#
+        );
+
+        #[test]
+        #[should_panic(expected = "Missing handle at actual=4")]
+        fn test_non_sequential_actual_values_should_fail() {
+            // This test intentionally uses non-sequential actual values (missing 4 and 5)
+            // to verify that the validation catches this error
+            let xml = r#"
+                <tab-index=0 actual=0>
+                <tab-index=1 actual=1>
+                <tab-group tab-index=2>
+                    <tab-group tab-index=0>
+                        <tab-index=0 actual=2>
+                        <tab-index=1 actual=3>
+                    </tab-group>
+                    <tab-index=1 actual=6>
+                </tab-group>
+                <tab-index=3 actual=7>
+                <tab-index=4 actual=8>
+            "#;
+            check(xml);
+        }
+
+        #[test]
+        #[should_panic(expected = "Tab navigation error at position")]
+        fn test_wrong_tab_order_should_fail() {
+            // This test has all sequential actual values, but they don't match
+            // the expected tab order based on the tree structure
+            // The element with actual=4 is in the wrong position in the tree
+            let xml = r#"
+                <tab-index=0 actual=0>
+                <tab-index=1 actual=1>
+                <tab-group tab-index=2>
+                    <tab-group tab-index=0>
+                        <tab-index=0 actual=2>
+                        <tab-index=1 actual=3>
+                    </tab-group>
+                    <tab-index=1 actual=6>
                 </tab-group>
                 <tab-index=3 actual=4>
                 <tab-index=4 actual=5>
-            "#
-        );
+            "#;
+            check(xml);
+        }
 
         xml_test!(
             test_sibling_nested_groups,
@@ -1283,70 +1061,42 @@ mod tests {
             tab.insert(handle);
         }
         tab.end_frame();
+        eprintln!("Tab nodes: {:?}", &tab.nodes);
+        let sorted = [
+            focus_handles[0].clone(),
+            focus_handles[5].clone(),
+            focus_handles[1].clone(),
+            focus_handles[2].clone(),
+            focus_handles[6].clone(),
+        ];
         assert_eq!(
-            tab.handles
+            tab.nodes
                 .iter()
-                .map(|handle| handle.id)
+                .filter_map(|node| match &node.kind {
+                    TabNodeKind::Element { handle } => Some(handle.id),
+                    _ => None,
+                })
                 .collect::<Vec<_>>(),
-            vec![
-                focus_handles[0].id,
-                focus_handles[5].id,
-                focus_handles[1].id,
-                focus_handles[2].id,
-                focus_handles[6].id,
-            ]
+            sorted.clone().map(|handle| handle.id),
         );
 
         // Select first tab index if no handle is currently focused.
-        assert_eq!(tab.next(None), Some(tab.handles[0].clone()));
+        assert_eq!(tab.next(None), Some(sorted[0].clone()));
         // Select last tab index if no handle is currently focused.
-        assert_eq!(
-            tab.prev(None),
-            Some(tab.handles[tab.handles.len() - 1].clone())
-        );
+        assert_eq!(tab.prev(None), sorted.last().cloned(),);
 
-        assert_eq!(
-            tab.next(Some(&tab.handles[0].id)),
-            Some(tab.handles[1].clone())
-        );
-        assert_eq!(
-            tab.next(Some(&tab.handles[1].id)),
-            Some(tab.handles[2].clone())
-        );
-        assert_eq!(
-            tab.next(Some(&tab.handles[2].id)),
-            Some(tab.handles[3].clone())
-        );
-        assert_eq!(
-            tab.next(Some(&tab.handles[3].id)),
-            Some(tab.handles[4].clone())
-        );
-        assert_eq!(
-            tab.next(Some(&tab.handles[4].id)),
-            Some(tab.handles[0].clone())
-        );
+        assert_eq!(tab.next(Some(&sorted[0].id)), Some(sorted[1].clone()));
+        assert_eq!(tab.next(Some(&sorted[1].id)), Some(sorted[2].clone()));
+        assert_eq!(tab.next(Some(&sorted[2].id)), Some(sorted[3].clone()));
+        assert_eq!(tab.next(Some(&sorted[3].id)), Some(sorted[4].clone()));
+        assert_eq!(tab.next(Some(&sorted[4].id)), Some(sorted[0].clone()));
 
         // prev
-        assert_eq!(tab.prev(None), Some(tab.handles[4].clone()));
-        assert_eq!(
-            tab.prev(Some(&tab.handles[0].id)),
-            Some(tab.handles[4].clone())
-        );
-        assert_eq!(
-            tab.prev(Some(&tab.handles[1].id)),
-            Some(tab.handles[0].clone())
-        );
-        assert_eq!(
-            tab.prev(Some(&tab.handles[2].id)),
-            Some(tab.handles[1].clone())
-        );
-        assert_eq!(
-            tab.prev(Some(&tab.handles[3].id)),
-            Some(tab.handles[2].clone())
-        );
-        assert_eq!(
-            tab.prev(Some(&tab.handles[4].id)),
-            Some(tab.handles[3].clone())
-        );
+        assert_eq!(tab.prev(None), Some(sorted[4].clone()));
+        assert_eq!(tab.prev(Some(&sorted[0].id)), Some(sorted[4].clone()));
+        assert_eq!(tab.prev(Some(&sorted[1].id)), Some(sorted[0].clone()));
+        assert_eq!(tab.prev(Some(&sorted[2].id)), Some(sorted[1].clone()));
+        assert_eq!(tab.prev(Some(&sorted[3].id)), Some(sorted[2].clone()));
+        assert_eq!(tab.prev(Some(&sorted[4].id)), Some(sorted[3].clone()));
     }
 }
