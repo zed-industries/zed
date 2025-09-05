@@ -1,6 +1,5 @@
 use ::proto::{FromProto, ToProto};
 use anyhow::{Context as _, Result, anyhow};
-use language_tools::lsp_log::{GlobalLogStore, LanguageServerKind};
 use lsp::LanguageServerId;
 
 use extension::ExtensionHostProxy;
@@ -16,6 +15,7 @@ use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
     debugger::{breakpoint_store::BreakpointStore, dap_store::DapStore},
     git_store::GitStore,
+    lsp_store::log_store::{self, GlobalLogStore, LanguageServerKind},
     project_settings::SettingsObserver,
     search::SearchQuery,
     task_store::TaskStore,
@@ -67,7 +67,7 @@ impl HeadlessProject {
         settings::init(cx);
         language::init(cx);
         project::Project::init_settings(cx);
-        language_tools::lsp_log::init(false, cx);
+        log_store::init(true, cx);
     }
 
     pub fn new(
@@ -310,7 +310,7 @@ impl HeadlessProject {
             LspStoreEvent::LanguageServerAdded(id, name, worktree_id) => {
                 let log_store = cx
                     .try_global::<GlobalLogStore>()
-                    .and_then(|lsp_logs| lsp_logs.0.upgrade());
+                    .map(|lsp_logs| lsp_logs.0.clone());
                 if let Some(log_store) = log_store {
                     log_store.update(cx, |log_store, cx| {
                         log_store.add_language_server(
@@ -329,7 +329,7 @@ impl HeadlessProject {
             LspStoreEvent::LanguageServerRemoved(id) => {
                 let log_store = cx
                     .try_global::<GlobalLogStore>()
-                    .and_then(|lsp_logs| lsp_logs.0.upgrade());
+                    .map(|lsp_logs| lsp_logs.0.clone());
                 if let Some(log_store) = log_store {
                     log_store.update(cx, |log_store, cx| {
                         log_store.remove_language_server(*id, cx);
@@ -541,12 +541,14 @@ impl HeadlessProject {
         let lsp_logs = cx
             .update(|cx| {
                 cx.try_global::<GlobalLogStore>()
-                    .and_then(|lsp_logs| lsp_logs.0.upgrade())
+                    .map(|lsp_logs| lsp_logs.0.clone())
             })?
             .context("lsp logs store is missing")?;
 
         lsp_logs.update(&mut cx, |lsp_logs, _| {
-            // we do not support any other log toggling yet
+            // RPC logs are very noisy and we need to toggle it on the headless server too.
+            // The rest of the logs for the ssh project are very important to have toggled always,
+            // to e.g. send language server error logs to the client before anything is toggled.
             if envelope.payload.enabled {
                 lsp_logs.enable_rpc_trace_for_language_server(server_id);
             } else {

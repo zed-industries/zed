@@ -431,7 +431,7 @@ pub fn deserialize_diagnostics(
                     code: diagnostic.code.map(lsp::NumberOrString::from_string),
                     code_description: diagnostic
                         .code_description
-                        .and_then(|s| lsp::Url::parse(&s).ok()),
+                        .and_then(|s| lsp::Uri::from_str(&s).ok()),
                     is_primary: diagnostic.is_primary,
                     is_disk_based: diagnostic.is_disk_based,
                     is_unnecessary: diagnostic.is_unnecessary,

@@ -395,6 +395,7 @@ pub trait LspAdapter: 'static + Send + Sync {
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
+        cx: &AsyncApp,
     ) -> Result<Box<dyn 'static + Send + Any>>;
 
     fn will_fetch_server(
@@ -605,7 +606,7 @@ async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>
     delegate.update_status(name.clone(), BinaryStatus::CheckingForUpdate);
 
     let latest_version = adapter
-        .fetch_latest_server_version(delegate.as_ref())
+        .fetch_latest_server_version(delegate.as_ref(), cx)
         .await?;
 
     if let Some(binary) = adapter
@@ -720,6 +721,9 @@ pub struct LanguageConfig {
     /// How to soft-wrap long lines of text.
     #[serde(default)]
     pub soft_wrap: Option<SoftWrap>,
+    /// When set, selections can be wrapped using prefix/suffix pairs on both sides.
+    #[serde(default)]
+    pub wrap_characters: Option<WrapCharactersConfig>,
     /// The name of a Prettier parser that will be used for this language when no file path is available.
     /// If there's a parser name in the language settings, that will be used instead.
     #[serde(default)]
@@ -923,6 +927,7 @@ impl Default for LanguageConfig {
             hard_tabs: None,
             tab_size: None,
             soft_wrap: None,
+            wrap_characters: None,
             prettier_parser_name: None,
             hidden: false,
             jsx_tag_auto_close: None,
@@ -930,6 +935,18 @@ impl Default for LanguageConfig {
             debuggers: Default::default(),
         }
     }
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+pub struct WrapCharactersConfig {
+    /// Opening token split into a prefix and suffix. The first caret goes
+    /// after the prefix (i.e., between prefix and suffix).
+    pub start_prefix: String,
+    pub start_suffix: String,
+    /// Closing token split into a prefix and suffix. The second caret goes
+    /// after the prefix (i.e., between prefix and suffix).
+    pub end_prefix: String,
+    pub end_suffix: String,
 }
 
 fn auto_indent_using_last_non_empty_line_default() -> bool {
@@ -1234,6 +1251,7 @@ struct InjectionPatternConfig {
     combined: bool,
 }
 
+#[derive(Debug)]
 struct BracketsConfig {
     query: Query,
     open_capture_ix: u32,
@@ -2205,6 +2223,7 @@ impl LspAdapter for FakeLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
+        _: &AsyncApp,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         unreachable!();
     }

@@ -26,7 +26,7 @@ impl PathList {
         let mut indexed_paths: Vec<(usize, PathBuf)> = paths
             .iter()
             .enumerate()
-            .map(|(ix, path)| (ix, SanitizedPath::from(path).into()))
+            .map(|(ix, path)| (ix, SanitizedPath::new(path).into()))
             .collect();
         indexed_paths.sort_by(|(_, a), (_, b)| a.cmp(b));
         let order = indexed_paths.iter().map(|e| e.0).collect::<Vec<_>>().into();

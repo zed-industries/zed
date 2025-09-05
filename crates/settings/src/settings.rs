@@ -4,6 +4,7 @@ mod keymap_file;
 mod settings_file;
 mod settings_json;
 mod settings_store;
+mod settings_ui_core;
 mod vscode_import;
 
 use gpui::{App, Global};
@@ -20,9 +21,12 @@ pub use keymap_file::{
 pub use settings_file::*;
 pub use settings_json::*;
 pub use settings_store::{
-    InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation, SettingsSources,
-    SettingsStore,
+    InvalidSettingsError, LocalSettingsKind, Settings, SettingsKey, SettingsLocation,
+    SettingsSources, SettingsStore,
 };
+pub use settings_ui_core::*;
+// Re-export the derive macro
+pub use settings_ui_macros::{SettingsKey, SettingsUi};
 pub use vscode_import::{VsCodeSettings, VsCodeSettingsSource};
 
 #[derive(Clone, Debug, PartialEq)]

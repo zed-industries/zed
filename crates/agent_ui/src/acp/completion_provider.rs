@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -13,8 +13,10 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{App, Entity, Task, WeakEntity};
 use language::{Buffer, CodeLabel, HighlightId};
 use lsp::CompletionContext;
+use project::lsp_store::CompletionDocumentation;
 use project::{
-    Completion, CompletionIntent, CompletionResponse, Project, ProjectPath, Symbol, WorktreeId,
+    Completion, CompletionDisplayOptions, CompletionIntent, CompletionResponse, Project,
+    ProjectPath, Symbol, WorktreeId,
 };
 use prompt_store::PromptStore;
 use rope::Point;
@@ -23,7 +25,7 @@ use ui::prelude::*;
 use workspace::Workspace;
 
 use crate::AgentPanel;
-use crate::acp::message_editor::MessageEditor;
+use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::context_picker::file_context_picker::{FileMatch, search_files};
 use crate::context_picker::rules_context_picker::{RulesContextEntry, search_rules};
 use crate::context_picker::symbol_context_picker::SymbolMatch;
@@ -67,6 +69,7 @@ pub struct ContextPickerCompletionProvider {
     history_store: Entity<HistoryStore>,
     prompt_store: Option<Entity<PromptStore>>,
     prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
+    available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
 }
 
 impl ContextPickerCompletionProvider {
@@ -76,6 +79,7 @@ impl ContextPickerCompletionProvider {
         history_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
         prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
+        available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
     ) -> Self {
         Self {
             message_editor,
@@ -83,6 +87,7 @@ impl ContextPickerCompletionProvider {
             history_store,
             prompt_store,
             prompt_capabilities,
+            available_commands,
         }
     }
 
@@ -369,7 +374,42 @@ impl ContextPickerCompletionProvider {
         })
     }
 
-    fn search(
+    fn search_slash_commands(
+        &self,
+        query: String,
+        cx: &mut App,
+    ) -> Task<Vec<acp::AvailableCommand>> {
+        let commands = self.available_commands.borrow().clone();
+        if commands.is_empty() {
+            return Task::ready(Vec::new());
+        }
+
+        cx.spawn(async move |cx| {
+            let candidates = commands
+                .iter()
+                .enumerate()
+                .map(|(id, command)| StringMatchCandidate::new(id, &command.name))
+                .collect::<Vec<_>>();
+
+            let matches = fuzzy::match_strings(
+                &candidates,
+                &query,
+                false,
+                true,
+                100,
+                &Arc::new(AtomicBool::default()),
+                cx.background_executor().clone(),
+            )
+            .await;
+
+            matches
+                .into_iter()
+                .map(|mat| commands[mat.candidate_id].clone())
+                .collect()
+        })
+    }
+
+    fn search_mentions(
         &self,
         mode: Option<ContextPickerMode>,
         query: String,
@@ -651,10 +691,10 @@ impl CompletionProvider for ContextPickerCompletionProvider {
             let offset_to_line = buffer.point_to_offset(line_start);
             let mut lines = buffer.text_for_range(line_start..position).lines();
             let line = lines.next()?;
-            MentionCompletion::try_parse(
-                self.prompt_capabilities.get().embedded_context,
+            ContextCompletion::try_parse(
                 line,
                 offset_to_line,
+                self.prompt_capabilities.get().embedded_context,
             )
         });
         let Some(state) = state else {
@@ -667,97 +707,175 @@ impl CompletionProvider for ContextPickerCompletionProvider {
 
         let project = workspace.read(cx).project().clone();
         let snapshot = buffer.read(cx).snapshot();
-        let source_range = snapshot.anchor_before(state.source_range.start)
-            ..snapshot.anchor_after(state.source_range.end);
+        let source_range = snapshot.anchor_before(state.source_range().start)
+            ..snapshot.anchor_after(state.source_range().end);
 
         let editor = self.message_editor.clone();
 
-        let MentionCompletion { mode, argument, .. } = state;
-        let query = argument.unwrap_or_else(|| "".to_string());
-
-        let search_task = self.search(mode, query, Arc::<AtomicBool>::default(), cx);
-
-        cx.spawn(async move |_, cx| {
-            let matches = search_task.await;
-
-            let completions = cx.update(|cx| {
-                matches
-                    .into_iter()
-                    .filter_map(|mat| match mat {
-                        Match::File(FileMatch { mat, is_recent }) => {
-                            let project_path = ProjectPath {
-                                worktree_id: WorktreeId::from_usize(mat.worktree_id),
-                                path: mat.path.clone(),
+        match state {
+            ContextCompletion::SlashCommand(SlashCommandCompletion {
+                command, argument, ..
+            }) => {
+                let search_task = self.search_slash_commands(command.unwrap_or_default(), cx);
+                cx.background_spawn(async move {
+                    let completions = search_task
+                        .await
+                        .into_iter()
+                        .map(|command| {
+                            let new_text = if let Some(argument) = argument.as_ref() {
+                                format!("/{} {}", command.name, argument)
+                            } else {
+                                format!("/{} ", command.name)
                             };
 
-                            Self::completion_for_path(
-                                project_path,
-                                &mat.path_prefix,
-                                is_recent,
-                                mat.is_dir,
-                                source_range.clone(),
-                                editor.clone(),
-                                project.clone(),
-                                cx,
-                            )
-                        }
+                            let is_missing_argument = argument.is_none() && command.input.is_some();
+                            Completion {
+                                replace_range: source_range.clone(),
+                                new_text,
+                                label: CodeLabel::plain(command.name.to_string(), None),
+                                documentation: Some(CompletionDocumentation::MultiLinePlainText(
+                                    command.description.into(),
+                                )),
+                                source: project::CompletionSource::Custom,
+                                icon_path: None,
+                                insert_text_mode: None,
+                                confirm: Some(Arc::new({
+                                    let editor = editor.clone();
+                                    move |intent, _window, cx| {
+                                        if !is_missing_argument {
+                                            cx.defer({
+                                                let editor = editor.clone();
+                                                move |cx| {
+                                                    editor
+                                                        .update(cx, |_editor, cx| {
+                                                            match intent {
+                                                                CompletionIntent::Complete
+                                                                | CompletionIntent::CompleteWithInsert
+                                                                | CompletionIntent::CompleteWithReplace => {
+                                                                    if !is_missing_argument {
+                                                                        cx.emit(MessageEditorEvent::Send);
+                                                                    }
+                                                                }
+                                                                CompletionIntent::Compose => {}
+                                                            }
+                                                        })
+                                                        .ok();
+                                                }
+                                            });
+                                        }
+                                        is_missing_argument
+                                    }
+                                })),
+                            }
+                        })
+                        .collect();
 
-                        Match::Symbol(SymbolMatch { symbol, .. }) => Self::completion_for_symbol(
-                            symbol,
-                            source_range.clone(),
-                            editor.clone(),
-                            workspace.clone(),
-                            cx,
-                        ),
+                    Ok(vec![CompletionResponse {
+                        completions,
+                        display_options: CompletionDisplayOptions {
+                            dynamic_width: true,
+                        },
+                        // Since this does its own filtering (see `filter_completions()` returns false),
+                        // there is no benefit to computing whether this set of completions is incomplete.
+                        is_incomplete: true,
+                    }])
+                })
+            }
+            ContextCompletion::Mention(MentionCompletion { mode, argument, .. }) => {
+                let query = argument.unwrap_or_default();
+                let search_task =
+                    self.search_mentions(mode, query, Arc::<AtomicBool>::default(), cx);
 
-                        Match::Thread(thread) => Some(Self::completion_for_thread(
-                            thread,
-                            source_range.clone(),
-                            false,
-                            editor.clone(),
-                            cx,
-                        )),
+                cx.spawn(async move |_, cx| {
+                    let matches = search_task.await;
 
-                        Match::RecentThread(thread) => Some(Self::completion_for_thread(
-                            thread,
-                            source_range.clone(),
-                            true,
-                            editor.clone(),
-                            cx,
-                        )),
+                    let completions = cx.update(|cx| {
+                        matches
+                            .into_iter()
+                            .filter_map(|mat| match mat {
+                                Match::File(FileMatch { mat, is_recent }) => {
+                                    let project_path = ProjectPath {
+                                        worktree_id: WorktreeId::from_usize(mat.worktree_id),
+                                        path: mat.path.clone(),
+                                    };
 
-                        Match::Rules(user_rules) => Some(Self::completion_for_rules(
-                            user_rules,
-                            source_range.clone(),
-                            editor.clone(),
-                            cx,
-                        )),
+                                    Self::completion_for_path(
+                                        project_path,
+                                        &mat.path_prefix,
+                                        is_recent,
+                                        mat.is_dir,
+                                        source_range.clone(),
+                                        editor.clone(),
+                                        project.clone(),
+                                        cx,
+                                    )
+                                }
 
-                        Match::Fetch(url) => Self::completion_for_fetch(
-                            source_range.clone(),
-                            url,
-                            editor.clone(),
-                            cx,
-                        ),
+                                Match::Symbol(SymbolMatch { symbol, .. }) => {
+                                    Self::completion_for_symbol(
+                                        symbol,
+                                        source_range.clone(),
+                                        editor.clone(),
+                                        workspace.clone(),
+                                        cx,
+                                    )
+                                }
 
-                        Match::Entry(EntryMatch { entry, .. }) => Self::completion_for_entry(
-                            entry,
-                            source_range.clone(),
-                            editor.clone(),
-                            &workspace,
-                            cx,
-                        ),
-                    })
-                    .collect()
-            })?;
+                                Match::Thread(thread) => Some(Self::completion_for_thread(
+                                    thread,
+                                    source_range.clone(),
+                                    false,
+                                    editor.clone(),
+                                    cx,
+                                )),
 
-            Ok(vec![CompletionResponse {
-                completions,
-                // Since this does its own filtering (see `filter_completions()` returns false),
-                // there is no benefit to computing whether this set of completions is incomplete.
-                is_incomplete: true,
-            }])
-        })
+                                Match::RecentThread(thread) => Some(Self::completion_for_thread(
+                                    thread,
+                                    source_range.clone(),
+                                    true,
+                                    editor.clone(),
+                                    cx,
+                                )),
+
+                                Match::Rules(user_rules) => Some(Self::completion_for_rules(
+                                    user_rules,
+                                    source_range.clone(),
+                                    editor.clone(),
+                                    cx,
+                                )),
+
+                                Match::Fetch(url) => Self::completion_for_fetch(
+                                    source_range.clone(),
+                                    url,
+                                    editor.clone(),
+                                    cx,
+                                ),
+
+                                Match::Entry(EntryMatch { entry, .. }) => {
+                                    Self::completion_for_entry(
+                                        entry,
+                                        source_range.clone(),
+                                        editor.clone(),
+                                        &workspace,
+                                        cx,
+                                    )
+                                }
+                            })
+                            .collect()
+                    })?;
+
+                    Ok(vec![CompletionResponse {
+                        completions,
+                        display_options: CompletionDisplayOptions {
+                            dynamic_width: true,
+                        },
+                        // Since this does its own filtering (see `filter_completions()` returns false),
+                        // there is no benefit to computing whether this set of completions is incomplete.
+                        is_incomplete: true,
+                    }])
+                })
+            }
+        }
     }
 
     fn is_completion_trigger(
@@ -775,14 +893,14 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         let offset_to_line = buffer.point_to_offset(line_start);
         let mut lines = buffer.text_for_range(line_start..position).lines();
         if let Some(line) = lines.next() {
-            MentionCompletion::try_parse(
-                self.prompt_capabilities.get().embedded_context,
+            ContextCompletion::try_parse(
                 line,
                 offset_to_line,
+                self.prompt_capabilities.get().embedded_context,
             )
             .map(|completion| {
-                completion.source_range.start <= offset_to_line + position.column as usize
-                    && completion.source_range.end >= offset_to_line + position.column as usize
+                completion.source_range().start <= offset_to_line + position.column as usize
+                    && completion.source_range().end >= offset_to_line + position.column as usize
             })
             .unwrap_or(false)
         } else {
@@ -851,7 +969,7 @@ fn confirm_completion_callback(
                 .clone()
                 .update(cx, |message_editor, cx| {
                     message_editor
-                        .confirm_completion(
+                        .confirm_mention_completion(
                             crease_text,
                             start,
                             content_len,
@@ -865,6 +983,89 @@ fn confirm_completion_callback(
         });
         false
     })
+}
+
+enum ContextCompletion {
+    SlashCommand(SlashCommandCompletion),
+    Mention(MentionCompletion),
+}
+
+impl ContextCompletion {
+    fn source_range(&self) -> Range<usize> {
+        match self {
+            Self::SlashCommand(completion) => completion.source_range.clone(),
+            Self::Mention(completion) => completion.source_range.clone(),
+        }
+    }
+
+    fn try_parse(line: &str, offset_to_line: usize, allow_non_file_mentions: bool) -> Option<Self> {
+        if let Some(command) = SlashCommandCompletion::try_parse(line, offset_to_line) {
+            Some(Self::SlashCommand(command))
+        } else if let Some(mention) =
+            MentionCompletion::try_parse(allow_non_file_mentions, line, offset_to_line)
+        {
+            Some(Self::Mention(mention))
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Debug, Default, PartialEq)]
+pub struct SlashCommandCompletion {
+    pub source_range: Range<usize>,
+    pub command: Option<String>,
+    pub argument: Option<String>,
+}
+
+impl SlashCommandCompletion {
+    pub fn try_parse(line: &str, offset_to_line: usize) -> Option<Self> {
+        // If we decide to support commands that are not at the beginning of the prompt, we can remove this check
+        if !line.starts_with('/') || offset_to_line != 0 {
+            return None;
+        }
+
+        let last_command_start = line.rfind('/')?;
+        if last_command_start >= line.len() {
+            return Some(Self::default());
+        }
+        if last_command_start > 0
+            && line
+                .chars()
+                .nth(last_command_start - 1)
+                .is_some_and(|c| !c.is_whitespace())
+        {
+            return None;
+        }
+
+        let rest_of_line = &line[last_command_start + 1..];
+
+        let mut command = None;
+        let mut argument = None;
+        let mut end = last_command_start + 1;
+
+        if let Some(command_text) = rest_of_line.split_whitespace().next() {
+            command = Some(command_text.to_string());
+            end += command_text.len();
+
+            // Find the start of arguments after the command
+            if let Some(args_start) =
+                rest_of_line[command_text.len()..].find(|c: char| !c.is_whitespace())
+            {
+                let args = &rest_of_line[command_text.len() + args_start..].trim_end();
+                if !args.is_empty() {
+                    argument = Some(args.to_string());
+                    end += args.len() + 1;
+                }
+            }
+        }
+
+        Some(Self {
+            source_range: last_command_start + offset_to_line..end + offset_to_line,
+            command,
+            argument,
+        })
+    }
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -931,6 +1132,62 @@ impl MentionCompletion {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_slash_command_completion_parse() {
+        assert_eq!(
+            SlashCommandCompletion::try_parse("/", 0),
+            Some(SlashCommandCompletion {
+                source_range: 0..1,
+                command: None,
+                argument: None,
+            })
+        );
+
+        assert_eq!(
+            SlashCommandCompletion::try_parse("/help", 0),
+            Some(SlashCommandCompletion {
+                source_range: 0..5,
+                command: Some("help".to_string()),
+                argument: None,
+            })
+        );
+
+        assert_eq!(
+            SlashCommandCompletion::try_parse("/help ", 0),
+            Some(SlashCommandCompletion {
+                source_range: 0..5,
+                command: Some("help".to_string()),
+                argument: None,
+            })
+        );
+
+        assert_eq!(
+            SlashCommandCompletion::try_parse("/help arg1", 0),
+            Some(SlashCommandCompletion {
+                source_range: 0..10,
+                command: Some("help".to_string()),
+                argument: Some("arg1".to_string()),
+            })
+        );
+
+        assert_eq!(
+            SlashCommandCompletion::try_parse("/help arg1 arg2", 0),
+            Some(SlashCommandCompletion {
+                source_range: 0..15,
+                command: Some("help".to_string()),
+                argument: Some("arg1 arg2".to_string()),
+            })
+        );
+
+        assert_eq!(SlashCommandCompletion::try_parse("Lorem Ipsum", 0), None);
+
+        assert_eq!(SlashCommandCompletion::try_parse("Lorem /", 0), None);
+
+        assert_eq!(SlashCommandCompletion::try_parse("Lorem /help", 0), None);
+
+        assert_eq!(SlashCommandCompletion::try_parse("Lorem/", 0), None);
+    }
 
     #[test]
     fn test_mention_completion_parse() {

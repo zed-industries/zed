@@ -36,6 +36,14 @@ impl AcpModelSelectorPopover {
     pub fn toggle(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.menu_handle.toggle(window, cx);
     }
+
+    pub fn active_model_name(&self, cx: &App) -> Option<SharedString> {
+        self.selector
+            .read(cx)
+            .delegate
+            .active_model()
+            .map(|model| model.name.clone())
+    }
 }
 
 impl Render for AcpModelSelectorPopover {
