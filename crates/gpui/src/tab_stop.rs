@@ -1,5 +1,3 @@
-use std::{cmp::Ordering, ops::Range};
-
 use crate::{FocusHandle, FocusId};
 
 /// Represents a collection of tab handles.
@@ -195,7 +193,7 @@ impl TabHandles {
             a.tab_index.cmp(&b.tab_index)
         });
 
-        for child_index in children {
+        for _child_index in children {
             // match &self.nodes[child_index] {
             //     TabNode::Group { children, .. } => {
             //         self.flatten_children(children.clone());
@@ -217,7 +215,7 @@ impl TabHandles {
 
 #[cfg(test)]
 mod tests {
-    use crate::{FocusHandle, FocusId, FocusMap, TabHandles, tab_stop::TabNodeKind};
+    use crate::{FocusHandle, FocusMap, TabHandles, tab_stop::TabNodeKind};
     use std::sync::Arc;
 
     #[test]
@@ -552,6 +550,7 @@ mod tests {
             tab_handles: &TabHandles,
             actual_to_handle: &HashMap<usize, FocusHandle>,
         ) {
+            use crate::FocusId;
             // Build an array of handles sorted by their actual values
             // First, find the max actual value to size our array
             let max_actual = actual_to_handle.keys().max().copied().unwrap_or(0);
@@ -605,45 +604,33 @@ mod tests {
 
                 // Test next navigation
                 let actual_next = tab_handles.next(Some(&current_id));
-                if actual_next.as_ref().map(|h| h.id) != Some(expected_next.id) {
-                    panic!(
-                        "Tab navigation error at position {}!\n\
-                        Expected next() to return handle at actual={} but got {:?}\n\
-                        Full expected order: {:?}",
-                        index,
-                        next_index,
-                        actual_next.as_ref().map(|h| {
-                            // Find the actual value for this handle
-                            actual_to_handle
-                                .iter()
-                                .find(|(_, handle)| handle.id == h.id)
-                                .map(|(actual, _)| *actual)
-                                .unwrap_or(999)
-                        }),
-                        (0..expected_order.len()).collect::<Vec<_>>()
-                    );
-                }
+                check_navigation(
+                    tree,
+                    &format!(
+                        "Tab navigation error at position {} (testing next())",
+                        index
+                    ),
+                    current_id,
+                    actual_next.as_ref().map(|h| h.id),
+                    expected_next.id,
+                    tab_handles,
+                    actual_to_handle,
+                );
 
                 // Test prev navigation
                 let actual_prev = tab_handles.prev(Some(&current_id));
-                if actual_prev.as_ref().map(|h| h.id) != Some(expected_prev.id) {
-                    panic!(
-                        "Tab navigation error at position {}!\n\
-                        Expected prev() to return handle at actual={} but got {:?}\n\
-                        Full expected order: {:?}",
-                        index,
-                        prev_index,
-                        actual_prev.as_ref().map(|h| {
-                            // Find the actual value for this handle
-                            actual_to_handle
-                                .iter()
-                                .find(|(_, handle)| handle.id == h.id)
-                                .map(|(actual, _)| *actual)
-                                .unwrap_or(999)
-                        }),
-                        (0..expected_order.len()).collect::<Vec<_>>()
-                    );
-                }
+                check_navigation(
+                    tree,
+                    &format!(
+                        "Tab navigation error at position {} (testing prev())",
+                        index
+                    ),
+                    current_id,
+                    actual_prev.as_ref().map(|h| h.id),
+                    expected_prev.id,
+                    tab_handles,
+                    actual_to_handle,
+                );
             }
 
             // Also test navigation from None (no current focus)
@@ -652,36 +639,198 @@ mod tests {
                 let last_handle = expected_order.last().unwrap();
 
                 let actual_next_from_none = tab_handles.next(None);
-                if actual_next_from_none.as_ref().map(|h| h.id) != Some(first_handle.id) {
-                    panic!(
-                        "Expected next(None) to return first handle (actual=0) but got {:?}",
-                        actual_next_from_none.as_ref().map(|h| {
-                            actual_to_handle
-                                .iter()
-                                .find(|(_, handle)| handle.id == h.id)
-                                .map(|(actual, _)| *actual)
-                                .unwrap_or(999)
-                        })
-                    );
-                }
+                check_navigation(
+                    tree,
+                    "Expected next(None) to return first handle",
+                    first_handle.id, // Use first handle ID as "current" for display purposes
+                    actual_next_from_none.as_ref().map(|h| h.id),
+                    first_handle.id,
+                    tab_handles,
+                    actual_to_handle,
+                );
 
                 let actual_prev_from_none = tab_handles.prev(None);
-                if actual_prev_from_none.as_ref().map(|h| h.id) != Some(last_handle.id) {
+                check_navigation(
+                    tree,
+                    "Expected prev(None) to return last handle",
+                    last_handle.id, // Use last handle ID as "current" for display purposes
+                    actual_prev_from_none.as_ref().map(|h| h.id),
+                    last_handle.id,
+                    tab_handles,
+                    actual_to_handle,
+                );
+            }
+
+            // Helper function to check navigation and panic with formatted error if it doesn't match
+            fn check_navigation(
+                tree: &TreeNode,
+                error_label: &str,
+                current_id: FocusId,
+                actual_id: Option<FocusId>,
+                expected_id: FocusId,
+                _tab_handles: &TabHandles,
+                actual_to_handle: &HashMap<usize, FocusHandle>,
+            ) {
+                if actual_id != Some(expected_id) {
+                    // Find actual values for the handles
+                    let actual_position = actual_id.and_then(|id| {
+                        actual_to_handle
+                            .iter()
+                            .find(|(_, handle)| handle.id == id)
+                            .map(|(actual, _)| *actual)
+                    });
+                    let expected_position = actual_to_handle
+                        .iter()
+                        .find(|(_, handle)| handle.id == expected_id)
+                        .map(|(actual, _)| *actual)
+                        .unwrap_or(999);
+
                     panic!(
-                        "Expected prev(None) to return last handle (actual={}) but got {:?}",
-                        expected_order.len() - 1,
-                        actual_prev_from_none.as_ref().map(|h| {
+                        "Tab navigation error!\n\n{}\n\n{}\n\nExpected: actual={}\nActual: {:?}",
+                        error_label,
+                        format_tree_with_navigation(
+                            tree,
+                            current_id,
+                            actual_id,
+                            expected_id,
                             actual_to_handle
-                                .iter()
-                                .find(|(_, handle)| handle.id == h.id)
-                                .map(|(actual, _)| *actual)
-                                .unwrap_or(999)
-                        })
+                        ),
+                        expected_position,
+                        actual_position.map_or("None".to_string(), |p| format!("actual={}", p))
                     );
                 }
             }
 
+            // Helper function to format tree with navigation annotations
+            fn format_tree_with_navigation(
+                node: &TreeNode,
+                current_id: FocusId,
+                went_to_id: Option<FocusId>,
+                expected_id: FocusId,
+                actual_to_handle: &HashMap<usize, FocusHandle>,
+            ) -> String {
+                let mut result = String::new();
+
+                fn format_node_with_nav(
+                    node: &TreeNode,
+                    indent: usize,
+                    current_id: FocusId,
+                    went_to_id: Option<FocusId>,
+                    expected_id: FocusId,
+                    actual_to_handle: &HashMap<usize, FocusHandle>,
+                ) -> String {
+                    let mut result = String::new();
+                    let indent_str = "  ".repeat(indent);
+
+                    match &node.node_type {
+                        NodeType::TabStop { tab_index, actual } => {
+                            let actual_str = format!(" actual={}", actual);
+
+                            // Add navigation annotations
+                            let nav_comment = if let Some(handle) = &node.handle {
+                                if handle.id == current_id && current_id != expected_id {
+                                    " // <- Current position".to_string()
+                                } else if Some(handle.id) == went_to_id {
+                                    let actual_val = actual_to_handle
+                                        .iter()
+                                        .find(|(_, h)| h.id == handle.id)
+                                        .map(|(a, _)| *a)
+                                        .unwrap_or(999);
+                                    format!(" // <- Actually went here (actual={})", actual_val)
+                                } else if handle.id == expected_id {
+                                    let expected_val = actual_to_handle
+                                        .iter()
+                                        .find(|(_, h)| h.id == expected_id)
+                                        .map(|(a, _)| *a)
+                                        .unwrap_or(999);
+                                    if went_to_id.is_none() {
+                                        format!(
+                                            " // <- Expected to go here (actual={}) but got None",
+                                            expected_val
+                                        )
+                                    } else {
+                                        format!(
+                                            " // <- Expected to go here (actual={})",
+                                            expected_val
+                                        )
+                                    }
+                                } else {
+                                    "".to_string()
+                                }
+                            } else {
+                                "".to_string()
+                            };
+
+                            result.push_str(&format!(
+                                "{}<tab-index={}{}>{}\n",
+                                indent_str, tab_index, actual_str, nav_comment
+                            ));
+                        }
+                        NodeType::NonTabStop { tab_index } => {
+                            result.push_str(&format!(
+                                "{}<tab-index={} tab-stop=false>\n",
+                                indent_str,
+                                tab_index.map_or("None".to_string(), |v| v.to_string()),
+                            ));
+                        }
+                        NodeType::Group {
+                            tab_index,
+                            children,
+                        } => {
+                            result.push_str(&format!(
+                                "{}<tab-group tab-index={}>\n",
+                                indent_str, tab_index
+                            ));
+                            for child in children {
+                                result.push_str(&format_node_with_nav(
+                                    child,
+                                    indent + 1,
+                                    current_id,
+                                    went_to_id,
+                                    expected_id,
+                                    actual_to_handle,
+                                ));
+                            }
+                            result.push_str(&format!("{}</tab-group>\n", indent_str));
+                        }
+                        NodeType::FocusTrap { children } => {
+                            result.push_str(&format!("{}<focus-trap>\n", indent_str));
+                            for child in children {
+                                result.push_str(&format_node_with_nav(
+                                    child,
+                                    indent + 1,
+                                    current_id,
+                                    went_to_id,
+                                    expected_id,
+                                    actual_to_handle,
+                                ));
+                            }
+                            result.push_str(&format!("{}</focus-trap>\n", indent_str));
+                        }
+                    }
+
+                    result
+                }
+
+                // Skip the root node and format its children
+                if let NodeType::Group { children, .. } = &node.node_type {
+                    for child in children {
+                        result.push_str(&format_node_with_nav(
+                            child,
+                            0,
+                            current_id,
+                            went_to_id,
+                            expected_id,
+                            actual_to_handle,
+                        ));
+                    }
+                }
+
+                result
+            }
+
             // Helper function to format tree structure as XML for error messages
+            #[allow(dead_code)]
             fn format_tree_structure(node: &TreeNode, tab_handles: &TabHandles) -> String {
                 let mut result = String::new();
 
@@ -992,56 +1141,6 @@ mod tests {
         );
     }
 
-    mod focus_trap {
-        // use super::*;
-
-        // xml_test!(
-        //     test_focus_trap_in_group,
-        //     r#"
-        //         <tab-index=0 actual=0>
-        //         <tab-group tab-index=1>
-        //             <tab-index=0 actual=1>
-        //             <focus-trap>
-        //                 <tab-index=0 actual=2>
-        //                 <tab-index=1 actual=3>
-        //             </focus-trap>
-        //             <tab-index=1 actual=4>
-        //         </tab-group>
-        //         <tab-index=2 actual=5>
-        //     "#
-        // );
-
-        // // This test defines the expected behavior for focus-trap
-        // // Focus-trap should trap navigation within its boundaries
-        // xml_test!(
-        //     test_focus_trap_functionality,
-        //     r#"
-        //         <tab-index=0 actual=0>
-        //         <focus-trap tab-index=1>
-        //             <tab-index=0 actual=1>
-        //             <tab-index=1 actual=2>
-        //         </focus-trap>
-        //         <tab-index=2 actual=3>
-        //     "#
-        // );
-
-        // xml_test!(
-        //     test_nested_groups_and_traps,
-        //     r#"
-        //         <tab-index=0 actual=0>
-        //         <tab-group tab-index=1>
-        //             <tab-index=0 actual=1>
-        //             <focus-trap tab-index=1>
-        //                 <tab-index=0 actual=2>
-        //                 <tab-index=1 actual=3>
-        //             </focus-trap>
-        //             <tab-index=2 actual=4>
-        //         </tab-group>
-        //         <tab-index=2 actual=5>
-        //     "#
-        // );
-    }
-
     #[test]
     fn test_tab_handles() {
         let focus_map = Arc::new(FocusMap::default());
@@ -1061,7 +1160,6 @@ mod tests {
             tab.insert(handle);
         }
         tab.end_frame();
-        eprintln!("Tab nodes: {:?}", &tab.nodes);
         let sorted = [
             focus_handles[0].clone(),
             focus_handles[5].clone(),
