@@ -243,17 +243,24 @@ struct Onboarding {
 impl Onboarding {
     fn new(workspace: &Workspace, cx: &mut App) -> Entity<Self> {
         let font_family_cache = theme::FontFamilyCache::global(cx);
-        cx.spawn(async move |cx| {
-            font_family_cache.prefetch(cx).await;
-        })
-        .detach();
 
-        cx.new(|cx| Self {
-            workspace: workspace.weak_handle(),
-            focus_handle: cx.focus_handle(),
-            selected_page: SelectedPage::Basics,
-            user_store: workspace.user_store().clone(),
-            _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
+        cx.new(|cx| {
+            cx.spawn(async move |this, cx| {
+                font_family_cache.prefetch(cx).await;
+                this.update(cx, |_, cx| {
+                    cx.notify();
+                })
+            })
+            .detach();
+
+            Self {
+                workspace: workspace.weak_handle(),
+                focus_handle: cx.focus_handle(),
+                selected_page: SelectedPage::Basics,
+                user_store: workspace.user_store().clone(),
+                _settings_subscription: cx
+                    .observe_global::<SettingsStore>(move |_, cx| cx.notify()),
+            }
         })
     }
 
@@ -626,7 +633,6 @@ impl Item for Onboarding {
             user_store: self.user_store.clone(),
             selected_page: self.selected_page,
             focus_handle: cx.focus_handle(),
-            last_frame_time: Instant::now(),
             _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
         }))
     }

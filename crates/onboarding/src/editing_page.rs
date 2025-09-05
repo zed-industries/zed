@@ -449,7 +449,9 @@ impl FontPickerDelegate {
     ) -> Self {
         let font_family_cache = FontFamilyCache::global(cx);
 
-        let fonts = font_family_cache.list_font_families(cx);
+        let fonts = font_family_cache
+            .try_list_font_families()
+            .unwrap_or_else(|| vec![current_font.clone()]);
         let selected_index = fonts
             .iter()
             .position(|font| *font == current_font)

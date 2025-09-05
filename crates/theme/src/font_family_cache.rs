@@ -16,7 +16,7 @@ struct FontFamilyCacheState {
 /// so we do it once and then use the cached values each render.
 #[derive(Default)]
 pub struct FontFamilyCache {
-    state: RwLock<FontFamilyCacheState>,
+    state: Arc<RwLock<FontFamilyCacheState>>,
 }
 
 #[derive(Default)]
@@ -53,6 +53,14 @@ impl FontFamilyCache {
         lock.font_families.clone()
     }
 
+    /// Returns the list of font families if they have been loaded
+    pub fn try_list_font_families(&self) -> Option<Vec<SharedString>> {
+        self.state
+            .try_read()
+            .filter(|state| state.loaded_at.is_some())
+            .map(|state| state.font_families.clone())
+    }
+
     /// Prefetch all font names in the background
     pub async fn prefetch(&self, cx: &gpui::AsyncApp) {
         if self
@@ -67,21 +75,21 @@ impl FontFamilyCache {
             return;
         };
 
-        // We take the lock early to block any synchronous calls to `list_font_families` to this struct until fonts are loaded
-        // this won't affect performance because the struct would have to load the font families anyway
-        let task = cx
-            .background_executor()
+        let state = self.state.clone();
+
+        cx.background_executor()
             .spawn(async move {
-                text_system
+                // We take this lock in the background executor to ensure that synchronous calls to `list_font_families` are blocked while we are prefetching,
+                // while not blocking the main thread and risking deadlocks
+                let mut lock = state.write();
+                let all_font_names = text_system
                     .all_font_names()
                     .into_iter()
                     .map(SharedString::from)
-                    .collect()
+                    .collect();
+                lock.font_families = all_font_names;
+                lock.loaded_at = Some(Instant::now());
             })
             .await;
-
-        let mut lock = self.state.write();
-        lock.font_families = task;
-        lock.loaded_at = Some(Instant::now());
     }
 }
