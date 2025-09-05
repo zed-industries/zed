@@ -4,6 +4,7 @@ use crate::{FocusHandle, FocusId};
 ///
 /// Used to manage the `Tab` event to switch between focus handles.
 pub(crate) struct TabHandles {
+    // todo! remove this and fix reuse_paint logic
     pub handles: Vec<FocusHandle>,
 
     active_group: usize,
@@ -41,32 +42,10 @@ impl TabNode {
         depth: 0,
         kind: TabNodeKind::Group,
     };
-
-    pub fn focus_handle(&self) -> Option<&FocusHandle> {
-        match &self.kind {
-            TabNodeKind::Element { handle } => Some(handle),
-            TabNodeKind::Group => None,
-        }
-    }
-
-    // fn depth(&self, nodes: &[TabNode]) -> usize {
-    //     match self.parent_index() {
-    //         0 if self.tab_index() == 0 => 0,
-    //         0 => 1,
-    //         _ => nodes[self.parent_index()].depth(nodes) + 1,
-    //     }
-    // }
 }
 
-// for (index, item) in vec.enumerate() {
-// if item.depth == current_sort_depth {
-//   sort_buf.push(index);
-// }
-//}
-//sort_buf.sort_by(|a, b| vec[a].index.cmp(&vec[b].index))
-
 impl TabHandles {
-    pub(crate) fn insert(&mut self, focus_handle: &FocusHandle) {
+    pub fn insert(&mut self, focus_handle: &FocusHandle) {
         if !focus_handle.tab_stop {
             return;
         }
@@ -111,15 +90,13 @@ impl TabHandles {
         }
     }
 
-    pub(crate) fn clear(&mut self) {
-        // todo!
+    pub fn clear(&mut self) {
         self.handles.clear();
         self.active_group = 0;
         self.nodes = vec![TabNode::ROOT.clone()];
     }
 
     fn current_index(&self, focused_id: &FocusId) -> Option<usize> {
-        // todo!
         for (index, node) in self.nodes.iter().enumerate() {
             if matches!(&node.kind, TabNodeKind::Element { handle } if &handle.id == focused_id) {
                 return Some(index);
@@ -128,8 +105,7 @@ impl TabHandles {
         return None;
     }
 
-    pub(crate) fn next(&self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {
-        // todo!
+    pub fn next(&self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {
         let cur_idx = focused_id
             .and_then(|focused_id| self.current_index(focused_id))
             .unwrap_or(self.nodes.len());
@@ -150,7 +126,7 @@ impl TabHandles {
         return None;
     }
 
-    pub(crate) fn prev(&self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {
+    pub fn prev(&self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {
         let cur_idx = focused_id
             .and_then(|focused_id| self.current_index(focused_id))
             .unwrap_or(self.nodes.len());
@@ -171,7 +147,7 @@ impl TabHandles {
         return None;
     }
 
-    fn begin_group(&mut self, tab_index: isize) {
+    pub fn begin_group(&mut self, tab_index: isize) {
         let new_node_index = self.nodes.len();
         self.insert_node(TabNode {
             kind: TabNodeKind::Group,
@@ -182,34 +158,8 @@ impl TabHandles {
         self.active_group = new_node_index;
     }
 
-    fn end_group(&mut self) {
+    pub fn end_group(&mut self) {
         self.active_group = self.nodes[self.active_group].parent_index;
-    }
-
-    fn flatten_children(&mut self, mut children: Vec<usize>) {
-        children.sort_by(|&a_idx, &b_idx| {
-            let a = &self.nodes[a_idx];
-            let b = &self.nodes[b_idx];
-            a.tab_index.cmp(&b.tab_index)
-        });
-
-        for _child_index in children {
-            // match &self.nodes[child_index] {
-            //     TabNode::Group { children, .. } => {
-            //         self.flatten_children(children.clone());
-            //     }
-            //     TabNode::Element { handle, .. } => self.handles.push(handle.clone()),
-            // };
-        }
-    }
-
-    pub fn end_frame(&mut self) {
-        // let TabNode::Group { children, .. } = &self.nodes[0] else {
-        //     panic!("wow");
-        // };
-
-        // self.handles.clear();
-        // self.flatten_children(children.clone());
     }
 }
 
@@ -235,8 +185,6 @@ mod tests {
         tab_handles.end_group();
 
         tab_handles.insert(&FocusHandle::new(&focus_map).tab_index(4).tab_stop(true));
-
-        tab_handles.end_frame();
 
         // eprintln!("{:?}", &tab_handles.index_buf);
         eprintln!("{:?}", &tab_handles.handles);
@@ -540,7 +488,6 @@ mod tests {
             }
 
             construct_recursive(node, focus_map, tab_handles, &mut actual_to_handle);
-            tab_handles.end_frame();
             actual_to_handle
         }
 
@@ -1159,7 +1106,6 @@ mod tests {
         for handle in focus_handles.iter() {
             tab.insert(handle);
         }
-        tab.end_frame();
         let sorted = [
             focus_handles[0].clone(),
             focus_handles[5].clone(),

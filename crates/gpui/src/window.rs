@@ -803,7 +803,6 @@ impl Frame {
     }
 
     pub(crate) fn finish(&mut self, prev_frame: &mut Self) {
-        self.tab_handles.end_frame();
         for element_state_key in &self.accessed_element_states {
             if let Some((element_state_key, element_state)) =
                 prev_frame.element_states.remove_entry(element_state_key)
