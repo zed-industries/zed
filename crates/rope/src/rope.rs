@@ -647,7 +647,7 @@ impl<'a> Chunks<'a> {
 
         if offset >= self.chunks.end() {
             self.chunks.seek_forward(&offset, bias);
-        } else {
+        } else if offset <= *self.chunks.start() {
             self.chunks.seek(&offset, bias);
         }
 
