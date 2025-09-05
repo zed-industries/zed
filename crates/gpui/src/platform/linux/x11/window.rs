@@ -1618,7 +1618,7 @@ impl PlatformWindow for X11Window {
         }
     }
 
-    fn update_ime_position(&self, bounds: Bounds<ScaledPixels>) {
+    fn update_ime_position(&self, bounds: Bounds<Pixels>) {
         let mut state = self.0.state.borrow_mut();
         let client = state.client.clone();
         drop(state);

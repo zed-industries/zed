@@ -1480,7 +1480,7 @@ impl PlatformWindow for MacWindow {
         None
     }
 
-    fn update_ime_position(&self, _bounds: Bounds<ScaledPixels>) {
+    fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
         let executor = self.0.lock().executor.clone();
         executor
             .spawn(async move {

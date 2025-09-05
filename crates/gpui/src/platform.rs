@@ -548,7 +548,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn set_client_inset(&self, _inset: Pixels) {}
     fn gpu_specs(&self) -> Option<GpuSpecs>;
 
-    fn update_ime_position(&self, _bounds: Bounds<ScaledPixels>);
+    fn update_ime_position(&self, _bounds: Bounds<Pixels>);
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {

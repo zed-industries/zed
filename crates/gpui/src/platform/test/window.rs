@@ -289,7 +289,7 @@ impl PlatformWindow for TestWindow {
         unimplemented!()
     }
 
-    fn update_ime_position(&self, _bounds: Bounds<ScaledPixels>) {}
+    fn update_ime_position(&self, _bounds: Bounds<Pixels>) {}
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
         None

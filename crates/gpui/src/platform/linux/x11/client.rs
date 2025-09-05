@@ -252,7 +252,7 @@ impl X11ClientStatePtr {
         }
     }
 
-    pub fn update_ime_position(&self, bounds: Bounds<ScaledPixels>) {
+    pub fn update_ime_position(&self, bounds: Bounds<Pixels>) {
         let Some(client) = self.get_client() else {
             return;
         };
