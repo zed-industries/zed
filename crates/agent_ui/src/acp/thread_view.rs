@@ -4070,15 +4070,15 @@ impl AcpThreadView {
                 MentionUri::PastedImage => {}
                 MentionUri::Directory { abs_path } => {
                     let project = workspace.project();
-                    let Some(entry) = project.update(cx, |project, cx| {
+                    let Some(entry_id) = project.update(cx, |project, cx| {
                         let path = project.find_project_path(abs_path, cx)?;
-                        project.entry_for_path(&path, cx)
+                        project.entry_for_path(&path, cx).map(|entry| entry.id)
                     }) else {
                         return;
                     };
 
                     project.update(cx, |_, cx| {
-                        cx.emit(project::Event::RevealInProjectPanel(entry.id));
+                        cx.emit(project::Event::RevealInProjectPanel(entry_id));
                     });
                 }
                 MentionUri::Symbol {
@@ -4091,11 +4091,9 @@ impl AcpThreadView {
                     line_range,
                 } => {
                     let project = workspace.project();
-                    let Some((path, _)) = project.update(cx, |project, cx| {
-                        let path = project.find_project_path(path, cx)?;
-                        let entry = project.entry_for_path(&path, cx)?;
-                        Some((path, entry))
-                    }) else {
+                    let Some(path) =
+                        project.update(cx, |project, cx| project.find_project_path(path, cx))
+                    else {
                         return;
                     };
 
