@@ -694,11 +694,24 @@ impl Fs for RealFs {
         }
         let file = smol::fs::File::create(path).await?;
         let mut writer = smol::io::BufWriter::with_capacity(buffer_size, file);
+
+        // BOM for UTF-16 is written at the start of the file here because
+        // if BOM is written in the `encode` function of `fs::encodings`, it would be written
+        // for every chunk, resulting in multiple BOMs in the file.
+        if encoding.get_encoding() == encoding_rs::UTF_16BE {
+            // Write BOM for UTF-16BE
+            writer.write_all(&[0xFE, 0xFF]).await?;
+        } else if encoding.get_encoding() == encoding_rs::UTF_16LE {
+            // Write BOM for UTF-16LE
+            writer.write_all(&[0xFF, 0xFE]).await?;
+        }
+
         for chunk in chunks(text, line_ending) {
             writer
                 .write_all(&from_utf8(chunk.to_string(), encoding.clone()).await?)
-                .await?;
+                .await?
         }
+
         writer.flush().await?;
         Ok(())
     }
