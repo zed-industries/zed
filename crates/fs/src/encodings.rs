@@ -38,8 +38,13 @@ impl EncodingWrapper {
         EncodingWrapper(encoding)
     }
 
+    pub fn get_encoding(&self) -> &'static Encoding {
+        self.0
+    }
+
     pub async fn decode(&self, input: Vec<u8>) -> Result<String> {
         let (cow, _had_errors) = self.0.decode_with_bom_removal(&input);
+
         // `encoding_rs` handles invalid bytes by replacing them with replacement characters
         // in the output string, so we return the result even if there were errors.
         // This preserves the original behaviour where files with invalid bytes could still be opened.
@@ -48,30 +53,27 @@ impl EncodingWrapper {
 
     pub async fn encode(&self, input: String) -> Result<Vec<u8>> {
         if self.0 == encoding_rs::UTF_16BE {
-            let mut data: Vec<u8> = vec![];
-            let utf = input.encode_utf16().collect::<Vec<u16>>();
+            let mut data = Vec::<u8>::new();
+            data.reserve(input.len() * 2); // Reserve space for UTF-16BE bytes
 
-            for i in utf {
-                let byte = i.to_be_bytes();
-                for b in byte {
-                    data.push(b);
-                }
-            }
+            // Convert the input string to UTF-16BE bytes
+            let utf16be_bytes: Vec<u8> =
+                input.encode_utf16().flat_map(|u| u.to_be_bytes()).collect();
+
+            data.extend(utf16be_bytes);
             return Ok(data);
         } else if self.0 == encoding_rs::UTF_16LE {
-            let mut data: Vec<u8> = vec![];
-            let utf = input.encode_utf16().collect::<Vec<u16>>();
+            let mut data = Vec::<u8>::new();
+            data.reserve(input.len() * 2); // Reserve space for UTF-16LE bytes
 
-            for i in utf {
-                let byte = i.to_le_bytes();
-                for b in byte {
-                    data.push(b);
-                }
-            }
+            // Convert the input string to UTF-16LE bytes
+            let utf16le_bytes: Vec<u8> =
+                input.encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+
+            data.extend(utf16le_bytes);
             return Ok(data);
         } else {
             let (cow, _encoding_used, _had_errors) = self.0.encode(&input);
-            println!("Encoding: {:?}", self);
             // `encoding_rs` handles unencodable characters by replacing them with
             // appropriate substitutes in the output, so we return the result even if there were errors.
             // This maintains consistency with the decode behaviour.
