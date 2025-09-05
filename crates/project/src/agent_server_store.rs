@@ -167,6 +167,7 @@ impl AgentServerStore {
                             .transpose()?,
                         None,
                         None,
+                        Path::new(&envelope.payload.root_dir).into(),
                         cx,
                     ),
                 )
@@ -184,6 +185,7 @@ impl AgentServerStore {
         minimum_version: Option<semver::Version>,
         status_tx: Option<watch::Sender<SharedString>>,
         new_version_available: Option<watch::Sender<Option<String>>>,
+        root_dir: Arc<Path>,
         cx: &mut App,
     ) -> Task<Result<AgentServerCommand>> {
         match &self.state {
@@ -206,7 +208,17 @@ impl AgentServerStore {
                 let project_environment = project_environment.clone();
 
                 cx.spawn(async move |cx| {
-                    if let Some(command) = custom_command {
+                    let mut env = project_environment
+                        .update(cx, |project_environment, cx| {
+                            project_environment.get_directory_environment(root_dir, cx)
+                        })?
+                        .await
+                        .unwrap_or_default();
+
+                    if let Some(mut command) = custom_command {
+                        // Environment variables specified by the user's settings override the directory environment.
+                        env.extend(command.env.unwrap_or_default());
+                        command.env = Some(env);
                         return Ok(command);
                     } else if !ignore_system_version {
                         if let Some(bin) = find_bin_in_path(
@@ -220,7 +232,7 @@ impl AgentServerStore {
                             return Ok(AgentServerCommand {
                                 path: bin,
                                 args: Vec::new(),
-                                env: Default::default(),
+                                env: Some(env),
                             });
                         }
                     }
@@ -342,7 +354,7 @@ impl AgentServerStore {
                         anyhow::Ok(AgentServerCommand {
                             path: node_path,
                             args: vec![agent_server_path.to_string_lossy().to_string()],
-                            env: Default::default(),
+                            env: Some(env),
                         })
                     })
                     .await
@@ -361,6 +373,7 @@ impl AgentServerStore {
                     entrypoint_path: entrypoint_path.to_proto(),
                     settings_key: settings_key.to_string(),
                     minimum_version: minimum_version.map(|version| version.to_string()),
+                    root_dir: root_dir.to_proto(),
                 });
                 cx.spawn(async move |_| {
                     let command = command.await?;

@@ -172,6 +172,7 @@ message GetAgentServerCommand {
     string entrypoint_path = 4;
     string settings_key = 5;
     optional string minimum_version = 6;
+    string root_dir = 7;
 }
 
 message AgentServerCommand {
