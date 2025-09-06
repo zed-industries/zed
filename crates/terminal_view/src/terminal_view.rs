@@ -326,12 +326,12 @@ impl TerminalView {
     pub(crate) fn set_marked_text(
         &mut self,
         text: String,
-        range: Range<usize>,
+        range: Option<Range<usize>>,
         cx: &mut Context<Self>,
     ) {
         self.ime_state = Some(ImeState {
             marked_text: text,
-            marked_range_utf16: Some(range),
+            marked_range_utf16: range,
         });
         cx.notify();
     }

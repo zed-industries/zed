@@ -1421,11 +1421,9 @@ impl InputHandler for TerminalInputHandler {
         _window: &mut Window,
         cx: &mut App,
     ) {
-        if let Some(range) = new_marked_range {
-            self.terminal_view.update(cx, |view, view_cx| {
-                view.set_marked_text(new_text.to_string(), range, view_cx);
-            });
-        }
+        self.terminal_view.update(cx, |view, view_cx| {
+            view.set_marked_text(new_text.to_string(), new_marked_range, view_cx);
+        });
     }
 
     fn unmark_text(&mut self, _window: &mut Window, cx: &mut App) {
