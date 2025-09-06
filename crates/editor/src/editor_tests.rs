@@ -1709,6 +1709,66 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_end_of_line(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("asdf", cx);
+        build_editor(buffer, window, cx)
+    });
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.set_clip_at_line_ends(true, cx);
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0)
+            ]);
+        });
+    });
+
+    _ = editor.update(cx, |editor, _, cx| {
+        let display_map = editor.display_map.read(cx);
+        println!("clip_at_line_ends: {}", display_map.clip_at_line_ends);
+    });
+
+    // Select to the end of the line.
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.select_to_end_of_line(
+            &SelectToEndOfLine {
+                stop_at_soft_wraps: true,
+            },
+            window,
+            cx,
+        );
+        println!("display ranges: {:?}", editor.selections.display_ranges(cx));
+        let (_, b) = editor.selections.all_adjusted_display(cx);
+
+        println!("display ranges adjusted: {:?}", b);
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            &[DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 4)]
+        );
+    });
+
+    // Selecting to end of line again should be noop.
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.select_to_end_of_line(
+            &SelectToEndOfLine {
+                stop_at_soft_wraps: true,
+            },
+            window,
+            cx,
+        );
+        println!("display ranges: {:?}", editor.selections.display_ranges(cx));
+        let (_, b) = editor.selections.all_adjusted_display(cx);
+        println!("display ranges adjusted: {:?}", b);
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            &[DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 4)]
+        );
+    });
+}
+
+#[gpui::test]
 fn test_beginning_end_of_line_ignore_soft_wrap(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let move_to_beg = MoveToBeginningOfLine {

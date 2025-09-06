@@ -13418,17 +13418,14 @@ impl Editor {
 
     pub fn select_to_end_of_line(
         &mut self,
-        action: &SelectToEndOfLine,
+        _: &SelectToEndOfLine,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(|map, head, _| {
-                (
-                    movement::line_end(map, head, action.stop_at_soft_wraps),
-                    SelectionGoal::None,
-                )
+                (movement::line_end(map, head, false), SelectionGoal::None)
             });
         })
     }
@@ -13441,13 +13438,7 @@ impl Editor {
     ) {
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         self.transact(window, cx, |this, window, cx| {
-            this.select_to_end_of_line(
-                &SelectToEndOfLine {
-                    stop_at_soft_wraps: false,
-                },
-                window,
-                cx,
-            );
+            this.select_to_end_of_line(&Default::default(), window, cx);
             this.delete(&Delete, window, cx);
         });
     }
@@ -13460,13 +13451,7 @@ impl Editor {
     ) {
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         self.transact(window, cx, |this, window, cx| {
-            this.select_to_end_of_line(
-                &SelectToEndOfLine {
-                    stop_at_soft_wraps: false,
-                },
-                window,
-                cx,
-            );
+            this.select_to_end_of_line(&Default::default(), window, cx);
             this.cut(&Cut, window, cx);
         });
     }
