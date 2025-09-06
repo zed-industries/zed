@@ -19,6 +19,8 @@ This configuration is merged with any local configuration inside your projects. 
 
 Although most projects will only need one settings file at the root, you can add more local settings files for subdirectories as needed. Not all settings can be set in local files, just those that impact the behavior of the editor and language tooling. For example you can set `tab_size`, `formatter` etc. but not `theme`, `vim_mode` and similar.
 
+You also add an additional local settings in `.zed/settings.local.json` to override settings in the corresponding `.zed/settings.json`. This is useful when you would like the ability to track some settings in version control so they can be shared among people, while ignoring others so that individual can provide their own settings. You can configure the version control system for you project (e.g. git) to ignore `.zed/settings.local.json` but not `.zed/settings.json`.
+
 The syntax for configuration files is a super-set of JSON that allows `//` comments.
 
 ## Default settings

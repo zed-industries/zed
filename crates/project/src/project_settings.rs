@@ -7,7 +7,8 @@ use futures::StreamExt as _;
 use gpui::{App, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Subscription, Task};
 use lsp::LanguageServerName;
 use paths::{
-    EDITORCONFIG_NAME, local_debug_file_relative_path, local_settings_file_relative_path,
+    EDITORCONFIG_NAME, additional_local_settings_file_relative_path,
+    local_debug_file_relative_path, local_settings_file_relative_path,
     local_tasks_file_relative_path, local_vscode_launch_file_relative_path,
     local_vscode_tasks_file_relative_path, task_file_name,
 };
@@ -879,6 +880,17 @@ impl SettingsObserver {
                 let settings_dir = Arc::<Path>::from(
                     path.ancestors()
                         .nth(local_settings_file_relative_path().components().count())
+                        .unwrap(),
+                );
+                (settings_dir, LocalSettingsKind::Settings)
+            } else if path.ends_with(additional_local_settings_file_relative_path()) {
+                let settings_dir = Arc::<Path>::from(
+                    path.ancestors()
+                        .nth(
+                            additional_local_settings_file_relative_path()
+                                .components()
+                                .count(),
+                        )
                         .unwrap(),
                 );
                 (settings_dir, LocalSettingsKind::Settings)

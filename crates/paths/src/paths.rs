@@ -412,6 +412,11 @@ pub fn local_settings_file_relative_path() -> &'static Path {
     Path::new(".zed/settings.json")
 }
 
+/// Returns the relative path to a `settings.local.json` file within a project.
+pub fn additional_local_settings_file_relative_path() -> &'static Path {
+    Path::new(".zed/settings.local.json")
+}
+
 /// Returns the relative path to a `tasks.json` file within a project.
 pub fn local_tasks_file_relative_path() -> &'static Path {
     Path::new(".zed/tasks.json")
