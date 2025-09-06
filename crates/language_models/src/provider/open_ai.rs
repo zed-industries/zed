@@ -56,13 +56,13 @@ pub struct OpenAiLanguageModelProvider {
 pub struct State {
     api_key: Option<String>,
     api_key_from_env: bool,
+    last_api_url: String,
     _subscription: Subscription,
 }
 
 const OPENAI_API_KEY_VAR: &str = "OPENAI_API_KEY";
 
 impl State {
-    //
     fn is_authenticated(&self) -> bool {
         self.api_key.is_some()
     }
@@ -104,11 +104,7 @@ impl State {
         })
     }
 
-    fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
-        if self.is_authenticated() {
-            return Task::ready(Ok(()));
-        }
-
+    fn get_api_key(&self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
         let api_url = AllLanguageModelSettings::get_global(cx)
             .openai
@@ -136,14 +132,52 @@ impl State {
             Ok(())
         })
     }
+
+    fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+        if self.is_authenticated() {
+            return Task::ready(Ok(()));
+        }
+
+        self.get_api_key(cx)
+    }
 }
 
 impl OpenAiLanguageModelProvider {
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
+        let initial_api_url = AllLanguageModelSettings::get_global(cx)
+            .openai
+            .api_url
+            .clone();
+
         let state = cx.new(|cx| State {
             api_key: None,
             api_key_from_env: false,
-            _subscription: cx.observe_global::<SettingsStore>(|_this: &mut State, cx| {
+            last_api_url: initial_api_url.clone(),
+            _subscription: cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
+                let current_api_url = AllLanguageModelSettings::get_global(cx)
+                    .openai
+                    .api_url
+                    .clone();
+
+                if this.last_api_url != current_api_url {
+                    this.last_api_url = current_api_url;
+                    if !this.api_key_from_env {
+                        this.api_key = None;
+                        let spawn_task = cx.spawn(async move |handle, cx| {
+                            if let Ok(task) = handle.update(cx, |this, cx| this.get_api_key(cx)) {
+                                if let Err(_) = task.await {
+                                    handle
+                                        .update(cx, |this, _| {
+                                            this.api_key = None;
+                                            this.api_key_from_env = false;
+                                        })
+                                        .ok();
+                                }
+                            }
+                        });
+                        spawn_task.detach();
+                    }
+                }
                 cx.notify();
             }),
         });

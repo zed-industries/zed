@@ -113,11 +113,7 @@ impl State {
         })
     }
 
-    fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
-        if self.is_authenticated() {
-            return Task::ready(Ok(()));
-        }
-
+    fn get_api_key(&self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
         let env_var_name = self.env_var_name.clone();
         let api_url = self.settings.api_url.clone();
@@ -143,6 +139,14 @@ impl State {
             Ok(())
         })
     }
+
+    fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+        if self.is_authenticated() {
+            return Task::ready(Ok(()));
+        }
+
+        self.get_api_key(cx)
+    }
 }
 
 impl OpenAiCompatibleLanguageModelProvider {
@@ -160,11 +164,27 @@ impl OpenAiCompatibleLanguageModelProvider {
             api_key: None,
             api_key_from_env: false,
             _subscription: cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
-                let Some(settings) = resolve_settings(&this.id, cx) else {
+                let Some(settings) = resolve_settings(&this.id, cx).cloned() else {
                     return;
                 };
-                if &this.settings != settings {
-                    this.settings = settings.clone();
+                if &this.settings != &settings {
+                    if settings.api_url != this.settings.api_url && !this.api_key_from_env {
+                        let spawn_task = cx.spawn(async move |handle, cx| {
+                            if let Ok(task) = handle.update(cx, |this, cx| this.get_api_key(cx)) {
+                                if let Err(_) = task.await {
+                                    handle
+                                        .update(cx, |this, _| {
+                                            this.api_key = None;
+                                            this.api_key_from_env = false;
+                                        })
+                                        .ok();
+                                }
+                            }
+                        });
+                        spawn_task.detach();
+                    }
+
+                    this.settings = settings;
                     cx.notify();
                 }
             }),
