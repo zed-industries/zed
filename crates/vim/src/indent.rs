@@ -5,6 +5,8 @@ use editor::{Bias, Editor, display_map::ToDisplayPoint};
 use gpui::actions;
 use gpui::{Context, Window};
 use language::SelectionGoal;
+use settings::Settings;
+use vim_mode_setting::HelixModeSetting;
 
 #[derive(PartialEq, Eq)]
 pub(crate) enum IndentDirection {
@@ -37,7 +39,9 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 for _ in 0..count {
                     editor.indent(&Default::default(), window, cx);
                 }
-                vim.restore_selection_cursors(editor, window, cx, original_positions);
+                if !HelixModeSetting::get_global(cx).0 {
+                    vim.restore_selection_cursors(editor, window, cx, original_positions);
+                }
             });
         });
         if vim.mode.is_visual() {
@@ -56,7 +60,9 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 for _ in 0..count {
                     editor.outdent(&Default::default(), window, cx);
                 }
-                vim.restore_selection_cursors(editor, window, cx, original_positions);
+                if !HelixModeSetting::get_global(cx).0 {
+                    vim.restore_selection_cursors(editor, window, cx, original_positions);
+                }
             });
         });
         if vim.mode.is_visual() {
