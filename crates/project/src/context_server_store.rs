@@ -349,11 +349,11 @@ impl ContextServerStore {
 
         let server = state.server();
         let configuration = state.configuration();
-        let mut result = Ok(());
+        let result = Ok(());
         if let ContextServerState::Running { server, .. } = &state {
             // Spawn async stop task - we can't await here since this method is sync
             let server_clone = server.clone();
-            cx.spawn(async move |_| {
+            cx.spawn(async move |_this, _cx| {
                 if let Err(e) = server_clone.stop().await {
                     log::error!("Failed to stop context server: {}", e);
                 }

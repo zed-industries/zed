@@ -195,7 +195,7 @@ impl ContextServer {
         let server_info = service.peer_info();
         log::debug!("context server {} initialized: {:?}", self.id, server_info);
 
-        *self.service.write() = Some(service);
+        *self.service.write() = Some(Arc::new(service));
         Ok(())
     }
 
@@ -301,11 +301,7 @@ impl ContextServer {
         #[cfg(feature = "rmcp")]
         {
             let mut service = self.service.write();
-            if let Some(service) = service.take() {
-                if let Err(e) = service.cancel().await {
-                    log::warn!("Error canceling context server {}: {}", self.id, e);
-                }
-            }
+            service.take();  // Just drop it, no explicit cancel needed
         }
         Ok(())
     }
