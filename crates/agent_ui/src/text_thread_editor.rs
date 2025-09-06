@@ -2005,6 +2005,7 @@ impl TextThreadEditor {
                         context.set_completion_mode(match active_completion_mode {
                             CompletionMode::Burn => CompletionMode::Normal,
                             CompletionMode::Normal => CompletionMode::Burn,
+                            _ => CompletionMode::Burn,
                         });
                     });
                 }))

@@ -291,6 +291,7 @@ pub struct AcpThreadView {
     new_server_version_available: Option<SharedString>,
     _cancel_task: Option<Task<()>>,
     _subscriptions: [Subscription; 4],
+    completion_mode: CompletionMode,
 }
 
 enum ThreadState {
@@ -419,6 +420,7 @@ impl AcpThreadView {
             _cancel_task: None,
             focus_handle: cx.focus_handle(),
             new_server_version_available: None,
+            completion_mode: CompletionMode::Normal,
         }
     }
 
@@ -3764,6 +3766,7 @@ impl AcpThreadView {
                     .child(
                         h_flex()
                             .child(self.render_follow_toggle(cx))
+                            .children(self.render_mode_indicator(cx))
                             .children(self.render_burn_mode_toggle(cx)),
                     )
                     .child(
@@ -3857,6 +3860,7 @@ impl AcpThreadView {
                 match current_mode {
                     CompletionMode::Burn => CompletionMode::Normal,
                     CompletionMode::Normal => CompletionMode::Burn,
+                    CompletionMode::AcceptEdits => CompletionMode::Burn,
                 },
                 cx,
             );
@@ -3879,6 +3883,87 @@ impl AcpThreadView {
         action_log
             .update(cx, |action_log, cx| action_log.reject_all_edits(cx))
             .detach();
+    }
+
+    fn toggle_accept_edits_mode(
+        &mut self,
+        _: &crate::ToggleAcceptEditsMode,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(thread) = self.as_native_thread(cx) else {
+            return;
+        };
+        thread.update(cx, |thread, cx| {
+            let current_mode = thread.completion_mode();
+            thread.set_completion_mode(
+                match current_mode {
+                    CompletionMode::AcceptEdits => CompletionMode::Normal,
+                    _ => CompletionMode::AcceptEdits,
+                },
+                cx,
+            );
+        });
+    }
+
+    fn toggle_plan_mode(
+        &mut self,
+        _: &crate::TogglePlanMode,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        // Not supported in ACP threads
+    }
+
+    fn cycle_completion_mode(
+        &mut self,
+        _: &crate::CycleCompletionMode,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.completion_mode = match self.completion_mode {
+            CompletionMode::Normal => CompletionMode::AcceptEdits,
+            CompletionMode::AcceptEdits => CompletionMode::Normal,
+            CompletionMode::Burn => CompletionMode::Normal,
+        };
+
+        if let Some(thread) = self.thread() {
+            thread.update(cx, |thread, cx| {
+                thread.set_completion_mode(self.completion_mode, cx);
+            });
+        }
+
+        cx.notify();
+    }
+
+    fn render_mode_indicator(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let (label, color) = match self.completion_mode {
+            CompletionMode::Normal => ("Normal", Color::Muted),
+            CompletionMode::AcceptEdits => ("Auto-Accept", Color::Success),
+            CompletionMode::Burn => ("Normal", Color::Muted),
+        };
+
+        Some(
+            div()
+                .px_1()
+                .py_0p5()
+                .rounded_md()
+                .bg(color.color(cx).opacity(0.15))
+                .cursor(CursorStyle::PointingHand)
+                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
+                    this.cycle_completion_mode(
+                        &crate::CycleCompletionMode,
+                        window,
+                        cx,
+                    );
+                }))
+                .child(
+                    Label::new(label)
+                        .size(LabelSize::XSmall)
+                        .color(color)
+                )
+                .into_any_element()
+        )
     }
 
     fn render_burn_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -5197,6 +5282,9 @@ impl Render for AcpThreadView {
             .key_context("AcpThread")
             .on_action(cx.listener(Self::open_agent_diff))
             .on_action(cx.listener(Self::toggle_burn_mode))
+            .on_action(cx.listener(Self::toggle_accept_edits_mode))
+            .on_action(cx.listener(Self::toggle_plan_mode))
+            .on_action(cx.listener(Self::cycle_completion_mode))
             .on_action(cx.listener(Self::keep_all))
             .on_action(cx.listener(Self::reject_all))
             .track_focus(&self.focus_handle)

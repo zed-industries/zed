@@ -126,6 +126,12 @@ actions!(
         ContinueWithBurnMode,
         /// Toggles burn mode for faster responses.
         ToggleBurnMode,
+        /// Toggles accept edits mode (automatically accepts edits).
+        ToggleAcceptEditsMode,
+        /// Toggles plan mode (shows plan before executing).
+        TogglePlanMode,
+        /// Cycles between different completion modes.
+        CycleCompletionMode,
     ]
 );
 

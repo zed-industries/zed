@@ -1341,7 +1341,7 @@ impl Thread {
         error: LanguageModelCompletionError,
         attempt: u8,
     ) -> Result<acp_thread::RetryStatus> {
-        if self.completion_mode == CompletionMode::Normal {
+        if self.completion_mode != CompletionMode::Burn {
             return Err(anyhow!(error));
         }
 
