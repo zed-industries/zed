@@ -1094,7 +1094,7 @@ impl AgentPanel {
         let workspace = self.workspace.clone();
         let project = self.project.clone();
         let fs = self.fs.clone();
-        let is_not_local = !self.project.read(cx).is_local();
+        let is_via_collab = self.project.read(cx).is_via_collab();
 
         const LAST_USED_EXTERNAL_AGENT_KEY: &str = "agent_panel__last_used_external_agent";
 
@@ -1126,7 +1126,7 @@ impl AgentPanel {
                     agent
                 }
                 None => {
-                    if is_not_local {
+                    if is_via_collab {
                         ExternalAgent::NativeAgent
                     } else {
                         cx.background_spawn(async move {
@@ -2537,8 +2537,10 @@ impl AgentPanel {
             .with_handle(self.new_thread_menu_handle.clone())
             .menu({
                 let workspace = self.workspace.clone();
-                let is_not_local = workspace
-                    .update(cx, |workspace, cx| !workspace.project().read(cx).is_local())
+                let is_via_collab = workspace
+                    .update(cx, |workspace, cx| {
+                        workspace.project().read(cx).is_via_collab()
+                    })
                     .unwrap_or_default();
 
                 move |window, cx| {
@@ -2630,7 +2632,7 @@ impl AgentPanel {
                                     ContextMenuEntry::new("New Gemini CLI Thread")
                                         .icon(IconName::AiGemini)
                                         .icon_color(Color::Muted)
-                                        .disabled(is_not_local)
+                                        .disabled(is_via_collab)
                                         .handler({
                                             let workspace = workspace.clone();
                                             move |window, cx| {
@@ -2657,7 +2659,7 @@ impl AgentPanel {
                                 menu.item(
                                     ContextMenuEntry::new("New Claude Code Thread")
                                         .icon(IconName::AiClaude)
-                                        .disabled(is_not_local)
+                                        .disabled(is_via_collab)
                                         .icon_color(Color::Muted)
                                         .handler({
                                             let workspace = workspace.clone();
@@ -2689,7 +2691,7 @@ impl AgentPanel {
                                         ContextMenuEntry::new(format!("New {} Thread", agent_name))
                                             .icon(IconName::Terminal)
                                             .icon_color(Color::Muted)
-                                            .disabled(is_not_local)
+                                            .disabled(is_via_collab)
                                             .handler({
                                                 let workspace = workspace.clone();
                                                 let agent_name = agent_name.clone();

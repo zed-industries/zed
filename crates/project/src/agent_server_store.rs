@@ -106,6 +106,7 @@ enum AgentServerStoreState {
         fs: Arc<dyn Fs>,
         project_environment: Entity<ProjectEnvironment>,
         downstream_client: Option<(u64, AnyProtoClient)>,
+        settings: Option<AllAgentServersSettings>,
         _subscriptions: [Subscription; 1],
     },
     Remote {
@@ -139,8 +140,9 @@ impl AgentServerStore {
             fs,
             project_environment,
             downstream_client,
+            settings: old_settings,
             _subscriptions: _,
-        } = &self.state
+        } = &mut self.state
         else {
             debug_panic!(
                 "should not be subscribed to agent server settings changes in non-local project"
@@ -148,8 +150,13 @@ impl AgentServerStore {
             return;
         };
 
-        cx.read_global(|settings: &SettingsStore, _| {
-            let settings = settings.get::<AllAgentServersSettings>(None);
+        let changed = cx.read_global(|settings: &SettingsStore, _| {
+            let new_settings = settings.get::<AllAgentServersSettings>(None);
+
+            if Some(new_settings) == old_settings.as_ref() {
+                return false;
+            }
+
             self.external_agents.clear();
             self.external_agents.insert(
                 gemini(),
@@ -157,11 +164,11 @@ impl AgentServerStore {
                     fs: fs.clone(),
                     node_runtime: node_runtime.clone(),
                     project_environment: project_environment.clone(),
-                    custom_command: settings
+                    custom_command: new_settings
                         .gemini
                         .clone()
                         .and_then(|settings| settings.custom_command()),
-                    ignore_system_version: settings
+                    ignore_system_version: new_settings
                         .gemini
                         .as_ref()
                         .and_then(|settings| settings.ignore_system_version)
@@ -172,7 +179,7 @@ impl AgentServerStore {
             // FIXME claude
 
             self.external_agents
-                .extend(settings.custom.iter().map(|(name, settings)| {
+                .extend(new_settings.custom.iter().map(|(name, settings)| {
                     (
                         ExternalAgentServerName(name.clone()),
                         Rc::new(LocalCustomAgent {
@@ -181,7 +188,14 @@ impl AgentServerStore {
                         }) as Rc<dyn ExternalAgentServer>,
                     )
                 }));
+
+            *old_settings = Some(new_settings.clone());
+            true
         });
+
+        if !changed {
+            return;
+        }
 
         if let Some((project_id, downstream_client)) = downstream_client {
             downstream_client
@@ -213,6 +227,7 @@ impl AgentServerStore {
                 fs,
                 project_environment,
                 downstream_client: None,
+                settings: None,
                 _subscriptions: [subscription],
             },
             external_agents: Default::default(),
@@ -712,7 +727,9 @@ pub fn claude_code() -> ExternalAgentServerName {
 
 // FIXME claude
 
-#[derive(Default, Deserialize, Serialize, Clone, JsonSchema, Debug, SettingsUi, SettingsKey)]
+#[derive(
+    Default, Deserialize, Serialize, Clone, JsonSchema, Debug, SettingsUi, SettingsKey, PartialEq,
+)]
 #[settings_key(key = "agent_servers")]
 pub struct AllAgentServersSettings {
     pub gemini: Option<BuiltinAgentServerSettings>,

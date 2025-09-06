@@ -1421,6 +1421,7 @@ impl Project {
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.dap_store);
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.settings_observer);
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.git_store);
+            remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.agent_server_store);
 
             remote_proto.add_entity_message_handler(Self::handle_create_buffer_for_peer);
             remote_proto.add_entity_message_handler(Self::handle_update_worktree);
@@ -1436,6 +1437,7 @@ impl Project {
             ToolchainStore::init(&remote_proto);
             DapStore::init(&remote_proto, cx);
             GitStore::init(&remote_proto);
+            AgentServerStore::init_remote(&remote_proto);
 
             this
         })

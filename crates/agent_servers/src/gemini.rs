@@ -43,7 +43,7 @@ impl AgentServer for Gemini {
         };
         let name = self.name();
         let root_dir = root_dir.map(|root_dir| root_dir.to_string_lossy().to_string());
-        let is_remote = todo!();
+        let is_remote = delegate.project.read(cx).is_via_remote_server();
 
         cx.spawn(async move |cx| {
             let mut extra_env = HashMap::default();
