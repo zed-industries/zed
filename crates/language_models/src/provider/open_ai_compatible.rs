@@ -168,7 +168,7 @@ impl OpenAiCompatibleLanguageModelProvider {
                     return;
                 };
                 if &this.settings != &settings {
-                    if settings.api_url != this.settings.api_url {
+                    if settings.api_url != this.settings.api_url && !this.api_key_from_env {
                         let spawn_task = cx.spawn(async move |handle, cx| {
                             if let Ok(task) = handle.update(cx, |this, cx| this.get_api_key(cx)) {
                                 if let Err(_) = task.await {
