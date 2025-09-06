@@ -9530,12 +9530,48 @@ async fn test_find_project_path_abs(
 }
 
 #[gpui::test]
+async fn test_additional_local_settings_standalone(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+
+    // Test just settings.local.json by itself
+    fs.insert_tree(
+        "/dir",
+        json!({
+            ".zed": {
+                "settings.local.json": r#"{ "tab_size": 2 }"#
+            },
+            "file.txt": "content"
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let worktree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+
+    cx.executor().run_until_parked();
+
+    cx.read(|cx| {
+        let tree = worktree.read(cx);
+        let file_root = File::for_entry(
+            tree.entry_for_path("file.txt").unwrap().clone(),
+            worktree.clone(),
+        ) as _;
+        let settings_root = language_settings(None, Some(&file_root), cx);
+
+        // Should be 2 from settings.local.json (default would be 4)
+        assert_eq!(settings_root.tab_size.get(), 2);
+    });
+}
+
+#[gpui::test]
 async fn test_local_settings_with_override_from_additional_local_settings(
     cx: &mut gpui::TestAppContext,
 ) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
 
     // Create a project with both settings.json and settings.local.json
     fs.insert_tree(
@@ -9572,11 +9608,6 @@ async fn test_local_settings_with_override_from_additional_local_settings(
     let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
     let worktree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
 
-    // Wait for the settings to be loaded
-    cx.executor().run_until_parked();
-
-    // Give more time for async operations
-    std::thread::sleep(std::time::Duration::from_millis(100));
     cx.executor().run_until_parked();
 
     // Test root directory settings - local should override base
@@ -9615,43 +9646,5 @@ async fn test_local_settings_with_override_from_additional_local_settings(
 
         // remove_trailing_whitespace_on_save should be true from base (not overridden in local)
         assert_eq!(settings_src.remove_trailing_whitespace_on_save, true);
-    });
-}
-
-#[gpui::test]
-async fn test_additional_local_settings_standalone(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.executor().clone());
-
-    // Test just settings.local.json by itself
-    fs.insert_tree(
-        "/dir",
-        json!({
-            ".zed": {
-                "settings.local.json": r#"{ "tab_size": 2 }"#
-            },
-            "file.txt": "content"
-        }),
-    )
-    .await;
-
-    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-    let worktree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
-
-    cx.executor().run_until_parked();
-    std::thread::sleep(std::time::Duration::from_millis(100));
-    cx.executor().run_until_parked();
-
-    cx.read(|cx| {
-        let tree = worktree.read(cx);
-        let file_root = File::for_entry(
-            tree.entry_for_path("file.txt").unwrap().clone(),
-            worktree.clone(),
-        ) as _;
-        let settings_root = language_settings(None, Some(&file_root), cx);
-
-        // Should be 2 from settings.local.json (default would be 4)
-        assert_eq!(settings_root.tab_size.get(), 2);
     });
 }
