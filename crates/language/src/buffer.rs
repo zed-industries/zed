@@ -1364,7 +1364,7 @@ impl Buffer {
             let Some((new_mtime, new_text)) = this.update(cx, |this, cx| {
                 let file = this.file.as_ref()?.as_local()?;
                 Some((file.disk_state().mtime(), {
-                    file.load_with_encoding(cx, &*encoding.lock().unwrap(), force, encoding.clone())
+                    file.load_with_encoding(cx, &encoding.lock().unwrap(), force, encoding.clone())
                 }))
             })?
             else {

@@ -633,7 +633,7 @@ impl Fs for RealFs {
         let path = path.to_path_buf();
         let encoding = EncodingWrapper::new(encoding_rs::UTF_8);
         let text = smol::unblock(async || {
-            Ok(encodings::to_utf8(std::fs::read(path)?, encoding, false, None).await?)
+            encodings::to_utf8(std::fs::read(path)?, encoding, false, None).await
         })
         .await
         .await;

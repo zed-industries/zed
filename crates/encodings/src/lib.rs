@@ -1,5 +1,6 @@
 //! A crate for handling file encodings in the text editor.
 
+use crate::selectors::encoding::Action;
 use editor::{Editor, EditorSettings};
 use encoding_rs::Encoding;
 use gpui::{ClickEvent, Entity, Subscription, WeakEntity};
@@ -9,6 +10,7 @@ use ui::{Button, ButtonCommon, Context, LabelSize, Render, Tooltip, Window, div}
 use ui::{Clickable, ParentElement};
 use workspace::{ItemHandle, StatusItemView, Workspace};
 
+use crate::selectors::encoding::EncodingSelector;
 use crate::selectors::save_or_reopen::EncodingSaveOrReopenSelector;
 
 /// A status bar item that shows the current file encoding and allows changing it.
@@ -22,7 +24,12 @@ pub struct EncodingIndicator {
     /// Subscription to observe changes in the `encoding` field of the `Buffer` struct
     observe_buffer_encoding: Option<Subscription>,
 
-    show: bool, // Whether to show the indicator or not, based on whether an editor is active
+    /// Whether to show the indicator or not, based on whether an editor is active
+    show: bool,
+
+    /// Whether to show `EncodingSaveOrReopenSelector`. It will be shown only when
+    /// the current buffer is associated with a file.
+    show_save_or_reopen_selector: bool,
 }
 
 pub mod selectors;
@@ -30,6 +37,7 @@ pub mod selectors;
 impl Render for EncodingIndicator {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         let status_element = div();
+        let show_save_or_reopen_selector = self.show_save_or_reopen_selector;
 
         if (!EditorSettings::get_global(cx).status_bar.encoding_indicator) || !self.show {
             return status_element;
@@ -42,12 +50,38 @@ impl Render for EncodingIndicator {
             )
             .label_size(LabelSize::Small)
             .tooltip(Tooltip::text("Select Encoding"))
-            .on_click(cx.listener(|indicator, _: &ClickEvent, window, cx| {
+            .on_click(cx.listener(move |indicator, _: &ClickEvent, window, cx| {
                 if let Some(workspace) = indicator.workspace.upgrade() {
-                    workspace.update(cx, |workspace, cx| {
-                        EncodingSaveOrReopenSelector::toggle(workspace, window, cx)
+                    workspace.update(cx, move |workspace, cx| {
+                        // Open the `EncodingSaveOrReopenSelector` if the buffer is associated with a file,
+                        if show_save_or_reopen_selector {
+                            EncodingSaveOrReopenSelector::toggle(workspace, window, cx)
+                        }
+                        // otherwise, open the `EncodingSelector` directly.
+                        else {
+                            let (_, buffer, _) = workspace
+                                .active_item(cx)
+                                .unwrap()
+                                .act_as::<Editor>(cx)
+                                .unwrap()
+                                .read(cx)
+                                .active_excerpt(cx)
+                                .unwrap();
+
+                            let weak_workspace = workspace.weak_handle();
+
+                            workspace.toggle_modal(window, cx, |window, cx| {
+                                let selector = EncodingSelector::new(
+                                    window,
+                                    cx,
+                                    Action::Save,
+                                    buffer.downgrade(),
+                                    weak_workspace,
+                                );
+                                selector
+                            })
+                        }
                     })
-                } else {
                 }
             })),
         )
@@ -67,6 +101,7 @@ impl EncodingIndicator {
             observe_editor,
             show: true,
             observe_buffer_encoding,
+            show_save_or_reopen_selector: false,
         }
     }
 
@@ -81,6 +116,12 @@ impl EncodingIndicator {
         if let Some((_, buffer, _)) = editor.active_excerpt(cx) {
             let encoding = buffer.read(cx).encoding.clone();
             self.encoding = Some(&*encoding.lock().unwrap());
+
+            if let Some(_) = buffer.read(cx).file() {
+                self.show_save_or_reopen_selector = true;
+            } else {
+                self.show_save_or_reopen_selector = false;
+            }
         }
 
         cx.notify();
