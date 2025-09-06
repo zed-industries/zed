@@ -14278,6 +14278,26 @@ async fn test_word_completions_do_not_show_before_threshold(cx: &mut TestAppCont
         }
     });
 
+    cx.update_editor(|editor, window, cx| {
+        editor.show_word_completions(&ShowWordCompletions, window, cx);
+    });
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
+            assert_eq!(completion_menu_entries(menu), &["wowser", "wowen", "wow"], "Even though the threshold is not met, invoking word completions with an action should provide the completions");
+        } else {
+            panic!("expected completion menu to be open after the word completions are called with an action");
+        }
+
+        editor.cancel(&Cancel, window, cx);
+    });
+    cx.update_editor(|editor, _, _| {
+        if editor.context_menu.borrow_mut().is_some() {
+            panic!("expected completion menu to be hidden after canceling");
+        }
+    });
+
     cx.simulate_keystroke("o");
     cx.executor().run_until_parked();
     cx.update_editor(|editor, _, _| {

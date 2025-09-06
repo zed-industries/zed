@@ -4892,8 +4892,15 @@ impl Editor {
             });
 
         match completions_source {
-            Some(CompletionsMenuSource::Words) => {
-                self.show_word_completions(&ShowWordCompletions, window, cx)
+            Some(CompletionsMenuSource::Words { .. }) => {
+                self.open_or_update_completions_menu(
+                    Some(CompletionsMenuSource::Words {
+                        ignore_threshold: false,
+                    }),
+                    None,
+                    window,
+                    cx,
+                );
             }
             Some(CompletionsMenuSource::Normal)
             | Some(CompletionsMenuSource::SnippetChoices)
@@ -5401,7 +5408,14 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_or_update_completions_menu(Some(CompletionsMenuSource::Words), None, window, cx);
+        self.open_or_update_completions_menu(
+            Some(CompletionsMenuSource::Words {
+                ignore_threshold: true,
+            }),
+            None,
+            window,
+            cx,
+        );
     }
 
     pub fn show_completions(
@@ -5450,9 +5464,13 @@ impl Editor {
 
         drop(multibuffer_snapshot);
 
+        let mut ignore_word_threshold = false;
         let provider = match requested_source {
             Some(CompletionsMenuSource::Normal) | None => self.completion_provider.clone(),
-            Some(CompletionsMenuSource::Words) => None,
+            Some(CompletionsMenuSource::Words { ignore_threshold }) => {
+                ignore_word_threshold = ignore_threshold;
+                None
+            }
             Some(CompletionsMenuSource::SnippetChoices) => {
                 log::error!("bug: SnippetChoices requested_source is not handled");
                 None
@@ -5573,10 +5591,11 @@ impl Editor {
             .as_ref()
             .is_none_or(|query| !query.chars().any(|c| c.is_digit(10)));
 
-        let omit_word_completions = match &query {
-            Some(query) => query.chars().count() < completion_settings.words_min_length,
-            None => completion_settings.words_min_length != 0,
-        };
+        let omit_word_completions = !ignore_word_threshold
+            && match &query {
+                Some(query) => query.chars().count() < completion_settings.words_min_length,
+                None => completion_settings.words_min_length != 0,
+            };
 
         let (mut words, provider_responses) = match &provider {
             Some(provider) => {
