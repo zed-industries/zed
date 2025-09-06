@@ -35,7 +35,7 @@ use std::{
     sync::Arc,
 };
 use task::{ShellKind, TaskTemplate, TaskTemplates, VariableName};
-use util::ResultExt;
+use util::{ResultExt, maybe};
 
 pub(crate) struct PyprojectTomlManifestProvider;
 
@@ -1619,23 +1619,37 @@ impl LspAdapter for BasedPyrightLspAdapter {
                     }
                 }
 
-                // Always set the python interpreter path
-                // Get or create the python section
-                let python = object
+                // Set both pythonPath and defaultInterpreterPath for compatibility
+                if let Some(python) = object
                     .entry("python")
                     .or_insert(Value::Object(serde_json::Map::default()))
                     .as_object_mut()
-                    .unwrap();
-
-                // Set both pythonPath and defaultInterpreterPath for compatibility
-                python.insert(
-                    "pythonPath".to_owned(),
-                    Value::String(interpreter_path.clone()),
-                );
-                python.insert(
-                    "defaultInterpreterPath".to_owned(),
-                    Value::String(interpreter_path),
-                );
+                {
+                    python.insert(
+                        "pythonPath".to_owned(),
+                        Value::String(interpreter_path.clone()),
+                    );
+                    python.insert(
+                        "defaultInterpreterPath".to_owned(),
+                        Value::String(interpreter_path),
+                    );
+                }
+                // Basedpyright by default uses `strict` type checking, we tone it down as to not surpris users
+                maybe!({
+                    let basedpyright = object
+                        .entry("basedpyright")
+                        .or_insert(Value::Object(serde_json::Map::default()));
+                    let analysis = basedpyright
+                        .as_object_mut()?
+                        .entry("analysis")
+                        .or_insert(Value::Object(serde_json::Map::default()));
+                    if let serde_json::map::Entry::Vacant(v) =
+                        analysis.as_object_mut()?.entry("typeCheckingMode")
+                    {
+                        v.insert(Value::String("standard".to_owned()));
+                    }
+                    Some(())
+                });
             }
 
             user_settings

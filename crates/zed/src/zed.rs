@@ -32,6 +32,7 @@ use gpui::{
 };
 use image_viewer::ImageInfo;
 use language::Capability;
+use language_onboarding::BasedPyrightBanner;
 use language_tools::lsp_button::{self, LspButton};
 use language_tools::lsp_log_view::LspLogToolbarItemView;
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
@@ -1001,6 +1002,8 @@ fn initialize_pane(
             toolbar.add_item(project_diff_toolbar, window, cx);
             let agent_diff_toolbar = cx.new(AgentDiffToolbar::new);
             toolbar.add_item(agent_diff_toolbar, window, cx);
+            let basedpyright_banner = cx.new(|cx| BasedPyrightBanner::new(workspace, cx));
+            toolbar.add_item(basedpyright_banner, window, cx);
         })
     });
 }

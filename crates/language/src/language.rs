@@ -590,6 +590,11 @@ pub trait LspAdapter: 'static + Send + Sync {
             "Not implemented for this adapter. This method should only be called on the default JSON language server adapter"
         );
     }
+
+    /// True for the extension adapter and false otherwise.
+    fn is_extension(&self) -> bool {
+        false
+    }
 }
 
 async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>(
@@ -2269,6 +2274,10 @@ impl LspAdapter for FakeLspAdapter {
     ) -> Option<CodeLabel> {
         let label_for_completion = self.label_for_completion.as_ref()?;
         label_for_completion(item, language)
+    }
+
+    fn is_extension(&self) -> bool {
+        false
     }
 }
 

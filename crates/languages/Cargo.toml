@@ -42,7 +42,6 @@ async-trait.workspace = true
 chrono.workspace = true
 collections.workspace = true
 dap.workspace = true
-feature_flags.workspace = true
 futures.workspace = true
 gpui.workspace = true
 http_client.workspace = true

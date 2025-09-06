@@ -1,5 +1,4 @@
 use anyhow::Context as _;
-use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{App, SharedString, UpdateGlobal};
 use node_runtime::NodeRuntime;
 use python::PyprojectTomlManifestProvider;
@@ -53,12 +52,6 @@ pub static LANGUAGE_GIT_COMMIT: std::sync::LazyLock<Arc<Language>> =
             Some(tree_sitter_gitcommit::LANGUAGE.into()),
         ))
     });
-
-struct BasedPyrightFeatureFlag;
-
-impl FeatureFlag for BasedPyrightFeatureFlag {
-    const NAME: &'static str = "basedpyright";
-}
 
 pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
     #[cfg(feature = "load-grammars")]
@@ -174,7 +167,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
         },
         LanguageInfo {
             name: "python",
-            adapters: vec![python_lsp_adapter, py_lsp_adapter],
+            adapters: vec![basedpyright_lsp_adapter],
             context: Some(python_context_provider),
             toolchain: Some(python_toolchain_provider),
             manifest_name: Some(SharedString::new_static("pyproject.toml").into()),
@@ -240,17 +233,6 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
         );
     }
 
-    let mut basedpyright_lsp_adapter = Some(basedpyright_lsp_adapter);
-    cx.observe_flag::<BasedPyrightFeatureFlag, _>({
-        let languages = languages.clone();
-        move |enabled, _| {
-            if enabled && let Some(adapter) = basedpyright_lsp_adapter.take() {
-                languages.register_available_lsp_adapter(adapter.name(), move || adapter.clone());
-            }
-        }
-    })
-    .detach();
-
     // Register globally available language servers.
     //
     // This will allow users to add support for a built-in language server (e.g., Tailwind)
@@ -267,27 +249,19 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
     // ```
     languages.register_available_lsp_adapter(
         LanguageServerName("tailwindcss-language-server".into()),
-        {
-            let adapter = tailwind_adapter.clone();
-            move || adapter.clone()
-        },
+        tailwind_adapter.clone(),
     );
-    languages.register_available_lsp_adapter(LanguageServerName("eslint".into()), {
-        let adapter = eslint_adapter.clone();
-        move || adapter.clone()
-    });
-    languages.register_available_lsp_adapter(LanguageServerName("vtsls".into()), {
-        let adapter = vtsls_adapter;
-        move || adapter.clone()
-    });
+    languages.register_available_lsp_adapter(
+        LanguageServerName("eslint".into()),
+        eslint_adapter.clone(),
+    );
+    languages.register_available_lsp_adapter(LanguageServerName("vtsls".into()), vtsls_adapter);
     languages.register_available_lsp_adapter(
         LanguageServerName("typescript-language-server".into()),
-        {
-            let adapter = typescript_lsp_adapter;
-            move || adapter.clone()
-        },
+        typescript_lsp_adapter,
     );
-
+    languages.register_available_lsp_adapter(python_lsp_adapter.name(), python_lsp_adapter);
+    languages.register_available_lsp_adapter(py_lsp_adapter.name(), py_lsp_adapter);
     // Register Tailwind for the existing languages that should have it by default.
     //
     // This can be driven by the `language_servers` setting once we have a way for
