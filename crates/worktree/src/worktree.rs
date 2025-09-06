@@ -7,7 +7,11 @@ use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{Context as _, Result, anyhow};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet, VecDeque};
-use fs::{Fs, MTime, PathEvent, RemoveOptions, Watcher, copy_recursive, read_dir_items};
+use encoding_rs::Encoding;
+use fs::{
+    Fs, MTime, PathEvent, RemoveOptions, Watcher, copy_recursive, encodings::EncodingWrapper,
+    read_dir_items,
+};
 use futures::{
     FutureExt as _, Stream, StreamExt,
     channel::{
@@ -831,9 +835,10 @@ impl Worktree {
         text: Rope,
         line_ending: LineEnding,
         cx: &Context<Worktree>,
+        encoding: &'static Encoding,
     ) -> Task<Result<Arc<File>>> {
         match self {
-            Worktree::Local(this) => this.write_file(path, text, line_ending, cx),
+            Worktree::Local(this) => this.write_file(path, text, line_ending, cx, encoding),
             Worktree::Remote(_) => {
                 Task::ready(Err(anyhow!("remote worktree can't yet write files")))
             }
@@ -1644,6 +1649,7 @@ impl LocalWorktree {
         text: Rope,
         line_ending: LineEnding,
         cx: &Context<Worktree>,
+        encoding: &'static Encoding,
     ) -> Task<Result<Arc<File>>> {
         let path = path.into();
         let fs = self.fs.clone();
@@ -1652,10 +1658,15 @@ impl LocalWorktree {
             return Task::ready(Err(anyhow!("invalid path {path:?}")));
         };
 
+        let encoding_wrapper = EncodingWrapper::new(encoding);
+
         let write = cx.background_spawn({
             let fs = fs.clone();
             let abs_path = abs_path.clone();
-            async move { fs.save(&abs_path, &text, line_ending).await }
+            async move {
+                fs.save(&abs_path, &text, line_ending, encoding_wrapper)
+                    .await
+            }
         });
 
         cx.spawn(async move |this, cx| {
@@ -3373,6 +3384,24 @@ impl language::LocalFile for File {
         let abs_path = worktree.absolutize(&self.path);
         let fs = worktree.fs.clone();
         cx.background_spawn(async move { fs.load_bytes(&abs_path?).await })
+    }
+
+    fn load_with_encoding(
+        &self,
+        cx: &App,
+        encoding: &'static Encoding,
+        force: bool, // whether to force the encoding even if there's a BOM
+        buffer_encoding: Arc<std::sync::Mutex<&'static Encoding>>,
+    ) -> Task<Result<String>> {
+        let worktree = self.worktree.read(cx).as_local().unwrap();
+        let path = worktree.absolutize(&self.path);
+        let fs = worktree.fs.clone();
+
+        let encoding = EncodingWrapper::new(encoding);
+        cx.background_spawn(async move {
+            fs.load_with_encoding(path?, encoding, force, buffer_encoding)
+                .await
+        })
     }
 }
 
