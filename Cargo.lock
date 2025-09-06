@@ -15313,6 +15313,7 @@ dependencies = [
  "futures 0.3.31",
  "indoc",
  "libsqlite3-sys",
+ "log",
  "parking_lot",
  "smol",
  "sqlformat",
