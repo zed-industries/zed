@@ -711,6 +711,9 @@ impl Domain for WorkspaceDb {
 
             CREATE UNIQUE INDEX ix_workspaces_location ON workspaces(remote_connection_id, paths);
         ),
+        sql!(
+            DROP TABLE ssh_connections;
+        ),
     ];
 
     // Allow recovering from bad migration that was initially shipped to nightly
