@@ -4,7 +4,7 @@
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
 use crate::{DisplayRow, EditorStyle, ToOffset, ToPoint, scroll::ScrollAnchor};
 use gpui::{Pixels, WindowTextSystem};
-use language::Point;
+use language::{CharClassifier, Point};
 use multi_buffer::{MultiBufferRow, MultiBufferSnapshot};
 use serde::Deserialize;
 use workspace::searchable::Direction;
@@ -405,13 +405,16 @@ pub fn previous_subword_start(map: &DisplaySnapshot, point: DisplayPoint) -> Dis
     let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
 
     find_preceding_boundary_display_point(map, point, FindRange::MultiLine, |left, right| {
-        let is_word_start =
-            classifier.kind(left) != classifier.kind(right) && !right.is_whitespace();
-        let is_subword_start = classifier.is_word('-') && left == '-' && right != '-'
-            || left == '_' && right != '_'
-            || left.is_lowercase() && right.is_uppercase();
-        is_word_start || is_subword_start || left == '\n'
+        is_subword_start(left, right, &classifier) || left == '\n'
     })
+}
+
+pub fn is_subword_start(left: char, right: char, classifier: &CharClassifier) -> bool {
+    let is_word_start = classifier.kind(left) != classifier.kind(right) && !right.is_whitespace();
+    let is_subword_start = classifier.is_word('-') && left == '-' && right != '-'
+        || left == '_' && right != '_'
+        || left.is_lowercase() && right.is_uppercase();
+    is_word_start || is_subword_start
 }
 
 /// Returns a position of the next word boundary, where a word character is defined as either
@@ -463,13 +466,17 @@ pub fn next_subword_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPo
     let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
 
     find_boundary(map, point, FindRange::MultiLine, |left, right| {
-        let is_word_end =
-            (classifier.kind(left) != classifier.kind(right)) && !classifier.is_whitespace(left);
-        let is_subword_end = classifier.is_word('-') && left != '-' && right == '-'
-            || left != '_' && right == '_'
-            || left.is_lowercase() && right.is_uppercase();
-        is_word_end || is_subword_end || right == '\n'
+        is_subword_end(left, right, &classifier) || right == '\n'
     })
+}
+
+pub fn is_subword_end(left: char, right: char, classifier: &CharClassifier) -> bool {
+    let is_word_end =
+        (classifier.kind(left) != classifier.kind(right)) && !classifier.is_whitespace(left);
+    let is_subword_end = classifier.is_word('-') && left != '-' && right == '-'
+        || left != '_' && right == '_'
+        || left.is_lowercase() && right.is_uppercase();
+    is_word_end || is_subword_end
 }
 
 /// Returns a position of the start of the current paragraph, where a paragraph
