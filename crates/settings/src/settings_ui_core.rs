@@ -78,6 +78,7 @@ impl SettingsValue<serde_json::Value> {
         let fs = <dyn Fs>::global(cx);
 
         let rx = settings_store.update_settings_file_at_path(fs.clone(), path.as_slice(), value);
+
         let path = path.clone();
         cx.background_spawn(async move {
             rx.await?

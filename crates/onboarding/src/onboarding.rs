@@ -242,12 +242,25 @@ struct Onboarding {
 
 impl Onboarding {
     fn new(workspace: &Workspace, cx: &mut App) -> Entity<Self> {
-        cx.new(|cx| Self {
-            workspace: workspace.weak_handle(),
-            focus_handle: cx.focus_handle(),
-            selected_page: SelectedPage::Basics,
-            user_store: workspace.user_store().clone(),
-            _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
+        let font_family_cache = theme::FontFamilyCache::global(cx);
+
+        cx.new(|cx| {
+            cx.spawn(async move |this, cx| {
+                font_family_cache.prefetch(cx).await;
+                this.update(cx, |_, cx| {
+                    cx.notify();
+                })
+            })
+            .detach();
+
+            Self {
+                workspace: workspace.weak_handle(),
+                focus_handle: cx.focus_handle(),
+                selected_page: SelectedPage::Basics,
+                user_store: workspace.user_store().clone(),
+                _settings_subscription: cx
+                    .observe_global::<SettingsStore>(move |_, cx| cx.notify()),
+            }
         })
     }
 
