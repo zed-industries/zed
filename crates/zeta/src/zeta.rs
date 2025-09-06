@@ -1843,7 +1843,7 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/project/src/main.rs", cx)
+                project.open_local_buffer(path!("/project/src/main.rs"), cx)
             })
             .await
             .unwrap();
