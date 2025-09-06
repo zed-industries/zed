@@ -3070,7 +3070,6 @@ dependencies = [
  "clock",
  "cloud_api_client",
  "cloud_llm_client",
- "cocoa 0.26.0",
  "collections",
  "credentials_provider",
  "derive_more",
@@ -3083,6 +3082,7 @@ dependencies = [
  "http_client_tls",
  "httparse",
  "log",
+ "objc2-foundation",
  "parking_lot",
  "paths",
  "postage",
@@ -9247,6 +9247,7 @@ dependencies = [
  "anyhow",
  "client",
  "collections",
+ "command_palette_hooks",
  "copilot",
  "editor",
  "futures 0.3.31",
@@ -9515,6 +9516,21 @@ dependencies = [
  "libc",
  "pkg-config",
  "vcpkg",
+]
+
+[[package]]
+name = "line_ending_selector"
+version = "0.1.0"
+dependencies = [
+ "editor",
+ "gpui",
+ "language",
+ "picker",
+ "project",
+ "ui",
+ "util",
+ "workspace",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -16985,10 +17001,15 @@ checksum = "bfb942dfe1d8e29a7ee7fcbde5bd2b9a25fb89aa70caea2eba3bee836ff41076"
 name = "toolchain_selector"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "convert_case 0.8.0",
  "editor",
+ "file_finder",
+ "futures 0.3.31",
  "fuzzy",
  "gpui",
  "language",
+ "menu",
  "picker",
  "project",
  "ui",
@@ -20492,6 +20513,7 @@ dependencies = [
  "language_tools",
  "languages",
  "libc",
+ "line_ending_selector",
  "livekit_client",
  "log",
  "markdown",

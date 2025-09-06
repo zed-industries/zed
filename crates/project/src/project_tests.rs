@@ -22,7 +22,7 @@ use itertools::Itertools;
 use language::{
     Diagnostic, DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, DiskState, FakeLspAdapter,
     LanguageConfig, LanguageMatcher, LanguageName, LineEnding, ManifestName, ManifestProvider,
-    ManifestQuery, OffsetRangeExt, Point, ToPoint, ToolchainLister,
+    ManifestQuery, OffsetRangeExt, Point, ToPoint, ToolchainList, ToolchainLister,
     language_settings::{AllLanguageSettings, LanguageSettingsContent, language_settings},
     tree_sitter_rust, tree_sitter_typescript,
 };
@@ -727,7 +727,12 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
     // We're not using venvs at all here, so both folders should fall under the same root.
     assert_eq!(server.server_id(), LanguageServerId(0));
     // Now, let's select a different toolchain for one of subprojects.
-    let (available_toolchains_for_b, root_path) = project
+
+    let Toolchains {
+        toolchains: available_toolchains_for_b,
+        root_path,
+        ..
+    } = project
         .update(cx, |this, cx| {
             let worktree_id = this.worktrees(cx).next().unwrap().read(cx).id();
             this.available_toolchains(
@@ -9213,13 +9218,21 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
                 ..Default::default()
             }
         }
-        // Returns a term which we should use in UI to refer to a toolchain.
-        fn term(&self) -> SharedString {
-            SharedString::new_static("virtual environment")
+        async fn resolve(
+            &self,
+            _: PathBuf,
+            _: Option<HashMap<String, String>>,
+        ) -> anyhow::Result<Toolchain> {
+            Err(anyhow::anyhow!("Not implemented"))
         }
-        /// Returns the name of the manifest file for this toolchain.
-        fn manifest_name(&self) -> ManifestName {
-            SharedString::new_static("pyproject.toml").into()
+        fn meta(&self) -> ToolchainMetadata {
+            ToolchainMetadata {
+                term: SharedString::new_static("Virtual Environment"),
+                new_toolchain_placeholder: SharedString::new_static(
+                    "A path to the python3 executable within a virtual environment, or path to virtual environment itself",
+                ),
+                manifest_name: ManifestName::from(SharedString::new_static("pyproject.toml")),
+            }
         }
         async fn activation_script(&self, _: &Toolchain, _: ShellKind, _: &dyn Fs) -> Vec<String> {
             vec![]

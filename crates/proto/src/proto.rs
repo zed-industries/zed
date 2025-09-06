@@ -26,6 +26,8 @@ messages!(
     (ActivateToolchain, Foreground),
     (ActiveToolchain, Foreground),
     (ActiveToolchainResponse, Foreground),
+    (ResolveToolchain, Background),
+    (ResolveToolchainResponse, Background),
     (AddNotification, Foreground),
     (AddProjectCollaborator, Foreground),
     (AddWorktree, Foreground),
@@ -102,6 +104,8 @@ messages!(
     (GetPathMetadata, Background),
     (GetPathMetadataResponse, Background),
     (GetPermalinkToLine, Foreground),
+    (GetProcesses, Background),
+    (GetProcessesResponse, Background),
     (GetPermalinkToLineResponse, Foreground),
     (GetProjectSymbols, Background),
     (GetProjectSymbolsResponse, Background),
@@ -457,6 +461,7 @@ request_messages!(
     (ListToolchains, ListToolchainsResponse),
     (ActivateToolchain, Ack),
     (ActiveToolchain, ActiveToolchainResponse),
+    (ResolveToolchain, ResolveToolchainResponse),
     (GetPathMetadata, GetPathMetadataResponse),
     (GetCrashFiles, GetCrashFilesResponse),
     (CancelLanguageServerWork, Ack),
@@ -485,6 +490,7 @@ request_messages!(
     (GetDefaultBranch, GetDefaultBranchResponse),
     (GitClone, GitCloneResponse),
     (ToggleLspLogs, Ack),
+    (GetProcesses, GetProcessesResponse),
 );
 
 lsp_messages!(
@@ -609,7 +615,9 @@ entity_messages!(
     ListToolchains,
     ActivateToolchain,
     ActiveToolchain,
+    ResolveToolchain,
     GetPathMetadata,
+    GetProcesses,
     CancelLanguageServerWork,
     RegisterBufferWithLanguageServers,
     GitShow,

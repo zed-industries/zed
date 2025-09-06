@@ -3933,8 +3933,8 @@ impl LspStore {
         event: &ToolchainStoreEvent,
         _: &mut Context<Self>,
     ) {
-        match event {
-            ToolchainStoreEvent::ToolchainActivated => self.request_workspace_config_refresh(),
+        if let ToolchainStoreEvent::ToolchainActivated = event {
+            self.request_workspace_config_refresh()
         }
     }
 

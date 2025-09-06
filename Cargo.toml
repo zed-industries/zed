@@ -97,6 +97,7 @@ members = [
     "crates/language_selector",
     "crates/language_tools",
     "crates/languages",
+    "crates/line_ending_selector",
     "crates/livekit_api",
     "crates/livekit_client",
     "crates/lmstudio",
@@ -323,6 +324,7 @@ language_models = { path = "crates/language_models" }
 language_selector = { path = "crates/language_selector" }
 language_tools = { path = "crates/language_tools" }
 languages = { path = "crates/languages" }
+line_ending_selector = { path = "crates/line_ending_selector" }
 livekit_api = { path = "crates/livekit_api" }
 livekit_client = { path = "crates/livekit_client" }
 lmstudio = { path = "crates/lmstudio" }
@@ -537,6 +539,31 @@ nbformat = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c80421
 nix = "0.29"
 num-format = "0.4.4"
 objc = "0.2"
+objc2-foundation = { version = "0.3", default-features = false, features = [
+    "NSArray",
+    "NSAttributedString",
+    "NSBundle",
+    "NSCoder",
+    "NSData",
+    "NSDate",
+    "NSDictionary",
+    "NSEnumerator",
+    "NSError",
+    "NSGeometry",
+    "NSNotification",
+    "NSNull",
+    "NSObjCRuntime",
+    "NSObject",
+    "NSProcessInfo",
+    "NSRange",
+    "NSRunLoop",
+    "NSString",
+    "NSURL",
+    "NSUndoManager",
+    "NSValue",
+    "objc2-core-foundation",
+    "std"
+] }
 open = "5.0.0"
 ordered-float = "2.1.1"
 palette = { version = "0.7.5", default-features = false, features = ["std"] }
