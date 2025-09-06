@@ -31,10 +31,10 @@ use gpui::{
 };
 use keymap_editor;
 use onboarding_banner::OnboardingBanner;
-use project::Project;
+use project::{Project, WorktreeSettings};
 use remote::RemoteConnectionOptions;
-use settings::Settings as _;
-use std::sync::Arc;
+use settings::{Settings, SettingsLocation};
+use std::{path::Path, sync::Arc};
 use theme::ActiveTheme;
 use title_bar_settings::TitleBarSettings;
 use ui::{
@@ -433,14 +433,24 @@ impl TitleBar {
     }
 
     pub fn render_project_name(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let name = {
-            let mut names = self.project.read(cx).visible_worktrees(cx).map(|worktree| {
+        let name = self
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .map(|worktree| {
                 let worktree = worktree.read(cx);
-                worktree.root_name()
-            });
+                let settings_location = SettingsLocation {
+                    worktree_id: worktree.id(),
+                    path: Path::new(""),
+                };
 
-            names.next()
-        };
+                let settings = WorktreeSettings::get(Some(settings_location), cx);
+                match &settings.project_name {
+                    Some(name) => name.as_str(),
+                    None => worktree.root_name(),
+                }
+            })
+            .next();
         let is_project_selected = name.is_some();
         let name = if let Some(name) = name {
             util::truncate_and_trailoff(name, MAX_PROJECT_NAME_LENGTH)
