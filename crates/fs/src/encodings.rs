@@ -54,20 +54,22 @@ impl EncodingWrapper {
         // Check if the input starts with a BOM for UTF-16 encodings only if not forced to
         // use the encoding specified.
         if !force {
-            if (input[0] == 0xFF) & (input[1] == 0xFE) {
-                self.0 = encoding_rs::UTF_16LE;
+            if input.len() >= 2 {
+                if (input[0] == 0xFF) & (input[1] == 0xFE) {
+                    self.0 = encoding_rs::UTF_16LE;
 
-                if let Some(v) = buffer_encoding {
-                    if let Ok(mut v) = (*v).lock() {
-                        *v = encoding_rs::UTF_16LE;
+                    if let Some(v) = buffer_encoding {
+                        if let Ok(mut v) = (*v).lock() {
+                            *v = encoding_rs::UTF_16LE;
+                        }
                     }
-                }
-            } else if (input[0] == 0xFE) & (input[1] == 0xFF) {
-                self.0 = encoding_rs::UTF_16BE;
+                } else if (input.len() >= 2) & (input[0] == 0xFE) & (input[1] == 0xFF) {
+                    self.0 = encoding_rs::UTF_16BE;
 
-                if let Some(v) = buffer_encoding {
-                    if let Ok(mut v) = (*v).lock() {
-                        *v = encoding_rs::UTF_16BE;
+                    if let Some(v) = buffer_encoding {
+                        if let Ok(mut v) = (*v).lock() {
+                            *v = encoding_rs::UTF_16BE;
+                        }
                     }
                 }
             }
