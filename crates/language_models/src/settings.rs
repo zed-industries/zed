@@ -11,6 +11,7 @@ use crate::provider::{
     self,
     anthropic::AnthropicSettings,
     bedrock::AmazonBedrockSettings,
+    cerebras::CerebrasSettings,
     cloud::{self, ZedDotDevSettings},
     deepseek::DeepSeekSettings,
     google::GoogleSettings,
@@ -33,6 +34,7 @@ pub fn init_settings(cx: &mut App) {
 pub struct AllLanguageModelSettings {
     pub anthropic: AnthropicSettings,
     pub bedrock: AmazonBedrockSettings,
+    pub cerebras: CerebrasSettings,
     pub deepseek: DeepSeekSettings,
     pub google: GoogleSettings,
     pub lmstudio: LmStudioSettings,
@@ -53,6 +55,7 @@ pub struct AllLanguageModelSettings {
 pub struct AllLanguageModelSettingsContent {
     pub anthropic: Option<AnthropicSettingsContent>,
     pub bedrock: Option<AmazonBedrockSettingsContent>,
+    pub cerebras: Option<CerebrasSettingsContent>,
     pub deepseek: Option<DeepseekSettingsContent>,
     pub google: Option<GoogleSettingsContent>,
     pub lmstudio: Option<LmStudioSettingsContent>,
@@ -98,6 +101,12 @@ pub struct LmStudioSettingsContent {
 pub struct DeepseekSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<provider::deepseek::AvailableModel>>,
+}
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct CerebrasSettingsContent {
+    pub api_url: Option<String>,
+    pub available_models: Option<Vec<provider::cerebras::AvailableModel>>,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -226,6 +235,18 @@ impl settings::Settings for AllLanguageModelSettings {
             merge(
                 &mut settings.deepseek.available_models,
                 deepseek.as_ref().and_then(|s| s.available_models.clone()),
+            );
+
+            // Cerebras
+            let cerebras = value.cerebras.clone();
+
+            merge(
+                &mut settings.cerebras.api_url,
+                value.cerebras.as_ref().and_then(|s| s.api_url.clone()),
+            );
+            merge(
+                &mut settings.cerebras.available_models,
+                cerebras.as_ref().and_then(|s| s.available_models.clone()),
             );
 
             // OpenAI
