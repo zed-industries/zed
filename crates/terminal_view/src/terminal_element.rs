@@ -1192,8 +1192,8 @@ impl Element for TerminalElement {
                 bounds.origin + Point::new(layout.gutter, px(0.)) - Point::new(px(0.), scroll_top);
 
             let marked_text_cloned: Option<String> = {
-                let ime_state = self.terminal_view.read(cx);
-                ime_state.marked_text.clone()
+                let ime_state = &self.terminal_view.read(cx).ime_state;
+                ime_state.as_ref().map(|state| state.marked_text.clone())
             };
 
             let terminal_input_handler = TerminalInputHandler {
