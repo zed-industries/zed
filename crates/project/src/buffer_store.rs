@@ -396,7 +396,7 @@ impl LocalBufferStore {
                 text,
                 line_ending,
                 cx,
-                &*encoding.lock().unwrap(),
+                &encoding.lock().unwrap(),
             )
         });
 
