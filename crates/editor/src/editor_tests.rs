@@ -14278,6 +14278,26 @@ async fn test_word_completions_do_not_show_before_threshold(cx: &mut TestAppCont
         }
     });
 
+    cx.update_editor(|editor, window, cx| {
+        editor.show_word_completions(&ShowWordCompletions, window, cx);
+    });
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
+            assert_eq!(completion_menu_entries(menu), &["wowser", "wowen", "wow"], "Even though the threshold is not met, invoking word completions with an action should provide the completions");
+        } else {
+            panic!("expected completion menu to be open after the word completions are called with an action");
+        }
+
+        editor.cancel(&Cancel, window, cx);
+    });
+    cx.update_editor(|editor, _, _| {
+        if editor.context_menu.borrow_mut().is_some() {
+            panic!("expected completion menu to be hidden after canceling");
+        }
+    });
+
     cx.simulate_keystroke("o");
     cx.executor().run_until_parked();
     cx.update_editor(|editor, _, _| {
@@ -14296,6 +14316,50 @@ async fn test_word_completions_do_not_show_before_threshold(cx: &mut TestAppCont
             assert_eq!(completion_menu_entries(menu), &["wowen", "wowser"], "After word completion threshold is met, matching words should be shown, excluding the already typed word");
         } else {
             panic!("expected completion menu to be open after the word completions threshold is met");
+        }
+    });
+}
+
+#[gpui::test]
+async fn test_word_completions_disabled(cx: &mut TestAppContext) {
+    init_test(cx, |language_settings| {
+        language_settings.defaults.completions = Some(CompletionSettings {
+            words: WordsCompletionMode::Enabled,
+            words_min_length: 0,
+            lsp: true,
+            lsp_fetch_timeout_ms: 0,
+            lsp_insert_mode: LspInsertMode::Insert,
+        });
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+    cx.update_editor(|editor, _, _| {
+        editor.disable_word_completions();
+    });
+    cx.set_state(indoc! {"ˇ
+        wow
+        wowen
+        wowser
+    "});
+    cx.simulate_keystroke("w");
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, _, _| {
+        if editor.context_menu.borrow_mut().is_some() {
+            panic!(
+                "expected completion menu to be hidden, as words completion are disabled for this editor"
+            );
+        }
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.show_word_completions(&ShowWordCompletions, window, cx);
+    });
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, _, _| {
+        if editor.context_menu.borrow_mut().is_some() {
+            panic!(
+                "expected completion menu to be hidden even if called for explicitly, as words completion are disabled for this editor"
+            );
         }
     });
 }
