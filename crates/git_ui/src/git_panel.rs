@@ -4957,6 +4957,7 @@ impl Component for PanelRepoFooter {
                     sha: "abc123".into(),
                     subject: "Modify stuff".into(),
                     commit_timestamp: 1710932954,
+                    author_name: "John Doe".into(),
                     has_parent: true,
                 }),
             }
@@ -4974,6 +4975,7 @@ impl Component for PanelRepoFooter {
                     sha: "abc123".into(),
                     subject: "Modify stuff".into(),
                     commit_timestamp: 1710932954,
+                    author_name: "John Doe".into(),
                     has_parent: true,
                 }),
             }

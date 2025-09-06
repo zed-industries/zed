@@ -405,6 +405,10 @@ pub struct GitSettings {
     ///
     /// Default: on
     pub inline_blame: Option<InlineBlameSettings>,
+    /// Which information to show in the branch picker.
+    ///
+    /// Default: on
+    pub branch_picker: Option<BranchPickerSettings>,
     /// How hunks are displayed visually in the editor.
     ///
     /// Default: staged_hollow
@@ -505,6 +509,24 @@ impl Default for InlineBlameSettings {
             padding: default_inline_blame_padding(),
             min_column: 0,
             show_commit_summary: false,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct BranchPickerSettings {
+    /// Whether to show author name as part of the commit information.
+    ///
+    /// Default: false
+    #[serde(default)]
+    pub show_author_name: bool,
+}
+
+impl Default for BranchPickerSettings {
+    fn default() -> Self {
+        Self {
+            show_author_name: true,
         }
     }
 }
