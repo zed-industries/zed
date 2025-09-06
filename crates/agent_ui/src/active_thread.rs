@@ -22,9 +22,9 @@ use editor::{Editor, EditorElement, EditorEvent, EditorStyle, MultiBuffer, Selec
 use gpui::{
     AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent, ClipboardEntry,
     ClipboardItem, DefiniteLength, EdgesRefinement, Empty, Entity, EventEmitter, Focusable, Hsla,
-    ListAlignment, ListOffset, ListState, MouseButton, PlatformDisplay, ScrollHandle, Stateful,
-    StyleRefinement, Subscription, Task, TextStyle, TextStyleRefinement, UnderlineStyle,
-    WeakEntity, WindowHandle, linear_color_stop, linear_gradient, list, pulsating_between,
+    ListAlignment, ListOffset, ListState, PlatformDisplay, ScrollHandle, Stateful, StyleRefinement,
+    Subscription, Task, TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, WindowHandle,
+    linear_color_stop, linear_gradient, list, pulsating_between,
 };
 use language::{Buffer, Language, LanguageRegistry};
 use language_model::{
@@ -45,8 +45,8 @@ use std::time::Duration;
 use text::ToPoint;
 use theme::ThemeSettings;
 use ui::{
-    Banner, CommonAnimationExt, Disclosure, KeyBinding, PopoverMenuHandle, Scrollbar,
-    ScrollbarState, TextSize, Tooltip, prelude::*,
+    Banner, CommonAnimationExt, Disclosure, KeyBinding, PopoverMenuHandle, TextSize, Tooltip,
+    WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
 use util::markdown::MarkdownCodeBlock;
@@ -67,7 +67,6 @@ pub struct ActiveThread {
     save_thread_task: Option<Task<()>>,
     messages: Vec<MessageId>,
     list_state: ListState,
-    scrollbar_state: ScrollbarState,
     rendered_messages_by_id: HashMap<MessageId, RenderedMessage>,
     rendered_tool_uses: HashMap<LanguageModelToolUseId, RenderedToolUse>,
     editing_message: Option<(MessageId, EditingMessageState)>,
@@ -798,8 +797,7 @@ impl ActiveThread {
             expanded_tool_uses: HashMap::default(),
             expanded_thinking_segments: HashMap::default(),
             expanded_code_blocks: HashMap::default(),
-            list_state: list_state.clone(),
-            scrollbar_state: ScrollbarState::new(list_state).parent_entity(&cx.entity()),
+            list_state,
             editing_message: None,
             last_error: None,
             copied_code_block_ids: HashSet::default(),
@@ -3482,39 +3480,6 @@ impl ActiveThread {
         }
     }
 
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        div()
-            .occlude()
-            .id("active-thread-scrollbar")
-            .on_mouse_move(cx.listener(|_, _, _, cx| {
-                cx.notify();
-                cx.stop_propagation()
-            }))
-            .on_hover(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_any_mouse_down(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|_, _, _, cx| {
-                    cx.stop_propagation();
-                }),
-            )
-            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                cx.notify();
-            }))
-            .h_full()
-            .absolute()
-            .right_1()
-            .top_1()
-            .bottom_0()
-            .w(px(12.))
-            .cursor_default()
-            .children(Scrollbar::vertical(self.scrollbar_state.clone()).map(|s| s.auto_hide(cx)))
-    }
-
     pub fn is_codeblock_expanded(&self, message_id: MessageId, ix: usize) -> bool {
         self.expanded_code_blocks
             .get(&(message_id, ix))
@@ -3548,13 +3513,13 @@ pub enum ActiveThreadEvent {
 impl EventEmitter<ActiveThreadEvent> for ActiveThread {}
 
 impl Render for ActiveThread {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
             .relative()
             .bg(cx.theme().colors().panel_background)
             .child(list(self.list_state.clone(), cx.processor(Self::render_message)).flex_grow())
-            .child(self.render_vertical_scrollbar(cx))
+            .vertical_scrollbar_for(self.list_state.clone(), window, cx)
     }
 }
 

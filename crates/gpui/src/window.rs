@@ -2578,7 +2578,7 @@ impl Window {
         &mut self,
         key: impl Into<ElementId>,
         cx: &mut App,
-        init: impl FnOnce(&mut Self, &mut App) -> S,
+        init: impl FnOnce(&mut Self, &mut Context<S>) -> S,
     ) -> Entity<S> {
         let current_view = self.current_view();
         self.with_global_id(key.into(), |global_id, window| {
@@ -2611,7 +2611,7 @@ impl Window {
     pub fn use_state<S: 'static>(
         &mut self,
         cx: &mut App,
-        init: impl FnOnce(&mut Self, &mut App) -> S,
+        init: impl FnOnce(&mut Self, &mut Context<S>) -> S,
     ) -> Entity<S> {
         self.use_keyed_state(
             ElementId::CodeLocation(*core::panic::Location::caller()),
@@ -4957,6 +4957,12 @@ impl From<(&'static str, u32)> for ElementId {
 impl<T: Into<SharedString>> From<(ElementId, T)> for ElementId {
     fn from((id, name): (ElementId, T)) -> Self {
         ElementId::NamedChild(Box::new(id), name.into())
+    }
+}
+
+impl From<&'static core::panic::Location<'static>> for ElementId {
+    fn from(location: &'static core::panic::Location<'static>) -> Self {
+        ElementId::CodeLocation(*location)
     }
 }
 
