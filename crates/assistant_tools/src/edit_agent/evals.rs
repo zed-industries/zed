@@ -1401,7 +1401,7 @@ fn eval(
 fn run_eval(eval: EvalInput, tx: mpsc::Sender<Result<EvalOutput>>) {
     let scheduler = Arc::new(TestScheduler::new(TestSchedulerConfig::default()));
     let mut cx = TestAppContext::build(scheduler, None);
-    let output = cx.executor().block_test(async {
+    let output = cx.foreground_executor().block_on(async {
         let test = EditAgentTest::new(&mut cx).await;
         test.eval(eval, &mut cx).await
     });

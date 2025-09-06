@@ -143,13 +143,6 @@ impl BackgroundExecutor {
         Task(self.0.spawn(future))
     }
 
-    /// Used by the test harness to run an async test in a synchronous fashion.
-    #[cfg(any(test, feature = "test-support"))]
-    #[track_caller]
-    pub fn block_test<R>(&self, future: impl Future<Output = R>) -> R {
-        todo!("move this to foreground executor (do we even need it ...test??)")
-    }
-
     /// Block the current thread until the given future resolves.
     /// Consider using `block_with_timeout` instead.
     pub fn block<R>(&self, _future: impl Future<Output = R>) -> R {
@@ -297,6 +290,22 @@ impl ForegroundExecutor {
         }
 
         inner::<R>(&self.0, Box::pin(future))
+    }
+
+    /// Block the current thread until the given future resolves.
+    /// Consider using `block_with_timeout` instead.
+    pub fn block_on<F: Future>(&self, future: F) -> F::Output {
+        self.0.block_on(future)
+    }
+
+    /// Block the current thread until the given future resolves
+    /// or `timeout` has elapsed.
+    pub fn block_with_timeout<Fut: Unpin + Future>(
+        &self,
+        future: &mut Fut,
+        timeout: Duration,
+    ) -> Option<Fut::Output> {
+        self.0.block_with_timeout(future, timeout)
     }
 }
 

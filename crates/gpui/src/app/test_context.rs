@@ -188,8 +188,8 @@ impl TestAppContext {
     }
 
     /// Returns an executor (for running tasks on the main thread)
-    pub fn foreground_executor(&self) -> &ForegroundExecutor {
-        &self.foreground_executor
+    pub fn foreground_executor(&self) -> ForegroundExecutor {
+        self.foreground_executor.clone()
     }
 
     #[expect(clippy::wrong_self_convention)]
