@@ -5746,7 +5746,7 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
 
     let definitions;
     let buffer_b2;
-    if rng.r#gen() {
+    if rng.random() {
         cx_a.run_until_parked();
         cx_b.run_until_parked();
         definitions = project_b.update(cx_b, |p, cx| p.definitions(&buffer_b1, 23, cx));

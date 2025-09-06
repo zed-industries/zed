@@ -1775,36 +1775,54 @@ impl LocalWorktree {
             };
             absolutize_path
         };
-        let abs_path = abs_new_path.clone();
-        let fs = self.fs.clone();
-        let case_sensitive = self.fs_case_sensitive;
-        let rename = cx.background_spawn(async move {
-            let abs_old_path = abs_old_path?;
-            let abs_new_path = abs_new_path;
 
-            let abs_old_path_lower = abs_old_path.to_str().map(|p| p.to_lowercase());
-            let abs_new_path_lower = abs_new_path.to_str().map(|p| p.to_lowercase());
+        let fs = self.fs.clone();
+        let abs_path = abs_new_path.clone();
+        let case_sensitive = self.fs_case_sensitive;
+
+        let do_rename = async move |fs: &dyn Fs, old_path: &Path, new_path: &Path, overwrite| {
+            fs.rename(
+                &old_path,
+                &new_path,
+                fs::RenameOptions {
+                    overwrite,
+                    ..fs::RenameOptions::default()
+                },
+            )
+            .await
+            .with_context(|| format!("renaming {old_path:?} into {new_path:?}"))
+        };
+
+        let rename_task = cx.background_spawn(async move {
+            let abs_old_path = abs_old_path?;
 
             // If we're on a case-insensitive FS and we're doing a case-only rename (i.e. `foobar` to `FOOBAR`)
             // we want to overwrite, because otherwise we run into a file-already-exists error.
             let overwrite = !case_sensitive
                 && abs_old_path != abs_new_path
-                && abs_old_path_lower == abs_new_path_lower;
+                && abs_old_path.to_str().map(|p| p.to_lowercase())
+                    == abs_new_path.to_str().map(|p| p.to_lowercase());
 
-            fs.rename(
-                &abs_old_path,
-                &abs_new_path,
-                fs::RenameOptions {
-                    overwrite,
-                    ..Default::default()
-                },
-            )
-            .await
-            .with_context(|| format!("Renaming {abs_old_path:?} into {abs_new_path:?}"))
+            // The directory we're renaming into might not exist yet
+            if let Err(e) = do_rename(fs.as_ref(), &abs_old_path, &abs_new_path, overwrite).await {
+                if let Some(err) = e.downcast_ref::<std::io::Error>()
+                    && err.kind() == std::io::ErrorKind::NotFound
+                {
+                    if let Some(parent) = abs_new_path.parent() {
+                        fs.create_dir(parent)
+                            .await
+                            .with_context(|| format!("creating parent directory {parent:?}"))?;
+                        return do_rename(fs.as_ref(), &abs_old_path, &abs_new_path, overwrite)
+                            .await;
+                    }
+                }
+                return Err(e);
+            }
+            Ok(())
         });
 
         cx.spawn(async move |this, cx| {
-            rename.await?;
+            rename_task.await?;
             Ok(this
                 .update(cx, |this, cx| {
                     let local = this.as_local_mut().unwrap();
@@ -1818,6 +1836,11 @@ impl LocalWorktree {
                         );
                         Task::ready(Ok(this.root_entry().cloned()))
                     } else {
+                        // First refresh the parent directory (in case it was newly created)
+                        if let Some(parent) = new_path.parent() {
+                            let _ = local.refresh_entries_for_paths(vec![parent.into()]);
+                        }
+                        // Then refresh the new path
                         local.refresh_entry(new_path.clone(), Some(old_path), cx)
                     }
                 })?

@@ -3201,6 +3201,7 @@ pub mod tests {
                 .read(cx)
                 .entry_for_path(&(worktree_id, "a").into(), cx)
                 .expect("no entry for /a/ directory")
+                .clone()
         });
         assert!(a_dir_entry.is_dir());
         window

@@ -28,6 +28,7 @@ use context_server_store::ContextServerStore;
 pub use environment::{EnvironmentErrorMessage, ProjectEnvironmentEvent};
 use git::repository::get_git_committer;
 use git_store::{Repository, RepositoryId};
+use schemars::JsonSchema;
 pub mod search_history;
 mod yarn;
 
@@ -47,7 +48,7 @@ use clock::ReplicaId;
 
 use dap::client::DebugAdapterClient;
 
-use collections::{BTreeSet, HashMap, HashSet};
+use collections::{BTreeSet, HashMap, HashSet, IndexSet};
 use debounced_delay::DebouncedDelay;
 pub use debugger::breakpoint_store::BreakpointWithPosition;
 use debugger::{
@@ -73,8 +74,9 @@ use gpui::{
 };
 use language::{
     Buffer, BufferEvent, Capability, CodeLabel, CursorShape, Language, LanguageName,
-    LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList, Transaction,
-    Unclipped, language_settings::InlayHintKind, proto::split_operations,
+    LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainMetadata,
+    ToolchainScope, Transaction, Unclipped, language_settings::InlayHintKind,
+    proto::split_operations,
 };
 use lsp::{
     CodeActionKind, CompletionContext, CompletionItemKind, DocumentHighlightKind, InsertTextMode,
@@ -94,12 +96,16 @@ use rpc::{
 };
 use search::{SearchInputKind, SearchQuery, SearchResult};
 use search_history::SearchHistory;
-use settings::{InvalidSettingsError, Settings, SettingsLocation, SettingsSources, SettingsStore};
+use settings::{
+    InvalidSettingsError, Settings, SettingsKey, SettingsLocation, SettingsSources, SettingsStore,
+    SettingsUi,
+};
 use smol::channel::Receiver;
 use snippet::Snippet;
 use snippet_provider::SnippetProvider;
 use std::{
     borrow::Cow,
+    collections::BTreeMap,
     ops::Range,
     path::{Component, Path, PathBuf},
     pin::pin,
@@ -113,7 +119,7 @@ use terminals::Terminals;
 use text::{Anchor, BufferId, OffsetRangeExt, Point, Rope};
 use toolchain_store::EmptyToolchainStore;
 use util::{
-    ResultExt as _,
+    ResultExt as _, maybe,
     paths::{PathStyle, RemotePathBuf, SanitizedPath, compare_paths},
 };
 use worktree::{CreatedEntry, Snapshot, Traversal};
@@ -138,7 +144,7 @@ pub use lsp_store::{
     LanguageServerStatus, LanguageServerToQuery, LspStore, LspStoreEvent,
     SERVER_PROGRESS_THROTTLE_TIMEOUT,
 };
-pub use toolchain_store::ToolchainStore;
+pub use toolchain_store::{ToolchainStore, Toolchains};
 const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
 const MAX_SEARCH_RESULT_FILES: usize = 5_000;
 const MAX_SEARCH_RESULT_RANGES: usize = 10_000;
@@ -968,10 +974,26 @@ pub struct DisableAiSettings {
     pub disable_ai: bool,
 }
 
-impl settings::Settings for DisableAiSettings {
-    const KEY: Option<&'static str> = Some("disable_ai");
+#[derive(
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    Debug,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    SettingsUi,
+    SettingsKey,
+    JsonSchema,
+)]
+#[settings_key(None)]
+pub struct DisableAiSettingContent {
+    pub disable_ai: Option<bool>,
+}
 
-    type FileContent = Option<bool>;
+impl settings::Settings for DisableAiSettings {
+    type FileContent = DisableAiSettingContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         // For security reasons, settings can only make AI restrictions MORE strict, not less.
@@ -984,7 +1006,7 @@ impl settings::Settings for DisableAiSettings {
             .iter()
             .chain(sources.user.iter())
             .chain(sources.server.iter())
-            .any(|disabled| **disabled == Some(true));
+            .any(|disabled| disabled.disable_ai == Some(true));
 
         Ok(Self { disable_ai })
     }
@@ -1271,6 +1293,7 @@ impl Project {
                     fs.clone(),
                     worktree_store.clone(),
                     task_store.clone(),
+                    Some(remote_proto.clone()),
                     cx,
                 )
             });
@@ -1521,7 +1544,13 @@ impl Project {
         })?;
 
         let settings_observer = cx.new(|cx| {
-            SettingsObserver::new_remote(fs.clone(), worktree_store.clone(), task_store.clone(), cx)
+            SettingsObserver::new_remote(
+                fs.clone(),
+                worktree_store.clone(),
+                task_store.clone(),
+                None,
+                cx,
+            )
         })?;
 
         let git_store = cx.new(|cx| {
@@ -3343,7 +3372,7 @@ impl Project {
         path: ProjectPath,
         language_name: LanguageName,
         cx: &App,
-    ) -> Task<Option<(ToolchainList, Arc<Path>)>> {
+    ) -> Task<Option<Toolchains>> {
         if let Some(toolchain_store) = self.toolchain_store.as_ref().map(Entity::downgrade) {
             cx.spawn(async move |cx| {
                 toolchain_store
@@ -3356,16 +3385,70 @@ impl Project {
         }
     }
 
-    pub async fn toolchain_term(
+    pub async fn toolchain_metadata(
         languages: Arc<LanguageRegistry>,
         language_name: LanguageName,
-    ) -> Option<SharedString> {
+    ) -> Option<ToolchainMetadata> {
         languages
             .language_for_name(language_name.as_ref())
             .await
             .ok()?
             .toolchain_lister()
-            .map(|lister| lister.term())
+            .map(|lister| lister.meta())
+    }
+
+    pub fn add_toolchain(
+        &self,
+        toolchain: Toolchain,
+        scope: ToolchainScope,
+        cx: &mut Context<Self>,
+    ) {
+        maybe!({
+            self.toolchain_store.as_ref()?.update(cx, |this, cx| {
+                this.add_toolchain(toolchain, scope, cx);
+            });
+            Some(())
+        });
+    }
+
+    pub fn remove_toolchain(
+        &self,
+        toolchain: Toolchain,
+        scope: ToolchainScope,
+        cx: &mut Context<Self>,
+    ) {
+        maybe!({
+            self.toolchain_store.as_ref()?.update(cx, |this, cx| {
+                this.remove_toolchain(toolchain, scope, cx);
+            });
+            Some(())
+        });
+    }
+
+    pub fn user_toolchains(
+        &self,
+        cx: &App,
+    ) -> Option<BTreeMap<ToolchainScope, IndexSet<Toolchain>>> {
+        Some(self.toolchain_store.as_ref()?.read(cx).user_toolchains())
+    }
+
+    pub fn resolve_toolchain(
+        &self,
+        path: PathBuf,
+        language_name: LanguageName,
+        cx: &App,
+    ) -> Task<Result<Toolchain>> {
+        if let Some(toolchain_store) = self.toolchain_store.as_ref().map(Entity::downgrade) {
+            cx.spawn(async move |cx| {
+                toolchain_store
+                    .update(cx, |this, cx| {
+                        this.resolve_toolchain(path, language_name, cx)
+                    })?
+                    .await
+            })
+        } else {
+            Task::ready(Err(anyhow!("This project does not support toolchains")))
+        }
     }
 
     pub fn toolchain_store(&self) -> Option<Entity<ToolchainStore>> {
@@ -4325,7 +4408,7 @@ impl Project {
         self.active_entry
     }
 
-    pub fn entry_for_path(&self, path: &ProjectPath, cx: &App) -> Option<Entry> {
+    pub fn entry_for_path<'a>(&'a self, path: &ProjectPath, cx: &'a App) -> Option<&'a Entry> {
         self.worktree_store.read(cx).entry_for_path(path, cx)
     }
 
@@ -5543,10 +5626,15 @@ mod disable_ai_settings_tests {
 
     #[gpui::test]
     async fn test_disable_ai_settings_security(cx: &mut TestAppContext) {
+        fn disable_setting(value: Option<bool>) -> DisableAiSettingContent {
+            DisableAiSettingContent { disable_ai: value }
+        }
         cx.update(|cx| {
             // Test 1: Default is false (AI enabled)
             let sources = SettingsSources {
-                default: &Some(false),
+                default: &DisableAiSettingContent {
+                    disable_ai: Some(false),
+                },
                 global: None,
                 extensions: None,
                 user: None,
@@ -5560,10 +5648,10 @@ mod disable_ai_settings_tests {
             assert!(!settings.disable_ai, "Default should allow AI");
 
             // Test 2: Global true, local false -> still disabled (local cannot re-enable)
-            let global_true = Some(true);
-            let local_false = Some(false);
+            let global_true = disable_setting(Some(true));
+            let local_false = disable_setting(Some(false));
             let sources = SettingsSources {
-                default: &Some(false),
+                default: &disable_setting(Some(false)),
                 global: None,
                 extensions: None,
                 user: Some(&global_true),
@@ -5580,10 +5668,10 @@ mod disable_ai_settings_tests {
             );
 
             // Test 3: Global false, local true -> disabled (local can make more restrictive)
-            let global_false = Some(false);
-            let local_true = Some(true);
+            let global_false = disable_setting(Some(false));
+            let local_true = disable_setting(Some(true));
             let sources = SettingsSources {
-                default: &Some(false),
+                default: &disable_setting(Some(false)),
                 global: None,
                 extensions: None,
                 user: Some(&global_false),
@@ -5597,10 +5685,10 @@ mod disable_ai_settings_tests {
             assert!(settings.disable_ai, "Local true can override global false");
 
             // Test 4: Server can only make more restrictive (set to true)
-            let user_false = Some(false);
-            let server_true = Some(true);
+            let user_false = disable_setting(Some(false));
+            let server_true = disable_setting(Some(true));
             let sources = SettingsSources {
-                default: &Some(false),
+                default: &disable_setting(Some(false)),
                 global: None,
                 extensions: None,
                 user: Some(&user_false),
@@ -5617,10 +5705,10 @@ mod disable_ai_settings_tests {
             );
 
             // Test 5: Server false cannot override user true
-            let user_true = Some(true);
-            let server_false = Some(false);
+            let user_true = disable_setting(Some(true));
+            let server_false = disable_setting(Some(false));
             let sources = SettingsSources {
-                default: &Some(false),
+                default: &disable_setting(Some(false)),
                 global: None,
                 extensions: None,
                 user: Some(&user_true),
@@ -5637,12 +5725,12 @@ mod disable_ai_settings_tests {
             );
 
             // Test 6: Multiple local settings, any true disables AI
-            let global_false = Some(false);
-            let local_false3 = Some(false);
-            let local_true2 = Some(true);
-            let local_false4 = Some(false);
+            let global_false = disable_setting(Some(false));
+            let local_false3 = disable_setting(Some(false));
+            let local_true2 = disable_setting(Some(true));
+            let local_false4 = disable_setting(Some(false));
             let sources = SettingsSources {
-                default: &Some(false),
+                default: &disable_setting(Some(false)),
                 global: None,
                 extensions: None,
                 user: Some(&global_false),
@@ -5656,11 +5744,11 @@ mod disable_ai_settings_tests {
             assert!(settings.disable_ai, "Any local true should disable AI");
 
             // Test 7: All three sources can independently disable AI
-            let user_false2 = Some(false);
-            let server_false2 = Some(false);
-            let local_true3 = Some(true);
+            let user_false2 = disable_setting(Some(false));
+            let server_false2 = disable_setting(Some(false));
+            let local_true3 = disable_setting(Some(true));
             let sources = SettingsSources {
-                default: &Some(false),
+                default: &disable_setting(Some(false)),
                 global: None,
                 extensions: None,
                 user: Some(&user_false2),

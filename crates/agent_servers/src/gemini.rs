@@ -36,16 +36,24 @@ impl AgentServer for Gemini {
         cx: &mut App,
     ) -> Task<Result<Rc<dyn AgentConnection>>> {
         let root_dir = root_dir.to_path_buf();
+        let fs = delegate.project().read(cx).fs().clone();
         let server_name = self.name();
         let settings = cx.read_global(|settings: &SettingsStore, _| {
             settings.get::<AllAgentServersSettings>(None).gemini.clone()
         });
+        let project = delegate.project().clone();
 
         cx.spawn(async move |cx| {
             let ignore_system_version = settings
                 .as_ref()
                 .and_then(|settings| settings.ignore_system_version)
                 .unwrap_or(true);
+            let mut project_env = project
+                .update(cx, |project, cx| {
+                    project.directory_environment(root_dir.as_path().into(), cx)
+                })?
+                .await
+                .unwrap_or_default();
             let mut command = if let Some(settings) = settings
                 && let Some(command) = settings.custom_command()
             {
@@ -66,13 +74,19 @@ impl AgentServer for Gemini {
             if !command.args.contains(&ACP_ARG.into()) {
                 command.args.push(ACP_ARG.into());
             }
-
             if let Some(api_key) = cx.update(GoogleLanguageModelProvider::api_key)?.await.ok() {
-                command
-                    .env
-                    .get_or_insert_default()
+                project_env
                     .insert("GEMINI_API_KEY".to_owned(), api_key.key);
             }
+            project_env.extend(command.env.take().unwrap_or_default());
+            command.env = Some(project_env);
+
+            let root_dir_exists = fs.is_dir(&root_dir).await;
+            anyhow::ensure!(
+                root_dir_exists,
+                "Session root {} does not exist or is not a directory",
+                root_dir.to_string_lossy()
+            );
 
             let result = crate::acp::connect(server_name, command.clone(), &root_dir, cx).await;
             match &result {
@@ -92,7 +106,7 @@ impl AgentServer for Gemini {
                         log::error!("connected to gemini, but missing prompt_capabilities.image (version is {current_version})");
                         return Err(LoadError::Unsupported {
                             current_version: current_version.into(),
-                            command: command.path.to_string_lossy().to_string().into(),
+                            command: (command.path.to_string_lossy().to_string() + " " + &command.args.join(" ")).into(),
                             minimum_version: Self::MINIMUM_VERSION.into(),
                         }
                         .into());
@@ -129,7 +143,7 @@ impl AgentServer for Gemini {
                     if !supported {
                         return Err(LoadError::Unsupported {
                             current_version: current_version.into(),
-                            command: command.path.to_string_lossy().to_string().into(),
+                            command: (command.path.to_string_lossy().to_string() + " " + &command.args.join(" ")).into(),
                             minimum_version: Self::MINIMUM_VERSION.into(),
                         }
                         .into());

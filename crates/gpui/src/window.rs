@@ -1282,8 +1282,6 @@ pub(crate) struct DispatchEventResult {
 pub struct ContentMask<P: Clone + Debug + Default + PartialEq> {
     /// The bounds
     pub bounds: Bounds<P>,
-    /// The corner radii of the content mask.
-    pub corner_radii: Corners<P>,
 }
 
 impl ContentMask<Pixels> {
@@ -1291,31 +1289,13 @@ impl ContentMask<Pixels> {
     pub fn scale(&self, factor: f32) -> ContentMask<ScaledPixels> {
         ContentMask {
             bounds: self.bounds.scale(factor),
-            corner_radii: self.corner_radii.scale(factor),
         }
     }
 
     /// Intersect the content mask with the given content mask.
     pub fn intersect(&self, other: &Self) -> Self {
         let bounds = self.bounds.intersect(&other.bounds);
-        ContentMask {
-            bounds,
-            corner_radii: Corners {
-                top_left: self.corner_radii.top_left.max(other.corner_radii.top_left),
-                top_right: self
-                    .corner_radii
-                    .top_right
-                    .max(other.corner_radii.top_right),
-                bottom_right: self
-                    .corner_radii
-                    .bottom_right
-                    .max(other.corner_radii.bottom_right),
-                bottom_left: self
-                    .corner_radii
-                    .bottom_left
-                    .max(other.corner_radii.bottom_left),
-            },
-        }
+        ContentMask { bounds }
     }
 }
 
@@ -2576,7 +2556,6 @@ impl Window {
                     origin: Point::default(),
                     size: self.viewport_size,
                 },
-                ..Default::default()
             })
     }
 
@@ -4093,9 +4072,7 @@ impl Window {
         self.on_next_frame(|window, cx| {
             if let Some(mut input_handler) = window.platform_window.take_input_handler() {
                 if let Some(bounds) = input_handler.selected_bounds(window, cx) {
-                    window
-                        .platform_window
-                        .update_ime_position(bounds.scale(window.scale_factor()));
+                    window.platform_window.update_ime_position(bounds);
                 }
                 window.platform_window.set_input_handler(input_handler);
             }

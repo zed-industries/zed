@@ -44,6 +44,7 @@ impl LspAdapter for YamlLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
+        _: &AsyncApp,
     ) -> Result<Box<dyn 'static + Any + Send>> {
         Ok(Box::new(
             self.node

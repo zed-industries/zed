@@ -53,11 +53,6 @@ struct Corners {
     bottom_left: f32,
 }
 
-struct ContentMask {
-    bounds: Bounds,
-    corner_radii: Corners,
-}
-
 struct Edges {
     top: f32,
     right: f32,
@@ -445,7 +440,7 @@ struct Quad {
     order: u32,
     border_style: u32,
     bounds: Bounds,
-    content_mask: ContentMask,
+    content_mask: Bounds,
     background: Background,
     border_color: Hsla,
     corner_radii: Corners,
@@ -483,7 +478,7 @@ fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     out.background_color1 = gradient.color1;
     out.border_color = hsla_to_rgba(quad.border_color);
     out.quad_id = instance_id;
-    out.clip_distances = distance_from_clip_rect(unit_vertex, quad.bounds, quad.content_mask.bounds);
+    out.clip_distances = distance_from_clip_rect(unit_vertex, quad.bounds, quad.content_mask);
     return out;
 }
 
@@ -496,19 +491,8 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
 
     let quad = b_quads[input.quad_id];
 
-    // Signed distance field threshold for inclusion of pixels. 0.5 is the
-    // minimum distance between the center of the pixel and the edge.
-    let antialias_threshold = 0.5;
-
-    var background_color = gradient_color(quad.background, input.position.xy, quad.bounds,
+    let background_color = gradient_color(quad.background, input.position.xy, quad.bounds,
         input.background_solid, input.background_color0, input.background_color1);
-    var border_color = input.border_color;
-
-    // Apply content_mask corner radii clipping
-    let clip_sdf = quad_sdf(input.position.xy, quad.content_mask.bounds, quad.content_mask.corner_radii);
-    let clip_alpha = saturate(antialias_threshold - clip_sdf);
-    background_color.a *= clip_alpha;
-    border_color.a *= clip_alpha;
 
     let unrounded = quad.corner_radii.top_left == 0.0 &&
         quad.corner_radii.bottom_left == 0.0 &&
@@ -528,6 +512,10 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     let half_size = size / 2.0;
     let point = input.position.xy - quad.bounds.origin;
     let center_to_point = point - half_size;
+
+    // Signed distance field threshold for inclusion of pixels. 0.5 is the
+    // minimum distance between the center of the pixel and the edge.
+    let antialias_threshold = 0.5;
 
     // Radius of the nearest corner
     let corner_radius = pick_corner_radius(center_to_point, quad.corner_radii);
@@ -619,6 +607,8 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
 
     var color = background_color;
     if (border_sdf < antialias_threshold) {
+        var border_color = input.border_color;
+
         // Dashed border logic when border_style == 1
         if (quad.border_style == 1) {
             // Position along the perimeter in "dash space", where each dash
@@ -654,11 +644,7 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
                 let is_horizontal =
                         corner_center_to_point.x <
                         corner_center_to_point.y;
-                var border_width = select(border.y, border.x, is_horizontal);
-                // When border width of some side is 0, we need to use the other side width for dash velocity.
-                if (border_width == 0.0) {
-                    border_width = select(border.x, border.y, is_horizontal);
-                }
+                let border_width = select(border.y, border.x, is_horizontal);
                 dash_velocity = dv_numerator / border_width;
                 t = select(point.y, point.x, is_horizontal) * dash_velocity;
                 max_t = select(size.y, size.x, is_horizontal) * dash_velocity;
@@ -870,7 +856,7 @@ struct Shadow {
     blur_radius: f32,
     bounds: Bounds,
     corner_radii: Corners,
-    content_mask: ContentMask,
+    content_mask: Bounds,
     color: Hsla,
 }
 var<storage, read> b_shadows: array<Shadow>;
@@ -898,7 +884,7 @@ fn vs_shadow(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) ins
     out.position = to_device_position(unit_vertex, shadow.bounds);
     out.color = hsla_to_rgba(shadow.color);
     out.shadow_id = instance_id;
-    out.clip_distances = distance_from_clip_rect(unit_vertex, shadow.bounds, shadow.content_mask.bounds);
+    out.clip_distances = distance_from_clip_rect(unit_vertex, shadow.bounds, shadow.content_mask);
     return out;
 }
 
@@ -913,6 +899,7 @@ fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
     let half_size = shadow.bounds.size / 2.0;
     let center = shadow.bounds.origin + half_size;
     let center_to_point = input.position.xy - center;
+
     let corner_radius = pick_corner_radius(center_to_point, shadow.corner_radii);
 
     // The signal is only non-zero in a limited range, so don't waste samples
@@ -1040,7 +1027,7 @@ struct Underline {
     order: u32,
     pad: u32,
     bounds: Bounds,
-    content_mask: ContentMask,
+    content_mask: Bounds,
     color: Hsla,
     thickness: f32,
     wavy: u32,
@@ -1064,7 +1051,7 @@ fn vs_underline(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) 
     out.position = to_device_position(unit_vertex, underline.bounds);
     out.color = hsla_to_rgba(underline.color);
     out.underline_id = instance_id;
-    out.clip_distances = distance_from_clip_rect(unit_vertex, underline.bounds, underline.content_mask.bounds);
+    out.clip_distances = distance_from_clip_rect(unit_vertex, underline.bounds, underline.content_mask);
     return out;
 }
 
@@ -1106,7 +1093,7 @@ struct MonochromeSprite {
     order: u32,
     pad: u32,
     bounds: Bounds,
-    content_mask: ContentMask,
+    content_mask: Bounds,
     color: Hsla,
     tile: AtlasTile,
     transformation: TransformationMatrix,
@@ -1130,7 +1117,7 @@ fn vs_mono_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index
 
     out.tile_position = to_tile_position(unit_vertex, sprite.tile);
     out.color = hsla_to_rgba(sprite.color);
-    out.clip_distances = distance_from_clip_rect(unit_vertex, sprite.bounds, sprite.content_mask.bounds);
+    out.clip_distances = distance_from_clip_rect(unit_vertex, sprite.bounds, sprite.content_mask);
     return out;
 }
 
@@ -1152,7 +1139,7 @@ struct PolychromeSprite {
     grayscale: u32,
     opacity: f32,
     bounds: Bounds,
-    content_mask: ContentMask,
+    content_mask: Bounds,
     corner_radii: Corners,
     tile: AtlasTile,
 }
@@ -1174,7 +1161,7 @@ fn vs_poly_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index
     out.position = to_device_position(unit_vertex, sprite.bounds);
     out.tile_position = to_tile_position(unit_vertex, sprite.tile);
     out.sprite_id = instance_id;
-    out.clip_distances = distance_from_clip_rect(unit_vertex, sprite.bounds, sprite.content_mask.bounds);
+    out.clip_distances = distance_from_clip_rect(unit_vertex, sprite.bounds, sprite.content_mask);
     return out;
 }
 
@@ -1246,13 +1233,4 @@ fn fs_surface(input: SurfaceVarying) -> @location(0) vec4<f32> {
         1.0);
 
     return ycbcr_to_RGB * y_cb_cr;
-}
-
-fn max_corner_radii(a: Corners, b: Corners) -> Corners {
-    return Corners(
-        max(a.top_left, b.top_left),
-        max(a.top_right, b.top_right),
-        max(a.bottom_right, b.bottom_right),
-        max(a.bottom_left, b.bottom_left)
-    );
 }
