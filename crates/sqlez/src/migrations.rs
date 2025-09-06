@@ -94,10 +94,51 @@ impl Connection {
                 store_completed_migration((domain, index, migration))?;
             }
 
+            self.delete_rows_with_orphaned_foreign_key_references()?;
             self.exec("PRAGMA foreign_key_check;")?()?;
 
             Ok(())
         })
+    }
+
+    /// Delete any rows that were orphaned by a migration. This is needed
+    /// because we disable foreign key constraints during migrations, so
+    /// that it's possible to re-create a table with the same name, without
+    /// deleting all associated data.
+    fn delete_rows_with_orphaned_foreign_key_references(&self) -> Result<()> {
+        let foreign_key_info: Vec<(String, String, String, String)> = self.select(
+            r#"
+                SELECT DISTINCT
+                    schema.name as child_table,
+                    foreign_keys.[from] as child_key,
+                    foreign_keys.[table] as parent_table,
+                    foreign_keys.[to] as parent_key
+                FROM sqlite_schema schema
+                JOIN pragma_foreign_key_list(schema.name) foreign_keys
+                WHERE
+                    schema.type = 'table' AND
+                    schema.name NOT LIKE "sqlite_%"
+            "#,
+        )?()?;
+
+        if !foreign_key_info.is_empty() {
+            log::info!(
+                "Found {} foreign key relationships to check",
+                foreign_key_info.len()
+            );
+        }
+
+        for (child_table, child_key, parent_table, parent_key) in foreign_key_info {
+            self.exec(&format!(
+                "
+                DELETE FROM {child_table}
+                WHERE {child_key} NOT IN
+                (SELECT {parent_key} FROM {parent_table})
+                "
+            ))?()?;
+        }
+
+        Ok(())
     }
 }
 
