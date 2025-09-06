@@ -9530,7 +9530,9 @@ async fn test_find_project_path_abs(
 }
 
 #[gpui::test]
-async fn test_local_settings_with_local_override(cx: &mut gpui::TestAppContext) {
+async fn test_local_settings_with_override_from_additional_local_settings(
+    cx: &mut gpui::TestAppContext,
+) {
     init_test(cx);
 
     let fs = FakeFs::new(cx.executor().clone());
@@ -9572,7 +9574,7 @@ async fn test_local_settings_with_local_override(cx: &mut gpui::TestAppContext) 
 
     // Wait for the settings to be loaded
     cx.executor().run_until_parked();
-    
+
     // Give more time for async operations
     std::thread::sleep(std::time::Duration::from_millis(100));
     cx.executor().run_until_parked();
@@ -9585,18 +9587,21 @@ async fn test_local_settings_with_local_override(cx: &mut gpui::TestAppContext) 
             worktree.clone(),
         ) as _;
         let settings_root = language_settings(None, Some(&file_root), cx);
-        
+
         // tab_size should be 2 from local, not 4 from base
         assert_eq!(settings_root.tab_size.get(), 2);
-        
+
         // preferred_line_length should be 120 from local, not 100 from base
         assert_eq!(settings_root.preferred_line_length, 120);
-        
+
         // soft_wrap should be "none" from base (not overridden in local)
-        assert_eq!(settings_root.soft_wrap, language::language_settings::SoftWrap::None);
+        assert_eq!(
+            settings_root.soft_wrap,
+            language::language_settings::SoftWrap::None
+        );
     });
 
-    // Test src directory settings - local should override base  
+    // Test src directory settings - local should override base
     cx.read(|cx| {
         let tree = worktree.read(cx);
         let file_src = File::for_entry(
@@ -9604,17 +9609,17 @@ async fn test_local_settings_with_local_override(cx: &mut gpui::TestAppContext) 
             worktree.clone(),
         ) as _;
         let settings_src = language_settings(None, Some(&file_src), cx);
-        
+
         // tab_size should be 3 from src/.zed/settings.local.json, not 8 from src/.zed/settings.json
         assert_eq!(settings_src.tab_size.get(), 3);
-        
+
         // remove_trailing_whitespace_on_save should be true from base (not overridden in local)
         assert_eq!(settings_src.remove_trailing_whitespace_on_save, true);
     });
 }
 
 #[gpui::test]
-async fn test_simple_local_settings(cx: &mut gpui::TestAppContext) {
+async fn test_additional_local_settings_standalone(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
     let fs = FakeFs::new(cx.executor().clone());
@@ -9633,7 +9638,7 @@ async fn test_simple_local_settings(cx: &mut gpui::TestAppContext) {
 
     let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
     let worktree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
-    
+
     cx.executor().run_until_parked();
     std::thread::sleep(std::time::Duration::from_millis(100));
     cx.executor().run_until_parked();
@@ -9645,7 +9650,7 @@ async fn test_simple_local_settings(cx: &mut gpui::TestAppContext) {
             worktree.clone(),
         ) as _;
         let settings_root = language_settings(None, Some(&file_root), cx);
-        
+
         // Should be 2 from settings.local.json (default would be 4)
         assert_eq!(settings_root.tab_size.get(), 2);
     });
