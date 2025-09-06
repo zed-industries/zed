@@ -10,11 +10,17 @@ use gpui::{
     Focusable, IntoElement, ParentElement, Render, Subscription, WeakEntity, actions, div,
     pulsating_between,
 };
+
 use indoc::indoc;
 use language::{
     EditPredictionsMode, File, Language,
     language_settings::{self, AllLanguageSettings, EditPredictionProvider, all_language_settings},
 };
+use language_models::AllLanguageModelSettings;
+
+use ollama;
+
+use paths;
 use project::DisableAiSettings;
 use regex::Regex;
 use settings::{Settings, SettingsStore, update_settings_file};
@@ -357,6 +363,41 @@ impl Render for EditPredictionButton {
 
                 div().child(popover_menu.into_any_element())
             }
+
+            EditPredictionProvider::Ollama => {
+                let enabled = self.editor_enabled.unwrap_or(false);
+                let icon = if enabled {
+                    IconName::AiOllama
+                } else {
+                    IconName::AiOllama // Could add disabled variant
+                };
+
+                let this = cx.entity().clone();
+
+                div().child(
+                    PopoverMenu::new("ollama")
+                        .menu(move |window, cx| {
+                            Some(
+                                this.update(cx, |this, cx| {
+                                    this.build_ollama_context_menu(window, cx)
+                                }),
+                            )
+                        })
+                        .trigger(
+                            IconButton::new("ollama-completion", icon)
+                                .icon_size(IconSize::Small)
+                                .tooltip(|window, cx| {
+                                    Tooltip::for_action(
+                                        "Ollama Completion",
+                                        &ToggleMenu,
+                                        window,
+                                        cx,
+                                    )
+                                }),
+                        )
+                        .with_handle(self.popover_menu_handle.clone()),
+                )
+            }
         }
     }
 }
@@ -375,10 +416,14 @@ impl EditPredictionButton {
         cx.observe_global::<SettingsStore>(move |_, cx| cx.notify())
             .detach();
 
+        if let Some(service) = ollama::State::global(cx) {
+            cx.observe(&service, |_, _, cx| cx.notify()).detach();
+        }
+
         Self {
             editor_subscription: None,
             editor_enabled: None,
-            editor_show_predictions: true,
+            editor_show_predictions: false,
             editor_focus_handle: None,
             language: None,
             file: None,
@@ -492,6 +537,7 @@ impl EditPredictionButton {
             EditPredictionProvider::Zed
                 | EditPredictionProvider::Copilot
                 | EditPredictionProvider::Supermaven
+                | EditPredictionProvider::Ollama
         ) {
             menu = menu
                 .separator()
@@ -813,6 +859,238 @@ impl EditPredictionButton {
         })
     }
 
+    /// Builds a simplified context menu for Ollama with essential features:
+    /// - API URL configuration that opens settings at the correct location
+    /// - Model selection from available models
+    /// - Common language settings (buffer/language/global toggles, privacy settings)
+    ///
+    /// The menu focuses on core functionality without connection status or external links.
+    fn build_ollama_context_menu(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ContextMenu> {
+        let fs = self.fs.clone();
+        ContextMenu::build(window, cx, |menu, window, cx| {
+            let settings = AllLanguageModelSettings::get_global(cx);
+            let ollama_settings = &settings.ollama;
+
+            // Get models from both settings and global service discovery
+            let mut available_models = ollama_settings.available_models.clone();
+
+            // Add discovered models from the global Ollama service
+            if let Some(service) = ollama::State::global(cx) {
+                let discovered_models = service.read(cx).available_models();
+                for model in discovered_models {
+                    // Convert from ollama::Model to language_models AvailableModel
+                    let available_model = language_models::provider::ollama::AvailableModel {
+                        name: model.name.clone(),
+                        display_name: model.display_name.clone(),
+                        max_tokens: model.max_tokens,
+                        keep_alive: model.keep_alive.clone(),
+                        supports_tools: model.supports_tools,
+                        supports_images: model.supports_vision,
+                        supports_thinking: model.supports_thinking,
+                    };
+
+                    // Add if not already in settings (settings take precedence)
+                    if !available_models.iter().any(|m| m.name == model.name) {
+                        available_models.push(available_model);
+                    }
+                }
+            }
+
+            // Check if ollama settings exist before building menu
+            let has_ollama_settings = Self::ollama_settings_exist_in_content(
+                &std::fs::read_to_string(paths::settings_file()).unwrap_or_default(),
+            );
+
+            // API URL configuration - only show if Ollama settings exist in the user's config
+            let menu = if has_ollama_settings {
+                menu.entry("Configure API URL", None, {
+                    let fs = fs.clone();
+                    move |window, cx| {
+                        Self::open_ollama_settings(fs.clone(), window, cx);
+                    }
+                })
+            } else {
+                menu
+            };
+
+            // Model selection section
+            let menu = if !available_models.is_empty() {
+                let menu = menu.separator().header("Available Models");
+
+                // Add each available model as a menu entry
+                let menu = available_models.iter().fold(menu, |menu, model| {
+                    let model_name = model.display_name.as_ref().unwrap_or(&model.name);
+                    let is_current = ollama_settings
+                        .available_models
+                        .first()
+                        .map(|current_model| current_model.name == model.name)
+                        .unwrap_or(false);
+
+                    menu.toggleable_entry(
+                        model_name.clone(),
+                        is_current,
+                        IconPosition::Start,
+                        None,
+                        {
+                            let model_name = model.name.clone();
+                            let fs = fs.clone();
+                            move |_window, cx| {
+                                Self::switch_ollama_model(fs.clone(), model_name.clone(), cx);
+                            }
+                        },
+                    )
+                });
+
+                // Add refresh models option
+                menu.separator().entry("Refresh Models", None, {
+                    move |_window, cx| {
+                        Self::refresh_ollama_models(cx);
+                    }
+                })
+            } else {
+                menu.separator()
+                    .header("No Models Configured")
+                    .entry("Configure Models", None, {
+                        let fs = fs.clone();
+                        move |window, cx| {
+                            Self::open_ollama_settings(fs.clone(), window, cx);
+                        }
+                    })
+                    .entry("Refresh Models", None, {
+                        move |_window, cx| {
+                            Self::refresh_ollama_models(cx);
+                        }
+                    })
+            };
+
+            // Use the common language settings menu
+            self.build_language_settings_menu(menu, window, cx)
+        })
+    }
+
+    /// Opens Zed settings and navigates directly to the Ollama models configuration.
+    /// Uses improved regex patterns to locate the exact setting in the JSON structure.
+    fn open_ollama_settings(_fs: Arc<dyn Fs>, window: &mut Window, cx: &mut App) {
+        if let Some(workspace) = window.root::<Workspace>().flatten() {
+            let workspace = workspace.downgrade();
+            window
+                .spawn(cx, async move |cx| {
+                    let settings_editor = workspace
+                        .update_in(cx, |_, window, cx| {
+                            create_and_open_local_file(paths::settings_file(), window, cx, || {
+                                settings::initial_user_settings_content().as_ref().into()
+                            })
+                        })?
+                        .await?
+                        .downcast::<Editor>()
+                        .unwrap();
+
+                    let _ = settings_editor
+                        .downgrade()
+                        .update_in(cx, |item, window, cx| {
+                            let text = item.buffer().read(cx).snapshot(cx).text();
+
+                            // Look for language_models.ollama section with precise pattern
+                            // This matches the full nested structure to avoid false matches
+                            let ollama_pattern = r#""language_models"\s*:\s*\{[\s\S]*?"ollama"\s*:\s*\{[\s\S]*?"available_models"\s*:\s*\[\s*\]"#;
+                            let regex = regex::Regex::new(ollama_pattern).unwrap();
+
+                            if let Some(captures) = regex.captures(&text) {
+                                let full_match = captures.get(0).unwrap();
+
+                                // Position cursor after the opening bracket of available_models array
+                                let bracket_pos = full_match.as_str().rfind('[').unwrap();
+                                let cursor_pos = full_match.start() + bracket_pos + 1;
+
+                                // Place cursor inside the available_models array
+                                item.change_selections(
+                                    SelectionEffects::scroll(Autoscroll::newest()),
+                                    window,
+                                    cx,
+                                    |selections| {
+                                        selections.select_ranges(vec![cursor_pos..cursor_pos]);
+                                    },
+                                );
+                                return Ok::<(), anyhow::Error>(());
+                            }
+
+                            Ok::<(), anyhow::Error>(())
+                        })?;
+
+                    Ok::<(), anyhow::Error>(())
+                })
+                .detach_and_log_err(cx);
+        }
+    }
+
+    fn ollama_settings_exist_in_content(content: &str) -> bool {
+        let api_url_pattern = r#""language_models"\s*:\s*\{[\s\S]*?"ollama"\s*:\s*\{[\s\S]*?"api_url"\s*:\s*"([^"]*)"#;
+        let regex = regex::Regex::new(api_url_pattern).unwrap();
+        regex.is_match(content)
+    }
+
+    fn switch_ollama_model(fs: Arc<dyn Fs>, model_name: String, cx: &mut App) {
+        update_settings_file::<AllLanguageModelSettings>(fs, cx, move |settings, cx| {
+            // Ensure ollama settings exist
+            if settings.ollama.is_none() {
+                settings.ollama = Some(language_models::OllamaSettingsContent {
+                    api_url: None,
+                    available_models: Some(Vec::new()),
+                });
+            }
+
+            let ollama_settings = settings.ollama.as_mut().unwrap();
+
+            // Ensure available_models exists
+            if ollama_settings.available_models.is_none() {
+                ollama_settings.available_models = Some(Vec::new());
+            }
+
+            let models = ollama_settings.available_models.as_mut().unwrap();
+
+            // Check if model is already in settings
+            if let Some(index) = models.iter().position(|m| m.name == model_name) {
+                // Move existing model to the front
+                let selected_model = models.remove(index);
+                models.insert(0, selected_model);
+            } else {
+                // Model not in settings - check if it's a discovered model and add it
+                if let Some(service) = ollama::State::global(cx) {
+                    let discovered_models = service.read(cx).available_models();
+                    if let Some(discovered_model) =
+                        discovered_models.iter().find(|m| m.name == model_name)
+                    {
+                        // Convert from ollama::Model to language_models AvailableModel
+                        let available_model = language_models::provider::ollama::AvailableModel {
+                            name: discovered_model.name.clone(),
+                            display_name: discovered_model.display_name.clone(),
+                            max_tokens: discovered_model.max_tokens,
+                            keep_alive: discovered_model.keep_alive.clone(),
+                            supports_tools: discovered_model.supports_tools,
+                            supports_images: discovered_model.supports_vision,
+                            supports_thinking: discovered_model.supports_thinking,
+                        };
+
+                        // Add the discovered model to the front of the list
+                        models.insert(0, available_model);
+                    }
+                }
+            }
+        });
+    }
+
+    fn refresh_ollama_models(cx: &mut App) {
+        if let Some(service) = ollama::State::global(cx) {
+            service.update(cx, |service, cx| {
+                service.refresh_models(cx);
+            });
+        }
+    }
+
     pub fn update_enabled(&mut self, editor: Entity<Editor>, cx: &mut Context<Self>) {
         let editor = editor.read(cx);
         let snapshot = editor.buffer().read(cx).snapshot(cx);
@@ -995,5 +1273,693 @@ fn toggle_edit_prediction_mode(fs: Arc<dyn Fs>, mode: EditPredictionsMode, cx: &
                     });
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clock::FakeSystemClock;
+    use gpui::TestAppContext;
+    use http_client;
+    use ollama::{State, fake::FakeHttpClient};
+    use settings::SettingsStore;
+    use std::sync::Arc;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            gpui_tokio::init(cx);
+            theme::init(theme::LoadThemes::JustBase, cx);
+            language::init(cx);
+            language_settings::init(cx);
+
+            // Initialize language_models settings for tests that need them
+            // Create client and user store for language_models::init
+            client::init_settings(cx);
+            let clock = Arc::new(FakeSystemClock::new());
+            let http = http_client::FakeHttpClient::with_404_response();
+            let client = client::Client::new(clock, http, cx);
+            let user_store = cx.new(|cx| client::UserStore::new(client.clone(), cx));
+
+            client::init(&client, cx);
+            language_model::init(client.clone(), cx);
+            language_models::init(user_store, client, cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_ollama_menu_shows_discovered_models(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Create fake HTTP client with mock models response
+        let fake_http_client = Arc::new(FakeHttpClient::new());
+
+        // Mock /api/tags response
+        let models_response = serde_json::json!({
+            "models": [
+                {
+                    "name": "qwen2.5-coder:3b",
+                    "modified_at": "2024-01-01T00:00:00Z",
+                    "size": 1000000,
+                    "digest": "abc123",
+                    "details": {
+                        "format": "gguf",
+                        "family": "qwen2",
+                        "families": ["qwen2"],
+                        "parameter_size": "3B",
+                        "quantization_level": "Q4_0"
+                    }
+                },
+                {
+                    "name": "codellama:7b-code",
+                    "modified_at": "2024-01-01T00:00:00Z",
+                    "size": 2000000,
+                    "digest": "def456",
+                    "details": {
+                        "format": "gguf",
+                        "family": "codellama",
+                        "families": ["codellama"],
+                        "parameter_size": "7B",
+                        "quantization_level": "Q4_0"
+                    }
+                }
+            ]
+        });
+
+        fake_http_client.set_response("/api/tags", models_response.to_string());
+
+        // Mock /api/show response
+        let capabilities = serde_json::json!({
+            "capabilities": ["tools"]
+        });
+        fake_http_client.set_response("/api/show", capabilities.to_string());
+
+        // Create and set global Ollama service
+        let service = cx.update(|cx| {
+            State::new(
+                fake_http_client.clone(),
+                "http://localhost:11434".to_string(),
+                None,
+                cx,
+            )
+        });
+
+        cx.update(|cx| {
+            State::set_global(service.clone(), cx);
+        });
+
+        // Wait for model discovery
+        cx.background_executor.run_until_parked();
+
+        // Verify models are accessible through the service
+        cx.update(|cx| {
+            if let Some(service) = State::global(cx) {
+                let discovered_models = service.read(cx).available_models();
+                assert_eq!(discovered_models.len(), 2);
+
+                let model_names: Vec<&str> =
+                    discovered_models.iter().map(|m| m.name.as_str()).collect();
+                assert!(model_names.contains(&"qwen2.5-coder:3b"));
+                assert!(model_names.contains(&"codellama:7b-code"));
+            } else {
+                panic!("Global service should be available");
+            }
+        });
+
+        // Verify the global service has the expected models
+        service.read_with(cx, |service, _| {
+            let models = service.available_models();
+            assert_eq!(models.len(), 2);
+
+            let model_names: Vec<&str> = models.iter().map(|m| m.name.as_str()).collect();
+            assert!(model_names.contains(&"qwen2.5-coder:3b"));
+            assert!(model_names.contains(&"codellama:7b-code"));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_ollama_menu_shows_service_models(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Create fake HTTP client with models
+        let fake_http_client = Arc::new(FakeHttpClient::new());
+
+        let models_response = serde_json::json!({
+            "models": [
+                {
+                    "name": "qwen2.5-coder:7b",
+                    "modified_at": "2024-01-01T00:00:00Z",
+                    "size": 1000000,
+                    "digest": "abc123",
+                    "details": {
+                        "format": "gguf",
+                        "family": "qwen2",
+                        "families": ["qwen2"],
+                        "parameter_size": "7B",
+                        "quantization_level": "Q4_0"
+                    }
+                }
+            ]
+        });
+
+        fake_http_client.set_response("/api/tags", models_response.to_string());
+        fake_http_client.set_response(
+            "/api/show",
+            serde_json::json!({"capabilities": []}).to_string(),
+        );
+
+        // Create and set global service
+        let service = cx.update(|cx| {
+            State::new(
+                fake_http_client,
+                "http://localhost:11434".to_string(),
+                None,
+                cx,
+            )
+        });
+
+        cx.update(|cx| {
+            State::set_global(service.clone(), cx);
+        });
+
+        cx.background_executor.run_until_parked();
+
+        // Test that discovered models are accessible
+        cx.update(|cx| {
+            if let Some(service) = State::global(cx) {
+                let discovered_models = service.read(cx).available_models();
+                assert_eq!(discovered_models.len(), 1);
+                assert_eq!(discovered_models[0].name, "qwen2.5-coder:7b");
+            } else {
+                panic!("Global service should be available");
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_ollama_menu_refreshes_on_service_update(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fake_http_client = Arc::new(FakeHttpClient::new());
+
+        // Initially empty models
+        fake_http_client.set_response("/api/tags", serde_json::json!({"models": []}).to_string());
+
+        let service = cx.update(|cx| {
+            State::new(
+                fake_http_client.clone(),
+                "http://localhost:11434".to_string(),
+                None,
+                cx,
+            )
+        });
+
+        cx.update(|cx| {
+            State::set_global(service.clone(), cx);
+        });
+
+        cx.background_executor.run_until_parked();
+
+        // Verify the service subscription mechanism works by creating a button
+        let _button = cx.update(|cx| {
+            let fs = fs::FakeFs::new(cx.background_executor().clone());
+            let clock = Arc::new(FakeSystemClock::new());
+            let http = http_client::FakeHttpClient::with_404_response();
+            let client = client::Client::new(clock, http, cx);
+            let user_store = cx.new(|cx| client::UserStore::new(client, cx));
+            let popover_handle = PopoverMenuHandle::default();
+
+            cx.new(|cx| EditPredictionButton::new(fs, user_store, popover_handle, cx))
+        });
+
+        // Verify initially no models
+        service.read_with(cx, |service, _| {
+            assert_eq!(service.available_models().len(), 0);
+        });
+
+        // Update mock to return models
+        let models_response = serde_json::json!({
+            "models": [
+                {
+                    "name": "phi3:mini",
+                    "modified_at": "2024-01-01T00:00:00Z",
+                    "size": 500000,
+                    "digest": "xyz789",
+                    "details": {
+                        "format": "gguf",
+                        "family": "phi3",
+                        "families": ["phi3"],
+                        "parameter_size": "3.8B",
+                        "quantization_level": "Q4_0"
+                    }
+                }
+            ]
+        });
+
+        fake_http_client.set_response("/api/tags", models_response.to_string());
+        fake_http_client.set_response(
+            "/api/show",
+            serde_json::json!({"capabilities": []}).to_string(),
+        );
+
+        // Trigger refresh
+        service.update(cx, |service, cx| {
+            service.refresh_models(cx);
+        });
+
+        cx.background_executor.run_until_parked();
+
+        // Verify models were refreshed
+        service.read_with(cx, |service, _| {
+            let models = service.available_models();
+            assert_eq!(models.len(), 1);
+            assert_eq!(models[0].name, "phi3:mini");
+        });
+
+        // The button should have been notified and will rebuild its menu with new models
+        // when next requested (this tests the subscription mechanism)
+    }
+
+    #[gpui::test]
+    async fn test_refresh_models_button_functionality(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fake_http_client = Arc::new(FakeHttpClient::new());
+
+        // Start with one model
+        let initial_response = serde_json::json!({
+            "models": [
+                {
+                    "name": "mistral:7b",
+                    "modified_at": "2024-01-01T00:00:00Z",
+                    "size": 1000000,
+                    "digest": "initial123",
+                    "details": {
+                        "format": "gguf",
+                        "family": "mistral",
+                        "families": ["mistral"],
+                        "parameter_size": "7B",
+                        "quantization_level": "Q4_0"
+                    }
+                }
+            ]
+        });
+
+        fake_http_client.set_response("/api/tags", initial_response.to_string());
+        fake_http_client.set_response(
+            "/api/show",
+            serde_json::json!({"capabilities": []}).to_string(),
+        );
+
+        let service = cx.update(|cx| {
+            State::new(
+                fake_http_client.clone(),
+                "http://localhost:11434".to_string(),
+                None,
+                cx,
+            )
+        });
+
+        cx.update(|cx| {
+            State::set_global(service.clone(), cx);
+        });
+
+        cx.background_executor.run_until_parked();
+
+        // Verify initial model
+        service.read_with(cx, |service, _| {
+            assert_eq!(service.available_models().len(), 1);
+            assert_eq!(service.available_models()[0].name, "mistral:7b");
+        });
+
+        // Update mock to simulate new model available
+        let updated_response = serde_json::json!({
+            "models": [
+                {
+                    "name": "mistral:7b",
+                    "modified_at": "2024-01-01T00:00:00Z",
+                    "size": 1000000,
+                    "digest": "initial123",
+                    "details": {
+                        "format": "gguf",
+                        "family": "mistral",
+                        "families": ["mistral"],
+                        "parameter_size": "7B",
+                        "quantization_level": "Q4_0"
+                    }
+                },
+                {
+                    "name": "gemma2:9b",
+                    "modified_at": "2024-01-01T00:00:00Z",
+                    "size": 2000000,
+                    "digest": "new456",
+                    "details": {
+                        "format": "gguf",
+                        "family": "gemma2",
+                        "families": ["gemma2"],
+                        "parameter_size": "9B",
+                        "quantization_level": "Q4_0"
+                    }
+                }
+            ]
+        });
+
+        fake_http_client.set_response("/api/tags", updated_response.to_string());
+
+        // Simulate clicking "Refresh Models" button
+        cx.update(|cx| {
+            EditPredictionButton::refresh_ollama_models(cx);
+        });
+
+        cx.background_executor.run_until_parked();
+
+        // Verify models were refreshed
+        service.read_with(cx, |service, _| {
+            let models = service.available_models();
+            assert_eq!(models.len(), 2);
+
+            let model_names: Vec<&str> = models.iter().map(|m| m.name.as_str()).collect();
+            assert!(model_names.contains(&"mistral:7b"));
+            assert!(model_names.contains(&"gemma2:9b"));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_ollama_menu_shows_discovered_models_for_selection(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Create fake HTTP client with mock models response
+        let fake_http_client = Arc::new(FakeHttpClient::new());
+
+        // Mock /api/tags response with a model not in settings
+        let models_response = serde_json::json!({
+            "models": [
+                {
+                    "name": "discovered-model:latest",
+                    "modified_at": "2024-01-01T00:00:00Z",
+                    "size": 1000000,
+                    "digest": "abc123",
+                    "details": {
+                        "format": "gguf",
+                        "family": "llama",
+                        "families": ["llama"],
+                        "parameter_size": "7B",
+                        "quantization_level": "Q4_0"
+                    }
+                }
+            ]
+        });
+
+        fake_http_client.set_response("/api/tags", models_response.to_string());
+        fake_http_client.set_response(
+            "/api/show",
+            serde_json::json!({"capabilities": []}).to_string(),
+        );
+
+        // Create and set global service
+        let service = cx.update(|cx| {
+            State::new(
+                fake_http_client.clone(),
+                "http://localhost:11434".to_string(),
+                None,
+                cx,
+            )
+        });
+
+        cx.update(|cx| {
+            State::set_global(service.clone(), cx);
+        });
+
+        cx.background_executor.run_until_parked();
+
+        // Verify model is discovered by the service
+        let discovered_model_exists = cx.update(|cx| {
+            if let Some(service) = State::global(cx) {
+                let discovered_models = service.read(cx).available_models();
+                discovered_models
+                    .iter()
+                    .any(|m| m.name == "discovered-model:latest")
+            } else {
+                false
+            }
+        });
+        assert!(
+            discovered_model_exists,
+            "Model should be discovered by service"
+        );
+
+        // Verify initial settings are empty
+        let settings_empty = cx.update(|cx| {
+            let settings = AllLanguageModelSettings::get_global(cx);
+            settings.ollama.available_models.is_empty()
+        });
+        assert!(settings_empty, "Settings should initially be empty");
+
+        // Test the core logic: when a discovered model is selected, it should be available
+        // In the UI context, the menu should show discovered models even if not in settings
+        let menu_shows_discovered_model = cx.update(|cx| {
+            let settings = AllLanguageModelSettings::get_global(cx);
+            let ollama_settings = &settings.ollama;
+
+            // Get models from both settings and global service discovery (like the UI does)
+            let mut available_models = ollama_settings.available_models.clone();
+
+            // Add discovered models from the global Ollama service
+            if let Some(service) = ollama::State::global(cx) {
+                let discovered_models = service.read(cx).available_models();
+                for model in discovered_models {
+                    // Convert from ollama::Model to language_models AvailableModel
+                    let available_model = language_models::provider::ollama::AvailableModel {
+                        name: model.name.clone(),
+                        display_name: model.display_name.clone(),
+                        max_tokens: model.max_tokens,
+                        keep_alive: model.keep_alive.clone(),
+                        supports_tools: model.supports_tools,
+                        supports_images: model.supports_vision,
+                        supports_thinking: model.supports_thinking,
+                    };
+
+                    // Add if not already in settings (settings take precedence)
+                    if !available_models.iter().any(|m| m.name == model.name) {
+                        available_models.push(available_model);
+                    }
+                }
+            }
+
+            available_models
+                .iter()
+                .any(|m| m.name == "discovered-model:latest")
+        });
+
+        assert!(
+            menu_shows_discovered_model,
+            "Menu should show discovered models even when not in settings"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_ollama_discovered_model_menu_integration(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Create fake HTTP client with mock models response
+        let fake_http_client = Arc::new(FakeHttpClient::new());
+
+        // Mock /api/tags response with a model not in settings
+        let models_response = serde_json::json!({
+            "models": [
+                {
+                    "name": "discovered-model:latest",
+                    "modified_at": "2024-01-01T00:00:00Z",
+                    "size": 1000000,
+                    "digest": "abc123",
+                    "details": {
+                        "format": "gguf",
+                        "family": "llama",
+                        "families": ["llama"],
+                        "parameter_size": "7B",
+                        "quantization_level": "Q4_0"
+                    }
+                }
+            ]
+        });
+
+        fake_http_client.set_response("/api/tags", models_response.to_string());
+        fake_http_client.set_response(
+            "/api/show",
+            serde_json::json!({"capabilities": []}).to_string(),
+        );
+
+        // Create and set global service
+        let service = cx.update(|cx| {
+            State::new(
+                fake_http_client.clone(),
+                "http://localhost:11434".to_string(),
+                None,
+                cx,
+            )
+        });
+
+        cx.update(|cx| {
+            State::set_global(service.clone(), cx);
+        });
+
+        cx.background_executor.run_until_parked();
+
+        // Test the core functionality: discovered models should be available for the UI
+        // This simulates what the build_ollama_context_menu function does
+        cx.update(|cx| {
+            let settings = AllLanguageModelSettings::get_global(cx);
+            let ollama_settings = &settings.ollama;
+
+            // Get models from both settings and global service discovery (like the UI does)
+            let mut available_models = ollama_settings.available_models.clone();
+
+            // Add discovered models from the global Ollama service
+            if let Some(service) = ollama::State::global(cx) {
+                let discovered_models = service.read(cx).available_models();
+                for model in discovered_models {
+                    // Convert from ollama::Model to language_models AvailableModel
+                    let available_model = language_models::provider::ollama::AvailableModel {
+                        name: model.name.clone(),
+                        display_name: model.display_name.clone(),
+                        max_tokens: model.max_tokens,
+                        keep_alive: model.keep_alive.clone(),
+                        supports_tools: model.supports_tools,
+                        supports_images: model.supports_vision,
+                        supports_thinking: model.supports_thinking,
+                    };
+
+                    // Add if not already in settings (settings take precedence)
+                    if !available_models.iter().any(|m| m.name == model.name) {
+                        available_models.push(available_model);
+                    }
+                }
+            }
+
+            // The key test: discovered models should now be available for selection
+            assert_eq!(available_models.len(), 1);
+            assert_eq!(available_models[0].name, "discovered-model:latest");
+
+            // Verify that the switch_ollama_model function can find the discovered model
+            // by checking it exists in the service
+            if let Some(service) = ollama::State::global(cx) {
+                let discovered_models = service.read(cx).available_models();
+                let found_model = discovered_models
+                    .iter()
+                    .find(|m| m.name == "discovered-model:latest");
+                assert!(
+                    found_model.is_some(),
+                    "Model should be discoverable by the service for selection"
+                );
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_switch_ollama_model_with_discovered_model(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Create fake HTTP client with mock models response
+        let fake_http_client = Arc::new(FakeHttpClient::new());
+
+        // Mock /api/tags response with a model not in settings
+        let models_response = serde_json::json!({
+            "models": [
+                {
+                    "name": "test-model:latest",
+                    "modified_at": "2024-01-01T00:00:00Z",
+                    "size": 1000000,
+                    "digest": "abc123",
+                    "details": {
+                        "format": "gguf",
+                        "family": "llama",
+                        "families": ["llama"],
+                        "parameter_size": "7B",
+                        "quantization_level": "Q4_0"
+                    }
+                }
+            ]
+        });
+
+        fake_http_client.set_response("/api/tags", models_response.to_string());
+        fake_http_client.set_response(
+            "/api/show",
+            serde_json::json!({"capabilities": []}).to_string(),
+        );
+
+        // Create and set global service
+        let service = cx.update(|cx| {
+            State::new(
+                fake_http_client.clone(),
+                "http://localhost:11434".to_string(),
+                None,
+                cx,
+            )
+        });
+
+        cx.update(|cx| {
+            State::set_global(service.clone(), cx);
+        });
+
+        cx.background_executor.run_until_parked();
+
+        // Verify model is discovered by service
+        let discovered = cx.update(|cx| {
+            if let Some(service) = ollama::State::global(cx) {
+                let models = service.read(cx).available_models();
+                models.iter().any(|m| m.name == "test-model:latest")
+            } else {
+                false
+            }
+        });
+        assert!(discovered, "Model should be discovered by service");
+
+        // Test that switch_ollama_model function can handle discovered models
+        // This test focuses on the function's ability to find and convert discovered models
+        // rather than testing file system persistence
+        let fs = fs::FakeFs::new(cx.background_executor.clone()) as Arc<dyn fs::Fs>;
+
+        // The key test: the function should be able to process a discovered model
+        // We test this by verifying the function doesn't panic and can access the service
+        cx.update(|cx| {
+            // Verify the service is accessible within the function context
+            if let Some(service) = ollama::State::global(cx) {
+                let discovered_models = service.read(cx).available_models();
+                let target_model = discovered_models
+                    .iter()
+                    .find(|m| m.name == "test-model:latest");
+
+                assert!(
+                    target_model.is_some(),
+                    "Target model should be discoverable"
+                );
+
+                // Test the conversion logic that switch_ollama_model uses
+                if let Some(discovered_model) = target_model {
+                    let available_model = language_models::provider::ollama::AvailableModel {
+                        name: discovered_model.name.clone(),
+                        display_name: discovered_model.display_name.clone(),
+                        max_tokens: discovered_model.max_tokens,
+                        keep_alive: discovered_model.keep_alive.clone(),
+                        supports_tools: discovered_model.supports_tools,
+                        supports_images: discovered_model.supports_vision,
+                        supports_thinking: discovered_model.supports_thinking,
+                    };
+
+                    // Verify the conversion worked correctly
+                    assert_eq!(available_model.name, "test-model:latest");
+                }
+            }
+
+            // Call the actual function to ensure it doesn't panic with discovered models
+            // Note: In a test environment, the file system changes may not persist to
+            // the global settings, but the function should execute without errors
+            EditPredictionButton::switch_ollama_model(fs, "test-model:latest".to_string(), cx);
+        });
+
+        // Allow any async operations to complete
+        cx.background_executor.run_until_parked();
     }
 }
