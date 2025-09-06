@@ -1,28 +1,27 @@
-pub mod client;
-pub mod listener;
-pub mod protocol;
+pub mod settings;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
-pub mod transport;
-pub mod types;
-
-// Add the new modules
-#[cfg(feature = "rmcp")]
-pub mod rmcp_adapter;
-pub mod settings;
 
 use std::path::Path;
 use std::sync::Arc;
 use std::{fmt::Display, path::PathBuf};
 
 use anyhow::Result;
-use client::Client;
 use collections::HashMap;
 use gpui::AsyncApp;
 use parking_lot::RwLock;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use util::redact::should_redact;
+
+// RMCP imports
+#[cfg(feature = "rmcp")]
+use rmcp::{
+    ServiceExt,
+    transport::{ConfigureCommandExt, TokioChildProcess},
+};
+#[cfg(feature = "rmcp")]
+use tokio::process::Command;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ContextServerId(pub Arc<str>);
@@ -59,14 +58,26 @@ impl std::fmt::Debug for ContextServerCommand {
     }
 }
 
-enum ContextServerTransport {
+pub enum ContextServerTransport {
     Stdio(ContextServerCommand, Option<PathBuf>),
-    Custom(Arc<dyn crate::transport::Transport>),
+    #[cfg(feature = "rmcp")]
+    Http {
+        url: String,
+        headers: HashMap<String, String>,
+    },
+    #[cfg(feature = "rmcp")]
+    Sse {
+        url: String,
+        headers: HashMap<String, String>,
+    },
 }
 
 pub struct ContextServer {
     id: ContextServerId,
-    client: RwLock<Option<Arc<crate::protocol::InitializedContextServerProtocol>>>,
+    #[cfg(feature = "rmcp")]
+    service: RwLock<Option<rmcp::Service<()>>>,
+    #[cfg(not(feature = "rmcp"))]
+    client: RwLock<Option<()>>, // Placeholder when RMCP not enabled
     configuration: ContextServerTransport,
 }
 
@@ -78,6 +89,9 @@ impl ContextServer {
     ) -> Self {
         Self {
             id,
+            #[cfg(feature = "rmcp")]
+            service: RwLock::new(None),
+            #[cfg(not(feature = "rmcp"))]
             client: RwLock::new(None),
             configuration: ContextServerTransport::Stdio(
                 command,
@@ -86,11 +100,21 @@ impl ContextServer {
         }
     }
 
-    pub fn new(id: ContextServerId, transport: Arc<dyn crate::transport::Transport>) -> Self {
+    #[cfg(feature = "rmcp")]
+    pub fn http(id: ContextServerId, url: String, headers: HashMap<String, String>) -> Self {
         Self {
             id,
-            client: RwLock::new(None),
-            configuration: ContextServerTransport::Custom(transport),
+            service: RwLock::new(None),
+            configuration: ContextServerTransport::Http { url, headers },
+        }
+    }
+
+    #[cfg(feature = "rmcp")]
+    pub fn sse(id: ContextServerId, url: String, headers: HashMap<String, String>) -> Self {
+        Self {
+            id,
+            service: RwLock::new(None),
+            configuration: ContextServerTransport::Sse { url, headers },
         }
     }
 
@@ -98,76 +122,189 @@ impl ContextServer {
         self.id.clone()
     }
 
-    pub fn client(&self) -> Option<Arc<crate::protocol::InitializedContextServerProtocol>> {
-        self.client.read().clone()
+    #[cfg(feature = "rmcp")]
+    pub fn service(&self) -> Option<rmcp::Service<()>> {
+        self.service.read().clone()
     }
 
-    pub async fn start(&self, cx: &AsyncApp) -> Result<()> {
-        self.initialize(self.new_client(cx)?).await
+    #[cfg(not(feature = "rmcp"))]
+    pub fn service(&self) -> Option<()> {
+        None
+    }
+
+    // Legacy method for backward compatibility
+    #[cfg(feature = "rmcp")]
+    pub fn client(&self) -> Option<rmcp::Service<()>> {
+        self.service()
+    }
+
+    #[cfg(not(feature = "rmcp"))]
+    pub fn client(&self) -> Option<()> {
+        None
+    }
+
+    pub async fn start(&self, _cx: &AsyncApp) -> Result<()> {
+        self.initialize().await
     }
 
     /// Starts the context server, making sure handlers are registered before initialization happens
     pub async fn start_with_handlers(
         &self,
-        notification_handlers: Vec<(
+        _notification_handlers: Vec<(
             &'static str,
             Box<dyn 'static + Send + FnMut(serde_json::Value, AsyncApp)>,
         )>,
         cx: &AsyncApp,
     ) -> Result<()> {
-        let client = self.new_client(cx)?;
-        for (method, handler) in notification_handlers {
-            client.on_notification(method, handler);
-        }
-        self.initialize(client).await
+        // Note: RMCP handles notifications differently, this might need to be updated
+        // when we implement notification handling
+        self.start(cx).await
     }
 
-    fn new_client(&self, cx: &AsyncApp) -> Result<Client> {
-        Ok(match &self.configuration {
-            ContextServerTransport::Stdio(command, working_directory) => Client::stdio(
-                client::ContextServerId(self.id.0.clone()),
-                client::ModelContextServerBinary {
-                    executable: Path::new(&command.path).to_path_buf(),
-                    args: command.args.clone(),
-                    env: command.env.clone(),
-                    timeout: command.timeout,
-                },
-                working_directory,
-                cx.clone(),
-            )?,
-            ContextServerTransport::Custom(transport) => Client::new(
-                client::ContextServerId(self.id.0.clone()),
-                self.id().0,
-                transport.clone(),
-                None,
-                cx.clone(),
-            )?,
-        })
-    }
-
-    async fn initialize(&self, client: Client) -> Result<()> {
+    #[cfg(feature = "rmcp")]
+    async fn initialize(&self) -> Result<()> {
         log::debug!("starting context server {}", self.id);
-        let protocol = crate::protocol::ModelContextProtocol::new(client);
-        let client_info = types::Implementation {
-            name: "Zed".to_string(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
+
+        let service = match &self.configuration {
+            ContextServerTransport::Stdio(command, working_directory) => {
+                let mut cmd = Command::new(&command.path);
+                cmd.args(&command.args);
+
+                if let Some(env) = &command.env {
+                    cmd.envs(env);
+                }
+
+                if let Some(working_directory) = working_directory {
+                    cmd.current_dir(working_directory);
+                }
+
+                let transport = TokioChildProcess::new(cmd.configure(|_| {}))?;
+                ().serve(transport).await?
+            }
+            ContextServerTransport::Http { url: _, headers: _ } => {
+                // TODO: Implement HTTP transport when needed
+                return Err(anyhow::anyhow!("HTTP transport not yet implemented"));
+            }
+            ContextServerTransport::Sse { url: _, headers: _ } => {
+                // TODO: Implement SSE transport when needed
+                return Err(anyhow::anyhow!("SSE transport not yet implemented"));
+            }
         };
-        let initialized_protocol = protocol.initialize(client_info).await?;
 
-        log::debug!(
-            "context server {} initialized: {:?}",
-            self.id,
-            initialized_protocol.initialize,
-        );
+        let server_info = service.peer_info();
+        log::debug!("context server {} initialized: {:?}", self.id, server_info);
 
-        *self.client.write() = Some(Arc::new(initialized_protocol));
+        *self.service.write() = Some(service);
         Ok(())
     }
 
-    pub fn stop(&self) -> Result<()> {
-        let mut client = self.client.write();
-        if let Some(protocol) = client.take() {
-            drop(protocol);
+    #[cfg(not(feature = "rmcp"))]
+    async fn initialize(&self) -> Result<()> {
+        Err(anyhow::anyhow!("RMCP feature not enabled"))
+    }
+
+    #[cfg(feature = "rmcp")]
+    pub async fn list_tools(&self) -> Result<Vec<rmcp::model::Tool>> {
+        let service = self.service.read();
+        let service = service
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Context server not initialized"))?;
+        Ok(service.list_all_tools().await?)
+    }
+
+    #[cfg(not(feature = "rmcp"))]
+    pub async fn list_tools(&self) -> Result<Vec<()>> {
+        Err(anyhow::anyhow!("RMCP feature not enabled"))
+    }
+
+    #[cfg(feature = "rmcp")]
+    pub async fn call_tool(
+        &self,
+        params: rmcp::model::CallToolRequestParam,
+    ) -> Result<rmcp::model::CallToolResult> {
+        let service = self.service.read();
+        let service = service
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Context server not initialized"))?;
+        Ok(service.call_tool(params).await?)
+    }
+
+    #[cfg(not(feature = "rmcp"))]
+    pub async fn call_tool(&self, _params: ()) -> Result<()> {
+        Err(anyhow::anyhow!("RMCP feature not enabled"))
+    }
+
+    #[cfg(feature = "rmcp")]
+    pub async fn list_prompts(&self) -> Result<Vec<rmcp::model::Prompt>> {
+        let service = self.service.read();
+        let service = service
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Context server not initialized"))?;
+        Ok(service.list_all_prompts().await?)
+    }
+
+    #[cfg(not(feature = "rmcp"))]
+    pub async fn list_prompts(&self) -> Result<Vec<()>> {
+        Err(anyhow::anyhow!("RMCP feature not enabled"))
+    }
+
+    #[cfg(feature = "rmcp")]
+    pub async fn get_prompt(
+        &self,
+        params: rmcp::model::GetPromptRequestParam,
+    ) -> Result<rmcp::model::GetPromptResult> {
+        let service = self.service.read();
+        let service = service
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Context server not initialized"))?;
+        Ok(service.get_prompt(params).await?)
+    }
+
+    #[cfg(not(feature = "rmcp"))]
+    pub async fn get_prompt(&self, _params: ()) -> Result<()> {
+        Err(anyhow::anyhow!("RMCP feature not enabled"))
+    }
+
+    #[cfg(feature = "rmcp")]
+    pub async fn list_resources(&self) -> Result<Vec<rmcp::model::Resource>> {
+        let service = self.service.read();
+        let service = service
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Context server not initialized"))?;
+        Ok(service.list_all_resources().await?)
+    }
+
+    #[cfg(not(feature = "rmcp"))]
+    pub async fn list_resources(&self) -> Result<Vec<()>> {
+        Err(anyhow::anyhow!("RMCP feature not enabled"))
+    }
+
+    #[cfg(feature = "rmcp")]
+    pub async fn read_resource(
+        &self,
+        params: rmcp::model::ReadResourceRequestParam,
+    ) -> Result<rmcp::model::ReadResourceResult> {
+        let service = self.service.read();
+        let service = service
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Context server not initialized"))?;
+        Ok(service.read_resource(params).await?)
+    }
+
+    #[cfg(not(feature = "rmcp"))]
+    pub async fn read_resource(&self, _params: ()) -> Result<()> {
+        Err(anyhow::anyhow!("RMCP feature not enabled"))
+    }
+
+    pub async fn stop(&self) -> Result<()> {
+        #[cfg(feature = "rmcp")]
+        {
+            let mut service = self.service.write();
+            if let Some(service) = service.take() {
+                if let Err(e) = service.cancel().await {
+                    log::warn!("Error canceling context server {}: {}", self.id, e);
+                }
+            }
         }
         Ok(())
     }

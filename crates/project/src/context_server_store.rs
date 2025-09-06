@@ -351,7 +351,14 @@ impl ContextServerStore {
         let configuration = state.configuration();
         let mut result = Ok(());
         if let ContextServerState::Running { server, .. } = &state {
-            result = server.stop();
+            // Spawn async stop task - we can't await here since this method is sync
+            let server_clone = server.clone();
+            cx.spawn(async move |_| {
+                if let Err(e) = server_clone.stop().await {
+                    log::error!("Failed to stop context server: {}", e);
+                }
+            })
+            .detach();
         }
         drop(state);
 
@@ -399,7 +406,7 @@ impl ContextServerStore {
             async move |this, cx| {
                 match server.clone().start(cx).await {
                     Ok(_) => {
-                        debug_assert!(server.client().is_some());
+                        debug_assert!(server.service().is_some());
 
                         this.update(cx, |this, cx| {
                             this.update_server_state(

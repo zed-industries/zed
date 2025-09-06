@@ -889,18 +889,12 @@ impl ContextStore {
         };
         let slash_command_working_set = self.slash_commands.clone();
         cx.spawn(async move |this, cx| {
-            let Some(protocol) = server.client() else {
+            let Some(service) = server.service() else {
                 return;
             };
 
-            if protocol.capable(context_server::protocol::ServerCapability::Prompts)
-                && let Some(response) = protocol
-                    .request::<context_server::types::requests::PromptsList>(())
-                    .await
-                    .log_err()
-            {
-                let slash_command_ids = response
-                    .prompts
+            if let Some(prompts) = service.list_all_prompts().await.log_err() {
+                let slash_command_ids = prompts
                     .into_iter()
                     .filter(assistant_slash_commands::acceptable_prompt)
                     .map(|prompt| {

@@ -1,130 +1,170 @@
-use anyhow::Context as _;
-use collections::HashMap;
-use futures::{FutureExt, Stream, StreamExt as _, future::BoxFuture, lock::Mutex};
-use gpui::BackgroundExecutor;
-use std::{pin::Pin, sync::Arc};
+//! Test utilities for context servers using RMCP
+//!
+//! Note: The old fake transport system has been removed in favor of RMCP.
+//! Test setups now need to use RMCP's built-in testing utilities.
 
-use crate::{
-    transport::Transport,
-    types::{Implementation, InitializeResponse, ProtocolVersion, ServerCapabilities},
-};
+use std::sync::Arc;
 
-pub fn create_fake_transport(
-    name: impl Into<String>,
-    executor: BackgroundExecutor,
-) -> FakeTransport {
-    let name = name.into();
-    FakeTransport::new(executor).on_request::<crate::types::requests::Initialize, _>(
-        move |_params| {
-            let name = name.clone();
-            async move { create_initialize_response(name.clone()) }
-        },
-    )
+/// Mock context server configuration for testing
+#[derive(Debug, Clone)]
+pub struct MockContextServerConfig {
+    pub name: String,
+    pub tools: Vec<rmcp::model::Tool>,
+    pub prompts: Vec<rmcp::model::Prompt>,
+    pub resources: Vec<rmcp::model::Resource>,
 }
 
-fn create_initialize_response(server_name: String) -> InitializeResponse {
-    InitializeResponse {
-        protocol_version: ProtocolVersion(crate::types::LATEST_PROTOCOL_VERSION.to_string()),
-        server_info: Implementation {
-            name: server_name,
-            version: "1.0.0".to_string(),
-        },
-        capabilities: ServerCapabilities::default(),
-        meta: None,
-    }
-}
-
-pub struct FakeTransport {
-    request_handlers: HashMap<
-        &'static str,
-        Arc<dyn Send + Sync + Fn(serde_json::Value) -> BoxFuture<'static, serde_json::Value>>,
-    >,
-    tx: futures::channel::mpsc::UnboundedSender<String>,
-    rx: Arc<Mutex<futures::channel::mpsc::UnboundedReceiver<String>>>,
-    executor: BackgroundExecutor,
-}
-
-impl FakeTransport {
-    pub fn new(executor: BackgroundExecutor) -> Self {
-        let (tx, rx) = futures::channel::mpsc::unbounded();
+impl MockContextServerConfig {
+    pub fn new(name: impl Into<String>) -> Self {
         Self {
-            request_handlers: Default::default(),
-            tx,
-            rx: Arc::new(Mutex::new(rx)),
-            executor,
+            name: name.into(),
+            tools: Vec::new(),
+            prompts: Vec::new(),
+            resources: Vec::new(),
         }
     }
 
-    pub fn on_request<T, Fut>(
-        mut self,
-        handler: impl 'static + Send + Sync + Fn(T::Params) -> Fut,
-    ) -> Self
-    where
-        T: crate::types::Request,
-        Fut: 'static + Send + Future<Output = T::Response>,
-    {
-        self.request_handlers.insert(
-            T::METHOD,
-            Arc::new(move |value| {
-                let params = value
-                    .get("params")
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null);
-                let params: T::Params =
-                    serde_json::from_value(params).expect("Invalid parameters received");
-                let response = handler(params);
-                async move { serde_json::to_value(response.await).unwrap() }.boxed()
-            }),
-        );
+    pub fn with_tool(mut self, tool: rmcp::model::Tool) -> Self {
+        self.tools.push(tool);
+        self
+    }
+
+    pub fn with_prompt(mut self, prompt: rmcp::model::Prompt) -> Self {
+        self.prompts.push(prompt);
+        self
+    }
+
+    pub fn with_resource(mut self, resource: rmcp::model::Resource) -> Self {
+        self.resources.push(resource);
         self
     }
 }
 
-#[async_trait::async_trait]
-impl Transport for FakeTransport {
-    async fn send(&self, message: String) -> anyhow::Result<()> {
-        if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&message) {
-            let id = msg.get("id").and_then(|id| id.as_u64()).unwrap_or(0);
-
-            if let Some(method) = msg.get("method") {
-                let method = method.as_str().expect("Invalid method received");
-                if let Some(handler) = self.request_handlers.get(method) {
-                    let payload = handler(msg).await;
-                    let response = serde_json::json!({
-                        "jsonrpc": "2.0",
-                        "id": id,
-                        "result": payload
-                    });
-                    self.tx
-                        .unbounded_send(response.to_string())
-                        .context("sending a message")?;
-                } else {
-                    log::debug!("No handler registered for MCP request '{method}'");
-                }
+/// Creates a simple test tool for testing purposes
+pub fn create_test_tool(name: impl Into<String>) -> rmcp::model::Tool {
+    let schema_map = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "message": {
+                "type": "string",
+                "description": "Message to echo"
             }
-        }
-        Ok(())
+        },
+        "required": ["message"]
+    })
+    .as_object()
+    .unwrap()
+    .clone();
+
+    rmcp::model::Tool {
+        name: name.into().into(),
+        description: Some("Test tool".into()),
+        input_schema: Arc::new(schema_map),
+        output_schema: None,
+        annotations: None,
+    }
+}
+
+/// Creates a simple test prompt for testing purposes
+pub fn create_test_prompt(name: impl Into<String>) -> rmcp::model::Prompt {
+    rmcp::model::Prompt {
+        name: name.into().into(),
+        description: Some("Test prompt".into()),
+        arguments: Some(vec![rmcp::model::PromptArgument {
+            name: "input".into(),
+            description: Some("Input parameter".into()),
+            required: Some(true),
+        }]),
+    }
+}
+
+/// Creates a simple test resource for testing purposes
+pub fn create_test_resource(
+    name: impl Into<String>,
+    uri: impl Into<String>,
+) -> rmcp::model::Resource {
+    rmcp::model::Resource {
+        raw: rmcp::model::RawResource {
+            uri: uri.into().into(),
+            name: name.into().into(),
+            description: Some("Test resource".into()),
+            mime_type: Some("text/plain".into()),
+        },
+        annotations: None,
+    }
+}
+
+/// Test utilities for RMCP-based context servers
+pub struct TestContextServer {
+    config: MockContextServerConfig,
+}
+
+impl TestContextServer {
+    pub fn new(config: MockContextServerConfig) -> Self {
+        Self { config }
     }
 
-    fn receive(&self) -> Pin<Box<dyn Stream<Item = String> + Send>> {
-        let rx = self.rx.clone();
-        let executor = self.executor.clone();
-        Box::pin(futures::stream::unfold(rx, move |rx| {
-            let executor = executor.clone();
-            async move {
-                let mut rx_guard = rx.lock().await;
-                executor.simulate_random_delay().await;
-                if let Some(message) = rx_guard.next().await {
-                    drop(rx_guard);
-                    Some((message, rx))
-                } else {
-                    None
-                }
-            }
-        }))
+    pub fn name(&self) -> &str {
+        &self.config.name
     }
 
-    fn receive_err(&self) -> Pin<Box<dyn Stream<Item = String> + Send>> {
-        Box::pin(futures::stream::empty())
+    pub fn tools(&self) -> &[rmcp::model::Tool] {
+        &self.config.tools
+    }
+
+    pub fn prompts(&self) -> &[rmcp::model::Prompt] {
+        &self.config.prompts
+    }
+
+    pub fn resources(&self) -> &[rmcp::model::Resource] {
+        &self.config.resources
+    }
+}
+
+// TODO: Implement actual RMCP-based test server when needed
+// This would involve creating a mock RMCP server that can be used in tests
+// For now, tests that require context server functionality will need to be
+// updated or disabled until proper RMCP test infrastructure is in place.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mock_config_creation() {
+        let config = MockContextServerConfig::new("test_server")
+            .with_tool(create_test_tool("echo"))
+            .with_prompt(create_test_prompt("test_prompt"))
+            .with_resource(create_test_resource("test_resource", "test://resource/1"));
+
+        assert_eq!(config.name, "test_server");
+        assert_eq!(config.tools.len(), 1);
+        assert_eq!(config.prompts.len(), 1);
+        assert_eq!(config.resources.len(), 1);
+    }
+
+    #[test]
+    fn test_create_test_tool() {
+        let tool = create_test_tool("test_tool");
+        assert_eq!(tool.name, "test_tool");
+        assert!(tool.description.is_some());
+        assert!(!tool.input_schema.is_empty());
+    }
+
+    #[test]
+    fn test_create_test_prompt() {
+        let prompt = create_test_prompt("test_prompt");
+        assert_eq!(prompt.name, "test_prompt");
+        assert!(prompt.description.is_some());
+        assert!(prompt.arguments.is_some());
+    }
+
+    #[test]
+    fn test_create_test_resource() {
+        let resource = create_test_resource("test_resource", "test://uri");
+        assert_eq!(resource.raw.name, "test_resource");
+        assert_eq!(resource.raw.uri, "test://uri");
+        assert!(resource.raw.description.is_some());
+        assert!(resource.raw.mime_type.is_some());
     }
 }

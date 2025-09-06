@@ -576,20 +576,15 @@ impl ThreadStore {
         };
         let tool_working_set = self.tools.clone();
         cx.spawn(async move |this, cx| {
-            let Some(protocol) = server.client() else {
+            let Some(service) = server.service() else {
                 return;
             };
 
-            if protocol.capable(context_server::protocol::ServerCapability::Tools)
-                && let Some(response) = protocol
-                    .request::<context_server::types::requests::ListTools>(())
-                    .await
-                    .log_err()
-            {
+            if let Some(tools) = service.list_all_tools().await.log_err() {
                 let tool_ids = tool_working_set
                     .update(cx, |tool_working_set, cx| {
                         tool_working_set.extend(
-                            response.tools.into_iter().map(|tool| {
+                            tools.into_iter().map(|tool| {
                                 Arc::new(ContextServerTool::new(
                                     context_server_store.clone(),
                                     server.id(),

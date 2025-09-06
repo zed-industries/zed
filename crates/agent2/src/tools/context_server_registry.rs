@@ -49,12 +49,9 @@ impl ContextServerRegistry {
         let Some(server) = self.server_store.read(cx).get_running_server(&server_id) else {
             return;
         };
-        let Some(client) = server.client() else {
+        let Some(service) = server.service() else {
             return;
         };
-        if !client.capable(context_server::protocol::ServerCapability::Tools) {
-            return;
-        }
 
         let registered_server =
             self.registered_servers
@@ -64,9 +61,7 @@ impl ContextServerRegistry {
                     load_tools: Task::ready(Ok(())),
                 });
         registered_server.load_tools = cx.spawn(async move |this, cx| {
-            let response = client
-                .request::<context_server::types::requests::ListTools>(())
-                .await;
+            let tools_result = service.list_all_tools().await;
 
             this.update(cx, |this, cx| {
                 let Some(registered_server) = this.registered_servers.get_mut(&server_id) else {
@@ -74,8 +69,8 @@ impl ContextServerRegistry {
                 };
 
                 registered_server.tools.clear();
-                if let Some(response) = response.log_err() {
-                    for tool in response.tools {
+                if let Some(tools) = tools_result.log_err() {
+                    for tool in tools {
                         let tool = Arc::new(ContextServerTool::new(
                             this.server_store.clone(),
                             server.id(),
@@ -115,14 +110,14 @@ impl ContextServerRegistry {
 struct ContextServerTool {
     store: Entity<ContextServerStore>,
     server_id: ContextServerId,
-    tool: context_server::types::Tool,
+    tool: rmcp::model::Tool,
 }
 
 impl ContextServerTool {
     fn new(
         store: Entity<ContextServerStore>,
         server_id: ContextServerId,
-        tool: context_server::types::Tool,
+        tool: rmcp::model::Tool,
     ) -> Self {
         Self {
             store,
@@ -181,12 +176,12 @@ impl AnyAgentTool for ContextServerTool {
         cx.spawn(async move |_cx| {
             authorize.await?;
 
-            let Some(protocol) = server.client() else {
+            let Some(service) = server.service() else {
                 bail!("Context server not initialized");
             };
 
             let arguments = if let serde_json::Value::Object(map) = input {
-                Some(map.into_iter().collect())
+                Some(map)
             } else {
                 None
             };
@@ -196,30 +191,24 @@ impl AnyAgentTool for ContextServerTool {
                 tool_name,
                 arguments
             );
-            let response = protocol
-                .request::<context_server::types::requests::CallTool>(
-                    context_server::types::CallToolParams {
-                        name: tool_name,
-                        arguments,
-                        meta: None,
-                    },
-                )
+            let response = service
+                .call_tool(rmcp::model::CallToolRequestParam {
+                    name: tool_name,
+                    arguments,
+                })
                 .await?;
 
             let mut result = String::new();
             for content in response.content {
                 match content {
-                    context_server::types::ToolResponseContent::Text { text } => {
-                        result.push_str(&text);
+                    rmcp::model::Content::Text(text_content) => {
+                        result.push_str(&text_content.text);
                     }
-                    context_server::types::ToolResponseContent::Image { .. } => {
+                    rmcp::model::Content::Image(_) => {
                         log::warn!("Ignoring image content from tool response");
                     }
-                    context_server::types::ToolResponseContent::Audio { .. } => {
-                        log::warn!("Ignoring audio content from tool response");
-                    }
-                    context_server::types::ToolResponseContent::Resource { .. } => {
-                        log::warn!("Ignoring resource content from tool response");
+                    rmcp::model::Content::EmbeddedResource(_) => {
+                        log::warn!("Ignoring embedded resource content from tool response");
                     }
                 }
             }

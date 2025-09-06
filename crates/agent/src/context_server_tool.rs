@@ -3,7 +3,7 @@ use std::sync::Arc;
 use action_log::ActionLog;
 use anyhow::{Result, anyhow, bail};
 use assistant_tool::{Tool, ToolResult, ToolSource};
-use context_server::{ContextServerId, types};
+use context_server::ContextServerId;
 use gpui::{AnyWindowHandle, App, Entity, Task};
 use icons::IconName;
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
@@ -12,14 +12,14 @@ use project::{Project, context_server_store::ContextServerStore};
 pub struct ContextServerTool {
     store: Entity<ContextServerStore>,
     server_id: ContextServerId,
-    tool: types::Tool,
+    tool: rmcp::model::Tool,
 }
 
 impl ContextServerTool {
     pub fn new(
         store: Entity<ContextServerStore>,
         server_id: ContextServerId,
-        tool: types::Tool,
+        tool: rmcp::model::Tool,
     ) -> Self {
         Self {
             store,
@@ -88,12 +88,12 @@ impl Tool for ContextServerTool {
             let tool_name = self.tool.name.clone();
 
             cx.spawn(async move |_cx| {
-                let Some(protocol) = server.client() else {
+                let Some(service) = server.service() else {
                     bail!("Context server not initialized");
                 };
 
                 let arguments = if let serde_json::Value::Object(map) = input {
-                    Some(map.into_iter().collect())
+                    Some(map)
                 } else {
                     None
                 };
@@ -103,30 +103,24 @@ impl Tool for ContextServerTool {
                     tool_name,
                     arguments
                 );
-                let response = protocol
-                    .request::<context_server::types::requests::CallTool>(
-                        context_server::types::CallToolParams {
-                            name: tool_name,
-                            arguments,
-                            meta: None,
-                        },
-                    )
+                let response = service
+                    .call_tool(rmcp::model::CallToolRequestParam {
+                        name: tool_name,
+                        arguments,
+                    })
                     .await?;
 
                 let mut result = String::new();
                 for content in response.content {
                     match content {
-                        types::ToolResponseContent::Text { text } => {
-                            result.push_str(&text);
+                        rmcp::model::Content::Text(text_content) => {
+                            result.push_str(&text_content.text);
                         }
-                        types::ToolResponseContent::Image { .. } => {
+                        rmcp::model::Content::Image(_) => {
                             log::warn!("Ignoring image content from tool response");
                         }
-                        types::ToolResponseContent::Audio { .. } => {
-                            log::warn!("Ignoring audio content from tool response");
-                        }
-                        types::ToolResponseContent::Resource { .. } => {
-                            log::warn!("Ignoring resource content from tool response");
+                        rmcp::model::Content::EmbeddedResource(_) => {
+                            log::warn!("Ignoring embedded resource content from tool response");
                         }
                     }
                 }
