@@ -1002,8 +1002,8 @@ impl AgentConfiguration {
             .agent_server_store
             .read(cx)
             .external_agents()
-            .filter(|(name, _)| name != &&gemini() && name != &&claude_code())
-            .map(|(name, _)| name.to_string())
+            .cloned()
+            .filter(|name| name != &gemini() && name != &claude_code())
             .collect::<Vec<_>>();
         let user_defined_agents = user_defined_agents
             .into_iter()

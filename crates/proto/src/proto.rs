@@ -318,6 +318,8 @@ messages!(
     (GetAgentServerCommand, Background),
     (AgentServerCommand, Background),
     (ExternalAgentsUpdated, Background),
+    (ExternalAgentLoadingStatusUpdated, Background),
+    (NewExternalAgentVersionAvailable, Background),
 );
 
 request_messages!(
@@ -642,7 +644,9 @@ entity_messages!(
     GetDefaultBranch,
     GitClone,
     GetAgentServerCommand,
-    ExternalAgentsUpdated
+    ExternalAgentsUpdated,
+    ExternalAgentLoadingStatusUpdated,
+    NewExternalAgentVersionAvailable,
 );
 
 entity_messages!(

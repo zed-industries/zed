@@ -1,4 +1,6 @@
 use std::{
+    any::Any,
+    borrow::Borrow,
     path::{Path, PathBuf},
     rc::Rc,
     str::FromStr as _,
@@ -90,14 +92,35 @@ impl std::fmt::Display for ExternalAgentServerName {
     }
 }
 
+impl From<ExternalAgentServerName> for SharedString {
+    fn from(value: ExternalAgentServerName) -> Self {
+        value.0
+    }
+}
+
+impl Borrow<str> for ExternalAgentServerName {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
 pub trait ExternalAgentServer {
-    // FIXME status_tx et al
     fn get_command(
-        &self,
+        &mut self,
         root_dir: Option<&str>,
         extra_env: HashMap<String, String>,
+        status_tx: Option<watch::Sender<SharedString>>,
+        new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
     ) -> Task<Result<(AgentServerCommand, String)>>;
+
+    fn as_any_mut(&mut self) -> &mut dyn Any;
+}
+
+impl dyn ExternalAgentServer {
+    fn downcast_mut<T: ExternalAgentServer + 'static>(&mut self) -> Option<&mut T> {
+        self.as_any_mut().downcast_mut()
+    }
 }
 
 enum AgentServerStoreState {
@@ -118,7 +141,7 @@ enum AgentServerStoreState {
 
 pub struct AgentServerStore {
     state: AgentServerStoreState,
-    external_agents: HashMap<ExternalAgentServerName, Rc<dyn ExternalAgentServer>>,
+    external_agents: HashMap<ExternalAgentServerName, Box<dyn ExternalAgentServer>>,
 }
 
 pub struct AgentServersUpdated;
@@ -128,6 +151,8 @@ impl EventEmitter<AgentServersUpdated> for AgentServerStore {}
 impl AgentServerStore {
     pub fn init_remote(session: &AnyProtoClient) {
         session.add_entity_message_handler(Self::handle_external_agents_updated);
+        session.add_entity_message_handler(Self::handle_loading_status_updated);
+        session.add_entity_message_handler(Self::handle_new_version_available);
     }
 
     pub fn init_headless(session: &AnyProtoClient) {
@@ -141,7 +166,7 @@ impl AgentServerStore {
             project_environment,
             downstream_client,
             settings: old_settings,
-            _subscriptions: _,
+            ..
         } = &mut self.state
         else {
             debug_panic!(
@@ -160,7 +185,7 @@ impl AgentServerStore {
             self.external_agents.clear();
             self.external_agents.insert(
                 gemini(),
-                Rc::new(LocalGemini {
+                Box::new(LocalGemini {
                     fs: fs.clone(),
                     node_runtime: node_runtime.clone(),
                     project_environment: project_environment.clone(),
@@ -182,10 +207,10 @@ impl AgentServerStore {
                 .extend(new_settings.custom.iter().map(|(name, settings)| {
                     (
                         ExternalAgentServerName(name.clone()),
-                        Rc::new(LocalCustomAgent {
+                        Box::new(LocalCustomAgent {
                             command: settings.command.clone(),
                             project_environment: project_environment.clone(),
-                        }) as Rc<dyn ExternalAgentServer>,
+                        }) as Box<dyn ExternalAgentServer>,
                     )
                 }));
 
@@ -247,11 +272,13 @@ impl AgentServerStore {
         let external_agents = [
             (
                 gemini(),
-                Rc::new(RemoteExternalAgentServer {
+                Box::new(RemoteExternalAgentServer {
                     project_id,
                     upstream_client: upstream_client.clone(),
                     name: gemini(),
-                }) as Rc<dyn ExternalAgentServer>,
+                    status_tx: None,
+                    new_version_available_tx: None,
+                }) as Box<dyn ExternalAgentServer>,
             ),
             // FIXME claude
         ]
@@ -303,16 +330,16 @@ impl AgentServerStore {
     }
 
     pub fn get_external_agent(
-        &self,
+        &mut self,
         name: &ExternalAgentServerName,
-    ) -> Option<Rc<dyn ExternalAgentServer>> {
-        self.external_agents.get(name).cloned()
+    ) -> Option<&mut (dyn ExternalAgentServer + 'static)> {
+        self.external_agents
+            .get_mut(name)
+            .map(|agent| agent.as_mut())
     }
 
-    pub fn external_agents(
-        &self,
-    ) -> impl Iterator<Item = (&ExternalAgentServerName, &Rc<dyn ExternalAgentServer>)> {
-        self.external_agents.iter()
+    pub fn external_agents(&self) -> impl Iterator<Item = &ExternalAgentServerName> {
+        self.external_agents.keys()
     }
 
     async fn handle_get_agent_server_command(
@@ -320,21 +347,73 @@ impl AgentServerStore {
         envelope: TypedEnvelope<proto::GetAgentServerCommand>,
         mut cx: AsyncApp,
     ) -> Result<proto::AgentServerCommand> {
-        let agent = this
-            .update(&mut cx, |this, _| {
-                this.external_agents
-                    .get(&ExternalAgentServerName(
-                        envelope.payload.name.clone().into(),
-                    ))
-                    .cloned()
-            })?
-            .with_context(|| format!("agent `{}` not found", envelope.payload.name))?;
-        let (command, root_dir) = agent
-            .get_command(
-                envelope.payload.root_dir.as_deref(),
-                HashMap::default(),
-                &mut cx,
-            )
+        let (command, root_dir) = this
+            .update(&mut cx, |this, cx| {
+                let AgentServerStoreState::Local {
+                    downstream_client, ..
+                } = &this.state
+                else {
+                    debug_panic!("should not receive GetAgentServerCommand in a non-local project");
+                    bail!("unexpected GetAgentServerCommand request in a non-local project");
+                };
+                let agent = this
+                    .external_agents
+                    .get_mut(&*envelope.payload.name)
+                    .with_context(|| format!("agent `{}` not found", envelope.payload.name))?;
+                let (status_tx, new_version_available_tx) = downstream_client
+                    .clone()
+                    .map(|(project_id, downstream_client)| {
+                        let (status_tx, mut status_rx) =
+                            watch::channel(SharedString::from("FIXME should be optional"));
+                        let (new_version_available_tx, mut new_version_available_rx) =
+                            watch::channel(None);
+                        cx.spawn({
+                            let downstream_client = downstream_client.clone();
+                            let name = envelope.payload.name.clone();
+                            async move |_, _| {
+                                while let Some(status) = status_rx.recv().await.ok() {
+                                    downstream_client.send(
+                                        proto::ExternalAgentLoadingStatusUpdated {
+                                            project_id,
+                                            name: name.clone(),
+                                            status: status.to_string(),
+                                        },
+                                    )?;
+                                }
+                                anyhow::Ok(())
+                            }
+                        })
+                        .detach_and_log_err(cx);
+                        cx.spawn({
+                            let downstream_client = downstream_client.clone();
+                            let name = envelope.payload.name.clone();
+                            async move |_, _| {
+                                if let Some(version) =
+                                    new_version_available_rx.recv().await.ok().flatten()
+                                {
+                                    downstream_client.send(
+                                        proto::NewExternalAgentVersionAvailable {
+                                            project_id,
+                                            name: name.clone(),
+                                            version,
+                                        },
+                                    )?;
+                                }
+                                anyhow::Ok(())
+                            }
+                        })
+                        .detach_and_log_err(cx);
+                        (status_tx, new_version_available_tx)
+                    })
+                    .unzip();
+                anyhow::Ok(agent.get_command(
+                    envelope.payload.root_dir.as_deref(),
+                    HashMap::default(),
+                    status_tx,
+                    new_version_available_tx,
+                    &mut cx.to_async(),
+                ))
+            })??
             .await?;
         Ok(command.to_proto(root_dir))
     }
@@ -356,6 +435,33 @@ impl AgentServerStore {
                 bail!("unexpected ExternalAgentsUpdated message")
             };
 
+            let mut status_txs = this
+                .external_agents
+                .iter_mut()
+                .filter_map(|(name, agent)| {
+                    Some((
+                        name.clone(),
+                        agent
+                            .downcast_mut::<RemoteExternalAgentServer>()?
+                            .status_tx
+                            .take(),
+                    ))
+                })
+                .collect::<HashMap<_, _>>();
+            let mut new_version_available_txs = this
+                .external_agents
+                .iter_mut()
+                .filter_map(|(name, agent)| {
+                    Some((
+                        name.clone(),
+                        agent
+                            .downcast_mut::<RemoteExternalAgentServer>()?
+                            .new_version_available_tx
+                            .take(),
+                    ))
+                })
+                .collect::<HashMap<_, _>>();
+
             this.external_agents = envelope
                 .payload
                 .names
@@ -365,16 +471,52 @@ impl AgentServerStore {
                         project_id: *project_id,
                         upstream_client: upstream_client.clone(),
                         name: ExternalAgentServerName(name.clone().into()),
+                        status_tx: status_txs.remove(&*name).flatten(),
+                        new_version_available_tx: new_version_available_txs
+                            .remove(&*name)
+                            .flatten(),
                     };
                     (
                         ExternalAgentServerName(name.into()),
-                        Rc::new(agent) as Rc<dyn ExternalAgentServer>,
+                        Box::new(agent) as Box<dyn ExternalAgentServer>,
                     )
                 })
                 .collect();
             cx.emit(AgentServersUpdated);
             Ok(())
         })?
+    }
+
+    async fn handle_loading_status_updated(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::ExternalAgentLoadingStatusUpdated>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, _| {
+            if let Some(agent) = this.external_agents.get_mut(&*envelope.payload.name)
+                && let Some(agent) = agent.downcast_mut::<RemoteExternalAgentServer>()
+                && let Some(status_tx) = &mut agent.status_tx
+            {
+                status_tx.send(envelope.payload.status.into()).ok();
+            }
+        })
+    }
+
+    async fn handle_new_version_available(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::NewExternalAgentVersionAvailable>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, _| {
+            if let Some(agent) = this.external_agents.get_mut(&*envelope.payload.name)
+                && let Some(agent) = agent.downcast_mut::<RemoteExternalAgentServer>()
+                && let Some(new_version_available_tx) = &mut agent.new_version_available_tx
+            {
+                new_version_available_tx
+                    .send(Some(envelope.payload.version))
+                    .ok();
+            }
+        })
     }
 }
 
@@ -566,19 +708,30 @@ struct RemoteExternalAgentServer {
     project_id: u64,
     upstream_client: Entity<RemoteClient>,
     name: ExternalAgentServerName,
+    status_tx: Option<watch::Sender<SharedString>>,
+    new_version_available_tx: Option<watch::Sender<Option<String>>>,
 }
+
+// new method: status_updated
+// does nothing in the all-local case
+// for RemoteExternalAgentServer, sends on the stored tx
+// etc.
 
 impl ExternalAgentServer for RemoteExternalAgentServer {
     fn get_command(
-        &self,
+        &mut self,
         root_dir: Option<&str>,
         extra_env: HashMap<String, String>,
+        status_tx: Option<watch::Sender<SharedString>>,
+        new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
     ) -> Task<Result<(AgentServerCommand, String)>> {
         let project_id = self.project_id;
         let name = self.name.to_string();
         let upstream_client = self.upstream_client.downgrade();
         let root_dir = root_dir.map(|root_dir| root_dir.to_owned());
+        self.status_tx = status_tx;
+        self.new_version_available_tx = new_version_available_tx;
         cx.spawn(async move |cx| {
             let mut command = upstream_client
                 .update(cx, |upstream_client, _| {
@@ -612,6 +765,10 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
             ))
         })
     }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
 }
 
 struct LocalGemini {
@@ -624,9 +781,11 @@ struct LocalGemini {
 
 impl ExternalAgentServer for LocalGemini {
     fn get_command(
-        &self,
+        &mut self,
         root_dir: Option<&str>,
         extra_env: HashMap<String, String>,
+        status_tx: Option<watch::Sender<SharedString>>,
+        new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
     ) -> Task<Result<(AgentServerCommand, String)>> {
         let fs = self.fs.clone();
@@ -666,8 +825,8 @@ impl ExternalAgentServer for LocalGemini {
                     "@google/gemini-cli".into(),
                     "node_modules/@google/gemini-cli/dist/index.js".into(),
                     Some("0.2.1".parse().unwrap()),
-                    None,
-                    None,
+                    status_tx,
+                    new_version_available_tx,
                     fs,
                     node_runtime,
                     cx,
@@ -682,6 +841,10 @@ impl ExternalAgentServer for LocalGemini {
             Ok((command, root_dir.to_proto()))
         })
     }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
 }
 
 struct LocalCustomAgent {
@@ -691,9 +854,11 @@ struct LocalCustomAgent {
 
 impl ExternalAgentServer for LocalCustomAgent {
     fn get_command(
-        &self,
+        &mut self,
         root_dir: Option<&str>,
         extra_env: HashMap<String, String>,
+        _status_tx: Option<watch::Sender<SharedString>>,
+        _new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
     ) -> Task<Result<(AgentServerCommand, String)>> {
         let mut command = self.command.clone();
@@ -715,12 +880,18 @@ impl ExternalAgentServer for LocalCustomAgent {
             Ok((command, root_dir.to_proto()))
         })
     }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
 }
 
+// FIXME
 pub fn gemini() -> ExternalAgentServerName {
     ExternalAgentServerName("gemini".into())
 }
 
+// FIXME
 pub fn claude_code() -> ExternalAgentServerName {
     ExternalAgentServerName("claude".into())
 }

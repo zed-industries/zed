@@ -1480,6 +1480,7 @@ impl AcpThreadView {
                 Task::ready(Ok(()))
             }
         } else if method.0.as_ref() == "oauth-personal" {
+            // FIXME maybe switch on local/remote for this part
             if let Some(workspace) = self.workspace.upgrade() {
                 Self::spawn_gemini_login(&workspace, window, cx)
             } else {

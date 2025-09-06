@@ -182,3 +182,15 @@ message ExternalAgentsUpdated {
     uint64 project_id = 1;
     repeated string names = 2;
 }
+
+message ExternalAgentLoadingStatusUpdated {
+    uint64 project_id = 1;
+    string name = 2;
+    string status = 3;
+}
+
+message NewExternalAgentVersionAvailable {
+    uint64 project_id = 1;
+    string name = 2;
+    string version = 3;
+}

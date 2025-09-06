@@ -404,7 +404,10 @@ message Envelope {
         GetAgentServerCommand get_agent_server_command = 369;
         AgentServerCommand agent_server_command = 370;
 
-        ExternalAgentsUpdated external_agents_updated = 371; // current max
+        ExternalAgentsUpdated external_agents_updated = 371;
+
+        ExternalAgentLoadingStatusUpdated external_agent_loading_status_updated = 372;
+        NewExternalAgentVersionAvailable new_external_agent_version_available = 373; // current max
     }
 
     reserved 87 to 88;

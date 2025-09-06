@@ -4,7 +4,7 @@ use std::{any::Any, path::Path};
 use crate::acp::AcpConnection;
 use crate::{AgentServer, AgentServerDelegate, AgentServerLoginCommand};
 use acp_thread::{AgentConnection, LoadError};
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use collections::HashMap;
 use gpui::{App, AppContext as _, SharedString, Task};
 use language_models::provider::google::GoogleLanguageModelProvider;
@@ -34,24 +34,29 @@ impl AgentServer for Gemini {
         delegate: AgentServerDelegate,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn AgentConnection>>> {
-        let Some(agent) = delegate
-            .store
-            .read(cx)
-            .get_external_agent(&project::agent_server_store::gemini())
-        else {
-            return Task::ready(Err(anyhow::anyhow!("Gemini CLI is not registered")));
-        };
         let name = self.name();
         let root_dir = root_dir.map(|root_dir| root_dir.to_string_lossy().to_string());
         let is_remote = delegate.project.read(cx).is_via_remote_server();
+        let store = delegate.store.downgrade();
 
         cx.spawn(async move |cx| {
             let mut extra_env = HashMap::default();
             if let Some(api_key) = cx.update(GoogleLanguageModelProvider::api_key)?.await.ok() {
                 extra_env.insert("GEMINI_API_KEY".into(), api_key.key);
             }
-            let (command, root_dir) = agent
-                .get_command(root_dir.as_deref(), extra_env, cx)
+            let (command, root_dir) = store
+                .update(cx, |store, cx| {
+                    let agent = store
+                        .get_external_agent(&project::agent_server_store::gemini())
+                        .context("Gemini CLI is not registered")?;
+                    anyhow::Ok(agent.get_command(
+                        root_dir.as_deref(),
+                        extra_env,
+                        delegate.status_tx,
+                        delegate.new_version_available,
+                        &mut cx.to_async(),
+                    ))
+                })??
                 .await?;
             crate::acp::connect(name, command, root_dir.as_ref(), is_remote, cx).await
         })
