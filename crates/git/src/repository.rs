@@ -262,6 +262,13 @@ impl GitExcludeOverride {
         content.push_str(self.added_excludes.as_ref().unwrap());
         content.push('\n');
 
+        // Ensure the parent directory exists before writing
+        if let Some(parent) = self.git_exclude_path.parent() {
+            if !parent.exists() {
+                smol::fs::create_dir_all(parent).await?;
+            }
+        }
+
         smol::fs::write(&self.git_exclude_path, content).await?;
         Ok(())
     }
@@ -1486,24 +1493,27 @@ impl GitRepository for RealGitRepository {
                 let working_directory = working_directory?;
                 let mut git = GitBinary::new(git_binary_path, working_directory.clone(), executor)
                     .envs(checkpoint_author_envs());
-                git.with_temp_index(async |git| {
-                    let head_sha = git.run(&["rev-parse", "HEAD"]).await.ok();
-                    let mut excludes = exclude_files(git).await?;
+                git.with_temp_index(|git| {
+                    async move {
+                        let head_sha = git.run(&["rev-parse", "HEAD"]).await.ok();
+                        let mut excludes = exclude_files(git).await?;
 
-                    git.run(&["add", "--all"]).await?;
-                    let tree = git.run(&["write-tree"]).await?;
-                    let checkpoint_sha = if let Some(head_sha) = head_sha.as_deref() {
-                        git.run(&["commit-tree", &tree, "-p", head_sha, "-m", "Checkpoint"])
-                            .await?
-                    } else {
-                        git.run(&["commit-tree", &tree, "-m", "Checkpoint"]).await?
-                    };
+                        git.run(&["add", "--all"]).await?;
+                        let tree = git.run(&["write-tree"]).await?;
+                        let checkpoint_sha = if let Some(head_sha) = head_sha.as_deref() {
+                            git.run(&["commit-tree", &tree, "-p", head_sha, "-m", "Checkpoint"])
+                                .await?
+                        } else {
+                            git.run(&["commit-tree", &tree, "-m", "Checkpoint"]).await?
+                        };
 
-                    excludes.restore_original().await?;
+                        excludes.restore_original().await?;
 
-                    Ok(GitRepositoryCheckpoint {
-                        commit_sha: checkpoint_sha.parse()?,
-                    })
+                        Ok(GitRepositoryCheckpoint {
+                            commit_sha: checkpoint_sha.parse()?,
+                        })
+                    }
+                    .boxed()
                 })
                 .await
             })
@@ -1706,6 +1716,89 @@ struct GitBinary {
 }
 
 impl GitBinary {
+    /// Resolves the actual .git directory path, handling both regular repos and worktrees.
+    /// In regular repos, .git is a directory.
+    /// In worktrees, .git is a file containing the path to the actual git directory.
+    async fn resolve_git_dir(&self) -> Result<PathBuf> {
+        let dot_git = self.working_directory.join(".git");
+
+        eprintln!(
+            "resolve_git_dir: working_directory = {:?}",
+            self.working_directory
+        );
+        eprintln!("resolve_git_dir: dot_git = {:?}", dot_git);
+        eprintln!("resolve_git_dir: dot_git.exists() = {}", dot_git.exists());
+        eprintln!("resolve_git_dir: dot_git.is_dir() = {}", dot_git.is_dir());
+        eprintln!("resolve_git_dir: dot_git.is_file() = {}", dot_git.is_file());
+
+        if dot_git.is_dir() {
+            // Regular repository - .git is a directory
+            eprintln!("resolve_git_dir: Regular repo, returning {:?}", dot_git);
+            Ok(dot_git)
+        } else if dot_git.is_file() {
+            // Worktree - .git is a file containing the path to the actual git directory
+            let contents = smol::fs::read_to_string(&dot_git).await?;
+            eprintln!("resolve_git_dir: .git file contents: {:?}", contents);
+
+            // The file contains a line like: "gitdir: /path/to/actual/.git/worktrees/name"
+            if let Some(gitdir_line) = contents.lines().find(|line| line.starts_with("gitdir:")) {
+                let gitdir_path = gitdir_line.trim_start_matches("gitdir:").trim();
+                eprintln!("resolve_git_dir: gitdir_path from file: {:?}", gitdir_path);
+
+                // The path may be relative or absolute
+                let git_dir = if Path::new(gitdir_path).is_absolute() {
+                    PathBuf::from(gitdir_path)
+                } else {
+                    // Relative path - resolve it relative to the .git file's location
+                    // (not the working directory)
+                    dot_git
+                        .parent()
+                        .ok_or_else(|| anyhow!(".git file has no parent directory"))?
+                        .join(gitdir_path)
+                };
+
+                eprintln!(
+                    "resolve_git_dir: git_dir before canonicalize: {:?}",
+                    git_dir
+                );
+
+                // Canonicalize the path to resolve any .. or . components
+                let git_dir = smol::fs::canonicalize(&git_dir).await.map_err(|e| {
+                    eprintln!(
+                        "resolve_git_dir: Failed to canonicalize {:?}: {}",
+                        git_dir, e
+                    );
+                    anyhow!(
+                        "Failed to canonicalize git directory path {:?}: {}",
+                        git_dir,
+                        e
+                    )
+                })?;
+
+                eprintln!("resolve_git_dir: git_dir after canonicalize: {:?}", git_dir);
+                eprintln!("resolve_git_dir: git_dir.exists() = {}", git_dir.exists());
+
+                if git_dir.exists() {
+                    eprintln!("resolve_git_dir: Returning worktree git_dir: {:?}", git_dir);
+                    Ok(git_dir)
+                } else {
+                    Err(anyhow!(
+                        "Git directory specified in .git file does not exist: {:?}",
+                        git_dir
+                    ))
+                }
+            } else {
+                Err(anyhow!(
+                    ".git file does not contain a valid gitdir reference"
+                ))
+            }
+        } else {
+            Err(anyhow!(
+                ".git path does not exist or is neither a file nor directory"
+            ))
+        }
+    }
+
     fn new(
         git_binary_path: PathBuf,
         working_directory: PathBuf,
@@ -1738,11 +1831,12 @@ impl GitBinary {
         self
     }
 
-    pub async fn with_temp_index<R>(
-        &mut self,
-        f: impl AsyncFnOnce(&Self) -> Result<R>,
-    ) -> Result<R> {
-        let index_file_path = self.path_for_index_id(Uuid::new_v4());
+    pub async fn with_temp_index<R, F>(&mut self, f: F) -> Result<R>
+    where
+        F: for<'a> FnOnce(&'a Self) -> BoxFuture<'a, Result<R>>,
+    {
+        let index_file_path = self.path_for_index_id(Uuid::new_v4()).await?;
+        eprintln!("with_temp_index: index_file_path = {:?}", index_file_path);
 
         let delete_temp_index = util::defer({
             let index_file_path = index_file_path.clone();
@@ -1756,14 +1850,18 @@ impl GitBinary {
             }
         });
 
+        // Ensure the parent directory exists for the temp index file
+        if let Some(parent) = index_file_path.parent() {
+            smol::fs::create_dir_all(parent).await?;
+        }
+
         // Copy the default index file so that Git doesn't have to rebuild the
-        // whole index from scratch. This might fail if this is an empty repository.
-        smol::fs::copy(
-            self.working_directory.join(".git").join("index"),
-            &index_file_path,
-        )
-        .await
-        .ok();
+        // whole index from scratch. This might fail if this is an empty repository
+        // or a worktree (where the index is not in the worktree's git dir).
+        // We just ignore the error and let git create a fresh index if needed.
+        let git_dir = self.resolve_git_dir().await?;
+        let index_source = git_dir.join("index");
+        smol::fs::copy(&index_source, &index_file_path).await.ok();
 
         self.index_file_path = Some(index_file_path.clone());
         let result = f(self).await;
@@ -1777,19 +1875,14 @@ impl GitBinary {
     }
 
     pub async fn with_exclude_overrides(&self) -> Result<GitExcludeOverride> {
-        let path = self
-            .working_directory
-            .join(".git")
-            .join("info")
-            .join("exclude");
-
+        let git_dir = self.resolve_git_dir().await?;
+        let path = git_dir.join("info").join("exclude");
         GitExcludeOverride::new(path).await
     }
 
-    fn path_for_index_id(&self, id: Uuid) -> PathBuf {
-        self.working_directory
-            .join(".git")
-            .join(format!("index-{}.tmp", id))
+    async fn path_for_index_id(&self, id: Uuid) -> Result<PathBuf> {
+        let git_dir = self.resolve_git_dir().await?;
+        Ok(git_dir.join(format!("index-{}.tmp", id)))
     }
 
     pub async fn run<S>(&self, args: impl IntoIterator<Item = S>) -> Result<String>
@@ -1808,15 +1901,32 @@ impl GitBinary {
     where
         S: AsRef<OsStr>,
     {
-        let mut command = self.build_command(args);
+        let args_vec: Vec<_> = args
+            .into_iter()
+            .map(|s| s.as_ref().to_string_lossy().to_string())
+            .collect();
+        let mut command = self.build_command(args_vec.iter().map(|s| s.as_str()));
         let output = command.output().await?;
-        anyhow::ensure!(
-            output.status.success(),
-            GitBinaryCommandError {
-                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-                status: output.status,
-            }
-        );
+        if !output.status.success() {
+            let working_dir = self.working_directory.display().to_string();
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let git_binary = self.git_binary_path.display().to_string();
+            let index_file = self
+                .index_file_path
+                .as_ref()
+                .map(|p| p.display().to_string());
+            return Err(GitBinaryCommandError::new(
+                &git_binary,
+                &working_dir,
+                &args_vec.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+                stdout,
+                stderr,
+                output.status,
+                index_file,
+            )
+            .into());
+        }
         Ok(String::from_utf8(output.stdout)?)
     }
 
@@ -1840,6 +1950,30 @@ impl GitBinary {
 struct GitBinaryCommandError {
     stdout: String,
     status: ExitStatus,
+}
+
+impl GitBinaryCommandError {
+    fn new(
+        git_binary: &str,
+        working_dir: &str,
+        args: &[&str],
+        stdout: String,
+        stderr: String,
+        status: ExitStatus,
+        index_file: Option<String>,
+    ) -> Self {
+        eprintln!("Git command failed:");
+        eprintln!("  Binary: {}", git_binary);
+        eprintln!("  Command: {} {}", git_binary, args.join(" "));
+        eprintln!("  Working dir: {}", working_dir);
+        if let Some(index) = &index_file {
+            eprintln!("  GIT_INDEX_FILE: {}", index);
+        }
+        eprintln!("  Exit status: {:?}", status);
+        eprintln!("  Stdout: {}", stdout);
+        eprintln!("  Stderr: {}", stderr);
+        Self { stdout, status }
+    }
 }
 
 async fn run_git_command(
@@ -2364,6 +2498,168 @@ mod tests {
                 })
             }]
         )
+    }
+
+    #[gpui::test]
+    async fn test_checkpoint_with_worktree(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        // Create main repository
+        let main_repo_dir = tempfile::tempdir().unwrap();
+        let main_repo_path = main_repo_dir.path();
+
+        git2::Repository::init(main_repo_path).unwrap();
+
+        // Create initial commit in main repo
+        let file_path = main_repo_path.join("test.txt");
+        smol::fs::write(&file_path, "initial content")
+            .await
+            .unwrap();
+
+        let git_repo = git2::Repository::open(main_repo_path).unwrap();
+        let mut index = git_repo.index().unwrap();
+        index.add_path(std::path::Path::new("test.txt")).unwrap();
+        index.write().unwrap();
+
+        let tree_id = index.write_tree().unwrap();
+        let tree = git_repo.find_tree(tree_id).unwrap();
+        let sig = git2::Signature::now("Test", "test@example.com").unwrap();
+        let commit = git_repo
+            .commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[])
+            .unwrap();
+
+        // Create a branch for the worktree
+        let commit_obj = git_repo.find_commit(commit).unwrap();
+        git_repo
+            .branch("worktree-branch", &commit_obj, false)
+            .unwrap();
+
+        // Create a worktree subdirectory in the main repo's parent
+        let worktree_name = format!("worktree-{}", uuid::Uuid::new_v4());
+        let worktree_path = main_repo_dir.path().parent().unwrap().join(&worktree_name);
+        std::fs::create_dir_all(&worktree_path).unwrap();
+
+        // Use git command line to create the worktree (more reliable than git2 API)
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(main_repo_path)
+            .arg("worktree")
+            .arg("add")
+            .arg(&worktree_path)
+            .arg("worktree-branch")
+            .output()
+            .expect("Failed to execute git worktree add");
+
+        if !output.status.success() {
+            panic!(
+                "Failed to create worktree: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        // Verify that .git is a file in the worktree (not a directory)
+        let git_file = worktree_path.join(".git");
+        assert!(git_file.exists(), ".git should exist in worktree");
+        assert!(
+            git_file.is_file(),
+            ".git should be a file in worktree, not a directory"
+        );
+
+        // Try to create a RealGitRepository with the worktree
+        // This should work but currently fails because .git is a file
+        let repo = RealGitRepository::new(&git_file, None, cx.executor());
+
+        if let Some(repo) = repo {
+            // Test checkpoint functionality
+            smol::fs::write(worktree_path.join("new_file.txt"), "new content")
+                .await
+                .unwrap();
+
+            // This should fail with the current implementation because
+            // with_exclude_overrides() and path_for_index_id() assume .git is a directory
+            let checkpoint_result = repo.checkpoint().await;
+
+            // In a working implementation, this should succeed
+            assert!(
+                checkpoint_result.is_ok(),
+                "Checkpoint should work in worktrees but currently fails with: {:?}",
+                checkpoint_result.err()
+            );
+
+            if let Ok(checkpoint) = checkpoint_result {
+                // Test restore
+                smol::fs::write(worktree_path.join("another_file.txt"), "more content")
+                    .await
+                    .unwrap();
+
+                let restore_result = repo.restore_checkpoint(checkpoint).await;
+                assert!(restore_result.is_ok(), "Restore should work in worktrees");
+            }
+        } else {
+            // This might fail to even create the repository with worktrees
+            panic!("Failed to create RealGitRepository with worktree - this is part of the bug");
+        }
+    }
+
+    #[gpui::test]
+    async fn test_checkpoint_with_regular_repo(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        // Create a regular repository (not a worktree)
+        let repo_dir = tempfile::tempdir().unwrap();
+        let repo_path = repo_dir.path();
+
+        git2::Repository::init(repo_path).unwrap();
+
+        // Create initial commit
+        let file_path = repo_path.join("test.txt");
+        smol::fs::write(&file_path, "initial content")
+            .await
+            .unwrap();
+
+        let git_repo = git2::Repository::open(repo_path).unwrap();
+        let mut index = git_repo.index().unwrap();
+        index.add_path(std::path::Path::new("test.txt")).unwrap();
+        index.write().unwrap();
+
+        let tree_id = index.write_tree().unwrap();
+        let tree = git_repo.find_tree(tree_id).unwrap();
+        let sig = git2::Signature::now("Test", "test@example.com").unwrap();
+        git_repo
+            .commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[])
+            .unwrap();
+
+        // Verify that .git is a directory in regular repo
+        let git_dir = repo_path.join(".git");
+        assert!(git_dir.exists(), ".git should exist");
+        assert!(
+            git_dir.is_dir(),
+            ".git should be a directory in regular repo"
+        );
+
+        // Create a RealGitRepository with the regular repo
+        let repo = RealGitRepository::new(&git_dir, None, cx.executor()).unwrap();
+
+        // Test checkpoint functionality - this should work fine
+        smol::fs::write(repo_path.join("new_file.txt"), "new content")
+            .await
+            .unwrap();
+
+        // The main point is that checkpoint creation succeeds in regular repos
+        let checkpoint = repo.checkpoint().await;
+        assert!(
+            checkpoint.is_ok(),
+            "Checkpoint should work in regular repos"
+        );
+
+        // Test that we can also restore (even if it doesn't fully restore the worktree state)
+        if let Ok(checkpoint) = checkpoint {
+            let restore_result = repo.restore_checkpoint(checkpoint).await;
+            assert!(
+                restore_result.is_ok(),
+                "Restore should not fail in regular repos"
+            );
+        }
     }
 
     impl RealGitRepository {
