@@ -1118,6 +1118,7 @@ pub struct Workspace {
     modal_layer: Entity<ModalLayer>,
     toast_layer: Entity<ToastLayer>,
     titlebar_item: Option<AnyView>,
+    titlebar_hidden: bool,
     notifications: Notifications,
     suppressed_notifications: HashSet<NotificationId>,
     project: Entity<Project>,
@@ -1456,6 +1457,7 @@ impl Workspace {
             modal_layer,
             toast_layer,
             titlebar_item: None,
+            titlebar_hidden: false,
             notifications: Notifications::default(),
             suppressed_notifications: HashSet::default(),
             left_dock,
@@ -2040,6 +2042,10 @@ impl Workspace {
     pub fn set_titlebar_item(&mut self, item: AnyView, _: &mut Window, cx: &mut Context<Self>) {
         self.titlebar_item = Some(item);
         cx.notify();
+    }
+
+    pub fn toggle_titlebar_visibility(&mut self, force_visible: bool) {
+        self.titlebar_hidden = if force_visible { false } else { !self.titlebar_hidden };
     }
 
     pub fn set_prompt_for_new_path(&mut self, prompt: PromptForNewPath) {
@@ -6295,7 +6301,7 @@ impl Render for Workspace {
                 .items_start()
                 .text_color(colors.text)
                 .overflow_hidden()
-                .children(self.titlebar_item.clone())
+                .children(if self.titlebar_hidden { None } else { self.titlebar_item.clone() })
                 .on_modifiers_changed(move |_, _, cx| {
                     for &id in &notification_entities {
                         cx.notify(id);

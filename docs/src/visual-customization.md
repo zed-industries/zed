@@ -115,7 +115,8 @@ To disable this behavior use:
     "show_onboarding_banner": true, // Show/hide onboarding banners
     "show_user_picture": true,      // Show/hide user avatar
     "show_sign_in": true,           // Show/hide sign-in button
-    "show_menus": false             // Show/hide menus
+    "show_menus": false,            // Show/hide menus
+    "hide_in_fullscreen": false     // Show/hide the titlebar when the window is fullscreen
   },
 ```
 
