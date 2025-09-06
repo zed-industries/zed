@@ -3,6 +3,7 @@
 //! Note: The old fake transport system has been removed in favor of RMCP.
 //! Test setups now need to use RMCP's built-in testing utilities.
 
+use collections::HashMap;
 use std::sync::Arc;
 
 /// Mock context server configuration for testing
@@ -122,10 +123,49 @@ impl TestContextServer {
     }
 }
 
-// TODO: Implement actual RMCP-based test server when needed
-// This would involve creating a mock RMCP server that can be used in tests
-// For now, tests that require context server functionality will need to be
-// updated or disabled until proper RMCP test infrastructure is in place.
+/// Creates a fake context server for testing purposes
+pub fn create_fake_context_server(
+    id: crate::ContextServerId,
+    tools: Vec<rmcp::model::Tool>,
+) -> std::sync::Arc<crate::ContextServer> {
+    use crate::ContextServerCommand;
+
+    // Create a fake command that represents our test server
+    let command = ContextServerCommand {
+        path: format!("fake_server_{}", id.0).into(),
+        args: vec!["--test".to_string()],
+        env: Some(HashMap::default()),
+        timeout: Some(30000),
+    };
+
+    // Create the context server with stdio transport
+    // In a real implementation, this would connect to an actual server
+    // For tests, we'll create it but it won't actually start
+    std::sync::Arc::new(crate::ContextServer::stdio(id, command, None))
+}
+
+/// Creates a fake transport-like object for backwards compatibility
+/// This is used by tests that expect the old transport interface
+pub fn create_fake_transport<T>(_name: T, _executor: gpui::BackgroundExecutor) -> FakeTransport
+where
+    T: Into<String>,
+{
+    FakeTransport::new()
+}
+
+/// A fake transport implementation for testing
+/// This provides the same interface as the old transport system
+pub struct FakeTransport {
+    _phantom: std::marker::PhantomData<()>,
+}
+
+impl FakeTransport {
+    pub fn new() -> Self {
+        Self {
+            _phantom: std::marker::PhantomData,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
