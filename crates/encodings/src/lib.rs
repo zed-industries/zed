@@ -1,7 +1,9 @@
 //! A crate for handling file encodings in the text editor.
+
 use editor::{Editor, EditorSettings};
 use encoding_rs::Encoding;
 use gpui::{ClickEvent, Entity, Subscription, WeakEntity};
+use language::Buffer;
 use settings::Settings;
 use ui::{Button, ButtonCommon, Context, LabelSize, Render, Tooltip, Window, div};
 use ui::{Clickable, ParentElement};
@@ -13,7 +15,13 @@ use crate::selectors::save_or_reopen::EncodingSaveOrReopenSelector;
 pub struct EncodingIndicator {
     pub encoding: Option<&'static Encoding>,
     pub workspace: WeakEntity<Workspace>,
-    observe: Option<Subscription>, // Subscription to observe changes in the active editor
+
+    /// Subscription to observe changes in the active editor
+    observe_editor: Option<Subscription>,
+
+    /// Subscription to observe changes in the `encoding` field of the `Buffer` struct
+    observe_buffer_encoding: Option<Subscription>,
+
     show: bool, // Whether to show the indicator or not, based on whether an editor is active
 }
 
@@ -50,17 +58,20 @@ impl EncodingIndicator {
     pub fn new(
         encoding: Option<&'static Encoding>,
         workspace: WeakEntity<Workspace>,
-        observe: Option<Subscription>,
+        observe_editor: Option<Subscription>,
+        observe_buffer_encoding: Option<Subscription>,
     ) -> EncodingIndicator {
         EncodingIndicator {
             encoding,
             workspace,
-            observe,
+            observe_editor,
             show: true,
+            observe_buffer_encoding,
         }
     }
 
-    pub fn update(
+    /// Update the encoding when the active editor is switched.
+    pub fn update_when_editor_is_switched(
         &mut self,
         editor: Entity<Editor>,
         _: &mut Window,
@@ -68,10 +79,22 @@ impl EncodingIndicator {
     ) {
         let editor = editor.read(cx);
         if let Some((_, buffer, _)) = editor.active_excerpt(cx) {
-            let encoding = buffer.read(cx).encoding;
-            self.encoding = Some(encoding);
+            let encoding = buffer.read(cx).encoding.clone();
+            self.encoding = Some(&*encoding.lock().unwrap());
         }
 
+        cx.notify();
+    }
+
+    /// Update the encoding when the `encoding` field of the `Buffer` struct changes.
+    pub fn update_when_buffer_encoding_changes(
+        &mut self,
+        buffer: Entity<Buffer>,
+        _: &mut Window,
+        cx: &mut Context<EncodingIndicator>,
+    ) {
+        let encoding = buffer.read(cx).encoding.clone();
+        self.encoding = Some(&*encoding.lock().unwrap());
         cx.notify();
     }
 }
@@ -85,13 +108,21 @@ impl StatusItemView for EncodingIndicator {
     ) {
         match active_pane_item.and_then(|item| item.downcast::<Editor>()) {
             Some(editor) => {
-                self.observe = Some(cx.observe_in(&editor, window, Self::update));
-                self.update(editor, window, cx);
+                self.observe_editor =
+                    Some(cx.observe_in(&editor, window, Self::update_when_editor_is_switched));
+                if let Some((_, buffer, _)) = &editor.read(cx).active_excerpt(cx) {
+                    self.observe_buffer_encoding = Some(cx.observe_in(
+                        buffer,
+                        window,
+                        Self::update_when_buffer_encoding_changes,
+                    ));
+                }
+                self.update_when_editor_is_switched(editor, window, cx);
                 self.show = true;
             }
             None => {
                 self.encoding = None;
-                self.observe = None;
+                self.observe_editor = None;
                 self.show = false;
             }
         }

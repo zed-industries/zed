@@ -1460,7 +1460,13 @@ mod tests {
             unimplemented!()
         }
 
-        fn load_with_encoding(&self, _: &App, _: &'static Encoding) -> Task<Result<String>> {
+        fn load_with_encoding(
+            &self,
+            _: &App,
+            _: &'static Encoding,
+            _: bool,
+            _: Arc<std::sync::Mutex<&'static Encoding>>,
+        ) -> Task<Result<String>> {
             unimplemented!()
         }
     }

@@ -3129,13 +3129,22 @@ impl language::LocalFile for File {
         cx.background_spawn(async move { fs.load_bytes(&abs_path).await })
     }
 
-    fn load_with_encoding(&self, cx: &App, encoding: &'static Encoding) -> Task<Result<String>> {
+    fn load_with_encoding(
+        &self,
+        cx: &App,
+        encoding: &'static Encoding,
+        force: bool, // whether to force the encoding even if there's a BOM
+        buffer_encoding: Arc<std::sync::Mutex<&'static Encoding>>,
+    ) -> Task<Result<String>> {
         let worktree = self.worktree.read(cx).as_local().unwrap();
         let path = worktree.absolutize(&self.path);
         let fs = worktree.fs.clone();
 
         let encoding = EncodingWrapper::new(encoding);
-        cx.background_spawn(async move { fs.load_with_encoding(path?, encoding).await })
+        cx.background_spawn(async move {
+            fs.load_with_encoding(path?, encoding, force, buffer_encoding)
+                .await
+        })
     }
 }
 

@@ -1056,7 +1056,7 @@ impl GitPanel {
                     .iter()
                     .filter_map(|buffer| {
                         buffer.as_ref().ok()?.update(cx, |buffer, cx| {
-                            buffer.is_dirty().then(|| buffer.reload(cx))
+                            buffer.is_dirty().then(|| buffer.reload(cx, false))
                         })
                     })
                     .collect()

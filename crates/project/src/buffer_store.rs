@@ -387,7 +387,7 @@ impl LocalBufferStore {
         let version = buffer.version();
         let buffer_id = buffer.remote_id();
         let file = buffer.file().cloned();
-        let encoding = buffer.encoding;
+        let encoding = buffer.encoding.clone();
 
         if file
             .as_ref()
@@ -397,7 +397,13 @@ impl LocalBufferStore {
         }
 
         let save = worktree.update(cx, |worktree, cx| {
-            worktree.write_file(path.as_ref(), text, line_ending, cx, encoding)
+            worktree.write_file(
+                path.as_ref(),
+                text,
+                line_ending,
+                cx,
+                &*encoding.lock().unwrap(),
+            )
         });
 
         cx.spawn(async move |this, cx| {
@@ -629,22 +635,13 @@ impl LocalBufferStore {
     ) -> Task<Result<Entity<Buffer>>> {
         let load_file = worktree.update(cx, |worktree, cx| worktree.load_file(path.as_ref(), cx));
         cx.spawn(async move |this, cx| {
-            let path = path.clone();
-            let buffer = match load_file.await.with_context(|| {
-                format!("Could not open path: {}", path.display(PathStyle::local()))
-            }) {
-                Ok(loaded) => {
-                    let reservation = cx.reserve_entity::<Buffer>()?;
-                    let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());
-                    let executor = cx.background_executor().clone();
-                    let text_buffer = cx
-                        .background_spawn(async move {
-                            text::Buffer::new(ReplicaId::LOCAL, buffer_id, loaded.text, &executor)
-                        })
-                        .await;
-                    cx.insert_entity(reservation, |_| {
-                        Buffer::build(text_buffer, Some(loaded.file), Capability::ReadWrite)
-                    })?
+            let buffer = match load_buffer.await {
+                Ok(buffer) => {
+                    // Reload the buffer to trigger UTF-16 detection
+                    buffer
+                        .update(cx, |buffer, cx| buffer.reload(cx, false))?
+                        .await?;
+                    Ok(buffer)
                 }
                 Err(error) if is_not_found_error(&error) => cx.new(|cx| {
                     let buffer_id = BufferId::from(cx.entity_id().as_non_zero_u64());
@@ -723,7 +720,9 @@ impl LocalBufferStore {
         cx.spawn(async move |_, cx| {
             let mut project_transaction = ProjectTransaction::default();
             for buffer in buffers {
-                let transaction = buffer.update(cx, |buffer, cx| buffer.reload(cx))?.await?;
+                let transaction = buffer
+                    .update(cx, |buffer, cx| buffer.reload(cx, false))?
+                    .await?;
                 buffer.update(cx, |buffer, cx| {
                     if let Some(transaction) = transaction {
                         if !push_to_history {

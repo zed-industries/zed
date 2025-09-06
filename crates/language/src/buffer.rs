@@ -127,7 +127,7 @@ pub struct Buffer {
     has_unsaved_edits: Cell<(clock::Global, bool)>,
     change_bits: Vec<rc::Weak<Cell<bool>>>,
     _subscriptions: Vec<gpui::Subscription>,
-    pub encoding: &'static Encoding,
+    pub encoding: Arc<std::sync::Mutex<&'static Encoding>>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -420,7 +420,13 @@ pub trait LocalFile: File {
     fn load_bytes(&self, cx: &App) -> Task<Result<Vec<u8>>>;
 
     /// Loads the file contents from disk, decoding them with the given encoding.
-    fn load_with_encoding(&self, cx: &App, encoding: &'static Encoding) -> Task<Result<String>>;
+    fn load_with_encoding(
+        &self,
+        cx: &App,
+        encoding: &'static Encoding,
+        force: bool, // whether to force the encoding even if a BOM is present
+        buffer_encoding: Arc<std::sync::Mutex<&'static Encoding>>,
+    ) -> Task<Result<String>>;
 }
 
 /// The auto-indent behavior associated with an editing operation.
@@ -1011,7 +1017,7 @@ impl Buffer {
             has_conflict: false,
             change_bits: Default::default(),
             _subscriptions: Vec::new(),
-            encoding: encoding_rs::UTF_8,
+            encoding: Arc::new(std::sync::Mutex::new(encoding_rs::UTF_8)),
         }
     }
 
@@ -1345,17 +1351,21 @@ impl Buffer {
     }
 
     /// Reloads the contents of the buffer from disk.
-    pub fn reload(&mut self, cx: &Context<Self>) -> oneshot::Receiver<Option<Transaction>> {
+    pub fn reload(
+        &mut self,
+        cx: &Context<Self>,
+        force: bool, // whether to force the encoding even if a BOM is present
+    ) -> oneshot::Receiver<Option<Transaction>> {
         let (tx, rx) = futures::channel::oneshot::channel();
-        let encoding = self.encoding;
+        let encoding = self.encoding.clone();
+
         let prev_version = self.text.version();
         self.reload_task = Some(cx.spawn(async move |this, cx| {
             let Some((new_mtime, new_text)) = this.update(cx, |this, cx| {
                 let file = this.file.as_ref()?.as_local()?;
-                Some((
-                    file.disk_state().mtime(),
-                    file.load_with_encoding(cx, encoding),
-                ))
+                Some((file.disk_state().mtime(), {
+                    file.load_with_encoding(cx, &*encoding.lock().unwrap(), force, encoding.clone())
+                }))
             })?
             else {
                 return Ok(());
@@ -5237,7 +5247,13 @@ impl LocalFile for TestFile {
         unimplemented!()
     }
 
-    fn load_with_encoding(&self, _: &App, _: &'static Encoding) -> Task<Result<String>> {
+    fn load_with_encoding(
+        &self,
+        _: &App,
+        _: &'static Encoding,
+        _: bool, // whether to force the encoding even if a BOM is present
+        _: Arc<std::sync::Mutex<&'static Encoding>>,
+    ) -> Task<Result<String>> {
         unimplemented!()
     }
 }
