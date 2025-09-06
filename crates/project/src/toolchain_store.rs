@@ -4,20 +4,23 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Result, bail};
+use anyhow::{Context as _, Result, bail};
 
 use async_trait::async_trait;
-use collections::BTreeMap;
+use collections::{BTreeMap, IndexSet};
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
 };
 use language::{
     LanguageName, LanguageRegistry, LanguageToolchainStore, ManifestDelegate, Toolchain,
-    ToolchainList,
+    ToolchainList, ToolchainScope,
 };
 use rpc::{
     AnyProtoClient, TypedEnvelope,
-    proto::{self, FromProto, ToProto},
+    proto::{
+        self, FromProto, ResolveToolchainResponse, ToProto,
+        resolve_toolchain_response::Response as ResolveResponsePayload,
+    },
 };
 use settings::WorktreeId;
 use util::ResultExt as _;
@@ -28,24 +31,31 @@ use crate::{
     worktree_store::WorktreeStore,
 };
 
-pub struct ToolchainStore(ToolchainStoreInner);
-enum ToolchainStoreInner {
-    Local(
-        Entity<LocalToolchainStore>,
-        #[allow(dead_code)] Subscription,
-    ),
-    Remote(
-        Entity<RemoteToolchainStore>,
-        #[allow(dead_code)] Subscription,
-    ),
+pub struct ToolchainStore {
+    mode: ToolchainStoreInner,
+    user_toolchains: BTreeMap<ToolchainScope, IndexSet<Toolchain>>,
+    _sub: Subscription,
 }
 
+enum ToolchainStoreInner {
+    Local(Entity<LocalToolchainStore>),
+    Remote(Entity<RemoteToolchainStore>),
+}
+
+pub struct Toolchains {
+    /// Auto-detected toolchains.
+    pub toolchains: ToolchainList,
+    /// Path of the project root at which we ran the automatic toolchain detection.
+    pub root_path: Arc<Path>,
+    pub user_toolchains: BTreeMap<ToolchainScope, IndexSet<Toolchain>>,
+}
 impl EventEmitter<ToolchainStoreEvent> for ToolchainStore {}
 impl ToolchainStore {
     pub fn init(client: &AnyProtoClient) {
         client.add_entity_request_handler(Self::handle_activate_toolchain);
         client.add_entity_request_handler(Self::handle_list_toolchains);
         client.add_entity_request_handler(Self::handle_active_toolchain);
+        client.add_entity_request_handler(Self::handle_resolve_toolchain);
     }
 
     pub fn local(
@@ -62,18 +72,26 @@ impl ToolchainStore {
             active_toolchains: Default::default(),
             manifest_tree,
         });
-        let subscription = cx.subscribe(&entity, |_, _, e: &ToolchainStoreEvent, cx| {
+        let _sub = cx.subscribe(&entity, |_, _, e: &ToolchainStoreEvent, cx| {
             cx.emit(e.clone())
         });
-        Self(ToolchainStoreInner::Local(entity, subscription))
+        Self {
+            mode: ToolchainStoreInner::Local(entity),
+            user_toolchains: Default::default(),
+            _sub,
+        }
     }
 
     pub(super) fn remote(project_id: u64, client: AnyProtoClient, cx: &mut Context<Self>) -> Self {
         let entity = cx.new(|_| RemoteToolchainStore { client, project_id });
-        let _subscription = cx.subscribe(&entity, |_, _, e: &ToolchainStoreEvent, cx| {
+        let _sub = cx.subscribe(&entity, |_, _, e: &ToolchainStoreEvent, cx| {
             cx.emit(e.clone())
         });
-        Self(ToolchainStoreInner::Remote(entity, _subscription))
+        Self {
+            mode: ToolchainStoreInner::Remote(entity),
+            user_toolchains: Default::default(),
+            _sub,
+        }
     }
     pub(crate) fn activate_toolchain(
         &self,
@@ -81,13 +99,64 @@ impl ToolchainStore {
         toolchain: Toolchain,
         cx: &mut App,
     ) -> Task<Option<()>> {
-        match &self.0 {
-            ToolchainStoreInner::Local(local, _) => {
+        match &self.mode {
+            ToolchainStoreInner::Local(local) => {
                 local.update(cx, |this, cx| this.activate_toolchain(path, toolchain, cx))
             }
-            ToolchainStoreInner::Remote(remote, _) => {
+            ToolchainStoreInner::Remote(remote) => {
                 remote.update(cx, |this, cx| this.activate_toolchain(path, toolchain, cx))
             }
+        }
+    }
+
+    pub(crate) fn user_toolchains(&self) -> BTreeMap<ToolchainScope, IndexSet<Toolchain>> {
+        self.user_toolchains.clone()
+    }
+    pub(crate) fn add_toolchain(
+        &mut self,
+        toolchain: Toolchain,
+        scope: ToolchainScope,
+        cx: &mut Context<Self>,
+    ) {
+        let did_insert = self
+            .user_toolchains
+            .entry(scope)
+            .or_default()
+            .insert(toolchain);
+        if did_insert {
+            cx.emit(ToolchainStoreEvent::CustomToolchainsModified);
+        }
+    }
+
+    pub(crate) fn remove_toolchain(
+        &mut self,
+        toolchain: Toolchain,
+        scope: ToolchainScope,
+        cx: &mut Context<Self>,
+    ) {
+        let mut did_remove = false;
+        self.user_toolchains
+            .entry(scope)
+            .and_modify(|toolchains| did_remove = toolchains.shift_remove(&toolchain));
+        if did_remove {
+            cx.emit(ToolchainStoreEvent::CustomToolchainsModified);
+        }
+    }
+
+    pub(crate) fn resolve_toolchain(
+        &self,
+        abs_path: PathBuf,
+        language_name: LanguageName,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Toolchain>> {
+        debug_assert!(abs_path.is_absolute());
+        match &self.mode {
+            ToolchainStoreInner::Local(local) => local.update(cx, |this, cx| {
+                this.resolve_toolchain(abs_path, language_name, cx)
+            }),
+            ToolchainStoreInner::Remote(remote) => remote.update(cx, |this, cx| {
+                this.resolve_toolchain(abs_path, language_name, cx)
+            }),
         }
     }
     pub(crate) fn list_toolchains(
@@ -95,29 +164,65 @@ impl ToolchainStore {
         path: ProjectPath,
         language_name: LanguageName,
         cx: &mut Context<Self>,
-    ) -> Task<Option<(ToolchainList, Arc<Path>)>> {
-        match &self.0 {
-            ToolchainStoreInner::Local(local, _) => {
+    ) -> Task<Option<Toolchains>> {
+        let user_toolchains = self
+            .user_toolchains
+            .iter()
+            .filter(|(scope, _)| {
+                if let ToolchainScope::Subproject(worktree_id, relative_path) = scope {
+                    path.worktree_id == *worktree_id && relative_path.starts_with(&path.path)
+                } else {
+                    true
+                }
+            })
+            .map(|(scope, toolchains)| {
+                (
+                    scope.clone(),
+                    toolchains
+                        .iter()
+                        .filter(|toolchain| toolchain.language_name == language_name)
+                        .cloned()
+                        .collect::<IndexSet<_>>(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let task = match &self.mode {
+            ToolchainStoreInner::Local(local) => {
                 local.update(cx, |this, cx| this.list_toolchains(path, language_name, cx))
             }
-            ToolchainStoreInner::Remote(remote, _) => {
+            ToolchainStoreInner::Remote(remote) => {
                 remote.read(cx).list_toolchains(path, language_name, cx)
             }
-        }
+        };
+        cx.spawn(async move |_, _| {
+            let (mut toolchains, root_path) = task.await?;
+            toolchains.toolchains.retain(|toolchain| {
+                !user_toolchains
+                    .values()
+                    .any(|toolchains| toolchains.contains(toolchain))
+            });
+
+            Some(Toolchains {
+                toolchains,
+                root_path,
+                user_toolchains,
+            })
+        })
     }
+
     pub(crate) fn active_toolchain(
         &self,
         path: ProjectPath,
         language_name: LanguageName,
         cx: &App,
     ) -> Task<Option<Toolchain>> {
-        match &self.0 {
-            ToolchainStoreInner::Local(local, _) => Task::ready(local.read(cx).active_toolchain(
+        match &self.mode {
+            ToolchainStoreInner::Local(local) => Task::ready(local.read(cx).active_toolchain(
                 path.worktree_id,
                 &path.path,
                 language_name,
             )),
-            ToolchainStoreInner::Remote(remote, _) => {
+            ToolchainStoreInner::Remote(remote) => {
                 remote.read(cx).active_toolchain(path, language_name, cx)
             }
         }
@@ -197,7 +302,7 @@ impl ToolchainStore {
             })?
             .await;
         let has_values = toolchains.is_some();
-        let groups = if let Some((toolchains, _)) = &toolchains {
+        let groups = if let Some(Toolchains { toolchains, .. }) = &toolchains {
             toolchains
                 .groups
                 .iter()
@@ -211,7 +316,12 @@ impl ToolchainStore {
         } else {
             vec![]
         };
-        let (toolchains, relative_path) = if let Some((toolchains, relative_path)) = toolchains {
+        let (toolchains, relative_path) = if let Some(Toolchains {
+            toolchains,
+            root_path: relative_path,
+            ..
+        }) = toolchains
+        {
             let toolchains = toolchains
                 .toolchains
                 .into_iter()
@@ -236,16 +346,45 @@ impl ToolchainStore {
             relative_worktree_path: Some(relative_path.to_string_lossy().into_owned()),
         })
     }
+
+    async fn handle_resolve_toolchain(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::ResolveToolchain>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::ResolveToolchainResponse> {
+        let toolchain = this
+            .update(&mut cx, |this, cx| {
+                let language_name = LanguageName::from_proto(envelope.payload.language_name);
+                let path = PathBuf::from(envelope.payload.abs_path);
+                this.resolve_toolchain(path, language_name, cx)
+            })?
+            .await;
+        let response = match toolchain {
+            Ok(toolchain) => {
+                let toolchain = proto::Toolchain {
+                    name: toolchain.name.to_string(),
+                    path: toolchain.path.to_string(),
+                    raw_json: toolchain.as_json.to_string(),
+                };
+                ResolveResponsePayload::Toolchain(toolchain)
+            }
+            Err(e) => ResolveResponsePayload::Error(e.to_string()),
+        };
+        Ok(ResolveToolchainResponse {
+            response: Some(response),
+        })
+    }
+
     pub fn as_language_toolchain_store(&self) -> Arc<dyn LanguageToolchainStore> {
-        match &self.0 {
-            ToolchainStoreInner::Local(local, _) => Arc::new(LocalStore(local.downgrade())),
-            ToolchainStoreInner::Remote(remote, _) => Arc::new(RemoteStore(remote.downgrade())),
+        match &self.mode {
+            ToolchainStoreInner::Local(local) => Arc::new(LocalStore(local.downgrade())),
+            ToolchainStoreInner::Remote(remote) => Arc::new(RemoteStore(remote.downgrade())),
         }
     }
     pub fn as_local_store(&self) -> Option<&Entity<LocalToolchainStore>> {
-        match &self.0 {
-            ToolchainStoreInner::Local(local, _) => Some(local),
-            ToolchainStoreInner::Remote(_, _) => None,
+        match &self.mode {
+            ToolchainStoreInner::Local(local) => Some(local),
+            ToolchainStoreInner::Remote(_) => None,
         }
     }
 }
@@ -311,6 +450,7 @@ struct RemoteStore(WeakEntity<RemoteToolchainStore>);
 #[derive(Clone)]
 pub enum ToolchainStoreEvent {
     ToolchainActivated,
+    CustomToolchainsModified,
 }
 
 impl EventEmitter<ToolchainStoreEvent> for LocalToolchainStore {}
@@ -351,7 +491,7 @@ impl LocalToolchainStore {
                 .await
                 .ok()?;
             let toolchains = language.toolchain_lister()?;
-            let manifest_name = toolchains.manifest_name();
+            let manifest_name = toolchains.meta().manifest_name;
             let (snapshot, worktree) = this
                 .update(cx, |this, cx| {
                     this.worktree_store
@@ -413,6 +553,33 @@ impl LocalToolchainStore {
                     .find_map(|root_path| paths.get(root_path))
             })
             .cloned()
+    }
+
+    fn resolve_toolchain(
+        &self,
+        path: PathBuf,
+        language_name: LanguageName,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Toolchain>> {
+        let registry = self.languages.clone();
+        let environment = self.project_environment.clone();
+        cx.spawn(async move |_, cx| {
+            let language = cx
+                .background_spawn(registry.language_for_name(&language_name.0))
+                .await
+                .with_context(|| format!("Language {} not found", language_name.0))?;
+            let toolchain_lister = language.toolchain_lister().with_context(|| {
+                format!("Language {} does not support toolchains", language_name.0)
+            })?;
+
+            let project_env = environment
+                .update(cx, |environment, cx| {
+                    environment.get_directory_environment(path.as_path().into(), cx)
+                })?
+                .await;
+            cx.background_spawn(async move { toolchain_lister.resolve(path, project_env).await })
+                .await
+        })
     }
 }
 
@@ -554,6 +721,49 @@ impl RemoteToolchainStore {
                     as_json: serde_json::Value::from_str(&toolchain.raw_json).ok()?,
                 })
             })
+        })
+    }
+
+    fn resolve_toolchain(
+        &self,
+        abs_path: PathBuf,
+        language_name: LanguageName,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Toolchain>> {
+        let project_id = self.project_id;
+        let client = self.client.clone();
+        cx.background_spawn(async move {
+            let response: proto::ResolveToolchainResponse = client
+                .request(proto::ResolveToolchain {
+                    project_id,
+                    language_name: language_name.clone().into(),
+                    abs_path: abs_path.to_string_lossy().into_owned(),
+                })
+                .await?;
+
+            let response = response
+                .response
+                .context("Failed to resolve toolchain via RPC")?;
+            use proto::resolve_toolchain_response::Response;
+            match response {
+                Response::Toolchain(toolchain) => {
+                    Ok(Toolchain {
+                        language_name: language_name.clone(),
+                        name: toolchain.name.into(),
+                        // todo(windows)
+                        // Do we need to convert path to native string?
+                        path: PathBuf::from_proto(toolchain.path)
+                            .to_string_lossy()
+                            .to_string()
+                            .into(),
+                        as_json: serde_json::Value::from_str(&toolchain.raw_json)
+                            .context("Deserializing ResolveToolchain LSP response")?,
+                    })
+                }
+                Response::Error(error) => {
+                    anyhow::bail!("{error}");
+                }
+            }
         })
     }
 }

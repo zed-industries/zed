@@ -2218,7 +2218,7 @@ mod tests {
         action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
 
         for _ in 0..operations {
-            match rng.gen_range(0..100) {
+            match rng.random_range(0..100) {
                 0..25 => {
                     action_log.update(cx, |log, cx| {
                         let range = buffer.read(cx).random_byte_range(0, &mut rng);
@@ -2237,7 +2237,7 @@ mod tests {
                         .unwrap();
                 }
                 _ => {
-                    let is_agent_edit = rng.gen_bool(0.5);
+                    let is_agent_edit = rng.random_bool(0.5);
                     if is_agent_edit {
                         log::info!("agent edit");
                     } else {
@@ -2252,7 +2252,7 @@ mod tests {
                 }
             }
 
-            if rng.gen_bool(0.2) {
+            if rng.random_bool(0.2) {
                 quiesce(&action_log, &buffer, cx);
             }
         }

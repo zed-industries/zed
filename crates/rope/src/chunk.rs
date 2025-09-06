@@ -612,7 +612,7 @@ mod tests {
 
     #[gpui::test(iterations = 100)]
     fn test_random_chunks(mut rng: StdRng) {
-        let chunk_len = rng.gen_range(0..=MAX_BASE);
+        let chunk_len = rng.random_range(0..=MAX_BASE);
         let text = RandomCharIter::new(&mut rng)
             .take(chunk_len)
             .collect::<String>();
@@ -627,8 +627,8 @@ mod tests {
         verify_chunk(chunk.as_slice(), text);
 
         for _ in 0..10 {
-            let mut start = rng.gen_range(0..=chunk.text.len());
-            let mut end = rng.gen_range(start..=chunk.text.len());
+            let mut start = rng.random_range(0..=chunk.text.len());
+            let mut end = rng.random_range(start..=chunk.text.len());
             while !chunk.text.is_char_boundary(start) {
                 start -= 1;
             }
@@ -645,7 +645,7 @@ mod tests {
 
     #[gpui::test(iterations = 1000)]
     fn test_nth_set_bit_random(mut rng: StdRng) {
-        let set_count = rng.gen_range(0..=128);
+        let set_count = rng.random_range(0..=128);
         let mut set_bits = (0..128).choose_multiple(&mut rng, set_count);
         set_bits.sort();
         let mut n = 0;

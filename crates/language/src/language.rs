@@ -69,6 +69,7 @@ pub use text_diff::{
 use theme::SyntaxTheme;
 pub use toolchain::{
     LanguageToolchainStore, LocalLanguageToolchainStore, Toolchain, ToolchainList, ToolchainLister,
+    ToolchainMetadata, ToolchainScope,
 };
 use tree_sitter::{self, Query, QueryCursor, WasmStore, wasmtime};
 use util::serde::default_true;
