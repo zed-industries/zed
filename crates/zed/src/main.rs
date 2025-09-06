@@ -16,10 +16,7 @@ use extension_host::ExtensionStore;
 use fs::{Fs, RealFs};
 use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
-use gpui::{
-    App, AppContext as _, Application, AsyncApp, Focusable as _, UpdateGlobal as _,
-    humanize_action_name,
-};
+use gpui::{App, AppContext, Application, AsyncApp, Focusable as _, UpdateGlobal as _};
 
 use gpui_tokio::Tokio;
 use http_client::{Url, read_proxy_from_env};
@@ -1464,7 +1461,7 @@ fn dump_all_gpui_actions() {
     let mut actions = gpui::generate_list_of_all_registered_actions()
         .map(|action| ActionDef {
             name: action.name,
-            human_name: humanize_action_name(action.name),
+            human_name: command_palette::humanize_action_name(action.name),
             aliases: action.deprecated_aliases,
             documentation: action.documentation,
         })

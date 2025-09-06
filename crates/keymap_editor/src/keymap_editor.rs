@@ -18,7 +18,7 @@ use gpui::{
     KeyBindingContextPredicate::{And, Descendant, Equal, Identifier, Not, NotEqual, Or},
     KeyContext, KeybindingKeystroke, MouseButton, PlatformKeyboardMapper, Point, ScrollStrategy,
     ScrollWheelEvent, Stateful, StyledText, Subscription, Task, TextStyleRefinement, WeakEntity,
-    actions, anchored, deferred, div, humanize_action_name,
+    actions, anchored, deferred, div,
 };
 use language::{Language, LanguageConfig, ToOffset as _};
 use notifications::status_toast::{StatusToast, ToastIcon};
@@ -1338,11 +1338,12 @@ struct HumanizedActionNameCache {
 
 impl HumanizedActionNameCache {
     fn new(cx: &App) -> Self {
-        let cache = HashMap::from_iter(
-            cx.all_action_names()
-                .iter()
-                .map(|&action_name| (action_name, humanize_action_name(action_name).into())),
-        );
+        let cache = HashMap::from_iter(cx.all_action_names().iter().map(|&action_name| {
+            (
+                action_name,
+                command_palette::humanize_action_name(action_name).into(),
+            )
+        }));
         Self { cache }
     }
 

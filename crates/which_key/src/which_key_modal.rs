@@ -2,7 +2,7 @@
 
 use gpui::{
     App, AvailableSpace, Context, DismissEvent, EventEmitter, FocusHandle, Focusable, FontWeight,
-    Keystroke, Subscription, WeakEntity, Window, humanize_action_name, size,
+    Keystroke, Subscription, WeakEntity, Window, size,
 };
 use settings::Settings;
 use std::collections::HashMap;
@@ -84,7 +84,8 @@ impl WhichKeyModal {
             .map(|(keystrokes, action)| {
                 // Map to remaining keystrokes and action name
                 let remaining_keystrokes = keystrokes[pending_keys.len()..].to_vec();
-                let action_name: SharedString = humanize_action_name(action.name()).into();
+                let action_name: SharedString =
+                    command_palette::humanize_action_name(action.name()).into();
                 (remaining_keystrokes, action_name)
             })
             .collect();
@@ -234,7 +235,7 @@ impl Render for WhichKeyModal {
                         .into_any_element()
                         .layout_as_root(AvailableSpace::min_size(), window, cx)
                         .width
-                        + px(5.)
+                        + px(10.)
                 });
 
             let column = v_flex().gap(row_gap).children(column_items.iter().map(
@@ -279,9 +280,8 @@ impl Render for WhichKeyModal {
 
         // Adjust height to avoid covering cursor
         let adjusted_height = if let Some(cursor_pos) = cursor_position {
-            let cursor_padding = ((ThemeSettings::get_global(cx).buffer_font_size(cx)
+            let cursor_padding = (ThemeSettings::get_global(cx).buffer_font_size(cx)
                 * ThemeSettings::get_global(cx).line_height())
-                / 2.0)
                 + margin;
             let window_height = window.viewport_size().height;
             // Calculate available space from cursor to bottom of panel

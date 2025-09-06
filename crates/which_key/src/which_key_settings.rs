@@ -2,7 +2,7 @@ use anyhow::Result;
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsUi};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 
 #[derive(Deserialize)]
 pub struct WhichKeySettings {
@@ -16,7 +16,8 @@ fn default_delay_ms() -> u64 {
     700
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
+#[settings_key(key = "which_key")]
 pub struct WhichKeySettingsContent {
     /// Whether to show the which-key popup when holding down key combinations.
     ///
@@ -29,8 +30,6 @@ pub struct WhichKeySettingsContent {
 }
 
 impl Settings for WhichKeySettings {
-    const KEY: Option<&'static str> = Some("which_key");
-
     type FileContent = WhichKeySettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {

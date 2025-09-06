@@ -1,6 +1,4 @@
 use anyhow::{Context, Result};
-use clap::{Arg, ArgMatches, Command};
-use gpui::humanize_action_name;
 use mdbook::BookItem;
 use mdbook::book::{Book, Chapter};
 use mdbook::preprocess::CmdPreprocessor;
@@ -304,7 +302,7 @@ fn dump_all_gpui_actions() -> Vec<ActionDef> {
     let mut actions = gpui::generate_list_of_all_registered_actions()
         .map(|action| ActionDef {
             name: action.name,
-            human_name: humanize_action_name(action.name),
+            human_name: command_palette::humanize_action_name(action.name),
             deprecated_aliases: action.deprecated_aliases,
             docs: action.documentation,
         })
