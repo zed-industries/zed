@@ -25,7 +25,10 @@ use language_model::{
 };
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{
-    agent_server_store::AgentServerCommand,
+    agent_server_store::{
+        AgentServerCommand, AgentServerStore, AllAgentServersSettings, CustomAgentServerSettings,
+        claude_code, gemini,
+    },
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
     project_settings::{ContextServerSettings, ProjectSettings},
 };
@@ -45,11 +48,13 @@ pub(crate) use manage_profiles_modal::ManageProfilesModal;
 use crate::{
     AddContextServer, ExternalAgent, NewExternalAgentThread,
     agent_configuration::add_llm_provider_modal::{AddLlmProviderModal, LlmCompatibleProvider},
+    placeholder_command,
 };
 
 pub struct AgentConfiguration {
     fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
+    agent_server_store: Entity<AgentServerStore>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     configuration_views_by_provider: HashMap<LanguageModelProviderId, AnyView>,
@@ -66,6 +71,7 @@ pub struct AgentConfiguration {
 impl AgentConfiguration {
     pub fn new(
         fs: Arc<dyn Fs>,
+        agent_server_store: Entity<AgentServerStore>,
         context_server_store: Entity<ContextServerStore>,
         tools: Entity<ToolWorkingSet>,
         language_registry: Arc<LanguageRegistry>,
@@ -104,6 +110,7 @@ impl AgentConfiguration {
             workspace,
             focus_handle,
             configuration_views_by_provider: HashMap::default(),
+            agent_server_store,
             context_server_store,
             expanded_context_server_tools: HashMap::default(),
             expanded_provider_configurations: HashMap::default(),
@@ -991,17 +998,22 @@ impl AgentConfiguration {
     }
 
     fn render_agent_servers_section(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let settings = AllAgentServersSettings::get_global(cx).clone();
-        let user_defined_agents = settings
-            .custom
-            .iter()
-            .map(|(name, settings)| {
+        let user_defined_agents = self
+            .agent_server_store
+            .read(cx)
+            .external_agents()
+            .filter(|(name, _)| name != &&gemini() && name != &&claude_code())
+            .map(|(name, _)| name.to_string())
+            .collect::<Vec<_>>();
+        let user_defined_agents = user_defined_agents
+            .into_iter()
+            .map(|name| {
                 self.render_agent_server(
                     IconName::Ai,
                     name.clone(),
                     ExternalAgent::Custom {
-                        name: name.clone(),
-                        command: settings.command.clone(),
+                        name: name.into(),
+                        command: placeholder_command(),
                     },
                     cx,
                 )

@@ -40,6 +40,7 @@ use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
 };
 use project::DisableAiSettings;
+use project::agent_server_store::AgentServerCommand;
 use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -169,8 +170,16 @@ enum ExternalAgent {
     NativeAgent,
     Custom {
         name: SharedString,
-        command: project::agent_server_store::AgentServerCommand,
+        command: AgentServerCommand,
     },
+}
+
+fn placeholder_command() -> AgentServerCommand {
+    AgentServerCommand {
+        path: "/placeholder".into(),
+        args: vec![],
+        env: None,
+    }
 }
 
 impl ExternalAgent {

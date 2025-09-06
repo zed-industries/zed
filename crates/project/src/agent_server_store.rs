@@ -294,6 +294,12 @@ impl AgentServerStore {
         self.external_agents.get(name).cloned()
     }
 
+    pub fn external_agents(
+        &self,
+    ) -> impl Iterator<Item = (&ExternalAgentServerName, &Rc<dyn ExternalAgentServer>)> {
+        self.external_agents.iter()
+    }
+
     async fn handle_get_agent_server_command(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GetAgentServerCommand>,

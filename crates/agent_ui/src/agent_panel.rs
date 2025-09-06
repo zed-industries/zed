@@ -7,7 +7,7 @@ use std::time::Duration;
 use acp_thread::AcpThread;
 use agent2::{DbThreadMetadata, HistoryEntry};
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
-use project::agent_server_store::AgentServerCommand;
+use project::agent_server_store::{AgentServerCommand, AllAgentServersSettings};
 use serde::{Deserialize, Serialize};
 use zed_actions::OpenBrowser;
 use zed_actions::agent::{OpenClaudeCodeOnboardingModal, ReauthenticateAgent};
@@ -1503,6 +1503,7 @@ impl AgentPanel {
     }
 
     pub(crate) fn open_configuration(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let agent_server_store = self.project.read(cx).agent_server_store().clone();
         let context_server_store = self.project.read(cx).context_server_store();
         let tools = self.thread_store.read(cx).tools();
         let fs = self.fs.clone();
@@ -1511,6 +1512,7 @@ impl AgentPanel {
         self.configuration = Some(cx.new(|cx| {
             AgentConfiguration::new(
                 fs,
+                agent_server_store,
                 context_server_store,
                 tools,
                 self.language_registry.clone(),
@@ -2681,8 +2683,7 @@ impl AgentPanel {
                             })
                             .when(cx.has_flag::<GeminiAndNativeFeatureFlag>(), |mut menu| {
                                 // Add custom agents from settings
-                                let settings =
-                                    agent_servers::AllAgentServersSettings::get_global(cx);
+                                let settings = AllAgentServersSettings::get_global(cx);
                                 for (agent_name, agent_settings) in &settings.custom {
                                     menu = menu.item(
                                         ContextMenuEntry::new(format!("New {} Thread", agent_name))
