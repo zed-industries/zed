@@ -128,6 +128,8 @@ struct ModelCapabilities {
     supports: ModelSupportedFeatures,
     #[serde(rename = "type")]
     model_type: String,
+    #[serde(default)]
+    tokenizer: Option<String>,
 }
 
 #[derive(Default, Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -166,6 +168,9 @@ pub enum ModelVendor {
     Anthropic,
     #[serde(rename = "xAI")]
     XAI,
+    /// Unknown vendor that we don't explicitly support yet
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
@@ -213,6 +218,10 @@ impl Model {
 
     pub fn supports_parallel_tool_calls(&self) -> bool {
         self.capabilities.supports.parallel_tool_calls
+    }
+
+    pub fn tokenizer(&self) -> Option<&str> {
+        self.capabilities.tokenizer.as_deref()
     }
 }
 
@@ -900,5 +909,46 @@ mod tests {
         assert_eq!(schema.data.len(), 2);
         assert_eq!(schema.data[0].id, "gpt-4");
         assert_eq!(schema.data[1].id, "claude-3.7-sonnet");
+    }
+
+    #[test]
+    fn test_unknown_vendor_resilience() {
+        let json = r#"{
+              "data": [
+                {
+                  "billing": {
+                    "is_premium": false,
+                    "multiplier": 1
+                  },
+                  "capabilities": {
+                    "family": "future-model",
+                    "limits": {
+                      "max_context_window_tokens": 128000,
+                      "max_output_tokens": 8192,
+                      "max_prompt_tokens": 120000
+                    },
+                    "object": "model_capabilities",
+                    "supports": { "streaming": true, "tool_calls": true },
+                    "type": "chat"
+                  },
+                  "id": "future-model-v1",
+                  "is_chat_default": false,
+                  "is_chat_fallback": false,
+                  "model_picker_enabled": true,
+                  "name": "Future Model v1",
+                  "object": "model",
+                  "preview": false,
+                  "vendor": "SomeNewVendor",
+                  "version": "v1.0"
+                }
+              ],
+              "object": "list"
+            }"#;
+
+        let schema: ModelSchema = serde_json::from_str(json).unwrap();
+
+        assert_eq!(schema.data.len(), 1);
+        assert_eq!(schema.data[0].id, "future-model-v1");
+        assert_eq!(schema.data[0].vendor, ModelVendor::Unknown);
     }
 }
