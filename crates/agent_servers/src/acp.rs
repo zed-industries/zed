@@ -10,6 +10,7 @@ use project::Project;
 use project::agent_server_store::AgentServerCommand;
 use serde::Deserialize;
 
+use std::path::PathBuf;
 use std::{any::Any, cell::RefCell};
 use std::{path::Path, rc::Rc};
 use thiserror::Error;
@@ -29,6 +30,7 @@ pub struct AcpConnection {
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
     auth_methods: Vec<acp::AuthMethod>,
     agent_capabilities: acp::AgentCapabilities,
+    root_dir: PathBuf,
     _io_task: Task<Result<()>>,
     _wait_task: Task<Result<()>>,
     _stderr_task: Task<Result<()>>,
@@ -42,10 +44,11 @@ pub struct AcpSession {
 pub async fn connect(
     server_name: SharedString,
     command: AgentServerCommand,
-    root_dir: Option<&Path>,
+    root_dir: &Path,
+    is_remote: bool,
     cx: &mut AsyncApp,
 ) -> Result<Rc<dyn AgentConnection>> {
-    let conn = AcpConnection::stdio(server_name, command.clone(), root_dir, cx).await?;
+    let conn = AcpConnection::stdio(server_name, command.clone(), root_dir, is_remote, cx).await?;
     Ok(Rc::new(conn) as _)
 }
 
@@ -55,7 +58,8 @@ impl AcpConnection {
     pub async fn stdio(
         server_name: SharedString,
         command: AgentServerCommand,
-        root_dir: Option<&Path>,
+        root_dir: &Path,
+        is_remote: bool,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
         let mut child = util::command::new_smol_command(command.path);
@@ -66,7 +70,7 @@ impl AcpConnection {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true);
-        if let Some(root_dir) = root_dir {
+        if !is_remote {
             child.current_dir(root_dir);
         }
         let mut child = child.spawn()?;
@@ -148,6 +152,7 @@ impl AcpConnection {
 
         Ok(Self {
             auth_methods: response.auth_methods,
+            root_dir: root_dir.to_owned(),
             connection,
             server_name,
             sessions,
@@ -160,6 +165,10 @@ impl AcpConnection {
 
     pub fn prompt_capabilities(&self) -> &acp::PromptCapabilities {
         &self.agent_capabilities.prompt_capabilities
+    }
+
+    pub fn root_dir(&self) -> &Path {
+        &self.root_dir
     }
 }
 
@@ -174,6 +183,7 @@ impl AgentConnection for AcpConnection {
         let sessions = self.sessions.clone();
         let cwd = cwd.to_path_buf();
         let context_server_store = project.read(cx).context_server_store().read(cx);
+        // FIXME don't pass mcp servers in the remote case (since they only run locally, right?)
         let mcp_servers = context_server_store
             .configured_server_ids()
             .iter()

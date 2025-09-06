@@ -5,7 +5,6 @@ mod tool_picker;
 
 use std::{ops::Range, sync::Arc};
 
-use agent_servers::{AllAgentServersSettings, CustomAgentServerSettings};
 use agent_settings::AgentSettings;
 use anyhow::Result;
 use assistant_tool::{ToolSource, ToolWorkingSet};

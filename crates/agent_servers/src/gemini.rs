@@ -43,22 +43,17 @@ impl AgentServer for Gemini {
         };
         let name = self.name();
         let root_dir = root_dir.map(|root_dir| root_dir.to_string_lossy().to_string());
+        let is_remote = todo!();
 
         cx.spawn(async move |cx| {
             let mut extra_env = HashMap::default();
             if let Some(api_key) = cx.update(GoogleLanguageModelProvider::api_key)?.await.ok() {
                 extra_env.insert("GEMINI_API_KEY".into(), api_key.key);
             }
-            let command = agent
+            let (command, root_dir) = agent
                 .get_command(root_dir.as_deref(), extra_env, cx)
                 .await?;
-            crate::acp::connect(
-                name,
-                command,
-                root_dir.as_ref().map(|root_dir| root_dir.as_ref()),
-                cx,
-            )
-            .await
+            crate::acp::connect(name, command, root_dir.as_ref(), is_remote, cx).await
         })
     }
 

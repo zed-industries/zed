@@ -194,13 +194,8 @@ impl HeadlessProject {
         });
 
         let agent_server_store = cx.new(|cx| {
-            let mut agent_server_store = AgentServerStore::local(
-                node_runtime.clone(),
-                fs.clone(),
-                worktree_store.clone(),
-                environment,
-                cx,
-            );
+            let mut agent_server_store =
+                AgentServerStore::local(node_runtime.clone(), fs.clone(), environment, cx);
             agent_server_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone());
             agent_server_store
         });

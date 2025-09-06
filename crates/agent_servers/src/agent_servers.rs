@@ -39,6 +39,8 @@ use std::{
 };
 use util::ResultExt as _;
 
+pub use acp::AcpConnection;
+
 pub struct AgentServerDelegate {
     store: Entity<AgentServerStore>,
     project: Entity<Project>,

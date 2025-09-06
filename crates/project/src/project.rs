@@ -1180,13 +1180,7 @@ impl Project {
             });
 
             let agent_server_store = cx.new(|cx| {
-                AgentServerStore::local(
-                    node.clone(),
-                    fs.clone(),
-                    worktree_store.clone(),
-                    environment.clone(),
-                    cx,
-                )
+                AgentServerStore::local(node.clone(), fs.clone(), environment.clone(), cx)
             });
 
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();

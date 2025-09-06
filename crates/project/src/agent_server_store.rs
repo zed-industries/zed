@@ -68,7 +68,7 @@ impl AgentServerCommand {
         }
     }
 
-    fn to_proto(self) -> proto::AgentServerCommand {
+    fn to_proto(self, root_dir: String) -> proto::AgentServerCommand {
         proto::AgentServerCommand {
             path: self.path.to_string_lossy().to_string(),
             args: self.args,
@@ -76,6 +76,7 @@ impl AgentServerCommand {
                 .env
                 .map(|env| env.into_iter().collect())
                 .unwrap_or_default(),
+            root_dir,
         }
     }
 }
@@ -96,15 +97,13 @@ pub trait ExternalAgentServer {
         root_dir: Option<&str>,
         extra_env: HashMap<String, String>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<AgentServerCommand>>;
+    ) -> Task<Result<(AgentServerCommand, String)>>;
 }
 
 enum AgentServerStoreState {
     Local {
         node_runtime: NodeRuntime,
         fs: Arc<dyn Fs>,
-        // FIXME remove this
-        worktree_store: Entity<WorktreeStore>,
         project_environment: Entity<ProjectEnvironment>,
         downstream_client: Option<(u64, AnyProtoClient)>,
         _subscriptions: [Subscription; 1],
@@ -138,7 +137,6 @@ impl AgentServerStore {
         let AgentServerStoreState::Local {
             node_runtime,
             fs,
-            worktree_store: _,
             project_environment,
             downstream_client,
             _subscriptions: _,
@@ -203,7 +201,6 @@ impl AgentServerStore {
     pub fn local(
         node_runtime: NodeRuntime,
         fs: Arc<dyn Fs>,
-        worktree_store: Entity<WorktreeStore>,
         project_environment: Entity<ProjectEnvironment>,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -214,7 +211,6 @@ impl AgentServerStore {
             state: AgentServerStoreState::Local {
                 node_runtime,
                 fs,
-                worktree_store,
                 project_environment,
                 downstream_client: None,
                 _subscriptions: [subscription],
@@ -312,14 +308,14 @@ impl AgentServerStore {
                     .cloned()
             })?
             .with_context(|| format!("agent `{}` not found", envelope.payload.name))?;
-        let command = agent
+        let (command, root_dir) = agent
             .get_command(
                 envelope.payload.root_dir.as_deref(),
                 HashMap::default(),
                 &mut cx,
             )
             .await?;
-        Ok(command.to_proto())
+        Ok(command.to_proto(root_dir))
     }
 
     async fn handle_external_agents_updated(
@@ -557,7 +553,7 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
         root_dir: Option<&str>,
         extra_env: HashMap<String, String>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<AgentServerCommand>> {
+    ) -> Task<Result<(AgentServerCommand, String)>> {
         let project_id = self.project_id;
         let name = self.name.to_string();
         let upstream_client = self.upstream_client.downgrade();
@@ -574,21 +570,25 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
                         })
                 })?
                 .await?;
+            let root_dir = command.root_dir;
             command.env.extend(extra_env);
             let command = upstream_client.update(cx, |client, cx| {
                 client.build_command(
                     Some(command.path),
                     &command.args,
                     &command.env.into_iter().collect(),
-                    root_dir,
+                    Some(root_dir.clone()),
                     None,
                 )
             })??;
-            Ok(AgentServerCommand {
-                path: command.program.into(),
-                args: command.args,
-                env: Some(command.env),
-            })
+            Ok((
+                AgentServerCommand {
+                    path: command.program.into(),
+                    args: command.args,
+                    env: Some(command.env),
+                },
+                root_dir,
+            ))
         })
     }
 }
@@ -607,7 +607,7 @@ impl ExternalAgentServer for LocalGemini {
         root_dir: Option<&str>,
         extra_env: HashMap<String, String>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<AgentServerCommand>> {
+    ) -> Task<Result<(AgentServerCommand, String)>> {
         let fs = self.fs.clone();
         let node_runtime = self.node_runtime.clone();
         let project_environment = self.project_environment.downgrade();
@@ -658,7 +658,7 @@ impl ExternalAgentServer for LocalGemini {
 
             command.env.get_or_insert_default().extend(extra_env);
             command.args.push("--experimental-acp".into());
-            Ok(command)
+            Ok((command, root_dir.to_proto()))
         })
     }
 }
@@ -674,7 +674,7 @@ impl ExternalAgentServer for LocalCustomAgent {
         root_dir: Option<&str>,
         extra_env: HashMap<String, String>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<AgentServerCommand>> {
+    ) -> Task<Result<(AgentServerCommand, String)>> {
         let mut command = self.command.clone();
         let root_dir: Arc<Path> = root_dir
             .map(|root_dir| Path::new(root_dir))
@@ -691,7 +691,7 @@ impl ExternalAgentServer for LocalCustomAgent {
             env.extend(command.env.unwrap_or_default());
             env.extend(extra_env);
             command.env = Some(env);
-            Ok(command)
+            Ok((command, root_dir.to_proto()))
         })
     }
 }
