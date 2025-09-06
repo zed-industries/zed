@@ -79,7 +79,8 @@ pub(super) fn find_from_grid_point<T: EventListener>(
         Some((url, true, url_match))
     } else if let Some(url_match) = regex_match_at(term, point, &mut regex_searches.url_regex) {
         let url = term.bounds_to_string(*url_match.start(), *url_match.end());
-        Some((url, true, url_match))
+        let (sanitized_url, sanitized_match) = sanitize_url_parentheses(url, url_match, term);
+        Some((sanitized_url, true, sanitized_match))
     } else if let Some(python_match) =
         regex_match_at(term, point, &mut regex_searches.python_file_line_regex)
     {
@@ -164,6 +165,45 @@ pub(super) fn find_from_grid_point<T: EventListener>(
     })
 }
 
+fn sanitize_url_parentheses<T: EventListener>(
+    url: String,
+    url_match: Match,
+    term: &Term<T>,
+) -> (String, Match) {
+    // Count opening and closing parentheses in the URL
+    let open_parens = url.chars().filter(|&c| c == '(').count();
+    let close_parens = url.chars().filter(|&c| c == ')').count();
+    
+    // If there are more closing parentheses than opening ones, and the URL ends with ')',
+    // trim trailing ')' characters until balanced or no more trailing ')' exist
+    if close_parens > open_parens && url.ends_with(')') {
+        let mut sanitized_url = url;
+        let mut chars_trimmed = 0;
+        
+        while sanitized_url.ends_with(')') {
+            let remaining_open = sanitized_url.chars().filter(|&c| c == '(').count();
+            let remaining_close = sanitized_url.chars().filter(|&c| c == ')').count();
+            
+            // If removing this ')' would make parentheses balanced or reduce the imbalance
+            if remaining_close > remaining_open {
+                sanitized_url.pop();
+                chars_trimmed += 1;
+            } else {
+                break;
+            }
+        }
+        
+        if chars_trimmed > 0 {
+            // Adjust the match range to reflect the trimmed characters
+            let new_end = url_match.end().sub(term, Boundary::Grid, chars_trimmed);
+            let sanitized_match = Match::new(*url_match.start(), new_end);
+            return (sanitized_url, sanitized_match);
+        }
+    }
+    
+    (url, url_match)
+}
+
 fn is_path_surrounded_by_common_symbols(path: &str) -> bool {
     // Avoid detecting `[]` or `()` strings as paths, surrounded by common symbols
     path.len() > 2
@@ -231,6 +271,39 @@ mod tests {
                 "mailto:bob@example.com",
             ],
         );
+    }
+
+    #[test]
+    fn test_url_parentheses_sanitization() {
+        // Test our sanitize_url_parentheses function directly
+        let test_cases = vec![
+            // Cases that should be sanitized (unbalanced parentheses)
+            ("https://www.google.com/)", "https://www.google.com/"),
+            ("https://example.com/path)", "https://example.com/path"),
+            ("https://test.com/))", "https://test.com/"),
+            
+            // Cases that should NOT be sanitized (balanced parentheses)
+            ("https://en.wikipedia.org/wiki/Example_(disambiguation)", "https://en.wikipedia.org/wiki/Example_(disambiguation)"),
+            ("https://test.com/(hello)", "https://test.com/(hello)"),
+            ("https://example.com/path(1)(2)", "https://example.com/path(1)(2)"),
+            
+            // Edge cases
+            ("https://test.com/", "https://test.com/"),
+            ("https://example.com", "https://example.com"),
+        ];
+        
+        for (input, expected) in test_cases {
+            // Create a minimal terminal for testing
+            let term = Term::new(Config::default(), &TermSize::new(80, 24), VoidListener);
+            
+            // Create a dummy match that spans the entire input
+            let start_point = AlacPoint::new(alacritty_terminal::index::Line(0), alacritty_terminal::index::Column(0));
+            let end_point = AlacPoint::new(alacritty_terminal::index::Line(0), alacritty_terminal::index::Column(input.len()));
+            let dummy_match = alacritty_terminal::term::search::Match::new(start_point, end_point);
+            
+            let (result, _) = sanitize_url_parentheses(input.to_string(), dummy_match, &term);
+            assert_eq!(result, expected, "Failed for input: {}", input);
+        }
     }
 
     #[test]
