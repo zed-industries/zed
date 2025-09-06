@@ -699,6 +699,9 @@ impl Domain for WorkspaceDb {
 
             PRIMARY KEY (workspace_id, worktree_id, relative_worktree_path, language_name, name, path, raw_json)
         ) STRICT;),
+        sql!(
+            DROP TABLE ssh_connections;
+        ),
     ];
 
     // Allow recovering from bad migration that was initially shipped to nightly
