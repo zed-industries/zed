@@ -639,17 +639,19 @@ impl<'a> Chunks<'a> {
     pub fn seek(&mut self, mut offset: usize) {
         offset = offset.clamp(self.range.start, self.range.end);
 
-        let bias = if self.reversed {
-            Bias::Left
+        if self.reversed {
+            if offset > self.chunks.end() {
+                self.chunks.seek_forward(&offset, Bias::Left);
+            } else if offset <= *self.chunks.start() {
+                self.chunks.seek(&offset, Bias::Left);
+            }
         } else {
-            Bias::Right
+            if offset >= self.chunks.end() {
+                self.chunks.seek_forward(&offset, Bias::Right);
+            } else if offset < *self.chunks.start() {
+                self.chunks.seek(&offset, Bias::Right);
+            }
         };
-
-        if offset >= self.chunks.end() {
-            self.chunks.seek_forward(&offset, bias);
-        } else if offset <= *self.chunks.start() {
-            self.chunks.seek(&offset, bias);
-        }
 
         self.offset = offset;
     }
