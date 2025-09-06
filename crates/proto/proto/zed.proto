@@ -402,7 +402,9 @@ message Envelope {
         UpdateUserSettings update_user_settings = 368;
 
         GetAgentServerCommand get_agent_server_command = 369;
-        AgentServerCommand agent_server_command = 370; // current max
+        AgentServerCommand agent_server_command = 370;
+
+        ExternalAgentsUpdated external_agents_updated = 371; // current max
     }
 
     reserved 87 to 88;

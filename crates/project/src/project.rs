@@ -1351,9 +1351,8 @@ impl Project {
                 )
             });
 
-            let agent_server_store = cx.new(|cx| {
-                AgentServerStore::remote(REMOTE_SERVER_PROJECT_ID, remote_proto.clone(), cx)
-            });
+            let agent_server_store =
+                cx.new(|cx| AgentServerStore::remote(REMOTE_SERVER_PROJECT_ID, remote.clone(), cx));
 
             cx.subscribe(&remote, Self::on_remote_client_event).detach();
 

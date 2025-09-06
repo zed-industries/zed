@@ -9,7 +9,9 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use collections::HashMap;
 use fs::{Fs, RemoveOptions, RenameOptions};
 use futures::StreamExt as _;
-use gpui::{App, AppContext as _, AsyncApp, Context, Entity, SharedString, Task};
+use gpui::{
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
+};
 use node_runtime::NodeRuntime;
 use remote::RemoteClient;
 use rpc::{
@@ -18,7 +20,7 @@ use rpc::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::SettingsStore;
+use settings::{SettingsKey, SettingsSources, SettingsStore, SettingsUi};
 use util::{ResultExt as _, debug_panic};
 
 use crate::{Project, ProjectEnvironment, worktree_store::WorktreeStore};
@@ -101,9 +103,11 @@ enum AgentServerStoreState {
     Local {
         node_runtime: NodeRuntime,
         fs: Arc<dyn Fs>,
+        // FIXME remove this
         worktree_store: Entity<WorktreeStore>,
         project_environment: Entity<ProjectEnvironment>,
         downstream_client: Option<(u64, AnyProtoClient)>,
+        _subscriptions: [Subscription; 1],
     },
     Remote {
         project_id: u64,
@@ -117,6 +121,10 @@ pub struct AgentServerStore {
     external_agents: HashMap<ExternalAgentServerName, Rc<dyn ExternalAgentServer>>,
 }
 
+pub struct AgentServersUpdated;
+
+impl EventEmitter<AgentServersUpdated> for AgentServerStore {}
+
 impl AgentServerStore {
     pub fn init_remote(session: &AnyProtoClient) {
         session.add_entity_message_handler(Self::handle_external_agents_updated);
@@ -126,40 +134,94 @@ impl AgentServerStore {
         session.add_entity_request_handler(Self::handle_get_agent_server_command);
     }
 
-    pub fn local(
-        node_runtime: NodeRuntime,
-        fs: Arc<dyn Fs>,
-        worktree_store: Entity<WorktreeStore>,
-        project_environment: Entity<ProjectEnvironment>,
-        _cx: &mut Context<Self>,
-    ) -> Self {
-        // FIXME need to subscribe to settings changed and send ExternalAgentsUpdated
+    fn agent_servers_settings_changed(&mut self, cx: &mut Context<Self>) {
+        let AgentServerStoreState::Local {
+            node_runtime,
+            fs,
+            worktree_store: _,
+            project_environment,
+            downstream_client,
+            _subscriptions: _,
+        } = &self.state
+        else {
+            debug_panic!(
+                "should not be subscribed to agent server settings changes in non-local project"
+            );
+            return;
+        };
 
-        let external_agents = [
-            (
+        cx.read_global(|settings: &SettingsStore, _| {
+            let settings = settings.get::<AllAgentServersSettings>(None);
+            self.external_agents.clear();
+            self.external_agents.insert(
                 gemini(),
                 Rc::new(LocalGemini {
                     fs: fs.clone(),
                     node_runtime: node_runtime.clone(),
                     project_environment: project_environment.clone(),
-                }) as Rc<dyn ExternalAgentServer>,
-            ),
-            // FIXME claude
-        ]
-        .into_iter()
-        .collect();
-        // FIXME read settings at start too
+                    custom_command: settings
+                        .gemini
+                        .clone()
+                        .and_then(|settings| settings.custom_command()),
+                    ignore_system_version: settings
+                        .gemini
+                        .as_ref()
+                        .and_then(|settings| settings.ignore_system_version)
+                        .unwrap_or(true),
+                }),
+            );
 
-        Self {
+            // FIXME claude
+
+            self.external_agents
+                .extend(settings.custom.iter().map(|(name, settings)| {
+                    (
+                        ExternalAgentServerName(name.clone()),
+                        Rc::new(LocalCustomAgent {
+                            command: settings.command.clone(),
+                        }) as Rc<dyn ExternalAgentServer>,
+                    )
+                }));
+        });
+
+        if let Some((project_id, downstream_client)) = downstream_client {
+            downstream_client
+                .send(proto::ExternalAgentsUpdated {
+                    project_id: *project_id,
+                    names: self
+                        .external_agents
+                        .keys()
+                        .map(|name| name.to_string())
+                        .collect(),
+                })
+                .log_err();
+        }
+        cx.emit(AgentServersUpdated);
+    }
+
+    pub fn local(
+        node_runtime: NodeRuntime,
+        fs: Arc<dyn Fs>,
+        worktree_store: Entity<WorktreeStore>,
+        project_environment: Entity<ProjectEnvironment>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let subscription = cx.observe_global::<SettingsStore>(|this, cx| {
+            this.agent_servers_settings_changed(cx);
+        });
+        let mut this = Self {
             state: AgentServerStoreState::Local {
                 node_runtime,
                 fs,
                 worktree_store,
                 project_environment,
                 downstream_client: None,
+                _subscriptions: [subscription],
             },
-            external_agents,
-        }
+            external_agents: Default::default(),
+        };
+        this.agent_servers_settings_changed(cx);
+        this
     }
 
     pub(crate) fn remote(
@@ -205,11 +267,26 @@ impl AgentServerStore {
             AgentServerStoreState::Local {
                 downstream_client, ..
             } => {
-                // FIXME need a subscription for settings changed so that we can send down the new servers
+                client
+                    .send(proto::ExternalAgentsUpdated {
+                        project_id,
+                        names: self
+                            .external_agents
+                            .keys()
+                            .map(|name| name.to_string())
+                            .collect(),
+                    })
+                    .log_err();
                 *downstream_client = Some((project_id, client));
             }
-            AgentServerStoreState::Remote { .. } => {}
-            AgentServerStoreState::Collab => {}
+            AgentServerStoreState::Remote { .. } => {
+                debug_panic!(
+                    "external agents over collab not implemented, remote project should not be shared"
+                );
+            }
+            AgentServerStoreState::Collab => {
+                debug_panic!("external agents over collab not implemented, should not be shared");
+            }
         }
     }
 
@@ -246,7 +323,7 @@ impl AgentServerStore {
         envelope: TypedEnvelope<proto::ExternalAgentsUpdated>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        this.update(&mut cx, |this, _cx| {
+        this.update(&mut cx, |this, cx| {
             let AgentServerStoreState::Remote {
                 project_id,
                 upstream_client,
@@ -274,8 +351,8 @@ impl AgentServerStore {
                     )
                 })
                 .collect();
+            cx.emit(AgentServersUpdated);
             Ok(())
-            // FIXME emit an event
         })?
     }
 }
@@ -284,165 +361,130 @@ fn get_or_npm_install_builtin_agent(
     binary_name: SharedString,
     package_name: SharedString,
     entrypoint_path: PathBuf,
-    extra_args: Vec<String>,
     minimum_version: Option<semver::Version>,
-    root_dir: Arc<Path>,
     status_tx: Option<watch::Sender<SharedString>>,
     new_version_available: Option<watch::Sender<Option<String>>>,
     fs: Arc<dyn Fs>,
     node_runtime: NodeRuntime,
-    project_environment: Entity<ProjectEnvironment>,
-    cx: &mut App,
+    cx: &mut AsyncApp,
 ) -> Task<std::result::Result<AgentServerCommand, anyhow::Error>> {
-    let (custom_command, ignore_system_version) = cx.read_global(|settings: &SettingsStore, _| {
-        // FIXME read settings
-        (None::<AgentServerCommand>, true)
-    });
-
     cx.spawn(async move |cx| {
-        let mut env = project_environment
-            .update(cx, |project_environment, cx| {
-                project_environment.get_directory_environment(root_dir.clone(), cx)
-            })?
-            .await
-            .unwrap_or_default();
+        let node_path = node_runtime.binary_path().await?;
+        let dir = paths::data_dir()
+            .join("external_agents")
+            .join(binary_name.as_str());
+        fs.create_dir(&dir).await?;
 
-        if let Some(mut command) = custom_command {
-            command.args.extend(extra_args);
-            env.extend(command.env.unwrap_or_default());
-            command.env = Some(env);
-            return Ok(command);
-        } else if !ignore_system_version {
-            if let Some(bin) =
-                find_bin_in_path(binary_name.clone(), &root_dir, &project_environment, cx).await
+        let mut stream = fs.read_dir(&dir).await?;
+        let mut versions = Vec::new();
+        let mut to_delete = Vec::new();
+        while let Some(entry) = stream.next().await {
+            let Ok(entry) = entry else { continue };
+            let Some(file_name) = entry.file_name() else {
+                continue;
+            };
+
+            if let Some(name) = file_name.to_str()
+                && let Some(version) = semver::Version::from_str(name).ok()
+                && fs
+                    .is_file(&dir.join(file_name).join(&entrypoint_path))
+                    .await
             {
-                return Ok(AgentServerCommand {
-                    path: bin,
-                    args: Vec::new(),
-                    env: Some(env),
-                });
+                versions.push((version, file_name.to_owned()));
+            } else {
+                to_delete.push(file_name.to_owned())
             }
         }
 
-        cx.spawn(async move |cx| {
-            let node_path = node_runtime.binary_path().await?;
-            let dir = paths::data_dir()
-                .join("external_agents")
-                .join(binary_name.as_str());
-            fs.create_dir(&dir).await?;
+        versions.sort();
+        let newest_version = if let Some((version, file_name)) = versions.last().cloned()
+            && minimum_version.is_none_or(|minimum_version| version >= minimum_version)
+        {
+            versions.pop();
+            Some(file_name)
+        } else {
+            None
+        };
+        log::debug!("existing version of {package_name}: {newest_version:?}");
+        to_delete.extend(versions.into_iter().map(|(_, file_name)| file_name));
 
-            let mut stream = fs.read_dir(&dir).await?;
-            let mut versions = Vec::new();
-            let mut to_delete = Vec::new();
-            while let Some(entry) = stream.next().await {
-                let Ok(entry) = entry else { continue };
-                let Some(file_name) = entry.file_name() else {
-                    continue;
-                };
-
-                if let Some(name) = file_name.to_str()
-                    && let Some(version) = semver::Version::from_str(name).ok()
-                    && fs.is_file(&dir.join(file_name).join(entrypoint_path)).await
-                {
-                    versions.push((version, file_name.to_owned()));
-                } else {
-                    to_delete.push(file_name.to_owned())
+        cx.background_spawn({
+            let fs = fs.clone();
+            let dir = dir.clone();
+            async move {
+                for file_name in to_delete {
+                    fs.remove_dir(
+                        &dir.join(file_name),
+                        RemoveOptions {
+                            recursive: true,
+                            ignore_if_not_exists: false,
+                        },
+                    )
+                    .await
+                    .ok();
                 }
             }
+        })
+        .detach();
 
-            versions.sort();
-            let newest_version = if let Some((version, file_name)) = versions.last().cloned()
-                && minimum_version.is_none_or(|minimum_version| version >= minimum_version)
-            {
-                versions.pop();
-                Some(file_name)
-            } else {
-                None
-            };
-            log::debug!("existing version of {package_name}: {newest_version:?}");
-            to_delete.extend(versions.into_iter().map(|(_, file_name)| file_name));
-
+        let version = if let Some(file_name) = newest_version {
             cx.background_spawn({
-                let fs = fs.clone();
+                let file_name = file_name.clone();
                 let dir = dir.clone();
+                let fs = fs.clone();
                 async move {
-                    for file_name in to_delete {
-                        fs.remove_dir(
-                            &dir.join(file_name),
-                            RemoveOptions {
-                                recursive: true,
-                                ignore_if_not_exists: false,
-                            },
+                    let latest_version =
+                        node_runtime.npm_package_latest_version(&package_name).await;
+                    if let Ok(latest_version) = latest_version
+                        && &latest_version != &file_name.to_string_lossy()
+                    {
+                        download_latest_version(
+                            fs,
+                            dir.clone(),
+                            node_runtime,
+                            package_name.clone(),
                         )
                         .await
-                        .ok();
+                        .log_err();
+                        if let Some(mut new_version_available) = new_version_available {
+                            new_version_available.send(Some(latest_version)).ok();
+                        }
                     }
                 }
             })
             .detach();
+            file_name
+        } else {
+            if let Some(mut status_tx) = status_tx {
+                status_tx.send("Installing…".into()).ok();
+            }
+            let dir = dir.clone();
+            cx.background_spawn(download_latest_version(
+                fs.clone(),
+                dir.clone(),
+                node_runtime,
+                package_name.clone(),
+            ))
+            .await?
+            .into()
+        };
 
-            let version = if let Some(file_name) = newest_version {
-                cx.background_spawn({
-                    let file_name = file_name.clone();
-                    let dir = dir.clone();
-                    let fs = fs.clone();
-                    async move {
-                        let latest_version =
-                            node_runtime.npm_package_latest_version(&package_name).await;
-                        if let Ok(latest_version) = latest_version
-                            && &latest_version != &file_name.to_string_lossy()
-                        {
-                            download_latest_version(
-                                fs,
-                                dir.clone(),
-                                node_runtime,
-                                package_name.clone(),
-                            )
-                            .await
-                            .log_err();
-                            if let Some(mut new_version_available) = new_version_available {
-                                new_version_available.send(Some(latest_version)).ok();
-                            }
-                        }
-                    }
-                })
-                .detach();
-                file_name
-            } else {
-                if let Some(mut status_tx) = status_tx {
-                    status_tx.send("Installing…".into()).ok();
-                }
-                let dir = dir.clone();
-                cx.background_spawn(download_latest_version(
-                    fs.clone(),
-                    dir.clone(),
-                    node_runtime,
-                    package_name.clone(),
-                ))
-                .await?
-                .into()
-            };
+        let agent_server_path = dir.join(version).join(entrypoint_path);
+        let agent_server_path_exists = fs.is_file(&agent_server_path).await;
+        anyhow::ensure!(
+            agent_server_path_exists,
+            "Missing entrypoint path {} after installation",
+            agent_server_path.to_string_lossy()
+        );
 
-            let agent_server_path = dir.join(version).join(entrypoint_path);
-            let agent_server_path_exists = fs.is_file(&agent_server_path).await;
-            anyhow::ensure!(
-                agent_server_path_exists,
-                "Missing entrypoint path {} after installation",
-                agent_server_path.to_string_lossy()
-            );
-            let mut args = extra_args;
-            args.insert(0, agent_server_path.to_string_lossy().to_string());
-
-            anyhow::Ok(AgentServerCommand {
-                path: node_path,
-                args,
-                env: Some(env),
-            })
+        anyhow::Ok(AgentServerCommand {
+            path: node_path,
+            args: vec![agent_server_path.to_string_lossy().to_string()],
+            env: None,
         })
-        .await
-        // FIXME restore this at a higher level
-        // .map_err(|e| LoadError::FailedToInstall(e.to_string().into()).into())
     })
+    // FIXME restore this at a higher level
+    // .map_err(|e| LoadError::FailedToInstall(e.to_string().into()).into())
 }
 
 async fn find_bin_in_path(
@@ -561,6 +603,8 @@ struct LocalGemini {
     fs: Arc<dyn Fs>,
     node_runtime: NodeRuntime,
     project_environment: Entity<ProjectEnvironment>,
+    custom_command: Option<AgentServerCommand>,
+    ignore_system_version: bool,
 }
 
 impl ExternalAgentServer for LocalGemini {
@@ -570,25 +614,53 @@ impl ExternalAgentServer for LocalGemini {
         extra_env: HashMap<String, String>,
         cx: &mut App,
     ) -> Task<Result<AgentServerCommand>> {
-        let command = get_or_npm_install_builtin_agent(
-            "gemini".into(),
-            "@google/gemini-cli".into(),
-            "node_modules/@google/gemini-cli/dist/index.js".into(),
-            vec!["--experimental-acp".into()],
-            Some("0.2.1".parse().unwrap()),
-            Path::new(root_dir).into(),
-            // FIXME
-            None,
-            None,
-            self.fs.clone(),
-            self.node_runtime.clone(),
-            self.project_environment.clone(),
-            cx,
-        );
+        let fs = self.fs.clone();
+        let node_runtime = self.node_runtime.clone();
+        let project_environment = self.project_environment.clone();
+        let custom_command = self.custom_command.clone();
+        let ignore_system_version = self.ignore_system_version;
+        let root_dir: Arc<Path> = Path::new(root_dir).into();
 
-        cx.spawn(async move |_| {
-            let mut command = command.await?;
+        cx.spawn(async move |cx| {
+            let mut env = project_environment
+                .update(cx, |project_environment, cx| {
+                    project_environment.get_directory_environment(root_dir.clone(), cx)
+                })?
+                .await
+                .unwrap_or_default();
+
+            let mut command = if let Some(mut custom_command) = custom_command {
+                env.extend(custom_command.env.unwrap_or_default());
+                custom_command.env = Some(env);
+                custom_command
+            } else if !ignore_system_version
+                && let Some(bin) =
+                    find_bin_in_path("gemini".into(), &root_dir, &project_environment, cx).await
+            {
+                AgentServerCommand {
+                    path: bin,
+                    args: Vec::new(),
+                    env: Some(env),
+                }
+            } else {
+                let mut command = get_or_npm_install_builtin_agent(
+                    "gemini".into(),
+                    "@google/gemini-cli".into(),
+                    "node_modules/@google/gemini-cli/dist/index.js".into(),
+                    Some("0.2.1".parse().unwrap()),
+                    None,
+                    None,
+                    fs,
+                    node_runtime,
+                    cx,
+                )
+                .await?;
+                command.env = Some(env);
+                command
+            };
+
             command.env.get_or_insert_default().extend(extra_env);
+            command.args.push("--experimental-acp".into());
             Ok(command)
         })
     }
@@ -623,3 +695,100 @@ pub fn claude_code() -> ExternalAgentServerName {
 }
 
 // FIXME claude
+
+#[derive(Default, Deserialize, Serialize, Clone, JsonSchema, Debug, SettingsUi, SettingsKey)]
+#[settings_key(key = "agent_servers")]
+pub struct AllAgentServersSettings {
+    pub gemini: Option<BuiltinAgentServerSettings>,
+    pub claude: Option<CustomAgentServerSettings>,
+
+    /// Custom agent servers configured by the user
+    #[serde(flatten)]
+    pub custom: HashMap<SharedString, CustomAgentServerSettings>,
+}
+
+#[derive(Default, Deserialize, Serialize, Clone, JsonSchema, Debug, PartialEq)]
+pub struct BuiltinAgentServerSettings {
+    /// Absolute path to a binary to be used when launching this agent.
+    ///
+    /// This can be used to run a specific binary without automatic downloads or searching `$PATH`.
+    #[serde(rename = "command")]
+    pub path: Option<PathBuf>,
+    /// If a binary is specified in `command`, it will be passed these arguments.
+    pub args: Option<Vec<String>>,
+    /// If a binary is specified in `command`, it will be passed these environment variables.
+    pub env: Option<HashMap<String, String>>,
+    /// Whether to skip searching `$PATH` for an agent server binary when
+    /// launching this agent.
+    ///
+    /// This has no effect if a `command` is specified. Otherwise, when this is
+    /// `false`, Zed will search `$PATH` for an agent server binary and, if one
+    /// is found, use it for threads with this agent. If no agent binary is
+    /// found on `$PATH`, Zed will automatically install and use its own binary.
+    /// When this is `true`, Zed will not search `$PATH`, and will always use
+    /// its own binary.
+    ///
+    /// Default: true
+    pub ignore_system_version: Option<bool>,
+}
+
+impl BuiltinAgentServerSettings {
+    pub(crate) fn custom_command(self) -> Option<AgentServerCommand> {
+        self.path.map(|path| AgentServerCommand {
+            path,
+            args: self.args.unwrap_or_default(),
+            env: self.env,
+        })
+    }
+}
+
+impl From<AgentServerCommand> for BuiltinAgentServerSettings {
+    fn from(value: AgentServerCommand) -> Self {
+        BuiltinAgentServerSettings {
+            path: Some(value.path),
+            args: Some(value.args),
+            env: value.env,
+            ..Default::default()
+        }
+    }
+}
+
+#[derive(Deserialize, Serialize, Clone, JsonSchema, Debug, PartialEq)]
+pub struct CustomAgentServerSettings {
+    #[serde(flatten)]
+    pub command: AgentServerCommand,
+}
+
+impl settings::Settings for AllAgentServersSettings {
+    type FileContent = Self;
+
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
+        let mut settings = AllAgentServersSettings::default();
+
+        for AllAgentServersSettings {
+            gemini,
+            claude,
+            custom,
+        } in sources.defaults_and_customizations()
+        {
+            if gemini.is_some() {
+                settings.gemini = gemini.clone();
+            }
+            if claude.is_some() {
+                settings.claude = claude.clone();
+            }
+
+            // Merge custom agents
+            for (name, config) in custom {
+                // Skip built-in agent names to avoid conflicts
+                if name != "gemini" && name != "claude" {
+                    settings.custom.insert(name.clone(), config.clone());
+                }
+            }
+        }
+
+        Ok(settings)
+    }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
+}

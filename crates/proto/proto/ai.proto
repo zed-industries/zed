@@ -168,6 +168,7 @@ enum LanguageModelRole {
 message GetAgentServerCommand {
     uint64 project_id = 1;
     string name = 2;
+    // FIXME should be optional (no worktrees)
     string root_dir = 3;
 }
 

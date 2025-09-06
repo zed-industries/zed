@@ -317,6 +317,7 @@ messages!(
     (ToggleLspLogs, Background),
     (GetAgentServerCommand, Background),
     (AgentServerCommand, Background),
+    (ExternalAgentsUpdated, Background),
 );
 
 request_messages!(
@@ -640,7 +641,8 @@ entity_messages!(
     PullWorkspaceDiagnostics,
     GetDefaultBranch,
     GitClone,
-    GetAgentServerCommand
+    GetAgentServerCommand,
+    ExternalAgentsUpdated
 );
 
 entity_messages!(
