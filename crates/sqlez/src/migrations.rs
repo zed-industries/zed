@@ -59,6 +59,7 @@ impl Connection {
             let mut store_completed_migration = self
                 .exec_bound("INSERT INTO migrations (domain, step, migration) VALUES (?, ?, ?)")?;
 
+            let mut did_migrate = false;
             for (index, migration) in migrations.iter().enumerate() {
                 let migration =
                     sqlformat::format(migration, &sqlformat::QueryParams::None, Default::default());
@@ -70,9 +71,7 @@ impl Connection {
                         &sqlformat::QueryParams::None,
                         Default::default(),
                     );
-                    if completed_migration == migration
-                        || migration.trim().starts_with("-- ALLOW_MIGRATION_CHANGE")
-                    {
+                    if completed_migration == migration {
                         // Migration already run. Continue
                         continue;
                     } else if should_allow_migration_change(index, &completed_migration, &migration)
@@ -91,11 +90,14 @@ impl Connection {
                 }
 
                 self.eager_exec(&migration)?;
+                did_migrate = true;
                 store_completed_migration((domain, index, migration))?;
             }
 
-            self.delete_rows_with_orphaned_foreign_key_references()?;
-            self.exec("PRAGMA foreign_key_check;")?()?;
+            if did_migrate {
+                self.delete_rows_with_orphaned_foreign_key_references()?;
+                self.exec("PRAGMA foreign_key_check;")?()?;
+            }
 
             Ok(())
         })
@@ -132,7 +134,7 @@ impl Connection {
             self.exec(&format!(
                 "
                 DELETE FROM {child_table}
-                WHERE {child_key} NOT IN
+                WHERE {child_key} IS NOT NULL and {child_key} NOT IN
                 (SELECT {parent_key} FROM {parent_table})
                 "
             ))?()?;
