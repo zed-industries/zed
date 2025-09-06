@@ -190,7 +190,7 @@ impl WrapMap {
             });
 
             match cx
-                .background_executor()
+                .foreground_executor()
                 .block_with_timeout(Duration::from_millis(5), task)
             {
                 Ok((snapshot, edits)) => {
@@ -269,7 +269,7 @@ impl WrapMap {
             });
 
             match cx
-                .background_executor()
+                .foreground_executor()
                 .block_with_timeout(Duration::from_millis(1), update_task)
             {
                 Ok((snapshot, output_edits)) => {

@@ -1496,7 +1496,7 @@ impl Buffer {
 
         self.parse_status.0.send(ParseStatus::Parsing).unwrap();
         match cx
-            .background_executor()
+            .foreground_executor()
             .block_with_timeout(self.sync_parse_timeout, parse_task)
         {
             Ok(new_syntax_snapshot) => {
@@ -1584,7 +1584,7 @@ impl Buffer {
         if let Some(indent_sizes) = self.compute_autoindents() {
             let indent_sizes = cx.background_spawn(indent_sizes);
             match cx
-                .background_executor()
+                .foreground_executor()
                 .block_with_timeout(Duration::from_micros(500), indent_sizes)
             {
                 Ok(indent_sizes) => self.apply_autoindents(indent_sizes, cx),

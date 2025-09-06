@@ -3,6 +3,7 @@ mod persistence;
 use std::{
     cmp::{self, Reverse},
     collections::HashMap,
+    pin::pin,
     sync::Arc,
     time::Duration,
 };
@@ -357,9 +358,13 @@ impl PickerDelegate for CommandPaletteDelegate {
             return true;
         };
 
+        let result = pin!({
+            let mut rx = rx.clone();
+            async move { rx.recv().await }
+        });
         match cx
-            .background_executor()
-            .block_with_timeout(duration, rx.clone().recv())
+            .foreground_executor()
+            .block_with_timeout(duration, result)
         {
             Ok(Some((commands, matches))) => {
                 self.matches_updated(query, commands, matches, cx);

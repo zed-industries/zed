@@ -149,16 +149,6 @@ impl BackgroundExecutor {
         todo!("move this to foreground executor")
     }
 
-    /// Block the current thread until the given future resolves
-    /// or `duration` has elapsed.
-    pub fn block_with_timeout<Fut: Future>(
-        &self,
-        _duration: Duration,
-        _future: Fut,
-    ) -> Result<Fut::Output, Fut> {
-        todo!("move this to foreground executor")
-    }
-
     /// Scoped lets you start a number of tasks and waits
     /// for all of them to complete before returning.
     pub async fn scoped<'scope, F>(&self, f: F)
@@ -295,10 +285,10 @@ impl ForegroundExecutor {
     /// or `timeout` has elapsed.
     pub fn block_with_timeout<Fut: Unpin + Future>(
         &self,
-        future: &mut Fut,
         timeout: Duration,
-    ) -> Option<Fut::Output> {
-        self.0.block_with_timeout(future, timeout)
+        future: Fut,
+    ) -> Result<Fut::Output, Fut> {
+        self.0.block_with_timeout(timeout, future)
     }
 }
 

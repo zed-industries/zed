@@ -57,16 +57,16 @@ impl ForegroundExecutor {
 
     pub fn block_with_timeout<Fut: Unpin + Future>(
         &self,
-        future: &mut Fut,
         timeout: Duration,
-    ) -> Option<Fut::Output> {
+        mut future: Fut,
+    ) -> Result<Fut::Output, Fut> {
         let mut output = None;
         self.scheduler.block(
             self.session_id,
-            async { output = Some(future.await) }.boxed_local(),
+            async { output = Some((&mut future).await) }.boxed_local(),
             Some(timeout),
         );
-        output
+        output.ok_or(future)
     }
 
     pub fn timer(&self, duration: Duration) -> Timer {

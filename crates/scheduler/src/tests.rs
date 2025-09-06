@@ -300,30 +300,30 @@ fn test_block_with_timeout() {
     // Test case: future completes within timeout
     TestScheduler::once(async |scheduler| {
         let foreground = scheduler.foreground();
-        let mut future = future::ready(42);
-        let output = foreground.block_with_timeout(&mut future, Duration::from_millis(100));
-        assert_eq!(output, Some(42));
+        let future = future::ready(42);
+        let output = foreground.block_with_timeout(Duration::from_millis(100), future);
+        assert_eq!(output.unwrap(), 42);
     });
 
     // Test case: future times out
     TestScheduler::once(async |scheduler| {
         let foreground = scheduler.foreground();
-        let mut future = future::pending::<()>();
-        let output = foreground.block_with_timeout(&mut future, Duration::from_millis(50));
-        assert_eq!(output, None);
+        let future = future::pending::<()>();
+        let output = foreground.block_with_timeout(Duration::from_millis(50), future);
+        let _ = output.expect_err("future should not have finished");
     });
 
     // Test case: future makes progress via timer but still times out
     let mut results = BTreeSet::new();
     TestScheduler::many(100, async |scheduler| {
-        let mut task = scheduler.background().spawn(async move {
+        let task = scheduler.background().spawn(async move {
             Yield { polls: 10 }.await;
             42
         });
         let output = scheduler
             .foreground()
-            .block_with_timeout(&mut task, Duration::from_millis(50));
-        results.insert(output);
+            .block_with_timeout(Duration::from_millis(50), task);
+        results.insert(output.ok());
     });
     assert_eq!(
         results.into_iter().collect::<Vec<_>>(),
