@@ -975,7 +975,7 @@ mod tests {
                 {
                     name: "test case 9",
                     anotherStr: "foooooooo",
-                },
+                }
             }
 
             notATableTest := []struct{
@@ -1006,39 +1006,41 @@ mod tests {
             snapshot.runnable_ranges(0..table_test.len()).collect()
         });
 
-        let tag_strings: Vec<String> = runnables
+        let expected_test_names = vec![
+            "test case 1",
+            "test case 2",
+            "test case 3",
+            "test case 4",
+            "test case 5",
+            "test case 6",
+            "test case 7",
+            "test case 8",
+            "test case 9",
+        ];
+
+        let table_test_runnables: Vec<_> = runnables
             .iter()
-            .flat_map(|r| &r.runnable.tags)
-            .map(|tag| tag.0.to_string())
+            .filter(|r| {
+                r.runnable
+                    .tags
+                    .iter()
+                    .any(|tag| tag.0 == "go-table-test-case")
+            })
             .collect();
 
-        assert!(
-            tag_strings.contains(&"go-test".to_string()),
-            "Should find go-test tag, found: {:?}",
-            tag_strings
-        );
-        assert!(
-            tag_strings.contains(&"go-table-test-case".to_string()),
-            "Should find go-table-test-case tag, found: {:?}",
-            tag_strings
-        );
-
-        let go_test_count = tag_strings.iter().filter(|&tag| tag == "go-test").count();
-        let go_table_test_count = tag_strings
+        let actual_test_names: Vec<String> = table_test_runnables
             .iter()
-            .filter(|&tag| tag == "go-table-test-case")
-            .count();
+            .filter_map(|r| {
+                r.extra_captures.get("_table_test_case_name").map(|s| {
+                    s.strip_prefix('"')
+                        .and_then(|s| s.strip_suffix('"'))
+                        .unwrap_or(s)
+                        .to_string()
+                })
+            })
+            .collect();
 
-        assert!(
-            go_test_count == 1,
-            "Should find exactly 1 go-test, found: {}",
-            go_test_count
-        );
-        assert!(
-            go_table_test_count == 9,
-            "Should find exactly 9 go-table-test-case, found: {}",
-            go_table_test_count
-        );
+        assert_eq!(actual_test_names, expected_test_names,);
     }
 
     #[gpui::test]
@@ -1107,14 +1109,42 @@ mod tests {
           		someStr string
           		fail    bool
            	}{
-          		"test failure": {
+          		"test case 1": {
          			someStr: "foo",
          			fail:    true,
           		},
-          		"test success": {
+          		"test case 2": {
          			someStr: "bar",
          			fail:    false,
           		},
+          		"test case 3": {
+         			someStr: "foo",
+         			fail:    true,
+          		},
+          		"test case 4": {
+         			someStr: "bar",
+         			fail:    false,
+          		},
+          		"test case 5": {
+         			someStr: "foo",
+         			fail:    true,
+          		},
+          		"test case 6": {
+         			someStr: "bar",
+         			fail:    false,
+          		},
+          		"test case 7": {
+         			someStr: "foo",
+         			fail:    true,
+          		},
+          		"test case 8": {
+         			someStr: "bar",
+         			fail:    false,
+          		},
+          		"test case 9": {
+         			someStr: "foo",
+         			fail:    true,
+          		}
            	}
 
            	notATableTest := map[string]struct {
@@ -1145,39 +1175,41 @@ mod tests {
             snapshot.runnable_ranges(0..table_test.len()).collect()
         });
 
-        let tag_strings: Vec<String> = runnables
+        let expected_test_names = vec![
+            "test case 1",
+            "test case 2",
+            "test case 3",
+            "test case 4",
+            "test case 5",
+            "test case 6",
+            "test case 7",
+            "test case 8",
+            "test case 9",
+        ];
+
+        let table_test_runnables: Vec<_> = runnables
             .iter()
-            .flat_map(|r| &r.runnable.tags)
-            .map(|tag| tag.0.to_string())
+            .filter(|r| {
+                r.runnable
+                    .tags
+                    .iter()
+                    .any(|tag| tag.0 == "go-table-test-case")
+            })
             .collect();
 
-        assert!(
-            tag_strings.contains(&"go-test".to_string()),
-            "Should find go-test tag, found: {:?}",
-            tag_strings
-        );
-        assert!(
-            tag_strings.contains(&"go-table-test-case".to_string()),
-            "Should find go-table-test-case tag, found: {:?}",
-            tag_strings
-        );
-
-        let go_test_count = tag_strings.iter().filter(|&tag| tag == "go-test").count();
-        let go_table_test_count = tag_strings
+        let actual_test_names: Vec<String> = table_test_runnables
             .iter()
-            .filter(|&tag| tag == "go-table-test-case")
-            .count();
+            .filter_map(|r| {
+                r.extra_captures.get("_table_test_case_name").map(|s| {
+                    s.strip_prefix('"')
+                        .and_then(|s| s.strip_suffix('"'))
+                        .unwrap_or(s)
+                        .to_string()
+                })
+            })
+            .collect();
 
-        assert!(
-            go_test_count == 1,
-            "Should find exactly 1 go-test, found: {}",
-            go_test_count
-        );
-        assert!(
-            go_table_test_count == 2,
-            "Should find exactly 2 go-table-test-case, found: {}",
-            go_table_test_count
-        );
+        assert_eq!(actual_test_names, expected_test_names,);
     }
 
     #[gpui::test]
