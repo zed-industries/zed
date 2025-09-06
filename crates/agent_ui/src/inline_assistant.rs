@@ -1226,6 +1226,8 @@ impl InlineAssistant {
             scroll_target_top -= editor.vertical_scroll_margin() as f32;
             scroll_target_bottom += editor.vertical_scroll_margin() as f32;
 
+            scroll_target_top = scroll_target_top.max(0.0);
+
             let height_in_lines = editor.visible_line_count().unwrap_or(0.);
             let scroll_top = editor.scroll_position(cx).y;
             let scroll_bottom = scroll_top + height_in_lines;
