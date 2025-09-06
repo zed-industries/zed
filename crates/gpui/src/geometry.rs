@@ -2554,6 +2554,12 @@ impl From<Percentage> for Radians {
 #[repr(transparent)]
 pub struct Pixels(pub f32);
 
+impl std::iter::Sum for Pixels {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        iter.fold(px(0.0), |a, v| a + v)
+    }
+}
+
 impl Div for Pixels {
     type Output = f32;
 
