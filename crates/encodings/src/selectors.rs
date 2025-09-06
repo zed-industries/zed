@@ -409,7 +409,6 @@ pub mod encoding {
                     )
                     .await
                 }
-
                 picker
                     .update(cx, |picker, cx| {
                         let delegate = &mut picker.delegate;
@@ -426,11 +425,13 @@ pub mod encoding {
         fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
             if let Some(buffer) = self.buffer.upgrade() {
                 buffer.update(cx, |buffer, cx| {
-                    buffer.encoding =
+                    let buffer_encoding = buffer.encoding.clone();
+                    let buffer_encoding = &mut *buffer_encoding.lock().unwrap();
+                    *buffer_encoding =
                         encoding_from_name(self.matches[self.current_selection].string.as_str());
                     if self.action == Action::Reopen {
                         let executor = cx.background_executor().clone();
-                        executor.spawn(buffer.reload(cx)).detach();
+                        executor.spawn(buffer.reload(cx, true)).detach();
                     } else if self.action == Action::Save {
                         let executor = cx.background_executor().clone();
 

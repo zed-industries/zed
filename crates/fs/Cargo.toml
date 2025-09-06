@@ -36,8 +36,6 @@ time.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
 
-
-
 [target.'cfg(target_os = "macos")'.dependencies]
 fsevent.workspace = true
 objc.workspace = true
