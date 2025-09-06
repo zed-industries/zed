@@ -89,6 +89,7 @@ pub fn create_test_resource(
             name: name.into().into(),
             description: Some("Test resource".into()),
             mime_type: Some("text/plain".into()),
+            size: None,
         },
         annotations: None,
     }

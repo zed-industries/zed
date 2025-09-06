@@ -18,6 +18,7 @@ use util::redact::should_redact;
 #[cfg(feature = "rmcp")]
 use rmcp::{
     ServiceExt,
+    service::Peer,
     transport::{ConfigureCommandExt, TokioChildProcess},
 };
 #[cfg(feature = "rmcp")]
@@ -75,7 +76,7 @@ pub enum ContextServerTransport {
 pub struct ContextServer {
     id: ContextServerId,
     #[cfg(feature = "rmcp")]
-    service: RwLock<Option<rmcp::Service<()>>>,
+    service: RwLock<Option<Arc<Peer>>>,
     #[cfg(not(feature = "rmcp"))]
     client: RwLock<Option<()>>, // Placeholder when RMCP not enabled
     configuration: ContextServerTransport,
@@ -123,7 +124,7 @@ impl ContextServer {
     }
 
     #[cfg(feature = "rmcp")]
-    pub fn service(&self) -> Option<rmcp::Service<()>> {
+    pub fn service(&self) -> Option<Arc<Peer>> {
         self.service.read().clone()
     }
 
@@ -134,7 +135,7 @@ impl ContextServer {
 
     // Legacy method for backward compatibility
     #[cfg(feature = "rmcp")]
-    pub fn client(&self) -> Option<rmcp::Service<()>> {
+    pub fn client(&self) -> Option<Arc<Peer>> {
         self.service()
     }
 
