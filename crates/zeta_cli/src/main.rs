@@ -18,7 +18,7 @@ use std::process::exit;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-use zeta::{CanCollectData, GatherContextOutput, PerformPredictEditsParams, Zeta, gather_context};
+use zeta::{GatherContextOutput, PerformPredictEditsParams, Zeta, gather_context};
 
 use crate::headless::ZetaCliAppState;
 
@@ -189,29 +189,17 @@ async fn get_context(
         Some(events) => events.read_to_string().await?,
         None => String::new(),
     };
-    let git_info = None;
-    let mut gather_context_output = cx
-        .update(|cx| {
-            gather_context(
-                &project,
-                full_path_str,
-                &snapshot,
-                clipped_cursor,
-                move || events,
-                CanCollectData::Yes,
-                git_info,
-                cx,
-            )
-        })?
-        .await;
-
-    // Disable data collection for these requests, as this is currently just used for evals. Data
-    // collection is enabled above to collect more context.
-    if let Ok(gather_context_output) = gather_context_output.as_mut() {
-        gather_context_output.body.can_collect_data = false
-    }
-
-    gather_context_output
+    let prompt_for_events = move || (events, 0);
+    cx.update(|cx| {
+        gather_context(
+            full_path_str,
+            &snapshot,
+            clipped_cursor,
+            prompt_for_events,
+            cx,
+        )
+    })?
+    .await
 }
 
 pub async fn open_buffer_with_language_server(

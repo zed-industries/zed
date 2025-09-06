@@ -65,7 +65,6 @@ const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_ch
 const MAX_CONTEXT_TOKENS: usize = 150;
 const MAX_REWRITE_TOKENS: usize = 350;
 const MAX_EVENT_TOKENS: usize = 500;
-const MAX_DIAGNOSTIC_GROUPS: usize = 10;
 
 /// Maximum number of events to track.
 const MAX_EVENT_COUNT: usize = 16;
@@ -418,20 +417,25 @@ impl Zeta {
         let buffer_snapshotted_at = Instant::now();
         let snapshot = self.report_changes_for_buffer(&buffer, project, cx);
         let zeta = cx.entity();
-        let events = self.get_or_init_zeta_project(project, cx).events.clone();
         let client = self.client.clone();
         let llm_token = self.llm_token.clone();
         let app_version = AppVersion::global(cx);
 
-        let can_collect_data = snapshot.file().map_or(CanCollectData::No, |file| {
-            self.can_collect_data_from_file(file, cx)
-        });
-        let git_info = if let CanCollectData::Yes = can_collect_data
-            && let Some(file) = snapshot.file()
-        {
-            git_info_for_file(project, &ProjectPath::from_file(file.as_ref(), cx), cx)
+        let zeta_project = self.get_or_init_zeta_project(project, cx);
+        let mut events = Vec::with_capacity(zeta_project.events.len());
+        events.extend(zeta_project.events.iter().cloned());
+        let events = Arc::new(events);
+
+        let (git_info, can_collect_file) = if let Some(file) = snapshot.file() {
+            let can_collect_file = self.can_collect_file(file, cx);
+            let git_info = if can_collect_file {
+                git_info_for_file(project, &ProjectPath::from_file(file.as_ref(), cx), cx)
+            } else {
+                None
+            };
+            (git_info, can_collect_file)
         } else {
-            None
+            (None, false)
         };
 
         let full_path: Arc<Path> = snapshot
@@ -441,24 +445,34 @@ impl Zeta {
         let full_path_str = full_path.to_string_lossy().to_string();
         let cursor_point = cursor.to_point(&snapshot);
         let cursor_offset = cursor_point.to_offset(&snapshot);
-        let make_events_prompt = move || prompt_for_events(&events, MAX_EVENT_TOKENS);
+        let prompt_for_events = {
+            let events = events.clone();
+            move || prompt_for_events_impl(&events, MAX_EVENT_TOKENS)
+        };
         let gather_task = gather_context(
-            project,
             full_path_str,
             &snapshot,
             cursor_point,
-            make_events_prompt,
-            can_collect_data,
-            git_info,
+            prompt_for_events,
             cx,
         );
 
         cx.spawn(async move |this, cx| {
             let GatherContextOutput {
-                body,
+                mut body,
                 editable_range,
+                included_events_count,
             } = gather_task.await?;
             let done_gathering_context_at = Instant::now();
+
+            let included_events = &events[events.len() - included_events_count..events.len()];
+            body.can_collect_data = can_collect_file
+                && this
+                    .read_with(cx, |this, cx| this.can_collect_events(included_events, cx))
+                    .unwrap_or(false);
+            if body.can_collect_data {
+                body.git_info = git_info;
+            }
 
             log::debug!(
                 "Events:\n{}\nExcerpt:\n{:?}",
@@ -945,16 +959,46 @@ impl Zeta {
         new_snapshot
     }
 
-    fn can_collect_data_from_file(
-        &self,
-        file: &Arc<dyn File>,
-        cx: &Context<Self>,
-    ) -> CanCollectData {
-        if self.data_collection_choice.is_enabled() && self.is_file_open_source(file, cx) {
-            CanCollectData::Yes
-        } else {
-            CanCollectData::No
+    fn can_collect_file(&self, file: &Arc<dyn File>, cx: &App) -> bool {
+        self.data_collection_choice.is_enabled() && self.is_file_open_source(file, cx)
+    }
+
+    fn can_collect_events(&self, events: &[Event], cx: &App) -> bool {
+        if !self.data_collection_choice.is_enabled() {
+            return false;
         }
+        let mut last_checked_file = None;
+        for event in events {
+            match event {
+                Event::BufferChange {
+                    old_snapshot,
+                    new_snapshot,
+                    ..
+                } => {
+                    if let Some(old_file) = old_snapshot.file()
+                        && let Some(new_file) = new_snapshot.file()
+                    {
+                        if let Some(last_checked_file) = last_checked_file
+                            && Arc::ptr_eq(last_checked_file, old_file)
+                            && Arc::ptr_eq(last_checked_file, new_file)
+                        {
+                            continue;
+                        }
+                        if !self.can_collect_file(old_file, cx) {
+                            return false;
+                        }
+                        if !Arc::ptr_eq(old_file, new_file) && !self.can_collect_file(new_file, cx)
+                        {
+                            return false;
+                        }
+                        last_checked_file = Some(new_file);
+                    } else {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
     }
 
     fn is_file_open_source(&self, file: &Arc<dyn File>, cx: &App) -> bool {
@@ -1049,50 +1093,19 @@ fn git_info_for_file(
 pub struct GatherContextOutput {
     pub body: PredictEditsBody,
     pub editable_range: Range<usize>,
+    pub included_events_count: usize,
 }
 
 pub fn gather_context(
-    project: &Entity<Project>,
     full_path_str: String,
     snapshot: &BufferSnapshot,
     cursor_point: language::Point,
-    make_events_prompt: impl FnOnce() -> String + Send + 'static,
-    can_collect_data: CanCollectData,
-    git_info: Option<PredictEditsGitInfo>,
+    prompt_for_events: impl FnOnce() -> (String, usize) + Send + 'static,
     cx: &App,
 ) -> Task<Result<GatherContextOutput>> {
-    let local_lsp_store = project.read(cx).lsp_store().read(cx).as_local();
-    let diagnostic_groups: Vec<(String, serde_json::Value)> = if let CanCollectData::Yes =
-        can_collect_data
-        && let Some(local_lsp_store) = local_lsp_store
-    {
-        snapshot
-            .diagnostic_groups(None)
-            .into_iter()
-            .filter_map(|(language_server_id, diagnostic_group)| {
-                let language_server =
-                    local_lsp_store.running_language_server_for_id(language_server_id)?;
-                let diagnostic_group = diagnostic_group.resolve::<usize>(snapshot);
-                let language_server_name = language_server.name().to_string();
-                let serialized = serde_json::to_value(diagnostic_group).unwrap();
-                Some((language_server_name, serialized))
-            })
-            .collect::<Vec<_>>()
-    } else {
-        Vec::new()
-    };
-
     cx.background_spawn({
         let snapshot = snapshot.clone();
         async move {
-            let diagnostic_groups = if diagnostic_groups.is_empty()
-                || diagnostic_groups.len() >= MAX_DIAGNOSTIC_GROUPS
-            {
-                None
-            } else {
-                Some(diagnostic_groups)
-            };
-
             let input_excerpt = excerpt_for_cursor_position(
                 cursor_point,
                 &full_path_str,
@@ -1100,15 +1113,15 @@ pub fn gather_context(
                 MAX_REWRITE_TOKENS,
                 MAX_CONTEXT_TOKENS,
             );
-            let input_events = make_events_prompt();
+            let (input_events, included_events_count) = prompt_for_events();
             let editable_range = input_excerpt.editable_range.to_offset(&snapshot);
 
             let body = PredictEditsBody {
                 input_events,
                 input_excerpt: input_excerpt.prompt,
-                can_collect_data: can_collect_data.into(),
-                diagnostic_groups,
-                git_info,
+                can_collect_data: false,
+                diagnostic_groups: None,
+                git_info: None,
                 outline: None,
                 speculated_output: None,
             };
@@ -1116,18 +1129,19 @@ pub fn gather_context(
             Ok(GatherContextOutput {
                 body,
                 editable_range,
+                included_events_count,
             })
         }
     })
 }
 
-fn prompt_for_events(events: &VecDeque<Event>, mut remaining_tokens: usize) -> String {
+fn prompt_for_events_impl(events: &[Event], mut remaining_tokens: usize) -> (String, usize) {
     let mut result = String::new();
-    for event in events.iter().rev() {
+    for (ix, event) in events.iter().rev().enumerate() {
         let event_string = event.to_prompt();
-        let event_tokens = tokens_for_bytes(event_string.len());
+        let event_tokens = guess_token_count(event_string.len());
         if event_tokens > remaining_tokens {
-            break;
+            return (result, ix);
         }
 
         if !result.is_empty() {
@@ -1136,7 +1150,7 @@ fn prompt_for_events(events: &VecDeque<Event>, mut remaining_tokens: usize) -> S
         result.insert_str(0, &event_string);
         remaining_tokens -= event_tokens;
     }
-    result
+    return (result, events.len());
 }
 
 struct RegisteredBuffer {
@@ -1223,21 +1237,6 @@ impl CurrentEditPrediction {
 struct PendingCompletion {
     id: usize,
     _task: Task<()>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CanCollectData {
-    Yes,
-    No,
-}
-
-impl From<CanCollectData> for bool {
-    fn from(value: CanCollectData) -> Self {
-        match value {
-            CanCollectData::Yes => true,
-            CanCollectData::No => false,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1612,10 +1611,11 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
     }
 }
 
-fn tokens_for_bytes(bytes: usize) -> usize {
-    /// Typical number of string bytes per token for the purposes of limiting model input. This is
-    /// intentionally low to err on the side of underestimating limits.
-    const BYTES_PER_TOKEN_GUESS: usize = 3;
+/// Typical number of string bytes per token for the purposes of limiting model input. This is
+/// intentionally low to err on the side of underestimating limits.
+const BYTES_PER_TOKEN_GUESS: usize = 3;
+
+fn guess_token_count(bytes: usize) -> usize {
     bytes / BYTES_PER_TOKEN_GUESS
 }
 
@@ -1848,9 +1848,25 @@ mod tests {
             .await
             .unwrap();
 
+        let (zeta, captured_request, _) = make_test_zeta(&project, cx).await;
+        zeta.update(cx, |zeta, _cx| {
+            zeta.data_collection_choice = DataCollectionChoice::Enabled
+        });
+
+        run_edit_prediction(&buffer, &project, &zeta, cx).await;
         assert_eq!(
-            check_can_collect_data(DataCollectionChoice::Enabled, &project, &buffer, cx).await,
-            CanCollectData::Yes
+            captured_request.lock().clone().unwrap().can_collect_data,
+            true
+        );
+
+        zeta.update(cx, |zeta, _cx| {
+            zeta.data_collection_choice = DataCollectionChoice::Disabled
+        });
+
+        run_edit_prediction(&buffer, &project, &zeta, cx).await;
+        assert_eq!(
+            captured_request.lock().clone().unwrap().can_collect_data,
+            false
         );
     }
 
@@ -1870,9 +1886,15 @@ mod tests {
             )
         });
 
+        let (zeta, captured_request, _) = make_test_zeta(&project, cx).await;
+        zeta.update(cx, |zeta, _cx| {
+            zeta.data_collection_choice = DataCollectionChoice::Enabled
+        });
+
+        run_edit_prediction(&buffer, &project, &zeta, cx).await;
         assert_eq!(
-            check_can_collect_data(DataCollectionChoice::Enabled, &project, &buffer, cx).await,
-            CanCollectData::No
+            captured_request.lock().clone().unwrap().can_collect_data,
+            false
         );
     }
 
@@ -1898,28 +1920,40 @@ mod tests {
             .await
             .unwrap();
 
+        let (zeta, captured_request, _) = make_test_zeta(&project, cx).await;
+        zeta.update(cx, |zeta, _cx| {
+            zeta.data_collection_choice = DataCollectionChoice::Enabled
+        });
+
+        run_edit_prediction(&buffer, &project, &zeta, cx).await;
         assert_eq!(
-            check_can_collect_data(DataCollectionChoice::Enabled, &project, &buffer, cx).await,
-            CanCollectData::No
+            captured_request.lock().clone().unwrap().can_collect_data,
+            false
         );
     }
 
     #[gpui::test]
-    async fn test_no_data_collection_for_projectless_buffer(cx: &mut TestAppContext) {
+    async fn test_no_data_collection_for_untitled_buffer(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = project::FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [], cx).await;
         let buffer = cx.new(|cx| Buffer::local("", cx));
 
+        let (zeta, captured_request, _) = make_test_zeta(&project, cx).await;
+        zeta.update(cx, |zeta, _cx| {
+            zeta.data_collection_choice = DataCollectionChoice::Enabled
+        });
+
+        run_edit_prediction(&buffer, &project, &zeta, cx).await;
         assert_eq!(
-            check_can_collect_data(DataCollectionChoice::Enabled, &project, &buffer, cx).await,
-            CanCollectData::No
+            captured_request.lock().clone().unwrap().can_collect_data,
+            false
         );
     }
 
     #[gpui::test]
-    async fn test_no_data_collection_when_not_opensource(cx: &mut TestAppContext) {
+    async fn test_no_data_collection_when_closed_source(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = project::FakeFs::new(cx.executor());
@@ -1934,43 +1968,63 @@ mod tests {
             .await
             .unwrap();
 
+        let (zeta, captured_request, _) = make_test_zeta(&project, cx).await;
+        zeta.update(cx, |zeta, _cx| {
+            zeta.data_collection_choice = DataCollectionChoice::Enabled
+        });
+
+        run_edit_prediction(&buffer, &project, &zeta, cx).await;
         assert_eq!(
-            check_can_collect_data(DataCollectionChoice::Enabled, &project, &buffer, cx).await,
-            CanCollectData::No
+            captured_request.lock().clone().unwrap().can_collect_data,
+            false
         );
     }
 
     #[gpui::test]
-    async fn test_data_collection_status_can_changes_on_move(cx: &mut TestAppContext) {
+    async fn test_data_collection_status_changes_on_move(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = project::FakeFs::new(cx.executor());
-        fs.insert_tree("/worktree1", json!({ "LICENSE": BSD_0_TXT, "main.rs": "" }))
+        fs.insert_tree(
+            "/open_source_worktree",
+            json!({ "LICENSE": BSD_0_TXT, "main.rs": "" }),
+        )
+        .await;
+        fs.insert_tree("/closed_source_worktree", json!({ "main.rs": "" }))
             .await;
-        fs.insert_tree("/worktree2", json!({ "main.rs": "" })).await;
 
         let project = Project::test(
             fs.clone(),
-            [path!("/worktree1").as_ref(), path!("/worktree2").as_ref()],
+            [
+                path!("/open_source_worktree").as_ref(),
+                path!("/closed_source_worktree").as_ref(),
+            ],
             cx,
         )
         .await;
-
         let buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/worktree1/main.rs", cx)
+                project.open_local_buffer("/open_source_worktree/main.rs", cx)
             })
             .await
             .unwrap();
 
+        let (zeta, captured_request, _) = make_test_zeta(&project, cx).await;
+        zeta.update(cx, |zeta, _cx| {
+            zeta.data_collection_choice = DataCollectionChoice::Enabled
+        });
+
+        run_edit_prediction(&buffer, &project, &zeta, cx).await;
         assert_eq!(
-            check_can_collect_data(DataCollectionChoice::Enabled, &project, &buffer, cx).await,
-            CanCollectData::Yes
+            captured_request.lock().clone().unwrap().can_collect_data,
+            true
         );
 
-        let file2 = project
+        let closed_source_file = project
             .update(cx, |project, cx| {
-                let worktree2 = project.worktree_for_root_name("worktree2", cx).unwrap();
+                let worktree2 = project
+                    .worktree_for_root_name("closed_source_worktree", cx)
+                    .unwrap();
                 worktree2.update(cx, |worktree2, cx| {
                     worktree2.load_file(Path::new("main.rs"), cx)
                 })
@@ -1980,13 +2034,90 @@ mod tests {
             .file;
 
         buffer.update(cx, |buffer, cx| {
-            buffer.file_updated(file2, cx);
+            buffer.file_updated(closed_source_file, cx);
         });
 
-        // moving the file to a worktree that has no license causes it to no longer be collectable
+        run_edit_prediction(&buffer, &project, &zeta, cx).await;
         assert_eq!(
-            check_can_collect_data(DataCollectionChoice::Enabled, &project, &buffer, cx).await,
-            CanCollectData::No
+            captured_request.lock().clone().unwrap().can_collect_data,
+            false
+        );
+    }
+
+    #[gpui::test]
+    async fn test_no_data_collection_for_events_in_uncollectable_buffers(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/worktree1",
+            json!({ "LICENSE": BSD_0_TXT, "main.rs": "", "other.rs": "" }),
+        )
+        .await;
+        fs.insert_tree("/worktree2", json!({ "private.rs": "" }))
+            .await;
+
+        let project = Project::test(
+            fs.clone(),
+            [path!("/worktree1").as_ref(), path!("/worktree2").as_ref()],
+            cx,
+        )
+        .await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer("/worktree1/main.rs", cx)
+            })
+            .await
+            .unwrap();
+        let private_buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer("/worktree2/file.rs", cx)
+            })
+            .await
+            .unwrap();
+
+        let (zeta, captured_request, _) = make_test_zeta(&project, cx).await;
+        zeta.update(cx, |zeta, _cx| {
+            zeta.data_collection_choice = DataCollectionChoice::Enabled
+        });
+
+        run_edit_prediction(&buffer, &project, &zeta, cx).await;
+        assert_eq!(
+            captured_request.lock().clone().unwrap().can_collect_data,
+            true
+        );
+
+        // this has a side effect of registering the buffer to watch for edits
+        run_edit_prediction(&private_buffer, &project, &zeta, cx).await;
+        assert_eq!(
+            captured_request.lock().clone().unwrap().can_collect_data,
+            false
+        );
+
+        private_buffer.update(cx, |private_buffer, cx| {
+            private_buffer.edit([(0..0, "An edit for the history!")], None, cx);
+        });
+
+        run_edit_prediction(&buffer, &project, &zeta, cx).await;
+        assert_eq!(
+            captured_request.lock().clone().unwrap().can_collect_data,
+            false
+        );
+
+        // make an edit that uses too many bytes, causing private_buffer edit to not be able to be
+        // included
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                [(0..0, " ".repeat(MAX_EVENT_TOKENS * BYTES_PER_TOKEN_GUESS))],
+                None,
+                cx,
+            );
+        });
+
+        run_edit_prediction(&buffer, &project, &zeta, cx).await;
+        assert_eq!(
+            captured_request.lock().clone().unwrap().can_collect_data,
+            true
         );
     }
 
@@ -2005,44 +2136,42 @@ mod tests {
         completion_response: &str,
         cx: &mut TestAppContext,
     ) -> String {
+        let fs = project::FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let buffer = cx.new(|cx| Buffer::local(buffer_content, cx));
-        let (_request, edit_prediction) =
-            simulate_edit_prediction(&buffer, completion_response, cx).await;
+        let (zeta, _, response) = make_test_zeta(&project, cx).await;
+        *response.lock() = completion_response.to_string();
+        let edit_prediction = run_edit_prediction(&buffer, &project, &zeta, cx).await;
         buffer.update(cx, |buffer, cx| {
             buffer.edit(edit_prediction.edits.iter().cloned(), None, cx)
         });
         buffer.read_with(cx, |buffer, _| buffer.text())
     }
 
-    async fn simulate_edit_prediction(
+    async fn run_edit_prediction(
         buffer: &Entity<Buffer>,
-        completion_response: &str,
+        project: &Entity<Project>,
+        zeta: &Entity<Zeta>,
         cx: &mut TestAppContext,
-    ) -> (PredictEditsBody, EditPrediction) {
-        let fs = project::FakeFs::new(cx.executor());
-        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let (zeta, captured_request) = make_test_zeta(&project, completion_response, cx).await;
+    ) -> EditPrediction {
         let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 0)));
+        zeta.update(cx, |zeta, cx| zeta.register_buffer(buffer, &project, cx));
+        cx.background_executor.run_until_parked();
         let completion_task = zeta.update(cx, |zeta, cx| {
-            zeta.register_buffer(buffer, &project, cx);
             zeta.request_completion(&project, buffer, cursor, cx)
         });
-        let edit_prediction = completion_task.await.unwrap().unwrap();
-        let request = captured_request.lock().clone().unwrap();
-        (request, edit_prediction)
+        completion_task.await.unwrap().unwrap()
     }
 
-    async fn check_can_collect_data(
-        data_collection_choice: DataCollectionChoice,
+    async fn make_test_zeta(
         project: &Entity<Project>,
-        buffer: &Entity<Buffer>,
         cx: &mut TestAppContext,
-    ) -> CanCollectData {
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit([(0..buffer.len(), "hello")], None, cx)
-        });
-
-        let completion_response = indoc! {"
+    ) -> (
+        Entity<Zeta>,
+        Arc<Mutex<Option<PredictEditsBody>>>,
+        Arc<Mutex<String>>,
+    ) {
+        let default_response = indoc! {"
             ```main.rs
             <|start_of_file|>
             <|editable_region_start|>
@@ -2050,42 +2179,15 @@ mod tests {
             <|editable_region_end|>
             ```"
         };
-
-        let (zeta, captured_request) = make_test_zeta(project, completion_response, cx).await;
-        zeta.update(cx, |zeta, cx| {
-            zeta.register_buffer(buffer, project, cx);
-            zeta.data_collection_choice = data_collection_choice;
-        });
-
-        // wait for license detection to update
-        cx.background_executor.run_until_parked();
-
-        let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(0, 0)));
-        let completion_task = zeta.update(cx, |zeta, cx| {
-            zeta.request_completion(project, buffer, cursor, cx)
-        });
-
-        let _edit_prediction = completion_task.await.unwrap().unwrap();
-        let request = captured_request.lock().clone().unwrap();
-        if request.can_collect_data {
-            CanCollectData::Yes
-        } else {
-            CanCollectData::No
-        }
-    }
-
-    async fn make_test_zeta(
-        project: &Entity<Project>,
-        completion_response: &str,
-        cx: &mut TestAppContext,
-    ) -> (Entity<Zeta>, Arc<Mutex<Option<PredictEditsBody>>>) {
         let captured_request: Arc<Mutex<Option<PredictEditsBody>>> = Arc::new(Mutex::new(None));
+        let completion_response: Arc<Mutex<String>> =
+            Arc::new(Mutex::new(default_response.to_string()));
         let http_client = FakeHttpClient::create({
-            let completion_response = completion_response.to_string();
             let captured_request = captured_request.clone();
+            let completion_response = completion_response.clone();
             move |req| {
-                let completion_response = completion_response.clone();
                 let captured_request = captured_request.clone();
+                let completion_response = completion_response.clone();
                 async move {
                     match (req.method(), req.uri().path()) {
                         (&Method::POST, "/client/llm_tokens") => {
@@ -2110,7 +2212,7 @@ mod tests {
                                 .body(
                                     serde_json::to_string(&PredictEditsResponse {
                                         request_id: Uuid::new_v4(),
-                                        output_excerpt: completion_response.clone(),
+                                        output_excerpt: completion_response.lock().clone(),
                                     })
                                     .unwrap()
                                     .into(),
@@ -2146,7 +2248,7 @@ mod tests {
             zeta
         });
 
-        (zeta, captured_request)
+        (zeta, captured_request, completion_response)
     }
 
     fn to_completion_edits(
