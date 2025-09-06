@@ -216,13 +216,6 @@ impl BackgroundExecutor {
         todo!()
     }
 
-    /// in tests, run one task.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn tick(&self) -> bool {
-        // self.0.tick()
-        todo!()
-    }
-
     /// in tests, run all tasks that are ready to run. If after doing so
     /// the test still has outstanding tasks, this will panic. (See also [`Self::allow_parking`])
     #[cfg(any(test, feature = "test-support"))]
