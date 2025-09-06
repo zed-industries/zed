@@ -383,7 +383,8 @@ impl DebugAdapter for GoDebugAdapter {
                     "program": launch_config.program,
                     "cwd": launch_config.cwd,
                     "args": launch_config.args,
-                    "env": launch_config.env_json()
+                    "env": launch_config.env_json(),
+                    "buildFlags": ""
                 })
             }
         };
