@@ -140,8 +140,10 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
 
         let found_key = text
             .get(key_range.clone())
-            .map(|key_text| {
-                depth < key_path.len() && key_text == format!("\"{}\"", key_path[depth].as_ref())
+            .and_then(|key_text| {
+                serde_json::to_string(key_path[depth].as_ref())
+                    .ok()
+                    .map(|key_path| depth < key_path.len() && key_text == key_path)
             })
             .unwrap_or(false);
 
@@ -163,8 +165,8 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
     if depth == key_path.len() {
         if let Some(new_value) = new_value {
             let new_val = to_pretty_json(new_value, tab_size, tab_size * depth);
-            if let Some(replace_key) = replace_key {
-                let new_key = format!("\"{}\": ", replace_key);
+            if let Some(replace_key) = replace_key.and_then(|str| serde_json::to_string(str).ok()) {
+                let new_key = format!("{}: ", replace_key);
                 if let Some(key_start) = text[..existing_value_range.start].rfind('"') {
                     if let Some(prev_key_start) = text[..key_start].rfind('"') {
                         existing_value_range.start = prev_key_start;
