@@ -1837,7 +1837,7 @@ mod tests {
         init_test(cx);
 
         let fs = project::FakeFs::new(cx.executor());
-        fs.insert_tree("/project", json!({ "LICENSE": BSD_0_TXT }))
+        fs.insert_tree(path!("/project"), json!({ "LICENSE": BSD_0_TXT }))
             .await;
 
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
@@ -1904,7 +1904,7 @@ mod tests {
 
         let fs = project::FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/project",
+            path!("/project"),
             json!({
                 "LICENSE": BSD_0_TXT,
                 ".env": "SECRET_KEY=secret"
@@ -1957,7 +1957,7 @@ mod tests {
         init_test(cx);
 
         let fs = project::FakeFs::new(cx.executor());
-        fs.insert_tree("/project", json!({ "main.rs": "fn main() {}" }))
+        fs.insert_tree(path!("/project"), json!({ "main.rs": "fn main() {}" }))
             .await;
 
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
@@ -1986,11 +1986,11 @@ mod tests {
 
         let fs = project::FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/open_source_worktree",
+            path!("/open_source_worktree"),
             json!({ "LICENSE": BSD_0_TXT, "main.rs": "" }),
         )
         .await;
-        fs.insert_tree("/closed_source_worktree", json!({ "main.rs": "" }))
+        fs.insert_tree(path!("/closed_source_worktree"), json!({ "main.rs": "" }))
             .await;
 
         let project = Project::test(
@@ -2004,7 +2004,7 @@ mod tests {
         .await;
         let buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/open_source_worktree/main.rs", cx)
+                project.open_local_buffer(path!("/open_source_worktree/main.rs"), cx)
             })
             .await
             .unwrap();
@@ -2050,11 +2050,11 @@ mod tests {
 
         let fs = project::FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/worktree1",
+            path!("/worktree1"),
             json!({ "LICENSE": BSD_0_TXT, "main.rs": "", "other.rs": "" }),
         )
         .await;
-        fs.insert_tree("/worktree2", json!({ "private.rs": "" }))
+        fs.insert_tree(path!("/worktree2"), json!({ "private.rs": "" }))
             .await;
 
         let project = Project::test(
@@ -2065,13 +2065,13 @@ mod tests {
         .await;
         let buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/worktree1/main.rs", cx)
+                project.open_local_buffer(path!("/worktree1/main.rs"), cx)
             })
             .await
             .unwrap();
         let private_buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/worktree2/file.rs", cx)
+                project.open_local_buffer(path!("/worktree2/file.rs"), cx)
             })
             .await
             .unwrap();
