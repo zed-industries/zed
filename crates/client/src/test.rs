@@ -3,7 +3,7 @@ use anyhow::{Context as _, Result, anyhow};
 use cloud_api_client::{AuthenticatedUser, GetAuthenticatedUserResponse, PlanInfo};
 use cloud_llm_client::{CurrentUsage, Plan, UsageData, UsageLimit};
 use futures::{StreamExt, stream::BoxStream};
-use gpui::{AppContext as _, BackgroundExecutor, Entity, TestAppContext};
+use gpui::{AppContext as _, Entity, TestAppContext};
 use http_client::{AsyncBody, Method, Request, http};
 use parking_lot::Mutex;
 use rpc::{ConnectionId, Peer, Receipt, TypedEnvelope, proto};
@@ -13,7 +13,6 @@ pub struct FakeServer {
     peer: Arc<Peer>,
     state: Arc<Mutex<FakeServerState>>,
     user_id: u64,
-    executor: BackgroundExecutor,
 }
 
 #[derive(Default)]
@@ -35,7 +34,6 @@ impl FakeServer {
             peer: Peer::new(0),
             state: Default::default(),
             user_id: client_user_id,
-            executor: cx.executor(),
         };
 
         client.http_client().as_fake().replace_handler({

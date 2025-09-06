@@ -2,15 +2,17 @@ use crate::{
     BackgroundExecutor, Clock as _, ForegroundExecutor, Scheduler, SessionId, TestClock, Timer,
 };
 use async_task::Runnable;
-use backtrace::Backtrace;
+use backtrace::{Backtrace, BacktraceFrame};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use futures::{FutureExt as _, channel::oneshot, future::LocalBoxFuture};
 use parking_lot::Mutex;
 use rand::prelude::*;
 use std::{
+    any::type_name_of_val,
     collections::{BTreeMap, VecDeque},
     fmt::Write,
     future::Future,
+    mem,
     panic::{self, AssertUnwindSafe},
     pin::Pin,
     sync::{
@@ -214,10 +216,8 @@ impl Scheduler for TestScheduler {
                     break;
                 } else {
                     let mut pending_traces = String::new();
-                    for trace in self.state.lock().pending_traces.values_mut() {
-                        trace.resolve();
-                        // todo!(cole): Exclude <std::task::Waker as Clone>::clone and everything above it.
-                        writeln!(pending_traces, "{:?}", trace).unwrap();
+                    for (_, trace) in mem::take(&mut self.state.lock().pending_traces) {
+                        writeln!(pending_traces, "{:?}", exclude_wakers_from_trace(trace)).unwrap();
                     }
                     panic!("Parking forbidden. Pending traces:\n{}", pending_traces);
                 }
@@ -444,4 +444,22 @@ fn park(parker: &parking::Parker, deadline: Option<Instant>) -> bool {
         parker.park();
         true
     }
+}
+
+fn exclude_wakers_from_trace(mut trace: Backtrace) -> Backtrace {
+    trace.resolve();
+    let mut frames: Vec<BacktraceFrame> = trace.into();
+    let waker_clone_frame_ix = frames.iter().position(|frame| {
+        frame.symbols().iter().any(|symbol| {
+            symbol
+                .name()
+                .is_some_and(|name| format!("{name:#?}") == type_name_of_val(&Waker::clone))
+        })
+    });
+
+    if let Some(waker_clone_frame_ix) = waker_clone_frame_ix {
+        frames.drain(..waker_clone_frame_ix + 1);
+    }
+
+    Backtrace::from(frames)
 }
