@@ -4,7 +4,7 @@ mod onboarding_banner;
 pub mod platform_title_bar;
 mod platforms;
 mod system_window_tabs;
-mod title_bar_settings;
+pub mod title_bar_settings;
 
 #[cfg(feature = "stories")]
 mod stories;
@@ -74,8 +74,24 @@ pub fn init(cx: &mut App) {
         let Some(window) = window else {
             return;
         };
-        let item = cx.new(|cx| TitleBar::new("title-bar", workspace, window, cx));
-        workspace.set_titlebar_item(item.into(), window, cx);
+        if TitleBarSettings::get_global(cx).show {
+            let item = cx.new(|cx| TitleBar::new("title-bar", workspace, window, cx));
+            workspace.set_titlebar_item(item.into(), window, cx);
+        }
+
+        // React to settings changes
+        cx.observe_global_in::<settings::SettingsStore>(window, |workspace, window, cx| {
+            let show = TitleBarSettings::get_global(cx).show;
+            if show {
+                if workspace.titlebar_item().is_none() {
+                    let item = cx.new(|cx| TitleBar::new("title-bar", workspace, window, cx));
+                    workspace.set_titlebar_item(item.into(), window, cx);
+                }
+            } else {
+                workspace.clear_titlebar_item(window, cx);
+            }
+        })
+        .detach();
 
         #[cfg(not(target_os = "macos"))]
         workspace.register_action(|workspace, action: &OpenApplicationMenu, window, cx| {
