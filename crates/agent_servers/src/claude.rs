@@ -6,7 +6,7 @@ use std::{any::Any, path::PathBuf};
 use anyhow::{Result, anyhow};
 use gpui::{App, AppContext as _, SharedString, Task};
 
-use crate::{AgentServer, AgentServerDelegate, AllAgentServersSettings};
+use crate::{AgentServer, AgentServerDelegate};
 use acp_thread::AgentConnection;
 
 #[derive(Clone)]
@@ -72,7 +72,7 @@ impl AgentServer for ClaudeCode {
 
     fn connect(
         &self,
-        root_dir: &Path,
+        root_dir: Option<&Path>,
         delegate: AgentServerDelegate,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn AgentConnection>>> {

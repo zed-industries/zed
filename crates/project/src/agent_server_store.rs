@@ -93,9 +93,9 @@ pub trait ExternalAgentServer {
     // FIXME status_tx et al
     fn get_command(
         &self,
-        root_dir: &str,
+        root_dir: Option<&str>,
         extra_env: HashMap<String, String>,
-        cx: &mut App,
+        cx: &mut AsyncApp,
     ) -> Task<Result<AgentServerCommand>>;
 }
 
@@ -179,6 +179,7 @@ impl AgentServerStore {
                         ExternalAgentServerName(name.clone()),
                         Rc::new(LocalCustomAgent {
                             command: settings.command.clone(),
+                            project_environment: project_environment.clone(),
                         }) as Rc<dyn ExternalAgentServer>,
                     )
                 }));
@@ -302,18 +303,21 @@ impl AgentServerStore {
         envelope: TypedEnvelope<proto::GetAgentServerCommand>,
         mut cx: AsyncApp,
     ) -> Result<proto::AgentServerCommand> {
-        let command = this
-            .update(&mut cx, |this, cx| {
-                let Some(agent) = this.external_agents.get(&ExternalAgentServerName(
-                    envelope.payload.name.clone().into(),
-                )) else {
-                    return Task::ready(Err(anyhow!(
-                        "agent `{}` not found",
-                        envelope.payload.name
-                    )));
-                };
-                agent.get_command(&envelope.payload.root_dir, HashMap::default(), cx)
+        let agent = this
+            .update(&mut cx, |this, _| {
+                this.external_agents
+                    .get(&ExternalAgentServerName(
+                        envelope.payload.name.clone().into(),
+                    ))
+                    .cloned()
             })?
+            .with_context(|| format!("agent `{}` not found", envelope.payload.name))?;
+        let command = agent
+            .get_command(
+                envelope.payload.root_dir.as_deref(),
+                HashMap::default(),
+                &mut cx,
+            )
             .await?;
         Ok(command.to_proto())
     }
@@ -487,36 +491,26 @@ fn get_or_npm_install_builtin_agent(
     // .map_err(|e| LoadError::FailedToInstall(e.to_string().into()).into())
 }
 
-async fn find_bin_in_path(
+fn find_bin_in_path(
     bin_name: SharedString,
-    root_dir: &Path,
-    project_environment: &Entity<ProjectEnvironment>,
+    root_dir: PathBuf,
+    env: HashMap<String, String>,
     cx: &mut AsyncApp,
-) -> Option<PathBuf> {
-    let env_task = project_environment
-        .update(cx, |environment, cx| {
-            environment.get_directory_environment(root_dir.into(), cx)
-        })
-        .log_err()?;
+) -> Task<Option<PathBuf>> {
+    cx.background_executor().spawn(async move {
+        let which_result = if cfg!(windows) {
+            which::which(bin_name.as_str())
+        } else {
+            let shell_path = env.get("PATH").cloned();
+            which::which_in(bin_name.as_str(), shell_path.as_ref(), &root_dir)
+        };
 
-    let root_dir = root_dir.to_path_buf();
-    cx.background_executor()
-        .spawn(async move {
-            let which_result = if cfg!(windows) {
-                which::which(bin_name.as_str())
-            } else {
-                let env = env_task.await.unwrap_or_default();
-                let shell_path = env.get("PATH").cloned();
-                which::which_in(bin_name.as_str(), shell_path.as_ref(), &root_dir)
-            };
+        if let Err(which::Error::CannotFindBinaryPath) = which_result {
+            return None;
+        }
 
-            if let Err(which::Error::CannotFindBinaryPath) = which_result {
-                return None;
-            }
-
-            which_result.log_err()
-        })
-        .await
+        which_result.log_err()
+    })
 }
 
 async fn download_latest_version(
@@ -560,33 +554,33 @@ struct RemoteExternalAgentServer {
 impl ExternalAgentServer for RemoteExternalAgentServer {
     fn get_command(
         &self,
-        root_dir: &str,
+        root_dir: Option<&str>,
         extra_env: HashMap<String, String>,
-        cx: &mut App,
+        cx: &mut AsyncApp,
     ) -> Task<Result<AgentServerCommand>> {
-        // FIXME need to get fallback path (when no suitable worktrees) on the remote
-
-        let command =
-            self.upstream_client
-                .read(cx)
-                .proto_client()
-                .request(proto::GetAgentServerCommand {
-                    project_id: self.project_id,
-                    name: self.name.to_string(),
-                    root_dir: root_dir.to_string(),
-                });
-
+        let project_id = self.project_id;
+        let name = self.name.to_string();
         let upstream_client = self.upstream_client.downgrade();
-        let root_dir = root_dir.to_string();
+        let root_dir = root_dir.map(|root_dir| root_dir.to_owned());
         cx.spawn(async move |cx| {
-            let mut command = command.await?;
+            let mut command = upstream_client
+                .update(cx, |upstream_client, _| {
+                    upstream_client
+                        .proto_client()
+                        .request(proto::GetAgentServerCommand {
+                            project_id,
+                            name,
+                            root_dir: root_dir.clone(),
+                        })
+                })?
+                .await?;
             command.env.extend(extra_env);
             let command = upstream_client.update(cx, |client, cx| {
                 client.build_command(
                     Some(command.path),
                     &command.args,
                     &command.env.into_iter().collect(),
-                    Some(root_dir),
+                    root_dir,
                     None,
                 )
             })??;
@@ -610,16 +604,19 @@ struct LocalGemini {
 impl ExternalAgentServer for LocalGemini {
     fn get_command(
         &self,
-        root_dir: &str,
+        root_dir: Option<&str>,
         extra_env: HashMap<String, String>,
-        cx: &mut App,
+        cx: &mut AsyncApp,
     ) -> Task<Result<AgentServerCommand>> {
         let fs = self.fs.clone();
         let node_runtime = self.node_runtime.clone();
-        let project_environment = self.project_environment.clone();
+        let project_environment = self.project_environment.downgrade();
         let custom_command = self.custom_command.clone();
         let ignore_system_version = self.ignore_system_version;
-        let root_dir: Arc<Path> = Path::new(root_dir).into();
+        let root_dir: Arc<Path> = root_dir
+            .map(|root_dir| Path::new(root_dir))
+            .unwrap_or(paths::home_dir())
+            .into();
 
         cx.spawn(async move |cx| {
             let mut env = project_environment
@@ -635,7 +632,7 @@ impl ExternalAgentServer for LocalGemini {
                 custom_command
             } else if !ignore_system_version
                 && let Some(bin) =
-                    find_bin_in_path("gemini".into(), &root_dir, &project_environment, cx).await
+                    find_bin_in_path("gemini".into(), root_dir.to_path_buf(), env.clone(), cx).await
             {
                 AgentServerCommand {
                     path: bin,
@@ -667,20 +664,33 @@ impl ExternalAgentServer for LocalGemini {
 }
 
 struct LocalCustomAgent {
+    project_environment: Entity<ProjectEnvironment>,
     command: AgentServerCommand,
 }
 
 impl ExternalAgentServer for LocalCustomAgent {
     fn get_command(
         &self,
-        _root_dir: &str,
+        root_dir: Option<&str>,
         extra_env: HashMap<String, String>,
-        cx: &mut App,
+        cx: &mut AsyncApp,
     ) -> Task<Result<AgentServerCommand>> {
-        let command = self.command.clone();
-        cx.spawn(async move |_| {
-            let mut command = command;
-            command.env.get_or_insert_default().extend(extra_env);
+        let mut command = self.command.clone();
+        let root_dir: Arc<Path> = root_dir
+            .map(|root_dir| Path::new(root_dir))
+            .unwrap_or(paths::home_dir())
+            .into();
+        let project_environment = self.project_environment.downgrade();
+        cx.spawn(async move |cx| {
+            let mut env = project_environment
+                .update(cx, |project_environment, cx| {
+                    project_environment.get_directory_environment(root_dir.clone(), cx)
+                })?
+                .await
+                .unwrap_or_default();
+            env.extend(command.env.unwrap_or_default());
+            env.extend(extra_env);
+            command.env = Some(env);
             Ok(command)
         })
     }

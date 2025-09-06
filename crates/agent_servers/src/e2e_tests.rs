@@ -1,5 +1,3 @@
-#[cfg(test)]
-use crate::CustomAgentServerSettings;
 use crate::{AgentServer, AgentServerDelegate};
 use acp_thread::{AcpThread, AgentThreadEntry, ToolCall, ToolCallStatus};
 use agent_client_protocol as acp;
@@ -7,8 +5,8 @@ use futures::{FutureExt, StreamExt, channel::mpsc, select};
 use gpui::{AppContext, Entity, TestAppContext};
 use indoc::indoc;
 #[cfg(test)]
-use project::agent_server_store::AgentServerCommand;
-use project::{FakeFs, Project};
+use project::agent_server_store::{AgentServerCommand, CustomAgentServerSettings};
+use project::{FakeFs, Project, agent_server_store::AllAgentServersSettings};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -451,7 +449,6 @@ pub use common_e2e_tests;
 // Helpers
 
 pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
-    #[cfg(test)]
     use settings::Settings;
 
     env_logger::try_init().ok();
@@ -470,11 +467,11 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
         language_model::init(client.clone(), cx);
         language_models::init(user_store, client, cx);
         agent_settings::init(cx);
-        crate::settings::init(cx);
+        AllAgentServersSettings::register(cx);
 
         #[cfg(test)]
-        crate::AllAgentServersSettings::override_global(
-            crate::AllAgentServersSettings {
+        AllAgentServersSettings::override_global(
+            AllAgentServersSettings {
                 claude: Some(CustomAgentServerSettings {
                     command: AgentServerCommand {
                         path: "claude-code-acp".into(),
@@ -504,7 +501,7 @@ pub async fn new_test_thread(
     let delegate = AgentServerDelegate::new(store, project.clone(), None, None);
 
     let connection = cx
-        .update(|cx| server.connect(current_dir.as_ref(), delegate, cx))
+        .update(|cx| server.connect(Some(current_dir.as_ref()), delegate, cx))
         .await
         .unwrap();
 

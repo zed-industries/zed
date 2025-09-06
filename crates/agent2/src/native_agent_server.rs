@@ -35,7 +35,7 @@ impl AgentServer for NativeAgentServer {
 
     fn connect(
         &self,
-        _root_dir: &Path,
+        _root_dir: Option<&Path>,
         delegate: AgentServerDelegate,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn acp_thread::AgentConnection>>> {

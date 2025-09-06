@@ -469,8 +469,7 @@ impl AcpThreadView {
                     Some(worktree.read(cx).abs_path())
                 }
             })
-            .next()
-            .unwrap_or_else(|| paths::home_dir().as_path().into());
+            .next();
         let (status_tx, mut status_rx) = watch::channel("Loading…".into());
         let (new_version_available_tx, mut new_version_available_rx) = watch::channel(None);
         let delegate = AgentServerDelegate::new(
@@ -480,7 +479,7 @@ impl AcpThreadView {
             Some(new_version_available_tx),
         );
 
-        let connect_task = agent.connect(&root_dir, delegate, cx);
+        let connect_task = agent.connect(root_dir.as_deref(), delegate, cx);
         let load_task = cx.spawn_in(window, async move |this, cx| {
             let connection = match connect_task.await {
                 Ok(connection) => connection,

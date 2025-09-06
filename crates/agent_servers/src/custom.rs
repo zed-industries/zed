@@ -33,14 +33,11 @@ impl crate::AgentServer for CustomAgentServer {
 
     fn connect(
         &self,
-        root_dir: &Path,
+        root_dir: Option<&Path>,
         _delegate: AgentServerDelegate,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn AgentConnection>>> {
-        let server_name = self.name();
-        let command = self.command.clone();
-        let root_dir = root_dir.to_path_buf();
-        cx.spawn(async move |cx| crate::acp::connect(server_name, command, &root_dir, cx).await)
+        todo!()
     }
 
     fn into_any(self: Rc<Self>) -> Rc<dyn std::any::Any> {

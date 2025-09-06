@@ -36,7 +36,9 @@ mod yarn;
 use dap::inline_value::{InlineValueLocation, VariableLookupKind, VariableScope};
 
 use crate::{
-    agent_server_store::AgentServerStore, git_store::GitStore, lsp_store::log_store::LogKind,
+    agent_server_store::{AgentServerStore, AllAgentServersSettings},
+    git_store::GitStore,
+    lsp_store::log_store::LogKind,
 };
 pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
@@ -1021,6 +1023,7 @@ impl Project {
         WorktreeSettings::register(cx);
         ProjectSettings::register(cx);
         DisableAiSettings::register(cx);
+        AllAgentServersSettings::register(cx);
     }
 
     pub fn init(client: &Arc<Client>, cx: &mut App) {

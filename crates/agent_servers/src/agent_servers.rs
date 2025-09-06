@@ -39,10 +39,6 @@ use std::{
 };
 use util::ResultExt as _;
 
-pub fn init(cx: &mut App) {
-    settings::init(cx);
-}
-
 pub struct AgentServerDelegate {
     store: Entity<AgentServerStore>,
     project: Entity<Project>,
@@ -77,7 +73,7 @@ pub trait AgentServer: Send {
 
     fn connect(
         &self,
-        root_dir: &Path,
+        root_dir: Option<&Path>,
         delegate: AgentServerDelegate,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn AgentConnection>>>;
