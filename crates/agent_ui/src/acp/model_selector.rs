@@ -193,15 +193,9 @@ impl PickerDelegate for AcpModelPickerDelegate {
     }
 
     fn dismissed(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        cx.emit(DismissEvent);
-        cx.spawn_in(window, async move |handle, cx| {
-            handle
-                .update_in(cx, |picker, window, cx| {
-                    picker.set_query("", window, cx);
-                })
-                .ok();
-        })
-        .detach();
+        cx.defer_in(window, |picker, window, cx| {
+            picker.set_query("", window, cx);
+        });
     }
 
     fn render_match(
