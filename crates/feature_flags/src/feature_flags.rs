@@ -293,3 +293,12 @@ impl Future for WaitForFlag {
         })
     }
 }
+
+pub struct MorphFastApplyFeatureFlag;
+impl FeatureFlag for MorphFastApplyFeatureFlag {
+    const NAME: &'static str = "morph-fast-apply";
+    // Staff-only by default; can be enabled via server flags.
+    fn enabled_for_all() -> bool {
+        false
+    }
+}
