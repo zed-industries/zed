@@ -204,7 +204,7 @@ impl super::LspAdapter for GoLspAdapter {
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
         Ok(Some(json!({
-            "usePlaceholders": true,
+            "usePlaceholders": false,
             "hints": {
                 "assignVariableTypes": true,
                 "compositeLiteralFields": true,
