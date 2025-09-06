@@ -494,8 +494,10 @@ impl RealGitRepository {
         git_binary_path: Option<PathBuf>,
         executor: BackgroundExecutor,
     ) -> Option<Self> {
+        // For worktrees, dotgit_path might be a file containing "gitdir: /path/to/main/.git/worktrees/name"
+        // Use git2::Repository::discover to properly handle both regular repos and worktrees
         let workdir_root = dotgit_path.parent()?;
-        let repository = git2::Repository::open(workdir_root).log_err()?;
+        let repository = git2::Repository::discover(workdir_root).log_err()?;
         Some(Self {
             repository: Arc::new(Mutex::new(repository)),
             git_binary_path: git_binary_path.unwrap_or_else(|| PathBuf::from("git")),
