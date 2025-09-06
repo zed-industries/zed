@@ -55,6 +55,7 @@ use zed_actions::assistant::OpenRulesLibrary;
 
 use super::entry_view_state::EntryViewState;
 use crate::acp::AcpModelSelectorPopover;
+use crate::acp::ModeSelector;
 use crate::acp::entry_view_state::{EntryViewEvent, ViewEvent};
 use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::agent_diff::AgentDiff;
@@ -65,8 +66,9 @@ use crate::ui::{
     AgentNotification, AgentNotificationEvent, BurnModeTooltip, UnavailableEditingTooltip,
 };
 use crate::{
-    AgentDiffPane, AgentPanel, ContinueThread, ContinueWithBurnMode, ExpandMessageEditor, Follow,
-    KeepAll, OpenAgentDiff, OpenHistory, RejectAll, ToggleBurnMode, ToggleProfileSelector,
+    AgentDiffPane, AgentPanel, ContinueThread, ContinueWithBurnMode, CycleModeSelector,
+    ExpandMessageEditor, Follow, KeepAll, OpenAgentDiff, OpenHistory, RejectAll, ToggleBurnMode,
+    ToggleProfileSelector,
 };
 
 pub const MIN_EDITOR_LINES: usize = 4;
@@ -270,6 +272,7 @@ pub struct AcpThreadView {
     focus_handle: FocusHandle,
     model_selector: Option<Entity<AcpModelSelectorPopover>>,
     profile_selector: Option<Entity<ProfileSelector>>,
+    mode_selector: Option<Entity<ModeSelector>>,
     notifications: Vec<WindowHandle<AgentNotification>>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
     thread_retry_status: Option<RetryStatus>,
@@ -395,6 +398,7 @@ impl AcpThreadView {
             message_editor,
             model_selector: None,
             profile_selector: None,
+            mode_selector: None,
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
             list_state: list_state.clone(),
@@ -580,6 +584,12 @@ impl AcpThreadView {
                                     })
                                 });
 
+                        this.mode_selector = thread
+                            .read(cx)
+                            .connection()
+                            .session_modes(thread.read(cx).session_id(), cx)
+                            .map(|session_modes| cx.new(|_cx| ModeSelector::new(session_modes)));
+
                         let mut subscriptions = vec![
                             cx.subscribe_in(&thread, window, Self::handle_thread_event),
                             cx.observe(&action_log, |_, _, cx| cx.notify()),
@@ -601,6 +611,7 @@ impl AcpThreadView {
                             } else {
                                 None
                             };
+
                         this.thread_state = ThreadState::Ready {
                             thread,
                             title_editor,
@@ -3707,6 +3718,13 @@ impl AcpThreadView {
                     profile_selector.read(cx).menu_handle().toggle(window, cx);
                 }
             }))
+            .on_action(cx.listener(|this, _: &CycleModeSelector, window, cx| {
+                if let Some(mode_selector) = this.mode_selector.as_ref() {
+                    mode_selector.update(cx, |mode_selector, cx| {
+                        mode_selector.cycle_mode(window, cx);
+                    });
+                }
+            }))
             .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
                 if let Some(model_selector) = this.model_selector.as_ref() {
                     model_selector
@@ -3764,7 +3782,8 @@ impl AcpThreadView {
                     .child(
                         h_flex()
                             .child(self.render_follow_toggle(cx))
-                            .children(self.render_burn_mode_toggle(cx)),
+                            .children(self.render_burn_mode_toggle(cx))
+                            .children(self.mode_selector.clone()),
                     )
                     .child(
                         h_flex()

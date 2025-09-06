@@ -37,6 +37,7 @@ pub struct AcpConnection {
 pub struct AcpSession {
     thread: WeakEntity<AcpThread>,
     suppress_abort_err: bool,
+    session_modes: Option<Rc<RefCell<acp::SessionModeState>>>,
 }
 
 pub async fn connect(
@@ -231,6 +232,7 @@ impl AgentConnection for AcpConnection {
             let session = AcpSession {
                 thread: thread.downgrade(),
                 suppress_abort_err: false,
+                session_modes: response.modes.map(|modes| Rc::new(RefCell::new(modes))),
             };
             sessions.borrow_mut().insert(session_id, session);
 
@@ -327,8 +329,74 @@ impl AgentConnection for AcpConnection {
             .detach();
     }
 
+    fn session_modes(
+        &self,
+        session_id: &acp::SessionId,
+        _cx: &App,
+    ) -> Option<Rc<dyn acp_thread::AgentSessionModes>> {
+        let sessions = self.sessions.clone();
+        let sessions_ref = sessions.borrow();
+        let Some(session) = sessions_ref.get(session_id) else {
+            return None;
+        };
+
+        if let Some(modes) = session.session_modes.as_ref() {
+            Some(Rc::new(AcpSessionModes {
+                connection: self.connection.clone(),
+                session_id: session_id.clone(),
+                state: modes.clone(),
+            }) as _)
+        } else {
+            None
+        }
+    }
+
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
         self
+    }
+}
+
+struct AcpSessionModes {
+    session_id: acp::SessionId,
+    connection: Rc<acp::ClientSideConnection>,
+    state: Rc<RefCell<acp::SessionModeState>>,
+}
+
+impl acp_thread::AgentSessionModes for AcpSessionModes {
+    fn current_mode(&self) -> acp::SessionModeId {
+        self.state.borrow().current_mode_id.clone()
+    }
+
+    fn all_modes(&self) -> Vec<acp::SessionMode> {
+        self.state.borrow().available_modes.clone()
+    }
+
+    fn set_mode(&self, mode_id: acp::SessionModeId, cx: &mut App) -> Task<Result<()>> {
+        let connection = self.connection.clone();
+        let session_id = self.session_id.clone();
+        let old_mode_id;
+        {
+            let mut state = self.state.borrow_mut();
+            old_mode_id = state.current_mode_id.clone();
+            state.current_mode_id = mode_id.clone();
+        };
+        let state = self.state.clone();
+        cx.foreground_executor().spawn(async move {
+            let result = connection
+                .set_session_mode(acp::SetSessionModeRequest {
+                    session_id,
+                    mode_id,
+                })
+                .await;
+
+            if result.is_err() {
+                state.borrow_mut().current_mode_id = old_mode_id;
+            }
+
+            result?;
+
+            Ok(())
+        })
     }
 }
 
