@@ -358,7 +358,6 @@
     "context": "PromptLibrary",
     "use_key_equivalents": true,
     "bindings": {
-      "new": "rules_library::NewRule",
       "ctrl-n": "rules_library::NewRule",
       "ctrl-shift-s": "rules_library::ToggleDefaultRule"
     }
@@ -580,9 +579,7 @@
       "ctrl-k ctrl-shift-s": "workspace::SaveWithoutFormat",
       "shift-save": "workspace::SaveAs",
       "ctrl-shift-s": "workspace::SaveAs",
-      "new": "workspace::NewFile",
       "ctrl-n": "workspace::NewFile",
-      "shift-new": "workspace::NewWindow",
       "ctrl-shift-n": "workspace::NewWindow",
       "ctrl-`": "terminal_panel::Toggle",
       "f10": ["app_menu::OpenApplicationMenu", "Zed"],
@@ -849,9 +846,7 @@
     "bindings": {
       "left": "project_panel::CollapseSelectedEntry",
       "right": "project_panel::ExpandSelectedEntry",
-      "new": "project_panel::NewFile",
       "ctrl-n": "project_panel::NewFile",
-      "alt-new": "project_panel::NewDirectory",
       "alt-n": "project_panel::NewDirectory",
       "ctrl-x": "project_panel::Cut",
       "ctrl-insert": "project_panel::Copy",
