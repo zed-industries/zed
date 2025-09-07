@@ -70,6 +70,12 @@ impl std::fmt::Display for ExternalAgentServerName {
     }
 }
 
+impl From<&'static str> for ExternalAgentServerName {
+    fn from(value: &'static str) -> Self {
+        ExternalAgentServerName(value.into())
+    }
+}
+
 impl From<ExternalAgentServerName> for SharedString {
     fn from(value: ExternalAgentServerName) -> Self {
         value.0
@@ -163,7 +169,7 @@ impl AgentServerStore {
 
         self.external_agents.clear();
         self.external_agents.insert(
-            gemini(),
+            GEMINI_NAME.into(),
             Box::new(LocalGemini {
                 fs: fs.clone(),
                 node_runtime: node_runtime.clone(),
@@ -180,7 +186,7 @@ impl AgentServerStore {
             }),
         );
         self.external_agents.insert(
-            claude_code(),
+            CLAUDE_CODE_NAME.into(),
             Box::new(LocalClaudeCode {
                 fs: fs.clone(),
                 node_runtime: node_runtime.clone(),
@@ -257,21 +263,21 @@ impl AgentServerStore {
         // will have them.
         let external_agents = [
             (
-                gemini(),
+                GEMINI_NAME.into(),
                 Box::new(RemoteExternalAgentServer {
                     project_id,
                     upstream_client: upstream_client.clone(),
-                    name: gemini(),
+                    name: GEMINI_NAME.into(),
                     status_tx: None,
                     new_version_available_tx: None,
                 }) as Box<dyn ExternalAgentServer>,
             ),
             (
-                claude_code(),
+                CLAUDE_CODE_NAME.into(),
                 Box::new(RemoteExternalAgentServer {
                     project_id,
                     upstream_client: upstream_client.clone(),
-                    name: claude_code(),
+                    name: CLAUDE_CODE_NAME.into(),
                     status_tx: None,
                     new_version_available_tx: None,
                 }) as Box<dyn ExternalAgentServer>,
@@ -283,7 +289,7 @@ impl AgentServerStore {
         Self {
             state: AgentServerStoreState::Remote {
                 project_id,
-                upstream_client: upstream_client.clone(),
+                upstream_client,
             },
             external_agents,
         }
@@ -379,7 +385,6 @@ impl AgentServerStore {
                         })
                         .detach_and_log_err(cx);
                         cx.spawn({
-                            let downstream_client = downstream_client.clone();
                             let name = envelope.payload.name.clone();
                             async move |_, _| {
                                 if let Some(version) =
@@ -474,7 +479,7 @@ impl AgentServerStore {
                         project_id: *project_id,
                         upstream_client: upstream_client.clone(),
                         name: ExternalAgentServerName(name.clone().into()),
-                        status_tx: status_txs.remove(dbg!(&*name)).flatten(),
+                        status_tx: status_txs.remove(&*name).flatten(),
                         new_version_available_tx: new_version_available_txs
                             .remove(&*name)
                             .flatten(),
@@ -825,7 +830,7 @@ impl ExternalAgentServer for LocalGemini {
                 }
             } else {
                 let mut command = get_or_npm_install_builtin_agent(
-                    "gemini".into(),
+                    GEMINI_NAME.into(),
                     "@google/gemini-cli".into(),
                     "node_modules/@google/gemini-cli/dist/index.js".into(),
                     Some("0.2.1".parse().unwrap()),
@@ -983,15 +988,8 @@ impl ExternalAgentServer for LocalCustomAgent {
     }
 }
 
-// FIXME
-pub fn gemini() -> ExternalAgentServerName {
-    ExternalAgentServerName("gemini".into())
-}
-
-// FIXME
-pub fn claude_code() -> ExternalAgentServerName {
-    ExternalAgentServerName("claude".into())
-}
+pub const GEMINI_NAME: &'static str = "gemini";
+pub const CLAUDE_CODE_NAME: &'static str = "claude";
 
 #[derive(
     Default, Deserialize, Serialize, Clone, JsonSchema, Debug, SettingsUi, SettingsKey, PartialEq,
@@ -1080,7 +1078,7 @@ impl settings::Settings for AllAgentServersSettings {
             // Merge custom agents
             for (name, config) in custom {
                 // Skip built-in agent names to avoid conflicts
-                if name != "gemini" && name != "claude" {
+                if name != GEMINI_NAME && name != CLAUDE_CODE_NAME {
                     settings.custom.insert(name.clone(), config.clone());
                 }
             }

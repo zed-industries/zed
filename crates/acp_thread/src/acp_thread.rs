@@ -2146,7 +2146,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let connection = Rc::new(FakeAgentConnection::new());
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")).into(), cx))
+            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -2266,7 +2266,7 @@ mod tests {
         ));
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")).into(), cx))
+            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -2349,7 +2349,7 @@ mod tests {
             .unwrap();
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/tmp")).into(), cx))
+            .update(|cx| connection.new_thread(project, Path::new(path!("/tmp")), cx))
             .await
             .unwrap();
 
@@ -2412,7 +2412,7 @@ mod tests {
         }));
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")).into(), cx))
+            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -2515,7 +2515,7 @@ mod tests {
         }));
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")).into(), cx))
+            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -2576,7 +2576,7 @@ mod tests {
             }
         }));
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")).into(), cx))
+            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -2758,7 +2758,7 @@ mod tests {
         }));
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")).into(), cx))
+            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -2850,7 +2850,7 @@ mod tests {
         }));
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")).into(), cx))
+            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -2927,7 +2927,7 @@ mod tests {
             }
         }));
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")).into(), cx))
+            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 

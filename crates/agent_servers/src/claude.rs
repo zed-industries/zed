@@ -4,6 +4,7 @@ use std::{any::Any, path::PathBuf};
 
 use anyhow::{Context as _, Result};
 use gpui::{App, SharedString, Task};
+use project::agent_server_store::CLAUDE_CODE_NAME;
 
 use crate::{AgentServer, AgentServerDelegate};
 use acp_thread::AgentConnection;
@@ -44,7 +45,7 @@ impl AgentServer for ClaudeCode {
             let (command, root_dir, login) = store
                 .update(cx, |store, cx| {
                     let agent = store
-                        .get_external_agent(&project::agent_server_store::claude_code())
+                        .get_external_agent(&CLAUDE_CODE_NAME.into())
                         .context("Claude Code is not registered")?;
                     anyhow::Ok(agent.get_command(
                         root_dir.as_deref(),

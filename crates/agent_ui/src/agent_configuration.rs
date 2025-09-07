@@ -26,8 +26,8 @@ use language_model::{
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{
     agent_server_store::{
-        AgentServerCommand, AgentServerStore, AllAgentServersSettings, CustomAgentServerSettings,
-        claude_code, gemini,
+        AgentServerCommand, AgentServerStore, AllAgentServersSettings, CLAUDE_CODE_NAME,
+        CustomAgentServerSettings, GEMINI_NAME,
     },
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
     project_settings::{ContextServerSettings, ProjectSettings},
@@ -1002,8 +1002,8 @@ impl AgentConfiguration {
             .agent_server_store
             .read(cx)
             .external_agents()
+            .filter(|name| name.0 != GEMINI_NAME && name.0 != CLAUDE_CODE_NAME)
             .cloned()
-            .filter(|name| dbg!(name) != &gemini() && name != &claude_code())
             .collect::<Vec<_>>();
         let user_defined_agents = user_defined_agents
             .into_iter()

@@ -9,7 +9,7 @@ use agent_client_protocol::{self as acp, PromptCapabilities};
 use agent_servers::{AgentServer, AgentServerDelegate};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode, NotifyWhenAgentWaiting};
 use agent2::{DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore, NativeAgentServer};
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context as _, Result, anyhow, bail};
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
 use client::zed_urls;
@@ -445,7 +445,6 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ThreadState {
-        // FIXME find the other places where we're filtering on is_local
         if project.read(cx).is_via_collab()
             && agent.clone().downcast::<NativeAgentServer>().is_none()
         {
@@ -1541,9 +1540,23 @@ impl AcpThreadView {
         let project = workspace.read(cx).project().clone();
         let cwd = project.read(cx).first_project_directory(cx);
         let shell = project.read(cx).terminal_settings(&cwd, cx).shell.clone();
+
         window.spawn(cx, async move |cx| {
+            login.command = login
+                .command
+                .map(|command| anyhow::Ok(shlex::try_quote(&command)?.to_string()))
+                .transpose()?;
+            login.args = login
+                .args
+                .iter()
+                .map(|arg| {
+                    Ok(shlex::try_quote(arg)
+                        .context("Failed to quote argument")?
+                        .to_string())
+                })
+                .collect::<Result<Vec<_>>>()?;
             login.full_label = login.label.clone();
-            login.id = task::TaskId(format!("external-agent-{}-login", login.label).into());
+            login.id = task::TaskId(format!("external-agent-{}-login", login.label));
             login.command_label = login.label.clone();
             login.use_new_terminal = true;
             login.allow_concurrent_runs = true;

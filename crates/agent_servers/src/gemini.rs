@@ -7,6 +7,7 @@ use anyhow::{Context as _, Result};
 use collections::HashMap;
 use gpui::{App, SharedString, Task};
 use language_models::provider::google::GoogleLanguageModelProvider;
+use project::agent_server_store::GEMINI_NAME;
 
 #[derive(Clone)]
 pub struct Gemini;
@@ -43,7 +44,7 @@ impl AgentServer for Gemini {
             let (command, root_dir, login) = store
                 .update(cx, |store, cx| {
                     let agent = store
-                        .get_external_agent(&project::agent_server_store::gemini())
+                        .get_external_agent(&GEMINI_NAME.into())
                         .context("Gemini CLI is not registered")?;
                     anyhow::Ok(agent.get_command(
                         root_dir.as_deref(),

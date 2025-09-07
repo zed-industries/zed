@@ -7,7 +7,7 @@ use std::time::Duration;
 use acp_thread::AcpThread;
 use agent2::{DbThreadMetadata, HistoryEntry};
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
-use project::agent_server_store::{AgentServerCommand, claude_code, gemini};
+use project::agent_server_store::{AgentServerCommand, CLAUDE_CODE_NAME, GEMINI_NAME};
 use serde::{Deserialize, Serialize};
 use zed_actions::OpenBrowser;
 use zed_actions::agent::{OpenClaudeCodeOnboardingModal, ReauthenticateAgent};
@@ -2690,7 +2690,9 @@ impl AgentPanel {
                                 let agent_names = agent_server_store
                                     .read(cx)
                                     .external_agents()
-                                    .filter(|name| name != &&gemini() && name != &&claude_code())
+                                    .filter(|name| {
+                                        name.0 != GEMINI_NAME && name.0 != CLAUDE_CODE_NAME
+                                    })
                                     .cloned()
                                     .collect::<Vec<_>>();
                                 for agent_name in agent_names {
