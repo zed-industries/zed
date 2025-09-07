@@ -902,7 +902,7 @@ impl ExternalAgentServer for LocalClaudeCode {
                 (custom_command, None)
             } else {
                 let mut command = get_or_npm_install_builtin_agent(
-                    "claude".into(),
+                    "claude-code-acp".into(),
                     "@zed-industries/claude-code-acp".into(),
                     "node_modules/@zed-industries/claude-code-acp/dist/index.js".into(),
                     Some("0.2.5".parse().unwrap()),
@@ -924,7 +924,7 @@ impl ExternalAgentServer for LocalClaudeCode {
                         command: Some(command.path.clone().to_proto()),
                         args: vec![
                             Path::new(path_prefix)
-                                .join("@anthropic-ai/claude-code/dist/cli.js")
+                                .join("@anthropic-ai/claude-code/cli.js")
                                 .to_string_lossy()
                                 .to_string(),
                             "/login".into(),
