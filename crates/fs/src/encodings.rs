@@ -54,22 +54,16 @@ impl EncodingWrapper {
         // Check if the input starts with a BOM for UTF-16 encodings only if not forced to
         // use the encoding specified.
         if !force {
-            if input.len() >= 2 {
-                if (input[0] == 0xFF) & (input[1] == 0xFE) {
-                    self.0 = encoding_rs::UTF_16LE;
+            if let Some(encoding) = match input.get(..2) {
+                Some([0xFF, 0xFE]) => Some(encoding_rs::UTF_16LE),
+                Some([0xFE, 0xFF]) => Some(encoding_rs::UTF_16BE),
+                _ => None,
+            } {
+                self.0 = encoding;
 
-                    if let Some(v) = buffer_encoding {
-                        if let Ok(mut v) = (*v).lock() {
-                            *v = encoding_rs::UTF_16LE;
-                        }
-                    }
-                } else if (input.len() >= 2) & (input[0] == 0xFE) & (input[1] == 0xFF) {
-                    self.0 = encoding_rs::UTF_16BE;
-
-                    if let Some(v) = buffer_encoding {
-                        if let Ok(mut v) = (*v).lock() {
-                            *v = encoding_rs::UTF_16BE;
-                        }
+                if let Some(v) = buffer_encoding {
+                    if let Ok(mut v) = (*v).lock() {
+                        *v = encoding;
                     }
                 }
             }
@@ -88,8 +82,7 @@ impl EncodingWrapper {
             let mut data = Vec::<u8>::with_capacity(input.len() * 2);
 
             // Convert the input string to UTF-16BE bytes
-            let utf16be_bytes: Vec<u8> =
-                input.encode_utf16().flat_map(|u| u.to_be_bytes()).collect();
+            let utf16be_bytes = input.encode_utf16().flat_map(|u| u.to_be_bytes());
 
             data.extend(utf16be_bytes);
             return Ok(data);
@@ -97,8 +90,7 @@ impl EncodingWrapper {
             let mut data = Vec::<u8>::with_capacity(input.len() * 2);
 
             // Convert the input string to UTF-16LE bytes
-            let utf16le_bytes: Vec<u8> =
-                input.encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+            let utf16le_bytes = input.encode_utf16().flat_map(|u| u.to_le_bytes());
 
             data.extend(utf16le_bytes);
             return Ok(data);
