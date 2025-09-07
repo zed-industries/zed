@@ -3515,6 +3515,7 @@ name = "component"
 version = "0.1.0"
 dependencies = [
  "collections",
+ "documented",
  "gpui",
  "inventory",
  "parking_lot",
