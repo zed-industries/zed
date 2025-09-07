@@ -2,8 +2,8 @@ use anyhow::Result;
 use chrono;
 use gpui::{
     actions, div, px, App, ClipboardItem, Context, Corner, DismissEvent, Entity, EventEmitter, 
-    FocusHandle, Focusable, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
-    ParentElement, Pixels, Point, Render, ScrollHandle, SharedString, Styled, Subscription, Window, KeyDownEvent,
+    FocusHandle, Focusable, InteractiveElement, InteractiveText, IntoElement, MouseButton, MouseDownEvent,
+    ParentElement, Pixels, Point, Render, ScrollHandle, SharedString, Styled, StyledText, Subscription, Window,
     anchored, deferred,
 };
 use pull_requests::{PullRequest, PullRequestState, PullRequestComment, PullRequestReview, GithubAuth, GithubPrClient, PullRequestApi, models::User};
@@ -40,11 +40,6 @@ pub struct PullRequestDetailView {
     loading_comments: bool,
     api_client: std::sync::Arc<dyn PullRequestApi>,
     remote: ParsedGitRemote,
-    // Text selection state
-    selection_start: Option<usize>,
-    selection_end: Option<usize>,
-    is_selecting: bool,
-    selected_text: Option<String>,
     // Context menu state
     context_menu_target: Option<ContextMenuTarget>,
 }
@@ -99,47 +94,6 @@ impl PullRequestDetailView {
         anyhow::bail!("Could not parse GitHub remote from PR URL: {}", url)
     }
 
-    fn render_selectable_text(&self, cx: &Context<Self>) -> impl IntoElement {
-        let description = self.pr.body.clone().unwrap_or_else(|| "No description provided".to_string());
-        let theme = cx.theme();
-        
-        // If we have a selection, render it with highlighting
-        if let (Some(start), Some(end)) = (self.selection_start, self.selection_end) {
-            let actual_start = start.min(end);
-            let actual_end = start.max(end);
-            
-            if actual_start < description.len() && actual_end <= description.len() && actual_start != actual_end {
-                // Create a container with the description split into three parts:
-                // before selection, selected text, after selection
-                return div()
-                    .flex()
-                    .flex_wrap()
-                    .children([
-                        // Text before selection
-                        if actual_start > 0 {
-                            Some(div().text_buffer(cx).child(SharedString::from(description[..actual_start].to_string())))
-                        } else {
-                            None
-                        },
-                        // Selected text with highlight background
-                        Some(
-                            div()
-                                    .bg(theme.colors().editor_active_line_background)
-                                .child(SharedString::from(description[actual_start..actual_end].to_string()))
-                        ),
-                        // Text after selection
-                        if actual_end < description.len() {
-                            Some(div().text_buffer(cx).child(SharedString::from(description[actual_end..].to_string())))
-                        } else {
-                            None
-                        },
-                    ].into_iter().flatten());
-            }
-        }
-        
-        // No selection, just render the plain text
-        div().text_buffer(cx).child(SharedString::from(description))
-    }
     
     pub fn new(pr: PullRequest, api_client: std::sync::Arc<dyn PullRequestApi>, remote: ParsedGitRemote, cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
@@ -161,10 +115,6 @@ impl PullRequestDetailView {
             loading_comments: true,
             api_client,
             remote,
-            selection_start: None,
-            selection_end: None,
-            is_selecting: false,
-            selected_text: None,
             context_menu_target: None,
         };
         
@@ -372,71 +322,13 @@ impl PullRequestDetailView {
     }
 
     fn copy_description(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        // If there's selected text, copy that. Otherwise copy full description
-        let text = if let Some(selected) = &self.selected_text {
-            selected.clone()
-        } else {
-            self.pr.body.clone().unwrap_or_else(|| "No description provided".to_string())
-        };
+        let text = self.pr.body.clone().unwrap_or_else(|| "No description provided".to_string());
         cx.write_to_clipboard(ClipboardItem::new_string(text));
     }
     
     fn copy_comment(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(ContextMenuTarget::Comment(text)) = &self.context_menu_target {
             cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
-        }
-    }
-    
-    fn start_selection(&mut self, char_index: usize) {
-        self.selection_start = Some(char_index);
-        self.selection_end = Some(char_index);
-        self.is_selecting = true;
-    }
-    
-    fn update_selection(&mut self, char_index: usize, cx: &mut Context<Self>) {
-        if self.is_selecting {
-            self.selection_end = Some(char_index);
-            self.update_selected_text();
-            cx.notify();
-        }
-    }
-    
-    fn end_selection(&mut self, cx: &mut Context<Self>) {
-        self.is_selecting = false;
-        self.update_selected_text();
-        cx.notify();
-    }
-    
-    fn update_selected_text(&mut self) {
-        if let (Some(start), Some(end)) = (self.selection_start, self.selection_end) {
-            if let Some(body) = &self.pr.body {
-                let actual_start = start.min(end);
-                let actual_end = start.max(end);
-                if actual_start < body.len() && actual_end <= body.len() && actual_start != actual_end {
-                    self.selected_text = Some(body[actual_start..actual_end].to_string());
-                } else {
-                    self.selected_text = None;
-                }
-            }
-        } else {
-            self.selected_text = None;
-        }
-    }
-    
-    fn clear_selection(&mut self, cx: &mut Context<Self>) {
-        self.selection_start = None;
-        self.selection_end = None;
-        self.is_selecting = false;
-        self.selected_text = None;
-        cx.notify();
-    }
-    
-    fn select_all_description(&mut self, cx: &mut Context<Self>) {
-        if let Some(body) = &self.pr.body {
-            self.selection_start = Some(0);
-            self.selection_end = Some(body.len());
-            self.selected_text = Some(body.clone());
-            cx.notify();
         }
     }
 
@@ -481,7 +373,7 @@ impl PullRequestDetailView {
 }
 
 impl Render for PullRequestDetailView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         
         div()
@@ -673,33 +565,12 @@ impl Render for PullRequestDetailView {
                                         }),
                                     )
                                     .child(
-                                        // Selectable description with text highlighting
+                                        // Text with cursor styling for description
                                         div()
                                             .cursor_text()
-                                            .on_mouse_down(
-                                                MouseButton::Left,
-                                                cx.listener(|this, _event: &MouseDownEvent, _window, cx| {
-                                                    // For now, clear selection on click
-                                                    // TODO: implement proper char index calculation from mouse position
-                                                    this.clear_selection(cx);
-                                                }),
-                                            )
-                                            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
-                                                // Handle Cmd+A for select all
-                                                if event.keystroke.key == "a" && event.keystroke.modifiers.platform {
-                                                    this.select_all_description(cx);
-                                                    cx.stop_propagation();
-                                                }
-                                                // Handle Cmd+C for copy
-                                                if event.keystroke.key == "c" && event.keystroke.modifiers.platform {
-                                                    if this.selected_text.is_some() {
-                                                        this.copy_description(_window, cx);
-                                                        cx.stop_propagation();
-                                                    }
-                                                }
-                                            }))
+                                            .text_buffer(cx)
                                             .child(
-                                                self.render_selectable_text(cx)
+                                                self.pr.body.clone().unwrap_or_else(|| "No description provided".to_string())
                                             ),
                                     ),
                             ),
@@ -825,7 +696,7 @@ impl Render for PullRequestDetailView {
                                                             // Comment body - separately selectable
                                                             div()
                                                                 .p_3()
-                                                                .bg(theme.colors().editor_background)
+                                                                .bg(cx.theme().colors().element_background)
                                                                 .cursor_text()
                                                                 .on_mouse_down(
                                                                     MouseButton::Right,
@@ -837,8 +708,9 @@ impl Render for PullRequestDetailView {
                                                                 )
                                                                 .child(
                                                                     div()
+                                                                        .cursor_text()
                                                                         .text_buffer(cx)
-                                                                        .child(SharedString::from(comment_text))
+                                                                        .child(comment_text)
                                                                 )
                                                         )
                                                         .when(comment.reactions.total_count > 0, |this| {
