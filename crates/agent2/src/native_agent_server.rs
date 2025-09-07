@@ -38,7 +38,12 @@ impl AgentServer for NativeAgentServer {
         _root_dir: Option<&Path>,
         delegate: AgentServerDelegate,
         cx: &mut App,
-    ) -> Task<Result<Rc<dyn acp_thread::AgentConnection>>> {
+    ) -> Task<
+        Result<(
+            Rc<dyn acp_thread::AgentConnection>,
+            Option<task::SpawnInTerminal>,
+        )>,
+    > {
         log::debug!(
             "NativeAgentServer::connect called for path: {:?}",
             _root_dir
@@ -60,7 +65,10 @@ impl AgentServer for NativeAgentServer {
             let connection = NativeAgentConnection(agent);
             log::debug!("NativeAgentServer connection established successfully");
 
-            Ok(Rc::new(connection) as Rc<dyn acp_thread::AgentConnection>)
+            Ok((
+                Rc::new(connection) as Rc<dyn acp_thread::AgentConnection>,
+                None,
+            ))
         })
     }
 

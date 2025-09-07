@@ -78,7 +78,7 @@ pub trait AgentServer: Send {
         root_dir: Option<&Path>,
         delegate: AgentServerDelegate,
         cx: &mut App,
-    ) -> Task<Result<Rc<dyn AgentConnection>>>;
+    ) -> Task<Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>>;
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any>;
 }

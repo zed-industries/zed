@@ -75,7 +75,7 @@ impl AgentServer for ClaudeCode {
         root_dir: Option<&Path>,
         delegate: AgentServerDelegate,
         cx: &mut App,
-    ) -> Task<Result<Rc<dyn AgentConnection>>> {
+    ) -> Task<Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
         Task::ready(Err(anyhow!("WIP")))
         // let root_dir = root_dir.to_path_buf();
         // let fs = delegate.project().read(cx).fs().clone();

@@ -2,6 +2,7 @@ syntax = "proto3";
 package zed.messages;
 
 import "buffer.proto";
+import "task.proto";
 
 message Context {
     repeated ContextOperation operations = 1;
@@ -176,6 +177,8 @@ message AgentServerCommand {
     repeated string args = 2;
     map<string, string> env = 3;
     string root_dir = 4;
+
+    optional SpawnInTerminal login = 5;
 }
 
 message ExternalAgentsUpdated {

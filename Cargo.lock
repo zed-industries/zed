@@ -318,6 +318,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "task",
  "tempfile",
  "thiserror 2.0.12",
  "ui",

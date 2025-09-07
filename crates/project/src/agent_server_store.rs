@@ -69,18 +69,6 @@ impl AgentServerCommand {
             env: Some(proto.env.into_iter().collect()),
         }
     }
-
-    fn to_proto(self, root_dir: String) -> proto::AgentServerCommand {
-        proto::AgentServerCommand {
-            path: self.path.to_string_lossy().to_string(),
-            args: self.args,
-            env: self
-                .env
-                .map(|env| env.into_iter().collect())
-                .unwrap_or_default(),
-            root_dir,
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -112,7 +100,7 @@ pub trait ExternalAgentServer {
         status_tx: Option<watch::Sender<SharedString>>,
         new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<(AgentServerCommand, String)>>;
+    ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>>;
 
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
@@ -347,7 +335,7 @@ impl AgentServerStore {
         envelope: TypedEnvelope<proto::GetAgentServerCommand>,
         mut cx: AsyncApp,
     ) -> Result<proto::AgentServerCommand> {
-        let (command, root_dir) = this
+        let (command, root_dir, login) = this
             .update(&mut cx, |this, cx| {
                 let AgentServerStoreState::Local {
                     downstream_client, ..
@@ -415,7 +403,17 @@ impl AgentServerStore {
                 ))
             })??
             .await?;
-        Ok(command.to_proto(root_dir))
+        Ok(proto::AgentServerCommand {
+            path: command.path.to_string_lossy().to_string(),
+            args: command.args,
+            env: command
+                .env
+                .map(|env| env.into_iter().collect())
+                .unwrap_or_default(),
+            root_dir: root_dir,
+            // FIXME
+            login: login.map(|login| login.to_proto()),
+        })
     }
 
     async fn handle_external_agents_updated(
@@ -725,7 +723,7 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
         status_tx: Option<watch::Sender<SharedString>>,
         new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<(AgentServerCommand, String)>> {
+    ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
         let project_id = self.project_id;
         let name = self.name.to_string();
         let upstream_client = self.upstream_client.downgrade();
@@ -733,7 +731,7 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
         self.status_tx = status_tx;
         self.new_version_available_tx = new_version_available_tx;
         cx.spawn(async move |cx| {
-            let mut command = upstream_client
+            let mut response = upstream_client
                 .update(cx, |upstream_client, _| {
                     upstream_client
                         .proto_client()
@@ -744,13 +742,13 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
                         })
                 })?
                 .await?;
-            let root_dir = command.root_dir;
-            command.env.extend(extra_env);
+            let root_dir = response.root_dir;
+            response.env.extend(extra_env);
             let command = upstream_client.update(cx, |client, cx| {
                 client.build_command(
-                    Some(command.path),
-                    &command.args,
-                    &command.env.into_iter().collect(),
+                    Some(response.path),
+                    &response.args,
+                    &response.env.into_iter().collect(),
                     Some(root_dir.clone()),
                     None,
                 )
@@ -762,6 +760,9 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
                     env: Some(command.env),
                 },
                 root_dir,
+                response
+                    .login
+                    .map(|login| task::SpawnInTerminal::from_proto(login)),
             ))
         })
     }
@@ -787,7 +788,7 @@ impl ExternalAgentServer for LocalGemini {
         status_tx: Option<watch::Sender<SharedString>>,
         new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<(AgentServerCommand, String)>> {
+    ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
         let fs = self.fs.clone();
         let node_runtime = self.node_runtime.clone();
         let project_environment = self.project_environment.downgrade();
@@ -836,9 +837,18 @@ impl ExternalAgentServer for LocalGemini {
                 command
             };
 
+            // Gemini CLI doesn't seem to have a dedicated invocation for logging in--we just run it normally without any arguments.
+            let login = task::SpawnInTerminal {
+                command: Some(command.path.clone().to_proto()),
+                args: command.args.clone(),
+                env: command.env.clone().unwrap_or_default(),
+                label: "gemini /auth".into(),
+                ..Default::default()
+            };
+
             command.env.get_or_insert_default().extend(extra_env);
             command.args.push("--experimental-acp".into());
-            Ok((command, root_dir.to_proto()))
+            Ok((command, root_dir.to_proto(), Some(login)))
         })
     }
 
@@ -860,7 +870,7 @@ impl ExternalAgentServer for LocalCustomAgent {
         _status_tx: Option<watch::Sender<SharedString>>,
         _new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<(AgentServerCommand, String)>> {
+    ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
         let mut command = self.command.clone();
         let root_dir: Arc<Path> = root_dir
             .map(|root_dir| Path::new(root_dir))
@@ -877,7 +887,7 @@ impl ExternalAgentServer for LocalCustomAgent {
             env.extend(command.env.unwrap_or_default());
             env.extend(extra_env);
             command.env = Some(env);
-            Ok((command, root_dir.to_proto()))
+            Ok((command, root_dir.to_proto(), None))
         })
     }
 

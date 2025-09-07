@@ -263,6 +263,7 @@ pub struct AcpThreadView {
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     thread_state: ThreadState,
+    login: Option<task::SpawnInTerminal>,
     history_store: Entity<HistoryStore>,
     hovered_recent_history_item: Option<usize>,
     entry_view_state: Entity<EntryViewState>,
@@ -392,6 +393,7 @@ impl AcpThreadView {
             project: project.clone(),
             entry_view_state,
             thread_state: Self::initial_state(agent, resume_thread, workspace, project, window, cx),
+            login: None,
             message_editor,
             model_selector: None,
             profile_selector: None,
@@ -481,8 +483,12 @@ impl AcpThreadView {
 
         let connect_task = agent.connect(root_dir.as_deref(), delegate, cx);
         let load_task = cx.spawn_in(window, async move |this, cx| {
+            // FIXME
             let connection = match connect_task.await {
-                Ok(connection) => connection,
+                Ok((connection, login)) => {
+                    this.update(cx, |this, _| this.login = login).ok();
+                    connection
+                }
                 Err(err) => {
                     this.update_in(cx, |this, window, cx| {
                         if err.downcast_ref::<LoadError>().is_some() {
@@ -1406,6 +1412,7 @@ impl AcpThreadView {
                 return;
             }
         } else if method.0.as_ref() == "anthropic-api-key" {
+            // FIXME we can remove this one I believe
             let registry = LanguageModelRegistry::global(cx);
             let provider = registry
                 .read(cx)
@@ -1473,16 +1480,12 @@ impl AcpThreadView {
         self.thread_error.take();
         configuration_view.take();
         pending_auth_method.replace(method.clone());
-        let authenticate = if method.0.as_ref() == "claude-login" {
+        let authenticate = if (method.0.as_ref() == "claude-login"
+            || method.0.as_ref() == "oauth-personal")
+            && let Some(login) = self.login.clone()
+        {
             if let Some(workspace) = self.workspace.upgrade() {
-                Self::spawn_claude_login(&workspace, window, cx)
-            } else {
-                Task::ready(Ok(()))
-            }
-        } else if method.0.as_ref() == "oauth-personal" {
-            // FIXME maybe switch on local/remote for this part
-            if let Some(workspace) = self.workspace.upgrade() {
-                Self::spawn_gemini_login(&workspace, window, cx)
+                Self::spawn_external_agent_login(login, &workspace, window, cx)
             } else {
                 Task::ready(Ok(()))
             }
@@ -1529,7 +1532,8 @@ impl AcpThreadView {
             }));
     }
 
-    fn spawn_gemini_login(
+    fn spawn_external_agent_login(
+        mut login: task::SpawnInTerminal,
         workspace: &Entity<Workspace>,
         window: &mut Window,
         cx: &mut App,
@@ -1537,55 +1541,17 @@ impl AcpThreadView {
         let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
             return Task::ready(Ok(()));
         };
-        let project_entity = workspace.read(cx).project();
-        let project = project_entity.read(cx);
-        let cwd = project.first_project_directory(cx);
-        let shell = project.terminal_settings(&cwd, cx).shell.clone();
-
-        let delegate = AgentServerDelegate::new(
-            project_entity.read(cx).agent_server_store().clone(),
-            project_entity.clone(),
-            None,
-            None,
-        );
-        let command = Gemini::login_command(delegate, cx);
-
         window.spawn(cx, async move |cx| {
-            let login_command = command.await?;
-            let command = login_command
-                .path
-                .to_str()
-                .with_context(|| format!("invalid login command: {:?}", login_command.path))?;
-            let command = shlex::try_quote(command)?;
-            let args = login_command
-                .arguments
-                .iter()
-                .map(|arg| {
-                    Ok(shlex::try_quote(arg)
-                        .context("Failed to quote argument")?
-                        .to_string())
-                })
-                .collect::<Result<Vec<_>>>()?;
+            login.full_label = login.label.clone();
+            login.id = task::TaskId(format!("external-agent-{}-login", login.label).into());
+            login.command_label = login.label.clone();
+            login.use_new_terminal = true;
+            login.allow_concurrent_runs = true;
+            login.hide = task::HideStrategy::Always;
+            // FIXME shell?
 
             let terminal = terminal_panel.update_in(cx, |terminal_panel, window, cx| {
-                terminal_panel.spawn_task(
-                    &SpawnInTerminal {
-                        id: task::TaskId("gemini-auth".into()),
-                        full_label: "gemini /auth".to_owned(),
-                        label: "gemini /auth".to_owned(),
-                        command: Some(command.into()),
-                        args,
-                        command_label: "gemini /auth".to_owned(),
-                        cwd,
-                        use_new_terminal: true,
-                        allow_concurrent_runs: true,
-                        hide: task::HideStrategy::Always,
-                        shell,
-                        ..Default::default()
-                    },
-                    window,
-                    cx,
-                )
+                terminal_panel.spawn_task(&login, window, cx)
             })?;
 
             let terminal = terminal.await?;
@@ -1601,103 +1567,9 @@ impl AcpThreadView {
                             cx.background_executor().timer(Duration::from_secs(1)).await;
                             let content =
                                 terminal.update(cx, |terminal, _cx| terminal.get_content())?;
-                            if content.contains("Type your message") {
-                                return anyhow::Ok(());
-                            }
-                        }
-                    }
-                })
-                .fuse();
-            futures::pin_mut!(logged_in);
-            futures::select_biased! {
-                result = logged_in => {
-                    if let Err(e) = result {
-                        log::error!("{e}");
-                        return Err(anyhow!("exited before logging in"));
-                    }
-                }
-                _ = exit_status => {
-                    return Err(anyhow!("exited before logging in"));
-                }
-            }
-            terminal.update(cx, |terminal, _| terminal.kill_active_task())?;
-            Ok(())
-        })
-    }
-
-    fn spawn_claude_login(
-        workspace: &Entity<Workspace>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Task<Result<()>> {
-        let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
-            return Task::ready(Ok(()));
-        };
-        let project_entity = workspace.read(cx).project();
-        let project = project_entity.read(cx);
-        let cwd = project.first_project_directory(cx);
-        let shell = project.terminal_settings(&cwd, cx).shell.clone();
-
-        let delegate = AgentServerDelegate::new(
-            project_entity.read(cx).agent_server_store().clone(),
-            project_entity.clone(),
-            None,
-            None,
-        );
-        let command = ClaudeCode::login_command(delegate, cx);
-
-        window.spawn(cx, async move |cx| {
-            let login_command = command.await?;
-            let command = login_command
-                .path
-                .to_str()
-                .with_context(|| format!("invalid login command: {:?}", login_command.path))?;
-            let command = shlex::try_quote(command)?;
-            let args = login_command
-                .arguments
-                .iter()
-                .map(|arg| {
-                    Ok(shlex::try_quote(arg)
-                        .context("Failed to quote argument")?
-                        .to_string())
-                })
-                .collect::<Result<Vec<_>>>()?;
-
-            let terminal = terminal_panel.update_in(cx, |terminal_panel, window, cx| {
-                terminal_panel.spawn_task(
-                    &SpawnInTerminal {
-                        id: task::TaskId("claude-login".into()),
-                        full_label: "claude /login".to_owned(),
-                        label: "claude /login".to_owned(),
-                        command: Some(command.into()),
-                        args,
-                        command_label: "claude /login".to_owned(),
-                        cwd,
-                        use_new_terminal: true,
-                        allow_concurrent_runs: true,
-                        hide: task::HideStrategy::Always,
-                        shell,
-                        ..Default::default()
-                    },
-                    window,
-                    cx,
-                )
-            })?;
-
-            let terminal = terminal.await?;
-            let mut exit_status = terminal
-                .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
-                .fuse();
-
-            let logged_in = cx
-                .spawn({
-                    let terminal = terminal.clone();
-                    async move |cx| {
-                        loop {
-                            cx.background_executor().timer(Duration::from_secs(1)).await;
-                            let content =
-                                terminal.update(cx, |terminal, _cx| terminal.get_content())?;
-                            if content.contains("Login successful") {
+                            if content.contains("Login successful")
+                                || content.contains("Type your message")
+                            {
                                 return anyhow::Ok(());
                             }
                         }
@@ -5834,8 +5706,8 @@ pub(crate) mod tests {
             _root_dir: Option<&Path>,
             _delegate: AgentServerDelegate,
             _cx: &mut App,
-        ) -> Task<gpui::Result<Rc<dyn AgentConnection>>> {
-            Task::ready(Ok(Rc::new(self.connection.clone())))
+        ) -> Task<gpui::Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
+            Task::ready(Ok((Rc::new(self.connection.clone()), None)))
         }
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {

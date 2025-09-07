@@ -9,6 +9,7 @@ use ui::IconName;
 /// A generic agent server implementation for custom user-defined agents
 pub struct CustomAgentServer {
     name: SharedString,
+    // FIXME
     command: AgentServerCommand,
 }
 
@@ -36,7 +37,7 @@ impl crate::AgentServer for CustomAgentServer {
         root_dir: Option<&Path>,
         _delegate: AgentServerDelegate,
         cx: &mut App,
-    ) -> Task<Result<Rc<dyn AgentConnection>>> {
+    ) -> Task<Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
         todo!()
     }
 

@@ -33,7 +33,7 @@ impl AgentServer for Gemini {
         root_dir: Option<&Path>,
         delegate: AgentServerDelegate,
         cx: &mut App,
-    ) -> Task<Result<Rc<dyn AgentConnection>>> {
+    ) -> Task<Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
         let name = self.name();
         let root_dir = root_dir.map(|root_dir| root_dir.to_string_lossy().to_string());
         let is_remote = delegate.project.read(cx).is_via_remote_server();
@@ -44,7 +44,7 @@ impl AgentServer for Gemini {
             if let Some(api_key) = cx.update(GoogleLanguageModelProvider::api_key)?.await.ok() {
                 extra_env.insert("GEMINI_API_KEY".into(), api_key.key);
             }
-            let (command, root_dir) = store
+            let (command, root_dir, login) = store
                 .update(cx, |store, cx| {
                     let agent = store
                         .get_external_agent(&project::agent_server_store::gemini())
@@ -58,7 +58,9 @@ impl AgentServer for Gemini {
                     ))
                 })??
                 .await?;
-            crate::acp::connect(name, command, root_dir.as_ref(), is_remote, cx).await
+            let connection =
+                crate::acp::connect(name, command, root_dir.as_ref(), is_remote, cx).await?;
+            Ok((connection, dbg!(login)))
         })
     }
 

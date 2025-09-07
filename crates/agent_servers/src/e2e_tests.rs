@@ -500,7 +500,7 @@ pub async fn new_test_thread(
     let store = project.read_with(cx, |project, cx| project.agent_server_store().clone());
     let delegate = AgentServerDelegate::new(store, project.clone(), None, None);
 
-    let connection = cx
+    let (connection, _) = cx
         .update(|cx| server.connect(Some(current_dir.as_ref()), delegate, cx))
         .await
         .unwrap();
