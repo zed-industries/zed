@@ -10,7 +10,7 @@ use pull_requests::{PullRequest, PullRequestState, PullRequestComment, PullReque
 use git::ParsedGitRemote;
 use gpui::http_client::HttpClient;
 use project::Project;
-use ui::{prelude::*, v_flex, h_flex, ButtonStyle, ButtonLike, Icon, IconName, IconSize, Color, ContextMenu, StyledTypography, Label};
+use ui::{prelude::*, v_flex, h_flex, ButtonStyle, ButtonLike, Icon, IconName, IconSize, Color, ContextMenu, StyledTypography, Label, Avatar};
 use theme::observe_buffer_font_size_adjustment;
 use workspace::item::Item;
 use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
@@ -562,13 +562,41 @@ impl Render for PullRequestDetailView {
                             .child(
                                 h_flex()
                                     .gap_2()
+                                    .items_center()
+                                    .when_some(self.pr.user.avatar_url.as_ref(), |this, avatar_url| {
+                                        this.child(
+                                            // PR author avatar
+                                            Avatar::new(avatar_url.to_string())
+                                                .size(rems(1.25))
+                                        )
+                                    })
                                     .child(
                                         div()
                                             .text_color(cx.theme().colors().text_muted)
-                                            .child(SharedString::from(format!(
-                                                "opened by {}",
-                                                self.pr.user.login
-                                            )))
+                                            .child("opened by")
+                                    )
+                                    .child(
+                                        // Clickable PR author name
+                                        if let Some(html_url) = self.pr.user.html_url.as_ref() {
+                                            let url_string = html_url.to_string();
+                                            ButtonLike::new(SharedString::from("pr_author"))
+                                                .child(
+                                                    div()
+                                                        .text_color(cx.theme().colors().text_muted)
+                                                        .font_weight(gpui::FontWeight::MEDIUM)
+                                                        .child(SharedString::from(self.pr.user.login.clone()))
+                                                )
+                                                .on_click(move |_, _, cx| {
+                                                    cx.open_url(&url_string);
+                                                })
+                                                .into_any_element()
+                                        } else {
+                                            div()
+                                                .text_color(cx.theme().colors().text_muted)
+                                                .font_weight(gpui::FontWeight::MEDIUM)
+                                                .child(SharedString::from(self.pr.user.login.clone()))
+                                                .into_any_element()
+                                        }
                                     )
                                     .child(
                                         div()
@@ -732,7 +760,7 @@ impl Render for PullRequestDetailView {
                                 } else {
                                     v_flex()
                                         .gap_2()
-                                        .children(self.comments.iter().map(|comment| {
+                                        .children(self.comments.iter().enumerate().map(|(idx, comment)| {
                                             let comment_text = comment.body.as_deref().unwrap_or("").to_string();
                                             let comment_text_for_menu = comment_text.clone();
                                             
@@ -755,11 +783,35 @@ impl Render for PullRequestDetailView {
                                                                     h_flex()
                                                                         .gap_3()
                                                                         .items_center()
+                                                                        .when_some(comment.user.avatar_url.as_ref(), |this, avatar_url| {
+                                                                            this.child(
+                                                                                // Avatar
+                                                                                Avatar::new(avatar_url.to_string())
+                                                                                    .size(rems(1.5))
+                                                                            )
+                                                                        })
                                                                         .child(
-                                                                            div()
-                                                                                .text_color(cx.theme().colors().text)
-                                                                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                                                                .child(SharedString::from(comment.user.login.clone()))
+                                                                            // Clickable username
+                                                                            if let Some(html_url) = comment.user.html_url.as_ref() {
+                                                                                let url_string = html_url.to_string();
+                                                                                ButtonLike::new(SharedString::from(format!("comment_user_{}", idx)))
+                                                                                    .child(
+                                                                                        div()
+                                                                                            .text_color(cx.theme().colors().text)
+                                                                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                                                            .child(SharedString::from(comment.user.login.clone()))
+                                                                                    )
+                                                                                    .on_click(move |_, _, cx| {
+                                                                                        cx.open_url(&url_string);
+                                                                                    })
+                                                                                    .into_any_element()
+                                                                            } else {
+                                                                                div()
+                                                                                    .text_color(cx.theme().colors().text)
+                                                                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                                                    .child(SharedString::from(comment.user.login.clone()))
+                                                                                    .into_any_element()
+                                                                            }
                                                                         )
                                                                         .child(
                                                                             div()
