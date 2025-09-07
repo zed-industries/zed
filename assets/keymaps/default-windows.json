@@ -74,7 +74,6 @@
       "shift-insert": "editor::Paste",
       "ctrl-v": "editor::Paste",
       "ctrl-z": "editor::Undo",
-      "redo": "editor::Redo",
       "ctrl-y": "editor::Redo",
       "ctrl-shift-z": "editor::Redo",
       "up": "editor::MoveUp",
