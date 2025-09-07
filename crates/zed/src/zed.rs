@@ -558,6 +558,10 @@ fn initialize_panels(
             workspace_handle.clone(),
             cx.clone(),
         );
+        let pull_requests_panel = pull_requests_ui::pr_list_panel::PullRequestListPanel::load(
+            workspace_handle.clone(),
+            cx.clone(),
+        );
         let debug_panel = DebugPanel::load(workspace_handle.clone(), cx);
 
         let (
@@ -568,6 +572,7 @@ fn initialize_panels(
             channels_panel,
             chat_panel,
             notification_panel,
+            pull_requests_panel,
             debug_panel,
         ) = futures::try_join!(
             project_panel,
@@ -577,6 +582,7 @@ fn initialize_panels(
             channels_panel,
             chat_panel,
             notification_panel,
+            pull_requests_panel,
             debug_panel,
         )?;
 
@@ -588,6 +594,7 @@ fn initialize_panels(
             workspace.add_panel(channels_panel, window, cx);
             workspace.add_panel(chat_panel, window, cx);
             workspace.add_panel(notification_panel, window, cx);
+            workspace.add_panel(pull_requests_panel, window, cx);
             workspace.add_panel(debug_panel, window, cx);
         })?;
 

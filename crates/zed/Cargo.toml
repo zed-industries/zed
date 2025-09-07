@@ -93,7 +93,6 @@ language_models.workspace = true
 language_selector.workspace = true
 language_tools.workspace = true
 languages = { workspace = true, features = ["load-grammars"] }
-line_ending_selector.workspace = true
 libc.workspace = true
 log.workspace = true
 markdown.workspace = true
@@ -119,6 +118,8 @@ project_panel.workspace = true
 project_symbols.workspace = true
 prompt_store.workspace = true
 proto.workspace = true
+pull_requests.workspace = true
+pull_requests_ui.workspace = true
 recent_projects.workspace = true
 release_channel.workspace = true
 remote.workspace = true

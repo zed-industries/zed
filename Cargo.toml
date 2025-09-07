@@ -128,6 +128,8 @@ members = [
     "crates/project_symbols",
     "crates/prompt_store",
     "crates/proto",
+    "crates/pull_requests",
+    "crates/pull_requests_ui",
     "crates/recent_projects",
     "crates/refineable",
     "crates/refineable/derive_refineable",
@@ -359,6 +361,8 @@ project_panel = { path = "crates/project_panel" }
 project_symbols = { path = "crates/project_symbols" }
 prompt_store = { path = "crates/prompt_store" }
 proto = { path = "crates/proto" }
+pull_requests = { path = "crates/pull_requests" }
+pull_requests_ui = { path = "crates/pull_requests_ui" }
 recent_projects = { path = "crates/recent_projects" }
 refineable = { path = "crates/refineable" }
 release_channel = { path = "crates/release_channel" }

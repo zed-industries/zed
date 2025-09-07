@@ -12958,6 +12958,57 @@ dependencies = [
 ]
 
 [[package]]
+name = "pull_requests"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "collections",
+ "dirs 5.0.1",
+ "futures 0.3.31",
+ "git",
+ "git_hosting_providers",
+ "gpui",
+ "http_client",
+ "log",
+ "project",
+ "serde",
+ "serde_json",
+ "settings",
+ "smol",
+ "url",
+ "util",
+]
+
+[[package]]
+name = "pull_requests_ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "collections",
+ "editor",
+ "fs",
+ "futures 0.3.31",
+ "git",
+ "gpui",
+ "language",
+ "log",
+ "menu",
+ "project",
+ "pull_requests",
+ "schemars",
+ "serde",
+ "settings",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
+ "zed_actions",
+]
+
+[[package]]
 name = "pulldown-cmark"
 version = "0.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -20513,7 +20564,6 @@ dependencies = [
  "language_tools",
  "languages",
  "libc",
- "line_ending_selector",
  "livekit_client",
  "log",
  "markdown",
@@ -20538,6 +20588,8 @@ dependencies = [
  "project_symbols",
  "prompt_store",
  "proto",
+ "pull_requests",
+ "pull_requests_ui",
  "recent_projects",
  "release_channel",
  "remote",
