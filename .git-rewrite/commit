@@ -1,0 +1,8 @@
+tree cff9c318798dcf088a8745ed0463b379ffe5e8bc
+parent 3ba530bca1ded8436267355c2a4d3d2befb2231f
+author Antonio Scandurra <me@as-cii.com> 1629469473 +0200
+committer Antonio Scandurra <me@as-cii.com> 1629469473 +0200
+
+Make database interactions deterministic in test
+
+Co-Authored-By: Nathan Sobo <nathan@zed.dev>

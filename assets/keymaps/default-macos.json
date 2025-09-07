@@ -379,6 +379,12 @@
     }
   },
   {
+    "context": "AcpThread",
+    "bindings": {
+      "ctrl-shift-m": "agent::CycleCompletionMode"
+    }
+  },
+  {
     "context": "AcpThread > Editor && !use_modifier_to_send",
     "use_key_equivalents": true,
     "bindings": {
@@ -686,6 +692,7 @@
       "cmd-shift-e": "project_panel::ToggleFocus",
       "cmd-shift-b": "outline_panel::ToggleFocus",
       "ctrl-shift-g": "git_panel::ToggleFocus",
+      "cmd-shift-g": "pull_requests::ToggleFocus",
       "cmd-shift-d": "debug_panel::ToggleFocus",
       "cmd-?": "agent::ToggleFocus",
       "cmd-alt-s": "workspace::SaveAll",

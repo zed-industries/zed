@@ -1,0 +1,26 @@
+{
+  "full": {
+    "browser-tools": {
+      "command": "npx",
+      "args": ["-y", "@agentdeskai/browser-tools-mcp@1.2.0"]
+    },
+    "linear": {
+      "command": "npx",
+      "args": ["-y", "@tacticlaunch/mcp-linear"]
+    },
+    "Context7": {
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp"]
+    },
+    "supabase": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@supabase/mcp-server-supabase@latest",
+        "--access-token",
+        "sbp_fac649e50a41770dc8aa5e73ccbdc1ef80c0383b"
+      ]
+    }
+  },
+  "light": {}
+}

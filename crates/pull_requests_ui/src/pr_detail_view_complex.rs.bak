@@ -1,0 +1,394 @@
+use gpui::{
+    actions, div, px, rems, App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
+    IntoElement, ParentElement, Render, ScrollHandle, SharedString, StatefulInteractiveElement,
+    Styled, Window,
+};
+use pull_requests::{
+    models::{CheckRunConclusion, CheckRunStatus, CheckState},
+    PullRequest, PullRequestComment, PullRequestReview, ReviewState,
+};
+use theme::ActiveTheme;
+use ui::{
+    h_flex, prelude::*, v_flex, Avatar, Button, ButtonCommon, ButtonStyle, Clickable, Color,
+    FluentBuilder, Icon, IconName, IconSize, Label, LabelCommon, LabelSize, Tab, TabBar,
+};
+use workspace::item::{Item, ItemHandle};
+
+actions!(pr_detail, [SubmitReview, AddComment, ApprovePullRequest]);
+
+pub fn init(_cx: &mut App) {}
+
+pub struct PullRequestDetailView {
+    pr: PullRequest,
+    comments: Vec<PullRequestComment>,
+    reviews: Vec<PullRequestReview>,
+    focus_handle: FocusHandle,
+    scroll_handle: ScrollHandle,
+    active_tab: DetailTab,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum DetailTab {
+    Overview,
+    Conversation,
+    Files,
+    Checks,
+}
+
+impl PullRequestDetailView {
+    pub fn new(pr: PullRequest, cx: &mut Context<Self>) -> Self {
+        let focus_handle = cx.focus_handle();
+
+        Self {
+            pr,
+            comments: Vec::new(),
+            reviews: Vec::new(),
+            focus_handle,
+            scroll_handle: ScrollHandle::new(),
+            active_tab: DetailTab::Overview,
+        }
+    }
+
+    fn render_overview(&self) -> impl IntoElement {
+        let pr = &self.pr;
+
+        v_flex()
+            .gap_4()
+            .p_4()
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(Avatar::new(pr.user.avatar_url.to_string()))
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(Label::new(SharedString::from(pr.user.login.clone())))
+                            .child(
+                                Label::new(SharedString::from(format!(
+                                    "Created {}",
+                                    pr.created_at.format("%b %d, %Y")
+                                )))
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                            ),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .gap_2()
+                    .child(Label::new("Description").size(LabelSize::Small))
+                    .child(
+                        div()
+                            .p_2()
+                            .rounded_md()
+                            .bg(gpui::rgb(0x1a1a1a))
+                            .child(Label::new(SharedString::from(pr.body.clone()))),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .gap_2()
+                    .child(Label::new("Details").size(LabelSize::Small))
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .child(Label::new("Branch:").size(LabelSize::Small))
+                                    .child(
+                                        Label::new(SharedString::from(pr.head.ref_name.clone()))
+                                            .size(LabelSize::Small),
+                                    ),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .child(Label::new("Into:").size(LabelSize::Small))
+                                    .child(
+                                        Label::new(SharedString::from(pr.base.ref_name.clone()))
+                                            .size(LabelSize::Small),
+                                    ),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .child(Label::new("Changes:").size(LabelSize::Small))
+                                    .child(
+                                        Label::new(SharedString::from(format!(
+                                            "+{} -{} in {} files",
+                                            pr.additions, pr.deletions, pr.changed_files
+                                        )))
+                                        .size(LabelSize::Small)
+                                        .color(Color::Success),
+                                    ),
+                            ),
+                    ),
+            )
+            .when(!pr.labels.is_empty(), |this| {
+                this.child(
+                    v_flex()
+                        .gap_2()
+                        .child(Label::new("Labels").size(LabelSize::Small))
+                        .child(h_flex().gap_1().children(pr.labels.iter().map(|label| {
+                            div()
+                                .px_2()
+                                .py_1()
+                                .rounded_md()
+                                .bg(gpui::rgb(0x2a2a2a))
+                                .child(
+                                    Label::new(SharedString::from(label.name.clone()))
+                                        .size(LabelSize::XSmall),
+                                )
+                        }))),
+                )
+            })
+    }
+
+    fn render_conversation(&self) -> impl IntoElement {
+        v_flex()
+            .gap_3()
+            .p_4()
+            .children(self.comments.iter().map(|comment| {
+                div().p_3().rounded_md().bg(gpui::rgb(0x1a1a1a)).child(
+                    v_flex()
+                        .gap_2()
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .child(
+                                    Avatar::new(comment.user.avatar_url.to_string())
+                                        .size(rems(1.5)),
+                                )
+                                .child(
+                                    v_flex()
+                                        .gap_1()
+                                        .child(
+                                            Label::new(SharedString::from(
+                                                comment.user.login.clone(),
+                                            ))
+                                            .size(LabelSize::Small),
+                                        )
+                                        .child(
+                                            Label::new(SharedString::from(
+                                                comment.created_at.format("%b %d at %H:%M"),
+                                            ))
+                                            .size(LabelSize::XSmall)
+                                            .color(Color::Muted),
+                                        ),
+                                ),
+                        )
+                        .child(Label::new(SharedString::from(comment.body.clone()))),
+                )
+            }))
+            .when(self.comments.is_empty(), |this| {
+                this.child(
+                    div()
+                        .p_4()
+                        .child(Label::new("No comments yet").color(Color::Muted)),
+                )
+            })
+    }
+
+    fn render_files(&self) -> impl IntoElement {
+        v_flex()
+            .gap_2()
+            .p_4()
+            .child(Label::new(SharedString::from(format!(
+                "{} files changed",
+                self.pr.changed_files
+            ))))
+            .child(
+                div()
+                    .p_4()
+                    .child(Label::new("File diff view coming soon").color(Color::Muted)),
+            )
+    }
+
+    fn render_checks(&self) -> impl IntoElement {
+        let checks = &self.pr.checks;
+
+        v_flex()
+            .gap_3()
+            .p_4()
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        match checks.state {
+                            CheckState::Success => Icon::new(IconName::Check).color(Color::Success),
+                            CheckState::Failure => Icon::new(IconName::XCircle).color(Color::Error),
+                            CheckState::Pending => {
+                                Icon::new(IconName::Circle).color(Color::Warning)
+                            }
+                            CheckState::Error => Icon::new(IconName::Warning).color(Color::Error),
+                        }
+                        .size(IconSize::Small),
+                    )
+                    .child(Label::new(SharedString::from(format!(
+                        "{} checks",
+                        checks.total_count
+                    )))),
+            )
+            .children(checks.check_runs.iter().map(|check| {
+                h_flex()
+                    .gap_2()
+                    .p_2()
+                    .rounded_md()
+                    .bg(gpui::rgb(0x1a1a1a))
+                    .child(
+                        match check.status {
+                            CheckRunStatus::Completed => match &check.conclusion {
+                                Some(CheckRunConclusion::Success) => {
+                                    Icon::new(IconName::Check).color(Color::Success)
+                                }
+                                Some(CheckRunConclusion::Failure) => {
+                                    Icon::new(IconName::XCircle).color(Color::Error)
+                                }
+                                _ => Icon::new(IconName::Circle).color(Color::Muted),
+                            },
+                            CheckRunStatus::InProgress => {
+                                Icon::new(IconName::Circle).color(Color::Warning)
+                            }
+                            CheckRunStatus::Queued => {
+                                Icon::new(IconName::Circle).color(Color::Muted)
+                            }
+                        }
+                        .size(IconSize::Small),
+                    )
+                    .child(Label::new(SharedString::from(check.name.clone())))
+            }))
+    }
+}
+
+impl Render for PullRequestDetailView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let pr = &self.pr;
+
+        v_flex()
+            .size_full()
+            .child(
+                v_flex()
+                    .gap_2()
+                    .p_3()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border)
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(Label::new(SharedString::from(pr.title.clone())))
+                            .child(
+                                Label::new(SharedString::from(format!("#{}", pr.number)))
+                                    .color(Color::Muted),
+                            ),
+                    )
+                    .child(
+                        TabBar::new("pr_detail_tabs")
+                            .child(
+                                Tab::new("overview", DetailTab::Overview, "Overview")
+                                    .selected(self.active_tab == DetailTab::Overview)
+                                    .on_click(cx.listener(|this, _, _window, cx| {
+                                        this.active_tab = DetailTab::Overview;
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Tab::new("conversation", DetailTab::Conversation, "Conversation")
+                                    .selected(self.active_tab == DetailTab::Conversation)
+                                    .on_click(cx.listener(|this, _, _window, cx| {
+                                        this.active_tab = DetailTab::Conversation;
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Tab::new("files", DetailTab::Files, "Files Changed")
+                                    .selected(self.active_tab == DetailTab::Files)
+                                    .on_click(cx.listener(|this, _, _window, cx| {
+                                        this.active_tab = DetailTab::Files;
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Tab::new("checks", DetailTab::Checks, "Checks")
+                                    .selected(self.active_tab == DetailTab::Checks)
+                                    .on_click(cx.listener(|this, _, _window, cx| {
+                                        this.active_tab = DetailTab::Checks;
+                                        cx.notify();
+                                    })),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll_handle)
+                    .child(match self.active_tab {
+                        DetailTab::Overview => self.render_overview(),
+                        DetailTab::Conversation => self.render_conversation(),
+                        DetailTab::Files => self.render_files(),
+                        DetailTab::Checks => self.render_checks(),
+                    }),
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .p_3()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border)
+                    .child(
+                        Button::new("comment", "Comment")
+                            .style(ButtonStyle::Filled)
+                            .on_click(cx.listener(|_, _, _window, cx| {
+                                cx.spawn(|_, cx| async move {
+                                    cx.prompt_message("Comment feature coming soon!");
+                                    Ok(())
+                                })
+                                .detach();
+                            })),
+                    )
+                    .child(
+                        Button::new("approve", "Approve")
+                            .style(ButtonStyle::Subtle)
+                            .on_click(cx.listener(|_, _, _window, cx| {
+                                cx.spawn(|_, cx| async move {
+                                    cx.prompt_message("Approve feature coming soon!");
+                                    Ok(())
+                                })
+                                .detach();
+                            })),
+                    )
+                    .child(
+                        Button::new("merge", "Merge")
+                            .style(ButtonStyle::Filled)
+                            .color(Color::Success)
+                            .disabled(pr.mergeable != Some(true))
+                            .on_click(cx.listener(|_, _, _window, cx| {
+                                cx.spawn(|_, cx| async move {
+                                    cx.prompt_message("Merge feature coming soon!");
+                                    Ok(())
+                                })
+                                .detach();
+                            })),
+                    ),
+            )
+    }
+}
+
+impl Focusable for PullRequestDetailView {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl Item for PullRequestDetailView {
+    type Event = ();
+
+    fn tab_content_text(&self, _tab_index: usize, _cx: &App) -> SharedString {
+        SharedString::from(format!("PR #{}", self.pr.number))
+    }
+
+    fn to_item_events(_event: &Self::Event, _f: impl FnMut(workspace::item::ItemEvent)) {}
+}
+
+impl EventEmitter<()> for PullRequestDetailView {}

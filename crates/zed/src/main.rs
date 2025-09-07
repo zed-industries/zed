@@ -612,6 +612,8 @@ pub fn main() {
         project_symbols::init(cx);
         project_panel::init(cx);
         outline_panel::init(cx);
+        pull_requests::init(cx);
+        pull_requests_ui::init(cx);
         tasks_ui::init(cx);
         snippets_ui::init(cx);
         channel::init(&app_state.client.clone(), app_state.user_store.clone(), cx);
@@ -628,6 +630,8 @@ pub fn main() {
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         collab_ui::init(&app_state, cx);
         git_ui::init(cx);
+        pull_requests::init(cx);
+        pull_requests_ui::init(cx);
         jj_ui::init(cx);
         feedback::init(cx);
         markdown_preview::init(cx);

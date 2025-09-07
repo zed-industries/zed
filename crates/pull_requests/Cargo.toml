@@ -1,0 +1,35 @@
+[package]
+name = "pull_requests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/pull_requests.rs"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+collections.workspace = true
+dirs = "5.0"
+futures.workspace = true
+git.workspace = true
+git_hosting_providers.workspace = true
+gpui.workspace = true
+http_client.workspace = true
+log.workspace = true
+project.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+settings.workspace = true
+smol.workspace = true
+util.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

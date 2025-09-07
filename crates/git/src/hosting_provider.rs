@@ -206,7 +206,7 @@ impl GitHostingProviderRegistry {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct ParsedGitRemote {
     pub owner: Arc<str>,
     pub repo: Arc<str>,
