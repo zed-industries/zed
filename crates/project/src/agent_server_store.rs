@@ -4,6 +4,7 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr as _,
     sync::Arc,
+    time::Duration,
 };
 
 use anyhow::{Context as _, Result, bail};
@@ -152,59 +153,53 @@ impl AgentServerStore {
             return;
         };
 
-        let changed = cx.read_global(|settings: &SettingsStore, _| {
-            let new_settings = settings.get::<AllAgentServersSettings>(None);
-
-            if Some(new_settings) == old_settings.as_ref() {
-                return false;
-            }
-
-            self.external_agents.clear();
-            self.external_agents.insert(
-                gemini(),
-                Box::new(LocalGemini {
-                    fs: fs.clone(),
-                    node_runtime: node_runtime.clone(),
-                    project_environment: project_environment.clone(),
-                    custom_command: new_settings
-                        .gemini
-                        .clone()
-                        .and_then(|settings| settings.custom_command()),
-                    ignore_system_version: new_settings
-                        .gemini
-                        .as_ref()
-                        .and_then(|settings| settings.ignore_system_version)
-                        .unwrap_or(true),
-                }),
-            );
-            self.external_agents.insert(
-                claude_code(),
-                Box::new(LocalClaudeCode {
-                    fs: fs.clone(),
-                    node_runtime: node_runtime.clone(),
-                    project_environment: project_environment.clone(),
-                    custom_command: new_settings.claude.clone().map(|settings| settings.command),
-                }),
-            );
-
-            self.external_agents
-                .extend(new_settings.custom.iter().map(|(name, settings)| {
-                    (
-                        ExternalAgentServerName(name.clone()),
-                        Box::new(LocalCustomAgent {
-                            command: settings.command.clone(),
-                            project_environment: project_environment.clone(),
-                        }) as Box<dyn ExternalAgentServer>,
-                    )
-                }));
-
-            *old_settings = Some(new_settings.clone());
-            true
-        });
-
-        if !changed {
+        let new_settings = cx
+            .global::<SettingsStore>()
+            .get::<AllAgentServersSettings>(None)
+            .clone();
+        if Some(&new_settings) == old_settings.as_ref() {
             return;
         }
+
+        self.external_agents.clear();
+        self.external_agents.insert(
+            gemini(),
+            Box::new(LocalGemini {
+                fs: fs.clone(),
+                node_runtime: node_runtime.clone(),
+                project_environment: project_environment.clone(),
+                custom_command: new_settings
+                    .gemini
+                    .clone()
+                    .and_then(|settings| settings.custom_command()),
+                ignore_system_version: new_settings
+                    .gemini
+                    .as_ref()
+                    .and_then(|settings| settings.ignore_system_version)
+                    .unwrap_or(true),
+            }),
+        );
+        self.external_agents.insert(
+            claude_code(),
+            Box::new(LocalClaudeCode {
+                fs: fs.clone(),
+                node_runtime: node_runtime.clone(),
+                project_environment: project_environment.clone(),
+                custom_command: new_settings.claude.clone().map(|settings| settings.command),
+            }),
+        );
+        self.external_agents
+            .extend(new_settings.custom.iter().map(|(name, settings)| {
+                (
+                    ExternalAgentServerName(name.clone()),
+                    Box::new(LocalCustomAgent {
+                        command: settings.command.clone(),
+                        project_environment: project_environment.clone(),
+                    }) as Box<dyn ExternalAgentServer>,
+                )
+            }));
+
+        *old_settings = Some(new_settings.clone());
 
         if let Some((project_id, downstream_client)) = downstream_client {
             downstream_client
@@ -230,7 +225,7 @@ impl AgentServerStore {
         let subscription = cx.observe_global::<SettingsStore>(|this, cx| {
             this.agent_servers_settings_changed(cx);
         });
-        let mut this = Self {
+        let this = Self {
             state: AgentServerStoreState::Local {
                 node_runtime,
                 fs,
@@ -241,7 +236,14 @@ impl AgentServerStore {
             },
             external_agents: Default::default(),
         };
-        this.agent_servers_settings_changed(cx);
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Duration::from_secs(1)).await;
+            this.update(cx, |this, cx| {
+                this.agent_servers_settings_changed(cx);
+            })
+            .ok();
+        })
+        .detach();
         this
     }
 
@@ -472,7 +474,7 @@ impl AgentServerStore {
                         project_id: *project_id,
                         upstream_client: upstream_client.clone(),
                         name: ExternalAgentServerName(name.clone().into()),
-                        status_tx: status_txs.remove(&*name).flatten(),
+                        status_tx: status_txs.remove(dbg!(&*name)).flatten(),
                         new_version_available_tx: new_version_available_txs
                             .remove(&*name)
                             .flatten(),

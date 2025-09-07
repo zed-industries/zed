@@ -7,7 +7,7 @@ use std::time::Duration;
 use acp_thread::AcpThread;
 use agent2::{DbThreadMetadata, HistoryEntry};
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
-use project::agent_server_store::{AgentServerCommand, AllAgentServersSettings};
+use project::agent_server_store::{AgentServerCommand, claude_code, gemini};
 use serde::{Deserialize, Serialize};
 use zed_actions::OpenBrowser;
 use zed_actions::agent::{OpenClaudeCodeOnboardingModal, ReauthenticateAgent};
@@ -33,7 +33,9 @@ use crate::{
     thread_history::{HistoryEntryElement, ThreadHistory},
     ui::{AgentOnboardingModal, EndTrialUpsell},
 };
-use crate::{ExternalAgent, NewExternalAgentThread, NewNativeAgentThreadFromSummary};
+use crate::{
+    ExternalAgent, NewExternalAgentThread, NewNativeAgentThreadFromSummary, placeholder_command,
+};
 use agent::{
     Thread, ThreadError, ThreadEvent, ThreadId, ThreadSummary, TokenUsageRatio,
     context_store::ContextStore,
@@ -2505,6 +2507,7 @@ impl AgentPanel {
     }
 
     fn render_toolbar_new(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let agent_server_store = self.project.read(cx).agent_server_store().clone();
         let focus_handle = self.focus_handle(cx);
 
         let active_thread = match &self.active_view {
@@ -2684,9 +2687,13 @@ impl AgentPanel {
                                 )
                             })
                             .when(cx.has_flag::<GeminiAndNativeFeatureFlag>(), |mut menu| {
-                                // Add custom agents from settings
-                                let settings = AllAgentServersSettings::get_global(cx);
-                                for (agent_name, agent_settings) in &settings.custom {
+                                let agent_names = agent_server_store
+                                    .read(cx)
+                                    .external_agents()
+                                    .filter(|name| name != &&gemini() && name != &&claude_code())
+                                    .cloned()
+                                    .collect::<Vec<_>>();
+                                for agent_name in agent_names {
                                     menu = menu.item(
                                         ContextMenuEntry::new(format!("New {} Thread", agent_name))
                                             .icon(IconName::Terminal)
@@ -2695,7 +2702,6 @@ impl AgentPanel {
                                             .handler({
                                                 let workspace = workspace.clone();
                                                 let agent_name = agent_name.clone();
-                                                let agent_settings = agent_settings.clone();
                                                 move |window, cx| {
                                                     if let Some(workspace) = workspace.upgrade() {
                                                         workspace.update(cx, |workspace, cx| {
@@ -2706,10 +2712,11 @@ impl AgentPanel {
                                                                     panel.new_agent_thread(
                                                                         AgentType::Custom {
                                                                             name: agent_name
+                                                                                .0
                                                                                 .clone(),
-                                                                            command: agent_settings
-                                                                                .command
-                                                                                .clone(),
+                                                                            command:
+                                                                                placeholder_command(
+                                                                                ),
                                                                         },
                                                                         window,
                                                                         cx,

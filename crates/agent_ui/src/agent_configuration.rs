@@ -1003,7 +1003,7 @@ impl AgentConfiguration {
             .read(cx)
             .external_agents()
             .cloned()
-            .filter(|name| name != &gemini() && name != &claude_code())
+            .filter(|name| dbg!(name) != &gemini() && name != &claude_code())
             .collect::<Vec<_>>();
         let user_defined_agents = user_defined_agents
             .into_iter()
