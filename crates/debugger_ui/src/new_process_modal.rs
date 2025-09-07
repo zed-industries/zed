@@ -1009,11 +1009,15 @@ impl DebugDelegate {
         languages: &Arc<LanguageRegistry>,
         dap_registry: &DapRegistry,
         scenario: DebugScenario,
+        file_path: Option<PathBuf>,
     ) -> (Option<TaskSourceKind>, DebugScenario) {
         let language_names = languages.language_names();
         let language = dap_registry
             .adapter_language(&scenario.adapter)
-            .map(|language| TaskSourceKind::Language { name: language.0 });
+            .map(|language| TaskSourceKind::Language {
+                name: language.0,
+                abs_path: file_path.clone().unwrap_or_else(|| PathBuf::new()),
+            });
 
         let language = language.or_else(|| {
             scenario.label.split_whitespace().find_map(|word| {
@@ -1022,6 +1026,7 @@ impl DebugDelegate {
                     .find(|name| name.as_ref().eq_ignore_ascii_case(word))
                     .map(|name| TaskSourceKind::Language {
                         name: name.to_owned().into(),
+                        abs_path: file_path.clone().unwrap_or_else(|| PathBuf::new()),
                     })
             })
         });
@@ -1077,11 +1082,28 @@ impl DebugDelegate {
                     _ => false,
                 });
 
+                let file_path = task_contexts
+                    .file(cx)
+                    .map(|file| file.path().to_path_buf())
+                    .or_else(|| {
+                        task_contexts.location().and_then(|location| {
+                            location
+                                .buffer
+                                .read(cx)
+                                .file()
+                                .map(|file| file.path().to_path_buf())
+                        })
+                    });
+
                 this.delegate.candidates = recent
                     .into_iter()
                     .map(|(scenario, context)| {
-                        let (kind, scenario) =
-                            Self::get_scenario_kind(&languages, dap_registry, scenario);
+                        let (kind, scenario) = Self::get_scenario_kind(
+                            &languages,
+                            dap_registry,
+                            scenario,
+                            file_path.clone(),
+                        );
                         (kind, scenario, Some(context))
                     })
                     .chain(
@@ -1097,8 +1119,12 @@ impl DebugDelegate {
                             })
                             .filter(|(_, scenario)| valid_adapters.contains(&scenario.adapter))
                             .map(|(kind, scenario)| {
-                                let (language, scenario) =
-                                    Self::get_scenario_kind(&languages, dap_registry, scenario);
+                                let (language, scenario) = Self::get_scenario_kind(
+                                    &languages,
+                                    dap_registry,
+                                    scenario,
+                                    file_path.clone(),
+                                );
                                 (language.or(Some(kind)), scenario, None)
                             }),
                     )
@@ -1467,7 +1493,9 @@ impl PickerDelegate for DebugDelegate {
             Some(TaskSourceKind::Lsp { language_name, .. }) => {
                 Some(format!("LSP: {language_name}"))
             }
-            Some(TaskSourceKind::Language { name }) => Some(format!("Language: {name}")),
+            Some(TaskSourceKind::Language { abs_path, .. }) => {
+                Some(abs_path.to_string_lossy().into_owned())
+            }
             _ => context.clone().and_then(|ctx| {
                 ctx.task_context
                     .task_variables
@@ -1496,7 +1524,7 @@ impl PickerDelegate for DebugDelegate {
                         .size(IconSize::Small),
                 )),
             ),
-            Some(TaskSourceKind::Language { name }) => (
+            Some(TaskSourceKind::Language { name, .. }) => (
                 file_icons::FileIcons::get(cx)
                     .get_icon_for_type(&name.to_lowercase(), cx)
                     .map(Icon::from_path),
