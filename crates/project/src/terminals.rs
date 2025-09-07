@@ -186,6 +186,7 @@ impl Project {
                             )?,
                         },
                         None => match activation_script.clone() {
+                            #[cfg(not(target_os = "windows"))]
                             activation_script if !activation_script.is_empty() => {
                                 let activation_script = activation_script.join("; ");
                                 let to_run = if let Some(command) = spawn_task.command {

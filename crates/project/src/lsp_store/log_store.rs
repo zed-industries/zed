@@ -16,11 +16,6 @@ const SEND_LINE: &str = "\n// Send:";
 const RECEIVE_LINE: &str = "\n// Receive:";
 const MAX_STORED_LOG_ENTRIES: usize = 2000;
 
-const RPC_MESSAGES: &str = "RPC Messages";
-const SERVER_LOGS: &str = "Server Logs";
-const SERVER_TRACE: &str = "Server Trace";
-const SERVER_INFO: &str = "Server Info";
-
 pub fn init(on_headless_host: bool, cx: &mut App) -> Entity<LogStore> {
     let log_store = cx.new(|cx| LogStore::new(on_headless_host, cx));
     cx.set_global(GlobalLogStore(log_store.clone()));
@@ -214,15 +209,6 @@ impl LogKind {
             LanguageServerLogType::Log(_) => Self::Logs,
             LanguageServerLogType::Trace { .. } => Self::Trace,
             LanguageServerLogType::Rpc { .. } => Self::Rpc,
-        }
-    }
-
-    pub fn label(&self) -> &'static str {
-        match self {
-            LogKind::Rpc => RPC_MESSAGES,
-            LogKind::Trace => SERVER_TRACE,
-            LogKind::Logs => SERVER_LOGS,
-            LogKind::ServerInfo => SERVER_INFO,
         }
     }
 }

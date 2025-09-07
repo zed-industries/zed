@@ -129,7 +129,7 @@ impl ChannelChat {
                 loaded_all_messages: false,
                 next_pending_message_id: 0,
                 last_acknowledged_id: None,
-                rng: StdRng::from_entropy(),
+                rng: StdRng::from_os_rng(),
                 first_loaded_message_id: None,
                 _subscription: subscription.set_entity(&cx.entity(), &cx.to_async()),
             }
@@ -183,7 +183,7 @@ impl ChannelChat {
 
         let channel_id = self.channel_id;
         let pending_id = ChannelMessageId::Pending(post_inc(&mut self.next_pending_message_id));
-        let nonce = self.rng.r#gen();
+        let nonce = self.rng.random();
         self.insert_messages(
             SumTree::from_item(
                 ChannelMessage {
@@ -257,7 +257,7 @@ impl ChannelChat {
             cx,
         );
 
-        let nonce: u128 = self.rng.r#gen();
+        let nonce: u128 = self.rng.random();
 
         let request = self.rpc.request(proto::UpdateChannelMessage {
             channel_id: self.channel_id.0,

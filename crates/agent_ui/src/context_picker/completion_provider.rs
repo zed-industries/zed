@@ -13,7 +13,10 @@ use http_client::HttpClientWithUrl;
 use itertools::Itertools;
 use language::{Buffer, CodeLabel, HighlightId};
 use lsp::CompletionContext;
-use project::{Completion, CompletionIntent, CompletionResponse, ProjectPath, Symbol, WorktreeId};
+use project::{
+    Completion, CompletionDisplayOptions, CompletionIntent, CompletionResponse, ProjectPath,
+    Symbol, WorktreeId,
+};
 use prompt_store::PromptStore;
 use rope::Point;
 use text::{Anchor, OffsetRangeExt, ToPoint};
@@ -897,6 +900,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
 
             Ok(vec![CompletionResponse {
                 completions,
+                display_options: CompletionDisplayOptions::default(),
                 // Since this does its own filtering (see `filter_completions()` returns false),
                 // there is no benefit to computing whether this set of completions is incomplete.
                 is_incomplete: true,

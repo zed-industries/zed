@@ -531,7 +531,7 @@ impl TerminalBuilder {
             },
         };
 
-        if !activation_script.is_empty() && no_task {
+        if cfg!(not(target_os = "windows")) && !activation_script.is_empty() && no_task {
             for activation_script in activation_script {
                 terminal.input(activation_script.into_bytes());
                 terminal.write_to_pty(b"\n");
@@ -1139,11 +1139,6 @@ impl Terminal {
                     .push_back(InternalEvent::ScrollToAlacPoint(*search_match.start()));
             }
         }
-    }
-
-    pub fn clear_matches(&mut self) {
-        self.matches.clear();
-        self.set_selection(None);
     }
 
     pub fn select_matches(&mut self, matches: &[RangeInclusive<AlacPoint>]) {
@@ -2203,7 +2198,7 @@ mod tests {
     };
     use collections::HashMap;
     use gpui::{Pixels, Point, TestAppContext, bounds, point, size};
-    use rand::{Rng, distributions::Alphanumeric, rngs::ThreadRng, thread_rng};
+    use rand::{Rng, distr, rngs::ThreadRng};
 
     #[ignore = "Test is flaky on macOS, and doesn't run on Windows"]
     #[gpui::test]
@@ -2254,13 +2249,14 @@ mod tests {
 
     #[test]
     fn test_mouse_to_cell_test() {
-        let mut rng = thread_rng();
+        let mut rng = rand::rng();
         const ITERATIONS: usize = 10;
         const PRECISION: usize = 1000;
 
         for _ in 0..ITERATIONS {
-            let viewport_cells = rng.gen_range(15..20);
-            let cell_size = rng.gen_range(5 * PRECISION..20 * PRECISION) as f32 / PRECISION as f32;
+            let viewport_cells = rng.random_range(15..20);
+            let cell_size =
+                rng.random_range(5 * PRECISION..20 * PRECISION) as f32 / PRECISION as f32;
 
             let size = crate::TerminalBounds {
                 cell_width: Pixels::from(cell_size),
@@ -2282,8 +2278,8 @@ mod tests {
                 for col in 0..(viewport_cells - 1) {
                     let col = col as usize;
 
-                    let row_offset = rng.gen_range(0..PRECISION) as f32 / PRECISION as f32;
-                    let col_offset = rng.gen_range(0..PRECISION) as f32 / PRECISION as f32;
+                    let row_offset = rng.random_range(0..PRECISION) as f32 / PRECISION as f32;
+                    let col_offset = rng.random_range(0..PRECISION) as f32 / PRECISION as f32;
 
                     let mouse_pos = point(
                         Pixels::from(col as f32 * cell_size + col_offset),
@@ -2303,7 +2299,7 @@ mod tests {
 
     #[test]
     fn test_mouse_to_cell_clamp() {
-        let mut rng = thread_rng();
+        let mut rng = rand::rng();
 
         let size = crate::TerminalBounds {
             cell_width: Pixels::from(10.),
@@ -2341,7 +2337,7 @@ mod tests {
         for _ in 0..((size.height() / size.line_height()) as usize) {
             let mut row_vec = Vec::new();
             for _ in 0..((size.width() / size.cell_width()) as usize) {
-                let cell_char = rng.sample(Alphanumeric) as char;
+                let cell_char = rng.sample(distr::Alphanumeric) as char;
                 row_vec.push(cell_char)
             }
             cells.push(row_vec)

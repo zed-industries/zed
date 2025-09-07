@@ -546,3 +546,17 @@ message LogToDebugConsole {
     uint64 session_id = 2;
     string message = 3;
 }
+
+message GetProcesses {
+    uint64 project_id = 1;
+}
+
+message GetProcessesResponse {
+    repeated ProcessInfo processes = 1;
+}
+
+message ProcessInfo {
+    uint32 pid = 1;
+    string name = 2;
+    repeated string command = 3;
+}

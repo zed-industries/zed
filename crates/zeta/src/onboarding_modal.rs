@@ -14,7 +14,7 @@ use settings::update_settings_file;
 use ui::{Vector, VectorName, prelude::*};
 use workspace::{ModalView, Workspace};
 
-/// Introduces user to Zed's Edit Prediction feature and terms of service
+/// Introduces user to Zed's Edit Prediction feature
 pub struct ZedPredictModal {
     onboarding: Entity<EditPredictionOnboarding>,
     focus_handle: FocusHandle,
@@ -86,7 +86,16 @@ impl Focusable for ZedPredictModal {
     }
 }
 
-impl ModalView for ZedPredictModal {}
+impl ModalView for ZedPredictModal {
+    fn on_before_dismiss(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> workspace::DismissDecision {
+        ZedPredictUpsell::set_dismissed(true, cx);
+        workspace::DismissDecision::Dismiss(true)
+    }
+}
 
 impl Render for ZedPredictModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
