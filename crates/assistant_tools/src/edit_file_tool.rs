@@ -1235,8 +1235,12 @@ mod tests {
     use language_model::fake_provider::FakeLanguageModel;
     use serde_json::json;
     use settings::SettingsStore;
-    use std::fs;
+    use std::{fs, sync::OnceLock};
+    use tempfile::TempDir;
     use util::path;
+
+    // This is initialized by the first test that needs a scratch data directory.
+    static SCRATCH_DATA_DIR: OnceLock<TempDir> = OnceLock::new();
 
     #[gpui::test]
     async fn test_edit_nonexistent_file(cx: &mut TestAppContext) {
@@ -1443,11 +1447,15 @@ mod tests {
         });
     }
 
-    fn init_test_with_config(cx: &mut TestAppContext, data_dir: &Path) {
+    fn init_test_with_data_dir(cx: &mut TestAppContext) {
         cx.update(|cx| {
             // Set custom data directory (config will be under data_dir/config)
-            paths::set_custom_data_dir(data_dir.to_str().unwrap());
-
+            SCRATCH_DATA_DIR.get_or_init(|| {
+                let temp_dir = tempfile::tempdir().unwrap();
+                // set_custom_data_dir may only be called once per process
+                paths::set_custom_data_dir(temp_dir.path().to_str().unwrap());
+                temp_dir
+            });
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             language::init(cx);
@@ -1459,7 +1467,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_format_on_save(cx: &mut TestAppContext) {
-        init_test(cx);
+        init_test_with_data_dir(cx);
 
         let fs = project::FakeFs::new(cx.executor());
         fs.insert_tree("/root", json!({"src": {}})).await;
@@ -1876,9 +1884,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_ui_text_shows_correct_context(cx: &mut TestAppContext) {
-        // Set up a custom config directory for testing
-        let temp_dir = tempfile::tempdir().unwrap();
-        init_test_with_config(cx, temp_dir.path());
+        init_test_with_data_dir(cx);
 
         let tool = Arc::new(EditFileTool);
 
@@ -1969,9 +1975,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_needs_confirmation_config_paths(cx: &mut TestAppContext) {
-        // Set up a custom data directory for testing
-        let temp_dir = tempfile::tempdir().unwrap();
-        init_test_with_config(cx, temp_dir.path());
+        init_test_with_data_dir(cx);
 
         let tool = Arc::new(EditFileTool);
         let fs = project::FakeFs::new(cx.executor());
@@ -2043,9 +2047,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_needs_confirmation_global_config(cx: &mut TestAppContext) {
-        // Set up a custom data directory for testing
-        let temp_dir = tempfile::tempdir().unwrap();
-        init_test_with_config(cx, temp_dir.path());
+        init_test_with_data_dir(cx);
 
         let tool = Arc::new(EditFileTool);
         let fs = project::FakeFs::new(cx.executor());
@@ -2368,9 +2370,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_always_allow_tool_actions_bypasses_all_checks(cx: &mut TestAppContext) {
-        // Set up with custom directories for deterministic testing
-        let temp_dir = tempfile::tempdir().unwrap();
-        init_test_with_config(cx, temp_dir.path());
+        init_test_with_data_dir(cx);
 
         let tool = Arc::new(EditFileTool);
         let fs = project::FakeFs::new(cx.executor());
