@@ -69,7 +69,6 @@
       "ctrl-delete": ["editor::DeleteToNextWordEnd", { "ignore_newlines": false, "ignore_brackets": false }],
       "shift-delete": "editor::Cut",
       "ctrl-x": "editor::Cut",
-      "copy": "editor::Copy",
       "ctrl-insert": "editor::Copy",
       "ctrl-c": "editor::Copy",
       "paste": "editor::Paste",
@@ -175,7 +174,6 @@
     "context": "Markdown",
     "use_key_equivalents": true,
     "bindings": {
-      "copy": "markdown::Copy",
       "ctrl-c": "markdown::Copy"
     }
   },
@@ -270,7 +268,6 @@
     "context": "AgentPanel > Markdown",
     "use_key_equivalents": true,
     "bindings": {
-      "copy": "markdown::CopyAsMarkdown",
       "ctrl-c": "markdown::CopyAsMarkdown"
     }
   },
@@ -845,9 +842,7 @@
     "bindings": {
       "left": "outline_panel::CollapseSelectedEntry",
       "right": "outline_panel::ExpandSelectedEntry",
-      "alt-copy": "outline_panel::CopyPath",
       "shift-alt-c": "outline_panel::CopyPath",
-      "shift-alt-copy": "workspace::CopyRelativePath",
       "ctrl-shift-alt-c": "workspace::CopyRelativePath",
       "ctrl-alt-r": "outline_panel::RevealInFileManager",
       "space": "outline_panel::OpenSelectedEntry",
@@ -868,15 +863,12 @@
       "alt-new": "project_panel::NewDirectory",
       "alt-n": "project_panel::NewDirectory",
       "ctrl-x": "project_panel::Cut",
-      "copy": "project_panel::Copy",
       "ctrl-insert": "project_panel::Copy",
       "ctrl-c": "project_panel::Copy",
       "paste": "project_panel::Paste",
       "shift-insert": "project_panel::Paste",
       "ctrl-v": "project_panel::Paste",
-      "alt-copy": "project_panel::CopyPath",
       "shift-alt-c": "project_panel::CopyPath",
-      "shift-alt-copy": "workspace::CopyRelativePath",
       "ctrl-k ctrl-shift-c": "workspace::CopyRelativePath",
       "enter": "project_panel::Rename",
       "f2": "project_panel::Rename",
@@ -1113,7 +1105,6 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-alt-space": "terminal::ShowCharacterPalette",
-      "copy": "terminal::Copy",
       "ctrl-insert": "terminal::Copy",
       "ctrl-shift-c": "terminal::Copy",
       "paste": "terminal::Paste",
