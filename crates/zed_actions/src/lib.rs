@@ -284,6 +284,10 @@ pub mod agent {
             OpenSettings,
             /// Opens the agent onboarding modal.
             OpenOnboardingModal,
+            /// Opens the ACP onboarding modal.
+            OpenAcpOnboardingModal,
+            /// Opens the Claude Code onboarding modal.
+            OpenClaudeCodeOnboardingModal,
             /// Resets the agent onboarding state.
             ResetOnboarding,
             /// Starts a chat conversation with the agent.

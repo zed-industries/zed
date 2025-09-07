@@ -16,6 +16,7 @@
       "up": "menu::SelectPrevious",
       "enter": "menu::Confirm",
       "ctrl-enter": "menu::SecondaryConfirm",
+      "ctrl-escape": "menu::Cancel",
       "ctrl-c": "menu::Cancel",
       "escape": "menu::Cancel",
       "alt-shift-enter": "menu::Restart",
@@ -40,7 +41,7 @@
       "shift-f11": "debugger::StepOut",
       "f11": "zed::ToggleFullScreen",
       "ctrl-alt-z": "edit_prediction::RateCompletions",
-      "ctrl-shift-i": "edit_prediction::ToggleMenu",
+      "ctrl-alt-shift-i": "edit_prediction::ToggleMenu",
       "ctrl-alt-l": "lsp_tool::ToggleMenu"
     }
   },
@@ -63,8 +64,8 @@
       "ctrl-k": "editor::CutToEndOfLine",
       "ctrl-k ctrl-q": "editor::Rewrap",
       "ctrl-k q": "editor::Rewrap",
-      "ctrl-backspace": "editor::DeleteToPreviousWordStart",
-      "ctrl-delete": "editor::DeleteToNextWordEnd",
+      "ctrl-backspace": ["editor::DeleteToPreviousWordStart", { "ignore_newlines": false, "ignore_brackets": false }],
+      "ctrl-delete": ["editor::DeleteToNextWordEnd", { "ignore_newlines": false, "ignore_brackets": false }],
       "cut": "editor::Cut",
       "shift-delete": "editor::Cut",
       "ctrl-x": "editor::Cut",
@@ -120,7 +121,7 @@
       "alt-g m": "git::OpenModifiedFiles",
       "menu": "editor::OpenContextMenu",
       "shift-f10": "editor::OpenContextMenu",
-      "ctrl-shift-e": "editor::ToggleEditPrediction",
+      "ctrl-alt-shift-e": "editor::ToggleEditPrediction",
       "f9": "editor::ToggleBreakpoint",
       "shift-f9": "editor::EditLogBreakpoint"
     }
@@ -130,8 +131,8 @@
     "bindings": {
       "shift-enter": "editor::Newline",
       "enter": "editor::Newline",
-      "ctrl-enter": "editor::NewlineAbove",
-      "ctrl-shift-enter": "editor::NewlineBelow",
+      "ctrl-enter": "editor::NewlineBelow",
+      "ctrl-shift-enter": "editor::NewlineAbove",
       "ctrl-k ctrl-z": "editor::ToggleSoftWrap",
       "ctrl-k z": "editor::ToggleSoftWrap",
       "find": "buffer_search::Deploy",
@@ -170,6 +171,7 @@
     "context": "Markdown",
     "bindings": {
       "copy": "markdown::Copy",
+      "ctrl-insert": "markdown::Copy",
       "ctrl-c": "markdown::Copy"
     }
   },
@@ -258,6 +260,7 @@
     "context": "AgentPanel > Markdown",
     "bindings": {
       "copy": "markdown::CopyAsMarkdown",
+      "ctrl-insert": "markdown::CopyAsMarkdown",
       "ctrl-c": "markdown::CopyAsMarkdown"
     }
   },
@@ -580,7 +583,7 @@
       "ctrl-n": "workspace::NewFile",
       "shift-new": "workspace::NewWindow",
       "ctrl-shift-n": "workspace::NewWindow",
-      "ctrl-`": "terminal_panel::ToggleFocus",
+      "ctrl-`": "terminal_panel::Toggle",
       "f10": ["app_menu::OpenApplicationMenu", "Zed"],
       "alt-1": ["workspace::ActivatePane", 0],
       "alt-2": ["workspace::ActivatePane", 1],
@@ -625,6 +628,7 @@
       "alt-save": "workspace::SaveAll",
       "ctrl-alt-s": "workspace::SaveAll",
       "ctrl-k m": "language_selector::Toggle",
+      "ctrl-k ctrl-m": "toolchain::AddToolchain",
       "escape": "workspace::Unfollow",
       "ctrl-k ctrl-left": "workspace::ActivatePaneLeft",
       "ctrl-k ctrl-right": "workspace::ActivatePaneRight",
@@ -1023,6 +1027,13 @@
     "context": "ChannelModal > Picker > Editor",
     "bindings": {
       "tab": "channel_modal::ToggleMode"
+    }
+  },
+  {
+    "context": "ToolchainSelector",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-shift-a": "toolchain::AddToolchain"
     }
   },
   {

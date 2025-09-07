@@ -43,8 +43,8 @@
     //           "args": ["--login"]
     //         }
     //     }
-    "shell": "system",
+    "shell": "system"
     // Represents the tags for inline runnable indicators, or spawning multiple tasks at once.
-    "tags": []
+    // "tags": []
   }
 ]

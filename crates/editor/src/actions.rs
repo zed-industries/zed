@@ -228,21 +228,29 @@ pub struct ShowCompletions {
 pub struct HandleInput(pub String);
 
 /// Deletes from the cursor to the end of the next word.
+/// Stops before the end of the next word, if whitespace sequences of length >= 2 are encountered.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct DeleteToNextWordEnd {
     #[serde(default)]
     pub ignore_newlines: bool,
+    // Whether to stop before the end of the next word, if language-defined bracket is encountered.
+    #[serde(default)]
+    pub ignore_brackets: bool,
 }
 
 /// Deletes from the cursor to the start of the previous word.
+/// Stops before the start of the previous word, if whitespace sequences of length >= 2 are encountered.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct DeleteToPreviousWordStart {
     #[serde(default)]
     pub ignore_newlines: bool,
+    // Whether to stop before the start of the previous word, if language-defined bracket is encountered.
+    #[serde(default)]
+    pub ignore_brackets: bool,
 }
 
 /// Folds all code blocks at the specified indentation level.
@@ -753,6 +761,8 @@ actions!(
         UniqueLinesCaseInsensitive,
         /// Removes duplicate lines (case-sensitive).
         UniqueLinesCaseSensitive,
-        UnwrapSyntaxNode
+        UnwrapSyntaxNode,
+        /// Wraps selections in tag specified by language.
+        WrapSelectionsInTag
     ]
 );

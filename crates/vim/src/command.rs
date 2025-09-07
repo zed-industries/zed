@@ -1265,8 +1265,8 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::str(("L", "explore"), "project_panel::ToggleFocus"),
         VimCommand::str(("S", "explore"), "project_panel::ToggleFocus"),
         VimCommand::str(("Ve", "xplore"), "project_panel::ToggleFocus"),
-        VimCommand::str(("te", "rm"), "terminal_panel::ToggleFocus"),
-        VimCommand::str(("T", "erm"), "terminal_panel::ToggleFocus"),
+        VimCommand::str(("te", "rm"), "terminal_panel::Toggle"),
+        VimCommand::str(("T", "erm"), "terminal_panel::Toggle"),
         VimCommand::str(("C", "ollab"), "collab_panel::ToggleFocus"),
         VimCommand::str(("Ch", "at"), "chat_panel::ToggleFocus"),
         VimCommand::str(("No", "tifications"), "notification_panel::ToggleFocus"),
@@ -1924,7 +1924,9 @@ impl ShellExec {
 
         let Some(range) = input_range else { return };
 
-        let mut process = project.read(cx).exec_in_shell(command, cx);
+        let Some(mut process) = project.read(cx).exec_in_shell(command, cx).log_err() else {
+            return;
+        };
         process.stdout(Stdio::piped());
         process.stderr(Stdio::piped());
 

@@ -15,7 +15,7 @@ use gpui::{
 use language::{Anchor, Buffer, CodeLabel, TextBufferSnapshot, ToOffset};
 use menu::{Confirm, SelectNext, SelectPrevious};
 use project::{
-    Completion, CompletionResponse,
+    Completion, CompletionDisplayOptions, CompletionResponse,
     debugger::session::{CompletionsQuery, OutputToken, Session},
     lsp_store::CompletionDocumentation,
     search_history::{SearchHistory, SearchHistoryCursor},
@@ -685,6 +685,7 @@ impl ConsoleQueryBarCompletionProvider {
 
             Ok(vec![project::CompletionResponse {
                 is_incomplete: completions.len() >= LIMIT,
+                display_options: CompletionDisplayOptions::default(),
                 completions,
             }])
         })
@@ -797,6 +798,7 @@ impl ConsoleQueryBarCompletionProvider {
 
             Ok(vec![project::CompletionResponse {
                 completions,
+                display_options: CompletionDisplayOptions::default(),
                 is_incomplete: false,
             }])
         })

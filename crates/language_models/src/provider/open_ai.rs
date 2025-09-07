@@ -586,7 +586,9 @@ impl OpenAiEventMapper {
         };
 
         if let Some(content) = choice.delta.content.clone() {
-            events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+            if !content.is_empty() {
+                events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+            }
         }
 
         if let Some(tool_calls) = choice.delta.tool_calls.as_ref() {

@@ -15,7 +15,7 @@ use gpui::{
     deferred, div,
 };
 use persistence::TERMINAL_DB;
-use project::{Project, search::SearchQuery, terminals::TerminalKind};
+use project::{Project, search::SearchQuery};
 use schemars::JsonSchema;
 use task::TaskId;
 use terminal::{
@@ -61,6 +61,11 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+
+struct ImeState {
+    marked_text: String,
+    marked_range_utf16: Option<Range<usize>>,
+}
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const TERMINAL_SCROLLBAR_WIDTH: Pixels = px(12.);
@@ -138,8 +143,7 @@ pub struct TerminalView {
     scroll_handle: TerminalScrollHandle,
     show_scrollbar: bool,
     hide_scrollbar_task: Option<Task<()>>,
-    marked_text: Option<String>,
-    marked_range_utf16: Option<Range<usize>>,
+    ime_state: Option<ImeState>,
     _subscriptions: Vec<Subscription>,
     _terminal_subscriptions: Vec<Subscription>,
 }
@@ -204,12 +208,9 @@ impl TerminalView {
         cx: &mut Context<Workspace>,
     ) {
         let working_directory = default_working_directory(workspace, cx);
-        TerminalPanel::add_center_terminal(
-            workspace,
-            TerminalKind::Shell(working_directory),
-            window,
-            cx,
-        )
+        TerminalPanel::add_center_terminal(workspace, window, cx, |project, cx| {
+            project.create_terminal_shell(working_directory, cx)
+        })
         .detach_and_log_err(cx);
     }
 
@@ -266,8 +267,7 @@ impl TerminalView {
             show_scrollbar: !Self::should_autohide_scrollbar(cx),
             hide_scrollbar_task: None,
             cwd_serialized: false,
-            marked_text: None,
-            marked_range_utf16: None,
+            ime_state: None,
             _subscriptions: vec![
                 focus_in,
                 focus_out,
@@ -326,24 +326,27 @@ impl TerminalView {
     pub(crate) fn set_marked_text(
         &mut self,
         text: String,
-        range: Range<usize>,
+        range: Option<Range<usize>>,
         cx: &mut Context<Self>,
     ) {
-        self.marked_text = Some(text);
-        self.marked_range_utf16 = Some(range);
+        self.ime_state = Some(ImeState {
+            marked_text: text,
+            marked_range_utf16: range,
+        });
         cx.notify();
     }
 
     /// Gets the current marked range (UTF-16).
     pub(crate) fn marked_text_range(&self) -> Option<Range<usize>> {
-        self.marked_range_utf16.clone()
+        self.ime_state
+            .as_ref()
+            .and_then(|state| state.marked_range_utf16.clone())
     }
 
     /// Clears the marked (pre-edit) text state.
     pub(crate) fn clear_marked_text(&mut self, cx: &mut Context<Self>) {
-        if self.marked_text.is_some() {
-            self.marked_text = None;
-            self.marked_range_utf16 = None;
+        if self.ime_state.is_some() {
+            self.ime_state = None;
             cx.notify();
         }
     }
@@ -1333,16 +1336,10 @@ impl Item for TerminalView {
         let terminal = self
             .project
             .update(cx, |project, cx| {
-                let terminal = self.terminal().read(cx);
-                let working_directory = terminal
-                    .working_directory()
-                    .or_else(|| Some(project.active_project_directory(cx)?.to_path_buf()));
-                let python_venv_directory = terminal.python_venv_directory.clone();
-                project.create_terminal_with_venv(
-                    TerminalKind::Shell(working_directory),
-                    python_venv_directory,
-                    cx,
-                )
+                let cwd = project
+                    .active_project_directory(cx)
+                    .map(|it| it.to_path_buf());
+                project.clone_terminal(self.terminal(), cx, || cwd)
             })
             .ok()?
             .log_err()?;
@@ -1498,9 +1495,7 @@ impl SerializableItem for TerminalView {
                 .flatten();
 
             let terminal = project
-                .update(cx, |project, cx| {
-                    project.create_terminal(TerminalKind::Shell(cwd), cx)
-                })?
+                .update(cx, |project, cx| project.create_terminal_shell(cwd, cx))?
                 .await?;
             cx.update(|window, cx| {
                 cx.new(|cx| {
@@ -1534,7 +1529,7 @@ impl SearchableItem for TerminalView {
 
     /// Clear stored matches
     fn clear_matches(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        self.terminal().update(cx, |term, _| term.clear_matches())
+        self.terminal().update(cx, |term, _| term.matches.clear())
     }
 
     /// Store matches returned from find_matches somewhere for rendering

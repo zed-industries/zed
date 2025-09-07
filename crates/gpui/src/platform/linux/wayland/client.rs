@@ -75,8 +75,8 @@ use crate::{
     FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, LinuxCommon,
     LinuxKeyboardLayout, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
     MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
-    PlatformInput, PlatformKeyboardLayout, Point, SCROLL_LINES, ScaledPixels, ScrollDelta,
-    ScrollWheelEvent, Size, TouchPhase, WindowParams, point, px, size,
+    PlatformInput, PlatformKeyboardLayout, Point, SCROLL_LINES, ScrollDelta, ScrollWheelEvent,
+    Size, TouchPhase, WindowParams, point, px, size,
 };
 use crate::{
     SharedString,
@@ -323,7 +323,7 @@ impl WaylandClientStatePtr {
         }
     }
 
-    pub fn update_ime_position(&self, bounds: Bounds<ScaledPixels>) {
+    pub fn update_ime_position(&self, bounds: Bounds<Pixels>) {
         let client = self.get_client();
         let mut state = client.borrow_mut();
         if state.composing || state.text_input.is_none() || state.pre_edit_text.is_some() {

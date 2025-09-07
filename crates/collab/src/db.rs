@@ -256,7 +256,7 @@ impl Database {
             let test_options = self.test_options.as_ref().unwrap();
             test_options.executor.simulate_random_delay().await;
             let fail_probability = *test_options.query_failure_probability.lock();
-            if test_options.executor.rng().gen_bool(fail_probability) {
+            if test_options.executor.rng().random_bool(fail_probability) {
                 return Err(anyhow!("simulated query failure"))?;
             }
 
