@@ -645,7 +645,8 @@ impl Render for PullRequestDetailView {
                         // Body
                 v_flex()
                     .flex_1()
-                    .p_4()
+                    .px_6()
+                    .py_4()
                     .pb_8()  // Add extra bottom padding
                     .gap_4()
                     .child(
