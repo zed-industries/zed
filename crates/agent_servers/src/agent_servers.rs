@@ -2,42 +2,20 @@ mod acp;
 mod claude;
 mod custom;
 mod gemini;
-mod settings;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod e2e_tests;
 
-use anyhow::Context as _;
 pub use claude::*;
 pub use custom::*;
-use fs::Fs;
-use fs::RemoveOptions;
-use fs::RenameOptions;
-use futures::StreamExt as _;
 pub use gemini::*;
-use gpui::AppContext;
-use node_runtime::NodeRuntime;
 use project::agent_server_store::AgentServerStore;
-pub use settings::*;
 
 use acp_thread::AgentConnection;
-use acp_thread::LoadError;
 use anyhow::Result;
-use anyhow::anyhow;
-use collections::HashMap;
-use gpui::{App, AsyncApp, Entity, SharedString, Task};
+use gpui::{App, Entity, SharedString, Task};
 use project::Project;
-use schemars::JsonSchema;
-use semver::Version;
-use serde::{Deserialize, Serialize};
-use std::str::FromStr as _;
-use std::{
-    any::Any,
-    path::{Path, PathBuf},
-    rc::Rc,
-    sync::Arc,
-};
-use util::ResultExt as _;
+use std::{any::Any, path::Path, rc::Rc};
 
 pub use acp::AcpConnection;
 

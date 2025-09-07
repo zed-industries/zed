@@ -2,12 +2,11 @@ use std::{
     any::Any,
     borrow::Borrow,
     path::{Path, PathBuf},
-    rc::Rc,
     str::FromStr as _,
     sync::Arc,
 };
 
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{Context as _, Result, bail};
 use collections::HashMap;
 use fs::{Fs, RemoveOptions, RenameOptions};
 use futures::StreamExt as _;
@@ -25,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use settings::{SettingsKey, SettingsSources, SettingsStore, SettingsUi};
 use util::{ResultExt as _, debug_panic};
 
-use crate::{Project, ProjectEnvironment, worktree_store::WorktreeStore};
+use crate::ProjectEnvironment;
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
 pub struct AgentServerCommand {
@@ -58,16 +57,6 @@ impl std::fmt::Debug for AgentServerCommand {
             .field("args", &self.args)
             .field("env", &filtered_env)
             .finish()
-    }
-}
-
-impl AgentServerCommand {
-    fn from_proto(proto: proto::AgentServerCommand) -> Self {
-        Self {
-            path: proto.path.into(),
-            args: proto.args,
-            env: Some(proto.env.into_iter().collect()),
-        }
     }
 }
 
@@ -188,8 +177,15 @@ impl AgentServerStore {
                         .unwrap_or(true),
                 }),
             );
-
-            // FIXME claude
+            self.external_agents.insert(
+                claude_code(),
+                Box::new(LocalClaudeCode {
+                    fs: fs.clone(),
+                    node_runtime: node_runtime.clone(),
+                    project_environment: project_environment.clone(),
+                    custom_command: new_settings.claude.clone().map(|settings| settings.command),
+                }),
+            );
 
             self.external_agents
                 .extend(new_settings.custom.iter().map(|(name, settings)| {
@@ -268,7 +264,16 @@ impl AgentServerStore {
                     new_version_available_tx: None,
                 }) as Box<dyn ExternalAgentServer>,
             ),
-            // FIXME claude
+            (
+                claude_code(),
+                Box::new(RemoteExternalAgentServer {
+                    project_id,
+                    upstream_client: upstream_client.clone(),
+                    name: claude_code(),
+                    status_tx: None,
+                    new_version_available_tx: None,
+                }) as Box<dyn ExternalAgentServer>,
+            ),
         ]
         .into_iter()
         .collect();
@@ -744,7 +749,7 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
                 .await?;
             let root_dir = response.root_dir;
             response.env.extend(extra_env);
-            let command = upstream_client.update(cx, |client, cx| {
+            let command = upstream_client.update(cx, |client, _| {
                 client.build_command(
                     Some(response.path),
                     &response.args,
@@ -857,6 +862,90 @@ impl ExternalAgentServer for LocalGemini {
     }
 }
 
+struct LocalClaudeCode {
+    fs: Arc<dyn Fs>,
+    node_runtime: NodeRuntime,
+    project_environment: Entity<ProjectEnvironment>,
+    custom_command: Option<AgentServerCommand>,
+}
+
+impl ExternalAgentServer for LocalClaudeCode {
+    fn get_command(
+        &mut self,
+        root_dir: Option<&str>,
+        extra_env: HashMap<String, String>,
+        status_tx: Option<watch::Sender<SharedString>>,
+        new_version_available_tx: Option<watch::Sender<Option<String>>>,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
+        let fs = self.fs.clone();
+        let node_runtime = self.node_runtime.clone();
+        let project_environment = self.project_environment.downgrade();
+        let custom_command = self.custom_command.clone();
+        let root_dir: Arc<Path> = root_dir
+            .map(|root_dir| Path::new(root_dir))
+            .unwrap_or(paths::home_dir())
+            .into();
+
+        cx.spawn(async move |cx| {
+            let mut env = project_environment
+                .update(cx, |project_environment, cx| {
+                    project_environment.get_directory_environment(root_dir.clone(), cx)
+                })?
+                .await
+                .unwrap_or_default();
+            env.insert("ANTHROPIC_API_KEY".into(), "".into());
+
+            let (mut command, login) = if let Some(mut custom_command) = custom_command {
+                env.extend(custom_command.env.unwrap_or_default());
+                custom_command.env = Some(env);
+                (custom_command, None)
+            } else {
+                let mut command = get_or_npm_install_builtin_agent(
+                    "claude".into(),
+                    "@zed-industries/claude-code-acp".into(),
+                    "node_modules/@zed-industries/claude-code-acp/dist/index.js".into(),
+                    Some("0.2.5".parse().unwrap()),
+                    status_tx,
+                    new_version_available_tx,
+                    fs,
+                    node_runtime,
+                    cx,
+                )
+                .await?;
+                command.env = Some(env);
+                let login = command
+                    .args
+                    .first()
+                    .and_then(|path| {
+                        path.strip_suffix("/@zed-industries/claude-code-acp/dist/index.js")
+                    })
+                    .map(|path_prefix| task::SpawnInTerminal {
+                        command: Some(command.path.clone().to_proto()),
+                        args: vec![
+                            Path::new(path_prefix)
+                                .join("@anthropic-ai/claude-code/dist/cli.js")
+                                .to_string_lossy()
+                                .to_string(),
+                            "/login".into(),
+                        ],
+                        env: command.env.clone().unwrap_or_default(),
+                        label: "claude /login".into(),
+                        ..Default::default()
+                    });
+                (command, login)
+            };
+
+            command.env.get_or_insert_default().extend(extra_env);
+            Ok((command, root_dir.to_proto(), login))
+        })
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
 struct LocalCustomAgent {
     project_environment: Entity<ProjectEnvironment>,
     command: AgentServerCommand,
@@ -905,8 +994,6 @@ pub fn gemini() -> ExternalAgentServerName {
 pub fn claude_code() -> ExternalAgentServerName {
     ExternalAgentServerName("claude".into())
 }
-
-// FIXME claude
 
 #[derive(
     Default, Deserialize, Serialize, Clone, JsonSchema, Debug, SettingsUi, SettingsKey, PartialEq,

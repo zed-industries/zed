@@ -1,19 +1,15 @@
 use std::rc::Rc;
 use std::{any::Any, path::Path};
 
-use crate::acp::AcpConnection;
-use crate::{AgentServer, AgentServerDelegate, AgentServerLoginCommand};
-use acp_thread::{AgentConnection, LoadError};
+use crate::{AgentServer, AgentServerDelegate};
+use acp_thread::AgentConnection;
 use anyhow::{Context as _, Result};
 use collections::HashMap;
-use gpui::{App, AppContext as _, SharedString, Task};
+use gpui::{App, SharedString, Task};
 use language_models::provider::google::GoogleLanguageModelProvider;
-use settings::SettingsStore;
 
 #[derive(Clone)]
 pub struct Gemini;
-
-const ACP_ARG: &str = "--experimental-acp";
 
 impl AgentServer for Gemini {
     fn telemetry_id(&self) -> &'static str {
@@ -60,31 +56,12 @@ impl AgentServer for Gemini {
                 .await?;
             let connection =
                 crate::acp::connect(name, command, root_dir.as_ref(), is_remote, cx).await?;
-            Ok((connection, dbg!(login)))
+            Ok((connection, login))
         })
     }
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
         self
-    }
-}
-
-impl Gemini {
-    const PACKAGE_NAME: &str = "@google/gemini-cli";
-
-    const MINIMUM_VERSION: &str = "0.2.1";
-
-    const BINARY_NAME: &str = "gemini";
-
-    pub fn login_command(
-        delegate: AgentServerDelegate,
-        cx: &mut App,
-    ) -> Task<Result<AgentServerLoginCommand>> {
-        // FIXME
-        Task::ready(Ok(AgentServerLoginCommand {
-            path: "gemini".into(),
-            arguments: vec![],
-        }))
     }
 }
 
