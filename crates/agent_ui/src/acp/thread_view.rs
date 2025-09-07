@@ -482,7 +482,6 @@ impl AcpThreadView {
 
         let connect_task = agent.connect(root_dir.as_deref(), delegate, cx);
         let load_task = cx.spawn_in(window, async move |this, cx| {
-            // FIXME
             let connection = match connect_task.await {
                 Ok((connection, login)) => {
                     this.update(cx, |this, _| this.login = login).ok();
@@ -1411,7 +1410,6 @@ impl AcpThreadView {
                 return;
             }
         } else if method.0.as_ref() == "anthropic-api-key" {
-            // FIXME we can remove this one I believe
             let registry = LanguageModelRegistry::global(cx);
             let provider = registry
                 .read(cx)
@@ -1540,6 +1538,9 @@ impl AcpThreadView {
         let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
             return Task::ready(Ok(()));
         };
+        let project = workspace.read(cx).project().clone();
+        let cwd = project.read(cx).first_project_directory(cx);
+        let shell = project.read(cx).terminal_settings(&cwd, cx).shell.clone();
         window.spawn(cx, async move |cx| {
             login.full_label = login.label.clone();
             login.id = task::TaskId(format!("external-agent-{}-login", login.label).into());
@@ -1547,7 +1548,7 @@ impl AcpThreadView {
             login.use_new_terminal = true;
             login.allow_concurrent_runs = true;
             login.hide = task::HideStrategy::Always;
-            // FIXME shell?
+            login.shell = shell;
 
             let terminal = terminal_panel.update_in(cx, |terminal_panel, window, cx| {
                 terminal_panel.spawn_task(&login, window, cx)

@@ -356,8 +356,7 @@ impl AgentServerStore {
                 let (status_tx, new_version_available_tx) = downstream_client
                     .clone()
                     .map(|(project_id, downstream_client)| {
-                        let (status_tx, mut status_rx) =
-                            watch::channel(SharedString::from("FIXME should be optional"));
+                        let (status_tx, mut status_rx) = watch::channel(SharedString::from(""));
                         let (new_version_available_tx, mut new_version_available_rx) =
                             watch::channel(None);
                         cx.spawn({
@@ -416,7 +415,6 @@ impl AgentServerStore {
                 .map(|env| env.into_iter().collect())
                 .unwrap_or_default(),
             root_dir: root_dir,
-            // FIXME
             login: login.map(|login| login.to_proto()),
         })
     }
@@ -649,8 +647,6 @@ fn get_or_npm_install_builtin_agent(
             env: None,
         })
     })
-    // FIXME restore this at a higher level
-    // .map_err(|e| LoadError::FailedToInstall(e.to_string().into()).into())
 }
 
 fn find_bin_in_path(
