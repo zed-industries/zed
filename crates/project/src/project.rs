@@ -4428,6 +4428,23 @@ impl Project {
         None
     }
 
+    /// If there's only one visible worktree, returns the given worktree-relative path with no prefix.
+    ///
+    /// Otherwise, returns the full path for the project path (obtained by prefixing the worktree-relative path with the name of the worktree).
+    pub fn short_full_path_for_project_path(
+        &self,
+        project_path: &ProjectPath,
+        cx: &App,
+    ) -> Option<PathBuf> {
+        if self.visible_worktrees(cx).take(2).count() < 2 {
+            return Some(project_path.path.to_path_buf());
+        }
+        self.worktree_for_id(project_path.worktree_id, cx)
+            .and_then(|worktree| {
+                Some(Path::new(worktree.read(cx).abs_path().file_name()?).join(&project_path.path))
+            })
+    }
+
     pub fn project_path_for_absolute_path(&self, abs_path: &Path, cx: &App) -> Option<ProjectPath> {
         self.find_worktree(abs_path, cx)
             .map(|(worktree, relative_path)| ProjectPath {

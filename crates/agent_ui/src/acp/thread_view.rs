@@ -2206,7 +2206,10 @@ impl AcpThreadView {
                                     })
                                     .child(self.render_markdown(
                                         tool_call.label.clone(),
-                                        default_markdown_style(false, true, window, cx),
+                                        MarkdownStyle {
+                                            prevent_mouse_interaction: true,
+                                            ..default_markdown_style(false, true, window, cx)
+                                        },
                                     ))
                                     .tooltip(Tooltip::text("Jump to File"))
                                     .on_click(cx.listener(move |this, _, window, cx| {
