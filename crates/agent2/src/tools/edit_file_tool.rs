@@ -10,6 +10,8 @@ use indoc::formatdoc;
 use language::language_settings::{self, FormatOnSave};
 use language::{LanguageRegistry, ToPoint};
 use language_model::LanguageModelToolResultContent;
+use feature_flags::{FeatureFlagAppExt, MorphFastApplyFeatureFlag};
+use http_client::{self, HttpClient, Method};
 use paths;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use project::{Project, ProjectPath};
@@ -21,6 +23,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use ui::SharedString;
 use util::ResultExt;
+use futures::io::AsyncReadExt;
 
 const DEFAULT_UI_TEXT: &str = "Editing file";
 
@@ -71,6 +74,20 @@ pub struct EditFileToolInput {
     ///
     /// When a file already exists or you just created it, prefer editing it as opposed to recreating it from scratch.
     pub mode: EditFileMode,
+    /// Optional additional instruction for Morph Fast Apply.
+    /// Prefer a short imperative description of what to change.
+    #[serde(default)]
+    pub instructions: Option<String>,
+    /// Optional lazy edit payload for Morph Fast Apply using sentinel lines
+    /// like `// ... existing code ...` to omit unchanged regions.
+    #[serde(default)]
+    pub code_edit: Option<String>,
+    /// Optional direct replacement pair for Morph Fast Apply when targeting a
+    /// single transformation: replace `old_string` with `new_string`.
+    #[serde(default)]
+    pub old_string: Option<String>,
+    #[serde(default)]
+    pub new_string: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -290,20 +307,87 @@ impl AgentTool for EditFileTool {
                 .await;
 
 
-            let (output, mut events) = if matches!(input.mode, EditFileMode::Edit) {
-                edit_agent.edit(
-                    buffer.clone(),
-                    input.display_description.clone(),
-                    &request,
-                    cx,
-                )
+            // Decide whether to use Morph Fast Apply
+            let use_morph = cx.update(|app| app.has_flag::<MorphFastApplyFeatureFlag>())?
+                && (input.code_edit.is_some()
+                    || (input.old_string.is_some() && input.new_string.is_some()));
+
+            // Prepare an EditAgentOutput task and event stream compatible with existing flow
+            let (output, mut events) = if use_morph {
+                use futures::channel::mpsc;
+
+                // Close the events stream immediately; Morph branch does not stream granular ranges
+                let (events_tx, events_rx) = mpsc::unbounded();
+                drop(events_tx);
+
+                // Compose instructions and update snippet
+                let mut instruction_parts = Vec::new();
+                if !input.display_description.trim().is_empty() {
+                    instruction_parts.push(input.display_description.clone());
+                }
+                if let Some(extra) = input.instructions.as_ref().filter(|s| !s.trim().is_empty()) {
+                    instruction_parts.push(extra.clone());
+                }
+                if instruction_parts.is_empty() {
+                    instruction_parts.push("Apply the provided update to the code".to_string());
+                }
+                let instructions = instruction_parts.join(". ");
+
+                let update_snippet = if let Some(edit) = input.code_edit.clone() {
+                    edit
+                } else {
+                    // Synthesize from old/new pair
+                    let old = input.old_string.clone().unwrap_or_default();
+                    let new = input.new_string.clone().unwrap_or_default();
+                    // Provide an explicit instruction augmentation
+                    let _ = &old; // silence unused warning in case
+                    format!("// ... existing code ...\n{}\n", new)
+                };
+
+                // Capture old text for diff
+                let old_text_arc = old_text.clone();
+
+                // Call Morph and apply
+                let buffer_for_morph = buffer.clone();
+                let apply_task: Task<Result<EditAgentOutput>> = cx.spawn(async move |cx| {
+                    let http_client = cx.update(|app| app.http_client())?;
+                    let updated_content = call_morph_api(
+                        http_client,
+                        &old_text_arc,
+                        &update_snippet,
+                        &instructions,
+                    )
+                    .await?;
+
+                    // Apply to buffer on the foreground thread
+                    buffer_for_morph.update(cx, |buffer, cx| {
+                        let len = buffer.len();
+                        buffer.edit([(0..len, updated_content)], None, cx);
+                    })?;
+
+                    Ok(EditAgentOutput {
+                        raw_edits: update_snippet,
+                        parser_metrics: Default::default(),
+                    })
+                });
+
+                (apply_task, events_rx)
             } else {
-                edit_agent.overwrite(
-                    buffer.clone(),
-                    input.display_description.clone(),
-                    &request,
-                    cx,
-                )
+                if matches!(input.mode, EditFileMode::Edit) {
+                    edit_agent.edit(
+                        buffer.clone(),
+                        input.display_description.clone(),
+                        &request,
+                        cx,
+                    )
+                } else {
+                    edit_agent.overwrite(
+                        buffer.clone(),
+                        input.display_description.clone(),
+                        &request,
+                        cx,
+                    )
+                }
             };
 
             let mut hallucinated_old_text = false;
@@ -451,6 +535,50 @@ impl AgentTool for EditFileTool {
         }));
         Ok(())
     }
+}
+
+async fn call_morph_api(
+    http_client: Arc<dyn HttpClient>,
+    original_code: &str,
+    edit_snippet: &str,
+    instructions: &str,
+) -> Result<String> {
+    let prompt = format!(
+        "<instruction>{}</instruction>\n<code>{}</code>\n<update>{}</update>",
+        instructions, original_code, edit_snippet
+    );
+
+    let request_body = serde_json::json!({
+        "model": "morph-v3-large",
+        "messages": [
+            { "role": "user", "content": prompt }
+        ],
+        "max_tokens": 8192
+    });
+
+    let api_key = std::env::var("MORPH_API_KEY")
+        .map_err(|_| anyhow::anyhow!("MORPH_API_KEY environment variable not set"))?;
+
+    let body = serde_json::to_string(&request_body)?;
+
+    let request = http_client::Request::builder()
+        .method(Method::POST)
+        .uri("https://api.morphllm.com/v1/chat/completions")
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Content-Type", "application/json")
+        .body(body.into())?;
+
+    let mut response = http_client.send(request).await?;
+
+    let mut response_body = String::new();
+    response.body_mut().read_to_string(&mut response_body).await?;
+
+    let response_json: serde_json::Value = serde_json::from_str(&response_body)?;
+    let updated_content = response_json["choices"][0]["message"]["content"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("Invalid response format"))?;
+
+    Ok(updated_content.to_string())
 }
 
 /// Validate that the file path is valid, meaning:

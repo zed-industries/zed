@@ -69,6 +69,7 @@ watch.workspace = true
 web_search.workspace = true
 workspace-hack.workspace = true
 zstd.workspace = true
+feature_flags.workspace = true
 
 [dev-dependencies]
 agent = { workspace = true, "features" = ["test-support"] }

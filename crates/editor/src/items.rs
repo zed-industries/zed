@@ -9,10 +9,8 @@ use crate::{
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
-use feature_flags::{FeatureFlagAppExt, MorphFastApplyFeatureFlag};
 use file_icons::FileIcons;
 use futures::future::try_join_all;
-use futures::io::AsyncReadExt;
 use git::status::GitSummary;
 use gpui::{
     AnyElement, App, AsyncWindowContext, Context, Entity, EntityId, EventEmitter, IntoElement,
@@ -23,7 +21,6 @@ use language::{
     proto::serialize_anchor as serialize_text_anchor,
 };
 use lsp::DiagnosticSeverity;
-use http_client::{self, HttpClient, Method};
 use project::{
     Project, ProjectItem as _, ProjectPath, lsp_store::FormatTrigger,
     project_settings::ProjectSettings, search::SearchQuery,
@@ -778,12 +775,6 @@ impl Item for Editor {
         self.nav_history = Some(history);
     }
 
-    fn discarded(&self, _project: Entity<Project>, _: &mut Window, cx: &mut Context<Self>) {
-        for buffer in self.buffer().clone().read(cx).all_buffers() {
-            buffer.update(cx, |buffer, cx| buffer.discarded(cx))
-        }
-    }
-
     fn on_removed(&self, cx: &App) {
         self.report_editor_event(ReportEditorEvent::Closed, None, cx);
     }
@@ -1025,8 +1016,6 @@ impl Item for Editor {
 
     fn to_item_events(event: &EditorEvent, mut f: impl FnMut(ItemEvent)) {
         match event {
-            EditorEvent::Closed => f(ItemEvent::CloseItem),
-
             EditorEvent::Saved | EditorEvent::TitleChanged => {
                 f(ItemEvent::UpdateTab);
                 f(ItemEvent::UpdateBreadcrumbs);
@@ -1470,124 +1459,6 @@ impl Editor {
             });
         });
     }
-    fn zed_replace(
-        &mut self,
-        identifier: &Range<Anchor>,
-        query: &SearchQuery,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let text = self.buffer.read(cx);
-        let text = text.snapshot(cx);
-        let text = text.text_for_range(identifier.clone()).collect::<Vec<_>>();
-        let text: Cow<_> = if text.len() == 1 {
-            text.first().cloned().unwrap().into()
-        } else {
-            let joined_chunks = text.join("");
-            joined_chunks.into()
-        };
-
-        if let Some(replacement) = query.replacement_for(&text) {
-            self.transact(window, cx, |this, _, cx| {
-                this.edit([(identifier.clone(), Arc::from(&*replacement))], cx);
-            });
-        }
-    }
-    fn zed_replace_all(
-        &mut self,
-        matches: &mut dyn Iterator<Item = &Range<Anchor>>,
-        query: &SearchQuery,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let text = self.buffer.read(cx);
-        let text = text.snapshot(cx);
-        let mut edits = vec![];
-
-        for m in matches {
-            let text = text.text_for_range(m.clone()).collect::<Vec<_>>();
-
-            let text: Cow<_> = if text.len() == 1 {
-                text.first().cloned().unwrap().into()
-            } else {
-                let joined_chunks = text.join("");
-                joined_chunks.into()
-            };
-
-            if let Some(replacement) = query.replacement_for(&text) {
-                edits.push((m.clone(), Arc::from(&*replacement)));
-            }
-        }
-
-        if !edits.is_empty() {
-            self.transact(window, cx, |this, _, cx| {
-                this.edit(edits, cx);
-            });
-        }
-    }
-
-    fn morph_replace_all(
-        &mut self,
-        matches: &mut dyn Iterator<Item = &Range<Anchor>>,
-        query: &SearchQuery,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        // Collect all matches
-        let matches: Vec<_> = matches.collect();
-        if matches.is_empty() {
-            return;
-        }
-        
-        // Get the full buffer content
-        let buffer = self.buffer.read(cx);
-        let snapshot = buffer.snapshot(cx);
-        let full_text = snapshot.text();
-        
-        // Build edit snippet for all replacements
-        let mut edit_parts = Vec::new();
-        let mut instruction_parts = Vec::new();
-        
-        for match_range in &matches {
-            let match_text = snapshot.text_for_range((*match_range).clone()).collect::<String>();
-            if let Some(replacement) = query.replacement_for(&match_text) {
-                edit_parts.push(format!("// ... existing code ...\n{}\n", replacement));
-                instruction_parts.push(format!("'{}' with '{}'", match_text, replacement));
-            }
-        }
-        
-        let edit_snippet = edit_parts.join("// ... existing code ...\n");
-        let instructions = format!("I am replacing {}", instruction_parts.join(", "));
-        
-        let query_owned = query.clone();
-        let owned_ranges: Vec<Range<Anchor>> = matches.into_iter().cloned().collect();
-
-        // Spawn async task to call Morph API
-        let task = cx.spawn_in(window, async move |this, cx| {
-            let http_client = cx.update(|_, app| app.http_client())?;
-            match call_morph_api(http_client, &full_text, &edit_snippet, &instructions).await {
-                Ok(updated_content) => {
-                    this.update_in(cx, |editor, window, cx| {
-                        editor.transact(window, cx, |editor, _, cx| {
-                            editor.buffer.update(cx, |buffer, cx| {
-                                let len = buffer.len(cx);
-                                buffer.edit([(0..len, updated_content)], None, cx);
-                            });
-                        });
-                    })
-                }
-                Err(err) => {
-                    log::warn!("Morph API call failed: {}, falling back to Zed", err);
-                    // build an iterator of &Range<Anchor>
-                    this.update_in(cx, |editor, window, cx| {
-                        let mut it = owned_ranges.iter();
-                        editor.zed_replace_all(&mut it, &query_owned, window, cx);
-                    })
-                }
-            }
-        });
-        task.detach();
-    }
 }
 
 pub(crate) enum BufferSearchHighlights {}
@@ -1745,7 +1616,21 @@ impl SearchableItem for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.zed_replace(identifier, query, window, cx);
+        let text = self.buffer.read(cx);
+        let text = text.snapshot(cx);
+        let text = text.text_for_range(identifier.clone()).collect::<Vec<_>>();
+        let text: Cow<_> = if text.len() == 1 {
+            text.first().cloned().unwrap().into()
+        } else {
+            let joined_chunks = text.join("");
+            joined_chunks.into()
+        };
+
+        if let Some(replacement) = query.replacement_for(&text) {
+            self.transact(window, cx, |this, _, cx| {
+                this.edit([(identifier.clone(), Arc::from(&*replacement))], cx);
+            });
+        }
     }
     fn replace_all(
         &mut self,
@@ -1754,13 +1639,31 @@ impl SearchableItem for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if cx.has_flag::<MorphFastApplyFeatureFlag>() {
-            self.morph_replace_all(matches, query, window, cx);
-        } else {
-            self.zed_replace_all(matches, query, window, cx);
+        let text = self.buffer.read(cx);
+        let text = text.snapshot(cx);
+        let mut edits = vec![];
+
+        for m in matches {
+            let text = text.text_for_range(m.clone()).collect::<Vec<_>>();
+
+            let text: Cow<_> = if text.len() == 1 {
+                text.first().cloned().unwrap().into()
+            } else {
+                let joined_chunks = text.join("");
+                joined_chunks.into()
+            };
+
+            if let Some(replacement) = query.replacement_for(&text) {
+                edits.push((m.clone(), Arc::from(&*replacement)));
+            }
+        }
+
+        if !edits.is_empty() {
+            self.transact(window, cx, |this, _, cx| {
+                this.edit(edits, cx);
+            });
         }
     }
-
     fn match_index_for_direction(
         &mut self,
         matches: &[Range<Anchor>],
@@ -2258,50 +2161,4 @@ mod tests {
             });
         }
     }
-}
-
-async fn call_morph_api(
-    http_client: Arc<dyn HttpClient>,
-    original_code: &str,
-    edit_snippet: &str,
-    instructions: &str,
-) -> Result<String> {
-    // Build Morph prompt
-    let prompt = format!(
-        "<instruction>{}</instruction>\n<code>{}</code>\n<update>{}</update>",
-        instructions, original_code, edit_snippet
-    );
-
-    let request_body = serde_json::json!({
-        "model": "morph-v3-large",
-        "messages": [
-            { "role": "user", "content": prompt }
-        ],
-        "max_tokens": 8192
-    });
-
-    let api_key = std::env::var("MORPH_API_KEY")
-        .map_err(|_| anyhow::anyhow!("MORPH_API_KEY environment variable not set"))?;
-
-    let body = serde_json::to_string(&request_body)?;
-
-    let request = http_client::Request::builder()
-        .method(Method::POST)
-        .uri("https://api.morphllm.com/v1/chat/completions")
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("Content-Type", "application/json")
-        .body(body.into())?;
-
-    let mut response = http_client.send(request).await?;
-
-    let mut response_body = String::new();
-    response.body_mut().read_to_string(&mut response_body).await?;
-
-    let response_json: serde_json::Value = serde_json::from_str(&response_body)?;
-
-    let updated_content = response_json["choices"][0]["message"]["content"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("Invalid response format"))?;
-
-    Ok(updated_content.to_string())
 }
