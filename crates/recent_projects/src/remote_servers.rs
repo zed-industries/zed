@@ -80,6 +80,28 @@ impl CreateRemoteServer {
     }
 }
 
+struct CreateP2pRemote {
+    address_editor: Entity<Editor>,
+    address_error: Option<SharedString>,
+    p2p_prompt: Option<Entity<RemoteConnectionPrompt>>,
+    _creating: Option<Task<Option<()>>>,
+}
+
+impl CreateP2pRemote {
+    fn new(window: &mut Window, cx: &mut App) -> Self {
+        let address_editor = cx.new(|cx| Editor::single_line(window, cx));
+        address_editor.update(cx, |this, cx| {
+            this.focus_handle(cx).focus(window);
+        });
+        Self {
+            address_editor,
+            address_error: None,
+            p2p_prompt: None,
+            _creating: None,
+        }
+    }
+}
+
 struct ProjectPicker {
     connection_string: SharedString,
     nickname: Option<SharedString>,
@@ -352,6 +374,7 @@ enum Mode {
     EditNickname(EditNicknameState),
     ProjectPicker(Entity<ProjectPicker>),
     CreateRemoteServer(CreateRemoteServer),
+    CreateP2pRemote(CreateP2pRemote),
 }
 
 impl Mode {
@@ -519,6 +542,89 @@ impl RemoteServerProjects {
         });
     }
 
+    fn create_p2p_server(
+        &mut self,
+        editor: Entity<Editor>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let input = get_text(&editor, cx);
+        if input.is_empty() {
+            return;
+        }
+
+        let connection_options = match SshConnectionOptions::parse_command_line(&input) {
+            Ok(c) => c,
+            Err(e) => {
+                self.mode = Mode::CreateRemoteServer(CreateRemoteServer {
+                    address_editor: editor,
+                    address_error: Some(format!("could not parse: {:?}", e).into()),
+                    ssh_prompt: None,
+                    _creating: None,
+                });
+                return;
+            }
+        };
+        let ssh_prompt = cx.new(|cx| {
+            RemoteConnectionPrompt::new(
+                connection_options.connection_string(),
+                connection_options.nickname.clone(),
+                window,
+                cx,
+            )
+        });
+
+        let connection = connect_over_ssh(
+            ConnectionIdentifier::setup(),
+            connection_options.clone(),
+            ssh_prompt.clone(),
+            window,
+            cx,
+        )
+        .prompt_err("Failed to connect", window, cx, |_, _, _| None);
+
+        let address_editor = editor.clone();
+        let creating = cx.spawn_in(window, async move |this, cx| {
+            match connection.await {
+                Some(Some(client)) => this
+                    .update_in(cx, |this, window, cx| {
+                        telemetry::event!("SSH Server Created");
+                        this.retained_connections.push(client);
+                        this.add_ssh_server(connection_options, cx);
+                        this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
+                        this.focus_handle(cx).focus(window);
+                        cx.notify()
+                    })
+                    .log_err(),
+                _ => this
+                    .update(cx, |this, cx| {
+                        address_editor.update(cx, |this, _| {
+                            this.set_read_only(false);
+                        });
+                        this.mode = Mode::CreateP2pRemote(CreateP2pRemote {
+                            address_editor,
+                            address_error: None,
+                            p2p_prompt: None,
+                            _creating: None,
+                        });
+                        cx.notify()
+                    })
+                    .log_err(),
+            };
+            None
+        });
+
+        editor.update(cx, |this, _| {
+            this.set_read_only(true);
+        });
+        self.mode = Mode::CreateP2pRemote(CreateP2pRemote {
+            address_editor: editor,
+            address_error: None,
+            p2p_prompt: Some(ssh_prompt),
+            _creating: Some(creating),
+        });
+    }
+
     fn view_server_options(
         &mut self,
         (server_index, connection): (usize, SshConnection),
@@ -658,6 +764,14 @@ impl RemoteServerProjects {
                 }
 
                 self.create_ssh_server(state.address_editor.clone(), window, cx);
+            }
+            Mode::CreateP2pRemote(state) => {
+                if let Some(prompt) = state.p2p_prompt.as_ref() {
+                    prompt.update(cx, |prompt, cx| {
+                        prompt.confirm(window, cx);
+                    });
+                    return;
+                }
             }
             Mode::EditNickname(state) => {
                 let text = Some(state.editor.read(cx).text(cx)).filter(|text| !text.is_empty());
@@ -1109,6 +1223,81 @@ impl RemoteServerProjects {
             )
     }
 
+    fn render_create_p2p_remote(
+        &self,
+        state: &CreateP2pRemote,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let ssh_prompt = state.p2p_prompt.clone();
+
+        state.address_editor.update(cx, |editor, cx| {
+            if editor.text(cx).is_empty() {
+                editor.set_placeholder_text("zedLongTicketStringHere", cx);
+            }
+        });
+
+        let theme = cx.theme();
+
+        v_flex()
+            .track_focus(&self.focus_handle(cx))
+            .id("create-p2p-remote")
+            .overflow_hidden()
+            .size_full()
+            .flex_1()
+            .child(
+                div()
+                    .p_2()
+                    .border_b_1()
+                    .border_color(theme.colors().border_variant)
+                    .child(state.address_editor.clone()),
+            )
+            .child(
+                h_flex()
+                    .bg(theme.colors().editor_background)
+                    .rounded_b_sm()
+                    .w_full()
+                    .map(|this| {
+                        if let Some(ssh_prompt) = ssh_prompt {
+                            this.child(h_flex().w_full().child(ssh_prompt))
+                        } else if let Some(address_error) = &state.address_error {
+                            this.child(
+                                h_flex().p_2().w_full().gap_2().child(
+                                    Label::new(address_error.clone())
+                                        .size(LabelSize::Small)
+                                        .color(Color::Error),
+                                ),
+                            )
+                        } else {
+                            this.child(
+                                h_flex()
+                                    .p_2()
+                                    .w_full()
+                                    .gap_1()
+                                    .child(
+                                        Label::new(
+                                            "Paste the p2p connection string shared with you here",
+                                        )
+                                        .color(Color::Muted)
+                                        .size(LabelSize::Small),
+                                    )
+                                    .child(
+                                        Button::new("learn-more", "Learn More")
+                                            .label_size(LabelSize::Small)
+                                            .icon(IconName::ArrowUpRight)
+                                            .icon_size(IconSize::XSmall)
+                                            .on_click(|_, _, cx| {
+                                                // TODO(b5): Documentation!
+                                                cx.open_url(
+                                                    "https://zed.dev/docs/p2p-collaboration",
+                                                );
+                                            }),
+                                    ),
+                            )
+                        }
+                    }),
+            )
+    }
+
     fn render_view_options(
         &mut self,
         ViewServerOptionsState {
@@ -1449,8 +1638,38 @@ impl RemoteServerProjects {
         }
 
         let scroll_state = state.scrollbar.parent_entity(&cx.entity());
-        let connect_button = div()
+        let connect_ssh_button = div()
             .id("ssh-connect-new-server-container")
+            .track_focus(&state.add_new_server.focus_handle)
+            .anchor_scroll(state.add_new_server.scroll_anchor.clone())
+            .child(
+                ListItem::new("register-remove-server-button")
+                    .toggle_state(
+                        state
+                            .add_new_server
+                            .focus_handle
+                            .contains_focused(window, cx),
+                    )
+                    .inset(true)
+                    .spacing(ui::ListItemSpacing::Sparse)
+                    .start_slot(Icon::new(IconName::Plus).color(Color::Muted))
+                    .child(Label::new("Connect New Server"))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        let state = CreateRemoteServer::new(window, cx);
+                        this.mode = Mode::CreateRemoteServer(state);
+
+                        cx.notify();
+                    })),
+            )
+            .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+                let state = CreateRemoteServer::new(window, cx);
+                this.mode = Mode::CreateRemoteServer(state);
+
+                cx.notify();
+            }));
+
+        let connect_p2p_button = div()
+            .id("p2p-connect-new-server-container")
             .track_focus(&state.add_new_server.focus_handle)
             .anchor_scroll(state.add_new_server.scroll_anchor.clone())
             .child(
@@ -1491,7 +1710,8 @@ impl RemoteServerProjects {
                 .overflow_y_scroll()
                 .track_scroll(scroll_handle)
                 .size_full()
-                .child(connect_button)
+                .child(connect_ssh_button)
+                .child(connect_p2p_button)
                 .child(
                     List::new()
                         .empty_message(
@@ -1733,6 +1953,9 @@ impl Render for RemoteServerProjects {
                 Mode::CreateRemoteServer(state) => self
                     .render_create_remote_server(state, cx)
                     .into_any_element(),
+                Mode::CreateP2pRemote(state) => {
+                    self.render_create_p2p_remote(state, cx).into_any_element()
+                }
                 Mode::EditNickname(state) => self
                     .render_edit_nickname(state, window, cx)
                     .into_any_element(),
