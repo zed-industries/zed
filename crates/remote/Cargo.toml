@@ -42,6 +42,7 @@ shlex.workspace = true
 smol.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
 tokio-util.workspace = true
 urlencoding.workspace = true
 util.workspace = true

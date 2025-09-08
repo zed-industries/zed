@@ -273,6 +273,20 @@ impl ServerListeners {
     }
 }
 
+fn start_p2p_server(log_rx: Receiver<Vec<u8>>, cx: &mut App) -> AnyProtoClient {
+    // This is the server idle timeout. If no connection comes in this timeout, the server will shut down.
+    const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+    let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
+    let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
+    let (app_quit_tx, mut app_quit_rx) = mpsc::unbounded::<()>();
+
+    // TODO(b5): create an endpoint & wire up here, thne call start_p2p_server in the main func of remote_server
+    todo!();
+
+    RemoteClient::proto_client_from_channels(incoming_rx, outgoing_tx, cx, "server")
+}
+
 fn start_server(
     listeners: ServerListeners,
     log_rx: Receiver<Vec<u8>>,

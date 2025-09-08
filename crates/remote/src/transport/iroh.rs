@@ -12,9 +12,9 @@ use futures::{
 };
 use gpui::{App, AppContext as _, AsyncApp, Task};
 use iroh::{
-    Endpoint, NodeAddr, NodeId, RelayUrl,
+    Endpoint, NodeAddr, NodeId, RelayUrl, Watcher,
     endpoint::{Connection, RecvStream, SendStream},
-    protocol::{AcceptError, ProtocolHandler},
+    protocol::{AcceptError, ProtocolHandler, Router},
 };
 use iroh_base::ticket::{self, ParseError, Ticket};
 use rpc::proto::Envelope;
@@ -28,7 +28,6 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
-use tempfile::TempDir;
 use tokio_util::{
     bytes::BytesMut,
     codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
@@ -38,14 +37,15 @@ use util::paths::{PathStyle, RemotePathBuf};
 /// The ALPN, or application-layer protocol negotiation, is exchanged in the
 /// connection handshake, and the connection is aborted unless both nodes pass
 /// the same bytestring.
-pub const ALPN: &[u8] = b"iroh/zed/remote/0";
+const ZED_ALPN: &[u8] = b"iroh/zed/remote/0";
 
+// max length of an RPC message in bytes
 const MAX_MESSAGE_SIZE: usize = 10000;
 
-pub(crate) struct IrohZedRemote {
+#[derive(Debug, Clone)]
+pub struct IrohZedRemote {
     options: IrohConnectionOptions,
     endpoint: Endpoint,
-    _temp_dir: TempDir,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -126,7 +126,7 @@ impl RemoteConnection for IrohZedRemote {
 
         let addr = self.options.ticket.node.clone();
 
-        self.send_rpc_messages(addr, incoming_tx, outgoing_rx, connection_activity_tx, cx)
+        self.handle_rpc_messages(addr, incoming_tx, outgoing_rx, connection_activity_tx, cx)
     }
 
     fn path_style(&self) -> PathStyle {
@@ -135,65 +135,93 @@ impl RemoteConnection for IrohZedRemote {
 }
 
 impl IrohZedRemote {
-    pub(crate) async fn new(
+    pub async fn new(
         connection_options: IrohConnectionOptions,
         delegate: Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
         delegate.set_status(Some("Connecting"), cx);
 
-        // let ticket = connection_options.ticket.clone();
-
-        let temp_dir = tempfile::Builder::new()
-            .prefix("zed-iroh-session")
-            .tempdir()?;
-
-        let ep = Endpoint::builder().discovery_n0().bind().await?;
+        let endpoint = Endpoint::builder()
+            .discovery_n0()
+            .alpns(vec![ZED_ALPN.to_vec()])
+            .bind()
+            .await?;
 
         Ok(Self {
             options: connection_options,
-            endpoint: ep,
-            _temp_dir: temp_dir,
+            endpoint,
         })
     }
 
-    fn send_rpc_messages(
+    // TODO(b5) - break providing out into a separate struct.
+    // it should be defined here & consumed in remote_server
+    pub async fn provide(&self) -> Router {
+        Router::builder(self.endpoint.clone())
+            .accept(ZED_ALPN, self.clone())
+            .spawn()
+    }
+
+    pub async fn ticket(&self) -> ZedIrohTicket {
+        let addr = self.endpoint.node_addr().initialized().await;
+        ZedIrohTicket::new(addr)
+    }
+
+    fn handle_rpc_messages(
         &self,
         addr: NodeAddr,
-        mut _incoming_tx: UnboundedSender<Envelope>,
+        mut incoming_tx: UnboundedSender<Envelope>,
         mut outgoing_rx: UnboundedReceiver<Envelope>,
-        mut _connection_activity_tx: Sender<()>,
+        mut connection_activity_tx: Sender<()>,
         cx: &mut AsyncApp,
     ) -> Task<Result<i32>> {
         let ep = self.endpoint.clone();
 
+        // TODO (b5) - I'm using tokio tasks here because it seems
+        // `cx.background_spawn` is intentionally not nestable, but we need an
+        // async block to construct the connection. I'm guessing there's a
+        // better way to do this.
         cx.background_spawn(async move {
             // Open a connection to the accepting node
-            let conn = ep.connect(addr, ALPN).await?;
+            let conn = ep.connect(addr, ZED_ALPN).await?;
             // Open a bidirectional QUIC stream
             let bi_stream = conn.open_bi().await?;
             // Wrap the stream with length-prefixed framing
             let mut stream = FramedBiStream::new(bi_stream);
 
-            while let Some(outgoing) = outgoing_rx.next().await {
-                let encoded = postcard::to_extend(&outgoing, BytesMut::new())?.freeze();
-                stream.write.send(encoded).await?;
-            }
+            tokio::spawn({
+                let mut connection_activity_tx = connection_activity_tx.clone();
+                async move {
+                    while let Some(outgoing) = outgoing_rx.next().await {
+                        // TODO(b5): don't swallow errors
+                        let encoded = postcard::to_extend(&outgoing, BytesMut::new())
+                            .unwrap()
+                            .freeze();
+                        connection_activity_tx.try_send(()).ok();
+                        stream.write.send(encoded).await.unwrap();
+                    }
+                }
+            });
+
+            tokio::spawn({
+                let mut connection_activity_tx = connection_activity_tx.clone();
+                async move {
+                    while let Some(env_data) = stream.read.next().await {
+                        // TODO(b5): don't swallow errors
+                        let env_data = env_data.unwrap();
+                        let decoded: Envelope = postcard::from_bytes(&env_data).unwrap();
+                        connection_activity_tx.try_send(()).ok();
+                        incoming_tx.unbounded_send(decoded).ok();
+                    }
+                }
+            });
+
             anyhow::Ok(0)
         })
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct IrohZedRemoteProtocol {}
-
-impl IrohZedRemoteProtocol {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
-
-impl ProtocolHandler for IrohZedRemoteProtocol {
+impl ProtocolHandler for IrohZedRemote {
     /// The `accept` method is called for each incoming connection for our ALPN.
     ///
     /// The returned future runs on a newly spawned tokio task, so it can run as long as
@@ -209,6 +237,9 @@ impl ProtocolHandler for IrohZedRemoteProtocol {
                 postcard::from_bytes(&encoded_env).map_err(AcceptError::from_err)?;
 
             log::info!("received message {:?}", msg);
+            // TODO(b5) - This needs to be wired up on the provide side.
+            // It's likely easiest to do a separate server struct with fields for
+            // the corresponding send & receive message pipes
         }
 
         // Wait until the remote closes the connection, which it does once it
