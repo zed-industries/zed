@@ -212,7 +212,8 @@ impl ActivityIndicator {
                 server_name,
                 status,
             } => {
-                let create_buffer = project.update(cx, |project, cx| project.create_buffer(cx));
+                let create_buffer =
+                    project.update(cx, |project, cx| project.create_buffer(false, cx));
                 let status = status.clone();
                 let server_name = server_name.clone();
                 cx.spawn_in(window, async move |workspace, cx| {
