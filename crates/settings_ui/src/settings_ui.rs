@@ -745,7 +745,7 @@ fn render_numeric_stepper<T: serde::de::DeserializeOwned + std::fmt::Display + C
         id,
         num.to_string(),
         {
-            let path = value.path.clone();
+            let path = value.path;
             move |_, _, cx| {
                 let Some(number) = to_serde_number(saturating_sub_1(num)).ok() else {
                     return;
@@ -888,7 +888,7 @@ fn settings_value_from_settings_and_path(
         default_value,
         value,
         documentation,
-        path: path.clone(),
+        path,
         // todo(settings_ui) is title required inside SettingsValue?
         title,
     };
