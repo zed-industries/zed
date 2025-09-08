@@ -13,6 +13,7 @@ use std::{
     fmt::Write,
     future::Future,
     mem,
+    ops::RangeInclusive,
     panic::{self, AssertUnwindSafe},
     pin::Pin,
     sync::{
@@ -69,7 +70,7 @@ impl TestScheduler {
                 blocked_sessions: Vec::new(),
                 randomize_order: config.randomize_order,
                 allow_parking: config.allow_parking,
-                max_timeout_ticks: config.max_timeout_ticks,
+                timeout_ticks: config.timeout_ticks,
                 next_session_id: SessionId(0),
                 pending_traces: BTreeMap::new(),
                 next_trace_id: TraceId(0),
@@ -84,6 +85,14 @@ impl TestScheduler {
 
     pub fn rng(&self) -> Arc<Mutex<StdRng>> {
         self.rng.clone()
+    }
+
+    pub fn set_timeout_ticks(&self, timeout_ticks: RangeInclusive<usize>) {
+        self.state.lock().timeout_ticks = timeout_ticks;
+    }
+
+    pub fn allow_parking(&self) {
+        self.state.lock().allow_parking = true;
     }
 
     pub fn forbid_parking(&self) {
@@ -187,7 +196,7 @@ impl Scheduler for TestScheduler {
         let max_ticks = if timeout.is_some() {
             self.rng
                 .lock()
-                .random_range(0..=self.state.lock().max_timeout_ticks)
+                .random_range(self.state.lock().timeout_ticks.clone())
         } else {
             usize::MAX
         };
@@ -297,7 +306,7 @@ pub struct TestSchedulerConfig {
     pub seed: u64,
     pub randomize_order: bool,
     pub allow_parking: bool,
-    pub max_timeout_ticks: usize,
+    pub timeout_ticks: RangeInclusive<usize>,
 }
 
 impl TestSchedulerConfig {
@@ -315,7 +324,7 @@ impl Default for TestSchedulerConfig {
             seed: 0,
             randomize_order: true,
             allow_parking: false,
-            max_timeout_ticks: 1000,
+            timeout_ticks: 0..=1000,
         }
     }
 }
@@ -342,7 +351,7 @@ struct SchedulerState {
     blocked_sessions: Vec<SessionId>,
     randomize_order: bool,
     allow_parking: bool,
-    max_timeout_ticks: usize,
+    timeout_ticks: RangeInclusive<usize>,
     next_session_id: SessionId,
     next_trace_id: TraceId,
     pending_traces: BTreeMap<TraceId, Backtrace>,

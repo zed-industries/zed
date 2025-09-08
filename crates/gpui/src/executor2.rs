@@ -212,22 +212,19 @@ impl BackgroundExecutor {
     /// do take real async time to run.
     #[cfg(any(test, feature = "test-support"))]
     pub fn allow_parking(&self) {
-        // self.0.allow_parking()
-        todo!()
+        self.0.scheduler().as_test().allow_parking();
     }
 
     /// undoes the effect of [`Self::allow_parking`].
     #[cfg(any(test, feature = "test-support"))]
     pub fn forbid_parking(&self) {
-        // self.0.forbid_parking()
-        todo!()
+        self.0.scheduler().as_test().forbid_parking();
     }
 
     /// in tests, returns the rng used by the dispatcher and seeded by the `SEED` environment variable
     #[cfg(any(test, feature = "test-support"))]
     pub fn rng(&self) -> StdRng {
-        // self.0.rng()
-        todo!()
+        self.scheduler().as_test().rng().lock().clone()
     }
 
     /// How many CPUs are available for this executor.
@@ -242,8 +239,7 @@ impl BackgroundExecutor {
     #[cfg(any(test, feature = "test-support"))]
     /// in tests, control the number of ticks that `block_with_timeout` will run before timing out.
     pub fn set_block_on_ticks(&self, range: std::ops::RangeInclusive<usize>) {
-        // self.0.set_block_on_ticks(range)
-        todo!()
+        self.0.scheduler().as_test().set_timeout_ticks(range)
     }
 }
 
