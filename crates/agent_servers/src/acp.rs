@@ -183,30 +183,36 @@ impl AgentConnection for AcpConnection {
         let sessions = self.sessions.clone();
         let cwd = cwd.to_path_buf();
         let context_server_store = project.read(cx).context_server_store().read(cx);
-        // FIXME don't pass mcp servers in the remote case (since they only run locally, right?)
-        let mcp_servers = context_server_store
-            .configured_server_ids()
-            .iter()
-            .filter_map(|id| {
-                let configuration = context_server_store.configuration_for_server(id)?;
-                let command = configuration.command();
-                Some(acp::McpServer {
-                    name: id.0.to_string(),
-                    command: command.path.clone(),
-                    args: command.args.clone(),
-                    env: if let Some(env) = command.env.as_ref() {
-                        env.iter()
-                            .map(|(name, value)| acp::EnvVariable {
-                                name: name.clone(),
-                                value: value.clone(),
-                            })
-                            .collect()
-                    } else {
-                        vec![]
-                    },
+        let mcp_servers = if project.read(cx).is_local() {
+            context_server_store
+                .configured_server_ids()
+                .iter()
+                .filter_map(|id| {
+                    let configuration = context_server_store.configuration_for_server(id)?;
+                    let command = configuration.command();
+                    Some(acp::McpServer {
+                        name: id.0.to_string(),
+                        command: command.path.clone(),
+                        args: command.args.clone(),
+                        env: if let Some(env) = command.env.as_ref() {
+                            env.iter()
+                                .map(|(name, value)| acp::EnvVariable {
+                                    name: name.clone(),
+                                    value: value.clone(),
+                                })
+                                .collect()
+                        } else {
+                            vec![]
+                        },
+                    })
                 })
-            })
-            .collect();
+                .collect()
+        } else {
+            // In SSH projects, the external agent is running on the remote
+            // machine, and currently we only run MCP servers on the local
+            // machine. So don't pass any MCP servers to the agent in that case.
+            Vec::new()
+        };
 
         cx.spawn(async move |cx| {
             let response = conn
