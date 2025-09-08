@@ -317,7 +317,6 @@ pub struct AllLanguageSettingsContent {
     pub defaults: LanguageSettingsContent,
     /// The settings for individual languages.
     #[serde(default)]
-    #[settings_ui(skip)]
     pub languages: LanguageToSettingsMap,
     /// Settings for associating file extensions and filenames
     /// with languages.
@@ -330,6 +329,36 @@ pub struct AllLanguageSettingsContent {
 /// names in the keys.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct LanguageToSettingsMap(pub HashMap<LanguageName, LanguageSettingsContent>);
+
+impl SettingsUi for LanguageToSettingsMap {
+    fn settings_ui_item() -> settings::SettingsUiItem {
+        settings::SettingsUiItem::DynamicMap(settings::SettingsUiItemDynamicMap {
+            item: LanguageSettingsContent::settings_ui_item,
+            determine_items: |settings_value, cx| {
+                use settings::SettingsUiEntryMetaData;
+
+                // todo(settings_ui): We should be using a global LanguageRegistry, but it's not implemented yet
+                _ = cx;
+
+                let Some(settings_language_map) = settings_value.as_object() else {
+                    return Vec::new();
+                };
+                let mut languages = Vec::with_capacity(settings_language_map.len());
+
+                for language_name in settings_language_map.keys().map(gpui::SharedString::from) {
+                    languages.push(SettingsUiEntryMetaData {
+                        title: language_name.clone(),
+                        path: language_name,
+                        // todo(settings_ui): Implement documentation for each language
+                        // ideally based on the language's official docs from extension or builtin info
+                        documentation: None,
+                    });
+                }
+                return languages;
+            },
+        })
+    }
+}
 
 inventory::submit! {
     ParameterizedJsonSchema {
@@ -431,11 +460,13 @@ fn default_3() -> usize {
 
 /// The settings for a particular language.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, SettingsUi)]
+#[settings_ui(group = "Default")]
 pub struct LanguageSettingsContent {
     /// How many columns a tab should occupy.
     ///
     /// Default: 4
     #[serde(default)]
+    #[settings_ui(skip)]
     pub tab_size: Option<NonZeroU32>,
     /// Whether to indent lines using tab characters, as opposed to multiple
     /// spaces.
@@ -466,6 +497,7 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: []
     #[serde(default)]
+    #[settings_ui(skip)]
     pub wrap_guides: Option<Vec<usize>>,
     /// Indent guide related settings.
     #[serde(default)]
@@ -516,6 +548,7 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: ["..."]
     #[serde(default)]
+    #[settings_ui(skip)]
     pub language_servers: Option<Vec<String>>,
     /// Controls where the `editor::Rewrap` action is allowed for this language.
     ///
@@ -538,6 +571,7 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: []
     #[serde(default)]
+    #[settings_ui(skip)]
     pub edit_predictions_disabled_in: Option<Vec<String>>,
     /// Whether to show tabs and spaces in the editor.
     #[serde(default)]
@@ -577,6 +611,7 @@ pub struct LanguageSettingsContent {
     /// These are not run if formatting is off.
     ///
     /// Default: {} (or {"source.organizeImports": true} for Go).
+    #[settings_ui(skip)]
     pub code_actions_on_format: Option<HashMap<String, bool>>,
     /// Whether to perform linked edits of associated ranges, if the language server supports it.
     /// For example, when editing opening <html> tag, the contents of the closing </html> tag will be edited as well.
@@ -610,11 +645,14 @@ pub struct LanguageSettingsContent {
     /// Preferred debuggers for this language.
     ///
     /// Default: []
+    #[settings_ui(skip)]
     pub debuggers: Option<Vec<String>>,
 }
 
 /// The behavior of `editor::Rewrap`.
-#[derive(Debug, PartialEq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, PartialEq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, SettingsUi,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum RewrapBehavior {
     /// Only rewrap within comments.
@@ -696,7 +734,7 @@ pub enum SoftWrap {
 }
 
 /// Controls the behavior of formatting files when they are saved.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, SettingsUi)]
 pub enum FormatOnSave {
     /// Files should be formatted on save.
     On,
@@ -795,7 +833,7 @@ impl<'de> Deserialize<'de> for FormatOnSave {
 }
 
 /// Controls how whitespace should be displayedin the editor.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi)]
 #[serde(rename_all = "snake_case")]
 pub enum ShowWhitespaceSetting {
     /// Draw whitespace only for the selected text.
@@ -816,7 +854,7 @@ pub enum ShowWhitespaceSetting {
 }
 
 /// Controls which formatter should be used when formatting code.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, SettingsUi)]
 pub enum SelectedFormatter {
     /// Format files using Zed's Prettier integration (if applicable),
     /// or falling back to formatting via language server.
@@ -1012,7 +1050,7 @@ pub enum IndentGuideBackgroundColoring {
 }
 
 /// The settings for inlay hints.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, SettingsUi)]
 pub struct InlayHintSettings {
     /// Global switch to toggle hints on and off.
     ///
@@ -1079,7 +1117,7 @@ fn scroll_debounce_ms() -> u64 {
 }
 
 /// The task settings for a particular language.
-#[derive(Debug, Clone, Deserialize, PartialEq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Serialize, JsonSchema, SettingsUi)]
 pub struct LanguageTaskConfig {
     /// Extra task variables to set for a particular language.
     #[serde(default)]
@@ -1622,7 +1660,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
 /// Allows to enable/disable formatting with Prettier
 /// and configure default Prettier, used when no project-level Prettier installation is found.
 /// Prettier formatting is disabled by default.
-#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, SettingsUi)]
 pub struct PrettierSettings {
     /// Enables or disables formatting with Prettier for a given language.
     #[serde(default)]
@@ -1643,7 +1681,7 @@ pub struct PrettierSettings {
     pub options: HashMap<String, serde_json::Value>,
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, SettingsUi)]
 pub struct JsxTagAutoCloseSettings {
     /// Enables or disables auto-closing of JSX tags.
     #[serde(default)]

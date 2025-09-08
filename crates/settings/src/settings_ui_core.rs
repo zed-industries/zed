@@ -1,8 +1,11 @@
-use std::any::TypeId;
+use std::{
+    any::TypeId,
+    num::{NonZeroU32, NonZeroUsize},
+};
 
 use anyhow::Context as _;
 use fs::Fs;
-use gpui::{AnyElement, App, AppContext as _, ReadGlobal as _, Window};
+use gpui::{AnyElement, App, AppContext as _, ReadGlobal as _, SharedString, Window};
 use smallvec::SmallVec;
 
 use crate::SettingsStore;
@@ -99,9 +102,20 @@ impl<T: serde::Serialize> SettingsValue<T> {
     }
 }
 
-pub struct SettingsUiItemDynamic {
+pub struct SettingsUiItemUnion {
     pub options: Vec<SettingsUiEntry>,
     pub determine_option: fn(&serde_json::Value, &App) -> usize,
+}
+
+pub struct SettingsUiEntryMetaData {
+    pub title: SharedString,
+    pub path: SharedString,
+    pub documentation: Option<SharedString>,
+}
+
+pub struct SettingsUiItemDynamicMap {
+    pub item: fn() -> SettingsUiItem,
+    pub determine_items: fn(&serde_json::Value, &App) -> Vec<SettingsUiEntryMetaData>,
 }
 
 pub struct SettingsUiItemGroup {
@@ -111,7 +125,8 @@ pub struct SettingsUiItemGroup {
 pub enum SettingsUiItem {
     Group(SettingsUiItemGroup),
     Single(SettingsUiItemSingle),
-    Dynamic(SettingsUiItemDynamic),
+    Union(SettingsUiItemUnion),
+    DynamicMap(SettingsUiItemDynamicMap),
     None,
 }
 
@@ -134,6 +149,7 @@ pub enum NumType {
     U32 = 1,
     F32 = 2,
     USIZE = 3,
+    U32NONZERO = 4,
 }
 
 pub static NUM_TYPE_NAMES: std::sync::LazyLock<[&'static str; NumType::COUNT]> =
@@ -151,6 +167,7 @@ impl NumType {
             NumType::U32 => TypeId::of::<u32>(),
             NumType::F32 => TypeId::of::<f32>(),
             NumType::USIZE => TypeId::of::<usize>(),
+            NumType::U32NONZERO => TypeId::of::<NonZeroU32>(),
         }
     }
 
@@ -160,6 +177,7 @@ impl NumType {
             NumType::U32 => std::any::type_name::<u32>(),
             NumType::F32 => std::any::type_name::<f32>(),
             NumType::USIZE => std::any::type_name::<usize>(),
+            NumType::U32NONZERO => std::any::type_name::<NonZeroU32>(),
         }
     }
 }
@@ -185,3 +203,4 @@ numeric_stepper_for_num_type!(u32, U32);
 // todo(settings_ui) is there a better ui for f32?
 numeric_stepper_for_num_type!(f32, F32);
 numeric_stepper_for_num_type!(usize, USIZE);
+numeric_stepper_for_num_type!(NonZeroUsize, U32NONZERO);

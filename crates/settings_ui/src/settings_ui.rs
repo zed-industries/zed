@@ -1,6 +1,7 @@
 mod appearance_settings_controls;
 
 use std::any::TypeId;
+use std::num::NonZeroU32;
 use std::ops::{Not, Range};
 
 use anyhow::Context as _;
@@ -9,8 +10,9 @@ use editor::EditorSettingsControls;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
 use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, ReadGlobal, ScrollHandle, actions};
 use settings::{
-    NumType, SettingsStore, SettingsUiEntry, SettingsUiItem, SettingsUiItemDynamic,
-    SettingsUiItemGroup, SettingsUiItemSingle, SettingsValue,
+    NumType, SettingsStore, SettingsUiEntry, SettingsUiEntryMetaData, SettingsUiItem,
+    SettingsUiItemDynamicMap, SettingsUiItemGroup, SettingsUiItemSingle, SettingsUiItemUnion,
+    SettingsValue,
 };
 use smallvec::SmallVec;
 use ui::{NumericStepper, SwitchField, ToggleButtonGroup, ToggleButtonSimple, prelude::*};
@@ -154,6 +156,10 @@ struct UiEntry {
     /// For dynamic items this is a way to select a value from a list of values
     /// this is always none for non-dynamic items
     select_descendant: Option<fn(&serde_json::Value, &App) -> usize>,
+    generate_items: Option<(
+        SettingsUiItem,
+        fn(&serde_json::Value, &App) -> Vec<SettingsUiEntryMetaData>,
+    )>,
 }
 
 impl UiEntry {
@@ -202,6 +208,7 @@ fn build_tree_item(
         render: None,
         next_sibling: None,
         select_descendant: None,
+        generate_items: None,
     });
     if let Some(prev_index) = prev_index {
         tree[prev_index].next_sibling = Some(index);
@@ -222,7 +229,7 @@ fn build_tree_item(
         SettingsUiItem::Single(item) => {
             tree[index].render = Some(item);
         }
-        SettingsUiItem::Dynamic(SettingsUiItemDynamic {
+        SettingsUiItem::Union(SettingsUiItemUnion {
             options,
             determine_option,
         }) => {
@@ -237,6 +244,12 @@ fn build_tree_item(
                 build_tree_item(tree, option, depth + 1, prev_index);
                 tree[index].total_descendant_range.end = tree.len();
             }
+        }
+        SettingsUiItem::DynamicMap(SettingsUiItemDynamicMap {
+            item: generate_settings_ui_item,
+            determine_items,
+        }) => {
+            tree[index].generate_items = Some((generate_settings_ui_item(), determine_items));
         }
         SettingsUiItem::None => {
             return;
@@ -398,8 +411,12 @@ fn render_content(
             if let Some(descendant_index) = selected_descendant {
                 element = render_recursive(&tree, descendant_index, path, element, window, cx);
             }
-        }
-        if let Some(child_render) = child.render.as_ref() {
+        } else if let Some((_, generate_items)) = child.generate_items.as_ref() {
+            let generated_items = generate_items(settings_value.read(), cx);
+            for item in generated_items {
+                element = element.child(Label::new(item.title).size(LabelSize::Large));
+            }
+        } else if let Some(child_render) = child.render.as_ref() {
             element = element.child(div().child(render_item_single(
                 settings_value,
                 child_render,
@@ -577,8 +594,8 @@ fn render_any_numeric_stepper(
     match num_type {
         NumType::U64 => render_numeric_stepper::<u64>(
             downcast_any_item(settings_value),
-            u64::saturating_sub,
-            u64::saturating_add,
+            |n| u64::saturating_sub(n, 1),
+            |n| u64::saturating_add(n, 1),
             |n| {
                 serde_json::Number::try_from(n)
                     .context("Failed to convert u64 to serde_json::Number")
@@ -588,8 +605,8 @@ fn render_any_numeric_stepper(
         ),
         NumType::U32 => render_numeric_stepper::<u32>(
             downcast_any_item(settings_value),
-            u32::saturating_sub,
-            u32::saturating_add,
+            |n| u32::saturating_sub(n, 1),
+            |n| u32::saturating_add(n, 1),
             |n| {
                 serde_json::Number::try_from(n)
                     .context("Failed to convert u32 to serde_json::Number")
@@ -599,8 +616,8 @@ fn render_any_numeric_stepper(
         ),
         NumType::F32 => render_numeric_stepper::<f32>(
             downcast_any_item(settings_value),
-            |a, b| a - b,
-            |a, b| a + b,
+            |a| a - 1.0,
+            |a| a + 1.0,
             |n| {
                 serde_json::Number::from_f64(n as f64)
                     .context("Failed to convert f32 to serde_json::Number")
@@ -610,10 +627,21 @@ fn render_any_numeric_stepper(
         ),
         NumType::USIZE => render_numeric_stepper::<usize>(
             downcast_any_item(settings_value),
-            usize::saturating_sub,
-            usize::saturating_add,
+            |n| usize::saturating_sub(n, 1),
+            |n| usize::saturating_add(n, 1),
             |n| {
                 serde_json::Number::try_from(n)
+                    .context("Failed to convert usize to serde_json::Number")
+            },
+            window,
+            cx,
+        ),
+        NumType::U32NONZERO => render_numeric_stepper::<NonZeroU32>(
+            downcast_any_item(settings_value),
+            |a| NonZeroU32::new(u32::saturating_sub(a.get(), 1)).unwrap_or(NonZeroU32::MIN),
+            |a| NonZeroU32::new(u32::saturating_add(a.get(), 1)).unwrap_or(NonZeroU32::MAX),
+            |n| {
+                serde_json::Number::try_from(n.get())
                     .context("Failed to convert usize to serde_json::Number")
             },
             window,
@@ -622,12 +650,10 @@ fn render_any_numeric_stepper(
     }
 }
 
-fn render_numeric_stepper<
-    T: serde::de::DeserializeOwned + std::fmt::Display + Copy + From<u8> + 'static,
->(
+fn render_numeric_stepper<T: serde::de::DeserializeOwned + std::fmt::Display + Copy + 'static>(
     value: SettingsValue<T>,
-    saturating_sub: fn(T, T) -> T,
-    saturating_add: fn(T, T) -> T,
+    saturating_sub_1: fn(T) -> T,
+    saturating_add_1: fn(T) -> T,
     to_serde_number: fn(T) -> anyhow::Result<serde_json::Number>,
     _window: &mut Window,
     _cx: &mut App,
@@ -642,7 +668,7 @@ fn render_numeric_stepper<
         {
             let path = value.path.clone();
             move |_, _, cx| {
-                let Some(number) = to_serde_number(saturating_sub(num, 1.into())).ok() else {
+                let Some(number) = to_serde_number(saturating_sub_1(num)).ok() else {
                     return;
                 };
                 let new_value = serde_json::Value::Number(number);
@@ -650,7 +676,7 @@ fn render_numeric_stepper<
             }
         },
         move |_, _, cx| {
-            let Some(number) = to_serde_number(saturating_add(num, 1.into())).ok() else {
+            let Some(number) = to_serde_number(saturating_add_1(num)).ok() else {
                 return;
             };
 
