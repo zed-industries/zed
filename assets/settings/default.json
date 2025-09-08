@@ -1689,6 +1689,11 @@
       "allow_rewrap": "anywhere"
     },
     "Python": {
+      "formatter": {
+        "language_server": {
+          "name": "ruff"
+        }
+      },
       "debuggers": ["Debugpy"]
     },
     "Ruby": {

@@ -1657,6 +1657,165 @@ impl LspAdapter for BasedPyrightLspAdapter {
     }
 }
 
+pub(crate) struct RuffLspAdapter {
+    python_venv_base: OnceCell<Result<Arc<Path>, String>>,
+}
+
+impl RuffLspAdapter {
+    const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("ruff");
+    const BINARY_NAME: &'static str = "ruff";
+
+    pub(crate) fn new() -> Self {
+        Self {
+            python_venv_base: OnceCell::new(),
+        }
+    }
+
+    async fn ensure_venv(delegate: &dyn LspAdapterDelegate) -> Result<Arc<Path>> {
+        let python_path = Self::find_base_python(delegate)
+            .await
+            .context("Could not find Python installation for ruff")?;
+        let work_dir = delegate
+            .language_server_download_dir(&Self::SERVER_NAME)
+            .await
+            .context("Could not get working directory for ruff")?;
+        let mut path = PathBuf::from(work_dir.as_ref());
+        path.push("ruff-venv");
+        if !path.exists() {
+            util::command::new_smol_command(python_path)
+                .arg("-m")
+                .arg("venv")
+                .arg("ruff-venv")
+                .current_dir(work_dir)
+                .spawn()?
+                .output()
+                .await?;
+        }
+
+        Ok(path.into())
+    }
+
+    // Find "baseline", user python version from which we'll create our own venv.
+    async fn find_base_python(delegate: &dyn LspAdapterDelegate) -> Option<PathBuf> {
+        for path in ["python3", "python"] {
+            if let Some(path) = delegate.which(path.as_ref()).await {
+                return Some(path);
+            }
+        }
+        None
+    }
+
+    async fn base_venv(&self, delegate: &dyn LspAdapterDelegate) -> Result<Arc<Path>, String> {
+        self.python_venv_base
+            .get_or_init(move || async move {
+                Self::ensure_venv(delegate)
+                    .await
+                    .map_err(|e| format!("{e}"))
+            })
+            .await
+            .clone()
+    }
+}
+
+#[async_trait(?Send)]
+impl LspAdapter for RuffLspAdapter {
+    fn name(&self) -> LanguageServerName {
+        Self::SERVER_NAME
+    }
+
+    async fn initialization_options(
+        self: Arc<Self>,
+        _: &dyn Fs,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<Value>> {
+        Ok(None)
+    }
+
+    async fn check_if_user_installed(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        toolchain: Option<Toolchain>,
+        _: &AsyncApp,
+    ) -> Option<LanguageServerBinary> {
+        if let Some(bin) = delegate.which(Self::BINARY_NAME.as_ref()).await {
+            let env = delegate.shell_env().await;
+            Some(LanguageServerBinary {
+                path: bin,
+                env: Some(env),
+                arguments: vec!["server".into()],
+            })
+        } else {
+            let path = Path::new(toolchain?.path.as_ref())
+                .parent()?
+                .join(Self::BINARY_NAME);
+            path.exists().then(|| LanguageServerBinary {
+                path,
+                arguments: vec!["server".into()],
+                env: None,
+            })
+        }
+    }
+
+    async fn fetch_latest_server_version(
+        &self,
+        _: &dyn LspAdapterDelegate,
+        _: &AsyncApp,
+    ) -> Result<Box<dyn 'static + Any + Send>> {
+        Ok(Box::new(()) as Box<_>)
+    }
+
+    async fn fetch_server_binary(
+        &self,
+        _latest_version: Box<dyn 'static + Send + Any>,
+        _container_dir: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Result<LanguageServerBinary> {
+        let venv = self.base_venv(delegate).await.map_err(|e| anyhow!(e))?;
+        let pip_path = venv.join(BINARY_DIR).join("pip3");
+        ensure!(
+            util::command::new_smol_command(pip_path.as_path())
+                .arg("install")
+                .arg("ruff")
+                .arg("-U")
+                .output()
+                .await?
+                .status
+                .success(),
+            "ruff installation failed"
+        );
+        let ruff = venv.join(BINARY_DIR).join(Self::BINARY_NAME);
+        Ok(LanguageServerBinary {
+            path: ruff,
+            env: None,
+            arguments: vec!["server".into()],
+        })
+    }
+
+    async fn cached_server_binary(
+        &self,
+        _container_dir: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
+        let venv = self.base_venv(delegate).await.ok()?;
+        let ruff = venv.join(BINARY_DIR).join(Self::BINARY_NAME);
+        Some(LanguageServerBinary {
+            path: ruff,
+            env: None,
+            arguments: vec!["server".into()],
+        })
+    }
+
+    async fn workspace_configuration(
+        self: Arc<Self>,
+        _: &dyn Fs,
+        _adapter: &Arc<dyn LspAdapterDelegate>,
+        _toolchain: Option<Toolchain>,
+        _cx: &mut AsyncApp,
+    ) -> Result<Value> {
+        Ok(json!({}))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use gpui::{AppContext as _, BorrowAppContext, Context, TestAppContext};
