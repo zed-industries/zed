@@ -7,9 +7,7 @@ use std::{
     fmt::Debug,
     marker::PhantomData,
     mem,
-    num::NonZeroUsize,
     pin::Pin,
-    sync::atomic::{AtomicUsize, Ordering::SeqCst},
     task::{Context, Poll},
     time::{Duration, Instant},
 };
@@ -81,25 +79,6 @@ impl<T> Future for Task<T> {
     }
 }
 
-/// A task label is an opaque identifier that you can use to
-/// refer to a task in tests.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct TaskLabel(NonZeroUsize);
-
-impl Default for TaskLabel {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl TaskLabel {
-    /// Construct a new task label.
-    pub fn new() -> Self {
-        static NEXT_TASK_LABEL: AtomicUsize = AtomicUsize::new(1);
-        Self(NEXT_TASK_LABEL.fetch_add(1, SeqCst).try_into().unwrap())
-    }
-}
-
 type AnyLocalFuture<R> = Pin<Box<dyn 'static + Future<Output = R>>>;
 
 type AnyFuture<R> = Pin<Box<dyn 'static + Send + Future<Output = R>>>;
@@ -127,20 +106,6 @@ impl BackgroundExecutor {
         }
 
         inner(&self.0, Box::pin(future))
-    }
-
-    /// Enqueues the given future to be run to completion on a background thread.
-    /// The given label can be used to control the priority of the task in tests.
-    pub fn spawn_labeled<R>(
-        &self,
-        _label: TaskLabel,
-        future: impl Future<Output = R> + Send + 'static,
-    ) -> Task<R>
-    where
-        R: Send + 'static,
-    {
-        // todo!("Solve deprioritization in project_tests.rs")
-        Task(self.0.spawn(future))
     }
 
     /// Scoped lets you start a number of tasks and waits
@@ -184,13 +149,6 @@ impl BackgroundExecutor {
     #[cfg(any(test, feature = "test-support"))]
     pub fn simulate_random_delay(&self) -> Yield {
         self.scheduler().as_test().yield_random()
-    }
-
-    /// in tests, indicate that a given task from `spawn_labeled` should run after everything else
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn deprioritize(&self, _task_label: TaskLabel) {
-        // self.0.deprioritize(task_label)
-        todo!("Fuzz test what's calling this")
     }
 
     /// in tests, move time forward. This does not run any tasks, but does make `timer`s ready.

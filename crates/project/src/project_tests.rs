@@ -6,8 +6,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use buffer_diff::{
-    BufferDiffEvent, CALCULATE_DIFF_TASK, DiffHunkSecondaryStatus, DiffHunkStatus,
-    DiffHunkStatusKind, assert_hunks,
+    BufferDiffEvent, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind, assert_hunks,
 };
 use fs::FakeFs;
 use futures::{StreamExt, future};
@@ -3917,7 +3916,7 @@ async fn test_save_file_spawns_language_server(cx: &mut gpui::TestAppContext) {
     });
 }
 
-#[gpui::test(iterations = 30)]
+#[gpui::test(iterations = 100)]
 async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -3936,10 +3935,6 @@ async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext)
         .update(cx, |p, cx| p.open_local_buffer(path!("/dir/file1"), cx))
         .await
         .unwrap();
-
-    // Simulate buffer diffs being slow, so that they don't complete before
-    // the next file change occurs.
-    cx.executor().deprioritize(*language::BUFFER_DIFF_TASK);
 
     // Change the buffer's file on disk, and then wait for the file change
     // to be detected by the worktree, so that the buffer starts reloading.
@@ -3972,7 +3967,7 @@ async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext)
     });
 }
 
-#[gpui::test(iterations = 30)]
+#[gpui::test(iterations = 100)]
 async fn test_edit_buffer_while_it_reloads(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -3991,10 +3986,6 @@ async fn test_edit_buffer_while_it_reloads(cx: &mut gpui::TestAppContext) {
         .update(cx, |p, cx| p.open_local_buffer(path!("/dir/file1"), cx))
         .await
         .unwrap();
-
-    // Simulate buffer diffs being slow, so that they don't complete before
-    // the next file change occurs.
-    cx.executor().deprioritize(*language::BUFFER_DIFF_TASK);
 
     // Change the buffer's file on disk, and then wait for the file change
     // to be detected by the worktree, so that the buffer starts reloading.
@@ -7650,20 +7641,11 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
     });
 }
 
-#[gpui::test(iterations = 25)]
-async fn test_staging_random_hunks(
-    mut rng: StdRng,
-    executor: BackgroundExecutor,
-    cx: &mut gpui::TestAppContext,
-) {
+#[gpui::test(iterations = 100)]
+async fn test_staging_random_hunks(mut rng: StdRng, cx: &mut gpui::TestAppContext) {
     let operations = env::var("OPERATIONS")
         .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
         .unwrap_or(20);
-
-    // Try to induce races between diff recalculation and index writes.
-    if rng.random_bool(0.5) {
-        executor.deprioritize(*CALCULATE_DIFF_TASK);
-    }
 
     use DiffHunkSecondaryStatus::*;
     init_test(cx);

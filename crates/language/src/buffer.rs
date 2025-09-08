@@ -25,7 +25,7 @@ use fs::MTime;
 use futures::channel::oneshot;
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, HighlightStyle, SharedString, StyledText,
-    Task, TaskLabel, TextStyle,
+    Task, TextStyle,
 };
 use lsp::{LanguageServerId, NumberOrString};
 use parking_lot::Mutex;
@@ -49,7 +49,7 @@ use std::{
     ops::{Deref, Range},
     path::{Path, PathBuf},
     rc,
-    sync::{Arc, LazyLock},
+    sync::Arc,
     time::{Duration, Instant},
     vec,
 };
@@ -71,10 +71,6 @@ use util::{RangeExt, debug_panic, maybe};
 pub use {tree_sitter_python, tree_sitter_rust, tree_sitter_typescript};
 
 pub use lsp::DiagnosticSeverity;
-
-/// A label for the background task spawned by the buffer to compute
-/// a diff against the contents of its file.
-pub static BUFFER_DIFF_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
 
 /// Indicate whether a [`Buffer`] has permissions to edit.
 #[derive(PartialEq, Clone, Copy, Debug)]
@@ -1844,18 +1840,17 @@ impl Buffer {
     pub fn diff(&self, mut new_text: String, cx: &App) -> Task<Diff> {
         let old_text = self.as_rope().clone();
         let base_version = self.version();
-        cx.background_executor()
-            .spawn_labeled(*BUFFER_DIFF_TASK, async move {
-                let old_text = old_text.to_string();
-                let line_ending = LineEnding::detect(&new_text);
-                LineEnding::normalize(&mut new_text);
-                let edits = text_diff(&old_text, &new_text);
-                Diff {
-                    base_version,
-                    line_ending,
-                    edits,
-                }
-            })
+        cx.background_executor().spawn(async move {
+            let old_text = old_text.to_string();
+            let line_ending = LineEnding::detect(&new_text);
+            LineEnding::normalize(&mut new_text);
+            let edits = text_diff(&old_text, &new_text);
+            Diff {
+                base_version,
+                line_ending,
+                edits,
+            }
+        })
     }
 
     /// Spawns a background task that searches the buffer for any whitespace

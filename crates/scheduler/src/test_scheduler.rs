@@ -115,7 +115,12 @@ impl TestScheduler {
     }
 
     pub fn yield_random(&self) -> Yield {
-        Yield(self.rng.lock().random_range(0..20))
+        let rng = &mut *self.rng.lock();
+        if rng.random_bool(0.1) {
+            Yield(rng.random_range(10..20))
+        } else {
+            Yield(rng.random_range(0..2))
+        }
     }
 
     pub fn run(&self) {
@@ -266,8 +271,9 @@ impl Scheduler for TestScheduler {
 
     fn schedule_background(&self, runnable: Runnable) {
         let mut state = self.state.lock();
+        let rng = &mut *self.rng.lock();
         let ix = if state.randomize_order {
-            self.rng.lock().random_range(0..=state.runnables.len())
+            rng.random_range(0..=state.runnables.len())
         } else {
             state.runnables.len()
         };
