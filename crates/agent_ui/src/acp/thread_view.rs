@@ -69,7 +69,7 @@ use crate::ui::{
 use crate::{
     AgentDiffPane, AgentPanel, ContinueThread, ContinueWithBurnMode, CycleModeSelector,
     ExpandMessageEditor, Follow, KeepAll, OpenAgentDiff, OpenHistory, RejectAll, ToggleBurnMode,
-    ToggleProfileSelector,
+    ToggleModeSelector, ToggleProfileSelector,
 };
 
 pub const MIN_EDITOR_LINES: usize = 4;
@@ -3753,6 +3753,11 @@ impl AcpThreadView {
             .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
                 if let Some(profile_selector) = this.profile_selector.as_ref() {
                     profile_selector.read(cx).menu_handle().toggle(window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &ToggleModeSelector, window, cx| {
+                if let Some(mode_selector) = this.mode_selector.as_ref() {
+                    mode_selector.read(cx).menu_handle().toggle(window, cx);
                 }
             }))
             .on_action(cx.listener(|this, _: &CycleModeSelector, window, cx| {

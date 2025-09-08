@@ -74,6 +74,8 @@ actions!(
         DeleteRecentlyOpenThread,
         /// Toggles the profile selector for switching between agent profiles.
         ToggleProfileSelector,
+        /// Toggles the mode selector menu for switching between session modes.
+        ToggleModeSelector,
         /// Cycles through available session modes.
         CycleModeSelector,
         /// Removes all added context from the current conversation.
