@@ -15913,7 +15913,7 @@ async fn test_following(cx: &mut TestAppContext) {
     let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
 
     let buffer = project.update(cx, |project, cx| {
-        let buffer = project.create_local_buffer(&sample_text(16, 8, 'a'), None, cx);
+        let buffer = project.create_local_buffer(&sample_text(16, 8, 'a'), None, false, cx);
         cx.new(|cx| MultiBuffer::singleton(buffer, cx))
     });
     let leader = cx.add_window(|window, cx| build_editor(buffer.clone(), window, cx));
@@ -16165,8 +16165,8 @@ async fn test_following_with_multiple_excerpts(cx: &mut TestAppContext) {
 
     let (buffer_1, buffer_2) = project.update(cx, |project, cx| {
         (
-            project.create_local_buffer("abc\ndef\nghi\njkl\n", None, cx),
-            project.create_local_buffer("mno\npqr\nstu\nvwx\n", None, cx),
+            project.create_local_buffer("abc\ndef\nghi\njkl\n", None, false, cx),
+            project.create_local_buffer("mno\npqr\nstu\nvwx\n", None, false, cx),
         )
     });
 

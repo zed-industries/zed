@@ -296,7 +296,7 @@ impl LanguageServerState {
                                 .update(cx, |workspace, cx| {
                                     workspace
                                         .project()
-                                        .update(cx, |project, cx| project.create_buffer(cx))
+                                        .update(cx, |project, cx| project.create_buffer(false, cx))
                                 })
                                 .ok()
                             else {
