@@ -429,23 +429,36 @@ impl Default for TextStyle {
 
 impl TextStyle {
     /// Create a new text style with the given highlighting applied.
-    pub fn highlight(self, style: impl Into<HighlightStyle>) -> Self {
+    pub fn highlight(mut self, style: impl Into<HighlightStyle>) -> Self {
         let style = style.into();
-        Self {
-            font_weight: style.font_weight.unwrap_or(self.font_weight),
-            font_style: style.font_style.unwrap_or(self.font_style),
-            color: style.color.map_or(self.color, |color| {
-                let mut new_color = self.color.blend(color);
-                if let Some(fade_out) = style.fade_out {
-                    new_color.fade_out(fade_out);
-                }
-                new_color
-            }),
-            background_color: style.background_color.or(self.background_color),
-            underline: style.underline.or(self.underline),
-            strikethrough: style.strikethrough.or(self.strikethrough),
-            ..self
+        if let Some(weight) = style.font_weight {
+            self.font_weight = weight;
         }
+        if let Some(style) = style.font_style {
+            self.font_style = style;
+        }
+
+        if let Some(color) = style.color {
+            self.color = self.color.blend(color);
+        }
+
+        if let Some(factor) = style.fade_out {
+            self.color.fade_out(factor);
+        }
+
+        if let Some(background_color) = style.background_color {
+            self.background_color = Some(background_color);
+        }
+
+        if let Some(underline) = style.underline {
+            self.underline = Some(underline);
+        }
+
+        if let Some(strikethrough) = style.strikethrough {
+            self.strikethrough = Some(strikethrough);
+        }
+
+        self
     }
 
     /// Get the font configured for this text style.
