@@ -516,8 +516,10 @@ impl AgentConfiguration {
 
             let (plan_name, label_color, bg_color) = match plan {
                 Plan::ZedFree => ("Free", Color::Default, free_chip_bg),
-                Plan::ZedProTrial => ("Pro Trial", Color::Accent, pro_chip_bg),
-                Plan::ZedPro => ("Pro", Color::Accent, pro_chip_bg),
+                Plan::ZedProTrial | Plan::ZedProTrialV2 => {
+                    ("Pro Trial", Color::Accent, pro_chip_bg)
+                }
+                Plan::ZedPro | Plan::ZedProV2 => ("Pro", Color::Accent, pro_chip_bg),
             };
 
             Chip::new(plan_name.to_string())

@@ -82,8 +82,10 @@ pub enum Plan {
     ZedFree,
     #[serde(alias = "ZedPro")]
     ZedPro,
+    ZedProV2,
     #[serde(alias = "ZedProTrial")]
     ZedProTrial,
+    ZedProTrialV2,
 }
 
 impl FromStr for Plan {
@@ -327,6 +329,12 @@ mod tests {
 
         let plan = serde_json::from_value::<Plan>(json!("zed_pro_trial")).unwrap();
         assert_eq!(plan, Plan::ZedProTrial);
+
+        let plan = serde_json::from_value::<Plan>(json!("zed_pro_v2")).unwrap();
+        assert_eq!(plan, Plan::ZedProV2);
+
+        let plan = serde_json::from_value::<Plan>(json!("zed_pro_trial_v2")).unwrap();
+        assert_eq!(plan, Plan::ZedProTrialV2);
     }
 
     #[test]

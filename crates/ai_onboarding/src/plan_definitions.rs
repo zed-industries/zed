@@ -13,7 +13,7 @@ impl PlanDefinitions {
             .child(ListBulletItem::new("2,000 accepted edit predictions"))
     }
 
-    pub fn pro_trial(&self, period: bool) -> impl IntoElement {
+    pub fn pro_trial(&self, _is_v2: bool, period: bool) -> impl IntoElement {
         List::new()
             .child(ListBulletItem::new("150 prompts with Claude models"))
             .child(ListBulletItem::new(
@@ -26,7 +26,7 @@ impl PlanDefinitions {
             })
     }
 
-    pub fn pro_plan(&self, price: bool) -> impl IntoElement {
+    pub fn pro_plan(&self, _is_v2: bool, price: bool) -> impl IntoElement {
         List::new()
             .child(ListBulletItem::new("500 prompts with Claude models"))
             .child(ListBulletItem::new(
