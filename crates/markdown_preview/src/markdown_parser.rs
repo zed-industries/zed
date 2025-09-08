@@ -876,16 +876,16 @@ impl<'a> MarkdownParser<'a> {
             markup5ever_rcdom::NodeData::Text { contents } => {
                 let contents = SharedString::from(contents.borrow().to_string());
                 paragraph.push(MarkdownParagraphChunk::Text(ParsedMarkdownText {
-                    contents: contents.clone(),
+                    source_range,
                     regions: Vec::default(),
+                    contents: contents.clone(),
                     region_ranges: Vec::default(),
-                    source_range: source_range.clone(),
                     highlights: add_highlight_range(contents, std::mem::take(highlights)),
                 }));
             }
             markup5ever_rcdom::NodeData::Element { name, attrs, .. } => {
                 if local_name!("img") == name.local {
-                    if let Some(image) = self.extract_image(source_range.clone(), attrs) {
+                    if let Some(image) = self.extract_image(source_range, attrs) {
                         paragraph.push(MarkdownParagraphChunk::Image(image));
                     }
                 } else if local_name!("b") == name.local || local_name!("strong") == name.local {
