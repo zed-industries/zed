@@ -20,7 +20,6 @@ use std::{
         atomic::{AtomicBool, Ordering::SeqCst},
     },
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
-    thread,
     time::{Duration, Instant},
 };
 
@@ -28,8 +27,6 @@ pub struct TestScheduler {
     clock: Arc<TestClock>,
     rng: Arc<Mutex<StdRng>>,
     state: Arc<Mutex<SchedulerState>>,
-    pub thread_id: thread::ThreadId,
-    pub config: TestSchedulerConfig,
 }
 
 impl TestScheduler {
@@ -72,13 +69,12 @@ impl TestScheduler {
                 blocked_sessions: Vec::new(),
                 randomize_order: config.randomize_order,
                 allow_parking: config.allow_parking,
+                max_timeout_ticks: config.max_timeout_ticks,
                 next_session_id: SessionId(0),
                 pending_traces: BTreeMap::new(),
                 next_trace_id: TraceId(0),
             })),
-            thread_id: thread::current().id(),
             clock: Arc::new(TestClock::new()),
-            config,
         }
     }
 
@@ -191,7 +187,7 @@ impl Scheduler for TestScheduler {
         let max_ticks = if timeout.is_some() {
             self.rng
                 .lock()
-                .random_range(0..=self.config.max_timeout_ticks)
+                .random_range(0..=self.state.lock().max_timeout_ticks)
         } else {
             usize::MAX
         };
@@ -203,8 +199,13 @@ impl Scheduler for TestScheduler {
             };
 
             let mut stepped = None;
-            while self.rng.lock().random() && stepped.unwrap_or(true) {
-                *stepped.get_or_insert(false) |= self.step();
+            while self.rng.lock().random() {
+                let stepped = stepped.get_or_insert(false);
+                if self.step() {
+                    *stepped = true;
+                } else {
+                    break;
+                }
             }
 
             let stepped = stepped.unwrap_or(true);
@@ -341,6 +342,7 @@ struct SchedulerState {
     blocked_sessions: Vec<SessionId>,
     randomize_order: bool,
     allow_parking: bool,
+    max_timeout_ticks: usize,
     next_session_id: SessionId,
     next_trace_id: TraceId,
     pending_traces: BTreeMap<TraceId, Backtrace>,
