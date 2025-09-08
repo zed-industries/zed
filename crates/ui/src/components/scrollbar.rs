@@ -622,11 +622,9 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> ScrollbarState<S, T> {
     }
 
     fn set_offset(&mut self, offset: Point<Pixels>, cx: &mut Context<Self>) {
-        if self.scroll_handle.offset() != offset {
-            self.scroll_handle.set_offset(offset);
-            self.notify_parent(cx);
-            cx.notify();
-        }
+        self.scroll_handle.set_offset(offset);
+        self.notify_parent(cx);
+        cx.notify();
     }
 
     fn is_dragging(&self) -> bool {
