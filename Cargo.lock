@@ -9224,13 +9224,11 @@ dependencies = [
 name = "language_onboarding"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "db",
  "editor",
  "gpui",
  "project",
  "ui",
- "util",
  "workspace",
 ]
 

@@ -422,7 +422,7 @@ impl LanguageRegistry {
         let cached = CachedLspAdapter::new(adapter);
         state
             .lsp_adapters
-            .entry(language_name.clone())
+            .entry(language_name)
             .or_default()
             .push(cached.clone());
         state
