@@ -21,9 +21,11 @@ use settings::Settings;
 use smol::stream::StreamExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use ui::SharedString;
 use util::ResultExt;
 use futures::io::AsyncReadExt;
+use futures::FutureExt as _;
 
 const DEFAULT_UI_TEXT: &str = "Editing file";
 
@@ -372,8 +374,82 @@ impl AgentTool for EditFileTool {
                     })
                 });
 
-                (apply_task, events_rx)
+                // Morph timeout + fallback to legacy EditAgent path
+                let morph_start = Instant::now();
+                let mut apply_task_fut = apply_task.fuse();
+                let mut timeout_fut = cx
+                    .background_executor()
+                    .timer(Duration::from_secs(6))
+                    .fuse();
+
+                let morph_result: Option<Result<EditAgentOutput>> = futures::select_biased! {
+                    res = apply_task_fut => Some(res),
+                    _ = timeout_fut => None,
+                };
+
+                match morph_result {
+                    Some(Ok(result)) => {
+                        let latency_ms = morph_start.elapsed().as_millis();
+                        log::info!("morph_fast_apply used=true latency_ms={} fallback=false", latency_ms);
+                        // Emit a small UI note indicating Morph was used
+                        event_stream.update_fields(ToolCallUpdateFields {
+                            content: Some(vec![acp::ToolCallContent::Content {
+                                content: "Applied with Morph Fast Apply".into(),
+                            }]),
+                            ..Default::default()
+                        });
+                        (Task::ready(Ok(result)), events_rx)
+                    }
+                    Some(Err(err)) => {
+                        let latency_ms = morph_start.elapsed().as_millis();
+                        log::info!(
+                            "morph_fast_apply used=true latency_ms={} fallback=true reason=error: {}",
+                            latency_ms,
+                            err
+                        );
+                        // Fallback to legacy EditAgent path
+                        if matches!(input.mode, EditFileMode::Edit) {
+                            edit_agent.edit(
+                                buffer.clone(),
+                                input.display_description.clone(),
+                                &request,
+                                cx,
+                            )
+                        } else {
+                            edit_agent.overwrite(
+                                buffer.clone(),
+                                input.display_description.clone(),
+                                &request,
+                                cx,
+                            )
+                        }
+                    }
+                    None => {
+                        let latency_ms = morph_start.elapsed().as_millis();
+                        log::info!(
+                            "morph_fast_apply used=true latency_ms={} fallback=true reason=timeout",
+                            latency_ms
+                        );
+                        // Cancel Morph task by dropping its future and fallback to legacy
+                        if matches!(input.mode, EditFileMode::Edit) {
+                            edit_agent.edit(
+                                buffer.clone(),
+                                input.display_description.clone(),
+                                &request,
+                                cx,
+                            )
+                        } else {
+                            edit_agent.overwrite(
+                                buffer.clone(),
+                                input.display_description.clone(),
+                                &request,
+                                cx,
+                            )
+                        }
+                    }
+                }
             } else {
+                log::info!("morph_fast_apply used=false");
                 if matches!(input.mode, EditFileMode::Edit) {
                     edit_agent.edit(
                         buffer.clone(),
