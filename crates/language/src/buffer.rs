@@ -635,13 +635,13 @@ impl HighlightedTextBuilder {
             self.text.push_str(chunk.text);
             let end = self.text.len();
 
-            if let Some(mut highlight_style) = chunk
+            if let Some(highlight_style) = chunk
                 .syntax_highlight_id
                 .and_then(|id| id.style(syntax_theme))
             {
-                if let Some(override_style) = override_style {
-                    highlight_style.highlight(override_style);
-                }
+                let highlight_style = override_style.map_or(highlight_style, |override_style| {
+                    highlight_style.highlight(override_style)
+                });
                 self.highlights.push((start..end, highlight_style));
             } else if let Some(override_style) = override_style {
                 self.highlights.push((start..end, override_style));

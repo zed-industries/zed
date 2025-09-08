@@ -429,36 +429,23 @@ impl Default for TextStyle {
 
 impl TextStyle {
     /// Create a new text style with the given highlighting applied.
-    pub fn highlight(mut self, style: impl Into<HighlightStyle>) -> Self {
+    pub fn highlight(self, style: impl Into<HighlightStyle>) -> Self {
         let style = style.into();
-        if let Some(weight) = style.font_weight {
-            self.font_weight = weight;
+        Self {
+            font_weight: style.font_weight.unwrap_or(self.font_weight),
+            font_style: style.font_style.unwrap_or(self.font_style),
+            color: style.color.map_or(self.color, |color| {
+                let mut new_color = self.color.blend(color);
+                if let Some(fade_out) = style.fade_out {
+                    new_color.fade_out(fade_out);
+                }
+                new_color
+            }),
+            background_color: style.background_color.or(self.background_color),
+            underline: style.underline.or(self.underline),
+            strikethrough: style.strikethrough.or(self.strikethrough),
+            ..self
         }
-        if let Some(style) = style.font_style {
-            self.font_style = style;
-        }
-
-        if let Some(color) = style.color {
-            self.color = self.color.blend(color);
-        }
-
-        if let Some(factor) = style.fade_out {
-            self.color.fade_out(factor);
-        }
-
-        if let Some(background_color) = style.background_color {
-            self.background_color = Some(background_color);
-        }
-
-        if let Some(underline) = style.underline {
-            self.underline = Some(underline);
-        }
-
-        if let Some(strikethrough) = style.strikethrough {
-            self.strikethrough = Some(strikethrough);
-        }
-
-        self
     }
 
     /// Get the font configured for this text style.
@@ -886,43 +873,32 @@ impl HighlightStyle {
     }
     /// Blend this highlight style with another.
     /// Non-continuous properties, like font_weight and font_style, are overwritten.
-    pub fn highlight(&mut self, other: HighlightStyle) {
-        match (self.color, other.color) {
-            (Some(self_color), Some(other_color)) => {
-                self.color = Some(self_color.blend(other_color));
-            }
-            (None, Some(other_color)) => {
-                self.color = Some(other_color);
-            }
-            _ => {}
-        }
-
-        if other.font_weight.is_some() {
-            self.font_weight = other.font_weight;
-        }
-
-        if other.font_style.is_some() {
-            self.font_style = other.font_style;
-        }
-
-        if other.background_color.is_some() {
-            self.background_color = other.background_color;
-        }
-
-        if other.underline.is_some() {
-            self.underline = other.underline;
-        }
-
-        if other.strikethrough.is_some() {
-            self.strikethrough = other.strikethrough;
-        }
-
-        match (other.fade_out, self.fade_out) {
-            (Some(source_fade), None) => self.fade_out = Some(source_fade),
-            (Some(source_fade), Some(dest_fade)) => {
-                self.fade_out = Some((dest_fade * (1. + source_fade)).clamp(0., 1.));
-            }
-            _ => {}
+    #[must_use]
+    pub fn highlight(self, other: HighlightStyle) -> Self {
+        Self {
+            color: other
+                .color
+                .map(|other_color| {
+                    if let Some(color) = self.color {
+                        color.blend(other_color)
+                    } else {
+                        other_color
+                    }
+                })
+                .or(self.color),
+            font_weight: other.font_weight.or(self.font_weight),
+            font_style: other.font_style.or(self.font_style),
+            background_color: other.background_color.or(self.background_color),
+            underline: other.underline.or(self.underline),
+            strikethrough: other.strikethrough.or(self.strikethrough),
+            fade_out: other
+                .fade_out
+                .map(|source_fade| {
+                    self.fade_out
+                        .map(|dest_fade| (dest_fade * (1. + source_fade)).clamp(0., 1.))
+                        .unwrap_or(source_fade)
+                })
+                .or(self.fade_out),
         }
     }
 }
@@ -987,10 +963,11 @@ pub fn combine_highlights(
         while let Some((endpoint_ix, highlight_id, is_start)) = endpoints.peek() {
             let prev_index = mem::replace(&mut ix, *endpoint_ix);
             if ix > prev_index && !active_styles.is_empty() {
-                let mut current_style = HighlightStyle::default();
-                for highlight_id in &active_styles {
-                    current_style.highlight(highlights[*highlight_id]);
-                }
+                let current_style = active_styles
+                    .iter()
+                    .fold(HighlightStyle::default(), |acc, highlight_id| {
+                        acc.highlight(highlights[*highlight_id])
+                    });
                 return Some((prev_index..ix, current_style));
             }
 
@@ -1312,9 +1289,9 @@ mod tests {
 
     #[test]
     fn test_basic_highlight_style_combination() {
-        let mut style_a = HighlightStyle::default();
+        let style_a = HighlightStyle::default();
         let style_b = HighlightStyle::default();
-        style_a.highlight(style_b);
+        let style_a = style_a.highlight(style_b);
         assert_eq!(
             style_a,
             HighlightStyle::default(),
@@ -1339,13 +1316,13 @@ mod tests {
         };
         let expected_style = style_b;
 
-        style_a.highlight(style_b);
+        let style_a = style_a.highlight(style_b);
         assert_eq!(
             style_a, expected_style,
             "Blending an empty style with another style should return the other style"
         );
 
-        style_b.highlight(Default::default());
+        let style_b = style_b.highlight(Default::default());
         assert_eq!(
             style_b, expected_style,
             "Blending a style with an empty style should not change the style."
@@ -1388,7 +1365,7 @@ mod tests {
             }),
         };
 
-        style_c.highlight(style_d);
+        let style_c = style_c.highlight(style_d);
         assert_eq!(
             style_c, expected_style,
             "Blending styles should blend properties where possible and override all others"

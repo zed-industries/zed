@@ -23576,8 +23576,7 @@ pub fn styled_runs_for_code_label<'a>(
             } else {
                 return Default::default();
             };
-            let mut muted_style = style;
-            muted_style.highlight(fade_out);
+            let muted_style = style.highlight(fade_out);
 
             let mut runs = SmallVec::<[(Range<usize>, HighlightStyle); 3]>::new();
             if range.start >= label.filter_range.end {

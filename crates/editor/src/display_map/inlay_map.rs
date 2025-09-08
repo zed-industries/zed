@@ -385,9 +385,9 @@ impl<'a> Iterator for InlayChunks<'a> {
                         next_inlay_highlight_endpoint = usize::MAX;
                     } else {
                         next_inlay_highlight_endpoint = range.end - offset_in_inlay.0;
-                        highlight_style
-                            .get_or_insert_with(Default::default)
-                            .highlight(*style);
+                        highlight_style = highlight_style
+                            .map(|highlight| highlight.highlight(*style))
+                            .or_else(|| Some(*style));
                     }
                 } else {
                     next_inlay_highlight_endpoint = usize::MAX;
