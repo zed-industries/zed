@@ -1126,17 +1126,21 @@ impl Render for AgentConfiguration {
             .pb_8()
             .bg(cx.theme().colors().panel_background)
             .child(
-                v_flex()
-                    .id("assistant-configuration-content")
-                    .track_scroll(&self.scroll_handle)
+                div()
                     .size_full()
-                    .overflow_y_scroll()
-                    .child(self.render_general_settings_section(cx))
-                    .child(self.render_agent_servers_section(cx))
-                    .child(self.render_context_servers_section(window, cx))
-                    .child(self.render_provider_configuration_section(cx)),
+                    .child(
+                        v_flex()
+                            .id("assistant-configuration-content")
+                            .track_scroll(&self.scroll_handle)
+                            .size_full()
+                            .overflow_y_scroll()
+                            .child(self.render_general_settings_section(cx))
+                            .child(self.render_agent_servers_section(cx))
+                            .child(self.render_context_servers_section(window, cx))
+                            .child(self.render_provider_configuration_section(cx)),
+                    )
+                    .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx),
             )
-            .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx)
     }
 }
 
