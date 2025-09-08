@@ -617,7 +617,7 @@ impl EditorElement {
                         .as_ref()
                         .filter(|modifiers| modifiers.modified())
                     {
-                        editor.refresh_inlay_hints(
+                        editor.refresh_inlay_hints_2(
                             InlayHintRefreshReason::ModifiersChanged(
                                 inlay_modifiers == &event.modifiers,
                             ),
