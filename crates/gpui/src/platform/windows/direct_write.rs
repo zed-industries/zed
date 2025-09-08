@@ -280,41 +280,6 @@ impl PlatformTextSystem for DirectWriteTextSystem {
     }
 }
 
-/// Find the nearest valid character boundary at or before the given position
-///
-/// This is a temporary implementation until str::floor_char_boundary() is stabilized.
-/// See: https://github.com/rust-lang/rust/issues/93743
-///
-/// Based on the standard library implementation, which is more efficient as it only
-/// checks up to 4 bytes back (the maximum length of a UTF-8 character).
-#[inline]
-fn find_char_boundary(text: &str, index: usize) -> usize {
-    if index >= text.len() {
-        return text.len();
-    }
-
-    // UTF-8 characters are at most 4 bytes, so we only need to check up to 3 bytes back
-    let lower_bound = index.saturating_sub(3);
-    let search_range = &text.as_bytes()[lower_bound..=index];
-
-    // Find the rightmost byte that is a UTF-8 character boundary
-    // SAFETY: A valid character boundary must exist in this range because:
-    // 1. index itself is a valid position in the string
-    // 2. UTF-8 characters are at most 4 bytes, so some boundary exists in [index-3..=index]
-    let pos_from_lower = unsafe {
-        // This is equivalent to checking if a byte is a UTF-8 character boundary.
-        // The condition `(b as i8) >= -0x40` is the bit magic equivalent of: `b < 128 || b >= 192`
-        // This is the same logic used in the standard library's internal `is_utf8_char_boundary` function,
-        // which is not exposed as public API. We replicate it here for our UTF-8 boundary finding needs.
-        search_range
-            .iter()
-            .rposition(|&b| (b as i8) >= -0x40)
-            .unwrap_unchecked()
-    };
-
-    lower_bound + pos_from_lower
-}
-
 impl DirectWriteState {
     fn add_fonts(&mut self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
         for font_data in fonts {
@@ -627,9 +592,8 @@ impl DirectWriteState {
                     f32::INFINITY,
                     f32::INFINITY,
                 )?;
-                let current_text_end = find_char_boundary(text, utf8_offset + first_run.len);
-                let current_text = &text[utf8_offset..current_text_end];
-                utf8_offset = current_text_end;
+                let current_text = &text[utf8_offset..(utf8_offset + first_run.len)];
+                utf8_offset += first_run.len;
                 let current_text_utf16_length = current_text.encode_utf16().count() as u32;
                 let text_range = DWRITE_TEXT_RANGE {
                     startPosition: utf16_offset,
@@ -655,9 +619,8 @@ impl DirectWriteState {
                     continue;
                 }
                 let font_info = &self.fonts[run.font_id.0];
-                let current_text_end = find_char_boundary(text, utf8_offset + run.len);
-                let current_text = &text[utf8_offset..current_text_end];
-                utf8_offset = current_text_end;
+                let current_text = &text[utf8_offset..(utf8_offset + run.len)];
+                utf8_offset += run.len;
                 let current_text_utf16_length = current_text.encode_utf16().count() as u32;
 
                 let collection = if font_info.is_system_font {
