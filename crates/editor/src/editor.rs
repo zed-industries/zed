@@ -2006,7 +2006,7 @@ impl Editor {
                         // we always query lens with actions, without storing them, always refreshing them
                     }
                     project::Event::RefreshInlayHints(server_id) => {
-                        editor.refresh_inlay_hints(
+                        editor.refresh_inlay_hints_2(
                             InlayHintRefreshReason::RefreshRequested(*server_id),
                             cx,
                         );
@@ -5294,7 +5294,7 @@ impl Editor {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.refresh_inlay_hints(
+        self.refresh_inlay_hints_2(
             InlayHintRefreshReason::Toggle(!self.inlay_hints_enabled()),
             cx,
         );
@@ -5497,6 +5497,7 @@ impl Editor {
                     }
                 }
                 InlayHintRefreshReason::SettingsChange(new_settings) => {
+                    // TODO kb
                     return;
                 }
                 InlayHintRefreshReason::ExcerptsRemoved(excerpts_removed) => {
@@ -5522,29 +5523,31 @@ impl Editor {
             };
         }
 
-        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
         let Some(semantics_provider) = self.semantics_provider.clone() else {
             return;
         };
         for (excerpt_id, (buffer, buffer_version, range)) in self.visible_excerpts(None, cx) {
-            let Some(excerpt_text_anchor_range) =
-                multi_buffer_snapshot.context_range_for_excerpt(excerpt_id)
-            else {
-                continue;
+            let Some(inlay_hints) = self.inlay_hints.as_mut() else {
+                return;
             };
             let buffer_id = buffer.read(cx).remote_id();
             let buffer_snapshot = buffer.read(cx).snapshot();
             let buffer_anchor_range =
                 buffer_snapshot.anchor_before(range.start)..buffer_snapshot.anchor_after(range.end);
+            let buffer_point_range = buffer_anchor_range.to_point(&buffer_snapshot);
 
-            let new_hints =
-                semantics_provider.inlay_hints_2(buffer, buffer_anchor_range.clone(), cx);
-            let Some(inlay_hints) = self.inlay_hints.as_mut() else {
+            let Some(new_hints) =
+                semantics_provider.inlay_hints_2(buffer, buffer_anchor_range.clone(), cx)
+            else {
                 return;
             };
-            if let Some((hints_range, new_hints)) = new_hints {
-                let buffer_hints = inlay_hints.inlay_tasks.entry(buffer_id).or_default();
-                buffer_hints.insert(
+            let hints_range = buffer_point_range.start.row..buffer_point_range.end.row;
+
+            inlay_hints
+                .inlay_tasks
+                .entry(buffer_id)
+                .or_default()
+                .insert(
                     hints_range.clone(),
                     cx.spawn(async move |editor, cx| {
                         let new_hints = new_hints.await;
@@ -5584,7 +5587,9 @@ impl Editor {
                                                     Vec::new()
                                                 };
                                                 let hints_to_insert = new_hints
-                                                    .into_iter()
+                                                    .into_values()
+                                                    .flat_map(|hints| hints.into_values().flatten())
+                                                    .dedup()
                                                     .filter_map(|lsp_hint| {
                                                         if buffer_anchor_range
                                                             .start
@@ -5635,7 +5640,6 @@ impl Editor {
                             .ok();
                     }),
                 );
-            }
         }
     }
 
@@ -17831,7 +17835,7 @@ impl Editor {
                     );
                 });
             });
-            self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+            self.refresh_inlay_hints_2(InlayHintRefreshReason::NewLinesShown, cx);
         }
     }
 
@@ -21198,7 +21202,7 @@ impl Editor {
                                 .collect::<HashSet<_>>()
                         });
                         if !languages_affected.is_empty() {
-                            self.refresh_inlay_hints(
+                            self.refresh_inlay_hints_2(
                                 InlayHintRefreshReason::BufferEdited(languages_affected),
                                 cx,
                             );
@@ -21243,13 +21247,16 @@ impl Editor {
                     predecessor: *predecessor,
                     excerpts: excerpts.clone(),
                 });
-                self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+                self.refresh_inlay_hints_2(InlayHintRefreshReason::NewLinesShown, cx);
             }
             multi_buffer::Event::ExcerptsRemoved {
                 ids,
                 removed_buffer_ids,
             } => {
-                self.refresh_inlay_hints(InlayHintRefreshReason::ExcerptsRemoved(ids.clone()), cx);
+                self.refresh_inlay_hints_2(
+                    InlayHintRefreshReason::ExcerptsRemoved(ids.clone()),
+                    cx,
+                );
                 let buffer = self.buffer.read(cx);
                 self.registered_buffers
                     .retain(|buffer_id, _| buffer.buffer(*buffer_id).is_some());
@@ -21271,7 +21278,7 @@ impl Editor {
                 });
             }
             multi_buffer::Event::ExcerptsExpanded { ids } => {
-                self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+                self.refresh_inlay_hints_2(InlayHintRefreshReason::NewLinesShown, cx);
                 cx.emit(EditorEvent::ExcerptsExpanded { ids: ids.clone() })
             }
             multi_buffer::Event::Reparsed(buffer_id) => {
@@ -21357,7 +21364,7 @@ impl Editor {
         self.update_edit_prediction_settings(cx);
         self.refresh_edit_prediction(true, false, window, cx);
         self.refresh_inline_values(cx);
-        self.refresh_inlay_hints(
+        self.refresh_inlay_hints_2(
             InlayHintRefreshReason::SettingsChange(inlay_hint_settings(
                 self.selections.newest_anchor().head(),
                 &self.buffer.read(cx).snapshot(cx),
@@ -21982,7 +21989,7 @@ impl Editor {
             self.last_focused_descendant = Some(event.blurred);
         }
         self.selection_drag_state = SelectionDragState::None;
-        self.refresh_inlay_hints(InlayHintRefreshReason::ModifiersChanged(false), cx);
+        self.refresh_inlay_hints_2(InlayHintRefreshReason::ModifiersChanged(false), cx);
     }
 
     pub fn handle_blur(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -23054,14 +23061,12 @@ pub trait SemanticsProvider {
 
     fn inlay_hints_2(
         &self,
-        buffer: Entity<Buffer>,
-        range: Range<text::Anchor>,
-        cx: &mut App,
-    ) -> Option<(
-        Range<BufferRow>,
-        Shared<Task<Result<Vec<InlayHint>, Arc<anyhow::Error>>>>,
-    )> {
-        todo!("TODO kb")
+        _buffer: Entity<Buffer>,
+        _range: Range<text::Anchor>,
+        _cx: &mut App,
+    ) -> Option<Task<Result<HashMap<Range<BufferRow>, HashMap<LanguageServerId, Vec<InlayHint>>>>>>
+    {
+        None
     }
 
     fn resolve_inlay_hint(
@@ -23583,14 +23588,12 @@ impl SemanticsProvider for Entity<Project> {
         buffer: Entity<Buffer>,
         range: Range<text::Anchor>,
         cx: &mut App,
-    ) -> Option<(
-        Range<BufferRow>,
-        Shared<Task<Result<Vec<InlayHint>, Arc<anyhow::Error>>>>,
-    )> {
-        // self.read(cx).lsp_store().update(cx, |lsp_store, cx| {
-        //     lsp_store.inlay_hints_2(buffer, range, cx)
-        // })
-        todo!("TODO kb")
+    ) -> Option<Task<Result<HashMap<Range<BufferRow>, HashMap<LanguageServerId, Vec<InlayHint>>>>>>
+    {
+        let new_hints = self.read(cx).lsp_store().update(cx, |lsp_store, cx| {
+            lsp_store.inlay_hints_2(buffer, range, cx)
+        });
+        Some(new_hints)
     }
 
     fn resolve_inlay_hint(
