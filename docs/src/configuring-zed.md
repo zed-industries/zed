@@ -4395,28 +4395,6 @@ Visit [the Configuration page](./ai/configuration.md) under the AI section to le
 - `dock`: Where to dock the collaboration panel. Can be `left` or `right`
 - `default_width`: Default width of the collaboration panel
 
-## Chat Panel
-
-- Description: Customizations for the chat panel.
-- Setting: `chat_panel`
-- Default:
-
-```json
-{
-  "chat_panel": {
-    "button": "when_in_call",
-    "dock": "right",
-    "default_width": 240
-  }
-}
-```
-
-**Options**
-
-- `button`: When to show the chat panel button in the status bar. Can be `never`, `always`, or `when_in_call`.
-- `dock`: Where to dock the chat panel. Can be 'left' or 'right'
-- `default_width`: Default width of the chat panel
-
 ## Debugger
 
 - Description: Configuration for debugger panel and settings
