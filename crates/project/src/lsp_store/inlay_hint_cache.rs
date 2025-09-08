@@ -10,27 +10,31 @@ use text::OffsetRangeExt;
 
 use crate::InlayHint;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct InlayHintId(usize);
+pub type CacheInlayHints = HashMap<LanguageServerId, Vec<InlayHint>>;
+pub type CacheInlayHintsTask = Shared<Task<Result<CacheInlayHints, Arc<anyhow::Error>>>>;
 
 pub struct BufferInlayHints {
-    pub all_hints: HashMap<InlayHintId, InlayHint>,
-    pub hints: HashMap<
-        Range<BufferRow>,
-        HashMap<LanguageServerId, Shared<Task<Result<Vec<InlayHint>, Arc<anyhow::Error>>>>>,
-    >,
     pub chunks_for_version: Global,
-    pub buffer_chunks: Vec<Range<BufferRow>>,
     snapshot: BufferSnapshot,
+    buffer_chunks: Vec<BufferChunk>,
+    hints_by_chunks: Vec<Option<CacheInlayHints>>,
+    fetches_by_chunks: Vec<Option<CacheInlayHintsTask>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BufferChunk {
+    id: usize,
+    pub start: BufferRow,
+    pub end: BufferRow,
 }
 
 impl std::fmt::Debug for BufferInlayHints {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BufferInlayHints")
-            .field("all_hints", &self.all_hints)
-            .field("hints", &self.hints)
             .field("chunks_for_version", &self.chunks_for_version)
             .field("buffer_chunks", &self.buffer_chunks)
+            .field("hints_by_chunks", &self.hints_by_chunks)
+            .field("fetches_by_chunks", &self.fetches_by_chunks)
             .finish_non_exhaustive()
     }
 }
@@ -44,56 +48,60 @@ impl BufferInlayHints {
         let buffer_point_range = (0..buffer.len()).to_point(&snapshot);
         let buffer_row_range = buffer_point_range.start.row..buffer_point_range.end.row;
         // TODO kb recheck
-        let buffer_chunks: Vec<Range<BufferRow>> = buffer_row_range
+        let buffer_chunks = buffer_row_range
             .clone()
             .step_by(MAX_ROWS_IN_A_CHUNK as usize)
-            .map(|chunk_start| {
+            .enumerate()
+            .map(|(id, chunk_start)| {
                 let chunk_end =
                     std::cmp::min(chunk_start + MAX_ROWS_IN_A_CHUNK, buffer_row_range.end);
-                chunk_start..chunk_end
+                BufferChunk {
+                    id,
+                    start: chunk_start,
+                    end: chunk_end,
+                }
             })
-            .collect();
+            .collect::<Vec<_>>();
 
         Self {
-            all_hints: HashMap::default(),
-            hints: HashMap::default(),
             chunks_for_version: buffer.version(),
+            hints_by_chunks: vec![None; buffer_chunks.len()],
+            fetches_by_chunks: vec![None; buffer_chunks.len()],
             snapshot,
             buffer_chunks,
         }
     }
 
-    pub fn applicable_chunks(&self, range: &Range<text::Anchor>) -> Vec<Range<BufferRow>> {
+    pub fn applicable_chunks(
+        &self,
+        range: &Range<text::Anchor>,
+    ) -> impl Iterator<Item = BufferChunk> {
         let point_range = range.to_point(&self.snapshot);
         let row_range = point_range.start.row..point_range.end.row;
         self.buffer_chunks
             .iter()
-            .filter(|chunk_range| {
+            .filter(move |chunk_range| {
                 // TODO kb recheck
                 row_range.contains(&chunk_range.start) || row_range.contains(&chunk_range.end)
             })
-            .cloned()
-            .collect()
+            .copied()
+    }
+
+    pub fn cached_hints(&mut self, chunk: &BufferChunk) -> &mut Option<CacheInlayHints> {
+        &mut self.hints_by_chunks[chunk.id]
+    }
+
+    pub fn fetched_hints(&mut self, chunk: &BufferChunk) -> &mut Option<CacheInlayHintsTask> {
+        &mut self.fetches_by_chunks[chunk.id]
     }
 
     pub fn remove_server_data(&mut self, for_server: LanguageServerId) {
-        for hints in self.hints.values_mut() {
-            hints.remove(&for_server);
+        for (chunk_index, hints) in self.hints_by_chunks.iter_mut().enumerate() {
+            if let Some(hints) = hints {
+                if hints.remove(&for_server).is_some() {
+                    self.fetches_by_chunks[chunk_index] = None;
+                }
+            }
         }
     }
-
-    pub fn cached_inlay_hints(
-        &self,
-        buffer: Entity<Buffer>,
-        range: Range<text::Anchor>,
-        cx: &mut App,
-    ) -> Option<(
-        Range<BufferRow>,
-        Shared<Task<Result<Vec<InlayHint>, Arc<anyhow::Error>>>>,
-    )> {
-        todo!("TODO kb")
-    }
-
-    // we want to store the cache version outbound, so they can query with it: we can return nothing (`Option`) if the version matches
-    // we can get a new server up/down, so we want to re-query for them things, ignoring the cache version
 }

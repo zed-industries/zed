@@ -28,6 +28,7 @@ use crate::{
     lsp_command::{self, *},
     lsp_store::{
         self,
+        inlay_hint_cache::CacheInlayHints,
         log_store::{GlobalLogStore, LanguageServerKind},
     },
     manifest_tree::{
@@ -6413,11 +6414,7 @@ impl LspStore {
         buffer: Entity<Buffer>,
         range: Range<text::Anchor>,
         cx: &mut Context<Self>,
-    ) -> HashMap<
-        // TODO kb type alias
-        Range<BufferRow>,
-        HashMap<LanguageServerId, Shared<Task<Result<Vec<InlayHint>, Arc<anyhow::Error>>>>>,
-    > {
+    ) -> Task<Result<HashMap<Range<BufferRow>, CacheInlayHints>>> {
         let buffer_version = buffer.read(cx).version();
         let buffer_snapshot = buffer.read(cx).snapshot();
         let buffer_id = buffer.read(cx).remote_id();
@@ -6430,44 +6427,124 @@ impl LspStore {
             *existing_inlay_hints = BufferInlayHints::new(&buffer, cx);
         }
 
-        let mut resulting_hints = HashMap::<
-            Range<BufferRow>,
-            HashMap<LanguageServerId, Shared<Task<Result<Vec<InlayHint>, Arc<anyhow::Error>>>>>,
-        >::default();
-        let applicable_chunks = existing_inlay_hints.applicable_chunks(&range);
-        let cached_hints = existing_inlay_hints.hints.clone();
-        for row_chunk in &applicable_chunks {
-            let hints_entry = resulting_hints.entry(row_chunk.clone()).or_default();
-            match cached_hints.get(row_chunk) {
-                Some(hints) => {
-                    hints_entry.extend(hints.clone());
-                }
-                None => {
-                    let new_hints = self.fetch_inlay_hints(
-                        &buffer,
+        let mut hint_fetch_tasks = Vec::new();
+        let mut cached_inlay_hints = HashMap::default();
+        let mut ranges_to_query = Vec::new();
+        let applicable_chunks = existing_inlay_hints
+            .applicable_chunks(&range)
+            .collect::<Vec<_>>();
+        for row_chunk in applicable_chunks {
+            match (
+                existing_inlay_hints.cached_hints(&row_chunk).clone(),
+                existing_inlay_hints.fetched_hints(&row_chunk),
+            ) {
+                (None, None) => {
+                    ranges_to_query.push((
+                        row_chunk,
                         buffer_snapshot.anchor_before(Point::new(row_chunk.start, 0))
                             ..buffer_snapshot.anchor_after(Point::new(row_chunk.end, 0)),
-                        cx,
-                    );
-                    let new_task = cx
-                        .spawn(async move |lsp_store, cx| {
-                            // TODO kb: how to unpack the Task<Result<Option<HashMap<LangServerId, Vec<Inlays>>> into the return type?
-                            todo!("TODO kb")
-                        })
-                        .shared();
-                    hints_entry.insert(row_chunk.clone(), new_task.clone());
-                    if let Some(cached_hints) = self.inlay_hint_data.get_mut(&buffer_id) {
-                        cached_hints
-                            .hints
+                    ));
+                }
+                (None, Some(fetched_hints)) => {
+                    hint_fetch_tasks.push((row_chunk, fetched_hints.clone()))
+                }
+                (Some(cached_hints), None) => {
+                    for (server_id, cached_hints) in cached_hints {
+                        cached_inlay_hints
+                            .entry(row_chunk.start..row_chunk.end)
+                            .or_insert_with(HashMap::default)
                             .entry(server_id)
-                            .or_default()
-                            .insert(row_chunk.clone(), new_task);
+                            .or_insert_with(Vec::new)
+                            .extend(cached_hints);
+                    }
+                }
+                (Some(cached_hints), Some(fetched_hints)) => {
+                    hint_fetch_tasks.push((row_chunk, fetched_hints.clone()));
+                    for (server_id, cached_hints) in cached_hints {
+                        cached_inlay_hints
+                            .entry(row_chunk.start..row_chunk.end)
+                            .or_insert_with(HashMap::default)
+                            .entry(server_id)
+                            .or_insert_with(Vec::new)
+                            .extend(cached_hints);
                     }
                 }
             }
         }
 
-        resulting_hints
+        if hint_fetch_tasks.is_empty() && ranges_to_query.is_empty() {
+            Task::ready(Ok(cached_inlay_hints))
+        } else {
+            cx.spawn(async move |lsp_store, cx| {
+                lsp_store.update(cx, |lsp_store, cx| {
+                    for (chunk, range_to_query) in ranges_to_query {
+                        let new_fetch_task =
+                            lsp_store.fetch_inlay_hints(&buffer, range_to_query, cx);
+                        let new_inlay_hints = cx
+                            .background_spawn(async move { new_fetch_task.await.map_err(Arc::new) })
+                            .shared();
+                        if let Some(buffer_hints) = lsp_store.inlay_hint_data.get_mut(&buffer_id) {
+                            let fetch_task = buffer_hints.fetched_hints(&chunk);
+                            if fetch_task.is_none() {
+                                *fetch_task = Some(new_inlay_hints.clone());
+                            }
+                            hint_fetch_tasks.push((chunk, new_inlay_hints));
+                        }
+                    }
+                })?;
+
+                let new_inlay_hints = join_all(
+                    hint_fetch_tasks
+                        .into_iter()
+                        .map(|(chunk, task)| async move { (chunk, task.await) }),
+                )
+                .await;
+                let mut combined_hints = cached_inlay_hints;
+                lsp_store.update(cx, |lsp_store, _| {
+                    let Some(buffer_hints) = lsp_store.inlay_hint_data.get_mut(&buffer_id) else {
+                        combined_hints.clear();
+                        return;
+                    };
+                    if buffer_hints.chunks_for_version != buffer_version {
+                        combined_hints.clear();
+                        return;
+                    }
+
+                    for (chunk, new_inlay_hints) in new_inlay_hints {
+                        match new_inlay_hints {
+                            Ok(new_hints) => {
+                                let combined_hints = combined_hints
+                                    .entry(chunk.start..chunk.end)
+                                    .or_insert_with(HashMap::default);
+                                for (server_id, new_hints) in new_hints {
+                                    combined_hints
+                                        .entry(server_id)
+                                        .or_insert_with(Vec::new)
+                                        .extend(new_hints.clone());
+                                    buffer_hints
+                                        .cached_hints(&chunk)
+                                        .get_or_insert_default()
+                                        .entry(server_id)
+                                        .or_insert_with(Vec::new)
+                                        .extend(new_hints);
+                                }
+                            }
+                            Err(e) => {
+                                log::error!(
+                                    "Error when fetching hints for buffer row range {}..{}: {:#}",
+                                    chunk.start,
+                                    chunk.end,
+                                    e,
+                                );
+                            }
+                        }
+
+                        *buffer_hints.fetched_hints(&chunk) = None;
+                    }
+                })?;
+                Ok(combined_hints)
+            })
+        }
     }
 
     // TODO kb this is identical to code_lens_actions, consider deduplication
@@ -6476,11 +6553,11 @@ impl LspStore {
         buffer: &Entity<Buffer>,
         range: Range<Anchor>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Option<HashMap<LanguageServerId, Vec<InlayHint>>>>> {
+    ) -> Task<Result<HashMap<LanguageServerId, Vec<InlayHint>>>> {
         let request = InlayHints { range };
         if let Some((upstream_client, project_id)) = self.upstream_client() {
             if !self.is_capable_for_proto_request(buffer, &request, cx) {
-                return Task::ready(Ok(None));
+                return Task::ready(Ok(HashMap::default()));
             }
             let request_task = upstream_client.request_lsp(
                 project_id,
@@ -6491,10 +6568,10 @@ impl LspStore {
             let buffer = buffer.clone();
             cx.spawn(async move |weak_lsp_store, cx| {
                 let Some(lsp_store) = weak_lsp_store.upgrade() else {
-                    return Ok(None);
+                    return Ok(HashMap::default());
                 };
                 let Some(responses) = request_task.await? else {
-                    return Ok(None);
+                    return Ok(HashMap::default());
                 };
 
                 let inlay_hints = join_all(responses.payload.into_iter().map(|response| {
@@ -6529,14 +6606,12 @@ impl LspStore {
                     !has_errors || !inlay_hints.is_empty(),
                     "Failed to fetch inlay hints"
                 );
-                Ok(Some(inlay_hints))
+                Ok(inlay_hints)
             })
         } else {
             let inlay_hints_task =
                 self.request_multiple_lsp_locally(buffer, None::<usize>, request, cx);
-            cx.background_spawn(
-                async move { Ok(Some(inlay_hints_task.await.into_iter().collect())) },
-            )
+            cx.background_spawn(async move { Ok(inlay_hints_task.await.into_iter().collect()) })
         }
     }
 
