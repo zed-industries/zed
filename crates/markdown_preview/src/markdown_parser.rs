@@ -1481,6 +1481,135 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_html_inline_style_attributes_elements() {
+        let parsed = parse(
+            "<p style=\"font-weight: bold;\">bold text</p>
+            <p style=\"font-weight: lighter;\">thin text</p>
+            <p style=\"font-style: italic;\">italic text</p>
+            <p style=\"text-decoration: underline;\">underline text</p>
+            <p style=\"text-decoration: line-through;\">line-through text</p>
+            <p style=\"font-style: oblique;\">obliqued text</p>",
+        )
+        .await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![
+                    ParsedMarkdownElement::Paragraph(vec![MarkdownParagraphChunk::Text(
+                        ParsedMarkdownText {
+                            source_range: 0..44,
+                            contents: "bold text".into(),
+                            highlights: vec![(
+                                0..9,
+                                MarkdownHighlight::Style(MarkdownHighlightStyle {
+                                    italic: false,
+                                    underline: false,
+                                    strikethrough: false,
+                                    weight: FontWeight::BOLD,
+                                    oblique: false
+                                })
+                            )],
+                            region_ranges: Default::default(),
+                            regions: Default::default()
+                        }
+                    )]),
+                    ParsedMarkdownElement::Paragraph(vec![MarkdownParagraphChunk::Text(
+                        ParsedMarkdownText {
+                            source_range: 44..103,
+                            contents: "thin text".into(),
+                            highlights: vec![(
+                                0..9,
+                                MarkdownHighlight::Style(MarkdownHighlightStyle {
+                                    italic: false,
+                                    underline: false,
+                                    strikethrough: false,
+                                    weight: FontWeight::THIN,
+                                    oblique: false
+                                })
+                            )],
+                            region_ranges: Default::default(),
+                            regions: Default::default()
+                        }
+                    )]),
+                    ParsedMarkdownElement::Paragraph(vec![MarkdownParagraphChunk::Text(
+                        ParsedMarkdownText {
+                            source_range: 103..162,
+                            contents: "italic text".into(),
+                            highlights: vec![(
+                                0..11,
+                                MarkdownHighlight::Style(MarkdownHighlightStyle {
+                                    italic: true,
+                                    underline: false,
+                                    strikethrough: false,
+                                    weight: FontWeight::NORMAL,
+                                    oblique: false
+                                })
+                            )],
+                            region_ranges: Default::default(),
+                            regions: Default::default()
+                        }
+                    )]),
+                    ParsedMarkdownElement::Paragraph(vec![MarkdownParagraphChunk::Text(
+                        ParsedMarkdownText {
+                            source_range: 162..232,
+                            contents: "underline text".into(),
+                            highlights: vec![(
+                                0..14,
+                                MarkdownHighlight::Style(MarkdownHighlightStyle {
+                                    italic: false,
+                                    underline: true,
+                                    strikethrough: false,
+                                    weight: FontWeight::NORMAL,
+                                    oblique: false
+                                })
+                            )],
+                            region_ranges: Default::default(),
+                            regions: Default::default()
+                        }
+                    )]),
+                    ParsedMarkdownElement::Paragraph(vec![MarkdownParagraphChunk::Text(
+                        ParsedMarkdownText {
+                            source_range: 232..308,
+                            contents: "line-through text".into(),
+                            highlights: vec![(
+                                0..17,
+                                MarkdownHighlight::Style(MarkdownHighlightStyle {
+                                    italic: false,
+                                    underline: false,
+                                    strikethrough: true,
+                                    weight: FontWeight::NORMAL,
+                                    oblique: false
+                                })
+                            )],
+                            region_ranges: Default::default(),
+                            regions: Default::default()
+                        }
+                    )]),
+                    ParsedMarkdownElement::Paragraph(vec![MarkdownParagraphChunk::Text(
+                        ParsedMarkdownText {
+                            source_range: 308..369,
+                            contents: "obliqued text".into(),
+                            highlights: vec![(
+                                0..13,
+                                MarkdownHighlight::Style(MarkdownHighlightStyle {
+                                    italic: false,
+                                    underline: false,
+                                    strikethrough: false,
+                                    weight: FontWeight::NORMAL,
+                                    oblique: true
+                                })
+                            )],
+                            region_ranges: Default::default(),
+                            regions: Default::default()
+                        }
+                    )]),
+                ]
+            },
+            parsed
+        );
+    }
+
+    #[gpui::test]
     async fn test_html_inline_style_elements() {
         let parsed =
             parse("<p>Some text <strong>strong text</strong> more text <b>bold text</b> more text <i>italic text</i> more text <em>emphasized text</em> more text <del>deleted text</del> more text <ins>inserted text</ins></p>").await;
