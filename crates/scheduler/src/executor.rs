@@ -48,7 +48,7 @@ impl ForegroundExecutor {
     pub fn block_on<Fut: Future>(&self, future: Fut) -> Fut::Output {
         let mut output = None;
         self.scheduler.block(
-            self.session_id,
+            Some(self.session_id),
             async { output = Some(future.await) }.boxed_local(),
             None,
         );
@@ -62,7 +62,7 @@ impl ForegroundExecutor {
     ) -> Result<Fut::Output, Fut> {
         let mut output = None;
         self.scheduler.block(
-            self.session_id,
+            Some(self.session_id),
             async { output = Some((&mut future).await) }.boxed_local(),
             Some(timeout),
         );

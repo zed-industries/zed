@@ -253,7 +253,7 @@ impl BufferDiffSnapshot {
         diff_base: String,
         cx: &mut gpui::TestAppContext,
     ) -> BufferDiffSnapshot {
-        cx.executor().block(cx.update(|cx| {
+        cx.foreground_executor().block_on(cx.update(|cx| {
             Self::new_with_base_text(buffer, Some(Arc::new(diff_base)), None, None, cx)
         }))
     }
@@ -919,7 +919,7 @@ impl BufferDiff {
             None,
             cx,
         );
-        let snapshot = cx.background_executor().block(snapshot);
+        let snapshot = cx.foreground_executor().block_on(snapshot);
         Self {
             buffer_id: buffer.read(cx).remote_id(),
             inner: snapshot.inner,
@@ -1222,7 +1222,7 @@ impl BufferDiff {
             self.inner.base_text.clone(),
             cx,
         );
-        let snapshot = cx.background_executor().block(snapshot);
+        let snapshot = cx.foreground_executor().block_on(snapshot);
         self.set_snapshot(snapshot, &buffer, cx);
     }
 }

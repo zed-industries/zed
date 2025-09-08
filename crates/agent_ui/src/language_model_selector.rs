@@ -4,7 +4,10 @@ use cloud_llm_client::Plan;
 use collections::{HashSet, IndexMap};
 use feature_flags::ZedProFeatureFlag;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
-use gpui::{Action, AnyElement, App, BackgroundExecutor, DismissEvent, Subscription, Task};
+use gpui::{
+    Action, AnyElement, App, BackgroundExecutor, DismissEvent, ForegroundExecutor, Subscription,
+    Task,
+};
 use language_model::{
     AuthenticateError, ConfiguredModel, LanguageModel, LanguageModelProviderId,
     LanguageModelRegistry,
@@ -279,22 +282,28 @@ enum LanguageModelPickerEntry {
 
 struct ModelMatcher {
     models: Vec<ModelInfo>,
+    fg_executor: ForegroundExecutor,
     bg_executor: BackgroundExecutor,
     candidates: Vec<StringMatchCandidate>,
 }
 
 impl ModelMatcher {
-    fn new(models: Vec<ModelInfo>, bg_executor: BackgroundExecutor) -> ModelMatcher {
+    fn new(
+        models: Vec<ModelInfo>,
+        fg_executor: ForegroundExecutor,
+        bg_executor: BackgroundExecutor,
+    ) -> ModelMatcher {
         let candidates = Self::make_match_candidates(&models);
         Self {
             models,
+            fg_executor,
             bg_executor,
             candidates,
         }
     }
 
     pub fn fuzzy_search(&self, query: &str) -> Vec<ModelInfo> {
-        let mut matches = self.bg_executor.block(match_strings(
+        let mut matches = self.fg_executor.block_on(match_strings(
             &self.candidates,
             query,
             false,
@@ -390,6 +399,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
     ) -> Task<()> {
         let all_models = self.all_models.clone();
         let active_model = (self.get_active_model)(cx);
+        let fg_executor = cx.foreground_executor();
         let bg_executor = cx.background_executor();
 
         let language_model_registry = LanguageModelRegistry::global(cx);
@@ -420,8 +430,10 @@ impl PickerDelegate for LanguageModelPickerDelegate {
             .cloned()
             .collect::<Vec<_>>();
 
-        let matcher_rec = ModelMatcher::new(recommended_models, bg_executor.clone());
-        let matcher_all = ModelMatcher::new(available_models, bg_executor.clone());
+        let matcher_rec =
+            ModelMatcher::new(recommended_models, fg_executor.clone(), bg_executor.clone());
+        let matcher_all =
+            ModelMatcher::new(available_models, fg_executor.clone(), bg_executor.clone());
 
         let recommended = matcher_rec.exact_search(&query);
         let all = matcher_all.fuzzy_search(&query);
@@ -720,7 +732,7 @@ mod tests {
             ("ollama", "mistral"),
             ("ollama", "deepseek"),
         ]);
-        let matcher = ModelMatcher::new(models, cx.background_executor.clone());
+        let matcher = ModelMatcher::new(models, cx.foreground_executor(), cx.executor());
 
         // The order of models should be maintained, case doesn't matter
         let results = matcher.exact_search("GPT-4.1");
@@ -748,7 +760,7 @@ mod tests {
             ("ollama", "mistral"),
             ("ollama", "deepseek"),
         ]);
-        let matcher = ModelMatcher::new(models, cx.background_executor.clone());
+        let matcher = ModelMatcher::new(models, cx.foreground_executor(), cx.executor());
 
         // Results should preserve models order whenever possible.
         // In the case below, `zed/gpt-4.1` and `openai/gpt-4.1` have identical

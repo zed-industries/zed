@@ -53,7 +53,12 @@ impl MacScheduler {
 }
 
 impl Scheduler for MacScheduler {
-    fn block(&self, _session_id: SessionId, future: LocalBoxFuture<()>, timeout: Option<Duration>) {
+    fn block(
+        &self,
+        _session_id: Option<SessionId>,
+        future: LocalBoxFuture<()>,
+        timeout: Option<Duration>,
+    ) {
         if let Some(timeout) = timeout {
             let timer = self.timer(timeout);
             futures::executor::block_on(future::select(timer, future));

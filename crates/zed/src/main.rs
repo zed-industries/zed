@@ -262,10 +262,10 @@ pub fn main() {
 
     let app = Application::new().with_assets(Assets);
 
-    let system_id = app.background_executor().block(system_id()).ok();
-    let installation_id = app.background_executor().block(installation_id()).ok();
+    let system_id = app.foreground_executor().block_on(system_id()).ok();
+    let installation_id = app.foreground_executor().block_on(installation_id()).ok();
     let session_id = Uuid::new_v4().to_string();
-    let session = app.background_executor().block(Session::new());
+    let session = app.foreground_executor().block_on(Session::new());
 
     app.background_executor()
         .spawn(crashes::init(InitCrashHandler {
@@ -1282,7 +1282,7 @@ fn load_embedded_fonts(cx: &App) {
     let embedded_fonts = Mutex::new(Vec::new());
     let executor = cx.background_executor();
 
-    executor.block(executor.scoped(|scope| {
+    cx.foreground_executor().block_on(executor.scoped(|scope| {
         for font_path in &font_paths {
             if !font_path.ends_with(".ttf") {
                 continue;

@@ -1239,12 +1239,12 @@ pub fn handle_settings_file_changes(
 
     // Initial load of both settings files
     let global_content = cx
-        .background_executor()
-        .block(global_settings_file_rx.next())
+        .foreground_executor()
+        .block_on(global_settings_file_rx.next())
         .unwrap();
     let user_content = cx
-        .background_executor()
-        .block(user_settings_file_rx.next())
+        .foreground_executor()
+        .block_on(user_settings_file_rx.next())
         .unwrap();
 
     SettingsStore::update_global(cx, |store, cx| {

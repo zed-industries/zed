@@ -170,11 +170,13 @@ impl Scheduler for TestScheduler {
     /// an otherwise deterministic test.
     fn block(
         &self,
-        session_id: SessionId,
+        session_id: Option<SessionId>,
         mut future: LocalBoxFuture<()>,
         timeout: Option<Duration>,
     ) {
-        self.state.lock().blocked_sessions.push(session_id);
+        if let Some(session_id) = session_id {
+            self.state.lock().blocked_sessions.push(session_id);
+        }
 
         let (parker, unparker) = parking::pair();
         let deadline = timeout.map(|timeout| Instant::now() + timeout);
@@ -224,7 +226,9 @@ impl Scheduler for TestScheduler {
             }
         }
 
-        self.state.lock().blocked_sessions.pop();
+        if session_id.is_some() {
+            self.state.lock().blocked_sessions.pop();
+        }
     }
 
     fn schedule_foreground(&self, session_id: SessionId, runnable: Runnable) {

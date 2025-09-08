@@ -1621,7 +1621,7 @@ impl Thread {
             is_input_complete: true,
         };
 
-        let tool_output = cx.background_executor().block(tool_result.output);
+        let tool_output = cx.foreground_executor().block_on(tool_result.output);
 
         // Attach a project_notification tool call to the latest existing
         // Assistant message. We cannot create a new Assistant message

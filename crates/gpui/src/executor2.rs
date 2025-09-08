@@ -143,12 +143,6 @@ impl BackgroundExecutor {
         Task(self.0.spawn(future))
     }
 
-    /// Block the current thread until the given future resolves.
-    /// Consider using `block_with_timeout` instead.
-    pub fn block<R>(&self, _future: impl Future<Output = R>) -> R {
-        todo!("move this to foreground executor")
-    }
-
     /// Scoped lets you start a number of tasks and waits
     /// for all of them to complete before returning.
     pub async fn scoped<'scope, F>(&self, f: F)
@@ -210,8 +204,7 @@ impl BackgroundExecutor {
     /// the test still has outstanding tasks, this will panic. (See also [`Self::allow_parking`])
     #[cfg(any(test, feature = "test-support"))]
     pub fn run_until_parked(&self) {
-        // self.0.run_until_parked()
-        todo!()
+        self.0.scheduler().as_test().run();
     }
 
     /// in tests, prevents `run_until_parked` from panicking if there are outstanding tasks.
@@ -237,10 +230,13 @@ impl BackgroundExecutor {
         todo!()
     }
 
-    /// How many CPUs are available to the dispatcher.
+    /// How many CPUs are available for this executor.
     pub fn num_cpus(&self) -> usize {
-        // self.0.num_cpus()
-        todo!()
+        #[cfg(any(test, feature = "test-support"))]
+        return 4;
+
+        #[cfg(not(any(test, feature = "test-support")))]
+        return num_cpus::get();
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -346,6 +342,13 @@ impl Drop for Scope<'_> {
 
         // Wait until the channel is closed, which means that all of the spawned
         // futures have resolved.
-        self.executor.block(self.rx.next());
+        self.executor.scheduler().block(
+            None,
+            async {
+                self.rx.next().await;
+            }
+            .boxed(),
+            None,
+        );
     }
 }

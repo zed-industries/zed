@@ -193,8 +193,8 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
                 .languages()
                 .language_for_file_path(file.path.as_ref());
             let file_language = cx
-                .background_executor()
-                .block(file_language)
+                .foreground_executor()
+                .block_on(file_language)
                 .expect("Failed to get file language");
             let file = file as _;
             language_settings(Some(file_language.name()), Some(&file), cx).into_owned()

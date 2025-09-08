@@ -74,8 +74,8 @@ fn test_remote(cx: &mut App) {
     let guest_buffer = cx.new(|cx| {
         let state = host_buffer.read(cx).to_proto(cx);
         let ops = cx
-            .background_executor()
-            .block(host_buffer.read(cx).serialize_ops(None, cx));
+            .foreground_executor()
+            .block_on(host_buffer.read(cx).serialize_ops(None, cx));
         let mut buffer = Buffer::from_proto(1, Capability::ReadWrite, state, None).unwrap();
         buffer.apply_ops(
             ops.into_iter()

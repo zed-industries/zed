@@ -35,8 +35,8 @@ fn extension_benchmarks(c: &mut Criterion) {
             || wasm_bytes.clone(),
             |wasm_bytes| {
                 let _extension = cx
-                    .executor()
-                    .block(wasm_host.load_extension(wasm_bytes, &manifest, cx.executor()))
+                    .foreground_executor()
+                    .block_on(wasm_host.load_extension(wasm_bytes, &manifest, cx.executor()))
                     .unwrap();
             },
             BatchSize::SmallInput,
@@ -67,8 +67,8 @@ fn wasm_bytes(cx: &TestAppContext, manifest: &mut ExtensionManifest) -> Vec<u8> 
         .parent()
         .unwrap()
         .join("extensions/test-extension");
-    cx.executor()
-        .block(extension_builder.compile_extension(
+    cx.foreground_executor()
+        .block_on(extension_builder.compile_extension(
             &path,
             manifest,
             CompileExtensionOptions { release: true },
