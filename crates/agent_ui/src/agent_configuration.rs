@@ -437,6 +437,24 @@ impl AgentConfiguration {
         )
     }
 
+    fn render_morph_fast_apply(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let enable = AgentSettings::get_global(cx).enable_morph_fast_apply;
+        let fs = self.fs.clone();
+
+        SwitchField::new(
+            "morph-fast-apply",
+            "Use Morph Fast Apply for edits (experimental)",
+            Some("Apply edits via Morph when available; falls back automatically if needed.".into()),
+            enable,
+            move |state, _window, cx| {
+                let allow = state == &ToggleState::Selected;
+                update_settings_file::<AgentSettings>(fs.clone(), cx, move |settings, _| {
+                    settings.set_enable_morph_fast_apply(allow);
+                });
+            },
+        )
+    }
+
     fn render_sound_notification(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let play_sound_when_agent_done = AgentSettings::get_global(cx).play_sound_when_agent_done;
         let fs = self.fs.clone();
@@ -487,6 +505,7 @@ impl AgentConfiguration {
             .child(Headline::new("General Settings"))
             .child(self.render_command_permission(cx))
             .child(self.render_single_file_review(cx))
+            .child(self.render_morph_fast_apply(cx))
             .child(self.render_sound_notification(cx))
             .child(self.render_modifier_to_send(cx))
     }

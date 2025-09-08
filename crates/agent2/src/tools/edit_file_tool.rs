@@ -311,7 +311,11 @@ impl AgentTool for EditFileTool {
 
 
             // Decide whether to use Morph Fast Apply
-            let use_morph = cx.update(|app| app.has_flag::<MorphFastApplyFeatureFlag>())?
+            let use_morph = cx.update(|app| {
+                let flag_on = app.has_flag::<MorphFastApplyFeatureFlag>();
+                let user_on = agent_settings::AgentSettings::get_global(app).enable_morph_fast_apply;
+                flag_on && user_on
+            })?
                 && (input.code_edit.is_some()
                     || (input.old_string.is_some() && input.new_string.is_some()));
 

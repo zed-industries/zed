@@ -69,6 +69,7 @@ pub struct AgentSettings {
     pub play_sound_when_agent_done: bool,
     pub stream_edits: bool,
     pub single_file_review: bool,
+    pub enable_morph_fast_apply: bool,
     pub model_parameters: Vec<LanguageModelParameters>,
     pub preferred_completion_mode: CompletionMode,
     pub enable_feedback: bool,
@@ -180,6 +181,10 @@ impl AgentSettingsContent {
         self.single_file_review = Some(allow);
     }
 
+    pub fn set_enable_morph_fast_apply(&mut self, allow: bool) {
+        self.enable_morph_fast_apply = Some(allow);
+    }
+
     pub fn set_use_modifier_to_send(&mut self, always_use: bool) {
         self.use_modifier_to_send = Some(always_use);
     }
@@ -287,6 +292,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     single_file_review: Option<bool>,
+    /// Whether to use Morph Fast Apply when possible for edit operations.
+    ///
+    /// Default: true
+    enable_morph_fast_apply: Option<bool>,
     /// Additional parameters for language model requests. When making a request
     /// to a model, parameters will be taken from the last entry in this list
     /// that matches the model's provider and name. In each entry, both provider
@@ -409,6 +418,8 @@ impl Settings for AgentSettings {
         _: &mut gpui::App,
     ) -> anyhow::Result<Self> {
         let mut settings = AgentSettings::default();
+        // Default Morph Fast Apply to enabled unless overridden by user/project settings
+        settings.enable_morph_fast_apply = true;
 
         for value in sources.defaults_and_customizations() {
             merge(&mut settings.enabled, value.enabled);
@@ -452,6 +463,7 @@ impl Settings for AgentSettings {
             );
             merge(&mut settings.stream_edits, value.stream_edits);
             merge(&mut settings.single_file_review, value.single_file_review);
+            merge(&mut settings.enable_morph_fast_apply, value.enable_morph_fast_apply);
             merge(&mut settings.default_profile, value.default_profile.clone());
             merge(&mut settings.default_view, value.default_view);
             merge(
