@@ -190,9 +190,10 @@ fn get_device(
         .ComputeShaders_Plus_RawAndStructuredBuffers_Via_Shader_4_x
         .as_bool()
     {
-        println!("=> StructuredBuffer is supported.");
+        Ok(device)
     } else {
-        println!("=> StructuredBuffer is not supported.");
+        Err(anyhow::anyhow!(
+            "Required feature StructuredBuffer is not supported by GPU/driver"
+        ))
     }
-    Ok(device)
 }
