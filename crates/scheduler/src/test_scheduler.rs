@@ -1,9 +1,8 @@
 use crate::{
-    BackgroundExecutor, Clock as _, ForegroundExecutor, Scheduler, SessionId, TestClock, Timer,
+    BackgroundExecutor, Clock, ForegroundExecutor, Scheduler, SessionId, TestClock, Timer,
 };
 use async_task::Runnable;
 use backtrace::{Backtrace, BacktraceFrame};
-use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use futures::{FutureExt as _, channel::oneshot, future::LocalBoxFuture};
 use parking_lot::Mutex;
 use rand::prelude::*;
@@ -124,7 +123,7 @@ impl TestScheduler {
     }
 
     pub fn run(&self) {
-        while self.step() || self.advance_clock() {
+        while self.step() {
             // Continue until no work remains
         }
     }
@@ -160,13 +159,18 @@ impl TestScheduler {
         false
     }
 
-    fn advance_clock(&self) -> bool {
+    fn advance_clock_to_next_timer(&self) -> bool {
         if let Some(timer) = self.state.lock().timers.first() {
-            self.clock.set_now(timer.expiration);
+            self.clock.advance(timer.expiration - self.clock.now());
             true
         } else {
             false
         }
+    }
+
+    pub fn advance_clock(&self, duration: Duration) {
+        self.clock.advance(duration);
+        self.run();
     }
 }
 
@@ -224,7 +228,7 @@ impl Scheduler for TestScheduler {
 
             let stepped = stepped.unwrap_or(true);
             let awoken = awoken.swap(false, SeqCst);
-            if !stepped && !awoken && !self.advance_clock() {
+            if !stepped && !awoken && !self.advance_clock_to_next_timer() {
                 if self.state.lock().allow_parking {
                     if !park(&parker, deadline) {
                         break;
@@ -288,18 +292,17 @@ impl Scheduler for TestScheduler {
 
     fn timer(&self, duration: Duration) -> Timer {
         let (tx, rx) = oneshot::channel();
-        let expiration = self.clock.now() + ChronoDuration::from_std(duration).unwrap();
         let state = &mut *self.state.lock();
         state.timers.push(ScheduledTimer {
-            expiration,
+            expiration: self.clock.now() + duration,
             _notify: tx,
         });
         state.timers.sort_by_key(|timer| timer.expiration);
         Timer(rx)
     }
 
-    fn now(&self) -> DateTime<Utc> {
-        self.clock.now()
+    fn clock(&self) -> Arc<dyn Clock> {
+        self.clock.clone()
     }
 
     fn as_test(&self) -> &TestScheduler {
@@ -347,7 +350,7 @@ impl ScheduledRunnable {
 }
 
 struct ScheduledTimer {
-    expiration: DateTime<Utc>,
+    expiration: Instant,
     _notify: oneshot::Sender<()>,
 }
 

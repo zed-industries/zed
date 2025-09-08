@@ -4,12 +4,11 @@
 
 use crate::{BackgroundExecutor, ForegroundExecutor};
 use async_task::Runnable;
-use chrono::{DateTime, Utc};
 use futures::{
     channel::oneshot,
     future::{self, LocalBoxFuture},
 };
-use scheduler::{Scheduler, SessionId, Timer};
+use scheduler::{Clock, Scheduler, SessionId, Timer};
 use std::{
     ffi::c_void,
     ptr::{NonNull, addr_of},
@@ -111,8 +110,8 @@ impl Scheduler for MacScheduler {
         Timer::new(rx)
     }
 
-    fn now(&self) -> DateTime<Utc> {
-        Utc::now()
+    fn clock(&self) -> Arc<dyn Clock> {
+        todo!()
     }
 }
 

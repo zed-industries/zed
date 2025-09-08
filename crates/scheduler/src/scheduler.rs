@@ -4,7 +4,6 @@ mod test_scheduler;
 #[cfg(test)]
 mod tests;
 
-use chrono::{DateTime, Utc};
 pub use clock::*;
 pub use executor::*;
 pub use test_scheduler::*;
@@ -14,6 +13,7 @@ use futures::{FutureExt as _, channel::oneshot, future::LocalBoxFuture};
 use std::{
     future::Future,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
     time::Duration,
 };
@@ -29,7 +29,7 @@ pub trait Scheduler: Send + Sync {
     fn schedule_foreground(&self, session_id: SessionId, runnable: Runnable);
     fn schedule_background(&self, runnable: Runnable);
     fn timer(&self, timeout: Duration) -> Timer;
-    fn now(&self) -> DateTime<Utc>;
+    fn clock(&self) -> Arc<dyn Clock>;
     fn as_test(&self) -> &TestScheduler {
         panic!("this is not a test scheduler")
     }

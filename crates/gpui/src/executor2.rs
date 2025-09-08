@@ -130,7 +130,7 @@ impl BackgroundExecutor {
     /// Calling this instead of `std::time::Instant::now` allows the use
     /// of fake timers in tests.
     pub fn now(&self) -> Instant {
-        todo!("convert to a chrono::DateTime?")
+        self.scheduler().clock().now()
     }
 
     /// Returns a task that will complete after the given duration.
@@ -154,8 +154,7 @@ impl BackgroundExecutor {
     /// in tests, move time forward. This does not run any tasks, but does make `timer`s ready.
     #[cfg(any(test, feature = "test-support"))]
     pub fn advance_clock(&self, duration: Duration) {
-        // self.0.advance_clock(duration)
-        todo!()
+        self.scheduler().as_test().advance_clock(duration);
     }
 
     /// in tests, run all tasks that are ready to run. If after doing so
