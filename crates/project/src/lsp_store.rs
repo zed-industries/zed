@@ -6361,12 +6361,12 @@ impl LspStore {
                             // Special case: if both ranges start at the very beginning of the file (line 0, column 0),
                             // and the primary completion is just an insertion (empty range), then this is likely
                             // an auto-import scenario and should not be considered overlapping
+                            // https://github.com/zed-industries/zed/issues/26136
                             let is_file_start_auto_import = {
                                 let snapshot = buffer.snapshot();
                                 let primary_start_point = primary.start.to_point(&snapshot);
                                 let range_start_point = range.start.to_point(&snapshot);
 
-                                // Check if both ranges start at the very beginning of the file (line 0, column 0)
                                 let result = primary_start_point.row == 0
                                     && primary_start_point.column == 0
                                     && range_start_point.row == 0
@@ -6376,7 +6376,6 @@ impl LspStore {
                             };
 
                             let has_overlap = if is_file_start_auto_import {
-                                // This is an auto-import at the start of the file - don't consider it overlapping
                                 false
                             } else {
                                 let start_within = primary.start.cmp(&range.start, buffer).is_le()
