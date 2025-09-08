@@ -76,7 +76,7 @@ impl CommandPaletteFilter {
     }
 
     /// Hides all actions with the given types.
-    pub fn hide_action_types(&mut self, action_types: &[TypeId]) {
+    pub fn hide_action_types<'a>(&mut self, action_types: impl IntoIterator<Item = &'a TypeId>) {
         for action_type in action_types {
             self.hidden_action_types.insert(*action_type);
             self.shown_action_types.remove(action_type);
@@ -84,7 +84,7 @@ impl CommandPaletteFilter {
     }
 
     /// Shows all actions with the given types.
-    pub fn show_action_types<'a>(&mut self, action_types: impl Iterator<Item = &'a TypeId>) {
+    pub fn show_action_types<'a>(&mut self, action_types: impl IntoIterator<Item = &'a TypeId>) {
         for action_type in action_types {
             self.shown_action_types.insert(*action_type);
             self.hidden_action_types.remove(action_type);

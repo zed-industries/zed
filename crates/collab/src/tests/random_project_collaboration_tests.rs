@@ -17,7 +17,7 @@ use project::{
     DEFAULT_COMPLETION_CONTEXT, Project, ProjectPath, search::SearchQuery, search::SearchResult,
 };
 use rand::{
-    distributions::{Alphanumeric, DistString},
+    distr::{self, SampleString},
     prelude::*,
 };
 use serde::{Deserialize, Serialize};
@@ -168,19 +168,19 @@ impl RandomizedTest for ProjectCollaborationTest {
     ) -> ClientOperation {
         let call = cx.read(ActiveCall::global);
         loop {
-            match rng.gen_range(0..100_u32) {
+            match rng.random_range(0..100_u32) {
                 // Mutate the call
                 0..=29 => {
                     // Respond to an incoming call
                     if call.read_with(cx, |call, _| call.incoming().borrow().is_some()) {
-                        break if rng.gen_bool(0.7) {
+                        break if rng.random_bool(0.7) {
                             ClientOperation::AcceptIncomingCall
                         } else {
                             ClientOperation::RejectIncomingCall
                         };
                     }
 
-                    match rng.gen_range(0..100_u32) {
+                    match rng.random_range(0..100_u32) {
                         // Invite a contact to the current call
                         0..=70 => {
                             let available_contacts =
@@ -212,7 +212,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                 }
 
                 // Mutate projects
-                30..=59 => match rng.gen_range(0..100_u32) {
+                30..=59 => match rng.random_range(0..100_u32) {
                     // Open a new project
                     0..=70 => {
                         // Open a remote project
@@ -270,7 +270,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                     }
 
                     // Mutate project worktrees
-                    81.. => match rng.gen_range(0..100_u32) {
+                    81.. => match rng.random_range(0..100_u32) {
                         // Add a worktree to a local project
                         0..=50 => {
                             let Some(project) = client.local_projects().choose(rng).cloned() else {
@@ -279,7 +279,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             let project_root_name = root_name_for_project(&project, cx);
                             let mut paths = client.fs().paths(false);
                             paths.remove(0);
-                            let new_root_path = if paths.is_empty() || rng.r#gen() {
+                            let new_root_path = if paths.is_empty() || rng.random() {
                                 Path::new(path!("/")).join(plan.next_root_dir_name())
                             } else {
                                 paths.choose(rng).unwrap().clone()
@@ -309,7 +309,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                                     .choose(rng)
                             });
                             let Some(worktree) = worktree else { continue };
-                            let is_dir = rng.r#gen::<bool>();
+                            let is_dir = rng.random::<bool>();
                             let mut full_path =
                                 worktree.read_with(cx, |w, _| PathBuf::from(w.root_name()));
                             full_path.push(gen_file_name(rng));
@@ -334,7 +334,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                     let project_root_name = root_name_for_project(&project, cx);
                     let is_local = project.read_with(cx, |project, _| project.is_local());
 
-                    match rng.gen_range(0..100_u32) {
+                    match rng.random_range(0..100_u32) {
                         // Manipulate an existing buffer
                         0..=70 => {
                             let Some(buffer) = client
@@ -349,7 +349,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             let full_path = buffer
                                 .read_with(cx, |buffer, cx| buffer.file().unwrap().full_path(cx));
 
-                            match rng.gen_range(0..100_u32) {
+                            match rng.random_range(0..100_u32) {
                                 // Close the buffer
                                 0..=15 => {
                                     break ClientOperation::CloseBuffer {
@@ -360,7 +360,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                                 }
                                 // Save the buffer
                                 16..=29 if buffer.read_with(cx, |b, _| b.is_dirty()) => {
-                                    let detach = rng.gen_bool(0.3);
+                                    let detach = rng.random_bool(0.3);
                                     break ClientOperation::SaveBuffer {
                                         project_root_name,
                                         is_local,
@@ -383,17 +383,17 @@ impl RandomizedTest for ProjectCollaborationTest {
                                 _ => {
                                     let offset = buffer.read_with(cx, |buffer, _| {
                                         buffer.clip_offset(
-                                            rng.gen_range(0..=buffer.len()),
+                                            rng.random_range(0..=buffer.len()),
                                             language::Bias::Left,
                                         )
                                     });
-                                    let detach = rng.r#gen();
+                                    let detach = rng.random();
                                     break ClientOperation::RequestLspDataInBuffer {
                                         project_root_name,
                                         full_path,
                                         offset,
                                         is_local,
-                                        kind: match rng.gen_range(0..5_u32) {
+                                        kind: match rng.random_range(0..5_u32) {
                                             0 => LspRequestKind::Rename,
                                             1 => LspRequestKind::Highlights,
                                             2 => LspRequestKind::Definition,
@@ -407,8 +407,8 @@ impl RandomizedTest for ProjectCollaborationTest {
                         }
 
                         71..=80 => {
-                            let query = rng.gen_range('a'..='z').to_string();
-                            let detach = rng.gen_bool(0.3);
+                            let query = rng.random_range('a'..='z').to_string();
+                            let detach = rng.random_bool(0.3);
                             break ClientOperation::SearchProject {
                                 project_root_name,
                                 is_local,
@@ -460,7 +460,7 @@ impl RandomizedTest for ProjectCollaborationTest {
 
                 // Create or update a file or directory
                 96.. => {
-                    let is_dir = rng.r#gen::<bool>();
+                    let is_dir = rng.random::<bool>();
                     let content;
                     let mut path;
                     let dir_paths = client.fs().directories(false);
@@ -470,11 +470,11 @@ impl RandomizedTest for ProjectCollaborationTest {
                         path = dir_paths.choose(rng).unwrap().clone();
                         path.push(gen_file_name(rng));
                     } else {
-                        content = Alphanumeric.sample_string(rng, 16);
+                        content = distr::Alphanumeric.sample_string(rng, 16);
 
                         // Create a new file or overwrite an existing file
                         let file_paths = client.fs().files();
-                        if file_paths.is_empty() || rng.gen_bool(0.5) {
+                        if file_paths.is_empty() || rng.random_bool(0.5) {
                             path = dir_paths.choose(rng).unwrap().clone();
                             path.push(gen_file_name(rng));
                             path.set_extension("rs");
@@ -1090,7 +1090,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             move |_, cx| {
                                 let background = cx.background_executor();
                                 let mut rng = background.rng();
-                                let count = rng.gen_range::<usize, _>(1..3);
+                                let count = rng.random_range::<usize, _>(1..3);
                                 let files = fs.as_fake().files();
                                 let files = (0..count)
                                     .map(|_| files.choose(&mut rng).unwrap().clone())
@@ -1117,12 +1117,12 @@ impl RandomizedTest for ProjectCollaborationTest {
                                     let background = cx.background_executor();
                                     let mut rng = background.rng();
 
-                                    let highlight_count = rng.gen_range(1..=5);
+                                    let highlight_count = rng.random_range(1..=5);
                                     for _ in 0..highlight_count {
-                                        let start_row = rng.gen_range(0..100);
-                                        let start_column = rng.gen_range(0..100);
-                                        let end_row = rng.gen_range(0..100);
-                                        let end_column = rng.gen_range(0..100);
+                                        let start_row = rng.random_range(0..100);
+                                        let start_column = rng.random_range(0..100);
+                                        let end_row = rng.random_range(0..100);
+                                        let end_column = rng.random_range(0..100);
                                         let start = PointUtf16::new(start_row, start_column);
                                         let end = PointUtf16::new(end_row, end_column);
                                         let range =
@@ -1219,8 +1219,8 @@ impl RandomizedTest for ProjectCollaborationTest {
                                         guest_project.remote_id(),
                                     );
                                     assert_eq!(
-                                        guest_snapshot.entries(false, 0).collect::<Vec<_>>(),
-                                        host_snapshot.entries(false, 0).collect::<Vec<_>>(),
+                                        guest_snapshot.entries(false, 0).map(null_out_entry_size).collect::<Vec<_>>(),
+                                        host_snapshot.entries(false, 0).map(null_out_entry_size).collect::<Vec<_>>(),
                                         "{} has different snapshot than the host for worktree {:?} ({:?}) and project {:?}",
                                         client.username,
                                         host_snapshot.abs_path(),
@@ -1248,6 +1248,18 @@ impl RandomizedTest for ProjectCollaborationTest {
                             );
                         }
                     });
+
+                // A hack to work around a hack in
+                // https://github.com/zed-industries/zed/pull/16696 that wasn't
+                // detected until we upgraded the rng crate. This whole crate is
+                // going away with DeltaDB soon, so we hold our nose and
+                // continue.
+                fn null_out_entry_size(entry: &project::Entry) -> project::Entry {
+                    project::Entry {
+                        size: 0,
+                        ..entry.clone()
+                    }
+                }
             }
 
             let buffers = client.buffers().clone();
@@ -1422,7 +1434,7 @@ fn generate_git_operation(rng: &mut StdRng, client: &TestClient) -> GitOperation
             .filter(|path| path.starts_with(repo_path))
             .collect::<Vec<_>>();
 
-        let count = rng.gen_range(0..=paths.len());
+        let count = rng.random_range(0..=paths.len());
         paths.shuffle(rng);
         paths.truncate(count);
 
@@ -1434,13 +1446,13 @@ fn generate_git_operation(rng: &mut StdRng, client: &TestClient) -> GitOperation
 
     let repo_path = client.fs().directories(false).choose(rng).unwrap().clone();
 
-    match rng.gen_range(0..100_u32) {
+    match rng.random_range(0..100_u32) {
         0..=25 => {
             let file_paths = generate_file_paths(&repo_path, rng, client);
 
             let contents = file_paths
                 .into_iter()
-                .map(|path| (path, Alphanumeric.sample_string(rng, 16)))
+                .map(|path| (path, distr::Alphanumeric.sample_string(rng, 16)))
                 .collect();
 
             GitOperation::WriteGitIndex {
@@ -1449,7 +1461,8 @@ fn generate_git_operation(rng: &mut StdRng, client: &TestClient) -> GitOperation
             }
         }
         26..=63 => {
-            let new_branch = (rng.gen_range(0..10) > 3).then(|| Alphanumeric.sample_string(rng, 8));
+            let new_branch =
+                (rng.random_range(0..10) > 3).then(|| distr::Alphanumeric.sample_string(rng, 8));
 
             GitOperation::WriteGitBranch {
                 repo_path,
@@ -1596,7 +1609,7 @@ fn choose_random_project(client: &TestClient, rng: &mut StdRng) -> Option<Entity
 fn gen_file_name(rng: &mut StdRng) -> String {
     let mut name = String::new();
     for _ in 0..10 {
-        let letter = rng.gen_range('a'..='z');
+        let letter = rng.random_range('a'..='z');
         name.push(letter);
     }
     name
@@ -1604,7 +1617,7 @@ fn gen_file_name(rng: &mut StdRng) -> String {
 
 fn gen_status(rng: &mut StdRng) -> FileStatus {
     fn gen_tracked_status(rng: &mut StdRng) -> TrackedStatus {
-        match rng.gen_range(0..3) {
+        match rng.random_range(0..3) {
             0 => TrackedStatus {
                 index_status: StatusCode::Unmodified,
                 worktree_status: StatusCode::Unmodified,
@@ -1626,7 +1639,7 @@ fn gen_status(rng: &mut StdRng) -> FileStatus {
     }
 
     fn gen_unmerged_status_code(rng: &mut StdRng) -> UnmergedStatusCode {
-        match rng.gen_range(0..3) {
+        match rng.random_range(0..3) {
             0 => UnmergedStatusCode::Updated,
             1 => UnmergedStatusCode::Added,
             2 => UnmergedStatusCode::Deleted,
@@ -1634,7 +1647,7 @@ fn gen_status(rng: &mut StdRng) -> FileStatus {
         }
     }
 
-    match rng.gen_range(0..2) {
+    match rng.random_range(0..2) {
         0 => FileStatus::Unmerged(UnmergedStatus {
             first_head: gen_unmerged_status_code(rng),
             second_head: gen_unmerged_status_code(rng),

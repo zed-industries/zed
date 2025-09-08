@@ -256,6 +256,9 @@ fn load_shell_from_passwd() -> Result<()> {
             &mut result,
         )
     };
+    anyhow::ensure!(!result.is_null(), "passwd entry for uid {} not found", uid);
+
+    // SAFETY: If `getpwuid_r` doesn't error, we have the entry here.
     let entry = unsafe { pwd.assume_init() };
 
     anyhow::ensure!(
@@ -264,7 +267,6 @@ fn load_shell_from_passwd() -> Result<()> {
         uid,
         status
     );
-    anyhow::ensure!(!result.is_null(), "passwd entry for uid {} not found", uid);
     anyhow::ensure!(
         entry.pw_uid == uid,
         "passwd entry has different uid ({}) than getuid ({}) returned",
@@ -815,7 +817,8 @@ pub fn defer<F: FnOnce()>(f: F) -> Deferred<F> {
 
 #[cfg(any(test, feature = "test-support"))]
 mod rng {
-    use rand::{Rng, seq::SliceRandom};
+    use rand::prelude::*;
+
     pub struct RandomCharIter<T: Rng> {
         rng: T,
         simple_text: bool,
@@ -840,18 +843,18 @@ mod rng {
 
         fn next(&mut self) -> Option<Self::Item> {
             if self.simple_text {
-                return if self.rng.gen_range(0..100) < 5 {
+                return if self.rng.random_range(0..100) < 5 {
                     Some('\n')
                 } else {
-                    Some(self.rng.gen_range(b'a'..b'z' + 1).into())
+                    Some(self.rng.random_range(b'a'..b'z' + 1).into())
                 };
             }
 
-            match self.rng.gen_range(0..100) {
+            match self.rng.random_range(0..100) {
                 // whitespace
                 0..=19 => [' ', '\n', '\r', '\t'].choose(&mut self.rng).copied(),
                 // two-byte greek letters
-                20..=32 => char::from_u32(self.rng.gen_range(('α' as u32)..('ω' as u32 + 1))),
+                20..=32 => char::from_u32(self.rng.random_range(('α' as u32)..('ω' as u32 + 1))),
                 // // three-byte characters
                 33..=45 => ['✋', '✅', '❌', '❎', '⭐']
                     .choose(&mut self.rng)
@@ -859,7 +862,7 @@ mod rng {
                 // // four-byte characters
                 46..=58 => ['🍐', '🏀', '🍗', '🎉'].choose(&mut self.rng).copied(),
                 // ascii letters
-                _ => Some(self.rng.gen_range(b'a'..b'z' + 1).into()),
+                _ => Some(self.rng.random_range(b'a'..b'z' + 1).into()),
             }
         }
     }

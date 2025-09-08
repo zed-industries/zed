@@ -682,7 +682,7 @@ async fn test_random_diagnostics_blocks(cx: &mut TestAppContext, mut rng: StdRng
         Default::default();
 
     for _ in 0..operations {
-        match rng.gen_range(0..100) {
+        match rng.random_range(0..100) {
             // language server completes its diagnostic check
             0..=20 if !updated_language_servers.is_empty() => {
                 let server_id = *updated_language_servers.iter().choose(&mut rng).unwrap();
@@ -691,7 +691,7 @@ async fn test_random_diagnostics_blocks(cx: &mut TestAppContext, mut rng: StdRng
                     lsp_store.disk_based_diagnostics_finished(server_id, cx)
                 });
 
-                if rng.gen_bool(0.5) {
+                if rng.random_bool(0.5) {
                     cx.run_until_parked();
                 }
             }
@@ -701,7 +701,7 @@ async fn test_random_diagnostics_blocks(cx: &mut TestAppContext, mut rng: StdRng
                 let (path, server_id, diagnostics) =
                     match current_diagnostics.iter_mut().choose(&mut rng) {
                         // update existing set of diagnostics
-                        Some(((path, server_id), diagnostics)) if rng.gen_bool(0.5) => {
+                        Some(((path, server_id), diagnostics)) if rng.random_bool(0.5) => {
                             (path.clone(), *server_id, diagnostics)
                         }
 
@@ -709,13 +709,13 @@ async fn test_random_diagnostics_blocks(cx: &mut TestAppContext, mut rng: StdRng
                         _ => {
                             let path: PathBuf =
                                 format!(path!("/test/{}.rs"), post_inc(&mut next_filename)).into();
-                            let len = rng.gen_range(128..256);
+                            let len = rng.random_range(128..256);
                             let content =
                                 RandomCharIter::new(&mut rng).take(len).collect::<String>();
                             fs.insert_file(&path, content.into_bytes()).await;
 
                             let server_id = match language_server_ids.iter().choose(&mut rng) {
-                                Some(server_id) if rng.gen_bool(0.5) => *server_id,
+                                Some(server_id) if rng.random_bool(0.5) => *server_id,
                                 _ => {
                                     let id = LanguageServerId(language_server_ids.len());
                                     language_server_ids.push(id);
@@ -846,7 +846,7 @@ async fn test_random_diagnostics_with_inlays(cx: &mut TestAppContext, mut rng: S
     let mut next_inlay_id = 0;
 
     for _ in 0..operations {
-        match rng.gen_range(0..100) {
+        match rng.random_range(0..100) {
             // language server completes its diagnostic check
             0..=20 if !updated_language_servers.is_empty() => {
                 let server_id = *updated_language_servers.iter().choose(&mut rng).unwrap();
@@ -855,7 +855,7 @@ async fn test_random_diagnostics_with_inlays(cx: &mut TestAppContext, mut rng: S
                     lsp_store.disk_based_diagnostics_finished(server_id, cx)
                 });
 
-                if rng.gen_bool(0.5) {
+                if rng.random_bool(0.5) {
                     cx.run_until_parked();
                 }
             }
@@ -864,7 +864,7 @@ async fn test_random_diagnostics_with_inlays(cx: &mut TestAppContext, mut rng: S
                 diagnostics.editor.update(cx, |editor, cx| {
                     let snapshot = editor.snapshot(window, cx);
                     if !snapshot.buffer_snapshot.is_empty() {
-                        let position = rng.gen_range(0..snapshot.buffer_snapshot.len());
+                        let position = rng.random_range(0..snapshot.buffer_snapshot.len());
                         let position = snapshot.buffer_snapshot.clip_offset(position, Bias::Left);
                         log::info!(
                             "adding inlay at {position}/{}: {:?}",
@@ -890,7 +890,7 @@ async fn test_random_diagnostics_with_inlays(cx: &mut TestAppContext, mut rng: S
                 let (path, server_id, diagnostics) =
                     match current_diagnostics.iter_mut().choose(&mut rng) {
                         // update existing set of diagnostics
-                        Some(((path, server_id), diagnostics)) if rng.gen_bool(0.5) => {
+                        Some(((path, server_id), diagnostics)) if rng.random_bool(0.5) => {
                             (path.clone(), *server_id, diagnostics)
                         }
 
@@ -898,13 +898,13 @@ async fn test_random_diagnostics_with_inlays(cx: &mut TestAppContext, mut rng: S
                         _ => {
                             let path: PathBuf =
                                 format!(path!("/test/{}.rs"), post_inc(&mut next_filename)).into();
-                            let len = rng.gen_range(128..256);
+                            let len = rng.random_range(128..256);
                             let content =
                                 RandomCharIter::new(&mut rng).take(len).collect::<String>();
                             fs.insert_file(&path, content.into_bytes()).await;
 
                             let server_id = match language_server_ids.iter().choose(&mut rng) {
-                                Some(server_id) if rng.gen_bool(0.5) => *server_id,
+                                Some(server_id) if rng.random_bool(0.5) => *server_id,
                                 _ => {
                                     let id = LanguageServerId(language_server_ids.len());
                                     language_server_ids.push(id);
@@ -1589,10 +1589,10 @@ fn randomly_update_diagnostics_for_path(
     next_id: &mut usize,
     rng: &mut impl Rng,
 ) {
-    let mutation_count = rng.gen_range(1..=3);
+    let mutation_count = rng.random_range(1..=3);
     for _ in 0..mutation_count {
-        if rng.gen_bool(0.3) && !diagnostics.is_empty() {
-            let idx = rng.gen_range(0..diagnostics.len());
+        if rng.random_bool(0.3) && !diagnostics.is_empty() {
+            let idx = rng.random_range(0..diagnostics.len());
             log::info!("  removing diagnostic at index {idx}");
             diagnostics.remove(idx);
         } else {
@@ -1601,7 +1601,7 @@ fn randomly_update_diagnostics_for_path(
 
             let new_diagnostic = random_lsp_diagnostic(rng, fs, path, unique_id);
 
-            let ix = rng.gen_range(0..=diagnostics.len());
+            let ix = rng.random_range(0..=diagnostics.len());
             log::info!(
                 "  inserting {} at index {ix}. {},{}..{},{}",
                 new_diagnostic.message,
@@ -1638,8 +1638,8 @@ fn random_lsp_diagnostic(
     let file_content = fs.read_file_sync(path).unwrap();
     let file_text = Rope::from(String::from_utf8_lossy(&file_content).as_ref());
 
-    let start = rng.gen_range(0..file_text.len().saturating_add(ERROR_MARGIN));
-    let end = rng.gen_range(start..file_text.len().saturating_add(ERROR_MARGIN));
+    let start = rng.random_range(0..file_text.len().saturating_add(ERROR_MARGIN));
+    let end = rng.random_range(start..file_text.len().saturating_add(ERROR_MARGIN));
 
     let start_point = file_text.offset_to_point_utf16(start);
     let end_point = file_text.offset_to_point_utf16(end);
@@ -1649,7 +1649,7 @@ fn random_lsp_diagnostic(
         lsp::Position::new(end_point.row, end_point.column),
     );
 
-    let severity = if rng.gen_bool(0.5) {
+    let severity = if rng.random_bool(0.5) {
         Some(lsp::DiagnosticSeverity::ERROR)
     } else {
         Some(lsp::DiagnosticSeverity::WARNING)
@@ -1657,13 +1657,14 @@ fn random_lsp_diagnostic(
 
     let message = format!("diagnostic {unique_id}");
 
-    let related_information = if rng.gen_bool(0.3) {
-        let info_count = rng.gen_range(1..=3);
+    let related_information = if rng.random_bool(0.3) {
+        let info_count = rng.random_range(1..=3);
         let mut related_info = Vec::with_capacity(info_count);
 
         for i in 0..info_count {
-            let info_start = rng.gen_range(0..file_text.len().saturating_add(ERROR_MARGIN));
-            let info_end = rng.gen_range(info_start..file_text.len().saturating_add(ERROR_MARGIN));
+            let info_start = rng.random_range(0..file_text.len().saturating_add(ERROR_MARGIN));
+            let info_end =
+                rng.random_range(info_start..file_text.len().saturating_add(ERROR_MARGIN));
 
             let info_start_point = file_text.offset_to_point_utf16(info_start);
             let info_end_point = file_text.offset_to_point_utf16(info_end);

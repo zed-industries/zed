@@ -493,14 +493,13 @@ impl MessageEditor {
         let Some(entry) = self.project.read(cx).entry_for_path(&project_path, cx) else {
             return Task::ready(Err(anyhow!("project entry not found")));
         };
-        let Some(worktree) = self.project.read(cx).worktree_for_entry(entry.id, cx) else {
+        let directory_path = entry.path.clone();
+        let worktree_id = project_path.worktree_id;
+        let Some(worktree) = self.project.read(cx).worktree_for_id(worktree_id, cx) else {
             return Task::ready(Err(anyhow!("worktree not found")));
         };
         let project = self.project.clone();
         cx.spawn(async move |_, cx| {
-            let directory_path = entry.path.clone();
-
-            let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id())?;
             let file_paths = worktree.read_with(cx, |worktree, _cx| {
                 collect_files_in_path(worktree, &directory_path)
             })?;
@@ -700,7 +699,7 @@ impl MessageEditor {
             self.project.read(cx).fs().clone(),
             self.history_store.clone(),
         ));
-        let delegate = AgentServerDelegate::new(self.project.clone(), None);
+        let delegate = AgentServerDelegate::new(self.project.clone(), None, None);
         let connection = server.connect(Path::new(""), delegate, cx);
         cx.spawn(async move |_, cx| {
             let agent = connection.await?;
