@@ -2,13 +2,14 @@ use crate::AgentServerCommand;
 use acp_thread::AgentConnection;
 use acp_tools::AcpConnectionRegistry;
 use action_log::ActionLog;
-use agent_client_protocol::{self as acp, Agent as _, ErrorCode};
+use agent_client_protocol::{self as acp, Agent as _, ErrorCode, SessionModeId};
 use anyhow::anyhow;
 use collections::HashMap;
 use futures::AsyncBufReadExt as _;
 use futures::io::BufReader;
 use project::Project;
 use serde::Deserialize;
+use util::ResultExt;
 
 use std::{any::Any, cell::RefCell};
 use std::{path::Path, rc::Rc};
@@ -29,6 +30,7 @@ pub struct AcpConnection {
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
     auth_methods: Vec<acp::AuthMethod>,
     agent_capabilities: acp::AgentCapabilities,
+    default_mode: Option<acp::SessionModeId>,
     _io_task: Task<Result<()>>,
     _wait_task: Task<Result<()>>,
     _stderr_task: Task<Result<()>>,
@@ -44,9 +46,11 @@ pub async fn connect(
     server_name: SharedString,
     command: AgentServerCommand,
     root_dir: &Path,
+    default_mode: Option<String>,
     cx: &mut AsyncApp,
 ) -> Result<Rc<dyn AgentConnection>> {
-    let conn = AcpConnection::stdio(server_name, command.clone(), root_dir, cx).await?;
+    let conn =
+        AcpConnection::stdio(server_name, command.clone(), root_dir, default_mode, cx).await?;
     Ok(Rc::new(conn) as _)
 }
 
@@ -57,6 +61,7 @@ impl AcpConnection {
         server_name: SharedString,
         command: AgentServerCommand,
         root_dir: &Path,
+        default_mode: Option<String>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
         let mut child = util::command::new_smol_command(command.path)
@@ -150,6 +155,7 @@ impl AcpConnection {
             server_name,
             sessions,
             agent_capabilities: response.agent_capabilities,
+            default_mode: default_mode.map(|mode| SessionModeId(mode.into())),
             _io_task: io_task,
             _wait_task: wait_task,
             _stderr_task: stderr_task,
@@ -168,6 +174,7 @@ impl AgentConnection for AcpConnection {
         cwd: &Path,
         cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
+        let name = self.server_name.clone();
         let conn = self.connection.clone();
         let sessions = self.sessions.clone();
         let cwd = cwd.to_path_buf();
@@ -195,6 +202,7 @@ impl AgentConnection for AcpConnection {
                 })
             })
             .collect();
+        let default_mode = self.default_mode.clone();
 
         cx.spawn(async move |cx| {
             let response = conn
@@ -214,6 +222,53 @@ impl AgentConnection for AcpConnection {
                     }
                 })?;
 
+            let modes = response.modes.map(|modes| Rc::new(RefCell::new(modes)));
+
+            if let Some(default_mode) = default_mode {
+                if let Some(modes) = modes.as_ref() {
+                    let mut modes_ref = modes.borrow_mut();
+                    let has_mode = modes_ref.available_modes.iter().any(|mode| mode.id == default_mode);
+
+                    if has_mode {
+                        let initial_mode_id = modes_ref.current_mode_id.clone();
+
+                        cx.spawn({
+                            let default_mode = default_mode.clone();
+                            let session_id = response.session_id.clone();
+                            let modes = modes.clone();
+                            async move |_| {
+                                let result = conn.set_session_mode(acp::SetSessionModeRequest {
+                                    session_id,
+                                    mode_id: default_mode,
+                                })
+                                .await.log_err();
+
+                                if result.is_none() {
+                                    modes.borrow_mut().current_mode_id = initial_mode_id;
+                                }
+                            }
+                        }).detach();
+
+                        modes_ref.current_mode_id = default_mode;
+                    } else {
+                        let available_modes = modes_ref
+                            .available_modes
+                            .iter()
+                            .map(|mode| format!("- `{}`: {}", mode.id, mode.name))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+
+                        log::warn!(
+                            "`{default_mode}` is not valid {name} mode. Available options:\n{available_modes}",
+                        );
+                    }
+                } else {
+                    log::warn!(
+                        "`{name}` does not support modes, but `default_mode` was set in settings.",
+                    );
+                }
+            }
+
             let session_id = response.session_id;
             let action_log = cx.new(|_| ActionLog::new(project.clone()))?;
             let thread = cx.new(|cx| {
@@ -232,7 +287,7 @@ impl AgentConnection for AcpConnection {
             let session = AcpSession {
                 thread: thread.downgrade(),
                 suppress_abort_err: false,
-                session_modes: response.modes.map(|modes| Rc::new(RefCell::new(modes))),
+                session_modes: modes
             };
             sessions.borrow_mut().insert(session_id, session);
 

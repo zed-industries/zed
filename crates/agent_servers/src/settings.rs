@@ -46,6 +46,13 @@ pub struct BuiltinAgentServerSettings {
     ///
     /// Default: true
     pub ignore_system_version: Option<bool>,
+    /// The default mode for new threads.
+    ///
+    /// Note: Not all agents support modes.
+    ///
+    /// Default: None
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_mode: Option<String>,
 }
 
 impl BuiltinAgentServerSettings {
@@ -73,6 +80,13 @@ impl From<AgentServerCommand> for BuiltinAgentServerSettings {
 pub struct CustomAgentServerSettings {
     #[serde(flatten)]
     pub command: AgentServerCommand,
+    /// The default mode for new threads.
+    ///
+    /// Note: Not all agents support modes.
+    ///
+    /// Default: None
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_mode: Option<String>,
 }
 
 impl settings::Settings for AllAgentServersSettings {

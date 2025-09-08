@@ -9,11 +9,20 @@ use ui::IconName;
 pub struct CustomAgentServer {
     name: SharedString,
     command: AgentServerCommand,
+    default_mode: Option<String>,
 }
 
 impl CustomAgentServer {
-    pub fn new(name: SharedString, command: AgentServerCommand) -> Self {
-        Self { name, command }
+    pub fn new(
+        name: SharedString,
+        command: AgentServerCommand,
+        default_mode: Option<String>,
+    ) -> Self {
+        Self {
+            name,
+            command,
+            default_mode,
+        }
     }
 }
 
@@ -39,7 +48,10 @@ impl crate::AgentServer for CustomAgentServer {
         let server_name = self.name();
         let command = self.command.clone();
         let root_dir = root_dir.to_path_buf();
-        cx.spawn(async move |cx| crate::acp::connect(server_name, command, &root_dir, cx).await)
+        let default_mode = self.default_mode.clone();
+        cx.spawn(async move |cx| {
+            crate::acp::connect(server_name, command, &root_dir, default_mode, cx).await
+        })
     }
 
     fn into_any(self: Rc<Self>) -> Rc<dyn std::any::Any> {

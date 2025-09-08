@@ -263,6 +263,7 @@ pub enum AgentType {
     Custom {
         name: SharedString,
         command: AgentServerCommand,
+        default_mode: Option<String>,
     },
 }
 
@@ -292,7 +293,15 @@ impl From<ExternalAgent> for AgentType {
         match value {
             ExternalAgent::Gemini => Self::Gemini,
             ExternalAgent::ClaudeCode => Self::ClaudeCode,
-            ExternalAgent::Custom { name, command } => Self::Custom { name, command },
+            ExternalAgent::Custom {
+                name,
+                command,
+                default_mode,
+            } => Self::Custom {
+                name,
+                command,
+                default_mode,
+            },
             ExternalAgent::NativeAgent => Self::NativeAgent,
         }
     }
@@ -1930,8 +1939,16 @@ impl AgentPanel {
                     cx,
                 )
             }
-            AgentType::Custom { name, command } => self.external_thread(
-                Some(crate::ExternalAgent::Custom { name, command }),
+            AgentType::Custom {
+                name,
+                command,
+                default_mode,
+            } => self.external_thread(
+                Some(crate::ExternalAgent::Custom {
+                    name,
+                    command,
+                    default_mode,
+                }),
                 None,
                 None,
                 window,
@@ -2707,6 +2724,10 @@ impl AgentPanel {
                                                                             command: agent_settings
                                                                                 .command
                                                                                 .clone(),
+                                                                            default_mode:
+                                                                                agent_settings
+                                                                                    .default_mode
+                                                                                    .clone(),
                                                                         },
                                                                         window,
                                                                         cx,

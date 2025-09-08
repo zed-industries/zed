@@ -175,6 +175,7 @@ enum ExternalAgent {
     Custom {
         name: SharedString,
         command: AgentServerCommand,
+        default_mode: Option<String>,
     },
 }
 
@@ -197,9 +198,14 @@ impl ExternalAgent {
             Self::Gemini => Rc::new(agent_servers::Gemini),
             Self::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
             Self::NativeAgent => Rc::new(agent2::NativeAgentServer::new(fs, history)),
-            Self::Custom { name, command } => Rc::new(agent_servers::CustomAgentServer::new(
+            Self::Custom {
+                name,
+                command,
+                default_mode,
+            } => Rc::new(agent_servers::CustomAgentServer::new(
                 name.clone(),
                 command.clone(),
+                default_mode.clone(),
             )),
         }
     }

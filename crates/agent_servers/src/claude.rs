@@ -82,6 +82,7 @@ impl AgentServer for ClaudeCode {
         });
 
         cx.spawn(async move |cx| {
+            let default_mode = settings.as_ref().and_then(|s| s.default_mode.clone());
             let mut command = if let Some(settings) = settings {
                 settings.command
             } else {
@@ -110,7 +111,7 @@ impl AgentServer for ClaudeCode {
                 root_dir.to_string_lossy()
             );
 
-            crate::acp::connect(server_name, command.clone(), &root_dir, cx).await
+            crate::acp::connect(server_name, command.clone(), &root_dir, default_mode, cx).await
         })
     }
 

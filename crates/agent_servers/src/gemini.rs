@@ -82,7 +82,7 @@ impl AgentServer for Gemini {
                 root_dir.to_string_lossy()
             );
 
-            let result = crate::acp::connect(server_name, command.clone(), &root_dir, cx).await;
+            let result = crate::acp::connect(server_name, command.clone(), &root_dir, None, cx).await;
             match &result {
                 Ok(connection) => {
                     if let Some(connection) = connection.clone().downcast::<AcpConnection>()

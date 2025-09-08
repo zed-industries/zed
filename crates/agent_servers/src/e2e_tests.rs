@@ -479,6 +479,7 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
                         args: vec![],
                         env: None,
                     },
+                    default_mode: None,
                 }),
                 gemini: Some(crate::gemini::tests::local_command().into()),
                 custom: collections::HashMap::default(),

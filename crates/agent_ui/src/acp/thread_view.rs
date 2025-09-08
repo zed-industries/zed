@@ -2062,8 +2062,8 @@ impl AcpThreadView {
                     acp::ToolKind::Execute => IconName::ToolTerminal,
                     acp::ToolKind::Think => IconName::ToolThink,
                     acp::ToolKind::Fetch => IconName::ToolWeb,
-                    acp::ToolKind::ModeSwitch => IconName::ArrowRightLeft,
-                    acp::ToolKind::Other | _ => IconName::ToolHammer,
+                    acp::ToolKind::SwitchMode => IconName::ArrowRightLeft,
+                    acp::ToolKind::Other => IconName::ToolHammer,
                 })
             }
             .size(IconSize::Small)
@@ -2452,7 +2452,7 @@ impl AcpThreadView {
             .flex_wrap()
             .border_t_1()
             .border_color(self.tool_card_border_color(cx))
-            .when(kind != acp::ToolKind::ModeSwitch, |this| {
+            .when(kind != acp::ToolKind::SwitchMode, |this| {
                 this.pl_2().child(
                     div().min_w(rems_from_px(145.)).child(
                         LoadingLabel::new("Waiting for Confirmation").size(LabelSize::Small),
@@ -2462,7 +2462,7 @@ impl AcpThreadView {
             .child({
                 div()
                     .map(|this| {
-                        if kind == acp::ToolKind::ModeSwitch {
+                        if kind == acp::ToolKind::SwitchMode {
                             this.w_full().v_flex()
                         } else {
                             this.h_flex()
