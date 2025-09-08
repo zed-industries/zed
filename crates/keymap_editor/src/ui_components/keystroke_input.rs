@@ -461,7 +461,7 @@ impl Render for KeystrokeInput {
         let is_focused = self.outer_focus_handle.contains_focused(window, cx);
         let is_recording = self.is_recording(window);
 
-        let horizontal_padding = rems_from_px(64.);
+        let width = rems_from_px(64.);
 
         let recording_bg_color = colors
             .editor_background
@@ -554,7 +554,7 @@ impl Render for KeystrokeInput {
             .on_action(cx.listener(Self::clear_keystrokes))
             .child(
                 h_flex()
-                    .w(horizontal_padding)
+                    .w(width)
                     .gap_0p5()
                     .justify_start()
                     .flex_none()
@@ -573,14 +573,13 @@ impl Render for KeystrokeInput {
                     .id("keystroke-input-inner")
                     .track_focus(&self.inner_focus_handle)
                     .on_modifiers_changed(cx.listener(Self::on_modifiers_changed))
-                    .size_full()
                     .when(!self.search, |this| {
                         this.focus(|mut style| {
                             style.border_color = Some(colors.border_focused);
                             style
                         })
                     })
-                    .w_full()
+                    .size_full()
                     .min_w_0()
                     .justify_center()
                     .flex_wrap()
@@ -589,7 +588,7 @@ impl Render for KeystrokeInput {
             )
             .child(
                 h_flex()
-                    .w(horizontal_padding)
+                    .w(width)
                     .gap_0p5()
                     .justify_end()
                     .flex_none()
@@ -641,9 +640,7 @@ impl Render for KeystrokeInput {
                                 "Clear Keystrokes",
                                 &ClearKeystrokes,
                             ))
-                            .when(!is_recording || !is_focused, |this| {
-                                this.icon_color(Color::Muted)
-                            })
+                            .when(!is_focused, |this| this.icon_color(Color::Muted))
                             .on_click(cx.listener(|this, _event, window, cx| {
                                 this.clear_keystrokes(&ClearKeystrokes, window, cx);
                             })),
