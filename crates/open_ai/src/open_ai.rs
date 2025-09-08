@@ -473,10 +473,7 @@ pub async fn stream_completion(
             .filter_map(|line| async move {
                 match line {
                     Ok(line) => {
-                        let mut line = line.strip_prefix("data:")?;
-                        if line.starts_with(" ") {
-                            line = &line[1..]
-                        }
+                        let line = line.strip_prefix("data: ").or_else(|| line.strip_prefix("data:"))?;
                         if line == "[DONE]" {
                             None
                         } else {
