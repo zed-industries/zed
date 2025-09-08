@@ -476,6 +476,7 @@ impl Onboarding {
                                 .map(|kb| kb.size(rems_from_px(12.))),
                         )
                         .on_click(|_, window, cx| {
+                            telemetry::event!("Welcome Sign In Clicked");
                             window.dispatch_action(SignIn.boxed_clone(), cx);
                         })
                         .into_any_element()

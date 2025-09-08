@@ -93,6 +93,7 @@ language_models.workspace = true
 language_selector.workspace = true
 language_tools.workspace = true
 languages = { workspace = true, features = ["load-grammars"] }
+line_ending_selector.workspace = true
 libc.workspace = true
 log.workspace = true
 markdown.workspace = true
@@ -165,6 +166,7 @@ web_search_providers.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+zed_env_vars.workspace = true
 zeta.workspace = true
 zlog.workspace = true
 zlog_settings.workspace = true
@@ -188,6 +190,7 @@ itertools.workspace = true
 language = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
+settings_ui = { workspace = true, features = ["test-support"] }
 terminal_view = { workspace = true, features = ["test-support"] }
 tree-sitter-md.workspace = true
 tree-sitter-rust.workspace = true

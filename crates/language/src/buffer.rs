@@ -284,6 +284,14 @@ pub enum Operation {
         /// The language server ID.
         server_id: LanguageServerId,
     },
+
+    /// An update to the line ending type of this buffer.
+    UpdateLineEnding {
+        /// The line ending type.
+        line_ending: LineEnding,
+        /// The buffer's lamport timestamp.
+        lamport_timestamp: clock::Lamport,
+    },
 }
 
 /// An event that occurs in a buffer.
@@ -315,10 +323,6 @@ pub enum BufferEvent {
     DiagnosticsUpdated,
     /// The buffer gained or lost editing capabilities.
     CapabilityChanged,
-    /// The buffer was explicitly requested to close.
-    Closed,
-    /// The buffer was discarded when closing.
-    Discarded,
 }
 
 /// The file associated with a buffer.
@@ -1244,10 +1248,27 @@ impl Buffer {
         self.syntax_map.lock().language_registry()
     }
 
+    /// Assign the line ending type to the buffer.
+    pub fn set_line_ending(&mut self, line_ending: LineEnding, cx: &mut Context<Self>) {
+        self.text.set_line_ending(line_ending);
+
+        let lamport_timestamp = self.text.lamport_clock.tick();
+        self.send_operation(
+            Operation::UpdateLineEnding {
+                line_ending,
+                lamport_timestamp,
+            },
+            true,
+            cx,
+        );
+    }
+
     /// Assign the buffer a new [`Capability`].
     pub fn set_capability(&mut self, capability: Capability, cx: &mut Context<Self>) {
-        self.capability = capability;
-        cx.emit(BufferEvent::CapabilityChanged)
+        if self.capability != capability {
+            self.capability = capability;
+            cx.emit(BufferEvent::CapabilityChanged)
+        }
     }
 
     /// This method is called to signal that the buffer has been saved.
@@ -1264,12 +1285,6 @@ impl Buffer {
         self.saved_mtime = mtime;
         self.was_changed();
         cx.emit(BufferEvent::Saved);
-        cx.notify();
-    }
-
-    /// This method is called to signal that the buffer has been discarded.
-    pub fn discarded(&self, cx: &mut Context<Self>) {
-        cx.emit(BufferEvent::Discarded);
         cx.notify();
     }
 
@@ -2565,7 +2580,7 @@ impl Buffer {
             Operation::UpdateSelections { selections, .. } => selections
                 .iter()
                 .all(|s| self.can_resolve(&s.start) && self.can_resolve(&s.end)),
-            Operation::UpdateCompletionTriggers { .. } => true,
+            Operation::UpdateCompletionTriggers { .. } | Operation::UpdateLineEnding { .. } => true,
         }
     }
 
@@ -2629,6 +2644,13 @@ impl Buffer {
                         .insert(server_id, triggers.iter().cloned().collect());
                     self.completion_triggers.extend(triggers);
                 }
+                self.text.lamport_clock.observe(lamport_timestamp);
+            }
+            Operation::UpdateLineEnding {
+                line_ending,
+                lamport_timestamp,
+            } => {
+                self.text.set_line_ending(line_ending);
                 self.text.lamport_clock.observe(lamport_timestamp);
             }
         }
@@ -2850,12 +2872,12 @@ impl Buffer {
 
             let new_start = last_end.map_or(0, |last_end| last_end + 1);
             let mut range = self.random_byte_range(new_start, rng);
-            if rng.gen_bool(0.2) {
+            if rng.random_bool(0.2) {
                 mem::swap(&mut range.start, &mut range.end);
             }
             last_end = Some(range.end);
 
-            let new_text_len = rng.gen_range(0..10);
+            let new_text_len = rng.random_range(0..10);
             let mut new_text: String = RandomCharIter::new(&mut *rng).take(new_text_len).collect();
             new_text = new_text.to_uppercase();
 
@@ -4821,6 +4843,9 @@ impl operation_queue::Operation for Operation {
                 lamport_timestamp, ..
             }
             | Operation::UpdateCompletionTriggers {
+                lamport_timestamp, ..
+            }
+            | Operation::UpdateLineEnding {
                 lamport_timestamp, ..
             } => *lamport_timestamp,
         }

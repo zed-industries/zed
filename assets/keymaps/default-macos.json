@@ -70,9 +70,9 @@
       "cmd-k q": "editor::Rewrap",
       "cmd-backspace": "editor::DeleteToBeginningOfLine",
       "cmd-delete": "editor::DeleteToEndOfLine",
-      "alt-backspace": "editor::DeleteToPreviousWordStart",
-      "ctrl-w": "editor::DeleteToPreviousWordStart",
-      "alt-delete": "editor::DeleteToNextWordEnd",
+      "alt-backspace": ["editor::DeleteToPreviousWordStart", { "ignore_newlines": false, "ignore_brackets": false }],
+      "ctrl-w": ["editor::DeleteToPreviousWordStart", { "ignore_newlines": false, "ignore_brackets": false }],
+      "alt-delete": ["editor::DeleteToNextWordEnd", { "ignore_newlines": false, "ignore_brackets": false }],
       "cmd-x": "editor::Cut",
       "cmd-c": "editor::Copy",
       "cmd-v": "editor::Paste",
@@ -649,7 +649,7 @@
       "alt-shift-enter": "toast::RunAction",
       "cmd-shift-s": "workspace::SaveAs",
       "cmd-shift-n": "workspace::NewWindow",
-      "ctrl-`": "terminal_panel::ToggleFocus",
+      "ctrl-`": "terminal_panel::Toggle",
       "cmd-1": ["workspace::ActivatePane", 0],
       "cmd-2": ["workspace::ActivatePane", 1],
       "cmd-3": ["workspace::ActivatePane", 2],
@@ -690,6 +690,7 @@
       "cmd-?": "agent::ToggleFocus",
       "cmd-alt-s": "workspace::SaveAll",
       "cmd-k m": "language_selector::Toggle",
+      "cmd-k cmd-m": "toolchain::AddToolchain",
       "escape": "workspace::Unfollow",
       "cmd-k cmd-left": "workspace::ActivatePaneLeft",
       "cmd-k cmd-right": "workspace::ActivatePaneRight",
@@ -1092,6 +1093,13 @@
     "use_key_equivalents": true,
     "bindings": {
       "tab": "channel_modal::ToggleMode"
+    }
+  },
+  {
+    "context": "ToolchainSelector",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-shift-a": "toolchain::AddToolchain"
     }
   },
   {

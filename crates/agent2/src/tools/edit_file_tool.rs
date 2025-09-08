@@ -100,6 +100,7 @@ struct EditFileToolPartialInput {
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
+#[schemars(inline)]
 pub enum EditFileMode {
     Edit,
     Create,

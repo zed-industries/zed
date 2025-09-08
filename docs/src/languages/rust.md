@@ -63,7 +63,21 @@ A `true` setting will set the target directory to `target/rust-analyzer`. You ca
 
 You can configure which `rust-analyzer` binary Zed should use.
 
-By default, Zed will try to find a `rust-analyzer` in your `$PATH` and try to use that. If that binary successfully executes `rust-analyzer --help`, it's used. Otherwise, Zed will fall back to installing its own `rust-analyzer` version and using that.
+By default, Zed will try to find a `rust-analyzer` in your `$PATH` and try to use that. If that binary successfully executes `rust-analyzer --help`, it's used. Otherwise, Zed will fall back to installing its own stable `rust-analyzer` version and use that.
+
+If you want to install pre-release `rust-analyzer` version instead you can instruct Zed to do so by setting `pre_release` to `true` in your `settings.json`:
+
+```json
+{
+  "lsp": {
+    "rust-analyzer": {
+      "fetch": {
+        "pre_release": true
+      }
+    }
+  }
+}
+```
 
 If you want to disable Zed looking for a `rust-analyzer` binary, you can set `ignore_system_version` to `true` in your `settings.json`:
 

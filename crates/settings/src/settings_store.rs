@@ -36,17 +36,19 @@ use crate::{
     settings_ui_core::SettingsUi, update_value_in_json_text,
 };
 
-/// A value that can be defined as a user setting.
-///
-/// Settings can be loaded from a combination of multiple JSON files.
-pub trait Settings: 'static + Send + Sync {
+pub trait SettingsKey: 'static + Send + Sync {
     /// The name of a key within the JSON file from which this setting should
     /// be deserialized. If this is `None`, then the setting will be deserialized
     /// from the root object.
     const KEY: Option<&'static str>;
 
     const FALLBACK_KEY: Option<&'static str> = None;
+}
 
+/// A value that can be defined as a user setting.
+///
+/// Settings can be loaded from a combination of multiple JSON files.
+pub trait Settings: 'static + Send + Sync {
     /// The name of the keys in the [`FileContent`](Self::FileContent) that should
     /// always be written to a settings file, even if their value matches the default
     /// value.
@@ -57,8 +59,19 @@ pub trait Settings: 'static + Send + Sync {
     const PRESERVED_KEYS: Option<&'static [&'static str]> = None;
 
     /// The type that is stored in an individual JSON file.
-    type FileContent: Clone + Default + Serialize + DeserializeOwned + JsonSchema + SettingsUi;
+    type FileContent: Clone
+        + Default
+        + Serialize
+        + DeserializeOwned
+        + JsonSchema
+        + SettingsUi
+        + SettingsKey;
 
+    /*
+     *  let path = Settings
+     *
+     *
+     */
     /// The logic for combining together values from one or more JSON files into the
     /// final value for this setting.
     ///
@@ -71,7 +84,7 @@ pub trait Settings: 'static + Send + Sync {
         Self: Sized;
 
     fn missing_default() -> anyhow::Error {
-        anyhow::anyhow!("missing default")
+        anyhow::anyhow!("missing default for: {}", std::any::type_name::<Self>())
     }
 
     /// Use [the helpers in the vscode_import module](crate::vscode_import) to apply known
@@ -467,6 +480,13 @@ impl SettingsStore {
         &self.raw_user_settings
     }
 
+    /// Replaces current settings with the values from the given JSON.
+    pub fn set_raw_user_settings(&mut self, new_settings: Value, cx: &mut App) -> Result<()> {
+        self.raw_user_settings = new_settings;
+        self.recompute_values(None, cx)?;
+        Ok(())
+    }
+
     /// Get the configured settings profile names.
     pub fn configured_settings_profiles(&self) -> impl Iterator<Item = &str> {
         self.raw_user_settings
@@ -519,20 +539,6 @@ impl SettingsStore {
                     && e.kind() == std::io::ErrorKind::NotFound
                 {
                     return Ok(crate::initial_user_settings_content().to_string());
-                }
-                Err(err)
-            }
-        }
-    }
-
-    pub async fn load_global_settings(fs: &Arc<dyn Fs>) -> Result<String> {
-        match fs.load(paths::global_settings_file()).await {
-            result @ Ok(_) => result,
-            Err(err) => {
-                if let Some(e) = err.downcast_ref::<std::io::Error>()
-                    && e.kind() == std::io::ErrorKind::NotFound
-                {
-                    return Ok("{}".to_string());
                 }
                 Err(err)
             }
@@ -1400,7 +1406,7 @@ impl Debug for SettingsStore {
 
 impl<T: Settings> AnySettingValue for SettingValue<T> {
     fn key(&self) -> Option<&'static str> {
-        T::KEY
+        T::FileContent::KEY
     }
 
     fn setting_type_name(&self) -> &'static str {
@@ -1452,16 +1458,21 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
         mut json: &Value,
     ) -> (Option<&'static str>, Result<DeserializedSetting>) {
         let mut key = None;
-        if let Some(k) = T::KEY {
+        if let Some(k) = T::FileContent::KEY {
             if let Some(value) = json.get(k) {
                 json = value;
                 key = Some(k);
-            } else if let Some((k, value)) = T::FALLBACK_KEY.and_then(|k| Some((k, json.get(k)?))) {
+            } else if let Some((k, value)) =
+                T::FileContent::FALLBACK_KEY.and_then(|k| Some((k, json.get(k)?)))
+            {
                 json = value;
                 key = Some(k);
             } else {
                 let value = T::FileContent::default();
-                return (T::KEY, Ok(DeserializedSetting(Box::new(value))));
+                return (
+                    T::FileContent::KEY,
+                    Ok(DeserializedSetting(Box::new(value))),
+                );
             }
         }
         let value = serde_path_to_error::deserialize::<_, T::FileContent>(json)
@@ -1505,6 +1516,7 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
                 }
             }
         }
+
         self.global_value
             .as_ref()
             .unwrap_or_else(|| panic!("no default value for setting {}", self.setting_type_name()))
@@ -1577,7 +1589,7 @@ mod tests {
     // This is so the SettingsUi macro can still work properly
     use crate as settings;
     use serde_derive::Deserialize;
-    use settings_ui_macros::SettingsUi;
+    use settings_ui_macros::{SettingsKey, SettingsUi};
     use unindent::Unindent;
 
     #[gpui::test]
@@ -2127,7 +2139,8 @@ mod tests {
         staff: bool,
     }
 
-    #[derive(Default, Clone, Serialize, Deserialize, JsonSchema, SettingsUi)]
+    #[derive(Default, Clone, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
+    #[settings_key(key = "user")]
     struct UserSettingsContent {
         name: Option<String>,
         age: Option<u32>,
@@ -2135,7 +2148,6 @@ mod tests {
     }
 
     impl Settings for UserSettings {
-        const KEY: Option<&'static str> = Some("user");
         type FileContent = UserSettingsContent;
 
         fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
@@ -2150,12 +2162,37 @@ mod tests {
     #[derive(Debug, Deserialize, PartialEq)]
     struct TurboSetting(bool);
 
+    #[derive(
+        Copy,
+        Clone,
+        PartialEq,
+        Eq,
+        Debug,
+        Default,
+        serde::Serialize,
+        serde::Deserialize,
+        SettingsUi,
+        SettingsKey,
+        JsonSchema,
+    )]
+    #[serde(default)]
+    #[settings_key(None)]
+    pub struct TurboSettingContent {
+        turbo: Option<bool>,
+    }
+
     impl Settings for TurboSetting {
-        const KEY: Option<&'static str> = Some("turbo");
-        type FileContent = bool;
+        type FileContent = TurboSettingContent;
 
         fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-            sources.json_merge()
+            Ok(Self(
+                sources
+                    .user
+                    .or(sources.server)
+                    .unwrap_or(sources.default)
+                    .turbo
+                    .unwrap_or_default(),
+            ))
         }
 
         fn import_from_vscode(_vscode: &VsCodeSettings, _current: &mut Self::FileContent) {}
@@ -2169,15 +2206,14 @@ mod tests {
         key2: String,
     }
 
-    #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
+    #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
+    #[settings_key(None)]
     struct MultiKeySettingsJson {
         key1: Option<String>,
         key2: Option<String>,
     }
 
     impl Settings for MultiKeySettings {
-        const KEY: Option<&'static str> = None;
-
         type FileContent = MultiKeySettingsJson;
 
         fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
@@ -2207,15 +2243,16 @@ mod tests {
         Hour24,
     }
 
-    #[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, SettingsUi)]
+    #[derive(
+        Clone, Default, Debug, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey,
+    )]
+    #[settings_key(key = "journal")]
     struct JournalSettingsJson {
         pub path: Option<String>,
         pub hour_format: Option<HourFormat>,
     }
 
     impl Settings for JournalSettings {
-        const KEY: Option<&'static str> = Some("journal");
-
         type FileContent = JournalSettingsJson;
 
         fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
@@ -2295,7 +2332,10 @@ mod tests {
         );
     }
 
-    #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
+    #[derive(
+        Clone, Debug, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey,
+    )]
+    #[settings_key(None)]
     struct LanguageSettings {
         #[serde(default)]
         languages: HashMap<String, LanguageSettingEntry>,
@@ -2308,8 +2348,6 @@ mod tests {
     }
 
     impl Settings for LanguageSettings {
-        const KEY: Option<&'static str> = None;
-
         type FileContent = Self;
 
         fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {

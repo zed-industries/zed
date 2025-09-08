@@ -20,6 +20,6 @@ if [ $IN_WSL = true ]; then
     "$ZED_PATH/zed.exe" --wsl "$WSL_USER@$WSL_DISTRO_NAME" "$@"
     exit $?
 else
-    echo "Only WSL is supported for now" >&2
-    exit 1
+    "$ZED_PATH/zed.exe" "$@"
+    exit $?
 fi

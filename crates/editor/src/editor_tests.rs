@@ -2476,51 +2476,379 @@ async fn test_delete_to_beginning_of_line(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_delete_to_word_boundary(cx: &mut TestAppContext) {
+async fn test_delete_to_word_boundary(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
-    let editor = cx.add_window(|window, cx| {
-        let buffer = MultiBuffer::build_simple("one two three four", cx);
-        build_editor(buffer, window, cx)
-    });
+    let mut cx = EditorTestContext::new(cx).await;
 
-    _ = editor.update(cx, |editor, window, cx| {
-        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_display_ranges([
-                // an empty selection - the preceding word fragment is deleted
-                DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 2),
-                // characters selected - they are deleted
-                DisplayPoint::new(DisplayRow(0), 9)..DisplayPoint::new(DisplayRow(0), 12),
-            ])
-        });
+    // For an empty selection, the preceding word fragment is deleted.
+    // For non-empty selections, only selected characters are deleted.
+    cx.set_state("onˇe two t«hreˇ»e four");
+    cx.update_editor(|editor, window, cx| {
         editor.delete_to_previous_word_start(
             &DeleteToPreviousWordStart {
                 ignore_newlines: false,
+                ignore_brackets: false,
             },
             window,
             cx,
         );
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "e two te four");
     });
+    cx.assert_editor_state("ˇe two tˇe four");
 
-    _ = editor.update(cx, |editor, window, cx| {
-        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_display_ranges([
-                // an empty selection - the following word fragment is deleted
-                DisplayPoint::new(DisplayRow(0), 3)..DisplayPoint::new(DisplayRow(0), 3),
-                // characters selected - they are deleted
-                DisplayPoint::new(DisplayRow(0), 9)..DisplayPoint::new(DisplayRow(0), 10),
-            ])
-        });
+    cx.set_state("e tˇwo te «fˇ»our");
+    cx.update_editor(|editor, window, cx| {
         editor.delete_to_next_word_end(
             &DeleteToNextWordEnd {
                 ignore_newlines: false,
+                ignore_brackets: false,
             },
             window,
             cx,
         );
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "e t te our");
     });
+    cx.assert_editor_state("e tˇ te ˇour");
+}
+
+#[gpui::test]
+async fn test_delete_whitespaces(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("here is some text    ˇwith a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: false,
+                ignore_brackets: true,
+            },
+            window,
+            cx,
+        );
+    });
+    // Continuous whitespace sequences are removed entirely, words behind them are not affected by the deletion action.
+    cx.assert_editor_state("here is some textˇwith a space");
+
+    cx.set_state("here is some text    ˇwith a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: false,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("here is some textˇwith a space");
+
+    cx.set_state("here is some textˇ    with a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_next_word_end(
+            &DeleteToNextWordEnd {
+                ignore_newlines: false,
+                ignore_brackets: true,
+            },
+            window,
+            cx,
+        );
+    });
+    // Same happens in the other direction.
+    cx.assert_editor_state("here is some textˇwith a space");
+
+    cx.set_state("here is some textˇ    with a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_next_word_end(
+            &DeleteToNextWordEnd {
+                ignore_newlines: false,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("here is some textˇwith a space");
+
+    cx.set_state("here is some textˇ    with a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_next_word_end(
+            &DeleteToNextWordEnd {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("here is some textˇwith a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("here is some ˇwith a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    // Single whitespaces are removed with the word behind them.
+    cx.assert_editor_state("here is ˇwith a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("here ˇwith a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("ˇwith a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("ˇwith a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_next_word_end(
+            &DeleteToNextWordEnd {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    // Same happens in the other direction.
+    cx.assert_editor_state("ˇ a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_next_word_end(
+            &DeleteToNextWordEnd {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("ˇ space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_next_word_end(
+            &DeleteToNextWordEnd {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("ˇ");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_next_word_end(
+            &DeleteToNextWordEnd {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("ˇ");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("ˇ");
+}
+
+#[gpui::test]
+async fn test_delete_to_bracket(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                brackets: BracketPairConfig {
+                    pairs: vec![
+                        BracketPair {
+                            start: "\"".to_string(),
+                            end: "\"".to_string(),
+                            close: true,
+                            surround: true,
+                            newline: false,
+                        },
+                        BracketPair {
+                            start: "(".to_string(),
+                            end: ")".to_string(),
+                            close: true,
+                            surround: true,
+                            newline: true,
+                        },
+                    ],
+                    ..BracketPairConfig::default()
+                },
+                ..LanguageConfig::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_brackets_query(
+            r#"
+                ("(" @open ")" @close)
+                ("\"" @open "\"" @close)
+            "#,
+        )
+        .unwrap(),
+    );
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    cx.set_state(r#"macro!("// ˇCOMMENT");"#);
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    // Deletion stops before brackets if asked to not ignore them.
+    cx.assert_editor_state(r#"macro!("ˇCOMMENT");"#);
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    // Deletion has to remove a single bracket and then stop again.
+    cx.assert_editor_state(r#"macro!(ˇCOMMENT");"#);
+
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state(r#"macro!ˇCOMMENT");"#);
+
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state(r#"ˇCOMMENT");"#);
+
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state(r#"ˇCOMMENT");"#);
+
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_next_word_end(
+            &DeleteToNextWordEnd {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    // Brackets on the right are not paired anymore, hence deletion does not stop at them
+    cx.assert_editor_state(r#"ˇ");"#);
+
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_next_word_end(
+            &DeleteToNextWordEnd {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state(r#"ˇ"#);
+
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_next_word_end(
+            &DeleteToNextWordEnd {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state(r#"ˇ"#);
+
+    cx.set_state(r#"macro!("// ˇCOMMENT");"#);
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                ignore_brackets: true,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state(r#"macroˇCOMMENT");"#);
 }
 
 #[gpui::test]
@@ -2533,9 +2861,11 @@ fn test_delete_to_previous_word_start_or_newline(cx: &mut TestAppContext) {
     });
     let del_to_prev_word_start = DeleteToPreviousWordStart {
         ignore_newlines: false,
+        ignore_brackets: false,
     };
     let del_to_prev_word_start_ignore_newlines = DeleteToPreviousWordStart {
         ignore_newlines: true,
+        ignore_brackets: false,
     };
 
     _ = editor.update(cx, |editor, window, cx| {
@@ -2569,9 +2899,11 @@ fn test_delete_to_next_word_end_or_newline(cx: &mut TestAppContext) {
     });
     let del_to_next_word_end = DeleteToNextWordEnd {
         ignore_newlines: false,
+        ignore_brackets: false,
     };
     let del_to_next_word_end_ignore_newlines = DeleteToNextWordEnd {
         ignore_newlines: true,
+        ignore_brackets: false,
     };
 
     _ = editor.update(cx, |editor, window, cx| {
@@ -2599,6 +2931,8 @@ fn test_delete_to_next_word_end_or_newline(cx: &mut TestAppContext) {
         assert_eq!(editor.buffer.read(cx).read(cx).text(), "\nthree\n   four");
         editor.delete_to_next_word_end(&del_to_next_word_end_ignore_newlines, window, cx);
         assert_eq!(editor.buffer.read(cx).read(cx).text(), "\n   four");
+        editor.delete_to_next_word_end(&del_to_next_word_end_ignore_newlines, window, cx);
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "four");
         editor.delete_to_next_word_end(&del_to_next_word_end_ignore_newlines, window, cx);
         assert_eq!(editor.buffer.read(cx).read(cx).text(), "");
     });
@@ -5028,6 +5362,20 @@ async fn test_manipulate_text(cx: &mut TestAppContext) {
     });
     cx.assert_editor_state(indoc! {"
         «HeLlO, wOrLD!ˇ»
+    "});
+
+    // Test selections with `line_mode = true`.
+    cx.update_editor(|editor, _window, _cx| editor.selections.line_mode = true);
+    cx.set_state(indoc! {"
+        «The quick brown
+        fox jumps over
+        tˇ»he lazy dog
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_upper_case(&ConvertToUpperCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «THE QUICK BROWN
+        FOX JUMPS OVER
+        THE LAZY DOGˇ»
     "});
 }
 
@@ -13930,6 +14278,26 @@ async fn test_word_completions_do_not_show_before_threshold(cx: &mut TestAppCont
         }
     });
 
+    cx.update_editor(|editor, window, cx| {
+        editor.show_word_completions(&ShowWordCompletions, window, cx);
+    });
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
+            assert_eq!(completion_menu_entries(menu), &["wowser", "wowen", "wow"], "Even though the threshold is not met, invoking word completions with an action should provide the completions");
+        } else {
+            panic!("expected completion menu to be open after the word completions are called with an action");
+        }
+
+        editor.cancel(&Cancel, window, cx);
+    });
+    cx.update_editor(|editor, _, _| {
+        if editor.context_menu.borrow_mut().is_some() {
+            panic!("expected completion menu to be hidden after canceling");
+        }
+    });
+
     cx.simulate_keystroke("o");
     cx.executor().run_until_parked();
     cx.update_editor(|editor, _, _| {
@@ -13948,6 +14316,50 @@ async fn test_word_completions_do_not_show_before_threshold(cx: &mut TestAppCont
             assert_eq!(completion_menu_entries(menu), &["wowen", "wowser"], "After word completion threshold is met, matching words should be shown, excluding the already typed word");
         } else {
             panic!("expected completion menu to be open after the word completions threshold is met");
+        }
+    });
+}
+
+#[gpui::test]
+async fn test_word_completions_disabled(cx: &mut TestAppContext) {
+    init_test(cx, |language_settings| {
+        language_settings.defaults.completions = Some(CompletionSettings {
+            words: WordsCompletionMode::Enabled,
+            words_min_length: 0,
+            lsp: true,
+            lsp_fetch_timeout_ms: 0,
+            lsp_insert_mode: LspInsertMode::Insert,
+        });
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+    cx.update_editor(|editor, _, _| {
+        editor.disable_word_completions();
+    });
+    cx.set_state(indoc! {"ˇ
+        wow
+        wowen
+        wowser
+    "});
+    cx.simulate_keystroke("w");
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, _, _| {
+        if editor.context_menu.borrow_mut().is_some() {
+            panic!(
+                "expected completion menu to be hidden, as words completion are disabled for this editor"
+            );
+        }
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.show_word_completions(&ShowWordCompletions, window, cx);
+    });
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, _, _| {
+        if editor.context_menu.borrow_mut().is_some() {
+            panic!(
+                "expected completion menu to be hidden even if called for explicitly, as words completion are disabled for this editor"
+            );
         }
     });
 }
@@ -15453,37 +15865,34 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
         );
 
         let snapshot = editor.snapshot(window, cx);
-        let mut highlighted_ranges = editor.background_highlights_in_range(
+        let highlighted_ranges = editor.sorted_background_highlights_in_range(
             anchor_range(Point::new(3, 4)..Point::new(7, 4)),
             &snapshot,
             cx.theme(),
         );
-        // Enforce a consistent ordering based on color without relying on the ordering of the
-        // highlight's `TypeId` which is non-executor.
-        highlighted_ranges.sort_unstable_by_key(|(_, color)| *color);
         assert_eq!(
             highlighted_ranges,
             &[
-                (
-                    DisplayPoint::new(DisplayRow(4), 2)..DisplayPoint::new(DisplayRow(4), 4),
-                    Hsla::red(),
-                ),
-                (
-                    DisplayPoint::new(DisplayRow(6), 3)..DisplayPoint::new(DisplayRow(6), 5),
-                    Hsla::red(),
-                ),
                 (
                     DisplayPoint::new(DisplayRow(3), 2)..DisplayPoint::new(DisplayRow(3), 5),
                     Hsla::green(),
                 ),
                 (
+                    DisplayPoint::new(DisplayRow(4), 2)..DisplayPoint::new(DisplayRow(4), 4),
+                    Hsla::red(),
+                ),
+                (
                     DisplayPoint::new(DisplayRow(5), 3)..DisplayPoint::new(DisplayRow(5), 6),
                     Hsla::green(),
+                ),
+                (
+                    DisplayPoint::new(DisplayRow(6), 3)..DisplayPoint::new(DisplayRow(6), 5),
+                    Hsla::red(),
                 ),
             ]
         );
         assert_eq!(
-            editor.background_highlights_in_range(
+            editor.sorted_background_highlights_in_range(
                 anchor_range(Point::new(5, 6)..Point::new(6, 4)),
                 &snapshot,
                 cx.theme(),
@@ -16452,6 +16861,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
                     "some other init value": false
                 })),
                 enable_lsp_tasks: false,
+                fetch: None,
             },
         );
     });
@@ -16472,6 +16882,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
                     "anotherInitValue": false
                 })),
                 enable_lsp_tasks: false,
+                fetch: None,
             },
         );
     });
@@ -16492,6 +16903,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
                     "anotherInitValue": false
                 })),
                 enable_lsp_tasks: false,
+                fetch: None,
             },
         );
     });
@@ -16510,6 +16922,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
                 settings: None,
                 initialization_options: None,
                 enable_lsp_tasks: false,
+                fetch: None,
             },
         );
     });

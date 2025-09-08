@@ -337,7 +337,7 @@
       "ctrl-x ctrl-z": "editor::Cancel",
       "ctrl-x ctrl-e": "vim::LineDown",
       "ctrl-x ctrl-y": "vim::LineUp",
-      "ctrl-w": "editor::DeleteToPreviousWordStart",
+      "ctrl-w": ["editor::DeleteToPreviousWordStart", { "ignore_newlines": false, "ignore_brackets": false }],
       "ctrl-u": "editor::DeleteToBeginningOfLine",
       "ctrl-t": "vim::Indent",
       "ctrl-d": "vim::Outdent",

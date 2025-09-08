@@ -94,43 +94,44 @@ impl Render for ProjectDiagnosticsEditor {
             0
         };
 
-        let child = if warning_count + self.summary.error_count == 0 {
-            let label = if self.summary.warning_count == 0 {
-                SharedString::new_static("No problems in workspace")
+        let child =
+            if warning_count + self.summary.error_count == 0 && self.editor.read(cx).is_empty(cx) {
+                let label = if self.summary.warning_count == 0 {
+                    SharedString::new_static("No problems in workspace")
+                } else {
+                    SharedString::new_static("No errors in workspace")
+                };
+                v_flex()
+                    .key_context("EmptyPane")
+                    .size_full()
+                    .gap_1()
+                    .justify_center()
+                    .items_center()
+                    .text_center()
+                    .bg(cx.theme().colors().editor_background)
+                    .child(Label::new(label).color(Color::Muted))
+                    .when(self.summary.warning_count > 0, |this| {
+                        let plural_suffix = if self.summary.warning_count > 1 {
+                            "s"
+                        } else {
+                            ""
+                        };
+                        let label = format!(
+                            "Show {} warning{}",
+                            self.summary.warning_count, plural_suffix
+                        );
+                        this.child(
+                            Button::new("diagnostics-show-warning-label", label).on_click(
+                                cx.listener(|this, _, window, cx| {
+                                    this.toggle_warnings(&Default::default(), window, cx);
+                                    cx.notify();
+                                }),
+                            ),
+                        )
+                    })
             } else {
-                SharedString::new_static("No errors in workspace")
+                div().size_full().child(self.editor.clone())
             };
-            v_flex()
-                .key_context("EmptyPane")
-                .size_full()
-                .gap_1()
-                .justify_center()
-                .items_center()
-                .text_center()
-                .bg(cx.theme().colors().editor_background)
-                .child(Label::new(label).color(Color::Muted))
-                .when(self.summary.warning_count > 0, |this| {
-                    let plural_suffix = if self.summary.warning_count > 1 {
-                        "s"
-                    } else {
-                        ""
-                    };
-                    let label = format!(
-                        "Show {} warning{}",
-                        self.summary.warning_count, plural_suffix
-                    );
-                    this.child(
-                        Button::new("diagnostics-show-warning-label", label).on_click(cx.listener(
-                            |this, _, window, cx| {
-                                this.toggle_warnings(&Default::default(), window, cx);
-                                cx.notify();
-                            },
-                        )),
-                    )
-                })
-        } else {
-            div().size_full().child(self.editor.clone())
-        };
 
         div()
             .key_context("Diagnostics")
@@ -233,6 +234,7 @@ impl ProjectDiagnosticsEditor {
                         }
                     }
                     EditorEvent::Blurred => this.update_stale_excerpts(window, cx),
+                    EditorEvent::Saved => this.update_stale_excerpts(window, cx),
                     _ => {}
                 }
             },
@@ -277,7 +279,7 @@ impl ProjectDiagnosticsEditor {
     }
 
     fn update_stale_excerpts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.update_excerpts_task.is_some() {
+        if self.update_excerpts_task.is_some() || self.multibuffer.read(cx).is_dirty(cx) {
             return;
         }
 

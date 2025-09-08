@@ -2,10 +2,11 @@ use anyhow::Result;
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsUi};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 
 /// Settings for slash commands.
-#[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema, SettingsUi)]
+#[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema, SettingsUi, SettingsKey)]
+#[settings_key(key = "slash_commands")]
 pub struct SlashCommandSettings {
     /// Settings for the `/cargo-workspace` slash command.
     #[serde(default)]
@@ -21,8 +22,6 @@ pub struct CargoWorkspaceCommandSettings {
 }
 
 impl Settings for SlashCommandSettings {
-    const KEY: Option<&'static str> = Some("slash_commands");
-
     type FileContent = Self;
 
     fn load(sources: SettingsSources<Self::FileContent>, _cx: &mut App) -> Result<Self> {
