@@ -5,9 +5,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use acp_thread::AcpThread;
-use agent_servers::AgentServerCommand;
 use agent2::{DbThreadMetadata, HistoryEntry};
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
+use project::agent_server_store::{
+    AgentServerCommand, AllAgentServersSettings, CLAUDE_CODE_NAME, GEMINI_NAME,
+};
 use serde::{Deserialize, Serialize};
 use zed_actions::OpenBrowser;
 use zed_actions::agent::{OpenClaudeCodeOnboardingModal, ReauthenticateAgent};
@@ -33,7 +35,9 @@ use crate::{
     thread_history::{HistoryEntryElement, ThreadHistory},
     ui::{AgentOnboardingModal, EndTrialUpsell},
 };
-use crate::{ExternalAgent, NewExternalAgentThread, NewNativeAgentThreadFromSummary};
+use crate::{
+    ExternalAgent, NewExternalAgentThread, NewNativeAgentThreadFromSummary, placeholder_command,
+};
 use agent::{
     Thread, ThreadError, ThreadEvent, ThreadId, ThreadSummary, TokenUsageRatio,
     context_store::ContextStore,
@@ -62,7 +66,7 @@ use project::{DisableAiSettings, Project, ProjectPath, Worktree};
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
 use rules_library::{RulesLibrary, open_rules_library};
 use search::{BufferSearchBar, buffer_search};
-use settings::{Settings, update_settings_file};
+use settings::{Settings, SettingsStore, update_settings_file};
 use theme::ThemeSettings;
 use time::UtcOffset;
 use ui::utils::WithRemSize;
@@ -1094,7 +1098,7 @@ impl AgentPanel {
         let workspace = self.workspace.clone();
         let project = self.project.clone();
         let fs = self.fs.clone();
-        let is_not_local = !self.project.read(cx).is_local();
+        let is_via_collab = self.project.read(cx).is_via_collab();
 
         const LAST_USED_EXTERNAL_AGENT_KEY: &str = "agent_panel__last_used_external_agent";
 
@@ -1126,7 +1130,7 @@ impl AgentPanel {
                     agent
                 }
                 None => {
-                    if is_not_local {
+                    if is_via_collab {
                         ExternalAgent::NativeAgent
                     } else {
                         cx.background_spawn(async move {
@@ -1503,6 +1507,7 @@ impl AgentPanel {
     }
 
     pub(crate) fn open_configuration(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let agent_server_store = self.project.read(cx).agent_server_store().clone();
         let context_server_store = self.project.read(cx).context_server_store();
         let tools = self.thread_store.read(cx).tools();
         let fs = self.fs.clone();
@@ -1511,6 +1516,7 @@ impl AgentPanel {
         self.configuration = Some(cx.new(|cx| {
             AgentConfiguration::new(
                 fs,
+                agent_server_store,
                 context_server_store,
                 tools,
                 self.language_registry.clone(),
@@ -2503,6 +2509,7 @@ impl AgentPanel {
     }
 
     fn render_toolbar_new(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let agent_server_store = self.project.read(cx).agent_server_store().clone();
         let focus_handle = self.focus_handle(cx);
 
         let active_thread = match &self.active_view {
@@ -2535,8 +2542,10 @@ impl AgentPanel {
             .with_handle(self.new_thread_menu_handle.clone())
             .menu({
                 let workspace = self.workspace.clone();
-                let is_not_local = workspace
-                    .update(cx, |workspace, cx| !workspace.project().read(cx).is_local())
+                let is_via_collab = workspace
+                    .update(cx, |workspace, cx| {
+                        workspace.project().read(cx).is_via_collab()
+                    })
                     .unwrap_or_default();
 
                 move |window, cx| {
@@ -2628,7 +2637,7 @@ impl AgentPanel {
                                     ContextMenuEntry::new("New Gemini CLI Thread")
                                         .icon(IconName::AiGemini)
                                         .icon_color(Color::Muted)
-                                        .disabled(is_not_local)
+                                        .disabled(is_via_collab)
                                         .handler({
                                             let workspace = workspace.clone();
                                             move |window, cx| {
@@ -2655,7 +2664,7 @@ impl AgentPanel {
                                 menu.item(
                                     ContextMenuEntry::new("New Claude Code Thread")
                                         .icon(IconName::AiClaude)
-                                        .disabled(is_not_local)
+                                        .disabled(is_via_collab)
                                         .icon_color(Color::Muted)
                                         .handler({
                                             let workspace = workspace.clone();
@@ -2680,19 +2689,25 @@ impl AgentPanel {
                                 )
                             })
                             .when(cx.has_flag::<GeminiAndNativeFeatureFlag>(), |mut menu| {
-                                // Add custom agents from settings
-                                let settings =
-                                    agent_servers::AllAgentServersSettings::get_global(cx);
-                                for (agent_name, agent_settings) in &settings.custom {
+                                let agent_names = agent_server_store
+                                    .read(cx)
+                                    .external_agents()
+                                    .filter(|name| {
+                                        name.0 != GEMINI_NAME && name.0 != CLAUDE_CODE_NAME
+                                    })
+                                    .cloned()
+                                    .collect::<Vec<_>>();
+                                let custom_settings = cx.global::<SettingsStore>().get::<AllAgentServersSettings>(None).custom.clone();
+                                for agent_name in agent_names {
                                     menu = menu.item(
                                         ContextMenuEntry::new(format!("New {} Thread", agent_name))
                                             .icon(IconName::Terminal)
                                             .icon_color(Color::Muted)
-                                            .disabled(is_not_local)
+                                            .disabled(is_via_collab)
                                             .handler({
                                                 let workspace = workspace.clone();
                                                 let agent_name = agent_name.clone();
-                                                let agent_settings = agent_settings.clone();
+                                                let custom_settings = custom_settings.clone();
                                                 move |window, cx| {
                                                     if let Some(workspace) = workspace.upgrade() {
                                                         workspace.update(cx, |workspace, cx| {
@@ -2703,10 +2718,9 @@ impl AgentPanel {
                                                                     panel.new_agent_thread(
                                                                         AgentType::Custom {
                                                                             name: agent_name
-                                                                                .clone(),
-                                                                            command: agent_settings
-                                                                                .command
-                                                                                .clone(),
+                                                                                .clone()
+                                                                                .into(),
+                                                                            command: custom_settings.get(&agent_name.0).map(|settings| settings.command.clone()).unwrap_or(placeholder_command())
                                                                         },
                                                                         window,
                                                                         cx,

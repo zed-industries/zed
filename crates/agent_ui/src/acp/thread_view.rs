@@ -6,7 +6,7 @@ use acp_thread::{
 use acp_thread::{AgentConnection, Plan};
 use action_log::ActionLog;
 use agent_client_protocol::{self as acp, PromptCapabilities};
-use agent_servers::{AgentServer, AgentServerDelegate, ClaudeCode};
+use agent_servers::{AgentServer, AgentServerDelegate};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode, NotifyWhenAgentWaiting};
 use agent2::{DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore, NativeAgentServer};
 use anyhow::{Context as _, Result, anyhow, bail};
@@ -40,7 +40,6 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 use std::{collections::BTreeMap, rc::Rc, time::Duration};
-use task::SpawnInTerminal;
 use terminal_view::terminal_panel::TerminalPanel;
 use text::Anchor;
 use theme::{AgentFontSize, ThemeSettings};
@@ -263,6 +262,7 @@ pub struct AcpThreadView {
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     thread_state: ThreadState,
+    login: Option<task::SpawnInTerminal>,
     history_store: Entity<HistoryStore>,
     hovered_recent_history_item: Option<usize>,
     entry_view_state: Entity<EntryViewState>,
@@ -392,6 +392,7 @@ impl AcpThreadView {
             project: project.clone(),
             entry_view_state,
             thread_state: Self::initial_state(agent, resume_thread, workspace, project, window, cx),
+            login: None,
             message_editor,
             model_selector: None,
             profile_selector: None,
@@ -444,9 +445,11 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ThreadState {
-        if !project.read(cx).is_local() && agent.clone().downcast::<NativeAgentServer>().is_none() {
+        if project.read(cx).is_via_collab()
+            && agent.clone().downcast::<NativeAgentServer>().is_none()
+        {
             return ThreadState::LoadError(LoadError::Other(
-                "External agents are not yet supported for remote projects.".into(),
+                "External agents are not yet supported in shared projects.".into(),
             ));
         }
         let mut worktrees = project.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
@@ -466,20 +469,23 @@ impl AcpThreadView {
                     Some(worktree.read(cx).abs_path())
                 }
             })
-            .next()
-            .unwrap_or_else(|| paths::home_dir().as_path().into());
+            .next();
         let (status_tx, mut status_rx) = watch::channel("Loading…".into());
         let (new_version_available_tx, mut new_version_available_rx) = watch::channel(None);
         let delegate = AgentServerDelegate::new(
+            project.read(cx).agent_server_store().clone(),
             project.clone(),
             Some(status_tx),
             Some(new_version_available_tx),
         );
 
-        let connect_task = agent.connect(&root_dir, delegate, cx);
+        let connect_task = agent.connect(root_dir.as_deref(), delegate, cx);
         let load_task = cx.spawn_in(window, async move |this, cx| {
             let connection = match connect_task.await {
-                Ok(connection) => connection,
+                Ok((connection, login)) => {
+                    this.update(cx, |this, _| this.login = login).ok();
+                    connection
+                }
                 Err(err) => {
                     this.update_in(cx, |this, window, cx| {
                         if err.downcast_ref::<LoadError>().is_some() {
@@ -506,6 +512,14 @@ impl AcpThreadView {
                 })
                 .log_err()
             } else {
+                let root_dir = if let Some(acp_agent) = connection
+                    .clone()
+                    .downcast::<agent_servers::AcpConnection>()
+                {
+                    acp_agent.root_dir().into()
+                } else {
+                    root_dir.unwrap_or(paths::home_dir().as_path().into())
+                };
                 cx.update(|_, cx| {
                     connection
                         .clone()
@@ -1462,9 +1476,12 @@ impl AcpThreadView {
         self.thread_error.take();
         configuration_view.take();
         pending_auth_method.replace(method.clone());
-        let authenticate = if method.0.as_ref() == "claude-login" {
+        let authenticate = if (method.0.as_ref() == "claude-login"
+            || method.0.as_ref() == "spawn-gemini-cli")
+            && let Some(login) = self.login.clone()
+        {
             if let Some(workspace) = self.workspace.upgrade() {
-                Self::spawn_claude_login(&workspace, window, cx)
+                Self::spawn_external_agent_login(login, workspace, false, window, cx)
             } else {
                 Task::ready(Ok(()))
             }
@@ -1511,31 +1528,28 @@ impl AcpThreadView {
             }));
     }
 
-    fn spawn_claude_login(
-        workspace: &Entity<Workspace>,
+    fn spawn_external_agent_login(
+        login: task::SpawnInTerminal,
+        workspace: Entity<Workspace>,
+        previous_attempt: bool,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<()>> {
         let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
             return Task::ready(Ok(()));
         };
-        let project_entity = workspace.read(cx).project();
-        let project = project_entity.read(cx);
-        let cwd = project.first_project_directory(cx);
-        let shell = project.terminal_settings(&cwd, cx).shell.clone();
-
-        let delegate = AgentServerDelegate::new(project_entity.clone(), None, None);
-        let command = ClaudeCode::login_command(delegate, cx);
+        let project = workspace.read(cx).project().clone();
+        let cwd = project.read(cx).first_project_directory(cx);
+        let shell = project.read(cx).terminal_settings(&cwd, cx).shell.clone();
 
         window.spawn(cx, async move |cx| {
-            let login_command = command.await?;
-            let command = login_command
-                .path
-                .to_str()
-                .with_context(|| format!("invalid login command: {:?}", login_command.path))?;
-            let command = shlex::try_quote(command)?;
-            let args = login_command
-                .arguments
+            let mut task = login.clone();
+            task.command = task
+                .command
+                .map(|command| anyhow::Ok(shlex::try_quote(&command)?.to_string()))
+                .transpose()?;
+            task.args = task
+                .args
                 .iter()
                 .map(|arg| {
                     Ok(shlex::try_quote(arg)
@@ -1543,26 +1557,16 @@ impl AcpThreadView {
                         .to_string())
                 })
                 .collect::<Result<Vec<_>>>()?;
+            task.full_label = task.label.clone();
+            task.id = task::TaskId(format!("external-agent-{}-login", task.label));
+            task.command_label = task.label.clone();
+            task.use_new_terminal = true;
+            task.allow_concurrent_runs = true;
+            task.hide = task::HideStrategy::Always;
+            task.shell = shell;
 
             let terminal = terminal_panel.update_in(cx, |terminal_panel, window, cx| {
-                terminal_panel.spawn_task(
-                    &SpawnInTerminal {
-                        id: task::TaskId("claude-login".into()),
-                        full_label: "claude /login".to_owned(),
-                        label: "claude /login".to_owned(),
-                        command: Some(command.into()),
-                        args,
-                        command_label: "claude /login".to_owned(),
-                        cwd,
-                        use_new_terminal: true,
-                        allow_concurrent_runs: true,
-                        hide: task::HideStrategy::Always,
-                        shell,
-                        ..Default::default()
-                    },
-                    window,
-                    cx,
-                )
+                terminal_panel.spawn_task(&login, window, cx)
             })?;
 
             let terminal = terminal.await?;
@@ -1578,7 +1582,9 @@ impl AcpThreadView {
                             cx.background_executor().timer(Duration::from_secs(1)).await;
                             let content =
                                 terminal.update(cx, |terminal, _cx| terminal.get_content())?;
-                            if content.contains("Login successful") {
+                            if content.contains("Login successful")
+                                || content.contains("Type your message")
+                            {
                                 return anyhow::Ok(());
                             }
                         }
@@ -1594,6 +1600,9 @@ impl AcpThreadView {
                     }
                 }
                 _ = exit_status => {
+                    if !previous_attempt && project.read_with(cx, |project, _| project.is_via_remote_server())? && login.label.contains("gemini") {
+                        return cx.update(|window, cx| Self::spawn_external_agent_login(login, workspace, true, window, cx))?.await
+                    }
                     return Err(anyhow!("exited before logging in"));
                 }
             }
@@ -3088,26 +3097,38 @@ impl AcpThreadView {
                             })
                             .children(connection.auth_methods().iter().enumerate().rev().map(
                                 |(ix, method)| {
-                                    Button::new(
-                                        SharedString::from(method.id.0.clone()),
-                                        method.name.clone(),
-                                    )
-                                    .when(ix == 0, |el| {
-                                        el.style(ButtonStyle::Tinted(ui::TintColor::Warning))
-                                    })
-                                    .label_size(LabelSize::Small)
-                                    .on_click({
-                                        let method_id = method.id.clone();
-                                        cx.listener(move |this, _, window, cx| {
-                                            telemetry::event!(
-                                                "Authenticate Agent Started",
-                                                agent = this.agent.telemetry_id(),
-                                                method = method_id
-                                            );
+                                    let (method_id, name) = if self
+                                        .project
+                                        .read(cx)
+                                        .is_via_remote_server()
+                                        && method.id.0.as_ref() == "oauth-personal"
+                                        && method.name == "Log in with Google"
+                                    {
+                                        ("spawn-gemini-cli".into(), "Log in with Gemini CLI".into())
+                                    } else {
+                                        (method.id.0.clone(), method.name.clone())
+                                    };
 
-                                            this.authenticate(method_id.clone(), window, cx)
+                                    Button::new(SharedString::from(method_id.clone()), name)
+                                        .when(ix == 0, |el| {
+                                            el.style(ButtonStyle::Tinted(ui::TintColor::Warning))
                                         })
-                                    })
+                                        .label_size(LabelSize::Small)
+                                        .on_click({
+                                            cx.listener(move |this, _, window, cx| {
+                                                telemetry::event!(
+                                                    "Authenticate Agent Started",
+                                                    agent = this.agent.telemetry_id(),
+                                                    method = method_id
+                                                );
+
+                                                this.authenticate(
+                                                    acp::AuthMethodId(method_id.clone()),
+                                                    window,
+                                                    cx,
+                                                )
+                                            })
+                                        })
                                 },
                             )),
                     )
@@ -5710,11 +5731,11 @@ pub(crate) mod tests {
 
         fn connect(
             &self,
-            _root_dir: &Path,
+            _root_dir: Option<&Path>,
             _delegate: AgentServerDelegate,
             _cx: &mut App,
-        ) -> Task<gpui::Result<Rc<dyn AgentConnection>>> {
-            Task::ready(Ok(Rc::new(self.connection.clone())))
+        ) -> Task<gpui::Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
+            Task::ready(Ok((Rc::new(self.connection.clone()), None)))
         }
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
