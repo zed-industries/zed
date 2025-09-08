@@ -59,7 +59,11 @@ impl AgentTool for ListDirectoryTool {
         ToolKind::Read
     }
 
-    fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString {
+    fn initial_title(
+        &self,
+        input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
         if let Ok(input) = input {
             let path = MarkdownInlineCode(&input.path);
             format!("List the {path} directory's contents").into()

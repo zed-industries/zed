@@ -49,7 +49,11 @@ impl AgentTool for CreateDirectoryTool {
         ToolKind::Read
     }
 
-    fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString {
+    fn initial_title(
+        &self,
+        input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
         if let Ok(input) = input {
             format!("Create directory {}", MarkdownInlineCode(&input.path)).into()
         } else {
