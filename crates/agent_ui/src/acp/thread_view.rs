@@ -1481,7 +1481,7 @@ impl AcpThreadView {
             && let Some(login) = self.login.clone()
         {
             if let Some(workspace) = self.workspace.upgrade() {
-                Self::spawn_external_agent_login(login, &workspace, window, cx)
+                Self::spawn_external_agent_login(login, workspace, false, window, cx)
             } else {
                 Task::ready(Ok(()))
             }
@@ -1529,8 +1529,9 @@ impl AcpThreadView {
     }
 
     fn spawn_external_agent_login(
-        mut login: task::SpawnInTerminal,
-        workspace: &Entity<Workspace>,
+        login: task::SpawnInTerminal,
+        workspace: Entity<Workspace>,
+        previous_attempt: bool,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<()>> {
@@ -1542,11 +1543,12 @@ impl AcpThreadView {
         let shell = project.read(cx).terminal_settings(&cwd, cx).shell.clone();
 
         window.spawn(cx, async move |cx| {
-            login.command = login
+            let mut task = login.clone();
+            task.command = task
                 .command
                 .map(|command| anyhow::Ok(shlex::try_quote(&command)?.to_string()))
                 .transpose()?;
-            login.args = login
+            task.args = task
                 .args
                 .iter()
                 .map(|arg| {
@@ -1555,13 +1557,13 @@ impl AcpThreadView {
                         .to_string())
                 })
                 .collect::<Result<Vec<_>>>()?;
-            login.full_label = login.label.clone();
-            login.id = task::TaskId(format!("external-agent-{}-login", login.label));
-            login.command_label = login.label.clone();
-            login.use_new_terminal = true;
-            login.allow_concurrent_runs = true;
-            login.hide = task::HideStrategy::Always;
-            login.shell = shell;
+            task.full_label = task.label.clone();
+            task.id = task::TaskId(format!("external-agent-{}-login", task.label));
+            task.command_label = task.label.clone();
+            task.use_new_terminal = true;
+            task.allow_concurrent_runs = true;
+            task.hide = task::HideStrategy::Always;
+            task.shell = shell;
 
             let terminal = terminal_panel.update_in(cx, |terminal_panel, window, cx| {
                 terminal_panel.spawn_task(&login, window, cx)
@@ -1598,6 +1600,9 @@ impl AcpThreadView {
                     }
                 }
                 _ = exit_status => {
+                    if !previous_attempt && project.read_with(cx, |project, _| project.is_via_remote_server())? && login.label.contains("gemini") {
+                        return cx.update(|window, cx| Self::spawn_external_agent_login(login, workspace, true, window, cx))?.await
+                    }
                     return Err(anyhow!("exited before logging in"));
                 }
             }
@@ -3112,7 +3117,6 @@ impl AcpThreadView {
                                         })
                                         .label_size(LabelSize::Small)
                                         .on_click({
-                                            let method_id = method_id.clone();
                                             cx.listener(move |this, _, window, cx| {
                                                 telemetry::event!(
                                                     "Authenticate Agent Started",

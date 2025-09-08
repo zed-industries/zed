@@ -308,12 +308,8 @@ dependencies = [
  "libc",
  "log",
  "nix 0.29.0",
- "node_runtime",
- "paths",
  "project",
  "reqwest_client",
- "schemars",
- "semver",
  "serde",
  "serde_json",
  "settings",
@@ -324,7 +320,6 @@ dependencies = [
  "ui",
  "util",
  "watch",
- "which 6.0.3",
  "workspace-hack",
 ]
 
@@ -20370,7 +20365,6 @@ dependencies = [
  "acp_tools",
  "activity_indicator",
  "agent",
- "agent_servers",
  "agent_settings",
  "agent_ui",
  "anyhow",
