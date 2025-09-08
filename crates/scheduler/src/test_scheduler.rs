@@ -169,6 +169,7 @@ impl TestScheduler {
     }
 
     pub fn advance_clock(&self, duration: Duration) {
+        self.run();
         self.clock.advance(duration);
         self.run();
     }
