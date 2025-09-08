@@ -287,76 +287,29 @@ impl LspAdapter for TyLspAdapter {
     async fn workspace_configuration(
         self: Arc<Self>,
         _: &dyn Fs,
-        adapter: &Arc<dyn LspAdapterDelegate>,
+        _: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
-        cx: &mut AsyncApp,
+        _cx: &mut AsyncApp,
     ) -> Result<Value> {
-        cx.update(move |cx| {
-            let mut user_settings =
-                language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
-                    .and_then(|s| s.settings.clone())
-                    .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
-
-            // If we have a detected toolchain, configure ty to use it
-            if let Some(toolchain) = toolchain
-                && let Ok(env) = serde_json::from_value::<
-                    pet_core::python_environment::PythonEnvironment,
-                >(toolchain.as_json.clone())
-            {
-                if user_settings.is_null() {
-                    user_settings = Value::Object(serde_json::Map::default());
-                }
-                let object = user_settings.as_object_mut().unwrap();
-
-                let interpreter_path = toolchain.path.to_string();
-                if let Some(venv_dir) = env.prefix {
-                    // Set venvPath and venv at the root level
-                    // This matches the format of a pyrightconfig.json file
-                    if let Some(parent) = venv_dir.parent() {
-                        // Use relative path if the venv is inside the workspace
-                        let venv_path = if parent == adapter.worktree_root_path() {
-                            ".".to_string()
-                        } else {
-                            parent.to_string_lossy().into_owned()
-                        };
-                        object.insert("venvPath".to_string(), Value::String(venv_path));
-                    }
-
-                    if let Some(venv_name) = venv_dir.file_name() {
-                        object.insert(
-                            "venv".to_owned(),
-                            Value::String(venv_name.to_string_lossy().into_owned()),
-                        );
-                    }
-                }
-
-                // Always set the python interpreter path
-                // Get or create the python section
-                let python = object
-                    .entry("python")
-                    .or_insert(Value::Object(serde_json::Map::default()))
-                    .as_object_mut()
-                    .unwrap();
-
-                // Set both pythonPath and defaultInterpreterPath for compatibility
-                python.insert(
-                    "pythonPath".to_owned(),
-                    Value::String(interpreter_path.clone()),
+        let mut ret = json!({});
+        if let Some(toolchain) = toolchain.and_then(|toolchain| {
+            serde_json::from_value::<PythonEnvironment>(toolchain.as_json).ok()
+        }) {
+            _ = maybe!({
+                let uri = toolchain.executable.clone()?;
+                let sys_prefix = toolchain.prefix.clone()?;
+                let environment = json!({"executable": {
+                    "uri": uri,
+                    "sysPrefix":sys_prefix
+                }});
+                ret.as_object_mut()?.insert(
+                    "pythonExtension".into(),
+                    json!({ "activeEnvironment": environment }),
                 );
-                python.insert(
-                    "defaultInterpreterPath".to_owned(),
-                    Value::String(interpreter_path),
-                );
-            }
-
-            serde_json::Value::Object(Map::from_iter([(
-                "ty".to_owned(),
-                serde_json::Value::Object(Map::from_iter([(
-                    "configuration".to_owned(),
-                    user_settings,
-                )])),
-            )]))
-        })
+                Some(())
+            });
+        }
+        Ok(ret)
     }
 }
 
