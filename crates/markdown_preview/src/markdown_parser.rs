@@ -890,7 +890,7 @@ impl<'a> MarkdownParser<'a> {
                     highlights.push(MarkdownHighlight::Style(MarkdownHighlightStyle {
                         italic: false,
                         underline: false,
-                        emphasized: false,
+                        oblique: false,
                         strikethrough: false,
                         weight: FontWeight::BOLD,
                     }));
@@ -899,7 +899,7 @@ impl<'a> MarkdownParser<'a> {
                 } else if local_name!("i") == name.local {
                     highlights.push(MarkdownHighlight::Style(MarkdownHighlightStyle {
                         italic: true,
-                        emphasized: false,
+                        oblique: false,
                         underline: false,
                         strikethrough: false,
                         weight: FontWeight::NORMAL,
@@ -910,7 +910,7 @@ impl<'a> MarkdownParser<'a> {
                     highlights.push(MarkdownHighlight::Style(MarkdownHighlightStyle {
                         italic: false,
                         underline: false,
-                        emphasized: true,
+                        oblique: true,
                         strikethrough: false,
                         weight: FontWeight::NORMAL,
                     }));
@@ -920,7 +920,7 @@ impl<'a> MarkdownParser<'a> {
                     highlights.push(MarkdownHighlight::Style(MarkdownHighlightStyle {
                         italic: false,
                         underline: false,
-                        emphasized: false,
+                        oblique: false,
                         strikethrough: true,
                         weight: FontWeight::NORMAL,
                     }));
@@ -930,7 +930,7 @@ impl<'a> MarkdownParser<'a> {
                     highlights.push(MarkdownHighlight::Style(MarkdownHighlightStyle {
                         italic: false,
                         underline: true,
-                        emphasized: false,
+                        oblique: false,
                         strikethrough: false,
                         weight: FontWeight::NORMAL,
                     }));
@@ -1023,7 +1023,7 @@ impl<'a> MarkdownParser<'a> {
                     markdown_style.italic = true;
                 }
                 "oblique" => {
-                    markdown_style.emphasized = true;
+                    markdown_style.oblique = true;
                 }
                 _ => {}
             }
@@ -1505,7 +1505,7 @@ mod tests {
                                 underline: false,
                                 strikethrough: false,
                                 weight: FontWeight::BOLD,
-                                emphasized: false
+                                oblique: false
                             })
                         )],
                         region_ranges: Default::default(),
@@ -1528,7 +1528,7 @@ mod tests {
                                 underline: false,
                                 strikethrough: false,
                                 weight: FontWeight::BOLD,
-                                emphasized: false
+                                oblique: false
                             })
                         )],
                         region_ranges: Default::default(),
@@ -1551,7 +1551,7 @@ mod tests {
                                 underline: false,
                                 strikethrough: false,
                                 weight: FontWeight::NORMAL,
-                                emphasized: false
+                                oblique: false
                             })
                         )],
                         region_ranges: Default::default(),
@@ -1574,7 +1574,7 @@ mod tests {
                                 underline: false,
                                 strikethrough: false,
                                 weight: FontWeight::NORMAL,
-                                emphasized: true
+                                oblique: true
                             })
                         )],
                         region_ranges: Default::default(),
@@ -1597,7 +1597,7 @@ mod tests {
                                 underline: false,
                                 strikethrough: true,
                                 weight: FontWeight::NORMAL,
-                                emphasized: false
+                                oblique: false
                             })
                         )],
                         region_ranges: Default::default(),
@@ -1620,7 +1620,7 @@ mod tests {
                                 underline: true,
                                 strikethrough: false,
                                 weight: FontWeight::NORMAL,
-                                emphasized: false
+                                oblique: false
                             })
                         )],
                         region_ranges: Default::default(),

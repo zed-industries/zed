@@ -184,7 +184,7 @@ impl MarkdownHighlight {
                     highlight.font_style = Some(FontStyle::Italic);
                 }
 
-                if style.emphasized {
+                if style.oblique {
                     highlight.font_style = Some(FontStyle::Oblique)
                 }
 
@@ -225,8 +225,8 @@ pub struct MarkdownHighlightStyle {
     pub strikethrough: bool,
     /// The weight of the text.
     pub weight: FontWeight,
-    /// Whether the text should be emphasized.
-    pub emphasized: bool,
+    /// Whether the text should be obliqued.
+    pub oblique: bool,
 }
 
 /// A parsed region in a Markdown document.
