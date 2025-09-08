@@ -1477,7 +1477,7 @@ impl AcpThreadView {
         configuration_view.take();
         pending_auth_method.replace(method.clone());
         let authenticate = if (method.0.as_ref() == "claude-login"
-            || method.0.as_ref() == "oauth-personal")
+            || method.0.as_ref() == "spawn-gemini-cli")
             && let Some(login) = self.login.clone()
         {
             if let Some(workspace) = self.workspace.upgrade() {
@@ -3094,26 +3094,39 @@ impl AcpThreadView {
                             })
                             .children(connection.auth_methods().iter().enumerate().rev().map(
                                 |(ix, method)| {
-                                    Button::new(
-                                        SharedString::from(method.id.0.clone()),
-                                        method.name.clone(),
-                                    )
-                                    .when(ix == 0, |el| {
-                                        el.style(ButtonStyle::Tinted(ui::TintColor::Warning))
-                                    })
-                                    .label_size(LabelSize::Small)
-                                    .on_click({
-                                        let method_id = method.id.clone();
-                                        cx.listener(move |this, _, window, cx| {
-                                            telemetry::event!(
-                                                "Authenticate Agent Started",
-                                                agent = this.agent.telemetry_id(),
-                                                method = method_id
-                                            );
+                                    let (method_id, name) = if self
+                                        .project
+                                        .read(cx)
+                                        .is_via_remote_server()
+                                        && method.id.0.as_ref() == "oauth-personal"
+                                        && method.name == "Log in with Google"
+                                    {
+                                        ("spawn-gemini-cli".into(), "Log in with Gemini CLI".into())
+                                    } else {
+                                        (method.id.0.clone(), method.name.clone())
+                                    };
 
-                                            this.authenticate(method_id.clone(), window, cx)
+                                    Button::new(SharedString::from(method_id.clone()), name)
+                                        .when(ix == 0, |el| {
+                                            el.style(ButtonStyle::Tinted(ui::TintColor::Warning))
                                         })
-                                    })
+                                        .label_size(LabelSize::Small)
+                                        .on_click({
+                                            let method_id = method_id.clone();
+                                            cx.listener(move |this, _, window, cx| {
+                                                telemetry::event!(
+                                                    "Authenticate Agent Started",
+                                                    agent = this.agent.telemetry_id(),
+                                                    method = method_id
+                                                );
+
+                                                this.authenticate(
+                                                    acp::AuthMethodId(method_id.clone()),
+                                                    window,
+                                                    cx,
+                                                )
+                                            })
+                                        })
                                 },
                             )),
                     )
