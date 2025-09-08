@@ -528,6 +528,9 @@ impl Render for KeystrokeInput {
         h_flex()
             .id("keystroke-input")
             .track_focus(&self.outer_focus_handle)
+            .key_context(Self::key_context())
+            .on_action(cx.listener(Self::start_recording))
+            .on_action(cx.listener(Self::clear_keystrokes))
             .py_2()
             .px_3()
             .gap_2()
@@ -545,13 +548,13 @@ impl Render for KeystrokeInput {
                 }
             })
             .border_1()
-            .border_color(colors.border_variant)
-            .when(is_focused, |parent| {
-                parent.border_color(colors.border_focused)
+            .map(|this| {
+                if is_focused {
+                    this.border_color(colors.border_focused)
+                } else {
+                    this.border_color(colors.border_variant)
+                }
             })
-            .key_context(Self::key_context())
-            .on_action(cx.listener(Self::start_recording))
-            .on_action(cx.listener(Self::clear_keystrokes))
             .child(
                 h_flex()
                     .w(width)
