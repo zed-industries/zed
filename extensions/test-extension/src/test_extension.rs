@@ -17,6 +17,10 @@ impl TestExtension {
         let echo_output = Command::new("echo").arg("hello!").output()?;
 
         println!("{}", String::from_utf8_lossy(&echo_output.stdout));
+        println!(
+            "current_dir: {}",
+            std::env::current_dir().unwrap().display()
+        );
 
         if let Some(path) = &self.cached_binary_path
             && fs::metadata(path).is_ok_and(|stat| stat.is_file())

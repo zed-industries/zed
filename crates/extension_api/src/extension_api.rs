@@ -267,9 +267,18 @@ pub trait Extension: Send + Sync {
 #[macro_export]
 macro_rules! register_extension {
     ($extension_type:ty) => {
+        unsafe extern "C" {
+            static mut __wasilibc_cwd: *mut std::ffi::c_char;
+        }
+
         #[unsafe(export_name = "init-extension")]
         pub extern "C" fn __init_extension() {
-            std::env::set_current_dir(std::env::var("PWD").unwrap()).unwrap();
+            unsafe {
+                __wasilibc_cwd = std::ffi::CString::new(std::env::var("PWD").unwrap())
+                    .unwrap()
+                    .into_raw();
+            }
+
             zed_extension_api::register_extension(|| {
                 Box::new(<$extension_type as zed_extension_api::Extension>::new())
             });

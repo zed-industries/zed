@@ -546,7 +546,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     let test_extension_dir = root_dir.join("extensions").join(test_extension_id);
 
     let fs = Arc::new(RealFs::new(None, cx.executor()));
-    let extensions_dir = TempTree::new(json!({
+    let extensions_tree = TempTree::new(json!({
         "installed": {},
         "work": {}
     }));
@@ -554,7 +554,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         "test.gleam": ""
     }));
 
-    let extensions_dir = extensions_dir.path().canonicalize().unwrap();
+    let extensions_dir = extensions_tree.path().canonicalize().unwrap();
     let project_dir = project_dir.path().canonicalize().unwrap();
 
     let project = Project::test(fs.clone(), [project_dir.as_path()], cx).await;
