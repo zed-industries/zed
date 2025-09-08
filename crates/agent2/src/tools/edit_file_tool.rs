@@ -1567,7 +1567,7 @@ mod tests {
             )
         });
         let tool = Arc::new(EditFileTool::new(
-            project.clone(),
+            project,
             thread.downgrade(),
             language_registry,
         ));

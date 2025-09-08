@@ -147,7 +147,7 @@ impl AgentTool for ReadFileTool {
 
         event_stream.update_fields(ToolCallUpdateFields {
             locations: Some(vec![acp::ToolCallLocation {
-                path: abs_path.clone(),
+                path: abs_path,
                 line: input.start_line.map(|line| line.saturating_sub(1)),
             }]),
             ..Default::default()
