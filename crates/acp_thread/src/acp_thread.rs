@@ -3,7 +3,6 @@ mod diff;
 mod mention;
 mod terminal;
 
-use agent_settings::AgentSettings;
 use collections::HashSet;
 pub use connection::*;
 pub use diff::*;
@@ -12,7 +11,6 @@ use language::language_settings::FormatOnSave;
 pub use mention::*;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use serde::{Deserialize, Serialize};
-use settings::Settings as _;
 pub use terminal::*;
 
 use action_log::ActionLog;

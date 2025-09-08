@@ -178,7 +178,7 @@ impl AgentConnection for AcpConnection {
             .filter_map(|id| {
                 let configuration = context_server_store.configuration_for_server(id)?;
                 let command = configuration.command();
-                Some(acp::McpServer {
+                Some(acp::McpServer::Stdio {
                     name: id.0.to_string(),
                     command: command.path.clone(),
                     args: command.args.clone(),
