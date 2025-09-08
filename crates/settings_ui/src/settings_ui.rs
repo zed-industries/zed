@@ -70,7 +70,7 @@ pub fn init(cx: &mut App) {
             move |is_enabled, _workspace, _, cx| {
                 if is_enabled {
                     CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                        filter.show_action_types(settings_ui_actions.iter());
+                        filter.show_action_types(&settings_ui_actions);
                     });
                 } else {
                     CommandPaletteFilter::update_global(cx, |filter, _cx| {

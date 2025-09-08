@@ -4272,7 +4272,7 @@ impl AcpThreadView {
                 }
 
                 let buffer = project.update(cx, |project, cx| {
-                    project.create_local_buffer(&markdown, Some(markdown_language), cx)
+                    project.create_local_buffer(&markdown, Some(markdown_language), true, cx)
                 });
                 let buffer = cx.new(|cx| {
                     MultiBuffer::singleton(buffer, cx).with_title(thread_summary.clone())

@@ -449,28 +449,28 @@ impl FontPickerDelegate {
     ) -> Self {
         let font_family_cache = FontFamilyCache::global(cx);
 
-        let fonts: Vec<SharedString> = font_family_cache
-            .list_font_families(cx)
-            .into_iter()
-            .collect();
-
+        let fonts = font_family_cache
+            .try_list_font_families()
+            .unwrap_or_else(|| vec![current_font.clone()]);
         let selected_index = fonts
             .iter()
             .position(|font| *font == current_font)
             .unwrap_or(0);
 
+        let filtered_fonts = fonts
+            .iter()
+            .enumerate()
+            .map(|(index, font)| StringMatch {
+                candidate_id: index,
+                string: font.to_string(),
+                positions: Vec::new(),
+                score: 0.0,
+            })
+            .collect();
+
         Self {
-            fonts: fonts.clone(),
-            filtered_fonts: fonts
-                .iter()
-                .enumerate()
-                .map(|(index, font)| StringMatch {
-                    candidate_id: index,
-                    string: font.to_string(),
-                    positions: Vec::new(),
-                    score: 0.0,
-                })
-                .collect(),
+            fonts,
+            filtered_fonts,
             selected_index,
             current_font,
             on_font_changed: Arc::new(on_font_changed),

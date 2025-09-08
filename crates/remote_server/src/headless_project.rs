@@ -33,6 +33,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, atomic::AtomicUsize},
 };
+use sysinfo::System;
 use util::ResultExt;
 use worktree::Worktree;
 
@@ -240,6 +241,7 @@ impl HeadlessProject {
         session.add_request_handler(cx.weak_entity(), Self::handle_get_path_metadata);
         session.add_request_handler(cx.weak_entity(), Self::handle_shutdown_remote_server);
         session.add_request_handler(cx.weak_entity(), Self::handle_ping);
+        session.add_request_handler(cx.weak_entity(), Self::handle_get_processes);
 
         session.add_entity_request_handler(Self::handle_add_worktree);
         session.add_request_handler(cx.weak_entity(), Self::handle_remove_worktree);
@@ -527,7 +529,7 @@ impl HeadlessProject {
             let buffer_store = this.buffer_store.clone();
             let buffer = this
                 .buffer_store
-                .update(cx, |buffer_store, cx| buffer_store.create_buffer(cx));
+                .update(cx, |buffer_store, cx| buffer_store.create_buffer(true, cx));
             anyhow::Ok((buffer_store, buffer))
         })??;
 
@@ -730,6 +732,34 @@ impl HeadlessProject {
     ) -> Result<proto::Ack> {
         log::debug!("Received ping from client");
         Ok(proto::Ack {})
+    }
+
+    async fn handle_get_processes(
+        _this: Entity<Self>,
+        _envelope: TypedEnvelope<proto::GetProcesses>,
+        _cx: AsyncApp,
+    ) -> Result<proto::GetProcessesResponse> {
+        let mut processes = Vec::new();
+        let system = System::new_all();
+
+        for (_pid, process) in system.processes() {
+            let name = process.name().to_string_lossy().into_owned();
+            let command = process
+                .cmd()
+                .iter()
+                .map(|s| s.to_string_lossy().to_string())
+                .collect::<Vec<_>>();
+
+            processes.push(proto::ProcessInfo {
+                pid: process.pid().as_u32(),
+                name,
+                command,
+            });
+        }
+
+        processes.sort_by_key(|p| p.name.clone());
+
+        Ok(proto::GetProcessesResponse { processes })
     }
 }
 
