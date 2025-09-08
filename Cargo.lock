@@ -898,6 +898,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "prompt_store",
+ "rmcp",
  "rope",
  "serde",
  "serde_json",
