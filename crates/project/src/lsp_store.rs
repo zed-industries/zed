@@ -6357,7 +6357,7 @@ impl LspStore {
 
                         for (range, text) in edits {
                             let primary = &completion.replace_range;
-                            
+
                             // Special case: if both ranges start at the very beginning of the file (line 0, column 0),
                             // and the primary completion is just an insertion (empty range), then this is likely
                             // an auto-import scenario and should not be considered overlapping
@@ -6365,10 +6365,12 @@ impl LspStore {
                                 let snapshot = buffer.snapshot();
                                 let primary_start_point = primary.start.to_point(&snapshot);
                                 let range_start_point = range.start.to_point(&snapshot);
-                                
+
                                 // Check if both ranges start at the very beginning of the file (line 0, column 0)
-                                let result = primary_start_point.row == 0 && primary_start_point.column == 0
-                                    && range_start_point.row == 0 && range_start_point.column == 0;
+                                let result = primary_start_point.row == 0
+                                    && primary_start_point.column == 0
+                                    && range_start_point.row == 0
+                                    && range_start_point.column == 0;
                                 
                                 result
                             };
