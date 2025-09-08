@@ -118,6 +118,10 @@ pub enum ChatMessage {
     System {
         content: String,
     },
+    Tool {
+        tool_name: String,
+        content: String,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
