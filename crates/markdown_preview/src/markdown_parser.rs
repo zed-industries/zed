@@ -839,13 +839,12 @@ impl<'a> MarkdownParser<'a> {
                         elements.push(ParsedMarkdownElement::Image(image));
                     }
                 } else if local_name!("p") == name.local {
-                    self.parse_paragraph(
-                        source_range,
-                        node,
-                        &mut MarkdownParagraph::new(),
-                        &mut styles,
-                        elements,
-                    );
+                    let mut paragraph = MarkdownParagraph::new();
+                    self.parse_paragraph(source_range, node, &mut paragraph, &mut styles);
+
+                    if !paragraph.is_empty() {
+                        elements.push(ParsedMarkdownElement::Paragraph(paragraph));
+                    }
                 } else {
                     self.consume_children(source_range, node, elements);
                 }
@@ -860,7 +859,6 @@ impl<'a> MarkdownParser<'a> {
         node: &Rc<markup5ever_rcdom::Node>,
         paragraph: &mut MarkdownParagraph,
         highlights: &mut Vec<MarkdownHighlight>,
-        elements: &mut Vec<ParsedMarkdownElement>,
     ) {
         fn add_highlight_range(
             text: SharedString,
@@ -897,7 +895,7 @@ impl<'a> MarkdownParser<'a> {
                         weight: FontWeight::BOLD,
                     }));
 
-                    self.consume_paragraph(source_range, node, paragraph, highlights, elements);
+                    self.consume_paragraph(source_range, node, paragraph, highlights);
                 } else if local_name!("i") == name.local {
                     highlights.push(MarkdownHighlight::Style(MarkdownHighlightStyle {
                         italic: true,
@@ -907,7 +905,7 @@ impl<'a> MarkdownParser<'a> {
                         weight: FontWeight::NORMAL,
                     }));
 
-                    self.consume_paragraph(source_range, node, paragraph, highlights, elements);
+                    self.consume_paragraph(source_range, node, paragraph, highlights);
                 } else if local_name!("em") == name.local {
                     highlights.push(MarkdownHighlight::Style(MarkdownHighlightStyle {
                         italic: false,
@@ -917,7 +915,7 @@ impl<'a> MarkdownParser<'a> {
                         weight: FontWeight::NORMAL,
                     }));
 
-                    self.consume_paragraph(source_range, node, paragraph, highlights, elements);
+                    self.consume_paragraph(source_range, node, paragraph, highlights);
                 } else if local_name!("del") == name.local {
                     highlights.push(MarkdownHighlight::Style(MarkdownHighlightStyle {
                         italic: false,
@@ -927,7 +925,7 @@ impl<'a> MarkdownParser<'a> {
                         weight: FontWeight::NORMAL,
                     }));
 
-                    self.consume_paragraph(source_range, node, paragraph, highlights, elements);
+                    self.consume_paragraph(source_range, node, paragraph, highlights);
                 } else if local_name!("ins") == name.local {
                     highlights.push(MarkdownHighlight::Style(MarkdownHighlightStyle {
                         italic: false,
@@ -937,13 +935,9 @@ impl<'a> MarkdownParser<'a> {
                         weight: FontWeight::NORMAL,
                     }));
 
-                    self.consume_paragraph(source_range, node, paragraph, highlights, elements);
+                    self.consume_paragraph(source_range, node, paragraph, highlights);
                 } else {
-                    self.consume_paragraph(source_range, node, paragraph, highlights, elements);
-
-                    if !paragraph.is_empty() {
-                        elements.push(ParsedMarkdownElement::Paragraph(std::mem::take(paragraph)));
-                    }
+                    self.consume_paragraph(source_range, node, paragraph, highlights);
                 }
             }
             _ => {}
@@ -956,10 +950,9 @@ impl<'a> MarkdownParser<'a> {
         node: &Rc<markup5ever_rcdom::Node>,
         paragraph: &mut MarkdownParagraph,
         highlights: &mut Vec<MarkdownHighlight>,
-        elements: &mut Vec<ParsedMarkdownElement>,
     ) {
         for node in node.children.borrow().iter() {
-            self.parse_paragraph(source_range.clone(), node, paragraph, highlights, elements);
+            self.parse_paragraph(source_range.clone(), node, paragraph, highlights);
         }
     }
 
