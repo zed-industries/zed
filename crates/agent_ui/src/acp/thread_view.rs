@@ -2024,35 +2024,34 @@ impl AcpThreadView {
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
+        let has_location = tool_call.locations.len() == 1;
         let card_header_id = SharedString::from("inner-tool-call-header");
 
-        let tool_icon =
-            if tool_call.kind == acp::ToolKind::Edit && tool_call.locations.len() == 1 {
-                FileIcons::get_icon(&tool_call.locations[0].path, cx)
-                    .map(Icon::from_path)
-                    .unwrap_or(Icon::new(IconName::ToolPencil))
-            } else {
-                Icon::new(match tool_call.kind {
-                    acp::ToolKind::Read => IconName::ToolSearch,
-                    acp::ToolKind::Edit => IconName::ToolPencil,
-                    acp::ToolKind::Delete => IconName::ToolDeleteFile,
-                    acp::ToolKind::Move => IconName::ArrowRightLeft,
-                    acp::ToolKind::Search => IconName::ToolSearch,
-                    acp::ToolKind::Execute => IconName::ToolTerminal,
-                    acp::ToolKind::Think => IconName::ToolThink,
-                    acp::ToolKind::Fetch => IconName::ToolWeb,
-                    acp::ToolKind::Other => IconName::ToolHammer,
-                })
-            }
-            .size(IconSize::Small)
-            .color(Color::Muted);
+        let tool_icon = if tool_call.kind == acp::ToolKind::Edit && has_location {
+            FileIcons::get_icon(&tool_call.locations[0].path, cx)
+                .map(Icon::from_path)
+                .unwrap_or(Icon::new(IconName::ToolPencil))
+        } else {
+            Icon::new(match tool_call.kind {
+                acp::ToolKind::Read => IconName::ToolSearch,
+                acp::ToolKind::Edit => IconName::ToolPencil,
+                acp::ToolKind::Delete => IconName::ToolDeleteFile,
+                acp::ToolKind::Move => IconName::ArrowRightLeft,
+                acp::ToolKind::Search => IconName::ToolSearch,
+                acp::ToolKind::Execute => IconName::ToolTerminal,
+                acp::ToolKind::Think => IconName::ToolThink,
+                acp::ToolKind::Fetch => IconName::ToolWeb,
+                acp::ToolKind::Other => IconName::ToolHammer,
+            })
+        }
+        .size(IconSize::Small)
+        .color(Color::Muted);
 
         let failed_or_canceled = match &tool_call.status {
             ToolCallStatus::Rejected | ToolCallStatus::Canceled | ToolCallStatus::Failed => true,
             _ => false,
         };
 
-        let has_location = tool_call.locations.len() == 1;
         let needs_confirmation = matches!(
             tool_call.status,
             ToolCallStatus::WaitingForConfirmation { .. }
@@ -2195,13 +2194,6 @@ impl AcpThreadView {
                             .overflow_hidden()
                             .child(tool_icon)
                             .child(if has_location {
-                                let name = tool_call.locations[0]
-                                    .path
-                                    .file_name()
-                                    .unwrap_or_default()
-                                    .display()
-                                    .to_string();
-
                                 h_flex()
                                     .id(("open-tool-call-location", entry_ix))
                                     .w_full()
@@ -2212,7 +2204,13 @@ impl AcpThreadView {
                                             this.text_color(cx.theme().colors().text_muted)
                                         }
                                     })
-                                    .child(name)
+                                    .child(self.render_markdown(
+                                        tool_call.label.clone(),
+                                        MarkdownStyle {
+                                            prevent_mouse_interaction: true,
+                                            ..default_markdown_style(false, true, window, cx)
+                                        },
+                                    ))
                                     .tooltip(Tooltip::text("Jump to File"))
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         this.open_tool_call_location(entry_ix, 0, window, cx);
