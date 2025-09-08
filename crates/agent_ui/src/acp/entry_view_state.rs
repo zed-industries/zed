@@ -207,7 +207,7 @@ impl EntryViewState {
         self.entries.drain(range);
     }
 
-    pub fn settings_changed(&mut self, cx: &mut App) {
+    pub fn agent_font_size_changed(&mut self, cx: &mut App) {
         for entry in self.entries.iter() {
             match entry {
                 Entry::UserMessage { .. } | Entry::AssistantMessage { .. } => {}

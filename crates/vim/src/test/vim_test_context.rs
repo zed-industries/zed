@@ -68,7 +68,7 @@ impl VimTestContext {
 
     pub fn init_keybindings(enabled: bool, cx: &mut App) {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(enabled));
+            store.update_user_settings::<VimModeSetting>(cx, |s| s.vim_mode = Some(enabled));
         });
         let default_key_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
             "keymaps/default-macos.json",
@@ -134,7 +134,7 @@ impl VimTestContext {
     pub fn enable_vim(&mut self) {
         self.cx.update(|_, cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(true));
+                store.update_user_settings::<VimModeSetting>(cx, |s| s.vim_mode = Some(true));
             });
         })
     }
@@ -142,7 +142,7 @@ impl VimTestContext {
     pub fn disable_vim(&mut self) {
         self.cx.update(|_, cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(false));
+                store.update_user_settings::<VimModeSetting>(cx, |s| s.vim_mode = Some(false));
             });
         })
     }
@@ -151,7 +151,7 @@ impl VimTestContext {
         self.cx.update(|_, cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings::<vim_mode_setting::HelixModeSetting>(cx, |s| {
-                    *s = Some(true)
+                    s.helix_mode = Some(true)
                 });
             });
         })

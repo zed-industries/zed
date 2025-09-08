@@ -5,7 +5,7 @@ use git::GitHostingProviderRegistry;
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore, SettingsUi};
+use settings::{Settings, SettingsKey, SettingsStore, SettingsUi};
 use url::Url;
 use util::ResultExt as _;
 
@@ -78,7 +78,8 @@ pub struct GitHostingProviderConfig {
     pub name: String,
 }
 
-#[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema, SettingsUi)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
+#[settings_key(None)]
 pub struct GitHostingProviderSettings {
     /// The list of custom Git hosting providers.
     #[serde(default)]
@@ -86,8 +87,6 @@ pub struct GitHostingProviderSettings {
 }
 
 impl Settings for GitHostingProviderSettings {
-    const KEY: Option<&'static str> = None;
-
     type FileContent = Self;
 
     fn load(sources: settings::SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {

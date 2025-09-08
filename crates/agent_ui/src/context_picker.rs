@@ -987,7 +987,8 @@ impl MentionLink {
                     .read(cx)
                     .project()
                     .read(cx)
-                    .entry_for_path(&project_path, cx)?;
+                    .entry_for_path(&project_path, cx)?
+                    .clone();
                 Some(MentionLink::File(project_path, entry))
             }
             Self::SYMBOL => {

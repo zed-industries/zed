@@ -3761,7 +3761,7 @@ impl LspStore {
             worktree_store,
             languages: languages.clone(),
             language_server_statuses: Default::default(),
-            nonce: StdRng::from_entropy().r#gen(),
+            nonce: StdRng::from_os_rng().random(),
             diagnostic_summaries: HashMap::default(),
             lsp_server_capabilities: HashMap::default(),
             lsp_document_colors: HashMap::default(),
@@ -3823,7 +3823,7 @@ impl LspStore {
             worktree_store,
             languages: languages.clone(),
             language_server_statuses: Default::default(),
-            nonce: StdRng::from_entropy().r#gen(),
+            nonce: StdRng::from_os_rng().random(),
             diagnostic_summaries: HashMap::default(),
             lsp_server_capabilities: HashMap::default(),
             lsp_document_colors: HashMap::default(),
@@ -3933,8 +3933,8 @@ impl LspStore {
         event: &ToolchainStoreEvent,
         _: &mut Context<Self>,
     ) {
-        match event {
-            ToolchainStoreEvent::ToolchainActivated => self.request_workspace_config_refresh(),
+        if let ToolchainStoreEvent::ToolchainActivated = event {
+            self.request_workspace_config_refresh()
         }
     }
 

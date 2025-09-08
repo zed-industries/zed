@@ -251,6 +251,7 @@ pub struct ConfigureContextServerModal {
     workspace: WeakEntity<Workspace>,
     source: ConfigurationSource,
     state: State,
+    original_server_id: Option<ContextServerId>,
 }
 
 impl ConfigureContextServerModal {
@@ -348,6 +349,11 @@ impl ConfigureContextServerModal {
                     context_server_store,
                     workspace: workspace_handle,
                     state: State::Idle,
+                    original_server_id: match &target {
+                        ConfigurationTarget::Existing { id, .. } => Some(id.clone()),
+                        ConfigurationTarget::Extension { id, .. } => Some(id.clone()),
+                        ConfigurationTarget::New => None,
+                    },
                     source: ConfigurationSource::from_target(
                         target,
                         language_registry,
@@ -415,9 +421,19 @@ impl ConfigureContextServerModal {
             // When we write the settings to the file, the context server will be restarted.
             workspace.update(cx, |workspace, cx| {
                 let fs = workspace.app_state().fs.clone();
-                update_settings_file::<ProjectSettings>(fs.clone(), cx, |project_settings, _| {
-                    project_settings.context_servers.insert(id.0, settings);
-                });
+                let original_server_id = self.original_server_id.clone();
+                update_settings_file::<ProjectSettings>(
+                    fs.clone(),
+                    cx,
+                    move |project_settings, _| {
+                        if let Some(original_id) = original_server_id {
+                            if original_id != id {
+                                project_settings.context_servers.remove(&original_id.0);
+                            }
+                        }
+                        project_settings.context_servers.insert(id.0, settings);
+                    },
+                );
             });
         } else if let Some(existing_server) = existing_server {
             self.context_server_store

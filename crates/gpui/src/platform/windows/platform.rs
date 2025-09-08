@@ -94,7 +94,11 @@ impl WindowsPlatform {
         }
         let directx_devices = DirectXDevices::new().context("Creating DirectX devices")?;
         let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
-        let validation_number = rand::random::<usize>();
+        let validation_number = if usize::BITS == 64 {
+            rand::random::<u64>() as usize
+        } else {
+            rand::random::<u32>() as usize
+        };
         let raw_window_handles = Arc::new(RwLock::new(SmallVec::new()));
         let text_system = Arc::new(
             DirectWriteTextSystem::new(&directx_devices)

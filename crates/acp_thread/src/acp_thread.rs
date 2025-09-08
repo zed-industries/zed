@@ -2114,7 +2114,7 @@ mod tests {
     use gpui::{App, AsyncApp, TestAppContext, WeakEntity};
     use indoc::indoc;
     use project::{FakeFs, Fs};
-    use rand::Rng as _;
+    use rand::{distr, prelude::*};
     use serde_json::json;
     use settings::SettingsStore;
     use smol::stream::StreamExt as _;
@@ -3057,8 +3057,8 @@ mod tests {
             cx: &mut App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             let session_id = acp::SessionId(
-                rand::thread_rng()
-                    .sample_iter(&rand::distributions::Alphanumeric)
+                rand::rng()
+                    .sample_iter(&distr::Alphanumeric)
                     .take(7)
                     .map(char::from)
                     .collect::<String>()

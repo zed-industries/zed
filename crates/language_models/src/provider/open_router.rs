@@ -92,7 +92,7 @@ pub struct State {
     api_key_from_env: bool,
     http_client: Arc<dyn HttpClient>,
     available_models: Vec<open_router::Model>,
-    fetch_models_task: Option<Task<Result<()>>>,
+    fetch_models_task: Option<Task<Result<(), LanguageModelCompletionError>>>,
     settings: OpenRouterSettings,
     _subscription: Subscription,
 }
@@ -178,20 +178,35 @@ impl State {
         })
     }
 
-    fn fetch_models(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+    fn fetch_models(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(), LanguageModelCompletionError>> {
         let settings = &AllLanguageModelSettings::get_global(cx).open_router;
         let http_client = self.http_client.clone();
         let api_url = settings.api_url.clone();
-
+        let Some(api_key) = self.api_key.clone() else {
+            return Task::ready(Err(LanguageModelCompletionError::NoApiKey {
+                provider: PROVIDER_NAME,
+            }));
+        };
         cx.spawn(async move |this, cx| {
-            let models = list_models(http_client.as_ref(), &api_url)
+            let models = list_models(http_client.as_ref(), &api_url, &api_key)
                 .await
-                .map_err(|e| anyhow::anyhow!("OpenRouter error: {:?}", e))?;
+                .map_err(|e| {
+                    LanguageModelCompletionError::Other(anyhow::anyhow!(
+                        "OpenRouter error: {:?}",
+                        e
+                    ))
+                })?;
 
             this.update(cx, |this, cx| {
                 this.available_models = models;
                 cx.notify();
             })
+            .map_err(|e| LanguageModelCompletionError::Other(e))?;
+
+            Ok(())
         })
     }
 

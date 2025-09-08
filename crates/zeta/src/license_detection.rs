@@ -358,7 +358,6 @@ impl LicenseDetectionWatcher {
 
 #[cfg(test)]
 mod tests {
-
     use fs::FakeFs;
     use gpui::TestAppContext;
     use serde_json::json;

@@ -41,12 +41,19 @@ impl AgentServer for Gemini {
         let settings = cx.read_global(|settings: &SettingsStore, _| {
             settings.get::<AllAgentServersSettings>(None).gemini.clone()
         });
+        let project = delegate.project().clone();
 
         cx.spawn(async move |cx| {
             let ignore_system_version = settings
                 .as_ref()
                 .and_then(|settings| settings.ignore_system_version)
                 .unwrap_or(true);
+            let mut project_env = project
+                .update(cx, |project, cx| {
+                    project.directory_environment(root_dir.as_path().into(), cx)
+                })?
+                .await
+                .unwrap_or_default();
             let mut command = if let Some(settings) = settings
                 && let Some(command) = settings.custom_command()
             {
@@ -67,13 +74,12 @@ impl AgentServer for Gemini {
             if !command.args.contains(&ACP_ARG.into()) {
                 command.args.push(ACP_ARG.into());
             }
-
             if let Some(api_key) = cx.update(GoogleLanguageModelProvider::api_key)?.await.ok() {
-                command
-                    .env
-                    .get_or_insert_default()
+                project_env
                     .insert("GEMINI_API_KEY".to_owned(), api_key.key);
             }
+            project_env.extend(command.env.take().unwrap_or_default());
+            command.env = Some(project_env);
 
             let root_dir_exists = fs.is_dir(&root_dir).await;
             anyhow::ensure!(

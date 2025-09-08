@@ -1167,7 +1167,7 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut Contex
                         };
                         let project = workspace.project().clone();
                         let buffer = project.update(cx, |project, cx| {
-                            project.create_local_buffer(&log, None, cx)
+                            project.create_local_buffer(&log, None, false, cx)
                         });
 
                         let buffer = cx
@@ -1733,7 +1733,7 @@ fn open_telemetry_log_file(
 
             workspace.update_in( cx, |workspace, window, cx| {
                 let project = workspace.project().clone();
-                let buffer = project.update(cx, |project, cx| project.create_local_buffer(&content, json, cx));
+                let buffer = project.update(cx, |project, cx| project.create_local_buffer(&content, json,false, cx));
                 let buffer = cx.new(|cx| {
                     MultiBuffer::singleton(buffer, cx).with_title("Telemetry Log".into())
                 });
@@ -1772,7 +1772,8 @@ fn open_bundled_file(
                 workspace.with_local_workspace(window, cx, |workspace, window, cx| {
                     let project = workspace.project();
                     let buffer = project.update(cx, move |project, cx| {
-                        let buffer = project.create_local_buffer(text.as_ref(), language, cx);
+                        let buffer =
+                            project.create_local_buffer(text.as_ref(), language, false, cx);
                         buffer.update(cx, |buffer, cx| {
                             buffer.set_capability(Capability::ReadOnly, cx);
                         });
@@ -4480,6 +4481,7 @@ mod tests {
                 "keymap_editor",
                 "keystroke_input",
                 "language_selector",
+                "line_ending",
                 "lsp_tool",
                 "markdown",
                 "menu",
@@ -4502,6 +4504,7 @@ mod tests {
                 "snippets",
                 "supermaven",
                 "svg",
+                "syntax_tree_view",
                 "tab_switcher",
                 "task",
                 "terminal",
@@ -4511,11 +4514,11 @@ mod tests {
                 "toolchain",
                 "variable_list",
                 "vim",
+                "window",
                 "workspace",
                 "zed",
                 "zed_predict_onboarding",
                 "zeta",
-                "window",
             ];
             assert_eq!(
                 all_namespaces,
