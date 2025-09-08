@@ -249,6 +249,37 @@ unsafe fn build_classes() {
                     sel!(characterIndexForPoint:),
                     character_index_for_point as extern "C" fn(&Object, Sel, NSPoint) -> u64,
                 );
+
+                // Disable automatic text substitutions and services, which cause
+                // performance issues by constantly running heuristics on macOS 26.
+                decl.add_method(
+                    sel!(isAutomaticTextCompletionEnabled),
+                    no as extern "C" fn(&Object, Sel) -> BOOL,
+                );
+                decl.add_method(
+                    sel!(isAutomaticQuoteSubstitutionEnabled),
+                    no as extern "C" fn(&Object, Sel) -> BOOL,
+                );
+                decl.add_method(
+                    sel!(isAutomaticDashSubstitutionEnabled),
+                    no as extern "C" fn(&Object, Sel) -> BOOL,
+                );
+                decl.add_method(
+                    sel!(isAutomaticLinkDetectionEnabled),
+                    no as extern "C" fn(&Object, Sel) -> BOOL,
+                );
+                decl.add_method(
+                    sel!(isAutomaticDataDetectionEnabled),
+                    no as extern "C" fn(&Object, Sel) -> BOOL,
+                );
+                decl.add_method(
+                    sel!(isAutomaticSpellingCorrectionEnabled),
+                    no as extern "C" fn(&Object, Sel) -> BOOL,
+                );
+                decl.add_method(
+                    sel!(isAutomaticTextReplacementEnabled),
+                    no as extern "C" fn(&Object, Sel) -> BOOL,
+                );
             }
             decl.register()
         };
@@ -1598,6 +1629,10 @@ unsafe fn drop_window_state(object: &Object) {
 
 extern "C" fn yes(_: &Object, _: Sel) -> BOOL {
     YES
+}
+
+extern "C" fn no(_: &Object, _: Sel) -> BOOL {
+    NO
 }
 
 extern "C" fn dealloc_window(this: &Object, _: Sel) {
