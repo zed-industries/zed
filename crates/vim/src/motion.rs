@@ -692,7 +692,7 @@ impl Vim {
                     }
                 }
 
-                Mode::HelixNormal => {}
+                Mode::HelixNormal | Mode::HelixSelect => {}
             }
         }
 
@@ -722,7 +722,7 @@ impl Vim {
                     self.normal_motion(motion, active_operator, count, forced_motion, window, cx)
                 }
             }
-            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock | Mode::HelixSelect => {
                 self.visual_motion(motion, count, window, cx)
             }
 

@@ -4,7 +4,7 @@ mod select;
 
 use editor::display_map::DisplaySnapshot;
 use editor::{DisplayPoint, Editor, SelectionEffects, ToOffset, ToPoint, movement};
-use gpui::{Action, actions};
+use gpui::actions;
 use gpui::{Context, Window};
 use language::{CharClassifier, CharKind};
 use text::{Bias, SelectionGoal};
@@ -19,8 +19,6 @@ use crate::{
 actions!(
     vim,
     [
-        /// Switches to normal mode after the cursor (Helix-style).
-        HelixNormalAfter,
         /// Yanks the current selection or character if no selection.
         HelixYank,
         /// Inserts at the beginning of the selection.
@@ -33,7 +31,6 @@ actions!(
 );
 
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
-    Vim::action(editor, cx, Vim::helix_normal_after);
     Vim::action(editor, cx, Vim::helix_insert);
     Vim::action(editor, cx, Vim::helix_append);
     Vim::action(editor, cx, Vim::helix_yank);
@@ -41,21 +38,6 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 }
 
 impl Vim {
-    pub fn helix_normal_after(
-        &mut self,
-        action: &HelixNormalAfter,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.active_operator().is_some() {
-            self.operator_stack.clear();
-            self.sync_vim_settings(window, cx);
-            return;
-        }
-        self.stop_recording_immediately(action.boxed_clone(), cx);
-        self.switch_mode(Mode::HelixNormal, false, window, cx);
-    }
-
     pub fn helix_normal_motion(
         &mut self,
         motion: Motion,
@@ -806,6 +788,19 @@ mod test {
         cx.simulate_keystrokes("shift-r");
 
         cx.assert_state("foo hello worldˇ baz", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_mode(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        assert_eq!(cx.mode(), Mode::Normal);
+        cx.enable_helix();
+
+        cx.simulate_keystrokes("v");
+        assert_eq!(cx.mode(), Mode::HelixSelect);
+        cx.simulate_keystrokes("escape");
+        assert_eq!(cx.mode(), Mode::HelixNormal);
     }
 
     #[gpui::test]

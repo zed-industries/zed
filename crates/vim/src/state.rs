@@ -46,6 +46,7 @@ pub enum Mode {
     VisualLine,
     VisualBlock,
     HelixNormal,
+    HelixSelect,
 }
 
 impl Display for Mode {
@@ -58,6 +59,7 @@ impl Display for Mode {
             Mode::VisualLine => write!(f, "VISUAL LINE"),
             Mode::VisualBlock => write!(f, "VISUAL BLOCK"),
             Mode::HelixNormal => write!(f, "HELIX NORMAL"),
+            Mode::HelixSelect => write!(f, "HELIX SELECT"),
         }
     }
 }
@@ -65,7 +67,7 @@ impl Display for Mode {
 impl Mode {
     pub fn is_visual(&self) -> bool {
         match self {
-            Self::Visual | Self::VisualLine | Self::VisualBlock => true,
+            Self::Visual | Self::VisualLine | Self::VisualBlock | Self::HelixSelect => true,
             Self::Normal | Self::Insert | Self::Replace | Self::HelixNormal => false,
         }
     }
