@@ -76,7 +76,7 @@ impl DirectXDevices {
                 }
                 _ => unreachable!(),
             }
-            (device.unwrap(), context.unwrap())
+            (device, context.unwrap())
         };
 
         Ok(Self {
@@ -185,6 +185,14 @@ fn get_device(
                 std::mem::size_of::<D3D11_FEATURE_DATA_D3D10_X_HARDWARE_OPTIONS>() as u32,
             )
             .context("Checking GPU device feature support")?;
+    }
+    if data
+        .ComputeShaders_Plus_RawAndStructuredBuffers_Via_Shader_4_x
+        .as_bool()
+    {
+        println!("=> StructuredBuffer is supported.");
+    } else {
+        println!("=> StructuredBuffer is not supported.");
     }
     Ok(device)
 }
