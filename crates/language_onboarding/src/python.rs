@@ -1,11 +1,7 @@
 use db::kvp::Dismissable;
 use editor::Editor;
 use gpui::{Context, EventEmitter, Subscription};
-use ui::{
-    Banner, Button, Clickable, Color, FluentBuilder as _, IconButton, IconName,
-    InteractiveElement as _, IntoElement, Label, LabelCommon, LabelSize, ParentElement as _,
-    Render, Styled as _, Window, div, h_flex, v_flex,
-};
+use ui::{Banner, FluentBuilder as _, prelude::*};
 use workspace::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace};
 
 pub struct BasedPyrightBanner {
@@ -45,29 +41,33 @@ impl Render for BasedPyrightBanner {
             .when(!self.dismissed && self.have_basedpyright, |el| {
                 el.child(
                     Banner::new()
-                        .severity(ui::Severity::Info)
                         .child(
+                            v_flex()
+                                .gap_0p5()
+                                .child(Label::new("Basedpyright is now the only default language server for Python").mt_0p5())
+                                .child(Label::new("We have disabled PyRight and pylsp by default. They can be re-enabled in your settings.").size(LabelSize::Small).color(Color::Muted))
+                        )
+                        .action_slot(
                             h_flex()
-                                .gap_2()
-                                .child(v_flex()
-                                    .child("Basedpyright is now the only default language server for Python")
-                                    .child(Label::new("We have disabled PyRight and pylsp by default. They can be re-enabled in your settings.").size(LabelSize::XSmall).color(Color::Muted))
-                                )
+                                .gap_0p5()
                                 .child(
                                     Button::new("learn-more", "Learn More")
                                         .icon(IconName::ArrowUpRight)
+                                        .label_size(LabelSize::Small)
+                                        .icon_size(IconSize::XSmall)
+                                        .icon_color(Color::Muted)
                                         .on_click(|_, _, cx| {
                                             cx.open_url("https://zed.dev/docs/languages/python")
                                         }),
-                                ),
+                                )
+                                .child(IconButton::new("dismiss", IconName::Close).icon_size(IconSize::Small).on_click(
+                                    cx.listener(|this, _, _, cx| {
+                                        this.dismissed = true;
+                                        Self::set_dismissed(true, cx);
+                                        cx.notify();
+                                    }),
+                                ))
                         )
-                        .action_slot(IconButton::new("dismiss", IconName::Close).on_click(
-                            cx.listener(|this, _, _, cx| {
-                                this.dismissed = true;
-                                Self::set_dismissed(true, cx);
-                                cx.notify();
-                            }),
-                        ))
                         .into_any_element(),
                 )
             })
