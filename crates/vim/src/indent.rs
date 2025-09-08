@@ -190,6 +190,20 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_indent_hx(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        cx.set_state("«Hello\nWorldˇ»\n", Mode::HelixNormal);
+
+        cx.simulate_keystrokes(">");
+        cx.assert_state("    «Hello\n    Worldˇ»\n", Mode::HelixNormal);
+
+        cx.simulate_keystrokes("<");
+        cx.assert_state("«Hello\nWorldˇ»\n", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
     async fn test_autoindent_op(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
 
