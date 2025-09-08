@@ -172,72 +172,48 @@ fn sanitize_url_punctuation<T: EventListener>(
 ) -> (String, Match) {
     let mut sanitized_url = url;
     let mut chars_trimmed = 0;
-    
-    // First, handle parentheses balancing
-    let open_parens = sanitized_url.chars().filter(|&c| c == '(').count();
-    let close_parens = sanitized_url.chars().filter(|&c| c == ')').count();
-    
-    // If there are more closing parentheses than opening ones, and the URL ends with ')',
-    // trim trailing ')' characters until balanced or no more trailing ')' exist
-    if close_parens > open_parens && sanitized_url.ends_with(')') {
-        while sanitized_url.ends_with(')') {
-            let remaining_open = sanitized_url.chars().filter(|&c| c == '(').count();
-            let remaining_close = sanitized_url.chars().filter(|&c| c == ')').count();
-            
-            // If removing this ')' would make parentheses balanced or reduce the imbalance
-            if remaining_close > remaining_open {
-                sanitized_url.pop();
-                chars_trimmed += 1;
-            } else {
-                break;
-            }
+
+    // First, handle parentheses balancing using single traversal
+    let (open_parens, close_parens) =
+        sanitized_url
+            .chars()
+            .fold((0, 0), |(opens, closes), c| match c {
+                '(' => (opens + 1, closes),
+                ')' => (opens, closes + 1),
+                _ => (opens, closes),
+            });
+
+    // Trim unbalanced closing parentheses
+    if close_parens > open_parens {
+        let mut remaining_close = close_parens;
+        while sanitized_url.ends_with(')') && remaining_close > open_parens {
+            sanitized_url.pop();
+            chars_trimmed += 1;
+            remaining_close -= 1;
         }
     }
-    
-    // Second, handle trailing periods (likely sentence punctuation)
+
+    // Handle trailing periods
     if sanitized_url.ends_with('.') {
-        // Count trailing periods
-        let mut trailing_periods = 0;
-        for char in sanitized_url.chars().rev() {
-            if char == '.' {
-                trailing_periods += 1;
-            } else {
-                break;
-            }
-        }
-        
-        // Always remove multiple trailing periods (unlikely to be valid in URLs)
+        let trailing_periods = sanitized_url
+            .chars()
+            .rev()
+            .take_while(|&c| c == '.')
+            .count();
+
         if trailing_periods > 1 {
             sanitized_url.truncate(sanitized_url.len() - trailing_periods);
             chars_trimmed += trailing_periods;
-        }
-        // For single trailing period, use heuristics to determine if it's sentence punctuation
-        else if trailing_periods == 1 {
-            // Simple heuristic: if the URL is likely at the end of a sentence, remove the period
-            // This covers most common cases where URLs appear in text followed by sentence punctuation
-            let should_remove_period = 
-                // Check if URL looks like it ends with a complete component (domain, path, file)
-                // and the period is likely sentence punctuation
-                sanitized_url.len() > 1 && {
-                    let chars: Vec<char> = sanitized_url.chars().collect();
-                    let second_last_char = chars[chars.len() - 2];
-                    
-                    // Remove period if the character before it is alphanumeric (common case)
-                    // This catches: example.com., file.html., path/something.
-                    second_last_char.is_alphanumeric() ||
-                    // Also remove if it's a slash (path ending: /path.)
-                    second_last_char == '/'
-                };
-                
-            if should_remove_period {
-                sanitized_url.pop();
-                chars_trimmed += 1;
-            }
+        } else if trailing_periods == 1
+            && let Some(second_last_char) = sanitized_url.chars().rev().nth(1)
+            && (second_last_char.is_alphanumeric() || second_last_char == '/')
+        {
+            sanitized_url.pop();
+            chars_trimmed += 1;
         }
     }
-    
+
     if chars_trimmed > 0 {
-        // Adjust the match range to reflect the trimmed characters
         let new_end = url_match.end().sub(term, Boundary::Grid, chars_trimmed);
         let sanitized_match = Match::new(*url_match.start(), new_end);
         (sanitized_url, sanitized_match)
@@ -285,8 +261,8 @@ mod tests {
     use super::*;
     use alacritty_terminal::{
         event::VoidListener,
-        index::{Boundary, Point as AlacPoint},
-        term::{Config, cell::Flags, test::TermSize},
+        index::{Boundary, Column, Line, Point as AlacPoint},
+        term::{Config, cell::Flags, search::Match, test::TermSize},
         vte::ansi::Handler,
     };
     use std::{cell::RefCell, ops::RangeInclusive, path::PathBuf};
@@ -323,26 +299,30 @@ mod tests {
             ("https://www.google.com/)", "https://www.google.com/"),
             ("https://example.com/path)", "https://example.com/path"),
             ("https://test.com/))", "https://test.com/"),
-            
             // Cases that should NOT be sanitized (balanced parentheses)
-            ("https://en.wikipedia.org/wiki/Example_(disambiguation)", "https://en.wikipedia.org/wiki/Example_(disambiguation)"),
+            (
+                "https://en.wikipedia.org/wiki/Example_(disambiguation)",
+                "https://en.wikipedia.org/wiki/Example_(disambiguation)",
+            ),
             ("https://test.com/(hello)", "https://test.com/(hello)"),
-            ("https://example.com/path(1)(2)", "https://example.com/path(1)(2)"),
-            
+            (
+                "https://example.com/path(1)(2)",
+                "https://example.com/path(1)(2)",
+            ),
             // Edge cases
             ("https://test.com/", "https://test.com/"),
             ("https://example.com", "https://example.com"),
         ];
-        
+
         for (input, expected) in test_cases {
             // Create a minimal terminal for testing
             let term = Term::new(Config::default(), &TermSize::new(80, 24), VoidListener);
-            
+
             // Create a dummy match that spans the entire input
-            let start_point = AlacPoint::new(alacritty_terminal::index::Line(0), alacritty_terminal::index::Column(0));
-            let end_point = AlacPoint::new(alacritty_terminal::index::Line(0), alacritty_terminal::index::Column(input.len()));
-            let dummy_match = alacritty_terminal::term::search::Match::new(start_point, end_point);
-            
+            let start_point = AlacPoint::new(Line(0), Column(0));
+            let end_point = AlacPoint::new(Line(0), Column(input.len()));
+            let dummy_match = Match::new(start_point, end_point);
+
             let (result, _) = sanitize_url_punctuation(input.to_string(), dummy_match, &term);
             assert_eq!(result, expected, "Failed for input: {}", input);
         }
@@ -354,28 +334,42 @@ mod tests {
         let test_cases = vec![
             // Cases that should be sanitized (trailing periods likely punctuation)
             ("https://example.com.", "https://example.com"),
-            ("https://github.com/zed-industries/zed.", "https://github.com/zed-industries/zed"),
-            ("https://example.com/path/file.html.", "https://example.com/path/file.html"),
-            ("https://example.com/file.pdf.", "https://example.com/file.pdf"),
+            (
+                "https://github.com/zed-industries/zed.",
+                "https://github.com/zed-industries/zed",
+            ),
+            (
+                "https://example.com/path/file.html.",
+                "https://example.com/path/file.html",
+            ),
+            (
+                "https://example.com/file.pdf.",
+                "https://example.com/file.pdf",
+            ),
             ("https://example.com:8080.", "https://example.com:8080"),
             ("https://example.com..", "https://example.com"),
-            ("https://en.wikipedia.org/wiki/C.E.O.", "https://en.wikipedia.org/wiki/C.E.O"),
-            
+            (
+                "https://en.wikipedia.org/wiki/C.E.O.",
+                "https://en.wikipedia.org/wiki/C.E.O",
+            ),
             // Cases that should NOT be sanitized (periods are part of URL structure)
-            ("https://example.com/v1.0/api", "https://example.com/v1.0/api"),
+            (
+                "https://example.com/v1.0/api",
+                "https://example.com/v1.0/api",
+            ),
             ("https://192.168.1.1", "https://192.168.1.1"),
             ("https://sub.domain.com", "https://sub.domain.com"),
         ];
-        
+
         for (input, expected) in test_cases {
             // Create a minimal terminal for testing
             let term = Term::new(Config::default(), &TermSize::new(80, 24), VoidListener);
-            
+
             // Create a dummy match that spans the entire input
-            let start_point = AlacPoint::new(alacritty_terminal::index::Line(0), alacritty_terminal::index::Column(0));
-            let end_point = AlacPoint::new(alacritty_terminal::index::Line(0), alacritty_terminal::index::Column(input.len()));
-            let dummy_match = alacritty_terminal::term::search::Match::new(start_point, end_point);
-            
+            let start_point = AlacPoint::new(Line(0), Column(0));
+            let end_point = AlacPoint::new(Line(0), Column(input.len()));
+            let dummy_match = Match::new(start_point, end_point);
+
             // This test should initially fail since we haven't implemented period sanitization yet
             let (result, _) = sanitize_url_punctuation(input.to_string(), dummy_match, &term);
             assert_eq!(result, expected, "Failed for input: {}", input);
