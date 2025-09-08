@@ -3824,14 +3824,14 @@ impl AcpThreadView {
                     .child(
                         h_flex()
                             .child(self.render_follow_toggle(cx))
-                            .children(self.render_burn_mode_toggle(cx))
-                            .children(self.mode_selector.clone()),
+                            .children(self.render_burn_mode_toggle(cx)),
                     )
                     .child(
                         h_flex()
                             .gap_1()
                             .children(self.render_token_usage(cx))
                             .children(self.profile_selector.clone())
+                            .children(self.mode_selector.clone())
                             .children(self.model_selector.clone())
                             .child(self.render_send_button(cx)),
                     ),

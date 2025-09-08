@@ -63,29 +63,36 @@ impl ModeSelector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
-        let all_modes = self.connection.all_modes();
-        let current_mode = self.connection.current_mode();
+        let weak_self = cx.weak_entity();
 
-        ContextMenu::build(window, cx, |mut menu, _window, _cx| {
+        ContextMenu::build(window, cx, move |mut menu, _window, _cx| {
+            let all_modes = self.connection.all_modes();
+            let current_mode = self.connection.current_mode();
+
             for mode in all_modes {
-                menu.push_item(
-                    ContextMenuEntry::new(mode.name.clone())
-                        .toggleable(IconPosition::End, mode.id == current_mode)
-                        .handler({
-                            let mode_id = mode.id.clone();
-                            let connection = self.connection.clone();
-                            move |_window, cx| {
-                                let task = connection.set_mode(mode_id.clone(), cx);
-                                cx.spawn(async move |_cx| {
-                                    if let Err(err) = task.await {
-                                        log::error!("Failed to set session mode: {:?}", err);
-                                    }
-                                    anyhow::Ok(())
-                                })
-                                .detach();
-                            }
-                        }),
-                );
+                let entry = ContextMenuEntry::new(mode.name.clone())
+                    .toggleable(IconPosition::End, mode.id == current_mode);
+
+                let entry = if let Some(description) = &mode.description {
+                    entry.documentation_aside(ui::DocumentationSide::Left, {
+                        let description = description.clone();
+                        move |_| ui::Label::new(description.clone()).into_any_element()
+                    })
+                } else {
+                    entry
+                };
+
+                menu.push_item(entry.handler({
+                    let mode_id = mode.id.clone();
+                    let weak_self = weak_self.clone();
+                    move |_window, cx| {
+                        weak_self
+                            .update(cx, |this, cx| {
+                                this.set_mode(mode_id.clone(), cx);
+                            })
+                            .ok();
+                    }
+                }));
             }
 
             menu
