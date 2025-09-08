@@ -6371,7 +6371,7 @@ impl LspStore {
                                     && primary_start_point.column == 0
                                     && range_start_point.row == 0
                                     && range_start_point.column == 0;
-                                
+
                                 result
                             };
 
