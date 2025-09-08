@@ -14,12 +14,21 @@ impl TestExtension {
         language_server_id: &LanguageServerId,
         _worktree: &zed::Worktree,
     ) -> Result<String> {
-        let echo_output = Command::new("echo").arg("hello!").output()?;
+        let (platform, arch) = zed::current_platform();
 
-        println!("{}", String::from_utf8_lossy(&echo_output.stdout));
         println!(
             "current_dir: {}",
             std::env::current_dir().unwrap().display()
+        );
+
+        let command = match platform {
+            zed::Os::Linux | zed::Os::Mac => Command::new("echo"),
+            zed::Os::Windows => Command::new("cmd").args(["/C", "echo"]),
+        };
+        let output = command.arg("hello from a child process!").output()?;
+        println!(
+            "command output: {}",
+            String::from_utf8_lossy(&output.stdout).trim()
         );
 
         if let Some(path) = &self.cached_binary_path
@@ -40,9 +49,21 @@ impl TestExtension {
             },
         )?;
 
-        let (platform, arch) = zed::current_platform();
+        let ext;
+        let download_type;
+        match platform {
+            zed::Os::Mac | zed::Os::Linux => {
+                ext = "tar.gz";
+                download_type = zed::DownloadedFileType::GzipTar;
+            }
+            zed::Os::Windows => {
+                ext = "zip";
+                download_type = zed::DownloadedFileType::Zip;
+            }
+        }
+
         let asset_name = format!(
-            "gleam-{version}-{arch}-{os}.tar.gz",
+            "gleam-{version}-{arch}-{os}.{ext}",
             version = release.version,
             arch = match arch {
                 zed::Architecture::Aarch64 => "aarch64",
@@ -71,12 +92,8 @@ impl TestExtension {
                 &zed::LanguageServerInstallationStatus::Downloading,
             );
 
-            zed::download_file(
-                &asset.download_url,
-                &version_dir,
-                zed::DownloadedFileType::GzipTar,
-            )
-            .map_err(|e| format!("failed to download file: {e}"))?;
+            zed::download_file(&asset.download_url, &version_dir, download_type)
+                .map_err(|e| format!("failed to download file: {e}"))?;
 
             let entries =
                 fs::read_dir(".").map_err(|e| format!("failed to list working directory {e}"))?;
