@@ -426,8 +426,8 @@ impl ConfigureContextServerModal {
                     fs.clone(),
                     cx,
                     move |project_settings, _| {
-                        if let Some(original_id) = &original_server_id {
-                            if original_id.0 != id.0 {
+                        if let Some(original_id) = original_server_id {
+                            if original_id != id {
                                 project_settings.context_servers.remove(&original_id.0);
                             }
                         }
