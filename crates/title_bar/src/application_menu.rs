@@ -121,7 +121,15 @@ impl ApplicationMenu {
                                     menu.action(name, action)
                                 }
                                 OwnedMenuItem::Submenu(_) => menu,
+                                OwnedMenuItem::SystemMenu(_) => {
+                                    // A system menu doesn't make sense in this context, so ignore it
+                                    menu
+                                }
                             })
+                    }
+                    OwnedMenuItem::SystemMenu(_) => {
+                        // A system menu doesn't make sense in this context, so ignore it
+                        menu
                     }
                 })
         })
@@ -178,7 +186,7 @@ impl ApplicationMenu {
                     .trigger(
                         Button::new(
                             SharedString::from(format!("{}-menu-trigger", menu_name)),
-                            menu_name.clone(),
+                            menu_name,
                         )
                         .style(ButtonStyle::Subtle)
                         .label_size(LabelSize::Small),
@@ -261,32 +269,31 @@ impl Render for ApplicationMenu {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let all_menus_shown = self.all_menus_shown(cx);
 
-        if let Some(pending_menu_open) = self.pending_menu_open.take() {
-            if let Some(entry) = self
+        if let Some(pending_menu_open) = self.pending_menu_open.take()
+            && let Some(entry) = self
                 .entries
                 .iter()
                 .find(|entry| entry.menu.name == pending_menu_open && !entry.handle.is_deployed())
-            {
-                let handle_to_show = entry.handle.clone();
-                let handles_to_hide: Vec<_> = self
-                    .entries
-                    .iter()
-                    .filter(|e| e.menu.name != pending_menu_open && e.handle.is_deployed())
-                    .map(|e| e.handle.clone())
-                    .collect();
+        {
+            let handle_to_show = entry.handle.clone();
+            let handles_to_hide: Vec<_> = self
+                .entries
+                .iter()
+                .filter(|e| e.menu.name != pending_menu_open && e.handle.is_deployed())
+                .map(|e| e.handle.clone())
+                .collect();
 
-                if handles_to_hide.is_empty() {
-                    // We need to wait for the next frame to show all menus first,
-                    // before we can handle show/hide operations
-                    window.on_next_frame(move |window, cx| {
-                        handles_to_hide.iter().for_each(|handle| handle.hide(cx));
-                        window.defer(cx, move |window, cx| handle_to_show.show(window, cx));
-                    });
-                } else {
-                    // Since menus are already shown, we can directly handle show/hide operations
+            if handles_to_hide.is_empty() {
+                // We need to wait for the next frame to show all menus first,
+                // before we can handle show/hide operations
+                window.on_next_frame(move |window, cx| {
                     handles_to_hide.iter().for_each(|handle| handle.hide(cx));
-                    cx.defer_in(window, move |_, window, cx| handle_to_show.show(window, cx));
-                }
+                    window.defer(cx, move |window, cx| handle_to_show.show(window, cx));
+                });
+            } else {
+                // Since menus are already shown, we can directly handle show/hide operations
+                handles_to_hide.iter().for_each(|handle| handle.hide(cx));
+                cx.defer_in(window, move |_, window, cx| handle_to_show.show(window, cx));
             }
         }
 

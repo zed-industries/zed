@@ -3,9 +3,9 @@ use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
 use gpui::AsyncApp;
-use language::{LanguageName, LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
+use language::{LanguageName, LspAdapter, LspAdapterDelegate, Toolchain};
 use lsp::{LanguageServerBinary, LanguageServerName};
-use node_runtime::NodeRuntime;
+use node_runtime::{NodeRuntime, VersionStrategy};
 use project::{Fs, lsp_store::language_server_settings};
 use serde_json::{Value, json};
 use smol::fs;
@@ -44,13 +44,13 @@ impl TailwindLspAdapter {
 #[async_trait(?Send)]
 impl LspAdapter for TailwindLspAdapter {
     fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
+        Self::SERVER_NAME
     }
 
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
@@ -66,6 +66,7 @@ impl LspAdapter for TailwindLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
+        _: &AsyncApp,
     ) -> Result<Box<dyn 'static + Any + Send>> {
         Ok(Box::new(
             self.node
@@ -108,7 +109,12 @@ impl LspAdapter for TailwindLspAdapter {
 
         let should_install_language_server = self
             .node
-            .should_install_npm_package(Self::PACKAGE_NAME, &server_path, &container_dir, &version)
+            .should_install_npm_package(
+                Self::PACKAGE_NAME,
+                &server_path,
+                container_dir,
+                VersionStrategy::Latest(version),
+            )
             .await;
 
         if should_install_language_server {
@@ -150,7 +156,7 @@ impl LspAdapter for TailwindLspAdapter {
         self: Arc<Self>,
         _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let mut tailwind_user_settings = cx.update(|cx| {
@@ -179,6 +185,7 @@ impl LspAdapter for TailwindLspAdapter {
             (LanguageName::new("Elixir"), "phoenix-heex".to_string()),
             (LanguageName::new("HEEX"), "phoenix-heex".to_string()),
             (LanguageName::new("ERB"), "erb".to_string()),
+            (LanguageName::new("HTML+ERB"), "erb".to_string()),
             (LanguageName::new("HTML/ERB"), "erb".to_string()),
             (LanguageName::new("PHP"), "php".to_string()),
             (LanguageName::new("Vue.js"), "vue".to_string()),

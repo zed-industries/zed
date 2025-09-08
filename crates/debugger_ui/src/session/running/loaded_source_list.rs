@@ -57,7 +57,7 @@ impl LoadedSourceList {
                 h_flex()
                     .text_ui_xs(cx)
                     .text_color(cx.theme().colors().text_muted)
-                    .when_some(source.path.clone(), |this, path| this.child(path)),
+                    .when_some(source.path, |this, path| this.child(path)),
             )
             .into_any()
     }

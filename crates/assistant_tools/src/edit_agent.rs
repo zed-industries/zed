@@ -5,8 +5,8 @@ mod evals;
 mod streaming_fuzzy_matcher;
 
 use crate::{Template, Templates};
+use action_log::ActionLog;
 use anyhow::Result;
-use assistant_tool::ActionLog;
 use cloud_llm_client::CompletionIntent;
 use create_file_parser::{CreateFileParser, CreateFileParserEvent};
 pub use edit_parser::EditFormat;
@@ -29,7 +29,6 @@ use serde::{Deserialize, Serialize};
 use std::{cmp, iter, mem, ops::Range, path::PathBuf, pin::Pin, sync::Arc, task::Poll};
 use streaming_diff::{CharOperation, StreamingDiff};
 use streaming_fuzzy_matcher::StreamingFuzzyMatcher;
-use util::debug_panic;
 
 #[derive(Serialize)]
 struct CreateFilePromptTemplate {
@@ -66,7 +65,7 @@ pub enum EditAgentOutputEvent {
     ResolvingEditRange(Range<Anchor>),
     UnresolvedEditRange,
     AmbiguousEditRange(Vec<Range<usize>>),
-    Edited,
+    Edited(Range<Anchor>),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -179,7 +178,9 @@ impl EditAgent {
                 )
             });
             output_events_tx
-                .unbounded_send(EditAgentOutputEvent::Edited)
+                .unbounded_send(EditAgentOutputEvent::Edited(
+                    language::Anchor::MIN..language::Anchor::MAX,
+                ))
                 .ok();
         })?;
 
@@ -201,7 +202,9 @@ impl EditAgent {
                         });
                     })?;
                     output_events_tx
-                        .unbounded_send(EditAgentOutputEvent::Edited)
+                        .unbounded_send(EditAgentOutputEvent::Edited(
+                            language::Anchor::MIN..language::Anchor::MAX,
+                        ))
                         .ok();
                 }
             }
@@ -337,8 +340,8 @@ impl EditAgent {
                 // Edit the buffer and report edits to the action log as part of the
                 // same effect cycle, otherwise the edit will be reported as if the
                 // user made it.
-                cx.update(|cx| {
-                    let max_edit_end = buffer.update(cx, |buffer, cx| {
+                let (min_edit_start, max_edit_end) = cx.update(|cx| {
+                    let (min_edit_start, max_edit_end) = buffer.update(cx, |buffer, cx| {
                         buffer.edit(edits.iter().cloned(), None, cx);
                         let max_edit_end = buffer
                             .summaries_for_anchors::<Point, _>(
@@ -346,7 +349,16 @@ impl EditAgent {
                             )
                             .max()
                             .unwrap();
-                        buffer.anchor_before(max_edit_end)
+                        let min_edit_start = buffer
+                            .summaries_for_anchors::<Point, _>(
+                                edits.iter().map(|(range, _)| &range.start),
+                            )
+                            .min()
+                            .unwrap();
+                        (
+                            buffer.anchor_after(min_edit_start),
+                            buffer.anchor_before(max_edit_end),
+                        )
                     });
                     self.action_log
                         .update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
@@ -359,9 +371,10 @@ impl EditAgent {
                             cx,
                         );
                     });
+                    (min_edit_start, max_edit_end)
                 })?;
                 output_events
-                    .unbounded_send(EditAgentOutputEvent::Edited)
+                    .unbounded_send(EditAgentOutputEvent::Edited(min_edit_start..max_edit_end))
                     .ok();
             }
 
@@ -659,34 +672,30 @@ impl EditAgent {
         cx: &mut AsyncApp,
     ) -> Result<BoxStream<'static, Result<String, LanguageModelCompletionError>>> {
         let mut messages_iter = conversation.messages.iter_mut();
-        if let Some(last_message) = messages_iter.next_back() {
-            if last_message.role == Role::Assistant {
-                let old_content_len = last_message.content.len();
-                last_message
-                    .content
-                    .retain(|content| !matches!(content, MessageContent::ToolUse(_)));
-                let new_content_len = last_message.content.len();
+        if let Some(last_message) = messages_iter.next_back()
+            && last_message.role == Role::Assistant
+        {
+            let old_content_len = last_message.content.len();
+            last_message
+                .content
+                .retain(|content| !matches!(content, MessageContent::ToolUse(_)));
+            let new_content_len = last_message.content.len();
 
-                // We just removed pending tool uses from the content of the
-                // last message, so it doesn't make sense to cache it anymore
-                // (e.g., the message will look very different on the next
-                // request). Thus, we move the flag to the message prior to it,
-                // as it will still be a valid prefix of the conversation.
-                if old_content_len != new_content_len && last_message.cache {
-                    if let Some(prev_message) = messages_iter.next_back() {
-                        last_message.cache = false;
-                        prev_message.cache = true;
-                    }
-                }
+            // We just removed pending tool uses from the content of the
+            // last message, so it doesn't make sense to cache it anymore
+            // (e.g., the message will look very different on the next
+            // request). Thus, we move the flag to the message prior to it,
+            // as it will still be a valid prefix of the conversation.
+            if old_content_len != new_content_len
+                && last_message.cache
+                && let Some(prev_message) = messages_iter.next_back()
+            {
+                last_message.cache = false;
+                prev_message.cache = true;
+            }
 
-                if last_message.content.is_empty() {
-                    conversation.messages.pop();
-                }
-            } else {
-                debug_panic!(
-                    "Last message must be an Assistant tool calling! Got {:?}",
-                    last_message.content
-                );
+            if last_message.content.is_empty() {
+                conversation.messages.pop();
             }
         }
 
@@ -761,6 +770,7 @@ mod tests {
     use gpui::{AppContext, TestAppContext};
     use indoc::indoc;
     use language_model::fake_provider::FakeLanguageModel;
+    use pretty_assertions::assert_matches;
     use project::{AgentLocation, Project};
     use rand::prelude::*;
     use rand::rngs::StdRng;
@@ -998,7 +1008,10 @@ mod tests {
 
         model.send_last_completion_stream_text_chunk("<new_text>abX");
         cx.run_until_parked();
-        assert_eq!(drain_events(&mut events), [EditAgentOutputEvent::Edited]);
+        assert_matches!(
+            drain_events(&mut events).as_slice(),
+            [EditAgentOutputEvent::Edited(_)]
+        );
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
             "abXc\ndef\nghi\njkl"
@@ -1013,7 +1026,10 @@ mod tests {
 
         model.send_last_completion_stream_text_chunk("cY");
         cx.run_until_parked();
-        assert_eq!(drain_events(&mut events), [EditAgentOutputEvent::Edited]);
+        assert_matches!(
+            drain_events(&mut events).as_slice(),
+            [EditAgentOutputEvent::Edited { .. }]
+        );
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
             "abXcY\ndef\nghi\njkl"
@@ -1124,9 +1140,9 @@ mod tests {
 
         model.send_last_completion_stream_text_chunk("GHI</new_text>");
         cx.run_until_parked();
-        assert_eq!(
-            drain_events(&mut events),
-            vec![EditAgentOutputEvent::Edited]
+        assert_matches!(
+            drain_events(&mut events).as_slice(),
+            [EditAgentOutputEvent::Edited { .. }]
         );
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
@@ -1171,9 +1187,9 @@ mod tests {
         );
 
         cx.run_until_parked();
-        assert_eq!(
-            drain_events(&mut events),
-            vec![EditAgentOutputEvent::Edited]
+        assert_matches!(
+            drain_events(&mut events).as_slice(),
+            [EditAgentOutputEvent::Edited(_)]
         );
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
@@ -1189,9 +1205,9 @@ mod tests {
 
         chunks_tx.unbounded_send("```\njkl\n").unwrap();
         cx.run_until_parked();
-        assert_eq!(
-            drain_events(&mut events),
-            vec![EditAgentOutputEvent::Edited]
+        assert_matches!(
+            drain_events(&mut events).as_slice(),
+            [EditAgentOutputEvent::Edited { .. }]
         );
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
@@ -1207,9 +1223,9 @@ mod tests {
 
         chunks_tx.unbounded_send("mno\n").unwrap();
         cx.run_until_parked();
-        assert_eq!(
-            drain_events(&mut events),
-            vec![EditAgentOutputEvent::Edited]
+        assert_matches!(
+            drain_events(&mut events).as_slice(),
+            [EditAgentOutputEvent::Edited { .. }]
         );
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
@@ -1225,9 +1241,9 @@ mod tests {
 
         chunks_tx.unbounded_send("pqr\n```").unwrap();
         cx.run_until_parked();
-        assert_eq!(
-            drain_events(&mut events),
-            vec![EditAgentOutputEvent::Edited]
+        assert_matches!(
+            drain_events(&mut events).as_slice(),
+            [EditAgentOutputEvent::Edited(_)],
         );
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
@@ -1299,17 +1315,17 @@ mod tests {
 
     #[gpui::test(iterations = 100)]
     async fn test_random_indents(mut rng: StdRng) {
-        let len = rng.gen_range(1..=100);
+        let len = rng.random_range(1..=100);
         let new_text = util::RandomCharIter::new(&mut rng)
             .with_simple_text()
             .take(len)
             .collect::<String>();
         let new_text = new_text
             .split('\n')
-            .map(|line| format!("{}{}", " ".repeat(rng.gen_range(0..=8)), line))
+            .map(|line| format!("{}{}", " ".repeat(rng.random_range(0..=8)), line))
             .collect::<Vec<_>>()
             .join("\n");
-        let delta = IndentDelta::Spaces(rng.gen_range(-4..=4));
+        let delta = IndentDelta::Spaces(rng.random_range(-4i8..=4i8) as isize);
 
         let chunks = to_random_chunks(&mut rng, &new_text);
         let new_text_chunks = stream::iter(chunks.iter().enumerate().map(|(index, chunk)| {
@@ -1341,7 +1357,7 @@ mod tests {
     }
 
     fn to_random_chunks(rng: &mut StdRng, input: &str) -> Vec<String> {
-        let chunk_count = rng.gen_range(1..=cmp::min(input.len(), 50));
+        let chunk_count = rng.random_range(1..=cmp::min(input.len(), 50));
         let mut chunk_indices = (0..input.len()).choose_multiple(rng, chunk_count);
         chunk_indices.sort();
         chunk_indices.push(input.len());

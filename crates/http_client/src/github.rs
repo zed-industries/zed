@@ -71,11 +71,19 @@ pub async fn latest_github_release(
         }
     };
 
-    releases
+    let mut release = releases
         .into_iter()
         .filter(|release| !require_assets || !release.assets.is_empty())
         .find(|release| release.pre_release == pre_release)
-        .context("finding a prerelease")
+        .context("finding a prerelease")?;
+    release.assets.iter_mut().for_each(|asset| {
+        if let Some(digest) = &mut asset.digest
+            && let Some(stripped) = digest.strip_prefix("sha256:")
+        {
+            *digest = stripped.to_owned();
+        }
+    });
+    Ok(release)
 }
 
 pub async fn get_release_by_tag_name(

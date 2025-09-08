@@ -48,16 +48,16 @@ pub struct Inlay {
 impl Inlay {
     pub fn hint(id: usize, position: Anchor, hint: &project::InlayHint) -> Self {
         let mut text = hint.text();
-        if hint.padding_right && !text.ends_with(' ') {
-            text.push(' ');
+        if hint.padding_right && text.reversed_chars_at(text.len()).next() != Some(' ') {
+            text.push(" ");
         }
-        if hint.padding_left && !text.starts_with(' ') {
-            text.insert(0, ' ');
+        if hint.padding_left && text.chars_at(0).next() != Some(' ') {
+            text.push_front(" ");
         }
         Self {
             id: InlayId::Hint(id),
             position,
-            text: text.into(),
+            text,
             color: None,
         }
     }
@@ -557,11 +557,11 @@ impl InlayMap {
             let mut buffer_edits_iter = buffer_edits.iter().peekable();
             while let Some(buffer_edit) = buffer_edits_iter.next() {
                 new_transforms.append(cursor.slice(&buffer_edit.old.start, Bias::Left), &());
-                if let Some(Transform::Isomorphic(transform)) = cursor.item() {
-                    if cursor.end().0 == buffer_edit.old.start {
-                        push_isomorphic(&mut new_transforms, *transform);
-                        cursor.next();
-                    }
+                if let Some(Transform::Isomorphic(transform)) = cursor.item()
+                    && cursor.end().0 == buffer_edit.old.start
+                {
+                    push_isomorphic(&mut new_transforms, *transform);
+                    cursor.next();
                 }
 
                 // Remove all the inlays and transforms contained by the edit.
@@ -625,7 +625,7 @@ impl InlayMap {
                 // we can push its remainder.
                 if buffer_edits_iter
                     .peek()
-                    .map_or(true, |edit| edit.old.start >= cursor.end().0)
+                    .is_none_or(|edit| edit.old.start >= cursor.end().0)
                 {
                     let transform_start = new_transforms.summary().input.len;
                     let transform_end =
@@ -719,14 +719,18 @@ impl InlayMap {
         let mut to_remove = Vec::new();
         let mut to_insert = Vec::new();
         let snapshot = &mut self.snapshot;
-        for i in 0..rng.gen_range(1..=5) {
-            if self.inlays.is_empty() || rng.r#gen() {
+        for i in 0..rng.random_range(1..=5) {
+            if self.inlays.is_empty() || rng.random() {
                 let position = snapshot.buffer.random_byte_range(0, rng).start;
-                let bias = if rng.r#gen() { Bias::Left } else { Bias::Right };
-                let len = if rng.gen_bool(0.01) {
+                let bias = if rng.random() {
+                    Bias::Left
+                } else {
+                    Bias::Right
+                };
+                let len = if rng.random_bool(0.01) {
                     0
                 } else {
-                    rng.gen_range(1..=5)
+                    rng.random_range(1..=5)
                 };
                 let text = util::RandomCharIter::new(&mut *rng)
                     .filter(|ch| *ch != '\r')
@@ -737,13 +741,13 @@ impl InlayMap {
                     Inlay::mock_hint(
                         post_inc(next_inlay_id),
                         snapshot.buffer.anchor_at(position, bias),
-                        text.clone(),
+                        &text,
                     )
                 } else {
                     Inlay::edit_prediction(
                         post_inc(next_inlay_id),
                         snapshot.buffer.anchor_at(position, bias),
-                        text.clone(),
+                        &text,
                     )
                 };
                 let inlay_id = next_inlay.id;
@@ -1306,6 +1310,29 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_inlay_hint_padding_with_multibyte_chars() {
+        assert_eq!(
+            Inlay::hint(
+                0,
+                Anchor::min(),
+                &InlayHint {
+                    label: InlayHintLabel::String("🎨".to_string()),
+                    position: text::Anchor::default(),
+                    padding_left: true,
+                    padding_right: true,
+                    tooltip: None,
+                    kind: None,
+                    resolve_state: ResolveState::Resolved,
+                },
+            )
+            .text
+            .to_string(),
+            " 🎨 ",
+            "Should pad single emoji correctly"
+        );
+    }
+
+    #[gpui::test]
     fn test_basic_inlays(cx: &mut App) {
         let buffer = MultiBuffer::build_simple("abcdefghi", cx);
         let buffer_edits = buffer.update(cx, |buffer, _| buffer.subscribe());
@@ -1642,8 +1669,8 @@ mod tests {
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
 
-        let len = rng.gen_range(0..30);
-        let buffer = if rng.r#gen() {
+        let len = rng.random_range(0..30);
+        let buffer = if rng.random() {
             let text = util::RandomCharIter::new(&mut rng)
                 .take(len)
                 .collect::<String>();
@@ -1660,7 +1687,7 @@ mod tests {
 
             let mut prev_inlay_text = inlay_snapshot.text();
             let mut buffer_edits = Vec::new();
-            match rng.gen_range(0..=100) {
+            match rng.random_range(0..=100) {
                 0..=50 => {
                     let (snapshot, edits) = inlay_map.randomly_mutate(&mut next_inlay_id, &mut rng);
                     log::info!("mutated text: {:?}", snapshot.text());
@@ -1668,7 +1695,7 @@ mod tests {
                 }
                 _ => buffer.update(cx, |buffer, cx| {
                     let subscription = buffer.subscribe();
-                    let edit_count = rng.gen_range(1..=5);
+                    let edit_count = rng.random_range(1..=5);
                     buffer.randomly_mutate(&mut rng, edit_count, cx);
                     buffer_snapshot = buffer.snapshot(cx);
                     let edits = subscription.consume().into_inner();
@@ -1694,7 +1721,7 @@ mod tests {
                     (offset, inlay.clone())
                 })
                 .collect::<Vec<_>>();
-            let mut expected_text = Rope::from(buffer_snapshot.text());
+            let mut expected_text = Rope::from(&buffer_snapshot.text());
             for (offset, inlay) in inlays.iter().rev() {
                 expected_text.replace(*offset..*offset, &inlay.text.to_string());
             }
@@ -1717,7 +1744,7 @@ mod tests {
             }
 
             let mut text_highlights = TextHighlights::default();
-            let text_highlight_count = rng.gen_range(0_usize..10);
+            let text_highlight_count = rng.random_range(0_usize..10);
             let mut text_highlight_ranges = (0..text_highlight_count)
                 .map(|_| buffer_snapshot.random_byte_range(0, &mut rng))
                 .collect::<Vec<_>>();
@@ -1739,10 +1766,10 @@ mod tests {
 
             let mut inlay_highlights = InlayHighlights::default();
             if !inlays.is_empty() {
-                let inlay_highlight_count = rng.gen_range(0..inlays.len());
+                let inlay_highlight_count = rng.random_range(0..inlays.len());
                 let mut inlay_indices = BTreeSet::default();
                 while inlay_indices.len() < inlay_highlight_count {
-                    inlay_indices.insert(rng.gen_range(0..inlays.len()));
+                    inlay_indices.insert(rng.random_range(0..inlays.len()));
                 }
                 let new_highlights = TreeMap::from_ordered_entries(
                     inlay_indices
@@ -1759,8 +1786,8 @@ mod tests {
                                 }),
                                 n => {
                                     let inlay_text = inlay.text.to_string();
-                                    let mut highlight_end = rng.gen_range(1..n);
-                                    let mut highlight_start = rng.gen_range(0..highlight_end);
+                                    let mut highlight_end = rng.random_range(1..n);
+                                    let mut highlight_start = rng.random_range(0..highlight_end);
                                     while !inlay_text.is_char_boundary(highlight_end) {
                                         highlight_end += 1;
                                     }
@@ -1782,9 +1809,9 @@ mod tests {
             }
 
             for _ in 0..5 {
-                let mut end = rng.gen_range(0..=inlay_snapshot.len().0);
+                let mut end = rng.random_range(0..=inlay_snapshot.len().0);
                 end = expected_text.clip_offset(end, Bias::Right);
-                let mut start = rng.gen_range(0..=end);
+                let mut start = rng.random_range(0..=end);
                 start = expected_text.clip_offset(start, Bias::Right);
 
                 let range = InlayOffset(start)..InlayOffset(end);

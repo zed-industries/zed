@@ -14,10 +14,7 @@ use copilot::{Copilot, Status};
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::{FutureExt, Stream, StreamExt};
-use gpui::{
-    Action, Animation, AnimationExt, AnyView, App, AsyncApp, Entity, Render, Subscription, Task,
-    Transformation, percentage, svg,
-};
+use gpui::{Action, AnyView, App, AsyncApp, Entity, Render, Subscription, Task, svg};
 use language::language_settings::all_language_settings;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -28,9 +25,10 @@ use language_model::{
     StopReason, TokenUsage,
 };
 use settings::SettingsStore;
-use std::time::Duration;
-use ui::prelude::*;
+use ui::{CommonAnimationExt, prelude::*};
 use util::debug_panic;
+
+use crate::provider::x_ai::count_xai_tokens;
 
 use super::anthropic::count_anthropic_tokens;
 use super::google::count_google_tokens;
@@ -176,7 +174,12 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         Task::ready(Err(err.into()))
     }
 
-    fn configuration_view(&self, _: &mut Window, cx: &mut App) -> AnyView {
+    fn configuration_view(
+        &self,
+        _target_agent: language_model::ConfigurationViewTargetAgent,
+        _: &mut Window,
+        cx: &mut App,
+    ) -> AnyView {
         let state = self.state.clone();
         cx.new(|cx| ConfigurationView::new(state, cx)).into()
     }
@@ -223,7 +226,9 @@ impl LanguageModel for CopilotChatLanguageModel {
             ModelVendor::OpenAI | ModelVendor::Anthropic => {
                 LanguageModelToolSchemaFormat::JsonSchema
             }
-            ModelVendor::Google => LanguageModelToolSchemaFormat::JsonSchemaSubset,
+            ModelVendor::Google | ModelVendor::XAI => {
+                LanguageModelToolSchemaFormat::JsonSchemaSubset
+            }
         }
     }
 
@@ -251,6 +256,10 @@ impl LanguageModel for CopilotChatLanguageModel {
         match self.model.vendor() {
             ModelVendor::Anthropic => count_anthropic_tokens(request, cx),
             ModelVendor::Google => count_google_tokens(request, cx),
+            ModelVendor::XAI => {
+                let model = x_ai::Model::from_id(self.model.id()).unwrap_or_default();
+                count_xai_tokens(request, model, cx)
+            }
             ModelVendor::OpenAI => {
                 let model = open_ai::Model::from_id(self.model.id()).unwrap_or_default();
                 count_open_ai_tokens(request, model, cx)
@@ -470,7 +479,6 @@ fn into_copilot_chat(
         }
     }
 
-    let mut tool_called = false;
     let mut messages: Vec<ChatMessage> = Vec::new();
     for message in request_messages {
         match message.role {
@@ -540,7 +548,6 @@ fn into_copilot_chat(
                 let mut tool_calls = Vec::new();
                 for content in &message.content {
                     if let MessageContent::ToolUse(tool_use) = content {
-                        tool_called = true;
                         tool_calls.push(ToolCall {
                             id: tool_use.id.to_string(),
                             content: copilot::copilot_chat::ToolCallContent::Function {
@@ -585,7 +592,7 @@ fn into_copilot_chat(
         }
     }
 
-    let mut tools = request
+    let tools = request
         .tools
         .iter()
         .map(|tool| Tool::Function {
@@ -596,22 +603,6 @@ fn into_copilot_chat(
             },
         })
         .collect::<Vec<_>>();
-
-    // The API will return a Bad Request (with no error message) when tools
-    // were used previously in the conversation but no tools are provided as
-    // part of this request. Inserting a dummy tool seems to circumvent this
-    // error.
-    if tool_called && tools.is_empty() {
-        tools.push(Tool::Function {
-            function: copilot::copilot_chat::Function {
-                name: "noop".to_string(),
-                description: "No operation".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object"
-                }),
-            },
-        });
-    }
 
     Ok(CopilotChatRequest {
         intent: true,
@@ -677,11 +668,7 @@ impl Render for ConfigurationView {
                         }),
                 )
         } else {
-            let loading_icon = Icon::new(IconName::ArrowCircle).with_animation(
-                "arrow-circle",
-                Animation::new(Duration::from_secs(4)).repeat(),
-                |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-            );
+            let loading_icon = Icon::new(IconName::ArrowCircle).with_rotate_animation(4);
 
             const ERROR_LABEL: &str = "Copilot Chat requires an active GitHub Copilot subscription. Please ensure Copilot is configured and try again, or use a different Assistant provider.";
 

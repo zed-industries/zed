@@ -88,10 +88,7 @@ fn view_release_notes_locally(
                         .update_in(cx, |workspace, window, cx| {
                             let project = workspace.project().clone();
                             let buffer = project.update(cx, |project, cx| {
-                                let buffer = project.create_local_buffer("", markdown, cx);
-                                project
-                                    .mark_buffer_as_non_searchable(buffer.read(cx).remote_id(), cx);
-                                buffer
+                                project.create_local_buffer("", markdown, false, cx)
                             });
                             buffer.update(cx, |buffer, cx| {
                                 buffer.edit([(0..0, body.release_notes)], None, cx)
@@ -114,7 +111,7 @@ fn view_release_notes_locally(
                                     cx,
                                 );
                             workspace.add_item_to_active_pane(
-                                Box::new(markdown_preview.clone()),
+                                Box::new(markdown_preview),
                                 None,
                                 true,
                                 window,

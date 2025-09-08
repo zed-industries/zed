@@ -8,7 +8,6 @@ mod embedding_tests;
 mod extension_tests;
 mod feature_flag_tests;
 mod message_tests;
-mod processed_stripe_event_tests;
 mod user_tests;
 
 use crate::migrations::run_database_migrations;
@@ -76,10 +75,10 @@ impl TestDb {
         static LOCK: Mutex<()> = Mutex::new(());
 
         let _guard = LOCK.lock();
-        let mut rng = StdRng::from_entropy();
+        let mut rng = StdRng::from_os_rng();
         let url = format!(
             "postgres://postgres@localhost/zed-test-{}",
-            rng.r#gen::<u128>()
+            rng.random::<u128>()
         );
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_io()

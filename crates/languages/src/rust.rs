@@ -15,6 +15,7 @@ use serde_json::json;
 use settings::Settings as _;
 use smol::fs::{self};
 use std::fmt::Display;
+use std::ops::Range;
 use std::{
     any::Any,
     borrow::Cow,
@@ -22,7 +23,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
-use util::fs::make_file_executable;
+use util::fs::{make_file_executable, remove_matching};
 use util::merge_json_value_into;
 use util::{ResultExt, maybe};
 
@@ -105,17 +106,13 @@ impl ManifestProvider for CargoManifestProvider {
 #[async_trait(?Send)]
 impl LspAdapter for RustLspAdapter {
     fn name(&self) -> LanguageServerName {
-        SERVER_NAME.clone()
-    }
-
-    fn manifest_name(&self) -> Option<ManifestName> {
-        Some(SharedString::new_static("Cargo.toml").into())
+        SERVER_NAME
     }
 
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         let path = delegate.which("rust-analyzer".as_ref()).await?;
@@ -150,24 +147,29 @@ impl LspAdapter for RustLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
+        cx: &AsyncApp,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         let release = latest_github_release(
             "rust-lang/rust-analyzer",
             true,
-            false,
+            ProjectSettings::try_read_global(cx, |s| {
+                s.lsp.get(&SERVER_NAME)?.fetch.as_ref()?.pre_release
+            })
+            .flatten()
+            .unwrap_or(false),
             delegate.http_client(),
         )
         .await?;
         let asset_name = Self::build_asset_name();
         let asset = release
             .assets
-            .iter()
+            .into_iter()
             .find(|asset| asset.name == asset_name)
             .with_context(|| format!("no asset found matching `{asset_name:?}`"))?;
         Ok(Box::new(GitHubLspBinaryVersion {
             name: release.tag_name,
-            url: asset.browser_download_url.clone(),
-            digest: asset.digest.clone(),
+            url: asset.browser_download_url,
+            digest: asset.digest,
         }))
     }
 
@@ -177,11 +179,11 @@ impl LspAdapter for RustLspAdapter {
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let GitHubLspBinaryVersion { name, url, digest } =
-            &*version.downcast::<GitHubLspBinaryVersion>().unwrap();
-        let expected_digest = digest
-            .as_ref()
-            .and_then(|digest| digest.strip_prefix("sha256:"));
+        let GitHubLspBinaryVersion {
+            name,
+            url,
+            digest: expected_digest,
+        } = *version.downcast::<GitHubLspBinaryVersion>().unwrap();
         let destination_path = container_dir.join(format!("rust-analyzer-{name}"));
         let server_path = match Self::GITHUB_ASSET_KIND {
             AssetKind::TarGz | AssetKind::Gz => destination_path.clone(), // Tar and gzip extract in place.
@@ -212,7 +214,7 @@ impl LspAdapter for RustLspAdapter {
                     })
             };
             if let (Some(actual_digest), Some(expected_digest)) =
-                (&metadata.digest, expected_digest)
+                (&metadata.digest, &expected_digest)
             {
                 if actual_digest == expected_digest {
                     if validity_check().await.is_ok() {
@@ -228,20 +230,20 @@ impl LspAdapter for RustLspAdapter {
             }
         }
 
-        _ = fs::remove_dir_all(&destination_path).await;
         download_server_binary(
             delegate,
-            url,
-            expected_digest,
+            &url,
+            expected_digest.as_deref(),
             &destination_path,
             Self::GITHUB_ASSET_KIND,
         )
         .await?;
         make_file_executable(&server_path).await?;
+        remove_matching(&container_dir, |path| path != destination_path).await;
         GithubBinaryMetadata::write_to_file(
             &GithubBinaryMetadata {
                 metadata_version: 1,
-                digest: expected_digest.map(ToString::to_string),
+                digest: expected_digest,
             },
             &metadata_path,
         )
@@ -305,66 +307,62 @@ impl LspAdapter for RustLspAdapter {
         completion: &lsp::CompletionItem,
         language: &Arc<Language>,
     ) -> Option<CodeLabel> {
-        let detail = completion
+        // rust-analyzer calls these detail left and detail right in terms of where it expects things to be rendered
+        // this usually contains signatures of the thing to be completed
+        let detail_right = completion
             .label_details
             .as_ref()
-            .and_then(|detail| detail.detail.as_ref())
+            .and_then(|detail| detail.description.as_ref())
             .or(completion.detail.as_ref())
             .map(|detail| detail.trim());
-        let function_signature = completion
+        // this tends to contain alias and import information
+        let detail_left = completion
             .label_details
             .as_ref()
-            .and_then(|detail| detail.description.as_deref())
-            .or(completion.detail.as_deref());
-        match (detail, completion.kind) {
-            (Some(detail), Some(lsp::CompletionItemKind::FIELD)) => {
+            .and_then(|detail| detail.detail.as_deref());
+        let mk_label = |text: String, filter_range: &dyn Fn() -> Range<usize>, runs| {
+            let filter_range = completion
+                .filter_text
+                .as_deref()
+                .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
+                .or_else(|| {
+                    text.find(&completion.label)
+                        .map(|ix| ix..ix + completion.label.len())
+                })
+                .unwrap_or_else(filter_range);
+
+            CodeLabel {
+                text,
+                runs,
+                filter_range,
+            }
+        };
+        let mut label = match (detail_right, completion.kind) {
+            (Some(signature), Some(lsp::CompletionItemKind::FIELD)) => {
                 let name = &completion.label;
-                let text = format!("{name}: {detail}");
+                let text = format!("{name}: {signature}");
                 let prefix = "struct S { ";
-                let source = Rope::from(format!("{prefix}{text} }}"));
+                let source = Rope::from_iter([prefix, &text, " }"]);
                 let runs =
                     language.highlight_text(&source, prefix.len()..prefix.len() + text.len());
-                let filter_range = completion
-                    .filter_text
-                    .as_deref()
-                    .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
-                    .unwrap_or(0..name.len());
-                return Some(CodeLabel {
-                    text,
-                    runs,
-                    filter_range,
-                });
+                mk_label(text, &|| 0..completion.label.len(), runs)
             }
             (
-                Some(detail),
+                Some(signature),
                 Some(lsp::CompletionItemKind::CONSTANT | lsp::CompletionItemKind::VARIABLE),
             ) if completion.insert_text_format != Some(lsp::InsertTextFormat::SNIPPET) => {
                 let name = &completion.label;
-                let text = format!(
-                    "{}: {}",
-                    name,
-                    completion.detail.as_deref().unwrap_or(detail)
-                );
+                let text = format!("{name}: {signature}",);
                 let prefix = "let ";
-                let source = Rope::from(format!("{prefix}{text} = ();"));
+                let source = Rope::from_iter([prefix, &text, " = ();"]);
                 let runs =
                     language.highlight_text(&source, prefix.len()..prefix.len() + text.len());
-                let filter_range = completion
-                    .filter_text
-                    .as_deref()
-                    .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
-                    .unwrap_or(0..name.len());
-                return Some(CodeLabel {
-                    text,
-                    runs,
-                    filter_range,
-                });
+                mk_label(text, &|| 0..completion.label.len(), runs)
             }
             (
-                Some(detail),
+                function_signature,
                 Some(lsp::CompletionItemKind::FUNCTION | lsp::CompletionItemKind::METHOD),
             ) => {
-                static REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new("\\(…?\\)").unwrap());
                 const FUNCTION_PREFIXES: [&str; 6] = [
                     "async fn",
                     "async unsafe fn",
@@ -373,57 +371,62 @@ impl LspAdapter for RustLspAdapter {
                     "unsafe fn",
                     "fn",
                 ];
-                // Is it function `async`?
-                let fn_keyword = FUNCTION_PREFIXES.iter().find_map(|prefix| {
-                    function_signature.as_ref().and_then(|signature| {
-                        signature
-                            .strip_prefix(*prefix)
-                            .map(|suffix| (*prefix, suffix))
-                    })
+                let fn_prefixed = FUNCTION_PREFIXES.iter().find_map(|&prefix| {
+                    function_signature?
+                        .strip_prefix(prefix)
+                        .map(|suffix| (prefix, suffix))
                 });
-                // fn keyword should be followed by opening parenthesis.
-                if let Some((prefix, suffix)) = fn_keyword {
-                    let mut text = REGEX.replace(&completion.label, suffix).to_string();
-                    let source = Rope::from(format!("{prefix} {text} {{}}"));
+                let label = if let Some(label) = completion
+                    .label
+                    .strip_suffix("(…)")
+                    .or_else(|| completion.label.strip_suffix("()"))
+                {
+                    label
+                } else {
+                    &completion.label
+                };
+
+                static FULL_SIGNATURE_REGEX: LazyLock<Regex> =
+                    LazyLock::new(|| Regex::new(r"fn (.?+)\(").expect("Failed to create REGEX"));
+                if let Some((function_signature, match_)) = function_signature
+                    .filter(|it| it.contains(&label))
+                    .and_then(|it| Some((it, FULL_SIGNATURE_REGEX.find(it)?)))
+                {
+                    let source = Rope::from(function_signature);
+                    let runs = language.highlight_text(&source, 0..function_signature.len());
+                    mk_label(
+                        function_signature.to_owned(),
+                        &|| match_.range().start - 3..match_.range().end - 1,
+                        runs,
+                    )
+                } else if let Some((prefix, suffix)) = fn_prefixed {
+                    let text = format!("{label}{suffix}");
+                    let source = Rope::from_iter([prefix, " ", &text, " {}"]);
                     let run_start = prefix.len() + 1;
                     let runs = language.highlight_text(&source, run_start..run_start + text.len());
-                    if detail.starts_with("(") {
-                        text.push(' ');
-                        text.push_str(&detail);
-                    }
-                    let filter_range = completion
-                        .filter_text
-                        .as_deref()
-                        .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
-                        .unwrap_or(0..completion.label.find('(').unwrap_or(text.len()));
-                    return Some(CodeLabel {
-                        filter_range,
-                        text,
-                        runs,
-                    });
+                    mk_label(text, &|| 0..label.len(), runs)
                 } else if completion
                     .detail
                     .as_ref()
-                    .map_or(false, |detail| detail.starts_with("macro_rules! "))
+                    .is_some_and(|detail| detail.starts_with("macro_rules! "))
                 {
                     let text = completion.label.clone();
                     let len = text.len();
                     let source = Rope::from(text.as_str());
                     let runs = language.highlight_text(&source, 0..len);
-                    let filter_range = completion
-                        .filter_text
-                        .as_deref()
-                        .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
-                        .unwrap_or(0..len);
-                    return Some(CodeLabel {
-                        filter_range,
-                        text,
-                        runs,
-                    });
+                    mk_label(text, &|| 0..completion.label.len(), runs)
+                } else if detail_left.is_none() {
+                    return None;
+                } else {
+                    mk_label(
+                        completion.label.clone(),
+                        &|| 0..completion.label.len(),
+                        vec![],
+                    )
                 }
             }
-            (_, Some(kind)) => {
-                let highlight_name = match kind {
+            (_, kind) => {
+                let highlight_name = kind.and_then(|kind| match kind {
                     lsp::CompletionItemKind::STRUCT
                     | lsp::CompletionItemKind::INTERFACE
                     | lsp::CompletionItemKind::ENUM => Some("type"),
@@ -433,27 +436,35 @@ impl LspAdapter for RustLspAdapter {
                         Some("constant")
                     }
                     _ => None,
-                };
+                });
 
-                let mut label = completion.label.clone();
-                if let Some(detail) = detail.filter(|detail| detail.starts_with("(")) {
-                    label.push(' ');
-                    label.push_str(detail);
-                }
-                let mut label = CodeLabel::plain(label, completion.filter_text.as_deref());
+                let label = completion.label.clone();
+                let mut runs = vec![];
                 if let Some(highlight_name) = highlight_name {
                     let highlight_id = language.grammar()?.highlight_id_for_name(highlight_name)?;
-                    label.runs.push((
-                        0..label.text.rfind('(').unwrap_or(completion.label.len()),
+                    runs.push((
+                        0..label.rfind('(').unwrap_or(completion.label.len()),
                         highlight_id,
                     ));
+                } else if detail_left.is_none() {
+                    return None;
                 }
 
-                return Some(label);
+                mk_label(label, &|| 0..completion.label.len(), runs)
             }
-            _ => {}
+        };
+
+        if let Some(detail_left) = detail_left {
+            label.text.push(' ');
+            if !detail_left.starts_with('(') {
+                label.text.push('(');
+            }
+            label.text.push_str(detail_left);
+            if !detail_left.ends_with(')') {
+                label.text.push(')');
+            }
         }
-        None
+        Some(label)
     }
 
     async fn label_for_symbol(
@@ -462,55 +473,22 @@ impl LspAdapter for RustLspAdapter {
         kind: lsp::SymbolKind,
         language: &Arc<Language>,
     ) -> Option<CodeLabel> {
-        let (text, filter_range, display_range) = match kind {
-            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
-                let text = format!("fn {} () {{}}", name);
-                let filter_range = 3..3 + name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            lsp::SymbolKind::STRUCT => {
-                let text = format!("struct {} {{}}", name);
-                let filter_range = 7..7 + name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            lsp::SymbolKind::ENUM => {
-                let text = format!("enum {} {{}}", name);
-                let filter_range = 5..5 + name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            lsp::SymbolKind::INTERFACE => {
-                let text = format!("trait {} {{}}", name);
-                let filter_range = 6..6 + name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            lsp::SymbolKind::CONSTANT => {
-                let text = format!("const {}: () = ();", name);
-                let filter_range = 6..6 + name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            lsp::SymbolKind::MODULE => {
-                let text = format!("mod {} {{}}", name);
-                let filter_range = 4..4 + name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            lsp::SymbolKind::TYPE_PARAMETER => {
-                let text = format!("type {} {{}}", name);
-                let filter_range = 5..5 + name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
+        let (prefix, suffix) = match kind {
+            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => ("fn ", " () {}"),
+            lsp::SymbolKind::STRUCT => ("struct ", " {}"),
+            lsp::SymbolKind::ENUM => ("enum ", " {}"),
+            lsp::SymbolKind::INTERFACE => ("trait ", " {}"),
+            lsp::SymbolKind::CONSTANT => ("const ", ": () = ();"),
+            lsp::SymbolKind::MODULE => ("mod ", " {}"),
+            lsp::SymbolKind::TYPE_PARAMETER => ("type ", " {}"),
             _ => return None,
         };
 
+        let filter_range = prefix.len()..prefix.len() + name.len();
+        let display_range = 0..filter_range.end;
         Some(CodeLabel {
-            runs: language.highlight_text(&text.as_str().into(), display_range.clone()),
-            text: text[display_range].to_string(),
+            runs: language.highlight_text(&Rope::from_iter([prefix, name, suffix]), display_range),
+            text: format!("{prefix}{name}"),
             filter_range,
         })
     }
@@ -523,7 +501,7 @@ impl LspAdapter for RustLspAdapter {
         let enable_lsp_tasks = ProjectSettings::get_global(cx)
             .lsp
             .get(&SERVER_NAME)
-            .map_or(false, |s| s.enable_lsp_tasks);
+            .is_some_and(|s| s.enable_lsp_tasks);
         if enable_lsp_tasks {
             let experimental = json!({
                 "runnables": {
@@ -534,20 +512,6 @@ impl LspAdapter for RustLspAdapter {
                 merge_json_value_into(experimental, original_experimental);
             } else {
                 original.capabilities.experimental = Some(experimental);
-            }
-        }
-
-        let cargo_diagnostics_fetched_separately = ProjectSettings::get_global(cx)
-            .diagnostics
-            .fetch_cargo_diagnostics();
-        if cargo_diagnostics_fetched_separately {
-            let disable_check_on_save = json!({
-                "checkOnSave": false,
-            });
-            if let Some(initialization_options) = &mut original.initialization_options {
-                merge_json_value_into(disable_check_on_save, initialization_options);
-            } else {
-                original.initialization_options = Some(disable_check_on_save);
             }
         }
 
@@ -608,7 +572,7 @@ impl ContextProvider for RustContextProvider {
 
         if let (Some(path), Some(stem)) = (&local_abs_path, task_variables.get(&VariableName::Stem))
         {
-            let fragment = test_fragment(&variables, &path, stem);
+            let fragment = test_fragment(&variables, path, stem);
             variables.insert(RUST_TEST_FRAGMENT_TASK_VARIABLE, fragment);
         };
         if let Some(test_name) =
@@ -625,16 +589,14 @@ impl ContextProvider for RustContextProvider {
             if let Some(path) = local_abs_path
                 .as_deref()
                 .and_then(|local_abs_path| local_abs_path.parent())
-            {
-                if let Some(package_name) =
+                && let Some(package_name) =
                     human_readable_package_name(path, project_env.as_ref()).await
-                {
-                    variables.insert(RUST_PACKAGE_TASK_VARIABLE.clone(), package_name);
-                }
+            {
+                variables.insert(RUST_PACKAGE_TASK_VARIABLE.clone(), package_name);
             }
             if let Some(path) = local_abs_path.as_ref()
                 && let Some((target, manifest_path)) =
-                    target_info_from_abs_path(&path, project_env.as_ref()).await
+                    target_info_from_abs_path(path, project_env.as_ref()).await
             {
                 if let Some(target) = target {
                     variables.extend(TaskVariables::from_iter([
@@ -688,7 +650,7 @@ impl ContextProvider for RustContextProvider {
             .variables
             .get(CUSTOM_TARGET_DIR)
             .cloned();
-        let run_task_args = if let Some(package_to_run) = package_to_run.clone() {
+        let run_task_args = if let Some(package_to_run) = package_to_run {
             vec!["run".into(), "-p".into(), package_to_run]
         } else {
             vec!["run".into()]
@@ -1046,8 +1008,14 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
             last = Some(path);
         }
 
+        let path = last.context("no cached binary")?;
+        let path = match RustLspAdapter::GITHUB_ASSET_KIND {
+            AssetKind::TarGz | AssetKind::Gz => path, // Tar and gzip extract in place.
+            AssetKind::Zip => path.join("rust-analyzer.exe"), // zip contains a .exe
+        };
+
         anyhow::Ok(LanguageServerBinary {
-            path: last.context("no cached binary")?,
+            path,
             env: None,
             arguments: Default::default(),
         })
@@ -1095,7 +1063,7 @@ mod tests {
     #[gpui::test]
     async fn test_process_rust_diagnostics() {
         let mut params = lsp::PublishDiagnosticsParams {
-            uri: lsp::Url::from_file_path(path!("/a")).unwrap(),
+            uri: lsp::Uri::from_file_path(path!("/a")).unwrap(),
             version: None,
             diagnostics: vec![
                 // no newlines
@@ -1187,7 +1155,7 @@ mod tests {
                         kind: Some(lsp::CompletionItemKind::FUNCTION),
                         label: "hello(…)".to_string(),
                         label_details: Some(CompletionItemLabelDetails {
-                            detail: Some(" (use crate::foo)".into()),
+                            detail: Some("(use crate::foo)".into()),
                             description: Some("async fn(&mut Option<T>) -> Vec<T>".to_string()),
                         }),
                         ..Default::default()
@@ -1234,10 +1202,39 @@ mod tests {
                         kind: Some(lsp::CompletionItemKind::FUNCTION),
                         label: "hello(…)".to_string(),
                         label_details: Some(CompletionItemLabelDetails {
-                            detail: Some(" (use crate::foo)".to_string()),
+                            detail: Some("(use crate::foo)".to_string()),
                             description: Some("fn(&mut Option<T>) -> Vec<T>".to_string()),
                         }),
 
+                        ..Default::default()
+                    },
+                    &language
+                )
+                .await,
+            Some(CodeLabel {
+                text: "hello(&mut Option<T>) -> Vec<T> (use crate::foo)".to_string(),
+                filter_range: 0..5,
+                runs: vec![
+                    (0..5, highlight_function),
+                    (7..10, highlight_keyword),
+                    (11..17, highlight_type),
+                    (18..19, highlight_type),
+                    (25..28, highlight_type),
+                    (29..30, highlight_type),
+                ],
+            })
+        );
+
+        assert_eq!(
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::FUNCTION),
+                        label: "hello".to_string(),
+                        label_details: Some(CompletionItemLabelDetails {
+                            detail: Some("(use crate::foo)".to_string()),
+                            description: Some("fn(&mut Option<T>) -> Vec<T>".to_string()),
+                        }),
                         ..Default::default()
                     },
                     &language
@@ -1274,9 +1271,46 @@ mod tests {
                 )
                 .await,
             Some(CodeLabel {
-                text: "await.as_deref_mut()".to_string(),
+                text: "await.as_deref_mut(&mut self) -> IterMut<'_, T>".to_string(),
                 filter_range: 6..18,
-                runs: vec![],
+                runs: vec![
+                    (6..18, HighlightId(2)),
+                    (20..23, HighlightId(1)),
+                    (33..40, HighlightId(0)),
+                    (45..46, HighlightId(0))
+                ],
+            })
+        );
+
+        assert_eq!(
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::METHOD),
+                        label: "as_deref_mut()".to_string(),
+                        filter_text: Some("as_deref_mut".to_string()),
+                        label_details: Some(CompletionItemLabelDetails {
+                            detail: None,
+                            description: Some(
+                                "pub fn as_deref_mut(&mut self) -> IterMut<'_, T>".to_string()
+                            ),
+                        }),
+                        ..Default::default()
+                    },
+                    &language
+                )
+                .await,
+            Some(CodeLabel {
+                text: "pub fn as_deref_mut(&mut self) -> IterMut<'_, T>".to_string(),
+                filter_range: 7..19,
+                runs: vec![
+                    (0..3, HighlightId(1)),
+                    (4..6, HighlightId(1)),
+                    (7..19, HighlightId(2)),
+                    (21..24, HighlightId(1)),
+                    (34..41, HighlightId(0)),
+                    (46..47, HighlightId(0))
+                ],
             })
         );
 
@@ -1525,7 +1559,7 @@ mod tests {
             let found = test_fragment(
                 &TaskVariables::from_iter(variables.into_iter().map(|(k, v)| (k, v.to_owned()))),
                 path,
-                &path.file_stem().unwrap().to_str().unwrap(),
+                path.file_stem().unwrap().to_str().unwrap(),
             );
             assert_eq!(expected, found);
         }

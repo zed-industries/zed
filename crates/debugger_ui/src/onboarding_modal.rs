@@ -131,7 +131,7 @@ impl Render for DebuggerOnboardingModal {
                     .child(Headline::new("Zed's Debugger").size(HeadlineSize::Large)),
             )
             .child(h_flex().absolute().top_2().right_2().child(
-                IconButton::new("cancel", IconName::X).on_click(cx.listener(
+                IconButton::new("cancel", IconName::Close).on_click(cx.listener(
                     |_, _: &ClickEvent, _window, cx| {
                         debugger_onboarding_event!("Cancelled", trigger = "X click");
                         cx.emit(DismissEvent);

@@ -58,11 +58,19 @@ impl EditPredictionProvider for CopilotCompletionProvider {
     }
 
     fn show_completions_in_menu() -> bool {
+        true
+    }
+
+    fn show_tab_accept_marker() -> bool {
+        true
+    }
+
+    fn supports_jump_to_edit() -> bool {
         false
     }
 
     fn is_refreshing(&self) -> bool {
-        self.pending_refresh.is_some()
+        self.pending_refresh.is_some() && self.completions.is_empty()
     }
 
     fn is_enabled(
@@ -293,6 +301,7 @@ mod tests {
         init_test(cx, |settings| {
             settings.defaults.completions = Some(CompletionSettings {
                 words: WordsCompletionMode::Disabled,
+                words_min_length: 0,
                 lsp: true,
                 lsp_fetch_timeout_ms: 0,
                 lsp_insert_mode: LspInsertMode::Insert,
@@ -343,8 +352,8 @@ mod tests {
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, window, cx| {
             assert!(editor.context_menu_visible());
-            assert!(!editor.has_active_edit_prediction());
-            // Since we have both, the copilot suggestion is not shown inline
+            assert!(editor.has_active_edit_prediction());
+            // Since we have both, the copilot suggestion is existing but does not show up as ghost text
             assert_eq!(editor.text(cx), "one.\ntwo\nthree\n");
             assert_eq!(editor.display_text(cx), "one.\ntwo\nthree\n");
 
@@ -525,6 +534,7 @@ mod tests {
         init_test(cx, |settings| {
             settings.defaults.completions = Some(CompletionSettings {
                 words: WordsCompletionMode::Disabled,
+                words_min_length: 0,
                 lsp: true,
                 lsp_fetch_timeout_ms: 0,
                 lsp_insert_mode: LspInsertMode::Insert,
@@ -934,8 +944,9 @@ mod tests {
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, _, cx| {
             assert!(editor.context_menu_visible());
-            assert!(!editor.has_active_edit_prediction(),);
+            assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.text(cx), "one\ntwo.\nthree\n");
+            assert_eq!(editor.display_text(cx), "one\ntwo.\nthree\n");
         });
     }
 
@@ -1074,11 +1085,9 @@ mod tests {
         let replace_range_marker: TextRangeMarker = ('<', '>').into();
         let (_, mut marked_ranges) = marked_text_ranges_by(
             marked_string,
-            vec![complete_from_marker.clone(), replace_range_marker.clone()],
+            vec![complete_from_marker, replace_range_marker.clone()],
         );
 
-        let complete_from_position =
-            cx.to_lsp(marked_ranges.remove(&complete_from_marker).unwrap()[0].start);
         let replace_range =
             cx.to_lsp_range(marked_ranges.remove(&replace_range_marker).unwrap()[0].clone());
 
@@ -1087,10 +1096,6 @@ mod tests {
                 let completions = completions.clone();
                 async move {
                     assert_eq!(params.text_document_position.text_document.uri, url.clone());
-                    assert_eq!(
-                        params.text_document_position.position,
-                        complete_from_position
-                    );
                     Ok(Some(lsp::CompletionResponse::Array(
                         completions
                             .iter()

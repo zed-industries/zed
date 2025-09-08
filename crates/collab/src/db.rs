@@ -41,12 +41,7 @@ use worktree_settings_file::LocalSettingsKind;
 pub use tests::TestDb;
 
 pub use ids::*;
-pub use queries::billing_customers::{CreateBillingCustomerParams, UpdateBillingCustomerParams};
-pub use queries::billing_subscriptions::{
-    CreateBillingSubscriptionParams, UpdateBillingSubscriptionParams,
-};
 pub use queries::contributors::ContributorSelector;
-pub use queries::processed_stripe_events::CreateProcessedStripeEventParams;
 pub use sea_orm::ConnectOptions;
 pub use tables::user::Model as User;
 pub use tables::*;
@@ -261,7 +256,7 @@ impl Database {
             let test_options = self.test_options.as_ref().unwrap();
             test_options.executor.simulate_random_delay().await;
             let fail_probability = *test_options.query_failure_probability.lock();
-            if test_options.executor.rng().gen_bool(fail_probability) {
+            if test_options.executor.rng().random_bool(fail_probability) {
                 return Err(anyhow!("simulated query failure"))?;
             }
 
@@ -690,7 +685,7 @@ impl LocalSettingsKind {
         }
     }
 
-    pub fn to_proto(&self) -> proto::LocalSettingsKind {
+    pub fn to_proto(self) -> proto::LocalSettingsKind {
         match self {
             Self::Settings => proto::LocalSettingsKind::Settings,
             Self::Tasks => proto::LocalSettingsKind::Tasks,

@@ -969,13 +969,13 @@ impl DisplaySnapshot {
             if let Some(chunk_highlight) = chunk.highlight_style {
                 // For color inlays, blend the color with the editor background
                 let mut processed_highlight = chunk_highlight;
-                if chunk.is_inlay {
-                    if let Some(inlay_color) = chunk_highlight.color {
-                        // Only blend if the color has transparency (alpha < 1.0)
-                        if inlay_color.a < 1.0 {
-                            let blended_color = editor_style.background.blend(inlay_color);
-                            processed_highlight.color = Some(blended_color);
-                        }
+                if chunk.is_inlay
+                    && let Some(inlay_color) = chunk_highlight.color
+                {
+                    // Only blend if the color has transparency (alpha < 1.0)
+                    if inlay_color.a < 1.0 {
+                        let blended_color = editor_style.background.blend(inlay_color);
+                        processed_highlight.color = Some(blended_color);
                     }
                 }
 
@@ -991,7 +991,7 @@ impl DisplaySnapshot {
             if let Some(severity) = chunk.diagnostic_severity.filter(|severity| {
                 self.diagnostics_max_severity
                     .into_lsp()
-                    .map_or(false, |max_severity| severity <= &max_severity)
+                    .is_some_and(|max_severity| severity <= &max_severity)
             }) {
                 if chunk.is_unnecessary {
                     diagnostic_highlight.fade_out = Some(editor_style.unnecessary_code_fade);
@@ -1552,15 +1552,15 @@ pub mod tests {
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
 
-        let mut tab_size = rng.gen_range(1..=4);
-        let buffer_start_excerpt_header_height = rng.gen_range(1..=5);
-        let excerpt_header_height = rng.gen_range(1..=5);
+        let mut tab_size = rng.random_range(1..=4);
+        let buffer_start_excerpt_header_height = rng.random_range(1..=5);
+        let excerpt_header_height = rng.random_range(1..=5);
         let font_size = px(14.0);
         let max_wrap_width = 300.0;
-        let mut wrap_width = if rng.gen_bool(0.1) {
+        let mut wrap_width = if rng.random_bool(0.1) {
             None
         } else {
-            Some(px(rng.gen_range(0.0..=max_wrap_width)))
+            Some(px(rng.random_range(0.0..=max_wrap_width)))
         };
 
         log::info!("tab size: {}", tab_size);
@@ -1571,8 +1571,8 @@ pub mod tests {
         });
 
         let buffer = cx.update(|cx| {
-            if rng.r#gen() {
-                let len = rng.gen_range(0..10);
+            if rng.random() {
+                let len = rng.random_range(0..10);
                 let text = util::RandomCharIter::new(&mut rng)
                     .take(len)
                     .collect::<String>();
@@ -1609,12 +1609,12 @@ pub mod tests {
         log::info!("display text: {:?}", snapshot.text());
 
         for _i in 0..operations {
-            match rng.gen_range(0..100) {
+            match rng.random_range(0..100) {
                 0..=19 => {
-                    wrap_width = if rng.gen_bool(0.2) {
+                    wrap_width = if rng.random_bool(0.2) {
                         None
                     } else {
-                        Some(px(rng.gen_range(0.0..=max_wrap_width)))
+                        Some(px(rng.random_range(0.0..=max_wrap_width)))
                     };
                     log::info!("setting wrap width to {:?}", wrap_width);
                     map.update(cx, |map, cx| map.set_wrap_width(wrap_width, cx));
@@ -1634,28 +1634,27 @@ pub mod tests {
                 }
                 30..=44 => {
                     map.update(cx, |map, cx| {
-                        if rng.r#gen() || blocks.is_empty() {
+                        if rng.random() || blocks.is_empty() {
                             let buffer = map.snapshot(cx).buffer_snapshot;
-                            let block_properties = (0..rng.gen_range(1..=1))
+                            let block_properties = (0..rng.random_range(1..=1))
                                 .map(|_| {
-                                    let position =
-                                        buffer.anchor_after(buffer.clip_offset(
-                                            rng.gen_range(0..=buffer.len()),
-                                            Bias::Left,
-                                        ));
+                                    let position = buffer.anchor_after(buffer.clip_offset(
+                                        rng.random_range(0..=buffer.len()),
+                                        Bias::Left,
+                                    ));
 
-                                    let placement = if rng.r#gen() {
+                                    let placement = if rng.random() {
                                         BlockPlacement::Above(position)
                                     } else {
                                         BlockPlacement::Below(position)
                                     };
-                                    let height = rng.gen_range(1..5);
+                                    let height = rng.random_range(1..5);
                                     log::info!(
                                         "inserting block {:?} with height {}",
                                         placement.as_ref().map(|p| p.to_point(&buffer)),
                                         height
                                     );
-                                    let priority = rng.gen_range(1..100);
+                                    let priority = rng.random_range(1..100);
                                     BlockProperties {
                                         placement,
                                         style: BlockStyle::Fixed,
@@ -1668,9 +1667,9 @@ pub mod tests {
                             blocks.extend(map.insert_blocks(block_properties, cx));
                         } else {
                             blocks.shuffle(&mut rng);
-                            let remove_count = rng.gen_range(1..=4.min(blocks.len()));
+                            let remove_count = rng.random_range(1..=4.min(blocks.len()));
                             let block_ids_to_remove = (0..remove_count)
-                                .map(|_| blocks.remove(rng.gen_range(0..blocks.len())))
+                                .map(|_| blocks.remove(rng.random_range(0..blocks.len())))
                                 .collect();
                             log::info!("removing block ids {:?}", block_ids_to_remove);
                             map.remove_blocks(block_ids_to_remove, cx);
@@ -1679,16 +1678,16 @@ pub mod tests {
                 }
                 45..=79 => {
                     let mut ranges = Vec::new();
-                    for _ in 0..rng.gen_range(1..=3) {
+                    for _ in 0..rng.random_range(1..=3) {
                         buffer.read_with(cx, |buffer, cx| {
                             let buffer = buffer.read(cx);
-                            let end = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Right);
-                            let start = buffer.clip_offset(rng.gen_range(0..=end), Left);
+                            let end = buffer.clip_offset(rng.random_range(0..=buffer.len()), Right);
+                            let start = buffer.clip_offset(rng.random_range(0..=end), Left);
                             ranges.push(start..end);
                         });
                     }
 
-                    if rng.r#gen() && fold_count > 0 {
+                    if rng.random() && fold_count > 0 {
                         log::info!("unfolding ranges: {:?}", ranges);
                         map.update(cx, |map, cx| {
                             map.unfold_intersecting(ranges, true, cx);
@@ -1727,8 +1726,8 @@ pub mod tests {
             // Line boundaries
             let buffer = &snapshot.buffer_snapshot;
             for _ in 0..5 {
-                let row = rng.gen_range(0..=buffer.max_point().row);
-                let column = rng.gen_range(0..=buffer.line_len(MultiBufferRow(row)));
+                let row = rng.random_range(0..=buffer.max_point().row);
+                let column = rng.random_range(0..=buffer.line_len(MultiBufferRow(row)));
                 let point = buffer.clip_point(Point::new(row, column), Left);
 
                 let (prev_buffer_bound, prev_display_bound) = snapshot.prev_line_boundary(point);
@@ -1776,8 +1775,8 @@ pub mod tests {
             let min_point = snapshot.clip_point(DisplayPoint::new(DisplayRow(0), 0), Left);
             let max_point = snapshot.clip_point(snapshot.max_point(), Right);
             for _ in 0..5 {
-                let row = rng.gen_range(0..=snapshot.max_point().row().0);
-                let column = rng.gen_range(0..=snapshot.line_len(DisplayRow(row)));
+                let row = rng.random_range(0..=snapshot.max_point().row().0);
+                let column = rng.random_range(0..=snapshot.line_len(DisplayRow(row)));
                 let point = snapshot.clip_point(DisplayPoint::new(DisplayRow(row), column), Left);
 
                 log::info!("Moving from point {:?}", point);
@@ -2351,11 +2350,12 @@ pub mod tests {
                 .highlight_style
                 .and_then(|style| style.color)
                 .map_or(black, |color| color.to_rgb());
-            if let Some((last_chunk, last_severity, last_color)) = chunks.last_mut() {
-                if *last_severity == chunk.diagnostic_severity && *last_color == color {
-                    last_chunk.push_str(chunk.text);
-                    continue;
-                }
+            if let Some((last_chunk, last_severity, last_color)) = chunks.last_mut()
+                && *last_severity == chunk.diagnostic_severity
+                && *last_color == color
+            {
+                last_chunk.push_str(chunk.text);
+                continue;
             }
 
             chunks.push((chunk.text.to_string(), chunk.diagnostic_severity, color));
@@ -2901,11 +2901,12 @@ pub mod tests {
                 .syntax_highlight_id
                 .and_then(|id| id.style(theme)?.color);
             let highlight_color = chunk.highlight_style.and_then(|style| style.color);
-            if let Some((last_chunk, last_syntax_color, last_highlight_color)) = chunks.last_mut() {
-                if syntax_color == *last_syntax_color && highlight_color == *last_highlight_color {
-                    last_chunk.push_str(chunk.text);
-                    continue;
-                }
+            if let Some((last_chunk, last_syntax_color, last_highlight_color)) = chunks.last_mut()
+                && syntax_color == *last_syntax_color
+                && highlight_color == *last_highlight_color
+            {
+                last_chunk.push_str(chunk.text);
+                continue;
             }
             chunks.push((chunk.text.to_string(), syntax_color, highlight_color));
         }

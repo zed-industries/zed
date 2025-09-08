@@ -45,7 +45,7 @@ use util::{ConnectionResult, ResultExt, TryFutureExt, redact};
 const JSON_RPC_VERSION: &str = "2.0";
 const CONTENT_LEN_HEADER: &str = "Content-Length: ";
 
-const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
+pub const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 type NotificationHandler = Box<dyn Send + FnMut(Option<RequestId>, Value, &mut AsyncApp)>;
@@ -100,8 +100,8 @@ pub struct LanguageServer {
     io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
     output_done_rx: Mutex<Option<barrier::Receiver>>,
     server: Arc<Mutex<Option<Child>>>,
-    workspace_folders: Option<Arc<Mutex<BTreeSet<Url>>>>,
-    root_uri: Url,
+    workspace_folders: Option<Arc<Mutex<BTreeSet<Uri>>>>,
+    root_uri: Uri,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -310,7 +310,7 @@ impl LanguageServer {
         binary: LanguageServerBinary,
         root_path: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
-        workspace_folders: Option<Arc<Mutex<BTreeSet<Url>>>>,
+        workspace_folders: Option<Arc<Mutex<BTreeSet<Uri>>>>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
         let working_dir = if root_path.is_dir() {
@@ -318,6 +318,8 @@ impl LanguageServer {
         } else {
             root_path.parent().unwrap_or_else(|| Path::new("/"))
         };
+        let root_uri = Uri::from_file_path(&working_dir)
+            .map_err(|()| anyhow!("{working_dir:?} is not a valid URI"))?;
 
         log::info!(
             "starting language server process. binary path: {:?}, working directory: {:?}, args: {:?}",
@@ -345,8 +347,6 @@ impl LanguageServer {
         let stdin = server.stdin.take().unwrap();
         let stdout = server.stdout.take().unwrap();
         let stderr = server.stderr.take().unwrap();
-        let root_uri = Url::from_file_path(&working_dir)
-            .map_err(|()| anyhow!("{working_dir:?} is not a valid URI"))?;
         let server = Self::new_internal(
             server_id,
             server_name,
@@ -384,8 +384,8 @@ impl LanguageServer {
         server: Option<Child>,
         code_action_kinds: Option<Vec<CodeActionKind>>,
         binary: LanguageServerBinary,
-        root_uri: Url,
-        workspace_folders: Option<Arc<Mutex<BTreeSet<Url>>>>,
+        root_uri: Uri,
+        workspace_folders: Option<Arc<Mutex<BTreeSet<Uri>>>>,
         cx: &mut AsyncApp,
         on_unhandled_notification: F,
     ) -> Self
@@ -651,7 +651,7 @@ impl LanguageServer {
             capabilities: ClientCapabilities {
                 general: Some(GeneralClientCapabilities {
                     position_encodings: Some(vec![PositionEncodingKind::UTF16]),
-                    ..Default::default()
+                    ..GeneralClientCapabilities::default()
                 }),
                 workspace: Some(WorkspaceClientCapabilities {
                     configuration: Some(true),
@@ -665,6 +665,7 @@ impl LanguageServer {
                     workspace_folders: Some(true),
                     symbol: Some(WorkspaceSymbolClientCapabilities {
                         resolve_support: None,
+                        dynamic_registration: Some(true),
                         ..WorkspaceSymbolClientCapabilities::default()
                     }),
                     inlay_hint: Some(InlayHintWorkspaceClientCapabilities {
@@ -688,21 +689,21 @@ impl LanguageServer {
                         ..WorkspaceEditClientCapabilities::default()
                     }),
                     file_operations: Some(WorkspaceFileOperationsClientCapabilities {
-                        dynamic_registration: Some(false),
+                        dynamic_registration: Some(true),
                         did_rename: Some(true),
                         will_rename: Some(true),
-                        ..Default::default()
+                        ..WorkspaceFileOperationsClientCapabilities::default()
                     }),
                     apply_edit: Some(true),
                     execute_command: Some(ExecuteCommandClientCapabilities {
-                        dynamic_registration: Some(false),
+                        dynamic_registration: Some(true),
                     }),
-                    ..Default::default()
+                    ..WorkspaceClientCapabilities::default()
                 }),
                 text_document: Some(TextDocumentClientCapabilities {
                     definition: Some(GotoCapability {
                         link_support: Some(true),
-                        dynamic_registration: None,
+                        dynamic_registration: Some(true),
                     }),
                     code_action: Some(CodeActionClientCapabilities {
                         code_action_literal_support: Some(CodeActionLiteralSupport {
@@ -725,7 +726,8 @@ impl LanguageServer {
                                 "command".to_string(),
                             ],
                         }),
-                        ..Default::default()
+                        dynamic_registration: Some(true),
+                        ..CodeActionClientCapabilities::default()
                     }),
                     completion: Some(CompletionClientCapabilities {
                         completion_item: Some(CompletionItemCapability {
@@ -751,7 +753,7 @@ impl LanguageServer {
                                 MarkupKind::Markdown,
                                 MarkupKind::PlainText,
                             ]),
-                            ..Default::default()
+                            ..CompletionItemCapability::default()
                         }),
                         insert_text_mode: Some(InsertTextMode::ADJUST_INDENTATION),
                         completion_list: Some(CompletionListCapability {
@@ -764,18 +766,20 @@ impl LanguageServer {
                             ]),
                         }),
                         context_support: Some(true),
-                        ..Default::default()
+                        dynamic_registration: Some(true),
+                        ..CompletionClientCapabilities::default()
                     }),
                     rename: Some(RenameClientCapabilities {
                         prepare_support: Some(true),
                         prepare_support_default_behavior: Some(
                             PrepareSupportDefaultBehavior::IDENTIFIER,
                         ),
-                        ..Default::default()
+                        dynamic_registration: Some(true),
+                        ..RenameClientCapabilities::default()
                     }),
                     hover: Some(HoverClientCapabilities {
                         content_format: Some(vec![MarkupKind::Markdown]),
-                        dynamic_registration: None,
+                        dynamic_registration: Some(true),
                     }),
                     inlay_hint: Some(InlayHintClientCapabilities {
                         resolve_support: Some(InlayHintResolveClientCapabilities {
@@ -787,7 +791,7 @@ impl LanguageServer {
                                 "label.command".to_string(),
                             ],
                         }),
-                        dynamic_registration: Some(false),
+                        dynamic_registration: Some(true),
                     }),
                     publish_diagnostics: Some(PublishDiagnosticsClientCapabilities {
                         related_information: Some(true),
@@ -818,26 +822,29 @@ impl LanguageServer {
                             }),
                             active_parameter_support: Some(true),
                         }),
+                        dynamic_registration: Some(true),
                         ..SignatureHelpClientCapabilities::default()
                     }),
                     synchronization: Some(TextDocumentSyncClientCapabilities {
                         did_save: Some(true),
+                        dynamic_registration: Some(true),
                         ..TextDocumentSyncClientCapabilities::default()
                     }),
                     code_lens: Some(CodeLensClientCapabilities {
-                        dynamic_registration: Some(false),
+                        dynamic_registration: Some(true),
                     }),
                     document_symbol: Some(DocumentSymbolClientCapabilities {
                         hierarchical_document_symbol_support: Some(true),
+                        dynamic_registration: Some(true),
                         ..DocumentSymbolClientCapabilities::default()
                     }),
                     diagnostic: Some(DiagnosticClientCapabilities {
-                        dynamic_registration: Some(false),
+                        dynamic_registration: Some(true),
                         related_document_support: Some(true),
                     })
                     .filter(|_| pull_diagnostics),
                     color_provider: Some(DocumentColorClientCapabilities {
-                        dynamic_registration: Some(false),
+                        dynamic_registration: Some(true),
                     }),
                     ..TextDocumentClientCapabilities::default()
                 }),
@@ -850,7 +857,7 @@ impl LanguageServer {
                     show_message: Some(ShowMessageRequestClientCapabilities {
                         message_action_item: None,
                     }),
-                    ..Default::default()
+                    ..WindowClientCapabilities::default()
                 }),
             },
             trace: None,
@@ -862,8 +869,7 @@ impl LanguageServer {
                 }
             }),
             locale: None,
-
-            ..Default::default()
+            ..InitializeParams::default()
         }
     }
 
@@ -1344,7 +1350,7 @@ impl LanguageServer {
     }
 
     /// Add new workspace folder to the list.
-    pub fn add_workspace_folder(&self, uri: Url) {
+    pub fn add_workspace_folder(&self, uri: Uri) {
         if self
             .capabilities()
             .workspace
@@ -1377,8 +1383,9 @@ impl LanguageServer {
             self.notify::<DidChangeWorkspaceFolders>(&params).ok();
         }
     }
-    /// Add new workspace folder to the list.
-    pub fn remove_workspace_folder(&self, uri: Url) {
+
+    /// Remove existing workspace folder from the list.
+    pub fn remove_workspace_folder(&self, uri: Uri) {
         if self
             .capabilities()
             .workspace
@@ -1410,7 +1417,7 @@ impl LanguageServer {
             self.notify::<DidChangeWorkspaceFolders>(&params).ok();
         }
     }
-    pub fn set_workspace_folders(&self, folders: BTreeSet<Url>) {
+    pub fn set_workspace_folders(&self, folders: BTreeSet<Uri>) {
         let Some(workspace_folders) = self.workspace_folders.as_ref() else {
             return;
         };
@@ -1443,7 +1450,7 @@ impl LanguageServer {
         }
     }
 
-    pub fn workspace_folders(&self) -> BTreeSet<Url> {
+    pub fn workspace_folders(&self) -> BTreeSet<Uri> {
         self.workspace_folders.as_ref().map_or_else(
             || BTreeSet::from_iter([self.root_uri.clone()]),
             |folders| folders.lock().clone(),
@@ -1452,7 +1459,7 @@ impl LanguageServer {
 
     pub fn register_buffer(
         &self,
-        uri: Url,
+        uri: Uri,
         language_id: String,
         version: i32,
         initial_text: String,
@@ -1463,7 +1470,7 @@ impl LanguageServer {
         .ok();
     }
 
-    pub fn unregister_buffer(&self, uri: Url) {
+    pub fn unregister_buffer(&self, uri: Uri) {
         self.notify::<notification::DidCloseTextDocument>(&DidCloseTextDocumentParams {
             text_document: TextDocumentIdentifier::new(uri),
         })
@@ -1580,7 +1587,7 @@ impl FakeLanguageServer {
         let server_name = LanguageServerName(name.clone().into());
         let process_name = Arc::from(name.as_str());
         let root = Self::root_path();
-        let workspace_folders: Arc<Mutex<BTreeSet<Url>>> = Default::default();
+        let workspace_folders: Arc<Mutex<BTreeSet<Uri>>> = Default::default();
         let mut server = LanguageServer::new_internal(
             server_id,
             server_name.clone(),
@@ -1650,13 +1657,13 @@ impl FakeLanguageServer {
         (server, fake)
     }
     #[cfg(target_os = "windows")]
-    fn root_path() -> Url {
-        Url::from_file_path("C:/").unwrap()
+    fn root_path() -> Uri {
+        Uri::from_file_path("C:/").unwrap()
     }
 
     #[cfg(not(target_os = "windows"))]
-    fn root_path() -> Url {
-        Url::from_file_path("/").unwrap()
+    fn root_path() -> Uri {
+        Uri::from_file_path("/").unwrap()
     }
 }
 
@@ -1672,7 +1679,7 @@ impl LanguageServer {
             workspace_symbol_provider: Some(OneOf::Left(true)),
             implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
             type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
-            ..Default::default()
+            ..ServerCapabilities::default()
         }
     }
 }
@@ -1858,7 +1865,7 @@ mod tests {
         server
             .notify::<notification::DidOpenTextDocument>(&DidOpenTextDocumentParams {
                 text_document: TextDocumentItem::new(
-                    Url::from_str("file://a/b").unwrap(),
+                    Uri::from_str("file://a/b").unwrap(),
                     "rust".to_string(),
                     0,
                     "".to_string(),
@@ -1879,7 +1886,7 @@ mod tests {
             message: "ok".to_string(),
         });
         fake.notify::<notification::PublishDiagnostics>(&PublishDiagnosticsParams {
-            uri: Url::from_str("file://b/c").unwrap(),
+            uri: Uri::from_str("file://b/c").unwrap(),
             version: Some(5),
             diagnostics: vec![],
         });

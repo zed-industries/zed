@@ -2,7 +2,7 @@
 
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fmt::Display, sync::Arc, time::Duration};
+use std::{collections::HashMap, fmt::Display, time::Duration};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct EventRequestBody {
@@ -93,19 +93,6 @@ impl Display for AssistantPhase {
 #[serde(tag = "type")]
 pub enum Event {
     Flexible(FlexibleEvent),
-    Editor(EditorEvent),
-    EditPrediction(EditPredictionEvent),
-    EditPredictionRating(EditPredictionRatingEvent),
-    Call(CallEvent),
-    Assistant(AssistantEventData),
-    Cpu(CpuEvent),
-    Memory(MemoryEvent),
-    App(AppEvent),
-    Setting(SettingEvent),
-    Extension(ExtensionEvent),
-    Edit(EditEvent),
-    Action(ActionEvent),
-    Repl(ReplEvent),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -115,51 +102,9 @@ pub struct FlexibleEvent {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct EditorEvent {
-    /// The editor operation performed (open, save)
-    pub operation: String,
-    /// The extension of the file that was opened or saved
-    pub file_extension: Option<String>,
-    /// Whether the user is in vim mode or not
-    pub vim_mode: bool,
-    /// Whether the user has copilot enabled or not
-    pub copilot_enabled: bool,
-    /// Whether the user has copilot enabled for the language of the file opened or saved
-    pub copilot_enabled_for_language: bool,
-    /// Whether the client is opening/saving a local file or a remote file via SSH
-    #[serde(default)]
-    pub is_via_ssh: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct EditPredictionEvent {
-    /// Provider of the completion suggestion (e.g. copilot, supermaven)
-    pub provider: String,
-    pub suggestion_accepted: bool,
-    pub file_extension: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum EditPredictionRating {
     Positive,
     Negative,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct EditPredictionRatingEvent {
-    pub rating: EditPredictionRating,
-    pub input_events: Arc<str>,
-    pub input_excerpt: Arc<str>,
-    pub output_excerpt: Arc<str>,
-    pub feedback: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CallEvent {
-    /// Operation performed: invite/join call; begin/end screenshare; share/unshare project; etc
-    pub operation: String,
-    pub room_id: Option<u64>,
-    pub channel_id: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -178,57 +123,6 @@ pub struct AssistantEventData {
     pub response_latency: Option<Duration>,
     pub error_message: Option<String>,
     pub language_name: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CpuEvent {
-    pub usage_as_percentage: f32,
-    pub core_count: u32,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MemoryEvent {
-    pub memory_in_bytes: u64,
-    pub virtual_memory_in_bytes: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ActionEvent {
-    pub source: String,
-    pub action: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct EditEvent {
-    pub duration: i64,
-    pub environment: String,
-    /// Whether the edits occurred locally or remotely via SSH
-    #[serde(default)]
-    pub is_via_ssh: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SettingEvent {
-    pub setting: String,
-    pub value: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ExtensionEvent {
-    pub extension_id: Arc<str>,
-    pub version: Arc<str>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AppEvent {
-    pub operation: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ReplEvent {
-    pub kernel_language: String,
-    pub kernel_status: String,
-    pub repl_session_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
