@@ -66,30 +66,6 @@ impl Database {
         .await
     }
 
-    /// Delete all channel chat participants from previous servers
-    pub async fn delete_stale_channel_chat_participants(
-        &self,
-        environment: &str,
-        new_server_id: ServerId,
-    ) -> Result<()> {
-        self.transaction(|tx| async move {
-            let stale_server_epochs = self
-                .stale_server_ids(environment, new_server_id, &tx)
-                .await?;
-
-            channel_chat_participant::Entity::delete_many()
-                .filter(
-                    channel_chat_participant::Column::ConnectionServerId
-                        .is_in(stale_server_epochs.iter().copied()),
-                )
-                .exec(&*tx)
-                .await?;
-
-            Ok(())
-        })
-        .await
-    }
-
     pub async fn clear_old_worktree_entries(&self, server_id: ServerId) -> Result<()> {
         self.transaction(|tx| async move {
             use sea_orm::Statement;

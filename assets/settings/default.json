@@ -740,16 +740,6 @@
     // Default width of the collaboration panel.
     "default_width": 240
   },
-  "chat_panel": {
-    // When to show the chat panel button in the status bar.
-    // Can be 'never', 'always', or 'when_in_call',
-    // or a boolean (interpreted as 'never'/'always').
-    "button": "when_in_call",
-    // Where to dock the chat panel. Can be 'left' or 'right'.
-    "dock": "right",
-    // Default width of the chat panel.
-    "default_width": 240
-  },
   "git_panel": {
     // Whether to show the git panel button in the status bar.
     "button": true,

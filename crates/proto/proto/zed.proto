@@ -208,8 +208,6 @@ message Envelope {
         BlameBuffer blame_buffer = 172;
         BlameBufferResponse blame_buffer_response = 173;
 
-        UpdateNotification update_notification = 174;
-
         MultiLspQuery multi_lsp_query = 175;
         MultiLspQueryResponse multi_lsp_query_response = 176;
         RestartLanguageServers restart_language_servers = 208;
@@ -407,6 +405,7 @@ message Envelope {
     reserved 158 to 161;
     reserved 164;
     reserved 166 to 169;
+    reserved 174;
     reserved 177 to 185;
     reserved 188;
     reserved 189 to 192;
