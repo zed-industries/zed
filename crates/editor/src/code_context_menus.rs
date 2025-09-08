@@ -251,7 +251,7 @@ enum MarkdownCacheKey {
 pub enum CompletionsMenuSource {
     Normal,
     SnippetChoices,
-    Words,
+    Words { ignore_threshold: bool },
 }
 
 // TODO: There should really be a wrapper around fuzzy match tasks that does this.

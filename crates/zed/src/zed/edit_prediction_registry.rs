@@ -8,7 +8,7 @@ use settings::SettingsStore;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use supermaven::{Supermaven, SupermavenCompletionProvider};
 use ui::Window;
-use zeta::{ProviderDataCollection, ZetaEditPredictionProvider};
+use zeta::ZetaEditPredictionProvider;
 
 pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     let editors: Rc<RefCell<HashMap<WeakEntity<Editor>, AnyWindowHandle>>> = Rc::default();
@@ -214,11 +214,8 @@ fn assign_edit_prediction_provider(
                     });
                 }
 
-                let data_collection =
-                    ProviderDataCollection::new(zeta.clone(), singleton_buffer, cx);
-
                 let provider =
-                    cx.new(|_| zeta::ZetaEditPredictionProvider::new(zeta, data_collection));
+                    cx.new(|_| zeta::ZetaEditPredictionProvider::new(zeta, singleton_buffer));
 
                 editor.set_edit_prediction_provider(Some(provider), window, cx);
             }

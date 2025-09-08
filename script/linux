@@ -47,7 +47,10 @@ if [[ -n $apt ]]; then
     musl-dev
     build-essential
   )
-  if (grep -qP 'PRETTY_NAME="(Linux Mint 22|.+24\.(04|10))' /etc/os-release); then
+  if (grep -qP 'PRETTY_NAME="((Debian|Raspbian).+13|' /etc/os-release); then
+      # libstdc++-14-dev is in build-essential
+      deps+=( mold )
+  elif (grep -qP 'PRETTY_NAME="(Linux Mint 22|.+24\.(04|10))' /etc/os-release); then
     deps+=( mold libstdc++-14-dev )
   elif (grep -qP 'PRETTY_NAME="((Debian|Raspbian).+12|Linux Mint 21|.+22\.04)' /etc/os-release); then
     deps+=( mold libstdc++-12-dev )

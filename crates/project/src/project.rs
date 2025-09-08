@@ -48,7 +48,7 @@ use clock::ReplicaId;
 
 use dap::client::DebugAdapterClient;
 
-use collections::{BTreeSet, HashMap, HashSet};
+use collections::{BTreeSet, HashMap, HashSet, IndexSet};
 use debounced_delay::DebouncedDelay;
 pub use debugger::breakpoint_store::BreakpointWithPosition;
 use debugger::{
@@ -74,8 +74,9 @@ use gpui::{
 };
 use language::{
     Buffer, BufferEvent, Capability, CodeLabel, CursorShape, Language, LanguageName,
-    LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList, Transaction,
-    Unclipped, language_settings::InlayHintKind, proto::split_operations,
+    LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainMetadata,
+    ToolchainScope, Transaction, Unclipped, language_settings::InlayHintKind,
+    proto::split_operations,
 };
 use lsp::{
     CodeActionKind, CompletionContext, CompletionItemKind, DocumentHighlightKind, InsertTextMode,
@@ -104,6 +105,7 @@ use snippet::Snippet;
 use snippet_provider::SnippetProvider;
 use std::{
     borrow::Cow,
+    collections::BTreeMap,
     ops::Range,
     path::{Component, Path, PathBuf},
     pin::pin,
@@ -117,7 +119,7 @@ use terminals::Terminals;
 use text::{Anchor, BufferId, OffsetRangeExt, Point, Rope};
 use toolchain_store::EmptyToolchainStore;
 use util::{
-    ResultExt as _,
+    ResultExt as _, maybe,
     paths::{PathStyle, RemotePathBuf, SanitizedPath, compare_paths},
 };
 use worktree::{CreatedEntry, Snapshot, Traversal};
@@ -142,7 +144,7 @@ pub use lsp_store::{
     LanguageServerStatus, LanguageServerToQuery, LspStore, LspStoreEvent,
     SERVER_PROGRESS_THROTTLE_TIMEOUT,
 };
-pub use toolchain_store::ToolchainStore;
+pub use toolchain_store::{ToolchainStore, Toolchains};
 const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
 const MAX_SEARCH_RESULT_FILES: usize = 5_000;
 const MAX_SEARCH_RESULT_RANGES: usize = 10_000;
@@ -3370,7 +3372,7 @@ impl Project {
         path: ProjectPath,
         language_name: LanguageName,
         cx: &App,
-    ) -> Task<Option<(ToolchainList, Arc<Path>)>> {
+    ) -> Task<Option<Toolchains>> {
         if let Some(toolchain_store) = self.toolchain_store.as_ref().map(Entity::downgrade) {
             cx.spawn(async move |cx| {
                 toolchain_store
@@ -3383,16 +3385,70 @@ impl Project {
         }
     }
 
-    pub async fn toolchain_term(
+    pub async fn toolchain_metadata(
         languages: Arc<LanguageRegistry>,
         language_name: LanguageName,
-    ) -> Option<SharedString> {
+    ) -> Option<ToolchainMetadata> {
         languages
             .language_for_name(language_name.as_ref())
             .await
             .ok()?
             .toolchain_lister()
-            .map(|lister| lister.term())
+            .map(|lister| lister.meta())
+    }
+
+    pub fn add_toolchain(
+        &self,
+        toolchain: Toolchain,
+        scope: ToolchainScope,
+        cx: &mut Context<Self>,
+    ) {
+        maybe!({
+            self.toolchain_store.as_ref()?.update(cx, |this, cx| {
+                this.add_toolchain(toolchain, scope, cx);
+            });
+            Some(())
+        });
+    }
+
+    pub fn remove_toolchain(
+        &self,
+        toolchain: Toolchain,
+        scope: ToolchainScope,
+        cx: &mut Context<Self>,
+    ) {
+        maybe!({
+            self.toolchain_store.as_ref()?.update(cx, |this, cx| {
+                this.remove_toolchain(toolchain, scope, cx);
+            });
+            Some(())
+        });
+    }
+
+    pub fn user_toolchains(
+        &self,
+        cx: &App,
+    ) -> Option<BTreeMap<ToolchainScope, IndexSet<Toolchain>>> {
+        Some(self.toolchain_store.as_ref()?.read(cx).user_toolchains())
+    }
+
+    pub fn resolve_toolchain(
+        &self,
+        path: PathBuf,
+        language_name: LanguageName,
+        cx: &App,
+    ) -> Task<Result<Toolchain>> {
+        if let Some(toolchain_store) = self.toolchain_store.as_ref().map(Entity::downgrade) {
+            cx.spawn(async move |cx| {
+                toolchain_store
+                    .update(cx, |this, cx| {
+                        this.resolve_toolchain(path, language_name, cx)
+                    })?
+                    .await
+            })
+        } else {
+            Task::ready(Err(anyhow!("This project does not support toolchains")))
+        }
     }
 
     pub fn toolchain_store(&self) -> Option<Entity<ToolchainStore>> {

@@ -63,6 +63,11 @@ use std::{
     time::Duration,
 };
 
+struct ImeState {
+    marked_text: String,
+    marked_range_utf16: Option<Range<usize>>,
+}
+
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 
 /// Event to transmit the scroll from the element to the view
@@ -135,8 +140,7 @@ pub struct TerminalView {
     block_below_cursor: Option<Rc<BlockProperties>>,
     scroll_top: Pixels,
     scroll_handle: TerminalScrollHandle,
-    marked_text: Option<String>,
-    marked_range_utf16: Option<Range<usize>>,
+    ime_state: Option<ImeState>,
     _subscriptions: Vec<Subscription>,
     _terminal_subscriptions: Vec<Subscription>,
 }
@@ -257,8 +261,7 @@ impl TerminalView {
             scroll_top: Pixels::ZERO,
             scroll_handle,
             cwd_serialized: false,
-            marked_text: None,
-            marked_range_utf16: None,
+            ime_state: None,
             _subscriptions: vec![
                 focus_in,
                 focus_out,
@@ -317,24 +320,27 @@ impl TerminalView {
     pub(crate) fn set_marked_text(
         &mut self,
         text: String,
-        range: Range<usize>,
+        range: Option<Range<usize>>,
         cx: &mut Context<Self>,
     ) {
-        self.marked_text = Some(text);
-        self.marked_range_utf16 = Some(range);
+        self.ime_state = Some(ImeState {
+            marked_text: text,
+            marked_range_utf16: range,
+        });
         cx.notify();
     }
 
     /// Gets the current marked range (UTF-16).
     pub(crate) fn marked_text_range(&self) -> Option<Range<usize>> {
-        self.marked_range_utf16.clone()
+        self.ime_state
+            .as_ref()
+            .and_then(|state| state.marked_range_utf16.clone())
     }
 
     /// Clears the marked (pre-edit) text state.
     pub(crate) fn clear_marked_text(&mut self, cx: &mut Context<Self>) {
-        if self.marked_text.is_some() {
-            self.marked_text = None;
-            self.marked_range_utf16 = None;
+        if self.ime_state.is_some() {
+            self.ime_state = None;
             cx.notify();
         }
     }
