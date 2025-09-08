@@ -2092,17 +2092,14 @@ impl MultiBuffer {
         let snapshot = self.read(cx);
         let buffers = self.buffers.borrow();
         let mut cursor = snapshot.excerpts.cursor::<Option<&Locator>>(&());
-        for locator in buffers
-            .get(&buffer_id)
-            .map(|state| &state.excerpts)
-            .into_iter()
-            .flatten()
-        {
-            cursor.seek_forward(&Some(locator), Bias::Left);
-            if let Some(excerpt) = cursor.item()
-                && excerpt.locator == *locator
-            {
-                excerpts.push((excerpt.id, excerpt.range.clone()));
+        if let Some(locators) = buffers.get(&buffer_id).map(|state| &state.excerpts) {
+            for locator in locators {
+                cursor.seek_forward(&Some(locator), Bias::Left);
+                if let Some(excerpt) = cursor.item()
+                    && excerpt.locator == *locator
+                {
+                    excerpts.push((excerpt.id, excerpt.range.clone()));
+                }
             }
         }
 
