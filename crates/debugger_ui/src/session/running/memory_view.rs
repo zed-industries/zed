@@ -228,7 +228,7 @@ impl MemoryView {
                 rows
             },
         )
-        .track_scroll(view_state.scroll_handle.clone())
+        .track_scroll(view_state.scroll_handle)
         .on_scroll_wheel(cx.listener(|this, evt: &ScrollWheelEvent, window, _| {
             let mut view_state = this.view_state();
             let delta = evt.delta.pixel_delta(window.line_height());
