@@ -172,9 +172,14 @@ impl minidumper::ServerHandler for CrashServer {
 
     fn on_minidump_created(&self, result: Result<MinidumpBinary, minidumper::Error>) -> LoopAction {
         let minidump_error = match result {
-            Ok(mut md_bin) => {
+            Ok(MinidumpBinary { mut file, path, .. }) => {
                 use io::Write;
-                let _ = md_bin.file.flush();
+                file.flush().ok();
+                // TODO: clean this up once https://github.com/EmbarkStudios/crash-handling/issues/101 is addressed
+                if let Ok(contents) = fs::read(path) {
+                    file.set_len(0).ok();
+                    zstd::stream::copy_encode(contents.as_slice(), file, 0).ok();
+                }
                 None
             }
             Err(e) => Some(format!("{e:?}")),
