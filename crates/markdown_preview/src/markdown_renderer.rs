@@ -277,7 +277,11 @@ fn render_markdown_list_item(
         .items_start()
         .children(vec![
             bullet,
-            div().children(contents).pr(cx.scaled_rems(1.0)).w_full(),
+            v_flex()
+                .children(contents)
+                .gap(cx.scaled_rems(1.0))
+                .pr(cx.scaled_rems(1.0))
+                .w_full(),
         ]);
 
     cx.with_common_p(item).into_any()
