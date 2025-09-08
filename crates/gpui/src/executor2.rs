@@ -183,7 +183,7 @@ impl BackgroundExecutor {
     /// in tests, run an arbitrary number of tasks (determined by the SEED environment variable)
     #[cfg(any(test, feature = "test-support"))]
     pub fn simulate_random_delay(&self) -> Yield {
-        self.0.scheduler().as_test().yield_random()
+        self.scheduler().as_test().yield_random()
     }
 
     /// in tests, indicate that a given task from `spawn_labeled` should run after everything else
@@ -204,7 +204,7 @@ impl BackgroundExecutor {
     /// the test still has outstanding tasks, this will panic. (See also [`Self::allow_parking`])
     #[cfg(any(test, feature = "test-support"))]
     pub fn run_until_parked(&self) {
-        self.0.scheduler().as_test().run();
+        self.scheduler().as_test().run();
     }
 
     /// in tests, prevents `run_until_parked` from panicking if there are outstanding tasks.
@@ -212,13 +212,13 @@ impl BackgroundExecutor {
     /// do take real async time to run.
     #[cfg(any(test, feature = "test-support"))]
     pub fn allow_parking(&self) {
-        self.0.scheduler().as_test().allow_parking();
+        self.scheduler().as_test().allow_parking();
     }
 
     /// undoes the effect of [`Self::allow_parking`].
     #[cfg(any(test, feature = "test-support"))]
     pub fn forbid_parking(&self) {
-        self.0.scheduler().as_test().forbid_parking();
+        self.scheduler().as_test().forbid_parking();
     }
 
     /// in tests, returns the rng used by the dispatcher and seeded by the `SEED` environment variable
@@ -239,7 +239,7 @@ impl BackgroundExecutor {
     #[cfg(any(test, feature = "test-support"))]
     /// in tests, control the number of ticks that `block_with_timeout` will run before timing out.
     pub fn set_block_on_ticks(&self, range: std::ops::RangeInclusive<usize>) {
-        self.0.scheduler().as_test().set_timeout_ticks(range)
+        self.scheduler().as_test().set_timeout_ticks(range)
     }
 }
 
