@@ -998,6 +998,11 @@ impl AgentConfiguration {
     }
 
     fn render_agent_servers_section(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let custom_settings = cx
+            .global::<SettingsStore>()
+            .get::<AllAgentServersSettings>(None)
+            .custom
+            .clone();
         let user_defined_agents = self
             .agent_server_store
             .read(cx)
@@ -1012,8 +1017,11 @@ impl AgentConfiguration {
                     IconName::Ai,
                     name.clone(),
                     ExternalAgent::Custom {
-                        name: name.into(),
-                        command: placeholder_command(),
+                        name: name.clone().into(),
+                        command: custom_settings
+                            .get(&name.0)
+                            .map(|settings| settings.command.clone())
+                            .unwrap_or(placeholder_command()),
                     },
                     cx,
                 )

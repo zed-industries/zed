@@ -7,7 +7,9 @@ use std::time::Duration;
 use acp_thread::AcpThread;
 use agent2::{DbThreadMetadata, HistoryEntry};
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
-use project::agent_server_store::{AgentServerCommand, CLAUDE_CODE_NAME, GEMINI_NAME};
+use project::agent_server_store::{
+    AgentServerCommand, AllAgentServersSettings, CLAUDE_CODE_NAME, GEMINI_NAME,
+};
 use serde::{Deserialize, Serialize};
 use zed_actions::OpenBrowser;
 use zed_actions::agent::{OpenClaudeCodeOnboardingModal, ReauthenticateAgent};
@@ -64,7 +66,7 @@ use project::{DisableAiSettings, Project, ProjectPath, Worktree};
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
 use rules_library::{RulesLibrary, open_rules_library};
 use search::{BufferSearchBar, buffer_search};
-use settings::{Settings, update_settings_file};
+use settings::{Settings, SettingsStore, update_settings_file};
 use theme::ThemeSettings;
 use time::UtcOffset;
 use ui::utils::WithRemSize;
@@ -2695,6 +2697,7 @@ impl AgentPanel {
                                     })
                                     .cloned()
                                     .collect::<Vec<_>>();
+                                let custom_settings = cx.global::<SettingsStore>().get::<AllAgentServersSettings>(None).custom.clone();
                                 for agent_name in agent_names {
                                     menu = menu.item(
                                         ContextMenuEntry::new(format!("New {} Thread", agent_name))
@@ -2704,6 +2707,7 @@ impl AgentPanel {
                                             .handler({
                                                 let workspace = workspace.clone();
                                                 let agent_name = agent_name.clone();
+                                                let custom_settings = custom_settings.clone();
                                                 move |window, cx| {
                                                     if let Some(workspace) = workspace.upgrade() {
                                                         workspace.update(cx, |workspace, cx| {
@@ -2714,11 +2718,9 @@ impl AgentPanel {
                                                                     panel.new_agent_thread(
                                                                         AgentType::Custom {
                                                                             name: agent_name
-                                                                                .0
-                                                                                .clone(),
-                                                                            command:
-                                                                                placeholder_command(
-                                                                                ),
+                                                                                .clone()
+                                                                                .into(),
+                                                                            command: custom_settings.get(&agent_name.0).map(|settings| settings.command.clone()).unwrap_or(placeholder_command())
                                                                         },
                                                                         window,
                                                                         cx,
