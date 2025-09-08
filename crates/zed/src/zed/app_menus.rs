@@ -1,6 +1,7 @@
 use collab_ui::collab_panel;
 use gpui::{Menu, MenuItem, OsAction};
 use terminal_view::terminal_panel;
+use zed_actions::ToggleFocus as ToggleDebugPanel;
 
 pub fn app_menus() -> Vec<Menu> {
     use zed_actions::Quit;
@@ -175,6 +176,7 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::action("Outline Panel", outline_panel::ToggleFocus),
                 MenuItem::action("Collab Panel", collab_panel::ToggleFocus),
                 MenuItem::action("Terminal Panel", terminal_panel::ToggleFocus),
+                MenuItem::action("Debugger Panel", ToggleDebugPanel),
                 MenuItem::separator(),
                 MenuItem::action("Diagnostics", diagnostics::Deploy),
                 MenuItem::separator(),
