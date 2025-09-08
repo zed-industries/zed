@@ -835,7 +835,7 @@ pub struct Window {
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
-    pub(crate) element_opacity: Option<f32>,
+    pub(crate) element_opacity: f32,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) requested_autoscroll: Option<Bounds<Pixels>>,
     pub(crate) image_cache_stack: Vec<AnyImageCache>,
@@ -1146,7 +1146,7 @@ impl Window {
             rendered_entity_stack: Vec::new(),
             element_offset_stack: Vec::new(),
             content_mask_stack: Vec::new(),
-            element_opacity: None,
+            element_opacity: 1.0,
             requested_autoscroll: None,
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
@@ -2368,7 +2368,7 @@ impl Window {
         };
 
         let previous_opacity = self.element_opacity;
-        self.element_opacity = Some(previous_opacity.unwrap_or(1.0) * opacity);
+        self.element_opacity = previous_opacity * opacity;
         let result = f(self);
         self.element_opacity = previous_opacity;
         result
@@ -2467,9 +2467,10 @@ impl Window {
 
     /// Obtain the current element opacity. This method should only be called during the
     /// prepaint phase of element drawing.
+    #[inline]
     pub(crate) fn element_opacity(&self) -> f32 {
         self.invalidator.debug_assert_paint_or_prepaint();
-        self.element_opacity.unwrap_or(1.0)
+        self.element_opacity
     }
 
     /// Obtain the current content mask. This method should only be called during element drawing.
