@@ -168,7 +168,7 @@ impl Render for SingleLineInput {
                     .py_1p5()
                     .flex_grow()
                     .text_color(style.text_color)
-                    .rounded_sm()
+                    .rounded_md()
                     .bg(style.background_color)
                     .border_1()
                     .border_color(style.border_color)

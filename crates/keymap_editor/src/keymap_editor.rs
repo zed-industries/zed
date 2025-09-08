@@ -1617,7 +1617,7 @@ impl Render for KeymapEditor {
                                     .py_1()
                                     .border_1()
                                     .border_color(theme.colors().border)
-                                    .rounded_lg()
+                                    .rounded_md()
                                     .child(self.filter_editor.clone()),
                             )
                             .child(

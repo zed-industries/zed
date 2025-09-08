@@ -535,7 +535,7 @@ impl Render for KeystrokeInput {
             .w_full()
             .flex_1()
             .justify_between()
-            .rounded_sm()
+            .rounded_md()
             .overflow_hidden()
             .map(|this| {
                 if is_recording {
