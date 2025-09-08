@@ -137,9 +137,9 @@ impl Item for SettingsPage {
 //   - Do we want to show the parent groups when a item is matched?
 
 struct UiEntry {
-    title: &'static str,
-    path: Option<&'static str>,
-    documentation: Option<&'static str>,
+    title: SharedString,
+    path: Option<SharedString>,
+    documentation: Option<SharedString>,
     _depth: usize,
     // a
     //  b     < a descendant range < a total descendant range
@@ -199,9 +199,9 @@ fn build_tree_item(
 ) {
     let index = tree.len();
     tree.push(UiEntry {
-        title: entry.title,
-        path: entry.path,
-        documentation: entry.documentation,
+        title: entry.title.into(),
+        path: entry.path.map(SharedString::new_static),
+        documentation: entry.documentation.map(SharedString::new_static),
         _depth: depth,
         descendant_range: index + 1..index + 1,
         total_descendant_range: index + 1..index + 1,
@@ -276,7 +276,7 @@ impl SettingsUiTree {
             build_tree_item(&mut tree, item, 0, prev_root_entry_index);
         }
 
-        root_entry_indices.sort_by_key(|i| tree[*i].title);
+        root_entry_indices.sort_by_key(|i| &tree[*i].title);
 
         let active_entry_index = root_entry_indices[0];
         Self {
@@ -289,18 +289,18 @@ impl SettingsUiTree {
     // todo(settings_ui): Make sure `Item::None` paths are added to the paths tree,
     // so that we can keep none/skip and still test in CI that all settings have
     #[cfg(feature = "test-support")]
-    pub fn all_paths(&self, cx: &App) -> Vec<Vec<&'static str>> {
+    pub fn all_paths(&self, cx: &App) -> Vec<Vec<SharedString>> {
         fn all_paths_rec(
             tree: &[UiEntry],
-            paths: &mut Vec<Vec<&'static str>>,
-            current_path: &mut Vec<&'static str>,
+            paths: &mut Vec<Vec<SharedString>>,
+            current_path: &mut Vec<SharedString>,
             idx: usize,
             cx: &App,
         ) {
             let child = &tree[idx];
             let mut pushed_path = false;
             if let Some(path) = child.path.as_ref() {
-                current_path.push(path);
+                current_path.push(path.clone());
                 paths.push(current_path.clone());
                 pushed_path = true;
             }
@@ -353,7 +353,7 @@ fn render_nav(tree: &SettingsUiTree, _window: &mut Window, cx: &mut Context<Sett
                     settings.settings_tree.active_entry_index = index;
                 }))
                 .child(
-                    Label::new(SharedString::new_static(tree.entries[index].title))
+                    Label::new(tree.entries[index].title.clone())
                         .size(LabelSize::Large)
                         .when(tree.active_entry_index == index, |this| {
                             this.color(Color::Selected)
@@ -374,47 +374,98 @@ fn render_content(
     let mut path = smallvec::smallvec![];
 
     fn render_recursive(
-        tree: &SettingsUiTree,
+        tree: &[UiEntry],
         index: usize,
-        path: &mut SmallVec<[&'static str; 1]>,
+        path: &mut SmallVec<[SharedString; 1]>,
         mut element: Div,
+        // todo(settings_ui): can this be a ref without cx borrow issues?
+        fallback_path: &mut Option<SmallVec<[SharedString; 1]>>,
         window: &mut Window,
         cx: &mut App,
     ) -> Div {
-        let Some(child) = tree.entries.get(index) else {
+        let Some(child) = tree.get(index) else {
             return element.child(
                 Label::new(SharedString::new_static("No settings found")).color(Color::Error),
             );
         };
 
-        element =
-            element.child(Label::new(SharedString::new_static(child.title)).size(LabelSize::Large));
+        element = element.child(Label::new(child.title.clone()).size(LabelSize::Large));
 
         // todo(settings_ui): subgroups?
         let mut pushed_path = false;
-        if let Some(child_path) = child.path {
-            path.push(child_path);
+        if let Some(child_path) = child.path.as_ref() {
+            path.push(child_path.clone());
+            if let Some(fallback_path) = fallback_path.as_mut() {
+                fallback_path.push(child_path.clone());
+            }
             pushed_path = true;
         }
+        // let fallback_path_copy = fallback_path.cloned();
         let settings_value = settings_value_from_settings_and_path(
             path.clone(),
-            child.title,
-            child.documentation,
+            fallback_path.as_ref().map(|path| path.as_slice()),
+            child.title.clone(),
+            child.documentation.clone(),
             // PERF: how to structure this better? There feels like there's a way to avoid the clone
             // and every value lookup
             SettingsStore::global(cx).raw_user_settings(),
             SettingsStore::global(cx).raw_default_settings(),
         );
         if let Some(select_descendant) = child.select_descendant {
-            let selected_descendant = child
-                .nth_descendant_index(&tree.entries, select_descendant(settings_value.read(), cx));
+            let selected_descendant =
+                child.nth_descendant_index(tree, select_descendant(settings_value.read(), cx));
             if let Some(descendant_index) = selected_descendant {
-                element = render_recursive(&tree, descendant_index, path, element, window, cx);
+                element = render_recursive(
+                    tree,
+                    descendant_index,
+                    path,
+                    element,
+                    fallback_path,
+                    window,
+                    cx,
+                );
             }
-        } else if let Some((_, generate_items)) = child.generate_items.as_ref() {
+        } else if let Some((settings_ui_item, generate_items)) = child.generate_items.as_ref() {
             let generated_items = generate_items(settings_value.read(), cx);
+            let mut ui_items = Vec::with_capacity(generated_items.len());
             for item in generated_items {
-                element = element.child(Label::new(item.title).size(LabelSize::Large));
+                let settings_ui_entry = SettingsUiEntry {
+                    path: None,
+                    title: "",
+                    documentation: None,
+                    item: settings_ui_item.clone(),
+                };
+                let prev_index = if ui_items.is_empty() {
+                    None
+                } else {
+                    Some(ui_items.len() - 1)
+                };
+                let item_index = ui_items.len();
+                build_tree_item(
+                    &mut ui_items,
+                    settings_ui_entry,
+                    child._depth + 1,
+                    prev_index,
+                );
+                if item_index < ui_items.len() {
+                    ui_items[item_index].path = None;
+                    ui_items[item_index].title = item.title.clone();
+                    ui_items[item_index].documentation = item.documentation.clone();
+                    // todo! this only works for language settings because they're top level, need way for DynamicMap to provide path for this
+
+                    // push instead of setting on ui item so that the path isn't pushed to default_path as well
+                    path.push(item.path.clone());
+                    element = render_recursive(
+                        &ui_items,
+                        item_index,
+                        path,
+                        element,
+                        &mut Some(SmallVec::new()),
+                        window,
+                        cx,
+                    );
+                    path.pop();
+                }
             }
         } else if let Some(child_render) = child.render.as_ref() {
             element = element.child(div().child(render_item_single(
@@ -426,8 +477,16 @@ fn render_content(
         } else if let Some(child_index) = child.first_descendant_index() {
             let mut index = Some(child_index);
             while let Some(sub_child_index) = index {
-                element = render_recursive(tree, sub_child_index, path, element, window, cx);
-                index = tree.entries[sub_child_index].next_sibling;
+                element = render_recursive(
+                    tree,
+                    sub_child_index,
+                    path,
+                    element,
+                    fallback_path,
+                    window,
+                    cx,
+                );
+                index = tree[sub_child_index].next_sibling;
             }
         } else {
             element =
@@ -436,15 +495,19 @@ fn render_content(
 
         if pushed_path {
             path.pop();
+            if let Some(fallback_path) = fallback_path.as_mut() {
+                fallback_path.pop();
+            }
         }
         return element;
     }
 
     return render_recursive(
-        tree,
+        &tree.entries,
         tree.active_entry_index,
         &mut path,
         content,
+        &mut None,
         window,
         cx,
     );
@@ -501,15 +564,15 @@ fn render_old_appearance_settings(cx: &mut App) -> impl IntoElement {
         )
 }
 
-fn element_id_from_path(path: &[&'static str]) -> ElementId {
+fn element_id_from_path(path: &[SharedString]) -> ElementId {
     if path.len() == 0 {
         panic!("Path length must not be zero");
     } else if path.len() == 1 {
-        ElementId::Name(SharedString::new_static(path[0]))
+        ElementId::Name(path[0].clone())
     } else {
         ElementId::from((
-            ElementId::from(SharedString::new_static(path[path.len() - 2])),
-            SharedString::new_static(path[path.len() - 1]),
+            ElementId::from(path[path.len() - 2].clone()),
+            path[path.len() - 1].clone(),
         ))
     }
 }
@@ -542,13 +605,13 @@ fn render_item_single(
 
 pub fn read_settings_value_from_path<'a>(
     settings_contents: &'a serde_json::Value,
-    path: &[&str],
+    path: &[impl AsRef<str>],
 ) -> Option<&'a serde_json::Value> {
     // todo(settings_ui) make non recursive, and move to `settings` alongside SettingsValue, and add method to SettingsValue to get nested
     let Some((key, remaining)) = path.split_first() else {
         return Some(settings_contents);
     };
-    let Some(value) = settings_contents.get(key) else {
+    let Some(value) = settings_contents.get(key.as_ref()) else {
         return None;
     };
 
@@ -558,13 +621,17 @@ pub fn read_settings_value_from_path<'a>(
 fn downcast_any_item<T: serde::de::DeserializeOwned>(
     settings_value: SettingsValue<serde_json::Value>,
 ) -> SettingsValue<T> {
-    let value = settings_value
-        .value
-        .map(|value| serde_json::from_value::<T>(value).expect("value is not a T"));
+    let value = settings_value.value.map(|value| {
+        serde_json::from_value::<T>(value.clone())
+            .with_context(|| format!("path: {:?}", settings_value.path.join(".")))
+            .with_context(|| format!("value is not a {}: {}", std::any::type_name::<T>(), value))
+            .unwrap()
+    });
     // todo(settings_ui) Create test that constructs UI tree, and asserts that all elements have default values
     let default_value = serde_json::from_value::<T>(settings_value.default_value)
         .with_context(|| format!("path: {:?}", settings_value.path.join(".")))
-        .expect("default value is not an Option<T>");
+        .with_context(|| format!("value is not a {}", std::any::type_name::<T>()))
+        .unwrap();
     let deserialized_setting_value = SettingsValue {
         title: settings_value.title,
         path: settings_value.path,
@@ -698,8 +765,8 @@ fn render_switch_field(
     let path = value.path.clone();
     SwitchField::new(
         id,
-        SharedString::new_static(value.title),
-        value.documentation.map(SharedString::new_static),
+        value.title.clone(),
+        value.documentation.clone(),
         match value.read() {
             true => ToggleState::Selected,
             false => ToggleState::Unselected,
@@ -729,7 +796,6 @@ fn render_toggle_button_group(
     let value = downcast_any_item::<String>(value);
 
     fn make_toggle_group<const LEN: usize>(
-        group_name: &'static str,
         value: SettingsValue<String>,
         variants: &'static [&'static str],
         labels: &'static [&'static str],
@@ -753,7 +819,7 @@ fn render_toggle_button_group(
 
         let mut idx = 0;
         ToggleButtonGroup::single_row(
-            group_name,
+            value.title.clone(),
             variants_array.map(|(variant, label)| {
                 let path = value.path.clone();
                 idx += 1;
@@ -774,7 +840,7 @@ fn render_toggle_button_group(
     macro_rules! templ_toggl_with_const_param {
         ($len:expr) => {
             if variants.len() == $len {
-                return make_toggle_group::<$len>(value.title, value, variants, labels);
+                return make_toggle_group::<$len>(value, variants, labels);
             }
         };
     }
@@ -788,13 +854,19 @@ fn render_toggle_button_group(
 }
 
 fn settings_value_from_settings_and_path(
-    path: SmallVec<[&'static str; 1]>,
-    title: &'static str,
-    documentation: Option<&'static str>,
+    path: SmallVec<[SharedString; 1]>,
+    fallback_path: Option<&[SharedString]>,
+    title: SharedString,
+    documentation: Option<SharedString>,
     user_settings: &serde_json::Value,
     default_settings: &serde_json::Value,
 ) -> SettingsValue<serde_json::Value> {
     let default_value = read_settings_value_from_path(default_settings, &path)
+        .or_else(|| {
+            fallback_path.and_then(|fallback_path| {
+                read_settings_value_from_path(default_settings, fallback_path)
+            })
+        })
         .with_context(|| format!("No default value for item at path {:?}", path.join(".")))
         .expect("Default value set for item")
         .clone();

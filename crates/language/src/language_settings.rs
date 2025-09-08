@@ -523,6 +523,7 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: auto
     #[serde(default)]
+    #[settings_ui(skip)]
     pub formatter: Option<SelectedFormatter>,
     /// Zed's Prettier integration settings.
     /// Allows to enable/disable formatting with Prettier
@@ -1673,11 +1674,13 @@ pub struct PrettierSettings {
     /// Forces Prettier integration to use specific plugins when formatting files with the language.
     /// The default Prettier will be installed with these plugins.
     #[serde(default)]
+    #[settings_ui(skip)]
     pub plugins: HashSet<String>,
 
     /// Default Prettier options, in the format as in package.json section for Prettier.
     /// If project installs Prettier via its package.json, these options will be ignored.
     #[serde(flatten)]
+    #[settings_ui(skip)]
     pub options: HashMap<String, serde_json::Value>,
 }
 

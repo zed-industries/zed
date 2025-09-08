@@ -1,6 +1,7 @@
 use std::{
     any::TypeId,
     num::{NonZeroU32, NonZeroUsize},
+    rc::Rc,
 };
 
 use anyhow::Context as _;
@@ -27,6 +28,7 @@ pub trait SettingsUi {
     }
 }
 
+#[derive(Clone)]
 pub struct SettingsUiEntry {
     /// The path in the settings JSON file for this setting. Relative to parent
     /// None implies `#[serde(flatten)]` or `Settings::KEY.is_none()` for top level settings
@@ -38,6 +40,7 @@ pub struct SettingsUiEntry {
     pub item: SettingsUiItem,
 }
 
+#[derive(Clone)]
 pub enum SettingsUiItemSingle {
     SwitchField,
     /// A numeric stepper for a specific type of number
@@ -55,13 +58,13 @@ pub enum SettingsUiItemSingle {
         /// Must be the same length as `variants`
         labels: &'static [&'static str],
     },
-    Custom(Box<dyn Fn(SettingsValue<serde_json::Value>, &mut Window, &mut App) -> AnyElement>),
+    Custom(Rc<dyn Fn(SettingsValue<serde_json::Value>, &mut Window, &mut App) -> AnyElement>),
 }
 
 pub struct SettingsValue<T> {
-    pub title: &'static str,
-    pub documentation: Option<&'static str>,
-    pub path: SmallVec<[&'static str; 1]>,
+    pub title: SharedString,
+    pub documentation: Option<SharedString>,
+    pub path: SmallVec<[SharedString; 1]>,
     pub value: Option<T>,
     pub default_value: T,
 }
@@ -76,7 +79,7 @@ impl<T> SettingsValue<T> {
 }
 
 impl SettingsValue<serde_json::Value> {
-    pub fn write_value(path: &SmallVec<[&'static str; 1]>, value: serde_json::Value, cx: &mut App) {
+    pub fn write_value(path: &SmallVec<[SharedString; 1]>, value: serde_json::Value, cx: &mut App) {
         let settings_store = SettingsStore::global(cx);
         let fs = <dyn Fs>::global(cx);
 
@@ -93,7 +96,7 @@ impl SettingsValue<serde_json::Value> {
 
 impl<T: serde::Serialize> SettingsValue<T> {
     pub fn write(
-        path: &SmallVec<[&'static str; 1]>,
+        path: &SmallVec<[SharedString; 1]>,
         value: T,
         cx: &mut App,
     ) -> Result<(), serde_json::Error> {
@@ -102,6 +105,7 @@ impl<T: serde::Serialize> SettingsValue<T> {
     }
 }
 
+#[derive(Clone)]
 pub struct SettingsUiItemUnion {
     pub options: Vec<SettingsUiEntry>,
     pub determine_option: fn(&serde_json::Value, &App) -> usize,
@@ -113,15 +117,18 @@ pub struct SettingsUiEntryMetaData {
     pub documentation: Option<SharedString>,
 }
 
+#[derive(Clone)]
 pub struct SettingsUiItemDynamicMap {
     pub item: fn() -> SettingsUiItem,
     pub determine_items: fn(&serde_json::Value, &App) -> Vec<SettingsUiEntryMetaData>,
 }
 
+#[derive(Clone)]
 pub struct SettingsUiItemGroup {
     pub items: Vec<SettingsUiEntry>,
 }
 
+#[derive(Clone)]
 pub enum SettingsUiItem {
     Group(SettingsUiItemGroup),
     Single(SettingsUiItemSingle),
