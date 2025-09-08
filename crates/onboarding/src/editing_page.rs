@@ -104,7 +104,7 @@ fn write_ui_font_family(font: SharedString, cx: &mut App) {
             "Welcome Font Changed",
             type = "ui font",
             old = theme_settings.ui_font_family,
-            new = font.clone()
+            new = font
         );
         theme_settings.ui_font_family = Some(FontFamilyName(font.into()));
     });
@@ -134,7 +134,7 @@ fn write_buffer_font_family(font_family: SharedString, cx: &mut App) {
             "Welcome Font Changed",
             type = "editor font",
             old = theme_settings.buffer_font_family,
-            new = font_family.clone()
+            new = font_family
         );
 
         theme_settings.buffer_font_family = Some(FontFamilyName(font_family.into()));
@@ -314,7 +314,7 @@ fn render_font_customization_section(
                         .child(
                             PopoverMenu::new("ui-font-picker")
                                 .menu({
-                                    let ui_font_picker = ui_font_picker.clone();
+                                    let ui_font_picker = ui_font_picker;
                                     move |_window, _cx| Some(ui_font_picker.clone())
                                 })
                                 .trigger(
@@ -378,7 +378,7 @@ fn render_font_customization_section(
                         .child(
                             PopoverMenu::new("buffer-font-picker")
                                 .menu({
-                                    let buffer_font_picker = buffer_font_picker.clone();
+                                    let buffer_font_picker = buffer_font_picker;
                                     move |_window, _cx| Some(buffer_font_picker.clone())
                                 })
                                 .trigger(
@@ -449,28 +449,28 @@ impl FontPickerDelegate {
     ) -> Self {
         let font_family_cache = FontFamilyCache::global(cx);
 
-        let fonts: Vec<SharedString> = font_family_cache
-            .list_font_families(cx)
-            .into_iter()
-            .collect();
-
+        let fonts = font_family_cache
+            .try_list_font_families()
+            .unwrap_or_else(|| vec![current_font.clone()]);
         let selected_index = fonts
             .iter()
             .position(|font| *font == current_font)
             .unwrap_or(0);
 
+        let filtered_fonts = fonts
+            .iter()
+            .enumerate()
+            .map(|(index, font)| StringMatch {
+                candidate_id: index,
+                string: font.to_string(),
+                positions: Vec::new(),
+                score: 0.0,
+            })
+            .collect();
+
         Self {
-            fonts: fonts.clone(),
-            filtered_fonts: fonts
-                .iter()
-                .enumerate()
-                .map(|(index, font)| StringMatch {
-                    candidate_id: index,
-                    string: font.to_string(),
-                    positions: Vec::new(),
-                    score: 0.0,
-                })
-                .collect(),
+            fonts,
+            filtered_fonts,
             selected_index,
             current_font,
             on_font_changed: Arc::new(on_font_changed),
@@ -605,8 +605,8 @@ fn render_popular_settings_section(
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement {
-    const LIGATURE_TOOLTIP: &'static str =
-        "Font ligatures combine two characters into one. For example, turning =/= into ≠.";
+    const LIGATURE_TOOLTIP: &str =
+        "Font ligatures combine two characters into one. For example, turning != into ≠.";
 
     v_flex()
         .pt_6()

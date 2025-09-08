@@ -385,12 +385,11 @@ impl ContextPicker {
     }
 
     pub fn select_first(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match &self.mode {
-            ContextPickerState::Default(entity) => entity.update(cx, |entity, cx| {
+        // Other variants already select their first entry on open automatically
+        if let ContextPickerState::Default(entity) = &self.mode {
+            entity.update(cx, |entity, cx| {
                 entity.select_first(&Default::default(), window, cx)
-            }),
-            // Other variants already select their first entry on open automatically
-            _ => {}
+            })
         }
     }
 
@@ -819,13 +818,8 @@ pub fn crease_for_mention(
 
     let render_trailer = move |_row, _unfold, _window: &mut Window, _cx: &mut App| Empty.into_any();
 
-    Crease::inline(
-        range,
-        placeholder.clone(),
-        fold_toggle("mention"),
-        render_trailer,
-    )
-    .with_metadata(CreaseMetadata { icon_path, label })
+    Crease::inline(range, placeholder, fold_toggle("mention"), render_trailer)
+        .with_metadata(CreaseMetadata { icon_path, label })
 }
 
 fn render_fold_icon_button(
@@ -993,7 +987,8 @@ impl MentionLink {
                     .read(cx)
                     .project()
                     .read(cx)
-                    .entry_for_path(&project_path, cx)?;
+                    .entry_for_path(&project_path, cx)?
+                    .clone();
                 Some(MentionLink::File(project_path, entry))
             }
             Self::SYMBOL => {

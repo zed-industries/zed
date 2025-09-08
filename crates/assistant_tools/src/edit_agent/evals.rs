@@ -1153,8 +1153,7 @@ impl EvalInput {
             .expect("Conversation must end with an edit_file tool use")
             .clone();
 
-        let edit_file_input: EditFileToolInput =
-            serde_json::from_value(tool_use.input.clone()).unwrap();
+        let edit_file_input: EditFileToolInput = serde_json::from_value(tool_use.input).unwrap();
 
         EvalInput {
             conversation,
@@ -1400,7 +1399,7 @@ fn eval(
 }
 
 fn run_eval(eval: EvalInput, tx: mpsc::Sender<Result<EvalOutput>>) {
-    let dispatcher = gpui::TestDispatcher::new(StdRng::from_entropy());
+    let dispatcher = gpui::TestDispatcher::new(StdRng::from_os_rng());
     let mut cx = TestAppContext::build(dispatcher, None);
     let output = cx.executor().block_test(async {
         let test = EditAgentTest::new(&mut cx).await;
@@ -1460,7 +1459,7 @@ impl EditAgentTest {
     async fn new(cx: &mut TestAppContext) -> Self {
         cx.executor().allow_parking();
 
-        let fs = FakeFs::new(cx.executor().clone());
+        let fs = FakeFs::new(cx.executor());
         cx.update(|cx| {
             settings::init(cx);
             gpui_tokio::init(cx);
@@ -1475,7 +1474,7 @@ impl EditAgentTest {
             Project::init_settings(cx);
             language::init(cx);
             language_model::init(client.clone(), cx);
-            language_models::init(user_store.clone(), client.clone(), cx);
+            language_models::init(user_store, client.clone(), cx);
             crate::init(client.http_client(), cx);
         });
 
@@ -1708,7 +1707,7 @@ async fn retry_on_rate_limit<R>(mut request: impl AsyncFnMut() -> Result<R>) -> 
         };
 
         if let Some(retry_after) = retry_delay {
-            let jitter = retry_after.mul_f64(rand::thread_rng().gen_range(0.0..1.0));
+            let jitter = retry_after.mul_f64(rand::rng().random_range(0.0..1.0));
             eprintln!("Attempt #{attempt}: Retry after {retry_after:?} + jitter of {jitter:?}");
             Timer::after(retry_after + jitter).await;
         } else {

@@ -9,12 +9,9 @@ use util::markdown::MarkdownInlineCode;
 
 use crate::{AgentTool, ToolCallEventStream};
 
-/// Creates a new directory at the specified path within the project. Returns
-/// confirmation that the directory was created.
+/// Creates a new directory at the specified path within the project. Returns confirmation that the directory was created.
 ///
-/// This tool creates a directory and all necessary parent directories (similar
-/// to `mkdir -p`). It should be used whenever you need to create new
-/// directories within the project.
+/// This tool creates a directory and all necessary parent directories (similar to `mkdir -p`). It should be used whenever you need to create new directories within the project.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CreateDirectoryToolInput {
     /// The path of the new directory.
@@ -44,15 +41,19 @@ impl AgentTool for CreateDirectoryTool {
     type Input = CreateDirectoryToolInput;
     type Output = String;
 
-    fn name(&self) -> SharedString {
-        "create_directory".into()
+    fn name() -> &'static str {
+        "create_directory"
     }
 
-    fn kind(&self) -> ToolKind {
+    fn kind() -> ToolKind {
         ToolKind::Read
     }
 
-    fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString {
+    fn initial_title(
+        &self,
+        input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
         if let Ok(input) = input {
             format!("Create directory {}", MarkdownInlineCode(&input.path)).into()
         } else {

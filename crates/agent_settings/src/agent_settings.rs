@@ -8,13 +8,15 @@ use gpui::{App, Pixels, SharedString};
 use language_model::LanguageModel;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 use std::borrow::Cow;
 
 pub use crate::agent_profile::*;
 
 pub const SUMMARIZE_THREAD_PROMPT: &str =
     include_str!("../../agent/src/prompts/summarize_thread_prompt.txt");
+pub const SUMMARIZE_THREAD_DETAILED_PROMPT: &str =
+    include_str!("../../agent/src/prompts/summarize_thread_detailed_prompt.txt");
 
 pub fn init(cx: &mut App) {
     AgentSettings::register(cx);
@@ -221,7 +223,8 @@ impl AgentSettingsContent {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize, JsonSchema, Debug, Default)]
+#[derive(Clone, Serialize, Deserialize, JsonSchema, Debug, Default, SettingsUi, SettingsKey)]
+#[settings_key(key = "agent", fallback_key = "assistant")]
 pub struct AgentSettingsContent {
     /// Whether the Agent is enabled.
     ///
@@ -350,18 +353,19 @@ impl JsonSchema for LanguageModelProviderSetting {
     fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
         json_schema!({
             "enum": [
-                "anthropic",
                 "amazon-bedrock",
-                "google",
-                "lmstudio",
-                "ollama",
-                "openai",
-                "zed.dev",
+                "anthropic",
                 "copilot_chat",
                 "deepseek",
-                "openrouter",
+                "google",
+                "lmstudio",
                 "mistral",
-                "vercel"
+                "ollama",
+                "openai",
+                "openrouter",
+                "vercel",
+                "x_ai",
+                "zed.dev"
             ]
         })
     }
@@ -396,10 +400,6 @@ pub struct ContextServerPresetContent {
 }
 
 impl Settings for AgentSettings {
-    const KEY: Option<&'static str> = Some("agent");
-
-    const FALLBACK_KEY: Option<&'static str> = Some("assistant");
-
     const PRESERVED_KEYS: Option<&'static [&'static str]> = Some(&["version"]);
 
     type FileContent = AgentSettingsContent;
@@ -503,9 +503,8 @@ impl Settings for AgentSettings {
             }
         }
 
-        debug_assert_eq!(
-            sources.default.always_allow_tool_actions.unwrap_or(false),
-            false,
+        debug_assert!(
+            !sources.default.always_allow_tool_actions.unwrap_or(false),
             "For security, agent.always_allow_tool_actions should always be false in default.json. If it's true, that is a bug that should be fixed!"
         );
 

@@ -69,6 +69,7 @@ pub use text_diff::{
 use theme::SyntaxTheme;
 pub use toolchain::{
     LanguageToolchainStore, LocalLanguageToolchainStore, Toolchain, ToolchainList, ToolchainLister,
+    ToolchainMetadata, ToolchainScope,
 };
 use tree_sitter::{self, Query, QueryCursor, WasmStore, wasmtime};
 use util::serde::default_true;
@@ -206,7 +207,7 @@ impl CachedLspAdapter {
     }
 
     pub fn name(&self) -> LanguageServerName {
-        self.adapter.name().clone()
+        self.adapter.name()
     }
 
     pub async fn get_language_server_command(
@@ -331,7 +332,7 @@ pub trait LspAdapter: 'static + Send + Sync {
             // for each worktree we might have open.
             if binary_options.allow_path_lookup
                 && let Some(binary) = self.check_if_user_installed(delegate.as_ref(), toolchains, cx).await {
-                    log::info!(
+                    log::debug!(
                         "found user-installed language server for {}. path: {:?}, arguments: {:?}",
                         self.name().0,
                         binary.path,
@@ -395,6 +396,7 @@ pub trait LspAdapter: 'static + Send + Sync {
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
+        cx: &AsyncApp,
     ) -> Result<Box<dyn 'static + Send + Any>>;
 
     fn will_fetch_server(
@@ -588,6 +590,11 @@ pub trait LspAdapter: 'static + Send + Sync {
             "Not implemented for this adapter. This method should only be called on the default JSON language server adapter"
         );
     }
+
+    /// True for the extension adapter and false otherwise.
+    fn is_extension(&self) -> bool {
+        false
+    }
 }
 
 async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>(
@@ -601,18 +608,18 @@ async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>
     }
 
     let name = adapter.name();
-    log::info!("fetching latest version of language server {:?}", name.0);
+    log::debug!("fetching latest version of language server {:?}", name.0);
     delegate.update_status(name.clone(), BinaryStatus::CheckingForUpdate);
 
     let latest_version = adapter
-        .fetch_latest_server_version(delegate.as_ref())
+        .fetch_latest_server_version(delegate.as_ref(), cx)
         .await?;
 
     if let Some(binary) = adapter
         .check_if_version_installed(latest_version.as_ref(), &container_dir, delegate.as_ref())
         .await
     {
-        log::info!("language server {:?} is already installed", name.0);
+        log::debug!("language server {:?} is already installed", name.0);
         delegate.update_status(name.clone(), BinaryStatus::None);
         Ok(binary)
     } else {
@@ -720,6 +727,9 @@ pub struct LanguageConfig {
     /// How to soft-wrap long lines of text.
     #[serde(default)]
     pub soft_wrap: Option<SoftWrap>,
+    /// When set, selections can be wrapped using prefix/suffix pairs on both sides.
+    #[serde(default)]
+    pub wrap_characters: Option<WrapCharactersConfig>,
     /// The name of a Prettier parser that will be used for this language when no file path is available.
     /// If there's a parser name in the language settings, that will be used instead.
     #[serde(default)]
@@ -923,6 +933,7 @@ impl Default for LanguageConfig {
             hard_tabs: None,
             tab_size: None,
             soft_wrap: None,
+            wrap_characters: None,
             prettier_parser_name: None,
             hidden: false,
             jsx_tag_auto_close: None,
@@ -930,6 +941,18 @@ impl Default for LanguageConfig {
             debuggers: Default::default(),
         }
     }
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+pub struct WrapCharactersConfig {
+    /// Opening token split into a prefix and suffix. The first caret goes
+    /// after the prefix (i.e., between prefix and suffix).
+    pub start_prefix: String,
+    pub start_suffix: String,
+    /// Closing token split into a prefix and suffix. The second caret goes
+    /// after the prefix (i.e., between prefix and suffix).
+    pub end_prefix: String,
+    pub end_suffix: String,
 }
 
 fn auto_indent_using_last_non_empty_line_default() -> bool {
@@ -1234,6 +1257,7 @@ struct InjectionPatternConfig {
     combined: bool,
 }
 
+#[derive(Debug)]
 struct BracketsConfig {
     query: Query,
     open_capture_ix: u32,
@@ -1513,9 +1537,8 @@ impl Language {
             .map(|ix| {
                 let mut config = BracketsPatternConfig::default();
                 for setting in query.property_settings(ix) {
-                    match setting.key.as_ref() {
-                        "newline.only" => config.newline_only = true,
-                        _ => {}
+                    if setting.key.as_ref() == "newline.only" {
+                        config.newline_only = true
                     }
                 }
                 config
@@ -2206,6 +2229,7 @@ impl LspAdapter for FakeLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
+        _: &AsyncApp,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         unreachable!();
     }
@@ -2250,6 +2274,10 @@ impl LspAdapter for FakeLspAdapter {
     ) -> Option<CodeLabel> {
         let label_for_completion = self.label_for_completion.as_ref()?;
         label_for_completion(item, language)
+    }
+
+    fn is_extension(&self) -> bool {
+        false
     }
 }
 

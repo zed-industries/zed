@@ -245,12 +245,12 @@ fn render_remote_button(
             }
             (0, 0) => None,
             (ahead, 0) => Some(remote_button::render_push_button(
-                keybinding_target.clone(),
+                keybinding_target,
                 id,
                 ahead,
             )),
             (ahead, behind) => Some(remote_button::render_pull_button(
-                keybinding_target.clone(),
+                keybinding_target,
                 id,
                 ahead,
                 behind,
@@ -425,16 +425,9 @@ mod remote_button {
         let command = command.into();
 
         if let Some(handle) = focus_handle {
-            Tooltip::with_meta_in(
-                label.clone(),
-                Some(action),
-                command.clone(),
-                &handle,
-                window,
-                cx,
-            )
+            Tooltip::with_meta_in(label, Some(action), command, &handle, window, cx)
         } else {
-            Tooltip::with_meta(label.clone(), Some(action), command.clone(), window, cx)
+            Tooltip::with_meta(label, Some(action), command, window, cx)
         }
     }
 
@@ -457,7 +450,7 @@ mod remote_button {
                 Some(ContextMenu::build(window, cx, |context_menu, _, _| {
                     context_menu
                         .when_some(keybinding_target.clone(), |el, keybinding_target| {
-                            el.context(keybinding_target.clone())
+                            el.context(keybinding_target)
                         })
                         .action("Fetch", git::Fetch.boxed_clone())
                         .action("Fetch From", git::FetchFrom.boxed_clone())

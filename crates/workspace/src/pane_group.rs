@@ -1175,7 +1175,7 @@ mod element {
             bounding_boxes.clear();
 
             let mut layout = PaneAxisLayout {
-                dragged_handle: dragged_handle.clone(),
+                dragged_handle,
                 children: Vec::new(),
             };
             for (ix, mut child) in mem::take(&mut self.children).into_iter().enumerate() {

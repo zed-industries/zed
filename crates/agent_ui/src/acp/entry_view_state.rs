@@ -1,15 +1,21 @@
-use std::ops::Range;
+use std::{
+    cell::{Cell, RefCell},
+    ops::Range,
+    rc::Rc,
+};
 
 use acp_thread::{AcpThread, AgentThreadEntry};
-use agent::{TextThreadStore, ThreadStore};
+use agent_client_protocol::{self as acp, ToolCallId};
+use agent2::HistoryStore;
 use collections::HashMap;
 use editor::{Editor, EditorMode, MinimapVisibility};
 use gpui::{
-    AnyEntity, App, AppContext as _, Entity, EntityId, EventEmitter, Focusable,
-    TextStyleRefinement, WeakEntity, Window,
+    AnyEntity, App, AppContext as _, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
+    ScrollHandle, SharedString, TextStyleRefinement, WeakEntity, Window,
 };
 use language::language_settings::SoftWrap;
 use project::Project;
+use prompt_store::PromptStore;
 use settings::Settings as _;
 use terminal_view::TerminalView;
 use theme::ThemeSettings;
@@ -21,27 +27,33 @@ use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
 pub struct EntryViewState {
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
-    thread_store: Entity<ThreadStore>,
-    text_thread_store: Entity<TextThreadStore>,
+    history_store: Entity<HistoryStore>,
+    prompt_store: Option<Entity<PromptStore>>,
     entries: Vec<Entry>,
-    prevent_slash_commands: bool,
+    prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
+    available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
+    agent_name: SharedString,
 }
 
 impl EntryViewState {
     pub fn new(
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
-        thread_store: Entity<ThreadStore>,
-        text_thread_store: Entity<TextThreadStore>,
-        prevent_slash_commands: bool,
+        history_store: Entity<HistoryStore>,
+        prompt_store: Option<Entity<PromptStore>>,
+        prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
+        available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
+        agent_name: SharedString,
     ) -> Self {
         Self {
             workspace,
             project,
-            thread_store,
-            text_thread_store,
+            history_store,
+            prompt_store,
             entries: Vec::new(),
-            prevent_slash_commands,
+            prompt_capabilities,
+            available_commands,
+            agent_name,
         }
     }
 
@@ -77,10 +89,12 @@ impl EntryViewState {
                         let mut editor = MessageEditor::new(
                             self.workspace.clone(),
                             self.project.clone(),
-                            self.thread_store.clone(),
-                            self.text_thread_store.clone(),
+                            self.history_store.clone(),
+                            self.prompt_store.clone(),
+                            self.prompt_capabilities.clone(),
+                            self.available_commands.clone(),
+                            self.agent_name.clone(),
                             "Edit message － @ to include context",
-                            self.prevent_slash_commands,
                             editor::EditorMode::AutoHeight {
                                 min_lines: 1,
                                 max_lines: None,
@@ -105,6 +119,7 @@ impl EntryViewState {
                 }
             }
             AgentThreadEntry::ToolCall(tool_call) => {
+                let id = tool_call.id.clone();
                 let terminals = tool_call.terminals().cloned().collect::<Vec<_>>();
                 let diffs = tool_call.diffs().cloned().collect::<Vec<_>>();
 
@@ -118,29 +133,64 @@ impl EntryViewState {
                     views
                 };
 
+                let is_tool_call_completed =
+                    matches!(tool_call.status, acp_thread::ToolCallStatus::Completed);
+
                 for terminal in terminals {
-                    views.entry(terminal.entity_id()).or_insert_with(|| {
-                        create_terminal(
-                            self.workspace.clone(),
-                            self.project.clone(),
-                            terminal.clone(),
-                            window,
-                            cx,
-                        )
-                        .into_any()
-                    });
+                    match views.entry(terminal.entity_id()) {
+                        collections::hash_map::Entry::Vacant(entry) => {
+                            let element = create_terminal(
+                                self.workspace.clone(),
+                                self.project.clone(),
+                                terminal.clone(),
+                                window,
+                                cx,
+                            )
+                            .into_any();
+                            cx.emit(EntryViewEvent {
+                                entry_index: index,
+                                view_event: ViewEvent::NewTerminal(id.clone()),
+                            });
+                            entry.insert(element);
+                        }
+                        collections::hash_map::Entry::Occupied(_entry) => {
+                            if is_tool_call_completed && terminal.read(cx).output().is_none() {
+                                cx.emit(EntryViewEvent {
+                                    entry_index: index,
+                                    view_event: ViewEvent::TerminalMovedToBackground(id.clone()),
+                                });
+                            }
+                        }
+                    }
                 }
 
                 for diff in diffs {
-                    views
-                        .entry(diff.entity_id())
-                        .or_insert_with(|| create_editor_diff(diff.clone(), window, cx).into_any());
+                    views.entry(diff.entity_id()).or_insert_with(|| {
+                        let element = create_editor_diff(diff.clone(), window, cx).into_any();
+                        cx.emit(EntryViewEvent {
+                            entry_index: index,
+                            view_event: ViewEvent::NewDiff(id.clone()),
+                        });
+                        element
+                    });
                 }
             }
-            AgentThreadEntry::AssistantMessage(_) => {
-                if index == self.entries.len() {
-                    self.entries.push(Entry::empty())
-                }
+            AgentThreadEntry::AssistantMessage(message) => {
+                let entry = if let Some(Entry::AssistantMessage(entry)) =
+                    self.entries.get_mut(index)
+                {
+                    entry
+                } else {
+                    self.set_entry(
+                        index,
+                        Entry::AssistantMessage(AssistantMessageEntry::default()),
+                    );
+                    let Some(Entry::AssistantMessage(entry)) = self.entries.get_mut(index) else {
+                        unreachable!()
+                    };
+                    entry
+                };
+                entry.sync(message);
             }
         };
     }
@@ -157,10 +207,10 @@ impl EntryViewState {
         self.entries.drain(range);
     }
 
-    pub fn settings_changed(&mut self, cx: &mut App) {
+    pub fn agent_font_size_changed(&mut self, cx: &mut App) {
         for entry in self.entries.iter() {
             match entry {
-                Entry::UserMessage { .. } => {}
+                Entry::UserMessage { .. } | Entry::AssistantMessage { .. } => {}
                 Entry::Content(response_views) => {
                     for view in response_views.values() {
                         if let Ok(diff_editor) = view.clone().downcast::<Editor>() {
@@ -186,19 +236,50 @@ pub struct EntryViewEvent {
 }
 
 pub enum ViewEvent {
+    NewDiff(ToolCallId),
+    NewTerminal(ToolCallId),
+    TerminalMovedToBackground(ToolCallId),
     MessageEditorEvent(Entity<MessageEditor>, MessageEditorEvent),
 }
 
+#[derive(Default, Debug)]
+pub struct AssistantMessageEntry {
+    scroll_handles_by_chunk_index: HashMap<usize, ScrollHandle>,
+}
+
+impl AssistantMessageEntry {
+    pub fn scroll_handle_for_chunk(&self, ix: usize) -> Option<ScrollHandle> {
+        self.scroll_handles_by_chunk_index.get(&ix).cloned()
+    }
+
+    pub fn sync(&mut self, message: &acp_thread::AssistantMessage) {
+        if let Some(acp_thread::AssistantMessageChunk::Thought { .. }) = message.chunks.last() {
+            let ix = message.chunks.len() - 1;
+            let handle = self.scroll_handles_by_chunk_index.entry(ix).or_default();
+            handle.scroll_to_bottom();
+        }
+    }
+}
+
+#[derive(Debug)]
 pub enum Entry {
     UserMessage(Entity<MessageEditor>),
+    AssistantMessage(AssistantMessageEntry),
     Content(HashMap<EntityId, AnyEntity>),
 }
 
 impl Entry {
+    pub fn focus_handle(&self, cx: &App) -> Option<FocusHandle> {
+        match self {
+            Self::UserMessage(editor) => Some(editor.read(cx).focus_handle(cx)),
+            Self::AssistantMessage(_) | Self::Content(_) => None,
+        }
+    }
+
     pub fn message_editor(&self) -> Option<&Entity<MessageEditor>> {
         match self {
             Self::UserMessage(editor) => Some(editor),
-            Entry::Content(_) => None,
+            Self::AssistantMessage(_) | Self::Content(_) => None,
         }
     }
 
@@ -219,6 +300,16 @@ impl Entry {
             .map(|entity| entity.downcast::<TerminalView>().unwrap())
     }
 
+    pub fn scroll_handle_for_assistant_message_chunk(
+        &self,
+        chunk_ix: usize,
+    ) -> Option<ScrollHandle> {
+        match self {
+            Self::AssistantMessage(message) => message.scroll_handle_for_chunk(chunk_ix),
+            Self::UserMessage(_) | Self::Content(_) => None,
+        }
+    }
+
     fn content_map(&self) -> Option<&HashMap<EntityId, AnyEntity>> {
         match self {
             Self::Content(map) => Some(map),
@@ -234,7 +325,7 @@ impl Entry {
     pub fn has_content(&self) -> bool {
         match self {
             Self::Content(map) => !map.is_empty(),
-            Self::UserMessage(_) => false,
+            Self::UserMessage(_) | Self::AssistantMessage(_) => false,
         }
     }
 }
@@ -312,9 +403,10 @@ mod tests {
     use std::{path::Path, rc::Rc};
 
     use acp_thread::{AgentConnection, StubAgentConnection};
-    use agent::{TextThreadStore, ThreadStore};
     use agent_client_protocol as acp;
     use agent_settings::AgentSettings;
+    use agent2::HistoryStore;
+    use assistant_context::ContextStore;
     use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
     use editor::{EditorSettings, RowInfo};
     use fs::FakeFs;
@@ -377,16 +469,18 @@ mod tests {
             connection.send_update(session_id, acp::SessionUpdate::ToolCall(tool_call), cx)
         });
 
-        let thread_store = cx.new(|cx| ThreadStore::fake(project.clone(), cx));
-        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+        let context_store = cx.new(|cx| ContextStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
 
         let view_state = cx.new(|_cx| {
             EntryViewState::new(
                 workspace.downgrade(),
                 project.clone(),
-                thread_store,
-                text_thread_store,
-                false,
+                history_store,
+                None,
+                Default::default(),
+                Default::default(),
+                "Test Agent".into(),
             )
         });
 

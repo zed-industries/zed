@@ -1265,8 +1265,8 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::str(("L", "explore"), "project_panel::ToggleFocus"),
         VimCommand::str(("S", "explore"), "project_panel::ToggleFocus"),
         VimCommand::str(("Ve", "xplore"), "project_panel::ToggleFocus"),
-        VimCommand::str(("te", "rm"), "terminal_panel::ToggleFocus"),
-        VimCommand::str(("T", "erm"), "terminal_panel::ToggleFocus"),
+        VimCommand::str(("te", "rm"), "terminal_panel::Toggle"),
+        VimCommand::str(("T", "erm"), "terminal_panel::Toggle"),
         VimCommand::str(("C", "ollab"), "collab_panel::ToggleFocus"),
         VimCommand::str(("Ch", "at"), "chat_panel::ToggleFocus"),
         VimCommand::str(("No", "tifications"), "notification_panel::ToggleFocus"),
@@ -1408,11 +1408,7 @@ pub fn command_interceptor(mut input: &str, cx: &App) -> Vec<CommandInterceptRes
             start: Position::Line { row: 0, offset: 0 },
             end: Some(Position::LastLine { offset: 0 }),
         });
-        if let Some(action) = OnMatchingLines::parse(query, invert, range, cx) {
-            Some(action.boxed_clone())
-        } else {
-            None
-        }
+        OnMatchingLines::parse(query, invert, range, cx).map(|action| action.boxed_clone())
     } else if query.contains('!') {
         ShellExec::parse(query, range.clone())
     } else {
@@ -1496,7 +1492,7 @@ impl OnMatchingLines {
         let mut search = String::new();
         let mut escaped = false;
 
-        while let Some(c) = chars.next() {
+        for c in chars.by_ref() {
             if escaped {
                 escaped = false;
                 // unescape escaped parens
@@ -1648,7 +1644,7 @@ impl OnMatchingLines {
                         });
                         window.dispatch_action(action, cx);
                         cx.defer_in(window, move |editor, window, cx| {
-                            let newest = editor.selections.newest::<Point>(cx).clone();
+                            let newest = editor.selections.newest::<Point>(cx);
                             editor.change_selections(
                                 SelectionEffects::no_scroll(),
                                 window,
@@ -1928,7 +1924,9 @@ impl ShellExec {
 
         let Some(range) = input_range else { return };
 
-        let mut process = project.read(cx).exec_in_shell(command, cx);
+        let Some(mut process) = project.read(cx).exec_in_shell(command, cx).log_err() else {
+            return;
+        };
         process.stdout(Stdio::piped());
         process.stderr(Stdio::piped());
 

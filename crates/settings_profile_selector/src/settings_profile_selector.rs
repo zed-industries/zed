@@ -135,7 +135,7 @@ impl SettingsProfileSelectorDelegate {
     ) -> Option<String> {
         if let Some(profile_name) = profile_name {
             cx.set_global(ActiveSettingsProfileName(profile_name.clone()));
-            return Some(profile_name.clone());
+            return Some(profile_name);
         }
 
         if cx.has_global::<ActiveSettingsProfileName>() {

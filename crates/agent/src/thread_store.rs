@@ -41,8 +41,7 @@ use std::{
 };
 use util::ResultExt as _;
 
-pub static ZED_STATELESS: std::sync::LazyLock<bool> =
-    std::sync::LazyLock::new(|| std::env::var("ZED_STATELESS").is_ok_and(|v| !v.is_empty()));
+use zed_env_vars::ZED_STATELESS;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DataType {
@@ -74,7 +73,7 @@ impl Column for DataType {
     }
 }
 
-const RULES_FILE_NAMES: [&'static str; 9] = [
+const RULES_FILE_NAMES: [&str; 9] = [
     ".rules",
     ".cursorrules",
     ".windsurfrules",
@@ -893,8 +892,19 @@ impl ThreadsDatabase {
 
         let needs_migration_from_heed = mdb_path.exists();
 
-        let connection = if *ZED_STATELESS || cfg!(any(feature = "test-support", test)) {
+        let connection = if *ZED_STATELESS {
             Connection::open_memory(Some("THREAD_FALLBACK_DB"))
+        } else if cfg!(any(feature = "test-support", test)) {
+            // rust stores the name of the test on the current thread.
+            // We use this to automatically create a database that will
+            // be shared within the test (for the test_retrieve_old_thread)
+            // but not with concurrent tests.
+            let thread = std::thread::current();
+            let test_name = thread.name();
+            Connection::open_memory(Some(&format!(
+                "THREAD_FALLBACK_{}",
+                test_name.unwrap_or_default()
+            )))
         } else {
             Connection::open_file(&sqlite_path.to_string_lossy())
         };

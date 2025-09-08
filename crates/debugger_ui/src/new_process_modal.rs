@@ -20,7 +20,7 @@ use gpui::{
 };
 use itertools::Itertools as _;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
-use project::{DebugScenarioContext, TaskContexts, TaskSourceKind, task_store::TaskStore};
+use project::{DebugScenarioContext, Project, TaskContexts, TaskSourceKind, task_store::TaskStore};
 use settings::Settings;
 use task::{DebugScenario, RevealTarget, ZedDebugConfig};
 use theme::ThemeSettings;
@@ -88,8 +88,10 @@ impl NewProcessModal {
             })?;
             workspace.update_in(cx, |workspace, window, cx| {
                 let workspace_handle = workspace.weak_handle();
+                let project = workspace.project().clone();
                 workspace.toggle_modal(window, cx, |window, cx| {
-                    let attach_mode = AttachMode::new(None, workspace_handle.clone(), window, cx);
+                    let attach_mode =
+                        AttachMode::new(None, workspace_handle.clone(), project, window, cx);
 
                     let debug_picker = cx.new(|cx| {
                         let delegate =
@@ -785,7 +787,7 @@ impl RenderOnce for AttachMode {
         v_flex()
             .w_full()
             .track_focus(&self.attach_picker.focus_handle(cx))
-            .child(self.attach_picker.clone())
+            .child(self.attach_picker)
     }
 }
 
@@ -940,6 +942,7 @@ impl AttachMode {
     pub(super) fn new(
         debugger: Option<DebugAdapterName>,
         workspace: WeakEntity<Workspace>,
+        project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<NewProcessModal>,
     ) -> Entity<Self> {
@@ -950,7 +953,7 @@ impl AttachMode {
             stop_on_entry: Some(false),
         };
         let attach_picker = cx.new(|cx| {
-            let modal = AttachModal::new(definition.clone(), workspace, false, window, cx);
+            let modal = AttachModal::new(definition.clone(), workspace, project, false, window, cx);
             window.focus(&modal.focus_handle(cx));
 
             modal
@@ -1383,14 +1386,28 @@ impl PickerDelegate for DebugDelegate {
             .border_color(cx.theme().colors().border_variant)
             .children({
                 let action = menu::SecondaryConfirm.boxed_clone();
-                KeyBinding::for_action(&*action, window, cx).map(|keybind| {
-                    Button::new("edit-debug-task", "Edit in debug.json")
-                        .label_size(LabelSize::Small)
-                        .key_binding(keybind)
-                        .on_click(move |_, window, cx| {
-                            window.dispatch_action(action.boxed_clone(), cx)
-                        })
-                })
+                if self.matches.is_empty() {
+                    Some(
+                        Button::new("edit-debug-json", "Edit debug.json")
+                            .label_size(LabelSize::Small)
+                            .on_click(cx.listener(|_picker, _, window, cx| {
+                                window.dispatch_action(
+                                    zed_actions::OpenProjectDebugTasks.boxed_clone(),
+                                    cx,
+                                );
+                                cx.emit(DismissEvent);
+                            })),
+                    )
+                } else {
+                    KeyBinding::for_action(&*action, window, cx).map(|keybind| {
+                        Button::new("edit-debug-task", "Edit in debug.json")
+                            .label_size(LabelSize::Small)
+                            .key_binding(keybind)
+                            .on_click(move |_, window, cx| {
+                                window.dispatch_action(action.boxed_clone(), cx)
+                            })
+                    })
+                }
             })
             .map(|this| {
                 if (current_modifiers.alt || self.matches.is_empty()) && !self.prompt.is_empty() {

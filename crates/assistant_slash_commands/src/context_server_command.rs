@@ -191,7 +191,7 @@ impl SlashCommand for ContextServerSlashCommand {
                     text: prompt,
                     run_commands_in_text: false,
                 }
-                .to_event_stream())
+                .into_event_stream())
             })
         } else {
             Task::ready(Err(anyhow!("Context server not found")))

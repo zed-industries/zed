@@ -257,9 +257,9 @@ pub fn refine_theme_family(theme_family_content: ThemeFamilyContent) -> ThemeFam
     let author = theme_family_content.author.clone();
 
     let mut theme_family = ThemeFamily {
-        id: id.clone(),
-        name: name.clone().into(),
-        author: author.clone().into(),
+        id,
+        name: name.into(),
+        author: author.into(),
         themes: vec![],
         scales: default_color_scales(),
     };

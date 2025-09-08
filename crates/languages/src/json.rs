@@ -234,7 +234,7 @@ impl JsonLspAdapter {
         schemas
             .as_array_mut()
             .unwrap()
-            .extend(cx.all_action_names().into_iter().map(|&name| {
+            .extend(cx.all_action_names().iter().map(|&name| {
                 project::lsp_store::json_language_server_ext::url_schema_for_action(name)
             }));
 
@@ -321,6 +321,7 @@ impl LspAdapter for JsonLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
+        _: &AsyncApp,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         Ok(Box::new(
             self.node
@@ -488,12 +489,13 @@ impl NodeVersionAdapter {
 #[async_trait(?Send)]
 impl LspAdapter for NodeVersionAdapter {
     fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
+        Self::SERVER_NAME
     }
 
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
+        _: &AsyncApp,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         let release = latest_github_release(
             "zed-industries/package-version-server",

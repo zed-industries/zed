@@ -69,6 +69,7 @@ use workspace::{
     notifications::{DetachAndPromptErr, NotifyTaskExt},
 };
 use worktree::CreatedEntry;
+use zed_actions::workspace::OpenWithSystem;
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
@@ -255,8 +256,6 @@ actions!(
         RevealInFileManager,
         /// Removes the selected folder from the project.
         RemoveFromProject,
-        /// Opens the selected file with the system's default application.
-        OpenWithSystem,
         /// Cuts the selected file or directory.
         Cut,
         /// Pastes the previously cut or copied item.
@@ -447,7 +446,7 @@ impl ProjectPanel {
             cx.subscribe(&project, |this, project, event, cx| match event {
                 project::Event::ActiveEntryChanged(Some(entry_id)) => {
                     if ProjectPanelSettings::get_global(cx).auto_reveal_entries {
-                        this.reveal_entry(project.clone(), *entry_id, true, cx).ok();
+                        this.reveal_entry(project, *entry_id, true, cx).ok();
                     }
                 }
                 project::Event::ActiveEntryChanged(None) => {
@@ -462,10 +461,7 @@ impl ProjectPanel {
                     }
                 }
                 project::Event::RevealInProjectPanel(entry_id) => {
-                    if let Some(()) = this
-                        .reveal_entry(project.clone(), *entry_id, false, cx)
-                        .log_err()
-                    {
+                    if let Some(()) = this.reveal_entry(project, *entry_id, false, cx).log_err() {
                         cx.emit(PanelEvent::Activate);
                     }
                 }
@@ -657,7 +653,7 @@ impl ProjectPanel {
                             let file_path = entry.path.clone();
                             let worktree_id = worktree.read(cx).id();
                             let entry_id = entry.id;
-                            let is_via_ssh = project.read(cx).is_via_ssh();
+                            let is_via_ssh = project.read(cx).is_via_remote_server();
 
                             workspace
                                 .open_path_preview(
@@ -813,7 +809,7 @@ impl ProjectPanel {
         diagnostic_severity: DiagnosticSeverity,
     ) {
         diagnostics
-            .entry((project_path.worktree_id, path_buffer.clone()))
+            .entry((project_path.worktree_id, path_buffer))
             .and_modify(|strongest_diagnostic_severity| {
                 *strongest_diagnostic_severity =
                     cmp::min(*strongest_diagnostic_severity, diagnostic_severity);
@@ -2515,7 +2511,7 @@ impl ProjectPanel {
 
             if clip_is_cut {
                 // Convert the clipboard cut entry to a copy entry after the first paste.
-                self.clipboard = self.clipboard.take().map(ClipboardEntry::to_copy_entry);
+                self.clipboard = self.clipboard.take().map(ClipboardEntry::into_copy_entry);
             }
 
             self.expand_entry(worktree_id, entry.id, cx);
@@ -2780,7 +2776,7 @@ impl ProjectPanel {
 
         let destination_worktree = self.project.update(cx, |project, cx| {
             let entry_path = project.path_for_entry(entry_to_move, cx)?;
-            let destination_entry_path = project.path_for_entry(destination, cx)?.path.clone();
+            let destination_entry_path = project.path_for_entry(destination, cx)?.path;
 
             let mut destination_path = destination_entry_path.as_ref();
             if destination_is_file {
@@ -3589,7 +3585,7 @@ impl ProjectPanel {
                                         previous_components.next();
                                     }
 
-                                    if let Some(_) = suffix_components {
+                                    if suffix_components.is_some() {
                                         new_path.push(previous_components);
                                     }
                                     if let Some(str) = new_path.to_str() {
@@ -3898,14 +3894,12 @@ impl ProjectPanel {
         // Always highlight directory or parent directory if it's file
         if target_entry.is_dir() {
             Some(target_entry.id)
-        } else if let Some(parent_entry) = target_entry
-            .path
-            .parent()
-            .and_then(|parent_path| target_worktree.entry_for_path(parent_path))
-        {
-            Some(parent_entry.id)
         } else {
-            None
+            target_entry
+                .path
+                .parent()
+                .and_then(|parent_path| target_worktree.entry_for_path(parent_path))
+                .map(|parent_entry| parent_entry.id)
         }
     }
 
@@ -3942,12 +3936,10 @@ impl ProjectPanel {
         // Always highlight directory or parent directory if it's file
         if target_entry.is_dir() {
             Some(target_entry.id)
-        } else if let Some(parent_entry) =
-            target_parent_path.and_then(|parent_path| target_worktree.entry_for_path(parent_path))
-        {
-            Some(parent_entry.id)
         } else {
-            None
+            target_parent_path
+                .and_then(|parent_path| target_worktree.entry_for_path(parent_path))
+                .map(|parent_entry| parent_entry.id)
         }
     }
 
@@ -4023,8 +4015,8 @@ impl ProjectPanel {
                 .as_ref()
                 .map_or(ValidationState::None, |e| e.validation_state.clone())
             {
-                ValidationState::Error(msg) => Some((Color::Error.color(cx), msg.clone())),
-                ValidationState::Warning(msg) => Some((Color::Warning.color(cx), msg.clone())),
+                ValidationState::Error(msg) => Some((Color::Error.color(cx), msg)),
+                ValidationState::Warning(msg) => Some((Color::Warning.color(cx), msg)),
                 ValidationState::None => None,
             }
         } else {
@@ -4097,6 +4089,7 @@ impl ProjectPanel {
             .when(!is_sticky, |this| {
                 this
                 .when(is_highlighted && folded_directory_drag_target.is_none(), |this| this.border_color(transparent_white()).bg(item_colors.drag_over))
+                .when(settings.drag_and_drop, |this| this
                 .on_drag_move::<ExternalPaths>(cx.listener(
                     move |this, event: &DragMoveEvent<ExternalPaths>, _, cx| {
                         let is_current_target = this.drag_target_entry.as_ref()
@@ -4230,7 +4223,7 @@ impl ProjectPanel {
                         }
                         this.drag_onto(selections, entry_id, kind.is_file(), window, cx);
                     }),
-                )
+                ))
             })
             .on_mouse_down(
                 MouseButton::Left,
@@ -4422,9 +4415,7 @@ impl ProjectPanel {
                                     let components = Path::new(&file_name)
                                         .components()
                                         .map(|comp| {
-                                            let comp_str =
-                                                comp.as_os_str().to_string_lossy().into_owned();
-                                            comp_str
+                                            comp.as_os_str().to_string_lossy().into_owned()
                                         })
                                         .collect::<Vec<_>>();
 
@@ -4443,6 +4434,7 @@ impl ProjectPanel {
                                                     div()
                                                     .when(!is_sticky, |div| {
                                                         div
+                                                            .when(settings.drag_and_drop, |div| div
                                                             .on_drop(cx.listener(move |this, selections: &DraggedSelection, window, cx| {
                                                             this.hover_scroll_task.take();
                                                             this.drag_target_entry = None;
@@ -4474,7 +4466,7 @@ impl ProjectPanel {
                                                                 }
 
                                                             },
-                                                        ))
+                                                        )))
                                                     })
                                                     .child(
                                                         Label::new(DELIMITER.clone())
@@ -4494,6 +4486,7 @@ impl ProjectPanel {
                                                 .when(index != components_len - 1, |div|{
                                                     let target_entry_id = folded_ancestors.ancestors.get(components_len - 1 - index).cloned();
                                                     div
+                                                    .when(settings.drag_and_drop, |div| div
                                                     .on_drag_move(cx.listener(
                                                         move |this, event: &DragMoveEvent<DraggedSelection>, _, _| {
                                                         if event.bounds.contains(&event.event.position) {
@@ -4531,7 +4524,7 @@ impl ProjectPanel {
                                                         target.index == index
                                                     ), |this| {
                                                         this.bg(item_colors.drag_over)
-                                                    })
+                                                    }))
                                                 })
                                             })
                                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -5039,7 +5032,8 @@ impl ProjectPanel {
 
         sticky_parents.reverse();
 
-        let git_status_enabled = ProjectPanelSettings::get_global(cx).git_status;
+        let panel_settings = ProjectPanelSettings::get_global(cx);
+        let git_status_enabled = panel_settings.git_status;
         let root_name = OsStr::new(worktree.root_name());
 
         let git_summaries_by_id = if git_status_enabled {
@@ -5123,11 +5117,11 @@ impl Render for ProjectPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_worktree = !self.visible_entries.is_empty();
         let project = self.project.read(cx);
-        let indent_size = ProjectPanelSettings::get_global(cx).indent_size;
-        let show_indent_guides =
-            ProjectPanelSettings::get_global(cx).indent_guides.show == ShowIndentGuides::Always;
+        let panel_settings = ProjectPanelSettings::get_global(cx);
+        let indent_size = panel_settings.indent_size;
+        let show_indent_guides = panel_settings.indent_guides.show == ShowIndentGuides::Always;
         let show_sticky_entries = {
-            if ProjectPanelSettings::get_global(cx).sticky_scroll {
+            if panel_settings.sticky_scroll {
                 let is_scrollable = self.scroll_handle.is_scrollable();
                 let is_scrolled = self.scroll_handle.offset().y < px(0.);
                 is_scrollable && is_scrolled
@@ -5215,8 +5209,10 @@ impl Render for ProjectPanel {
             h_flex()
                 .id("project-panel")
                 .group("project-panel")
-                .on_drag_move(cx.listener(handle_drag_move::<ExternalPaths>))
-                .on_drag_move(cx.listener(handle_drag_move::<DraggedSelection>))
+                .when(panel_settings.drag_and_drop, |this| {
+                    this.on_drag_move(cx.listener(handle_drag_move::<ExternalPaths>))
+                        .on_drag_move(cx.listener(handle_drag_move::<DraggedSelection>))
+                })
                 .size_full()
                 .relative()
                 .on_modifiers_changed(cx.listener(
@@ -5305,7 +5301,7 @@ impl Render for ProjectPanel {
                         .on_action(cx.listener(Self::open_system))
                         .on_action(cx.listener(Self::open_in_terminal))
                 })
-                .when(project.is_via_ssh(), |el| {
+                .when(project.is_via_remote_server(), |el| {
                     el.on_action(cx.listener(Self::open_in_terminal))
                 })
                 .on_mouse_down(
@@ -5507,7 +5503,7 @@ impl Render for ProjectPanel {
                     .with_priority(3)
                 }))
         } else {
-            let focus_handle = self.focus_handle(cx).clone();
+            let focus_handle = self.focus_handle(cx);
 
             v_flex()
                 .id("empty-project_panel")
@@ -5554,30 +5550,32 @@ impl Render for ProjectPanel {
                         })),
                 )
                 .when(is_local, |div| {
-                    div.drag_over::<ExternalPaths>(|style, _, _, cx| {
-                        style.bg(cx.theme().colors().drop_target_background)
+                    div.when(panel_settings.drag_and_drop, |div| {
+                        div.drag_over::<ExternalPaths>(|style, _, _, cx| {
+                            style.bg(cx.theme().colors().drop_target_background)
+                        })
+                        .on_drop(cx.listener(
+                            move |this, external_paths: &ExternalPaths, window, cx| {
+                                this.drag_target_entry = None;
+                                this.hover_scroll_task.take();
+                                if let Some(task) = this
+                                    .workspace
+                                    .update(cx, |workspace, cx| {
+                                        workspace.open_workspace_for_paths(
+                                            true,
+                                            external_paths.paths().to_owned(),
+                                            window,
+                                            cx,
+                                        )
+                                    })
+                                    .log_err()
+                                {
+                                    task.detach_and_log_err(cx);
+                                }
+                                cx.stop_propagation();
+                            },
+                        ))
                     })
-                    .on_drop(cx.listener(
-                        move |this, external_paths: &ExternalPaths, window, cx| {
-                            this.drag_target_entry = None;
-                            this.hover_scroll_task.take();
-                            if let Some(task) = this
-                                .workspace
-                                .update(cx, |workspace, cx| {
-                                    workspace.open_workspace_for_paths(
-                                        true,
-                                        external_paths.paths().to_owned(),
-                                        window,
-                                        cx,
-                                    )
-                                })
-                                .log_err()
-                            {
-                                task.detach_and_log_err(cx);
-                            }
-                            cx.stop_propagation();
-                        },
-                    ))
                 })
         }
     }
@@ -5711,7 +5709,7 @@ impl ClipboardEntry {
         }
     }
 
-    fn to_copy_entry(self) -> Self {
+    fn into_copy_entry(self) -> Self {
         match self {
             ClipboardEntry::Copied(_) => self,
             ClipboardEntry::Cut(entries) => ClipboardEntry::Copied(entries),

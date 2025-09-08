@@ -10,12 +10,9 @@ pub use sink::{flush, init_output_file, init_output_stderr, init_output_stdout};
 pub const SCOPE_DEPTH_MAX: usize = 4;
 
 pub fn init() {
-    match try_init() {
-        Err(err) => {
-            log::error!("{err}");
-            eprintln!("{err}");
-        }
-        Ok(()) => {}
+    if let Err(err) = try_init() {
+        log::error!("{err}");
+        eprintln!("{err}");
     }
 }
 
@@ -268,7 +265,7 @@ pub mod private {
 
 pub type Scope = [&'static str; SCOPE_DEPTH_MAX];
 pub type ScopeAlloc = [String; SCOPE_DEPTH_MAX];
-const SCOPE_STRING_SEP_STR: &'static str = ".";
+const SCOPE_STRING_SEP_STR: &str = ".";
 const SCOPE_STRING_SEP_CHAR: char = '.';
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

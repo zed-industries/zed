@@ -2,7 +2,7 @@ use editor::ShowScrollbar;
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Copy, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -47,6 +47,7 @@ pub struct ProjectPanelSettings {
     pub scrollbar: ScrollbarSettings,
     pub show_diagnostics: ShowDiagnostics,
     pub hide_root: bool,
+    pub drag_and_drop: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -91,7 +92,8 @@ pub enum ShowDiagnostics {
     All,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi, SettingsKey)]
+#[settings_key(key = "project_panel")]
 pub struct ProjectPanelSettingsContent {
     /// Whether to show the project panel button in the status bar.
     ///
@@ -160,11 +162,13 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub sticky_scroll: Option<bool>,
+    /// Whether to enable drag-and-drop operations in the project panel.
+    ///
+    /// Default: true
+    pub drag_and_drop: Option<bool>,
 }
 
 impl Settings for ProjectPanelSettings {
-    const KEY: Option<&'static str> = Some("project_panel");
-
     type FileContent = ProjectPanelSettingsContent;
 
     fn load(

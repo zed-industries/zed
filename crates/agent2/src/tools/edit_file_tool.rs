@@ -34,25 +34,21 @@ const DEFAULT_UI_TEXT: &str = "Editing file";
 ///    - Use the `list_directory` tool to verify the parent directory exists and is the correct location
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EditFileToolInput {
-    /// A one-line, user-friendly markdown description of the edit. This will be
-    /// shown in the UI and also passed to another model to perform the edit.
+    /// A one-line, user-friendly markdown description of the edit. This will be shown in the UI and also passed to another model to perform the edit.
     ///
-    /// Be terse, but also descriptive in what you want to achieve with this
-    /// edit. Avoid generic instructions.
+    /// Be terse, but also descriptive in what you want to achieve with this edit. Avoid generic instructions.
     ///
     /// NEVER mention the file path in this description.
     ///
     /// <example>Fix API endpoint URLs</example>
     /// <example>Update copyright year in `page_footer`</example>
     ///
-    /// Make sure to include this field before all the others in the input object
-    /// so that we can display it immediately.
+    /// Make sure to include this field before all the others in the input object so that we can display it immediately.
     pub display_description: String,
 
     /// The full path of the file to create or modify in the project.
     ///
-    /// WARNING: When specifying which file path need changing, you MUST
-    /// start each path with one of the project's root directories.
+    /// WARNING: When specifying which file path need changing, you MUST start each path with one of the project's root directories.
     ///
     /// The following examples assume we have two root directories in the project:
     /// - /a/b/backend
@@ -61,22 +57,19 @@ pub struct EditFileToolInput {
     /// <example>
     /// `backend/src/main.rs`
     ///
-    /// Notice how the file path starts with `backend`. Without that, the path
-    /// would be ambiguous and the call would fail!
+    /// Notice how the file path starts with `backend`. Without that, the path would be ambiguous and the call would fail!
     /// </example>
     ///
     /// <example>
     /// `frontend/db.js`
     /// </example>
     pub path: PathBuf,
-
     /// The mode of operation on the file. Possible values:
     /// - 'edit': Make granular edits to an existing file.
     /// - 'create': Create a new file if it doesn't exist.
     /// - 'overwrite': Replace the entire contents of an existing file.
     ///
-    /// When a file already exists or you just created it, prefer editing
-    /// it as opposed to recreating it from scratch.
+    /// When a file already exists or you just created it, prefer editing it as opposed to recreating it from scratch.
     pub mode: EditFileMode,
 }
 
@@ -90,6 +83,7 @@ struct EditFileToolPartialInput {
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
+#[schemars(inline)]
 pub enum EditFileMode {
     Edit,
     Create,
@@ -126,11 +120,17 @@ impl From<EditFileToolOutput> for LanguageModelToolResultContent {
 pub struct EditFileTool {
     thread: WeakEntity<Thread>,
     language_registry: Arc<LanguageRegistry>,
+    project: Entity<Project>,
 }
 
 impl EditFileTool {
-    pub fn new(thread: WeakEntity<Thread>, language_registry: Arc<LanguageRegistry>) -> Self {
+    pub fn new(
+        project: Entity<Project>,
+        thread: WeakEntity<Thread>,
+        language_registry: Arc<LanguageRegistry>,
+    ) -> Self {
         Self {
+            project,
             thread,
             language_registry,
         }
@@ -193,29 +193,57 @@ impl AgentTool for EditFileTool {
     type Input = EditFileToolInput;
     type Output = EditFileToolOutput;
 
-    fn name(&self) -> SharedString {
-        "edit_file".into()
+    fn name() -> &'static str {
+        "edit_file"
     }
 
-    fn kind(&self) -> acp::ToolKind {
+    fn kind() -> acp::ToolKind {
         acp::ToolKind::Edit
     }
 
-    fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString {
+    fn initial_title(
+        &self,
+        input: Result<Self::Input, serde_json::Value>,
+        cx: &mut App,
+    ) -> SharedString {
         match input {
-            Ok(input) => input.display_description.into(),
+            Ok(input) => self
+                .project
+                .read(cx)
+                .find_project_path(&input.path, cx)
+                .and_then(|project_path| {
+                    self.project
+                        .read(cx)
+                        .short_full_path_for_project_path(&project_path, cx)
+                })
+                .unwrap_or(Path::new(&input.path).into())
+                .to_string_lossy()
+                .to_string()
+                .into(),
             Err(raw_input) => {
                 if let Some(input) =
                     serde_json::from_value::<EditFileToolPartialInput>(raw_input).ok()
                 {
+                    let path = input.path.trim();
+                    if !path.is_empty() {
+                        return self
+                            .project
+                            .read(cx)
+                            .find_project_path(&input.path, cx)
+                            .and_then(|project_path| {
+                                self.project
+                                    .read(cx)
+                                    .short_full_path_for_project_path(&project_path, cx)
+                            })
+                            .unwrap_or(Path::new(&input.path).into())
+                            .to_string_lossy()
+                            .to_string()
+                            .into();
+                    }
+
                     let description = input.display_description.trim();
                     if !description.is_empty() {
                         return description.to_string().into();
-                    }
-
-                    let path = input.path.trim().to_string();
-                    if !path.is_empty() {
-                        return path.into();
                     }
                 }
 
@@ -280,6 +308,13 @@ impl AgentTool for EditFileTool {
 
             let diff = cx.new(|cx| Diff::new(buffer.clone(), cx))?;
             event_stream.update_diff(diff.clone());
+            let _finalize_diff = util::defer({
+               let diff = diff.downgrade();
+               let mut cx = cx.clone();
+               move || {
+                   diff.update(&mut cx, |diff, cx| diff.finalize(cx)).ok();
+               }
+            });
 
             let old_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
             let old_text = cx
@@ -396,8 +431,6 @@ impl AgentTool for EditFileTool {
                 })
                 .await;
 
-            diff.update(cx, |diff, cx| diff.finalize(cx)).ok();
-
             let input_path = input.path.display();
             if unified_diff.is_empty() {
                 anyhow::ensure!(
@@ -427,7 +460,7 @@ impl AgentTool for EditFileTool {
 
             Ok(EditFileToolOutput {
                 input_path: input.path,
-                new_text: new_text.clone(),
+                new_text,
                 old_text,
                 diff: unified_diff,
                 edit_agent_output,
@@ -524,7 +557,6 @@ fn resolve_path(
 mod tests {
     use super::*;
     use crate::{ContextServerRegistry, Templates};
-    use action_log::ActionLog;
     use client::TelemetrySettings;
     use fs::Fs;
     use gpui::{TestAppContext, UpdateGlobal};
@@ -542,16 +574,14 @@ mod tests {
         fs.insert_tree("/root", json!({})).await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
         let thread = cx.new(|cx| {
             Thread::new(
-                project,
+                project.clone(),
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
-                action_log,
                 Templates::new(),
                 Some(model),
                 cx,
@@ -564,11 +594,12 @@ mod tests {
                     path: "root/nonexistent_file.txt".into(),
                     mode: EditFileMode::Edit,
                 };
-                Arc::new(EditFileTool::new(thread.downgrade(), language_registry)).run(
-                    input,
-                    ToolCallEventStream::test().0,
-                    cx,
-                )
+                Arc::new(EditFileTool::new(
+                    project,
+                    thread.downgrade(),
+                    language_registry,
+                ))
+                .run(input, ToolCallEventStream::test().0, cx)
             })
             .await;
         assert_eq!(
@@ -655,8 +686,7 @@ mod tests {
             mode: mode.clone(),
         };
 
-        let result = cx.update(|cx| resolve_path(&input, project, cx));
-        result
+        cx.update(|cx| resolve_path(&input, project, cx))
     }
 
     fn assert_resolved_path_eq(path: anyhow::Result<ProjectPath>, expected: &str) {
@@ -743,16 +773,14 @@ mod tests {
             }
         });
 
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
         let thread = cx.new(|cx| {
             Thread::new(
-                project,
+                project.clone(),
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
-                action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
                 cx,
@@ -782,6 +810,7 @@ mod tests {
                     mode: EditFileMode::Overwrite,
                 };
                 Arc::new(EditFileTool::new(
+                    project.clone(),
                     thread.downgrade(),
                     language_registry.clone(),
                 ))
@@ -809,7 +838,9 @@ mod tests {
             "Code should be formatted when format_on_save is enabled"
         );
 
-        let stale_buffer_count = action_log.read_with(cx, |log, cx| log.stale_buffers(cx).count());
+        let stale_buffer_count = thread
+            .read_with(cx, |thread, _cx| thread.action_log.clone())
+            .read_with(cx, |log, cx| log.stale_buffers(cx).count());
 
         assert_eq!(
             stale_buffer_count, 0,
@@ -838,11 +869,12 @@ mod tests {
                     path: "root/src/main.rs".into(),
                     mode: EditFileMode::Overwrite,
                 };
-                Arc::new(EditFileTool::new(thread.downgrade(), language_registry)).run(
-                    input,
-                    ToolCallEventStream::test().0,
-                    cx,
-                )
+                Arc::new(EditFileTool::new(
+                    project.clone(),
+                    thread.downgrade(),
+                    language_registry,
+                ))
+                .run(input, ToolCallEventStream::test().0, cx)
             });
 
             // Stream the unformatted content
@@ -887,14 +919,12 @@ mod tests {
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let model = Arc::new(FakeLanguageModel::default());
         let thread = cx.new(|cx| {
             Thread::new(
-                project,
+                project.clone(),
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
-                action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
                 cx,
@@ -925,6 +955,7 @@ mod tests {
                     mode: EditFileMode::Overwrite,
                 };
                 Arc::new(EditFileTool::new(
+                    project.clone(),
                     thread.downgrade(),
                     language_registry.clone(),
                 ))
@@ -976,11 +1007,12 @@ mod tests {
                     path: "root/src/main.rs".into(),
                     mode: EditFileMode::Overwrite,
                 };
-                Arc::new(EditFileTool::new(thread.downgrade(), language_registry)).run(
-                    input,
-                    ToolCallEventStream::test().0,
-                    cx,
-                )
+                Arc::new(EditFileTool::new(
+                    project.clone(),
+                    thread.downgrade(),
+                    language_registry,
+                ))
+                .run(input, ToolCallEventStream::test().0, cx)
             });
 
             // Stream the content with trailing whitespace
@@ -1016,20 +1048,22 @@ mod tests {
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let model = Arc::new(FakeLanguageModel::default());
         let thread = cx.new(|cx| {
             Thread::new(
-                project,
+                project.clone(),
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
-                action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
                 cx,
             )
         });
-        let tool = Arc::new(EditFileTool::new(thread.downgrade(), language_registry));
+        let tool = Arc::new(EditFileTool::new(
+            project.clone(),
+            thread.downgrade(),
+            language_registry,
+        ));
         fs.insert_tree("/root", json!({})).await;
 
         // Test 1: Path with .zed component should require confirmation
@@ -1154,20 +1188,22 @@ mod tests {
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let model = Arc::new(FakeLanguageModel::default());
         let thread = cx.new(|cx| {
             Thread::new(
-                project,
+                project.clone(),
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
-                action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
                 cx,
             )
         });
-        let tool = Arc::new(EditFileTool::new(thread.downgrade(), language_registry));
+        let tool = Arc::new(EditFileTool::new(
+            project.clone(),
+            thread.downgrade(),
+            language_registry,
+        ));
 
         // Test global config paths - these should require confirmation if they exist and are outside the project
         let test_cases = vec![
@@ -1262,7 +1298,6 @@ mod tests {
         )
         .await;
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
@@ -1271,13 +1306,16 @@ mod tests {
                 project.clone(),
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry.clone(),
-                action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
                 cx,
             )
         });
-        let tool = Arc::new(EditFileTool::new(thread.downgrade(), language_registry));
+        let tool = Arc::new(EditFileTool::new(
+            project.clone(),
+            thread.downgrade(),
+            language_registry,
+        ));
 
         // Test files in different worktrees
         let test_cases = vec![
@@ -1344,7 +1382,6 @@ mod tests {
         .await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
@@ -1353,13 +1390,16 @@ mod tests {
                 project.clone(),
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry.clone(),
-                action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
                 cx,
             )
         });
-        let tool = Arc::new(EditFileTool::new(thread.downgrade(), language_registry));
+        let tool = Arc::new(EditFileTool::new(
+            project.clone(),
+            thread.downgrade(),
+            language_registry,
+        ));
 
         // Test edge cases
         let test_cases = vec![
@@ -1429,7 +1469,6 @@ mod tests {
         .await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
@@ -1438,13 +1477,16 @@ mod tests {
                 project.clone(),
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry.clone(),
-                action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
                 cx,
             )
         });
-        let tool = Arc::new(EditFileTool::new(thread.downgrade(), language_registry));
+        let tool = Arc::new(EditFileTool::new(
+            project.clone(),
+            thread.downgrade(),
+            language_registry,
+        ));
 
         // Test different EditFileMode values
         let modes = vec![
@@ -1511,7 +1553,6 @@ mod tests {
         let fs = project::FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
@@ -1520,54 +1561,178 @@ mod tests {
                 project.clone(),
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
-                action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
                 cx,
             )
         });
-        let tool = Arc::new(EditFileTool::new(thread.downgrade(), language_registry));
+        let tool = Arc::new(EditFileTool::new(
+            project,
+            thread.downgrade(),
+            language_registry,
+        ));
 
-        assert_eq!(
-            tool.initial_title(Err(json!({
-                "path": "src/main.rs",
-                "display_description": "",
-                "old_string": "old code",
-                "new_string": "new code"
-            }))),
-            "src/main.rs"
-        );
-        assert_eq!(
-            tool.initial_title(Err(json!({
-                "path": "",
-                "display_description": "Fix error handling",
-                "old_string": "old code",
-                "new_string": "new code"
-            }))),
-            "Fix error handling"
-        );
-        assert_eq!(
-            tool.initial_title(Err(json!({
-                "path": "src/main.rs",
-                "display_description": "Fix error handling",
-                "old_string": "old code",
-                "new_string": "new code"
-            }))),
-            "Fix error handling"
-        );
-        assert_eq!(
-            tool.initial_title(Err(json!({
-                "path": "",
-                "display_description": "",
-                "old_string": "old code",
-                "new_string": "new code"
-            }))),
-            DEFAULT_UI_TEXT
-        );
-        assert_eq!(
-            tool.initial_title(Err(serde_json::Value::Null)),
-            DEFAULT_UI_TEXT
-        );
+        cx.update(|cx| {
+            // ...
+            assert_eq!(
+                tool.initial_title(
+                    Err(json!({
+                        "path": "src/main.rs",
+                        "display_description": "",
+                        "old_string": "old code",
+                        "new_string": "new code"
+                    })),
+                    cx
+                ),
+                "src/main.rs"
+            );
+            assert_eq!(
+                tool.initial_title(
+                    Err(json!({
+                        "path": "",
+                        "display_description": "Fix error handling",
+                        "old_string": "old code",
+                        "new_string": "new code"
+                    })),
+                    cx
+                ),
+                "Fix error handling"
+            );
+            assert_eq!(
+                tool.initial_title(
+                    Err(json!({
+                        "path": "src/main.rs",
+                        "display_description": "Fix error handling",
+                        "old_string": "old code",
+                        "new_string": "new code"
+                    })),
+                    cx
+                ),
+                "src/main.rs"
+            );
+            assert_eq!(
+                tool.initial_title(
+                    Err(json!({
+                        "path": "",
+                        "display_description": "",
+                        "old_string": "old code",
+                        "new_string": "new code"
+                    })),
+                    cx
+                ),
+                DEFAULT_UI_TEXT
+            );
+            assert_eq!(
+                tool.initial_title(Err(serde_json::Value::Null), cx),
+                DEFAULT_UI_TEXT
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_diff_finalization(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree("/", json!({"main.rs": ""})).await;
+
+        let project = Project::test(fs.clone(), [path!("/").as_ref()], cx).await;
+        let languages = project.read_with(cx, |project, _cx| project.languages().clone());
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry.clone(),
+                Templates::new(),
+                Some(model.clone()),
+                cx,
+            )
+        });
+
+        // Ensure the diff is finalized after the edit completes.
+        {
+            let tool = Arc::new(EditFileTool::new(
+                project.clone(),
+                thread.downgrade(),
+                languages.clone(),
+            ));
+            let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+            let edit = cx.update(|cx| {
+                tool.run(
+                    EditFileToolInput {
+                        display_description: "Edit file".into(),
+                        path: path!("/main.rs").into(),
+                        mode: EditFileMode::Edit,
+                    },
+                    stream_tx,
+                    cx,
+                )
+            });
+            stream_rx.expect_update_fields().await;
+            let diff = stream_rx.expect_diff().await;
+            diff.read_with(cx, |diff, _| assert!(matches!(diff, Diff::Pending(_))));
+            cx.run_until_parked();
+            model.end_last_completion_stream();
+            edit.await.unwrap();
+            diff.read_with(cx, |diff, _| assert!(matches!(diff, Diff::Finalized(_))));
+        }
+
+        // Ensure the diff is finalized if an error occurs while editing.
+        {
+            model.forbid_requests();
+            let tool = Arc::new(EditFileTool::new(
+                project.clone(),
+                thread.downgrade(),
+                languages.clone(),
+            ));
+            let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+            let edit = cx.update(|cx| {
+                tool.run(
+                    EditFileToolInput {
+                        display_description: "Edit file".into(),
+                        path: path!("/main.rs").into(),
+                        mode: EditFileMode::Edit,
+                    },
+                    stream_tx,
+                    cx,
+                )
+            });
+            stream_rx.expect_update_fields().await;
+            let diff = stream_rx.expect_diff().await;
+            diff.read_with(cx, |diff, _| assert!(matches!(diff, Diff::Pending(_))));
+            edit.await.unwrap_err();
+            diff.read_with(cx, |diff, _| assert!(matches!(diff, Diff::Finalized(_))));
+            model.allow_requests();
+        }
+
+        // Ensure the diff is finalized if the tool call gets dropped.
+        {
+            let tool = Arc::new(EditFileTool::new(
+                project.clone(),
+                thread.downgrade(),
+                languages.clone(),
+            ));
+            let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+            let edit = cx.update(|cx| {
+                tool.run(
+                    EditFileToolInput {
+                        display_description: "Edit file".into(),
+                        path: path!("/main.rs").into(),
+                        mode: EditFileMode::Edit,
+                    },
+                    stream_tx,
+                    cx,
+                )
+            });
+            stream_rx.expect_update_fields().await;
+            let diff = stream_rx.expect_diff().await;
+            diff.read_with(cx, |diff, _| assert!(matches!(diff, Diff::Pending(_))));
+            drop(edit);
+            cx.run_until_parked();
+            diff.read_with(cx, |diff, _| assert!(matches!(diff, Diff::Finalized(_))));
+        }
     }
 
     fn init_test(cx: &mut TestAppContext) {

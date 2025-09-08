@@ -157,7 +157,7 @@ impl SlashCommand for TabSlashCommand {
             for (full_path, buffer, _) in tab_items_search.await? {
                 append_buffer_to_output(&buffer, full_path.as_deref(), &mut output).log_err();
             }
-            Ok(output.to_event_stream())
+            Ok(output.into_event_stream())
         })
     }
 }

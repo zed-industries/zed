@@ -234,11 +234,12 @@ impl PythonDebugAdapter {
                     .await
                     .map_err(|e| format!("{e:#?}"))?
                     .success();
+
                 if !did_succeed {
                     return Err("Failed to create base virtual environment".into());
                 }
 
-                const DIR: &'static str = if cfg!(target_os = "windows") {
+                const DIR: &str = if cfg!(target_os = "windows") {
                     "Scripts"
                 } else {
                     "bin"

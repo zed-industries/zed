@@ -8,6 +8,10 @@ license = "GPL-3.0-or-later"
 [lib]
 path = "src/agent2.rs"
 
+[features]
+test-support = ["db/test-support"]
+e2e = []
+
 [lints]
 workspace = true
 
@@ -23,9 +27,11 @@ assistant_context.workspace = true
 assistant_tool.workspace = true
 assistant_tools.workspace = true
 chrono.workspace = true
+client.workspace = true
 cloud_llm_client.workspace = true
 collections.workspace = true
 context_server.workspace = true
+db.workspace = true
 fs.workspace = true
 futures.workspace = true
 git.workspace = true
@@ -42,7 +48,6 @@ log.workspace = true
 open.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
-portable-pty.workspace = true
 project.workspace = true
 prompt_store.workspace = true
 rust-embed.workspace = true
@@ -53,23 +58,28 @@ settings.workspace = true
 smol.workspace = true
 sqlez.workspace = true
 task.workspace = true
+telemetry.workspace = true
 terminal.workspace = true
+thiserror.workspace = true
 text.workspace = true
 ui.workspace = true
 util.workspace = true
 uuid.workspace = true
 watch.workspace = true
 web_search.workspace = true
-which.workspace = true
 workspace-hack.workspace = true
+zed_env_vars.workspace = true
 zstd.workspace = true
 
 [dev-dependencies]
 agent = { workspace = true, "features" = ["test-support"] }
+agent_servers = { workspace = true, "features" = ["test-support"] }
+assistant_context = { workspace = true, "features" = ["test-support"] }
 ctor.workspace = true
 client = { workspace = true, "features" = ["test-support"] }
 clock = { workspace = true, "features" = ["test-support"] }
 context_server = { workspace = true, "features" = ["test-support"] }
+db = { workspace = true, "features" = ["test-support"] }
 editor = { workspace = true, "features" = ["test-support"] }
 env_logger.workspace = true
 fs = { workspace = true, "features" = ["test-support"] }

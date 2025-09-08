@@ -44,7 +44,7 @@ impl TailwindLspAdapter {
 #[async_trait(?Send)]
 impl LspAdapter for TailwindLspAdapter {
     fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
+        Self::SERVER_NAME
     }
 
     async fn check_if_user_installed(
@@ -66,6 +66,7 @@ impl LspAdapter for TailwindLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
+        _: &AsyncApp,
     ) -> Result<Box<dyn 'static + Any + Send>> {
         Ok(Box::new(
             self.node
@@ -184,6 +185,7 @@ impl LspAdapter for TailwindLspAdapter {
             (LanguageName::new("Elixir"), "phoenix-heex".to_string()),
             (LanguageName::new("HEEX"), "phoenix-heex".to_string()),
             (LanguageName::new("ERB"), "erb".to_string()),
+            (LanguageName::new("HTML+ERB"), "erb".to_string()),
             (LanguageName::new("HTML/ERB"), "erb".to_string()),
             (LanguageName::new("PHP"), "php".to_string()),
             (LanguageName::new("Vue.js"), "vue".to_string()),

@@ -23,9 +23,8 @@ use gpui::{
     AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent, ClipboardEntry,
     ClipboardItem, DefiniteLength, EdgesRefinement, Empty, Entity, EventEmitter, Focusable, Hsla,
     ListAlignment, ListOffset, ListState, MouseButton, PlatformDisplay, ScrollHandle, Stateful,
-    StyleRefinement, Subscription, Task, TextStyle, TextStyleRefinement, Transformation,
-    UnderlineStyle, WeakEntity, WindowHandle, linear_color_stop, linear_gradient, list, percentage,
-    pulsating_between,
+    StyleRefinement, Subscription, Task, TextStyle, TextStyleRefinement, UnderlineStyle,
+    WeakEntity, WindowHandle, linear_color_stop, linear_gradient, list, pulsating_between,
 };
 use language::{Buffer, Language, LanguageRegistry};
 use language_model::{
@@ -46,8 +45,8 @@ use std::time::Duration;
 use text::ToPoint;
 use theme::ThemeSettings;
 use ui::{
-    Banner, Disclosure, KeyBinding, PopoverMenuHandle, Scrollbar, ScrollbarState, TextSize,
-    Tooltip, prelude::*,
+    Banner, CommonAnimationExt, Disclosure, KeyBinding, PopoverMenuHandle, Scrollbar,
+    ScrollbarState, TextSize, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 use util::markdown::MarkdownCodeBlock;
@@ -491,7 +490,7 @@ fn render_markdown_code_block(
             .on_click({
                 let active_thread = active_thread.clone();
                 let parsed_markdown = parsed_markdown.clone();
-                let code_block_range = metadata.content_range.clone();
+                let code_block_range = metadata.content_range;
                 move |_event, _window, cx| {
                     active_thread.update(cx, |this, cx| {
                         this.copied_code_block_ids.insert((message_id, ix));
@@ -532,7 +531,6 @@ fn render_markdown_code_block(
                 "Expand Code"
             }))
             .on_click({
-                let active_thread = active_thread.clone();
                 move |_event, _window, cx| {
                     active_thread.update(cx, |this, cx| {
                         this.toggle_codeblock_expanded(message_id, ix);
@@ -780,13 +778,11 @@ impl ActiveThread {
 
         let list_state = ListState::new(0, ListAlignment::Bottom, px(2048.));
 
-        let workspace_subscription = if let Some(workspace) = workspace.upgrade() {
-            Some(cx.observe_release(&workspace, |this, _, cx| {
+        let workspace_subscription = workspace.upgrade().map(|workspace| {
+            cx.observe_release(&workspace, |this, _, cx| {
                 this.dismiss_notifications(cx);
-            }))
-        } else {
-            None
-        };
+            })
+        });
 
         let mut this = Self {
             language_registry,
@@ -916,7 +912,7 @@ impl ActiveThread {
     ) {
         let rendered = self
             .rendered_tool_uses
-            .entry(tool_use_id.clone())
+            .entry(tool_use_id)
             .or_insert_with(|| RenderedToolUse {
                 label: cx.new(|cx| {
                     Markdown::new("".into(), Some(self.language_registry.clone()), None, cx)
@@ -1005,8 +1001,22 @@ impl ActiveThread {
                         // Don't notify for intermediate tool use
                     }
                     Ok(StopReason::Refusal) => {
+                        let model_name = self
+                            .thread
+                            .read(cx)
+                            .configured_model()
+                            .map(|configured| configured.model.name().0.to_string())
+                            .unwrap_or_else(|| "The model".to_string());
+                        let refusal_message = format!(
+                            "{} refused to respond to this prompt. This can happen when a model believes the prompt violates its content policy or safety guidelines, so rephrasing it can sometimes address the issue.",
+                            model_name
+                        );
+                        self.last_error = Some(ThreadError::Message {
+                            header: SharedString::from("Request Refused"),
+                            message: SharedString::from(refusal_message),
+                        });
                         self.notify_with_sound(
-                            "Language model refused to respond",
+                            format!("{} refused to respond", model_name),
                             IconName::Warning,
                             window,
                             cx,
@@ -1218,7 +1228,7 @@ impl ActiveThread {
         match AgentSettings::get_global(cx).notify_when_agent_waiting {
             NotifyWhenAgentWaiting::PrimaryScreen => {
                 if let Some(primary) = cx.primary_display() {
-                    self.pop_up(icon, caption.into(), title.clone(), window, primary, cx);
+                    self.pop_up(icon, caption.into(), title, window, primary, cx);
                 }
             }
             NotifyWhenAgentWaiting::AllScreens => {
@@ -1373,12 +1383,12 @@ impl ActiveThread {
             editor.focus_handle(cx).focus(window);
             editor.move_to_end(&editor::actions::MoveToEnd, window, cx);
         });
-        let buffer_edited_subscription = cx.subscribe(&editor, |this, _, event, cx| match event {
-            EditorEvent::BufferEdited => {
-                this.update_editing_message_token_count(true, cx);
-            }
-            _ => {}
-        });
+        let buffer_edited_subscription =
+            cx.subscribe(&editor, |this, _, event: &EditorEvent, cx| {
+                if event == &EditorEvent::BufferEdited {
+                    this.update_editing_message_token_count(true, cx);
+                }
+            });
 
         let context_picker_menu_handle = PopoverMenuHandle::default();
         let context_strip = cx.new(|cx| {
@@ -1598,11 +1608,6 @@ impl ActiveThread {
             return;
         };
 
-        if model.provider.must_accept_terms(cx) {
-            cx.notify();
-            return;
-        }
-
         let edited_text = state.editor.read(cx).text(cx);
 
         let creases = state.editor.update(cx, extract_message_creases);
@@ -1765,7 +1770,7 @@ impl ActiveThread {
                 .thread
                 .read(cx)
                 .message(message_id)
-                .map(|msg| msg.to_string())
+                .map(|msg| msg.to_message_content())
                 .unwrap_or_default();
 
             telemetry::event!(
@@ -2112,7 +2117,7 @@ impl ActiveThread {
                                         .gap_1()
                                         .children(message_content)
                                         .when_some(editing_message_state, |this, state| {
-                                            let focus_handle = state.editor.focus_handle(cx).clone();
+                                            let focus_handle = state.editor.focus_handle(cx);
 
                                             this.child(
                                                 h_flex()
@@ -2173,7 +2178,6 @@ impl ActiveThread {
                                                                 .icon_color(Color::Muted)
                                                                 .icon_size(IconSize::Small)
                                                                 .tooltip({
-                                                                    let focus_handle = focus_handle.clone();
                                                                     move |window, cx| {
                                                                         Tooltip::for_action_in(
                                                                             "Regenerate",
@@ -2312,7 +2316,7 @@ impl ActiveThread {
                             .into_any_element()
                     } else if let Some(error) = error {
                         restore_checkpoint_button
-                            .tooltip(Tooltip::text(error.to_string()))
+                            .tooltip(Tooltip::text(error))
                             .into_any_element()
                     } else {
                         restore_checkpoint_button.into_any_element()
@@ -2353,7 +2357,6 @@ impl ActiveThread {
                                     this.submit_feedback_message(message_id, cx);
                                     cx.notify();
                                 }))
-                                .on_action(cx.listener(Self::confirm_editing_message))
                                 .mb_2()
                                 .mx_4()
                                 .p_2()
@@ -2657,15 +2660,7 @@ impl ActiveThread {
                                         Icon::new(IconName::ArrowCircle)
                                             .color(Color::Accent)
                                             .size(IconSize::Small)
-                                            .with_animation(
-                                                "arrow-circle",
-                                                Animation::new(Duration::from_secs(2)).repeat(),
-                                                |icon, delta| {
-                                                    icon.transform(Transformation::rotate(
-                                                        percentage(delta),
-                                                    ))
-                                                },
-                                            )
+                                            .with_rotate_animation(2)
                                     }),
                             ),
                     )
@@ -2841,17 +2836,11 @@ impl ActiveThread {
             }
             ToolUseStatus::Pending
             | ToolUseStatus::InputStillStreaming
-            | ToolUseStatus::Running => {
-                let icon = Icon::new(IconName::ArrowCircle)
-                    .color(Color::Accent)
-                    .size(IconSize::Small);
-                icon.with_animation(
-                    "arrow-circle",
-                    Animation::new(Duration::from_secs(2)).repeat(),
-                    |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                )
-                .into_any_element()
-            }
+            | ToolUseStatus::Running => Icon::new(IconName::ArrowCircle)
+                .color(Color::Accent)
+                .size(IconSize::Small)
+                .with_rotate_animation(2)
+                .into_any_element(),
             ToolUseStatus::Finished(_) => div().w_0().into_any_element(),
             ToolUseStatus::Error(_) => {
                 let icon = Icon::new(IconName::Close)
@@ -2940,15 +2929,7 @@ impl ActiveThread {
                                     Icon::new(IconName::ArrowCircle)
                                         .size(IconSize::Small)
                                         .color(Color::Accent)
-                                        .with_animation(
-                                            "arrow-circle",
-                                            Animation::new(Duration::from_secs(2)).repeat(),
-                                            |icon, delta| {
-                                                icon.transform(Transformation::rotate(percentage(
-                                                    delta,
-                                                )))
-                                            },
-                                        ),
+                                        .with_rotate_animation(2),
                                 )
                                 .child(
                                     Label::new("Running…")
@@ -3604,7 +3585,7 @@ pub(crate) fn open_active_thread_as_markdown(
             }
 
             let buffer = project.update(cx, |project, cx| {
-                project.create_local_buffer(&markdown, Some(markdown_language), cx)
+                project.create_local_buffer(&markdown, Some(markdown_language), true, cx)
             });
             let buffer =
                 cx.new(|cx| MultiBuffer::singleton(buffer, cx).with_title(thread_summary.clone()));

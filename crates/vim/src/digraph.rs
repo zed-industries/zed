@@ -89,7 +89,7 @@ impl Vim {
             return;
         };
 
-        if prefix.len() > 0 {
+        if !prefix.is_empty() {
             self.handle_literal_input(prefix, "", window, cx);
         } else {
             self.pop_operator(window, cx);

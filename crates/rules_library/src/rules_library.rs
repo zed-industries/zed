@@ -49,7 +49,7 @@ actions!(
     ]
 );
 
-const BUILT_IN_TOOLTIP_TEXT: &'static str = concat!(
+const BUILT_IN_TOOLTIP_TEXT: &str = concat!(
     "This rule supports special functionality.\n",
     "It's read-only, but you can remove it from your default rules."
 );
@@ -414,11 +414,11 @@ impl RulesLibrary {
         });
         Self {
             title_bar: if !cfg!(target_os = "macos") {
-                Some(cx.new(|_| PlatformTitleBar::new("rules-library-title-bar")))
+                Some(cx.new(|cx| PlatformTitleBar::new("rules-library-title-bar", cx)))
             } else {
                 None
             },
-            store: store.clone(),
+            store,
             language_registry,
             rule_editors: HashMap::default(),
             active_rule_id: None,
@@ -1136,7 +1136,7 @@ impl RulesLibrary {
                                                 .child(
                                                     Label::new(format!(
                                                         "{} tokens",
-                                                        label_token_count.clone()
+                                                        label_token_count
                                                     ))
                                                     .color(Color::Muted),
                                                 )

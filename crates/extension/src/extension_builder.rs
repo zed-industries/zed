@@ -484,14 +484,10 @@ impl ExtensionBuilder {
                 _ => {}
             }
 
-            match &payload {
-                CustomSection(c) => {
-                    if strip_custom_section(c.name()) {
-                        continue;
-                    }
-                }
-
-                _ => {}
+            if let CustomSection(c) = &payload
+                && strip_custom_section(c.name())
+            {
+                continue;
             }
             if let Some((id, range)) = payload.as_section() {
                 RawSection {

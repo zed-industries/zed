@@ -87,9 +87,9 @@ pub fn update_value_in_json_text<'a>(
 }
 
 /// * `replace_key` - When an exact key match according to `key_path` is found, replace the key with `replace_key` if `Some`.
-fn replace_value_in_json_text(
+pub fn replace_value_in_json_text<T: AsRef<str>>(
     text: &str,
-    key_path: &[&str],
+    key_path: &[T],
     tab_size: usize,
     new_value: Option<&Value>,
     replace_key: Option<&str>,
@@ -140,8 +140,10 @@ fn replace_value_in_json_text(
 
         let found_key = text
             .get(key_range.clone())
-            .map(|key_text| {
-                depth < key_path.len() && key_text == format!("\"{}\"", key_path[depth])
+            .and_then(|key_text| {
+                serde_json::to_string(key_path[depth].as_ref())
+                    .ok()
+                    .map(|key_path| depth < key_path.len() && key_text == key_path)
             })
             .unwrap_or(false);
 
@@ -163,8 +165,8 @@ fn replace_value_in_json_text(
     if depth == key_path.len() {
         if let Some(new_value) = new_value {
             let new_val = to_pretty_json(new_value, tab_size, tab_size * depth);
-            if let Some(replace_key) = replace_key {
-                let new_key = format!("\"{}\": ", replace_key);
+            if let Some(replace_key) = replace_key.and_then(|str| serde_json::to_string(str).ok()) {
+                let new_key = format!("{}: ", replace_key);
                 if let Some(key_start) = text[..existing_value_range.start].rfind('"') {
                     if let Some(prev_key_start) = text[..key_start].rfind('"') {
                         existing_value_range.start = prev_key_start;
@@ -209,7 +211,7 @@ fn replace_value_in_json_text(
                     if ch == ',' {
                         removal_end = existing_value_range.end + offset + 1;
                         // Also consume whitespace after the comma
-                        while let Some((_, next_ch)) = chars.next() {
+                        for (_, next_ch) in chars.by_ref() {
                             if next_ch.is_whitespace() {
                                 removal_end += next_ch.len_utf8();
                             } else {
@@ -226,13 +228,13 @@ fn replace_value_in_json_text(
         }
     } else {
         // We have key paths, construct the sub objects
-        let new_key = key_path[depth];
+        let new_key = key_path[depth].as_ref();
 
         // We don't have the key, construct the nested objects
         let mut new_value =
             serde_json::to_value(new_value.unwrap_or(&serde_json::Value::Null)).unwrap();
         for key in key_path[(depth + 1)..].iter().rev() {
-            new_value = serde_json::json!({ key.to_string(): new_value });
+            new_value = serde_json::json!({ key.as_ref().to_string(): new_value });
         }
 
         if let Some(first_key_start) = first_key_start {
@@ -295,9 +297,9 @@ fn replace_value_in_json_text(
     }
 }
 
-const TS_DOCUMENT_KIND: &'static str = "document";
-const TS_ARRAY_KIND: &'static str = "array";
-const TS_COMMENT_KIND: &'static str = "comment";
+const TS_DOCUMENT_KIND: &str = "document";
+const TS_ARRAY_KIND: &str = "array";
+const TS_COMMENT_KIND: &str = "comment";
 
 pub fn replace_top_level_array_value_in_json_text(
     text: &str,
@@ -361,7 +363,7 @@ pub fn replace_top_level_array_value_in_json_text(
     let needs_indent = range.start_point.row > 0;
 
     if new_value.is_none() && key_path.is_empty() {
-        let mut remove_range = text_range.clone();
+        let mut remove_range = text_range;
         if index == 0 {
             while cursor.goto_next_sibling()
                 && (cursor.node().is_extra() || cursor.node().is_missing())
@@ -465,7 +467,7 @@ pub fn append_top_level_array_value_in_json_text(
     }
 
     let (mut replace_range, mut replace_value) =
-        replace_value_in_json_text("", &[], tab_size, Some(new_value), None);
+        replace_value_in_json_text::<&str>("", &[], tab_size, Some(new_value), None);
 
     replace_range.start = close_bracket_start;
     replace_range.end = close_bracket_start;
@@ -563,7 +565,8 @@ pub fn to_pretty_json(
 }
 
 pub fn parse_json_with_comments<T: DeserializeOwned>(content: &str) -> Result<T> {
-    Ok(serde_json_lenient::from_str(content)?)
+    let mut deserializer = serde_json_lenient::Deserializer::from_str(content);
+    Ok(serde_path_to_error::deserialize(&mut deserializer)?)
 }
 
 #[cfg(test)]
@@ -582,7 +585,7 @@ mod tests {
             expected: String,
         ) {
             let result = replace_value_in_json_text(&input, key_path, 4, value.as_ref(), None);
-            let mut result_str = input.to_string();
+            let mut result_str = input;
             result_str.replace_range(result.0, &result.1);
             pretty_assertions::assert_eq!(expected, result_str);
         }

@@ -289,7 +289,7 @@ impl NotificationPanel {
                         .gap_1()
                         .size_full()
                         .overflow_hidden()
-                        .child(Label::new(text.clone()))
+                        .child(Label::new(text))
                         .child(
                             h_flex()
                                 .child(

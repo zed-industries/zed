@@ -32,7 +32,7 @@ use parking_lot::Mutex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use settings::WorktreeId;
+use settings::{SettingsUi, WorktreeId};
 use smallvec::SmallVec;
 use smol::future::yield_now;
 use std::{
@@ -173,7 +173,9 @@ pub enum IndentKind {
 }
 
 /// The shape of a selection cursor.
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(
+    Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CursorShape {
     /// A vertical bar
@@ -202,7 +204,7 @@ pub struct Diagnostic {
     pub source: Option<String>,
     /// A machine-readable code that identifies this diagnostic.
     pub code: Option<NumberOrString>,
-    pub code_description: Option<lsp::Url>,
+    pub code_description: Option<lsp::Uri>,
     /// Whether this diagnostic is a hint, warning, or error.
     pub severity: DiagnosticSeverity,
     /// The human-readable message associated with this diagnostic.
@@ -282,6 +284,14 @@ pub enum Operation {
         /// The language server ID.
         server_id: LanguageServerId,
     },
+
+    /// An update to the line ending type of this buffer.
+    UpdateLineEnding {
+        /// The line ending type.
+        line_ending: LineEnding,
+        /// The buffer's lamport timestamp.
+        lamport_timestamp: clock::Lamport,
+    },
 }
 
 /// An event that occurs in a buffer.
@@ -313,10 +323,6 @@ pub enum BufferEvent {
     DiagnosticsUpdated,
     /// The buffer gained or lost editing capabilities.
     CapabilityChanged,
-    /// The buffer was explicitly requested to close.
-    Closed,
-    /// The buffer was discarded when closing.
-    Discarded,
 }
 
 /// The file associated with a buffer.
@@ -974,8 +980,6 @@ impl Buffer {
                 TextBuffer::new_normalized(0, buffer_id, Default::default(), text).snapshot();
             let mut syntax = SyntaxMap::new(&text).snapshot();
             if let Some(language) = language.clone() {
-                let text = text.clone();
-                let language = language.clone();
                 let language_registry = language_registry.clone();
                 syntax.reparse(&text, language_registry, language);
             }
@@ -1020,9 +1024,6 @@ impl Buffer {
         let text = TextBuffer::new_normalized(0, buffer_id, Default::default(), text).snapshot();
         let mut syntax = SyntaxMap::new(&text).snapshot();
         if let Some(language) = language.clone() {
-            let text = text.clone();
-            let language = language.clone();
-            let language_registry = language_registry.clone();
             syntax.reparse(&text, language_registry, language);
         }
         BufferSnapshot {
@@ -1128,7 +1129,7 @@ impl Buffer {
         } else {
             ranges.as_slice()
         }
-        .into_iter()
+        .iter()
         .peekable();
 
         let mut edits = Vec::new();
@@ -1247,10 +1248,27 @@ impl Buffer {
         self.syntax_map.lock().language_registry()
     }
 
+    /// Assign the line ending type to the buffer.
+    pub fn set_line_ending(&mut self, line_ending: LineEnding, cx: &mut Context<Self>) {
+        self.text.set_line_ending(line_ending);
+
+        let lamport_timestamp = self.text.lamport_clock.tick();
+        self.send_operation(
+            Operation::UpdateLineEnding {
+                line_ending,
+                lamport_timestamp,
+            },
+            true,
+            cx,
+        );
+    }
+
     /// Assign the buffer a new [`Capability`].
     pub fn set_capability(&mut self, capability: Capability, cx: &mut Context<Self>) {
-        self.capability = capability;
-        cx.emit(BufferEvent::CapabilityChanged)
+        if self.capability != capability {
+            self.capability = capability;
+            cx.emit(BufferEvent::CapabilityChanged)
+        }
     }
 
     /// This method is called to signal that the buffer has been saved.
@@ -1267,12 +1285,6 @@ impl Buffer {
         self.saved_mtime = mtime;
         self.was_changed();
         cx.emit(BufferEvent::Saved);
-        cx.notify();
-    }
-
-    /// This method is called to signal that the buffer has been discarded.
-    pub fn discarded(&self, cx: &mut Context<Self>) {
-        cx.emit(BufferEvent::Discarded);
         cx.notify();
     }
 
@@ -1395,7 +1407,8 @@ impl Buffer {
                     is_first = false;
                     return true;
                 }
-                let any_sub_ranges_contain_range = layer
+
+                layer
                     .included_sub_ranges
                     .map(|sub_ranges| {
                         sub_ranges.iter().any(|sub_range| {
@@ -1404,9 +1417,7 @@ impl Buffer {
                             !is_before_start && !is_after_end
                         })
                     })
-                    .unwrap_or(true);
-                let result = any_sub_ranges_contain_range;
-                result
+                    .unwrap_or(true)
             })
             .last()
             .map(|info| info.language.clone())
@@ -1575,11 +1586,21 @@ impl Buffer {
         self.send_operation(op, true, cx);
     }
 
-    pub fn get_diagnostics(&self, server_id: LanguageServerId) -> Option<&DiagnosticSet> {
-        let Ok(idx) = self.diagnostics.binary_search_by_key(&server_id, |v| v.0) else {
-            return None;
-        };
-        Some(&self.diagnostics[idx].1)
+    pub fn buffer_diagnostics(
+        &self,
+        for_server: Option<LanguageServerId>,
+    ) -> Vec<&DiagnosticEntry<Anchor>> {
+        match for_server {
+            Some(server_id) => match self.diagnostics.binary_search_by_key(&server_id, |v| v.0) {
+                Ok(idx) => self.diagnostics[idx].1.iter().collect(),
+                Err(_) => Vec::new(),
+            },
+            None => self
+                .diagnostics
+                .iter()
+                .flat_map(|(_, diagnostic_set)| diagnostic_set.iter())
+                .collect(),
+        }
     }
 
     fn request_autoindent(&mut self, cx: &mut Context<Self>) {
@@ -2207,7 +2228,7 @@ impl Buffer {
         self.remote_selections.insert(
             AGENT_REPLICA_ID,
             SelectionSet {
-                selections: selections.clone(),
+                selections,
                 lamport_timestamp,
                 line_mode,
                 cursor_shape,
@@ -2559,7 +2580,7 @@ impl Buffer {
             Operation::UpdateSelections { selections, .. } => selections
                 .iter()
                 .all(|s| self.can_resolve(&s.start) && self.can_resolve(&s.end)),
-            Operation::UpdateCompletionTriggers { .. } => true,
+            Operation::UpdateCompletionTriggers { .. } | Operation::UpdateLineEnding { .. } => true,
         }
     }
 
@@ -2616,13 +2637,20 @@ impl Buffer {
                     self.completion_triggers = self
                         .completion_triggers_per_language_server
                         .values()
-                        .flat_map(|triggers| triggers.into_iter().cloned())
+                        .flat_map(|triggers| triggers.iter().cloned())
                         .collect();
                 } else {
                     self.completion_triggers_per_language_server
                         .insert(server_id, triggers.iter().cloned().collect());
                     self.completion_triggers.extend(triggers);
                 }
+                self.text.lamport_clock.observe(lamport_timestamp);
+            }
+            Operation::UpdateLineEnding {
+                line_ending,
+                lamport_timestamp,
+            } => {
+                self.text.set_line_ending(line_ending);
                 self.text.lamport_clock.observe(lamport_timestamp);
             }
         }
@@ -2776,7 +2804,7 @@ impl Buffer {
             self.completion_triggers = self
                 .completion_triggers_per_language_server
                 .values()
-                .flat_map(|triggers| triggers.into_iter().cloned())
+                .flat_map(|triggers| triggers.iter().cloned())
                 .collect();
         } else {
             self.completion_triggers_per_language_server
@@ -2844,12 +2872,12 @@ impl Buffer {
 
             let new_start = last_end.map_or(0, |last_end| last_end + 1);
             let mut range = self.random_byte_range(new_start, rng);
-            if rng.gen_bool(0.2) {
+            if rng.random_bool(0.2) {
                 mem::swap(&mut range.start, &mut range.end);
             }
             last_end = Some(range.end);
 
-            let new_text_len = rng.gen_range(0..10);
+            let new_text_len = rng.random_range(0..10);
             let mut new_text: String = RandomCharIter::new(&mut *rng).take(new_text_len).collect();
             new_text = new_text.to_uppercase();
 
@@ -3007,9 +3035,9 @@ impl BufferSnapshot {
         }
 
         let mut error_ranges = Vec::<Range<Point>>::new();
-        let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
-            grammar.error_query.as_ref()
-        });
+        let mut matches = self
+            .syntax
+            .matches(range, &self.text, |grammar| grammar.error_query.as_ref());
         while let Some(mat) = matches.peek() {
             let node = mat.captures[0].node;
             let start = Point::from_ts_point(node.start_position());
@@ -4076,7 +4104,7 @@ impl BufferSnapshot {
         // Get the ranges of the innermost pair of brackets.
         let mut result: Option<(Range<usize>, Range<usize>)> = None;
 
-        for pair in self.enclosing_bracket_ranges(range.clone()) {
+        for pair in self.enclosing_bracket_ranges(range) {
             if let Some(range_filter) = range_filter
                 && !range_filter(pair.open_range.clone(), pair.close_range.clone())
             {
@@ -4249,7 +4277,7 @@ impl BufferSnapshot {
                         .map(|(range, name)| {
                             (
                                 name.to_string(),
-                                self.text_for_range(range.clone()).collect::<String>(),
+                                self.text_for_range(range).collect::<String>(),
                             )
                         })
                         .collect();
@@ -4815,6 +4843,9 @@ impl operation_queue::Operation for Operation {
                 lamport_timestamp, ..
             }
             | Operation::UpdateCompletionTriggers {
+                lamport_timestamp, ..
+            }
+            | Operation::UpdateLineEnding {
                 lamport_timestamp, ..
             } => *lamport_timestamp,
         }

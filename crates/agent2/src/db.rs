@@ -1,5 +1,6 @@
 use crate::{AgentMessage, AgentMessageContent, UserMessage, UserMessageContent};
-use agent::thread_store;
+use acp_thread::UserMessageId;
+use agent::{thread::DetailedSummaryState, thread_store};
 use agent_client_protocol as acp;
 use agent_settings::{AgentProfileId, CompletionMode};
 use anyhow::{Result, anyhow};
@@ -17,9 +18,10 @@ use sqlez::{
 };
 use std::sync::Arc;
 use ui::{App, SharedString};
+use zed_env_vars::ZED_STATELESS;
 
 pub type DbMessage = crate::Message;
-pub type DbSummary = agent::thread::DetailedSummaryState;
+pub type DbSummary = DetailedSummaryState;
 pub type DbLanguageModel = thread_store::SerializedLanguageModel;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,13 +38,13 @@ pub struct DbThread {
     pub messages: Vec<DbMessage>,
     pub updated_at: DateTime<Utc>,
     #[serde(default)]
-    pub summary: DbSummary,
+    pub detailed_summary: Option<SharedString>,
     #[serde(default)]
     pub initial_project_snapshot: Option<Arc<agent::thread::ProjectSnapshot>>,
     #[serde(default)]
     pub cumulative_token_usage: language_model::TokenUsage,
     #[serde(default)]
-    pub request_token_usage: Vec<language_model::TokenUsage>,
+    pub request_token_usage: HashMap<acp_thread::UserMessageId, language_model::TokenUsage>,
     #[serde(default)]
     pub model: Option<DbLanguageModel>,
     #[serde(default)]
@@ -67,7 +69,10 @@ impl DbThread {
 
     fn upgrade_from_agent_1(thread: agent::SerializedThread) -> Result<Self> {
         let mut messages = Vec::new();
-        for msg in thread.messages {
+        let mut request_token_usage = HashMap::default();
+
+        let mut last_user_message_id = None;
+        for (ix, msg) in thread.messages.into_iter().enumerate() {
             let message = match msg.role {
                 language_model::Role::User => {
                     let mut content = Vec::new();
@@ -93,9 +98,12 @@ impl DbThread {
                         content.push(UserMessageContent::Text(msg.context));
                     }
 
+                    let id = UserMessageId::new();
+                    last_user_message_id = Some(id.clone());
+
                     crate::Message::User(UserMessage {
                         // MessageId from old format can't be meaningfully converted, so generate a new one
-                        id: acp_thread::UserMessageId::new(),
+                        id,
                         content,
                     })
                 }
@@ -154,6 +162,12 @@ impl DbThread {
                         );
                     }
 
+                    if let Some(last_user_message_id) = &last_user_message_id
+                        && let Some(token_usage) = thread.request_token_usage.get(ix).copied()
+                    {
+                        request_token_usage.insert(last_user_message_id.clone(), token_usage);
+                    }
+
                     crate::Message::Agent(AgentMessage {
                         content,
                         tool_results,
@@ -172,19 +186,21 @@ impl DbThread {
             title: thread.summary,
             messages,
             updated_at: thread.updated_at,
-            summary: thread.detailed_summary_state,
+            detailed_summary: match thread.detailed_summary_state {
+                DetailedSummaryState::NotGenerated | DetailedSummaryState::Generating { .. } => {
+                    None
+                }
+                DetailedSummaryState::Generated { text, .. } => Some(text),
+            },
             initial_project_snapshot: thread.initial_project_snapshot,
             cumulative_token_usage: thread.cumulative_token_usage,
-            request_token_usage: thread.request_token_usage,
+            request_token_usage,
             model: thread.model,
             completion_mode: thread.completion_mode,
             profile: thread.profile,
         })
     }
 }
-
-pub static ZED_STATELESS: std::sync::LazyLock<bool> =
-    std::sync::LazyLock::new(|| std::env::var("ZED_STATELESS").is_ok_and(|v| !v.is_empty()));
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DataType {
@@ -248,8 +264,19 @@ impl ThreadsDatabase {
     }
 
     pub fn new(executor: BackgroundExecutor) -> Result<Self> {
-        let connection = if *ZED_STATELESS || cfg!(any(feature = "test-support", test)) {
+        let connection = if *ZED_STATELESS {
             Connection::open_memory(Some("THREAD_FALLBACK_DB"))
+        } else if cfg!(any(feature = "test-support", test)) {
+            // rust stores the name of the test on the current thread.
+            // We use this to automatically create a database that will
+            // be shared within the test (for the test_retrieve_old_thread)
+            // but not with concurrent tests.
+            let thread = std::thread::current();
+            let test_name = thread.name();
+            Connection::open_memory(Some(&format!(
+                "THREAD_FALLBACK_{}",
+                test_name.unwrap_or_default()
+            )))
         } else {
             let threads_dir = paths::data_dir().join("threads");
             std::fs::create_dir_all(&threads_dir)?;
@@ -269,7 +296,7 @@ impl ThreadsDatabase {
         .map_err(|e| anyhow!("Failed to create threads table: {}", e))?;
 
         let db = Self {
-            executor: executor.clone(),
+            executor,
             connection: Arc::new(Mutex::new(connection)),
         };
 
@@ -307,7 +334,7 @@ impl ThreadsDatabase {
             INSERT OR REPLACE INTO threads (id, summary, updated_at, data_type, data) VALUES (?, ?, ?, ?, ?)
         "})?;
 
-        insert((id.0.clone(), title, updated_at, data_type, data))?;
+        insert((id.0, title, updated_at, data_type, data))?;
 
         Ok(())
     }
@@ -416,7 +443,7 @@ mod tests {
             let client = Client::new(clock, http_client, cx);
             agent::init(cx);
             agent_settings::init(cx);
-            language_model::init(client.clone(), cx);
+            language_model::init(client, cx);
         });
     }
 

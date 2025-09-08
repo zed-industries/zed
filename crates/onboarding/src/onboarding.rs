@@ -242,12 +242,25 @@ struct Onboarding {
 
 impl Onboarding {
     fn new(workspace: &Workspace, cx: &mut App) -> Entity<Self> {
-        cx.new(|cx| Self {
-            workspace: workspace.weak_handle(),
-            focus_handle: cx.focus_handle(),
-            selected_page: SelectedPage::Basics,
-            user_store: workspace.user_store().clone(),
-            _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
+        let font_family_cache = theme::FontFamilyCache::global(cx);
+
+        cx.new(|cx| {
+            cx.spawn(async move |this, cx| {
+                font_family_cache.prefetch(cx).await;
+                this.update(cx, |_, cx| {
+                    cx.notify();
+                })
+            })
+            .detach();
+
+            Self {
+                workspace: workspace.weak_handle(),
+                focus_handle: cx.focus_handle(),
+                selected_page: SelectedPage::Basics,
+                user_store: workspace.user_store().clone(),
+                _settings_subscription: cx
+                    .observe_global::<SettingsStore>(move |_, cx| cx.notify()),
+            }
         })
     }
 
@@ -476,6 +489,7 @@ impl Onboarding {
                                 .map(|kb| kb.size(rems_from_px(12.))),
                         )
                         .on_click(|_, window, cx| {
+                            telemetry::event!("Welcome Sign In Clicked");
                             window.dispatch_action(SignIn.boxed_clone(), cx);
                         })
                         .into_any_element()
@@ -850,13 +864,19 @@ impl workspace::SerializableItem for Onboarding {
 }
 
 mod persistence {
-    use db::{define_connection, query, sqlez_macros::sql};
+    use db::{
+        query,
+        sqlez::{domain::Domain, thread_safe_connection::ThreadSafeConnection},
+        sqlez_macros::sql,
+    };
     use workspace::WorkspaceDb;
 
-    define_connection! {
-        pub static ref ONBOARDING_PAGES: OnboardingPagesDb<WorkspaceDb> =
-            &[
-                sql!(
+    pub struct OnboardingPagesDb(ThreadSafeConnection);
+
+    impl Domain for OnboardingPagesDb {
+        const NAME: &str = stringify!(OnboardingPagesDb);
+
+        const MIGRATIONS: &[&str] = &[sql!(
                     CREATE TABLE onboarding_pages (
                         workspace_id INTEGER,
                         item_id INTEGER UNIQUE,
@@ -866,9 +886,10 @@ mod persistence {
                         FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
                         ON DELETE CASCADE
                     ) STRICT;
-                ),
-            ];
+        )];
     }
+
+    db::static_connection!(ONBOARDING_PAGES, OnboardingPagesDb, [WorkspaceDb]);
 
     impl OnboardingPagesDb {
         query! {

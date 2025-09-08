@@ -1,9 +1,9 @@
 id = "snippets"
 name = "Snippets"
 description = "Support for language-agnostic snippets, provided by simple-completion-language-server"
-version = "0.0.5"
+version = "0.0.6"
 schema_version = 1
-authors = []
+authors = ["Zed Industries <hi@zed.dev>"]
 repository = "https://github.com/zed-industries/zed"
 
 [language_servers.snippet-completion-server]

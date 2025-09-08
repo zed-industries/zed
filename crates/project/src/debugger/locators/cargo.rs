@@ -117,7 +117,7 @@ impl DapLocator for CargoLocator {
             .cwd
             .clone()
             .context("Couldn't get cwd from debug config which is needed for locators")?;
-        let builder = ShellBuilder::new(true, &build_config.shell).non_interactive();
+        let builder = ShellBuilder::new(None, &build_config.shell).non_interactive();
         let (program, args) = builder.build(
             Some("cargo".into()),
             &build_config
@@ -126,7 +126,7 @@ impl DapLocator for CargoLocator {
                 .cloned()
                 .take_while(|arg| arg != "--")
                 .chain(Some("--message-format=json".to_owned()))
-                .collect(),
+                .collect::<Vec<_>>(),
         );
         let mut child = util::command::new_smol_command(program)
             .args(args)

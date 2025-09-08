@@ -161,7 +161,7 @@ impl Render for QuickActionBar {
             IconName::ZedAssistant,
             false,
             Box::new(InlineAssist::default()),
-            focus_handle.clone(),
+            focus_handle,
             "Inline Assist",
             move |_, window, cx| {
                 window.dispatch_action(Box::new(InlineAssist::default()), cx);
@@ -215,7 +215,7 @@ impl Render for QuickActionBar {
                             )
                         })
                         .on_click({
-                            let focus = focus.clone();
+                            let focus = focus;
                             move |_, window, cx| {
                                 focus.dispatch_action(
                                     &ToggleCodeActions {

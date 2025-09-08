@@ -1073,7 +1073,7 @@ impl ChannelStore {
 
                 if let Some(this) = this.upgrade() {
                     this.update(cx, |this, cx| {
-                        for (_, buffer) in &this.opened_buffers {
+                        for buffer in this.opened_buffers.values() {
                             if let OpenEntityHandle::Open(buffer) = &buffer
                                 && let Some(buffer) = buffer.upgrade()
                             {

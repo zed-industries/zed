@@ -113,14 +113,16 @@ impl zed::Extension for SnippetExtension {
     ) -> Result<Option<zed_extension_api::serde_json::Value>> {
         let settings = LspSettings::for_worktree(server_id.as_ref(), worktree)
             .ok()
-            .and_then(|lsp_settings| lsp_settings.settings.clone())
+            .and_then(|lsp_settings| lsp_settings.settings)
             .unwrap_or_else(|| {
                 json!({
                     "max_completion_items": 20,
                     "snippets_first": true,
                     "feature_words": false,
                     "feature_snippets": true,
-                    "feature_paths": true
+                    // We disable `feature_paths` by default, because it's bad UX to assume that any `/` that is typed
+                    // is the start of a path.
+                    "feature_paths": false
                 })
             });
         Ok(Some(settings))

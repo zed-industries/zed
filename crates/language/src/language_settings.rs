@@ -5,7 +5,7 @@ use anyhow::Result;
 use collections::{FxHashMap, HashMap, HashSet};
 use ec4rs::{
     Properties as EditorconfigProperties,
-    property::{FinalNewline, IndentSize, IndentStyle, TabWidth, TrimTrailingWs},
+    property::{FinalNewline, IndentSize, IndentStyle, MaxLineLen, TabWidth, TrimTrailingWs},
 };
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{App, Modifiers};
@@ -17,7 +17,8 @@ use serde::{
 };
 
 use settings::{
-    ParameterizedJsonSchema, Settings, SettingsLocation, SettingsSources, SettingsStore,
+    ParameterizedJsonSchema, Settings, SettingsKey, SettingsLocation, SettingsSources,
+    SettingsStore, SettingsUi,
 };
 use shellexpand;
 use std::{borrow::Cow, num::NonZeroU32, path::Path, slice, sync::Arc};
@@ -199,7 +200,7 @@ impl LanguageSettings {
                 if language_server.0.as_ref() == Self::REST_OF_LANGUAGE_SERVERS {
                     rest.clone()
                 } else {
-                    vec![language_server.clone()]
+                    vec![language_server]
                 }
             })
             .collect::<Vec<_>>()
@@ -207,7 +208,9 @@ impl LanguageSettings {
 }
 
 /// The provider that supplies edit predictions.
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema, SettingsUi,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum EditPredictionProvider {
     None,
@@ -230,13 +233,14 @@ impl EditPredictionProvider {
 
 /// The settings for edit predictions, such as [GitHub Copilot](https://github.com/features/copilot)
 /// or [Supermaven](https://supermaven.com).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, SettingsUi)]
 pub struct EditPredictionSettings {
     /// The provider that supplies edit predictions.
     pub provider: EditPredictionProvider,
     /// A list of globs representing files that edit predictions should be disabled for.
     /// This list adds to a pre-existing, sensible default set of globs.
     /// Any additional ones you add are combined with them.
+    #[settings_ui(skip)]
     pub disabled_globs: Vec<DisabledGlob>,
     /// Configures how edit predictions are displayed in the buffer.
     pub mode: EditPredictionsMode,
@@ -268,7 +272,9 @@ pub struct DisabledGlob {
 }
 
 /// The mode in which edit predictions should be displayed.
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema, SettingsUi,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum EditPredictionsMode {
     /// If provider supports it, display inline when holding modifier key (e.g., alt).
@@ -281,18 +287,24 @@ pub enum EditPredictionsMode {
     Eager,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, SettingsUi)]
 pub struct CopilotSettings {
     /// HTTP/HTTPS proxy to use for Copilot.
+    #[settings_ui(skip)]
     pub proxy: Option<String>,
     /// Disable certificate verification for proxy (not recommended).
     pub proxy_no_verify: Option<bool>,
     /// Enterprise URI for Copilot.
+    #[settings_ui(skip)]
     pub enterprise_uri: Option<String>,
 }
 
 /// The settings for all languages.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey,
+)]
+#[settings_key(None)]
+#[settings_ui(group = "Default Language Settings")]
 pub struct AllLanguageSettingsContent {
     /// The settings for enabling/disabling features.
     #[serde(default)]
@@ -305,10 +317,12 @@ pub struct AllLanguageSettingsContent {
     pub defaults: LanguageSettingsContent,
     /// The settings for individual languages.
     #[serde(default)]
+    #[settings_ui(skip)]
     pub languages: LanguageToSettingsMap,
     /// Settings for associating file extensions and filenames
     /// with languages.
     #[serde(default)]
+    #[settings_ui(skip)]
     pub file_types: HashMap<Arc<str>, Vec<String>>,
 }
 
@@ -341,7 +355,7 @@ inventory::submit! {
 }
 
 /// Controls how completions are processed for this language.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi)]
 #[serde(rename_all = "snake_case")]
 pub struct CompletionSettings {
     /// Controls how words are completed.
@@ -350,6 +364,12 @@ pub struct CompletionSettings {
     /// Default: `fallback`
     #[serde(default = "default_words_completion_mode")]
     pub words: WordsCompletionMode,
+    /// How many characters has to be in the completions query to automatically show the words-based completions.
+    /// Before that value, it's still possible to trigger the words-based completion manually with the corresponding editor command.
+    ///
+    /// Default: 3
+    #[serde(default = "default_3")]
+    pub words_min_length: usize,
     /// Whether to fetch LSP completions or not.
     ///
     /// Default: true
@@ -359,7 +379,7 @@ pub struct CompletionSettings {
     /// When set to 0, waits indefinitely.
     ///
     /// Default: 0
-    #[serde(default = "default_lsp_fetch_timeout_ms")]
+    #[serde(default)]
     pub lsp_fetch_timeout_ms: u64,
     /// Controls how LSP completions are inserted.
     ///
@@ -405,12 +425,12 @@ fn default_lsp_insert_mode() -> LspInsertMode {
     LspInsertMode::ReplaceSuffix
 }
 
-fn default_lsp_fetch_timeout_ms() -> u64 {
-    0
+fn default_3() -> usize {
+    3
 }
 
 /// The settings for a particular language.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, SettingsUi)]
 pub struct LanguageSettingsContent {
     /// How many columns a tab should occupy.
     ///
@@ -607,12 +627,13 @@ pub enum RewrapBehavior {
 }
 
 /// The contents of the edit prediction settings.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, SettingsUi)]
 pub struct EditPredictionSettingsContent {
     /// A list of globs representing files that edit predictions should be disabled for.
     /// This list adds to a pre-existing, sensible default set of globs.
     /// Any additional ones you add are combined with them.
     #[serde(default)]
+    #[settings_ui(skip)]
     pub disabled_globs: Option<Vec<String>>,
     /// The mode used to display edit predictions in the buffer.
     /// Provider support required.
@@ -627,12 +648,13 @@ pub struct EditPredictionSettingsContent {
     pub enabled_in_text_threads: bool,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, SettingsUi)]
 pub struct CopilotSettingsContent {
     /// HTTP/HTTPS proxy to use for Copilot.
     ///
     /// Default: none
     #[serde(default)]
+    #[settings_ui(skip)]
     pub proxy: Option<String>,
     /// Disable certificate verification for the proxy (not recommended).
     ///
@@ -643,19 +665,21 @@ pub struct CopilotSettingsContent {
     ///
     /// Default: none
     #[serde(default)]
+    #[settings_ui(skip)]
     pub enterprise_uri: Option<String>,
 }
 
 /// The settings for enabling/disabling features.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
 #[serde(rename_all = "snake_case")]
+#[settings_ui(group = "Features")]
 pub struct FeaturesContent {
     /// Determines which edit prediction provider to use.
     pub edit_prediction_provider: Option<EditPredictionProvider>,
 }
 
 /// Controls the soft-wrapping behavior in the editor.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi)]
 #[serde(rename_all = "snake_case")]
 pub enum SoftWrap {
     /// Prefer a single line generally, unless an overly long line is encountered.
@@ -924,7 +948,9 @@ pub enum Formatter {
 }
 
 /// The settings for indent guides.
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, SettingsUi,
+)]
 pub struct IndentGuideSettings {
     /// Whether to display indent guides in the editor.
     ///
@@ -1131,6 +1157,10 @@ impl AllLanguageSettings {
 }
 
 fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigProperties) {
+    let preferred_line_length = cfg.get::<MaxLineLen>().ok().and_then(|v| match v {
+        MaxLineLen::Value(u) => Some(u as u32),
+        MaxLineLen::Off => None,
+    });
     let tab_size = cfg.get::<IndentSize>().ok().and_then(|v| match v {
         IndentSize::Value(u) => NonZeroU32::new(u as u32),
         IndentSize::UseTabWidth => cfg.get::<TabWidth>().ok().and_then(|w| match w {
@@ -1158,6 +1188,7 @@ fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigPr
             *target = value;
         }
     }
+    merge(&mut settings.preferred_line_length, preferred_line_length);
     merge(&mut settings.tab_size, tab_size);
     merge(&mut settings.hard_tabs, hard_tabs);
     merge(
@@ -1202,8 +1233,6 @@ impl InlayHintKind {
 }
 
 impl settings::Settings for AllLanguageSettings {
-    const KEY: Option<&'static str> = None;
-
     type FileContent = AllLanguageSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
@@ -1463,6 +1492,7 @@ impl settings::Settings for AllLanguageSettings {
             } else {
                 d.completions = Some(CompletionSettings {
                     words: mode,
+                    words_min_length: 3,
                     lsp: true,
                     lsp_fetch_timeout_ms: 0,
                     lsp_insert_mode: LspInsertMode::ReplaceSuffix,
@@ -1793,7 +1823,7 @@ mod tests {
         assert!(!settings.enabled_for_file(&dot_env_file, &cx));
 
         // Test tilde expansion
-        let home = shellexpand::tilde("~").into_owned().to_string();
+        let home = shellexpand::tilde("~").into_owned();
         let home_file = make_test_file(&[&home, "test.rs"]);
         let settings = build_settings(&["~/test.rs"]);
         assert!(!settings.enabled_for_file(&home_file, &cx));

@@ -8,7 +8,7 @@ See [Configuring Zed](./configuring-zed.md) for additional information and other
 
 Use may install zed extensions providing [Themes](./themes.md) and [Icon Themes](./icon-themes.md) via {#action zed::Extensions} from the command palette or menu.
 
-You can preview/choose amongsts your installed themes and icon themes with {#action theme_selector::Toggle} ({#kb theme_selector::Toggle}) and ({#action icon_theme_selector::Toggle}) which will modify the following settings:
+You can preview/choose amongst your installed themes and icon themes with {#action theme_selector::Toggle} ({#kb theme_selector::Toggle}) and ({#action icon_theme_selector::Toggle}) which will modify the following settings:
 
 ```json
 {
@@ -321,6 +321,12 @@ TBD: Centered layout related settings
     // Defaults to true.
     "cursor_position_button": true,
   },
+  "global_lsp_settings": {
+    // Show/hide the LSP button in the status bar.
+    // Activity from the LSP is still shown.
+    // Button is not shown if "enable_language_server" if false.
+    "button": true
+  },
 ```
 
 ### Multibuffer
@@ -328,7 +334,9 @@ TBD: Centered layout related settings
 ```json
 {
   // The default number of lines to expand excerpts in the multibuffer by.
-  "expand_excerpt_lines": 5
+  "expand_excerpt_lines": 5,
+  // The default number of lines of context provided for excerpts in the multibuffer by.
+  "excerpt_context_lines": 2
 }
 ```
 
@@ -424,6 +432,8 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
     "indent_size": 20,              // Pixels for each successive indent
     "auto_reveal_entries": true,    // Show file in panel when activating its buffer
     "auto_fold_dirs": true,         // Fold dirs with single subdir
+    "sticky_scroll": true,          // Stick parent directories at top of the project panel.
+    "drag_and_drop": true,          // Whether drag and drop is enabled
     "scrollbar": {                  // Project panel scrollbar settings
       "show": null                  // Show/hide: (auto, system, always, never)
     },

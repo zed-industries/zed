@@ -81,10 +81,7 @@ pub fn init(
     };
     copilot_chat::init(fs.clone(), http.clone(), configuration, cx);
 
-    let copilot = cx.new({
-        let node_runtime = node_runtime.clone();
-        move |cx| Copilot::start(new_server_id, fs, node_runtime, cx)
-    });
+    let copilot = cx.new(move |cx| Copilot::start(new_server_id, fs, node_runtime, cx));
     Copilot::set_global(copilot.clone(), cx);
     cx.observe(&copilot, |copilot, cx| {
         copilot.update(cx, |copilot, cx| copilot.update_action_visibilities(cx));
@@ -129,7 +126,7 @@ impl CopilotServer {
     fn as_authenticated(&mut self) -> Result<&mut RunningCopilotServer> {
         let server = self.as_running()?;
         anyhow::ensure!(
-            matches!(server.sign_in_status, SignInStatus::Authorized { .. }),
+            matches!(server.sign_in_status, SignInStatus::Authorized),
             "must sign in before using copilot"
         );
         Ok(server)
@@ -200,7 +197,7 @@ impl Status {
 }
 
 struct RegisteredBuffer {
-    uri: lsp::Url,
+    uri: lsp::Uri,
     language_id: String,
     snapshot: BufferSnapshot,
     snapshot_version: i32,
@@ -581,12 +578,12 @@ impl Copilot {
     pub(crate) fn sign_in(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         if let CopilotServer::Running(server) = &mut self.server {
             let task = match &server.sign_in_status {
-                SignInStatus::Authorized { .. } => Task::ready(Ok(())).shared(),
+                SignInStatus::Authorized => Task::ready(Ok(())).shared(),
                 SignInStatus::SigningIn { task, .. } => {
                     cx.notify();
                     task.clone()
                 }
-                SignInStatus::SignedOut { .. } | SignInStatus::Unauthorized { .. } => {
+                SignInStatus::SignedOut { .. } | SignInStatus::Unauthorized => {
                     let lsp = server.lsp.clone();
                     let task = cx
                         .spawn(async move |this, cx| {
@@ -730,7 +727,7 @@ impl Copilot {
             ..
         }) = &mut self.server
         {
-            if !matches!(status, SignInStatus::Authorized { .. }) {
+            if !matches!(status, SignInStatus::Authorized) {
                 return;
             }
 
@@ -1012,8 +1009,8 @@ impl Copilot {
             CopilotServer::Error(error) => Status::Error(error.clone()),
             CopilotServer::Running(RunningCopilotServer { sign_in_status, .. }) => {
                 match sign_in_status {
-                    SignInStatus::Authorized { .. } => Status::Authorized,
-                    SignInStatus::Unauthorized { .. } => Status::Unauthorized,
+                    SignInStatus::Authorized => Status::Authorized,
+                    SignInStatus::Unauthorized => Status::Unauthorized,
                     SignInStatus::SigningIn { prompt, .. } => Status::SigningIn {
                         prompt: prompt.clone(),
                     },
@@ -1098,7 +1095,7 @@ impl Copilot {
                 _ => {
                     filter.hide_action_types(&signed_in_actions);
                     filter.hide_action_types(&auth_actions);
-                    filter.show_action_types(no_auth_actions.iter());
+                    filter.show_action_types(&no_auth_actions);
                 }
             }
         }
@@ -1111,9 +1108,9 @@ fn id_for_language(language: Option<&Arc<Language>>) -> String {
         .unwrap_or_else(|| "plaintext".to_string())
 }
 
-fn uri_for_buffer(buffer: &Entity<Buffer>, cx: &App) -> Result<lsp::Url, ()> {
+fn uri_for_buffer(buffer: &Entity<Buffer>, cx: &App) -> Result<lsp::Uri, ()> {
     if let Some(file) = buffer.read(cx).file().and_then(|file| file.as_local()) {
-        lsp::Url::from_file_path(file.abs_path(cx))
+        lsp::Uri::from_file_path(file.abs_path(cx))
     } else {
         format!("buffer://{}", buffer.entity_id())
             .parse()
@@ -1204,7 +1201,7 @@ mod tests {
         let (copilot, mut lsp) = Copilot::fake(cx);
 
         let buffer_1 = cx.new(|cx| Buffer::local("Hello", cx));
-        let buffer_1_uri: lsp::Url = format!("buffer://{}", buffer_1.entity_id().as_u64())
+        let buffer_1_uri: lsp::Uri = format!("buffer://{}", buffer_1.entity_id().as_u64())
             .parse()
             .unwrap();
         copilot.update(cx, |copilot, cx| copilot.register_buffer(&buffer_1, cx));
@@ -1222,7 +1219,7 @@ mod tests {
         );
 
         let buffer_2 = cx.new(|cx| Buffer::local("Goodbye", cx));
-        let buffer_2_uri: lsp::Url = format!("buffer://{}", buffer_2.entity_id().as_u64())
+        let buffer_2_uri: lsp::Uri = format!("buffer://{}", buffer_2.entity_id().as_u64())
             .parse()
             .unwrap();
         copilot.update(cx, |copilot, cx| copilot.register_buffer(&buffer_2, cx));
@@ -1273,7 +1270,7 @@ mod tests {
                 text_document: lsp::TextDocumentIdentifier::new(buffer_1_uri),
             }
         );
-        let buffer_1_uri = lsp::Url::from_file_path(path!("/root/child/buffer-1")).unwrap();
+        let buffer_1_uri = lsp::Uri::from_file_path(path!("/root/child/buffer-1")).unwrap();
         assert_eq!(
             lsp.receive_notification::<lsp::notification::DidOpenTextDocument>()
                 .await,

@@ -10,12 +10,12 @@ use editor::{
     Direction, Editor, EditorEvent, EditorSettings, MultiBuffer, MultiBufferSnapshot,
     SelectionEffects, ToPoint,
     actions::{GoToHunk, GoToPreviousHunk},
+    multibuffer_context_lines,
     scroll::Autoscroll,
 };
 use gpui::{
-    Action, Animation, AnimationExt, AnyElement, AnyView, App, AppContext, Empty, Entity,
-    EventEmitter, FocusHandle, Focusable, Global, SharedString, Subscription, Task, Transformation,
-    WeakEntity, Window, percentage, prelude::*,
+    Action, AnyElement, AnyView, App, AppContext, Empty, Entity, EventEmitter, FocusHandle,
+    Focusable, Global, SharedString, Subscription, Task, WeakEntity, Window, prelude::*,
 };
 
 use language::{Buffer, Capability, DiskState, OffsetRangeExt, Point};
@@ -28,9 +28,8 @@ use std::{
     collections::hash_map::Entry,
     ops::Range,
     sync::Arc,
-    time::Duration,
 };
-use ui::{IconButtonShape, KeyBinding, Tooltip, prelude::*, vertical_divider};
+use ui::{CommonAnimationExt, IconButtonShape, KeyBinding, Tooltip, prelude::*, vertical_divider};
 use util::ResultExt;
 use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
@@ -185,7 +184,7 @@ impl AgentDiffPane {
         let focus_handle = cx.focus_handle();
         let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
 
-        let project = thread.project(cx).clone();
+        let project = thread.project(cx);
         let editor = cx.new(|cx| {
             let mut editor =
                 Editor::for_multibuffer(multibuffer.clone(), Some(project.clone()), window, cx);
@@ -196,7 +195,7 @@ impl AgentDiffPane {
             editor
         });
 
-        let action_log = thread.action_log(cx).clone();
+        let action_log = thread.action_log(cx);
 
         let mut this = Self {
             _subscriptions: vec![
@@ -257,7 +256,7 @@ impl AgentDiffPane {
                         path_key.clone(),
                         buffer.clone(),
                         diff_hunk_ranges,
-                        editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                        multibuffer_context_lines(cx),
                         cx,
                     );
                     multibuffer.add_diff(diff_handle, cx);
@@ -322,16 +321,14 @@ impl AgentDiffPane {
     }
 
     fn handle_native_thread_event(&mut self, event: &ThreadEvent, cx: &mut Context<Self>) {
-        match event {
-            ThreadEvent::SummaryGenerated => self.update_title(cx),
-            _ => {}
+        if let ThreadEvent::SummaryGenerated = event {
+            self.update_title(cx)
         }
     }
 
     fn handle_acp_thread_event(&mut self, event: &AcpThreadEvent, cx: &mut Context<Self>) {
-        match event {
-            AcpThreadEvent::TitleUpdated => self.update_title(cx),
-            _ => {}
+        if let AcpThreadEvent::TitleUpdated = event {
+            self.update_title(cx)
         }
     }
 
@@ -1085,11 +1082,7 @@ impl Render for AgentDiffToolbar {
                 Icon::new(IconName::LoadCircle)
                     .size(IconSize::Small)
                     .color(Color::Accent)
-                    .with_animation(
-                        "load_circle",
-                        Animation::new(Duration::from_secs(3)).repeat(),
-                        |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                    ),
+                    .with_rotate_animation(3),
             )
             .into_any();
 
@@ -1314,7 +1307,7 @@ impl AgentDiff {
                 let entity = cx.new(|_cx| Self::default());
                 let global = AgentDiffGlobal(entity.clone());
                 cx.set_global(global);
-                entity.clone()
+                entity
             })
     }
 
@@ -1336,7 +1329,7 @@ impl AgentDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let action_log = thread.action_log(cx).clone();
+        let action_log = thread.action_log(cx);
 
         let action_log_subscription = cx.observe_in(&action_log, window, {
             let workspace = workspace.clone();
@@ -1524,12 +1517,18 @@ impl AgentDiff {
                     self.update_reviewing_editors(workspace, window, cx);
                 }
             }
-            AcpThreadEvent::Stopped | AcpThreadEvent::Error | AcpThreadEvent::ServerExited(_) => {
+            AcpThreadEvent::Stopped
+            | AcpThreadEvent::Error
+            | AcpThreadEvent::LoadError(_)
+            | AcpThreadEvent::Refusal => {
                 self.update_reviewing_editors(workspace, window, cx);
             }
             AcpThreadEvent::TitleUpdated
+            | AcpThreadEvent::TokenUsageUpdated
             | AcpThreadEvent::EntriesRemoved(_)
             | AcpThreadEvent::ToolAuthorizationRequired
+            | AcpThreadEvent::PromptCapabilitiesUpdated
+            | AcpThreadEvent::AvailableCommandsUpdated(_)
             | AcpThreadEvent::Retry(_) => {}
         }
     }
@@ -1541,15 +1540,11 @@ impl AgentDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match event {
-            workspace::Event::ItemAdded { item } => {
-                if let Some(editor) = item.downcast::<Editor>()
-                    && let Some(buffer) = Self::full_editor_buffer(editor.read(cx), cx)
-                {
-                    self.register_editor(workspace.downgrade(), buffer.clone(), editor, window, cx);
-                }
-            }
-            _ => {}
+        if let workspace::Event::ItemAdded { item } = event
+            && let Some(editor) = item.downcast::<Editor>()
+            && let Some(buffer) = Self::full_editor_buffer(editor.read(cx), cx)
+        {
+            self.register_editor(workspace.downgrade(), buffer, editor, window, cx);
         }
     }
 
@@ -1648,7 +1643,7 @@ impl AgentDiff {
                 continue;
             };
 
-            for (weak_editor, _) in buffer_editors {
+            for weak_editor in buffer_editors.keys() {
                 let Some(editor) = weak_editor.upgrade() else {
                     continue;
                 };

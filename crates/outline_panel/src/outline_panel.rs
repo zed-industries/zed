@@ -733,7 +733,8 @@ impl OutlinePanel {
     ) -> Entity<Self> {
         let project = workspace.project().clone();
         let workspace_handle = cx.entity().downgrade();
-        let outline_panel = cx.new(|cx| {
+
+        cx.new(|cx| {
             let filter_editor = cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
                 editor.set_placeholder_text("Filter...", cx);
@@ -912,9 +913,7 @@ impl OutlinePanel {
                 outline_panel.replace_active_editor(item, editor, window, cx);
             }
             outline_panel
-        });
-
-        outline_panel
+        })
     }
 
     fn serialization_key(workspace: &Workspace) -> Option<String> {
@@ -2624,7 +2623,7 @@ impl OutlinePanel {
     }
 
     fn entry_name(&self, worktree_id: &WorktreeId, entry: &Entry, cx: &App) -> String {
-        let name = match self.project.read(cx).worktree_for_id(*worktree_id, cx) {
+        match self.project.read(cx).worktree_for_id(*worktree_id, cx) {
             Some(worktree) => {
                 let worktree = worktree.read(cx);
                 match worktree.snapshot().root_entry() {
@@ -2645,8 +2644,7 @@ impl OutlinePanel {
                 }
             }
             None => file_name(entry.path.as_ref()),
-        };
-        name
+        }
     }
 
     fn update_fs_entries(
@@ -2681,7 +2679,8 @@ impl OutlinePanel {
                 new_collapsed_entries = outline_panel.collapsed_entries.clone();
                 new_unfolded_dirs = outline_panel.unfolded_dirs.clone();
                 let multi_buffer_snapshot = active_multi_buffer.read(cx).snapshot(cx);
-                let buffer_excerpts = multi_buffer_snapshot.excerpts().fold(
+
+                multi_buffer_snapshot.excerpts().fold(
                     HashMap::default(),
                     |mut buffer_excerpts, (excerpt_id, buffer_snapshot, excerpt_range)| {
                         let buffer_id = buffer_snapshot.remote_id();
@@ -2728,8 +2727,7 @@ impl OutlinePanel {
                         );
                         buffer_excerpts
                     },
-                );
-                buffer_excerpts
+                )
             }) else {
                 return;
             };
@@ -4395,12 +4393,13 @@ impl OutlinePanel {
             })
             .filter(|(match_range, _)| {
                 let editor = active_editor.read(cx);
-                if let Some(buffer_id) = match_range.start.buffer_id
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                if let Some(buffer_id) = snapshot.buffer_id_for_anchor(match_range.start)
                     && editor.is_buffer_folded(buffer_id, cx)
                 {
                     return false;
                 }
-                if let Some(buffer_id) = match_range.start.buffer_id
+                if let Some(buffer_id) = snapshot.buffer_id_for_anchor(match_range.end)
                     && editor.is_buffer_folded(buffer_id, cx)
                 {
                     return false;
@@ -4807,7 +4806,7 @@ impl OutlinePanel {
                             .with_compute_indents_fn(cx.entity(), |outline_panel, range, _, _| {
                                 let entries = outline_panel.cached_entries.get(range);
                                 if let Some(entries) = entries {
-                                    entries.into_iter().map(|item| item.depth).collect()
+                                    entries.iter().map(|item| item.depth).collect()
                                 } else {
                                     smallvec::SmallVec::new()
                                 }
@@ -5093,7 +5092,7 @@ impl Panel for OutlinePanel {
 
 impl Focusable for OutlinePanel {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.filter_editor.focus_handle(cx).clone()
+        self.filter_editor.focus_handle(cx)
     }
 }
 
@@ -5103,9 +5102,9 @@ impl EventEmitter<PanelEvent> for OutlinePanel {}
 
 impl Render for OutlinePanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (is_local, is_via_ssh) = self
-            .project
-            .read_with(cx, |project, _| (project.is_local(), project.is_via_ssh()));
+        let (is_local, is_via_ssh) = self.project.read_with(cx, |project, _| {
+            (project.is_local(), project.is_via_remote_server())
+        });
         let query = self.query(cx);
         let pinned = self.pinned;
         let settings = OutlinePanelSettings::get_global(cx);
@@ -5340,7 +5339,7 @@ fn subscribe_for_editor_events(
                 }
                 EditorEvent::Reparsed(buffer_id) => {
                     if let Some(excerpts) = outline_panel.excerpts.get_mut(buffer_id) {
-                        for (_, excerpt) in excerpts {
+                        for excerpt in excerpts.values_mut() {
                             excerpt.invalidate_outlines();
                         }
                     }
@@ -5403,8 +5402,9 @@ mod tests {
         init_test(cx);
 
         let fs = FakeFs::new(cx.background_executor.clone());
-        populate_with_test_ra_project(&fs, "/rust-analyzer").await;
-        let project = Project::test(fs.clone(), ["/rust-analyzer".as_ref()], cx).await;
+        let root = path!("/rust-analyzer");
+        populate_with_test_ra_project(&fs, root).await;
+        let project = Project::test(fs.clone(), [Path::new(root)], cx).await;
         project.read_with(cx, |project, _| {
             project.languages().add(Arc::new(rust_lang()))
         });
@@ -5449,15 +5449,16 @@ mod tests {
                 });
         });
 
-        let all_matches = r#"/rust-analyzer/
+        let all_matches = format!(
+            r#"{root}/
   crates/
     ide/src/
       inlay_hints/
         fn_lifetime_fn.rs
-          search: match config.param_names_for_lifetime_elision_hints {
-          search: allocated_lifetimes.push(if config.param_names_for_lifetime_elision_hints {
-          search: Some(it) if config.param_names_for_lifetime_elision_hints => {
-          search: InlayHintsConfig { param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG },
+          search: match config.param_names_for_lifetime_elision_hints {{
+          search: allocated_lifetimes.push(if config.param_names_for_lifetime_elision_hints {{
+          search: Some(it) if config.param_names_for_lifetime_elision_hints => {{
+          search: InlayHintsConfig {{ param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG }},
       inlay_hints.rs
         search: pub param_names_for_lifetime_elision_hints: bool,
         search: param_names_for_lifetime_elision_hints: self
@@ -5468,7 +5469,9 @@ mod tests {
         analysis_stats.rs
           search: param_names_for_lifetime_elision_hints: true,
       config.rs
-        search: param_names_for_lifetime_elision_hints: self"#;
+        search: param_names_for_lifetime_elision_hints: self"#
+        );
+
         let select_first_in_all_matches = |line_to_select: &str| {
             assert!(all_matches.contains(line_to_select));
             all_matches.replacen(
@@ -5525,7 +5528,7 @@ mod tests {
                     cx,
                 ),
                 format!(
-                    r#"/rust-analyzer/
+                    r#"{root}/
   crates/
     ide/src/
       inlay_hints/
@@ -5595,7 +5598,7 @@ mod tests {
                     cx,
                 ),
                 format!(
-                    r#"/rust-analyzer/
+                    r#"{root}/
   crates/
     ide/src/{SELECTED_MARKER}
     rust-analyzer/src/
@@ -5632,8 +5635,9 @@ mod tests {
         init_test(cx);
 
         let fs = FakeFs::new(cx.background_executor.clone());
-        populate_with_test_ra_project(&fs, "/rust-analyzer").await;
-        let project = Project::test(fs.clone(), ["/rust-analyzer".as_ref()], cx).await;
+        let root = path!("/rust-analyzer");
+        populate_with_test_ra_project(&fs, root).await;
+        let project = Project::test(fs.clone(), [Path::new(root)], cx).await;
         project.read_with(cx, |project, _| {
             project.languages().add(Arc::new(rust_lang()))
         });
@@ -5677,15 +5681,16 @@ mod tests {
                     );
                 });
         });
-        let all_matches = r#"/rust-analyzer/
+        let all_matches = format!(
+            r#"{root}/
   crates/
     ide/src/
       inlay_hints/
         fn_lifetime_fn.rs
-          search: match config.param_names_for_lifetime_elision_hints {
-          search: allocated_lifetimes.push(if config.param_names_for_lifetime_elision_hints {
-          search: Some(it) if config.param_names_for_lifetime_elision_hints => {
-          search: InlayHintsConfig { param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG },
+          search: match config.param_names_for_lifetime_elision_hints {{
+          search: allocated_lifetimes.push(if config.param_names_for_lifetime_elision_hints {{
+          search: Some(it) if config.param_names_for_lifetime_elision_hints => {{
+          search: InlayHintsConfig {{ param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG }},
       inlay_hints.rs
         search: pub param_names_for_lifetime_elision_hints: bool,
         search: param_names_for_lifetime_elision_hints: self
@@ -5696,7 +5701,8 @@ mod tests {
         analysis_stats.rs
           search: param_names_for_lifetime_elision_hints: true,
       config.rs
-        search: param_names_for_lifetime_elision_hints: self"#;
+        search: param_names_for_lifetime_elision_hints: self"#
+        );
 
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
@@ -5769,8 +5775,9 @@ mod tests {
         init_test(cx);
 
         let fs = FakeFs::new(cx.background_executor.clone());
-        populate_with_test_ra_project(&fs, path!("/rust-analyzer")).await;
-        let project = Project::test(fs.clone(), [path!("/rust-analyzer").as_ref()], cx).await;
+        let root = path!("/rust-analyzer");
+        populate_with_test_ra_project(&fs, root).await;
+        let project = Project::test(fs.clone(), [Path::new(root)], cx).await;
         project.read_with(cx, |project, _| {
             project.languages().add(Arc::new(rust_lang()))
         });
@@ -5814,9 +5821,8 @@ mod tests {
                     );
                 });
         });
-        let root_path = format!("{}/", path!("/rust-analyzer"));
         let all_matches = format!(
-            r#"{root_path}
+            r#"{root}/
   crates/
     ide/src/
       inlay_hints/
@@ -5978,7 +5984,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
-            "/root",
+            path!("/root"),
             json!({
                 "one": {
                     "a.txt": "aaa aaa"
@@ -5990,7 +5996,7 @@ mod tests {
             }),
         )
         .await;
-        let project = Project::test(fs.clone(), [Path::new("/root/one")], cx).await;
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/one"))], cx).await;
         let workspace = add_outline_panel(&project, cx).await;
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let outline_panel = outline_panel(&workspace, cx);
@@ -6001,7 +6007,7 @@ mod tests {
         let items = workspace
             .update(cx, |workspace, window, cx| {
                 workspace.open_paths(
-                    vec![PathBuf::from("/root/two")],
+                    vec![PathBuf::from(path!("/root/two"))],
                     OpenOptions {
                         visible: Some(OpenVisible::OnlyDirectories),
                         ..Default::default()
@@ -6065,13 +6071,17 @@ mod tests {
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                r#"/root/one/
+                format!(
+                    r#"{}/
   a.txt
     search: aaa aaa  <==== selected
     search: aaa aaa
-/root/two/
+{}/
   b.txt
-    search: a aaa"#
+    search: a aaa"#,
+                    path!("/root/one"),
+                    path!("/root/two"),
+                ),
             );
         });
 
@@ -6091,11 +6101,15 @@ mod tests {
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                r#"/root/one/
+                format!(
+                    r#"{}/
   a.txt  <==== selected
-/root/two/
+{}/
   b.txt
-    search: a aaa"#
+    search: a aaa"#,
+                    path!("/root/one"),
+                    path!("/root/two"),
+                ),
             );
         });
 
@@ -6115,9 +6129,13 @@ mod tests {
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                r#"/root/one/
+                format!(
+                    r#"{}/
   a.txt
-/root/two/  <==== selected"#
+{}/  <==== selected"#,
+                    path!("/root/one"),
+                    path!("/root/two"),
+                ),
             );
         });
 
@@ -6136,11 +6154,15 @@ mod tests {
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                r#"/root/one/
+                format!(
+                    r#"{}/
   a.txt
-/root/two/  <==== selected
+{}/  <==== selected
   b.txt
-    search: a aaa"#
+    search: a aaa"#,
+                    path!("/root/one"),
+                    path!("/root/two"),
+                )
             );
         });
     }
@@ -6166,7 +6188,7 @@ struct OutlineEntryExcerpt {
             }),
         )
         .await;
-        let project = Project::test(fs.clone(), [root.as_ref()], cx).await;
+        let project = Project::test(fs.clone(), [Path::new(root)], cx).await;
         project.read_with(cx, |project, _| {
             project.languages().add(Arc::new(
                 rust_lang()
@@ -6509,7 +6531,7 @@ outline: struct OutlineEntryExcerpt
     async fn test_frontend_repo_structure(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let root = "/frontend-project";
+        let root = path!("/frontend-project");
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
             root,
@@ -6546,7 +6568,7 @@ outline: struct OutlineEntryExcerpt
             }),
         )
         .await;
-        let project = Project::test(fs.clone(), [root.as_ref()], cx).await;
+        let project = Project::test(fs.clone(), [Path::new(root)], cx).await;
         let workspace = add_outline_panel(&project, cx).await;
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let outline_panel = outline_panel(&workspace, cx);
@@ -6600,10 +6622,11 @@ outline: struct OutlineEntryExcerpt
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                r#"/frontend-project/
+                format!(
+                    r#"{root}/
   public/lottie/
     syntax-tree.json
-      search: { "something": "static" }  <==== selected
+      search: {{ "something": "static" }}  <==== selected
   src/
     app/(site)/
       (about)/jobs/[slug]/
@@ -6615,6 +6638,7 @@ outline: struct OutlineEntryExcerpt
     components/
       ErrorBoundary.tsx
         search: static"#
+                )
             );
         });
 
@@ -6637,15 +6661,17 @@ outline: struct OutlineEntryExcerpt
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                r#"/frontend-project/
+                format!(
+                    r#"{root}/
   public/lottie/
     syntax-tree.json
-      search: { "something": "static" }
+      search: {{ "something": "static" }}
   src/
     app/(site)/  <==== selected
     components/
       ErrorBoundary.tsx
         search: static"#
+                )
             );
         });
 
@@ -6665,15 +6691,17 @@ outline: struct OutlineEntryExcerpt
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                r#"/frontend-project/
+                format!(
+                    r#"{root}/
   public/lottie/
     syntax-tree.json
-      search: { "something": "static" }
+      search: {{ "something": "static" }}
   src/
     app/(site)/
     components/
       ErrorBoundary.tsx
         search: static  <==== selected"#
+                )
             );
         });
 
@@ -6697,14 +6725,16 @@ outline: struct OutlineEntryExcerpt
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                r#"/frontend-project/
+                format!(
+                    r#"{root}/
   public/lottie/
     syntax-tree.json
-      search: { "something": "static" }
+      search: {{ "something": "static" }}
   src/
     app/(site)/
     components/
       ErrorBoundary.tsx  <==== selected"#
+                )
             );
         });
 
@@ -6728,15 +6758,17 @@ outline: struct OutlineEntryExcerpt
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                r#"/frontend-project/
+                format!(
+                    r#"{root}/
   public/lottie/
     syntax-tree.json
-      search: { "something": "static" }
+      search: {{ "something": "static" }}
   src/
     app/(site)/
     components/
       ErrorBoundary.tsx  <==== selected
         search: static"#
+                )
             );
         });
     }

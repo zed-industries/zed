@@ -28,7 +28,7 @@ fn migrate(text: &str, patterns: MigrationPatterns, query: &Query) -> Result<Opt
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&tree_sitter_json::LANGUAGE.into())?;
     let syntax_tree = parser
-        .parse(&text, None)
+        .parse(text, None)
         .context("failed to parse settings")?;
 
     let mut cursor = tree_sitter::QueryCursor::new();

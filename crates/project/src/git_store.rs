@@ -44,7 +44,7 @@ use parking_lot::Mutex;
 use postage::stream::Stream as _;
 use rpc::{
     AnyProtoClient, TypedEnvelope,
-    proto::{self, FromProto, SSH_PROJECT_ID, ToProto, git_reset, split_repository_update},
+    proto::{self, FromProto, ToProto, git_reset, split_repository_update},
 };
 use serde::Deserialize;
 use std::{
@@ -62,7 +62,7 @@ use std::{
 };
 use sum_tree::{Edit, SumTree, TreeSet};
 use text::{Bias, BufferId};
-use util::{ResultExt, debug_panic, post_inc};
+use util::{ResultExt, debug_panic, paths::SanitizedPath, post_inc};
 use worktree::{
     File, PathChange, PathKey, PathProgress, PathSummary, PathTarget, ProjectEntryId,
     UpdatedGitRepositoriesSet, UpdatedGitRepository, Worktree,
@@ -141,14 +141,10 @@ enum GitStoreState {
         project_environment: Entity<ProjectEnvironment>,
         fs: Arc<dyn Fs>,
     },
-    Ssh {
-        upstream_client: AnyProtoClient,
-        upstream_project_id: ProjectId,
-        downstream: Option<(AnyProtoClient, ProjectId)>,
-    },
     Remote {
         upstream_client: AnyProtoClient,
-        upstream_project_id: ProjectId,
+        upstream_project_id: u64,
+        downstream: Option<(AnyProtoClient, ProjectId)>,
     },
 }
 
@@ -355,7 +351,7 @@ impl GitStore {
         worktree_store: &Entity<WorktreeStore>,
         buffer_store: Entity<BufferStore>,
         upstream_client: AnyProtoClient,
-        project_id: ProjectId,
+        project_id: u64,
         cx: &mut Context<Self>,
     ) -> Self {
         Self::new(
@@ -364,23 +360,6 @@ impl GitStore {
             GitStoreState::Remote {
                 upstream_client,
                 upstream_project_id: project_id,
-            },
-            cx,
-        )
-    }
-
-    pub fn ssh(
-        worktree_store: &Entity<WorktreeStore>,
-        buffer_store: Entity<BufferStore>,
-        upstream_client: AnyProtoClient,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        Self::new(
-            worktree_store.clone(),
-            buffer_store,
-            GitStoreState::Ssh {
-                upstream_client,
-                upstream_project_id: ProjectId(SSH_PROJECT_ID),
                 downstream: None,
             },
             cx,
@@ -451,7 +430,7 @@ impl GitStore {
 
     pub fn shared(&mut self, project_id: u64, client: AnyProtoClient, cx: &mut Context<Self>) {
         match &mut self.state {
-            GitStoreState::Ssh {
+            GitStoreState::Remote {
                 downstream: downstream_client,
                 ..
             } => {
@@ -527,9 +506,6 @@ impl GitStore {
                     }),
                 });
             }
-            GitStoreState::Remote { .. } => {
-                debug_panic!("shared called on remote store");
-            }
         }
     }
 
@@ -541,14 +517,11 @@ impl GitStore {
             } => {
                 downstream_client.take();
             }
-            GitStoreState::Ssh {
+            GitStoreState::Remote {
                 downstream: downstream_client,
                 ..
             } => {
                 downstream_client.take();
-            }
-            GitStoreState::Remote { .. } => {
-                debug_panic!("unshared called on remote store");
             }
         }
         self.shared_diffs.clear();
@@ -769,7 +742,7 @@ impl GitStore {
                 .as_ref()
                 .and_then(|weak| weak.upgrade())
         {
-            let conflict_set = conflict_set.clone();
+            let conflict_set = conflict_set;
             let buffer_snapshot = buffer.read(cx).text_snapshot();
 
             git_state.update(cx, |state, cx| {
@@ -912,7 +885,7 @@ impl GitStore {
             return Task::ready(Err(anyhow!("failed to find a git repository for buffer")));
         };
         let content = match &version {
-            Some(version) => buffer.rope_for_version(version).clone(),
+            Some(version) => buffer.rope_for_version(version),
             None => buffer.as_rope().clone(),
         };
         let version = version.unwrap_or(buffer.version());
@@ -1047,21 +1020,17 @@ impl GitStore {
             } => downstream_client
                 .as_ref()
                 .map(|state| (state.client.clone(), state.project_id)),
-            GitStoreState::Ssh {
+            GitStoreState::Remote {
                 downstream: downstream_client,
                 ..
             } => downstream_client.clone(),
-            GitStoreState::Remote { .. } => None,
         }
     }
 
     fn upstream_client(&self) -> Option<AnyProtoClient> {
         match &self.state {
             GitStoreState::Local { .. } => None,
-            GitStoreState::Ssh {
-                upstream_client, ..
-            }
-            | GitStoreState::Remote {
+            GitStoreState::Remote {
                 upstream_client, ..
             } => Some(upstream_client.clone()),
         }
@@ -1432,12 +1401,7 @@ impl GitStore {
                 cx.background_executor()
                     .spawn(async move { fs.git_init(&path, fallback_branch_name) })
             }
-            GitStoreState::Ssh {
-                upstream_client,
-                upstream_project_id: project_id,
-                ..
-            }
-            | GitStoreState::Remote {
+            GitStoreState::Remote {
                 upstream_client,
                 upstream_project_id: project_id,
                 ..
@@ -1447,7 +1411,7 @@ impl GitStore {
                 cx.background_executor().spawn(async move {
                     client
                         .request(proto::GitInit {
-                            project_id: project_id.0,
+                            project_id: project_id,
                             abs_path: path.to_string_lossy().to_string(),
                             fallback_branch_name,
                         })
@@ -1471,13 +1435,18 @@ impl GitStore {
                 cx.background_executor()
                     .spawn(async move { fs.git_clone(&repo, &path).await })
             }
-            GitStoreState::Ssh {
+            GitStoreState::Remote {
                 upstream_client,
                 upstream_project_id,
                 ..
             } => {
+                if upstream_client.is_via_collab() {
+                    return Task::ready(Err(anyhow!(
+                        "Git Clone isn't supported for project guests"
+                    )));
+                }
                 let request = upstream_client.request(proto::GitClone {
-                    project_id: upstream_project_id.0,
+                    project_id: *upstream_project_id,
                     abs_path: path.to_string_lossy().to_string(),
                     remote_repo: repo,
                 });
@@ -1491,9 +1460,6 @@ impl GitStore {
                     }
                 })
             }
-            GitStoreState::Remote { .. } => {
-                Task::ready(Err(anyhow!("Git Clone isn't supported for remote users")))
-            }
         }
     }
 
@@ -1506,10 +1472,7 @@ impl GitStore {
             let mut update = envelope.payload;
 
             let id = RepositoryId::from_proto(update.id);
-            let client = this
-                .upstream_client()
-                .context("no upstream client")?
-                .clone();
+            let client = this.upstream_client().context("no upstream client")?;
 
             let mut is_new = false;
             let repo = this.repositories.entry(id).or_insert_with(|| {
@@ -3271,6 +3234,7 @@ impl Repository {
         let git_store = self.git_store.upgrade()?;
         let worktree_store = git_store.read(cx).worktree_store.read(cx);
         let abs_path = self.snapshot.work_directory_abs_path.join(&path.0);
+        let abs_path = SanitizedPath::new(&abs_path);
         let (worktree, relative_path) = worktree_store.find_worktree(abs_path, cx)?;
         Some(ProjectPath {
             worktree_id: worktree.read(cx).id(),
@@ -3353,7 +3317,7 @@ impl Repository {
     ) -> Task<Result<Entity<Buffer>>> {
         cx.spawn(async move |repository, cx| {
             let buffer = buffer_store
-                .update(cx, |buffer_store, cx| buffer_store.create_buffer(cx))?
+                .update(cx, |buffer_store, cx| buffer_store.create_buffer(false, cx))?
                 .await?;
 
             if let Some(language_registry) = language_registry {
@@ -3418,7 +3382,6 @@ impl Repository {
         reset_mode: ResetMode,
         _cx: &mut App,
     ) -> oneshot::Receiver<Result<()>> {
-        let commit = commit.to_string();
         let id = self.id;
 
         self.send_job(None, move |git_repo, _| async move {
@@ -3644,7 +3607,7 @@ impl Repository {
         let to_stage = self
             .cached_status()
             .filter(|entry| !entry.status.staging().is_fully_staged())
-            .map(|entry| entry.repo_path.clone())
+            .map(|entry| entry.repo_path)
             .collect();
         self.stage_entries(to_stage, cx)
     }
@@ -3653,16 +3616,13 @@ impl Repository {
         let to_unstage = self
             .cached_status()
             .filter(|entry| entry.status.staging().has_staged())
-            .map(|entry| entry.repo_path.clone())
+            .map(|entry| entry.repo_path)
             .collect();
         self.unstage_entries(to_unstage, cx)
     }
 
     pub fn stash_all(&mut self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
-        let to_stash = self
-            .cached_status()
-            .map(|entry| entry.repo_path.clone())
-            .collect();
+        let to_stash = self.cached_status().map(|entry| entry.repo_path).collect();
 
         self.stash_entries(to_stash, cx)
     }

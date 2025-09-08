@@ -43,7 +43,7 @@ use language::{
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
 use release_channel::ReleaseChannel;
-use remote::SshRemoteClient;
+use remote::{RemoteClient, RemoteConnectionOptions};
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -117,7 +117,7 @@ pub struct ExtensionStore {
     pub wasm_host: Arc<WasmHost>,
     pub wasm_extensions: Vec<(Arc<ExtensionManifest>, WasmExtension)>,
     pub tasks: Vec<Task<()>>,
-    pub ssh_clients: HashMap<String, WeakEntity<SshRemoteClient>>,
+    pub remote_clients: HashMap<RemoteConnectionOptions, WeakEntity<RemoteClient>>,
     pub ssh_registered_tx: UnboundedSender<()>,
 }
 
@@ -270,7 +270,7 @@ impl ExtensionStore {
             reload_tx,
             tasks: Vec::new(),
 
-            ssh_clients: HashMap::default(),
+            remote_clients: HashMap::default(),
             ssh_registered_tx: connection_registered_tx,
         };
 
@@ -1175,16 +1175,16 @@ impl ExtensionStore {
                 }
             }
 
-            for (server_id, _) in &extension.manifest.context_servers {
+            for server_id in extension.manifest.context_servers.keys() {
                 self.proxy.unregister_context_server(server_id.clone(), cx);
             }
-            for (adapter, _) in &extension.manifest.debug_adapters {
+            for adapter in extension.manifest.debug_adapters.keys() {
                 self.proxy.unregister_debug_adapter(adapter.clone());
             }
-            for (locator, _) in &extension.manifest.debug_locators {
+            for locator in extension.manifest.debug_locators.keys() {
                 self.proxy.unregister_debug_locator(locator.clone());
             }
-            for (command_name, _) in &extension.manifest.slash_commands {
+            for command_name in extension.manifest.slash_commands.keys() {
                 self.proxy.unregister_slash_command(command_name.clone());
             }
         }
@@ -1386,7 +1386,7 @@ impl ExtensionStore {
                         );
                     }
 
-                    for (id, _context_server_entry) in &manifest.context_servers {
+                    for id in manifest.context_servers.keys() {
                         this.proxy
                             .register_context_server(extension.clone(), id.clone(), cx);
                     }
@@ -1675,9 +1675,8 @@ impl ExtensionStore {
                 let schema_path = &extension::build_debug_adapter_schema_path(adapter_name, meta);
 
                 if fs.is_file(&src_dir.join(schema_path)).await {
-                    match schema_path.parent() {
-                        Some(parent) => fs.create_dir(&tmp_dir.join(parent)).await?,
-                        None => {}
+                    if let Some(parent) = schema_path.parent() {
+                        fs.create_dir(&tmp_dir.join(parent)).await?
                     }
                     fs.copy_file(
                         &src_dir.join(schema_path),
@@ -1694,7 +1693,7 @@ impl ExtensionStore {
 
     async fn sync_extensions_over_ssh(
         this: &WeakEntity<Self>,
-        client: WeakEntity<SshRemoteClient>,
+        client: WeakEntity<RemoteClient>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
         let extensions = this.update(cx, |this, _cx| {
@@ -1766,8 +1765,8 @@ impl ExtensionStore {
 
     pub async fn update_ssh_clients(this: &WeakEntity<Self>, cx: &mut AsyncApp) -> Result<()> {
         let clients = this.update(cx, |this, _cx| {
-            this.ssh_clients.retain(|_k, v| v.upgrade().is_some());
-            this.ssh_clients.values().cloned().collect::<Vec<_>>()
+            this.remote_clients.retain(|_k, v| v.upgrade().is_some());
+            this.remote_clients.values().cloned().collect::<Vec<_>>()
         })?;
 
         for client in clients {
@@ -1779,17 +1778,16 @@ impl ExtensionStore {
         anyhow::Ok(())
     }
 
-    pub fn register_ssh_client(&mut self, client: Entity<SshRemoteClient>, cx: &mut Context<Self>) {
-        let connection_options = client.read(cx).connection_options();
-        let ssh_url = connection_options.ssh_url();
+    pub fn register_remote_client(&mut self, client: Entity<RemoteClient>, cx: &mut Context<Self>) {
+        let options = client.read(cx).connection_options();
 
-        if let Some(existing_client) = self.ssh_clients.get(&ssh_url)
+        if let Some(existing_client) = self.remote_clients.get(&options)
             && existing_client.upgrade().is_some()
         {
             return;
         }
 
-        self.ssh_clients.insert(ssh_url, client.downgrade());
+        self.remote_clients.insert(options, client.downgrade());
         self.ssh_registered_tx.unbounded_send(()).ok();
     }
 }

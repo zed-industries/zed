@@ -69,6 +69,7 @@ pub struct MarkdownStyle {
     pub heading_level_styles: Option<HeadingLevelStyles>,
     pub table_overflow_x_scroll: bool,
     pub height_is_multiple_of_line_height: bool,
+    pub prevent_mouse_interaction: bool,
 }
 
 impl Default for MarkdownStyle {
@@ -89,6 +90,7 @@ impl Default for MarkdownStyle {
             heading_level_styles: None,
             table_overflow_x_scroll: false,
             height_is_multiple_of_line_height: false,
+            prevent_mouse_interaction: false,
         }
     }
 }
@@ -575,16 +577,22 @@ impl MarkdownElement {
         window: &mut Window,
         cx: &mut App,
     ) {
+        if self.style.prevent_mouse_interaction {
+            return;
+        }
+
         let is_hovering_link = hitbox.is_hovered(window)
             && !self.markdown.read(cx).selection.pending
             && rendered_text
                 .link_for_position(window.mouse_position())
                 .is_some();
 
-        if is_hovering_link {
-            window.set_cursor_style(CursorStyle::PointingHand, hitbox);
-        } else {
-            window.set_cursor_style(CursorStyle::IBeam, hitbox);
+        if !self.style.prevent_mouse_interaction {
+            if is_hovering_link {
+                window.set_cursor_style(CursorStyle::PointingHand, hitbox);
+            } else {
+                window.set_cursor_style(CursorStyle::IBeam, hitbox);
+            }
         }
 
         let on_open_url = self.on_url_click.take();
@@ -1084,7 +1092,13 @@ impl Element for MarkdownElement {
                                     cx,
                                 );
                                 el.child(
-                                    div().absolute().top_1().right_0p5().w_5().child(codeblock),
+                                    h_flex()
+                                        .w_4()
+                                        .absolute()
+                                        .top_1p5()
+                                        .right_1p5()
+                                        .justify_end()
+                                        .child(codeblock),
                                 )
                             });
                         }
@@ -1109,11 +1123,12 @@ impl Element for MarkdownElement {
                                     cx,
                                 );
                                 el.child(
-                                    div()
+                                    h_flex()
+                                        .w_4()
                                         .absolute()
                                         .top_0()
                                         .right_0()
-                                        .w_5()
+                                        .justify_end()
                                         .visible_on_hover("code_block")
                                         .child(codeblock),
                                 )
@@ -1314,11 +1329,11 @@ fn render_copy_code_block_button(
     )
     .icon_color(Color::Muted)
     .icon_size(IconSize::Small)
+    .style(ButtonStyle::Filled)
     .shape(ui::IconButtonShape::Square)
-    .tooltip(Tooltip::text("Copy Code"))
+    .tooltip(Tooltip::text("Copy"))
     .on_click({
-        let id = id.clone();
-        let markdown = markdown.clone();
+        let markdown = markdown;
         move |_event, _window, cx| {
             let id = id.clone();
             markdown.update(cx, |this, cx| {

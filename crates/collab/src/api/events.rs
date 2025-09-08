@@ -280,7 +280,7 @@ pub async fn post_hang(
         service = "client",
         version = %report.app_version.unwrap_or_default().to_string(),
         os_name = %report.os_name,
-        os_version = report.os_version.unwrap_or_default().to_string(),
+        os_version = report.os_version.unwrap_or_default(),
         incident_id = %incident_id,
         installation_id = %report.installation_id.unwrap_or_default(),
         backtrace = %backtrace,

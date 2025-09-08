@@ -461,7 +461,7 @@ impl MemoryView {
             let data_breakpoint_info = this.data_breakpoint_info(context.clone(), None, cx);
             cx.spawn(async move |this, cx| {
                 if let Some(info) = data_breakpoint_info.await {
-                    let Some(data_id) = info.data_id.clone() else {
+                    let Some(data_id) = info.data_id else {
                         return;
                     };
                     _ = this.update(cx, |this, cx| {

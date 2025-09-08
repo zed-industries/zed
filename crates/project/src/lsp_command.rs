@@ -50,8 +50,8 @@ pub fn lsp_formatting_options(settings: &LanguageSettings) -> lsp::FormattingOpt
     }
 }
 
-pub fn file_path_to_lsp_url(path: &Path) -> Result<lsp::Url> {
-    match lsp::Url::from_file_path(path) {
+pub fn file_path_to_lsp_url(path: &Path) -> Result<lsp::Uri> {
+    match lsp::Uri::from_file_path(path) {
         Ok(url) => Ok(url),
         Err(()) => anyhow::bail!("Invalid file path provided to LSP request: {path:?}"),
     }
@@ -2501,8 +2501,8 @@ pub(crate) fn parse_completion_text_edit(
     };
 
     Some(ParsedCompletionEdit {
-        insert_range: insert_range,
-        replace_range: replace_range,
+        insert_range,
+        replace_range,
         new_text: new_text.clone(),
     })
 }
@@ -2595,11 +2595,9 @@ impl LspCommand for GetCodeActions {
         server_id: LanguageServerId,
         cx: AsyncApp,
     ) -> Result<Vec<CodeAction>> {
-        let requested_kinds_set = if let Some(kinds) = self.kinds {
-            Some(kinds.into_iter().collect::<HashSet<_>>())
-        } else {
-            None
-        };
+        let requested_kinds_set = self
+            .kinds
+            .map(|kinds| kinds.into_iter().collect::<HashSet<_>>());
 
         let language_server = cx.update(|cx| {
             lsp_store
@@ -2739,7 +2737,7 @@ impl GetCodeActions {
             Some(lsp::CodeActionProviderCapability::Options(CodeActionOptions {
                 code_action_kinds: Some(supported_action_kinds),
                 ..
-            })) => Some(supported_action_kinds.clone()),
+            })) => Some(supported_action_kinds),
             _ => capabilities.code_action_kinds,
         }
     }
@@ -3137,7 +3135,7 @@ impl InlayHints {
                                     Some(((uri, range), server_id)) => Some((
                                         LanguageServerId(server_id as usize),
                                         lsp::Location {
-                                            uri: lsp::Url::parse(&uri)
+                                            uri: lsp::Uri::from_str(&uri)
                                                 .context("invalid uri in hint part {part:?}")?,
                                             range: lsp::Range::new(
                                                 point_to_lsp(PointUtf16::new(
@@ -3446,8 +3444,7 @@ impl LspCommand for GetCodeLens {
         capabilities
             .server_capabilities
             .code_lens_provider
-            .as_ref()
-            .is_some_and(|code_lens_options| code_lens_options.resolve_provider.unwrap_or(false))
+            .is_some()
     }
 
     fn to_lsp(
@@ -3736,7 +3733,7 @@ impl GetDocumentDiagnostics {
             .filter_map(|diagnostics| {
                 Some(LspPullDiagnostics::Response {
                     server_id: LanguageServerId::from_proto(diagnostics.server_id),
-                    uri: lsp::Url::from_str(diagnostics.uri.as_str()).log_err()?,
+                    uri: lsp::Uri::from_str(diagnostics.uri.as_str()).log_err()?,
                     diagnostics: if diagnostics.changed {
                         PulledDiagnostics::Unchanged {
                             result_id: diagnostics.result_id?,
@@ -3791,9 +3788,9 @@ impl GetDocumentDiagnostics {
                             start: point_to_lsp(PointUtf16::new(start.row, start.column)),
                             end: point_to_lsp(PointUtf16::new(end.row, end.column)),
                         },
-                        uri: lsp::Url::parse(&info.location_url.unwrap()).unwrap(),
+                        uri: lsp::Uri::from_str(&info.location_url.unwrap()).unwrap(),
                     },
-                    message: info.message.clone(),
+                    message: info.message,
                 }
             })
             .collect::<Vec<_>>();
@@ -3821,12 +3818,11 @@ impl GetDocumentDiagnostics {
                 _ => None,
             },
             code,
-            code_description: match diagnostic.code_description {
-                Some(code_description) => Some(CodeDescription {
-                    href: Some(lsp::Url::parse(&code_description).unwrap()),
+            code_description: diagnostic
+                .code_description
+                .map(|code_description| CodeDescription {
+                    href: Some(lsp::Uri::from_str(&code_description).unwrap()),
                 }),
-                None => None,
-            },
             related_information: Some(related_information),
             tags: Some(tags),
             source: diagnostic.source.clone(),
@@ -3965,7 +3961,7 @@ pub struct WorkspaceLspPullDiagnostics {
 }
 
 fn process_full_workspace_diagnostics_report(
-    diagnostics: &mut HashMap<lsp::Url, WorkspaceLspPullDiagnostics>,
+    diagnostics: &mut HashMap<lsp::Uri, WorkspaceLspPullDiagnostics>,
     server_id: LanguageServerId,
     report: lsp::WorkspaceFullDocumentDiagnosticReport,
 ) {
@@ -3988,7 +3984,7 @@ fn process_full_workspace_diagnostics_report(
 }
 
 fn process_unchanged_workspace_diagnostics_report(
-    diagnostics: &mut HashMap<lsp::Url, WorkspaceLspPullDiagnostics>,
+    diagnostics: &mut HashMap<lsp::Uri, WorkspaceLspPullDiagnostics>,
     server_id: LanguageServerId,
     report: lsp::WorkspaceUnchangedDocumentDiagnosticReport,
 ) {
@@ -4347,9 +4343,9 @@ impl LspCommand for GetDocumentColor {
 }
 
 fn process_related_documents(
-    diagnostics: &mut HashMap<lsp::Url, LspPullDiagnostics>,
+    diagnostics: &mut HashMap<lsp::Uri, LspPullDiagnostics>,
     server_id: LanguageServerId,
-    documents: impl IntoIterator<Item = (lsp::Url, lsp::DocumentDiagnosticReportKind)>,
+    documents: impl IntoIterator<Item = (lsp::Uri, lsp::DocumentDiagnosticReportKind)>,
 ) {
     for (url, report_kind) in documents {
         match report_kind {
@@ -4364,9 +4360,9 @@ fn process_related_documents(
 }
 
 fn process_unchanged_diagnostics_report(
-    diagnostics: &mut HashMap<lsp::Url, LspPullDiagnostics>,
+    diagnostics: &mut HashMap<lsp::Uri, LspPullDiagnostics>,
     server_id: LanguageServerId,
-    uri: lsp::Url,
+    uri: lsp::Uri,
     report: lsp::UnchangedDocumentDiagnosticReport,
 ) {
     let result_id = report.result_id;
@@ -4408,9 +4404,9 @@ fn process_unchanged_diagnostics_report(
 }
 
 fn process_full_diagnostics_report(
-    diagnostics: &mut HashMap<lsp::Url, LspPullDiagnostics>,
+    diagnostics: &mut HashMap<lsp::Uri, LspPullDiagnostics>,
     server_id: LanguageServerId,
-    uri: lsp::Url,
+    uri: lsp::Uri,
     report: lsp::FullDocumentDiagnosticReport,
 ) {
     let result_id = report.result_id;
@@ -4491,9 +4487,8 @@ mod tests {
             data: Some(json!({"detail": "test detail"})),
         };
 
-        let proto_diagnostic =
-            GetDocumentDiagnostics::serialize_lsp_diagnostic(lsp_diagnostic.clone())
-                .expect("Failed to serialize diagnostic");
+        let proto_diagnostic = GetDocumentDiagnostics::serialize_lsp_diagnostic(lsp_diagnostic)
+            .expect("Failed to serialize diagnostic");
 
         let start = proto_diagnostic.start.unwrap();
         let end = proto_diagnostic.end.unwrap();
@@ -4545,7 +4540,7 @@ mod tests {
     fn test_related_information() {
         let related_info = lsp::DiagnosticRelatedInformation {
             location: lsp::Location {
-                uri: lsp::Url::parse("file:///test.rs").unwrap(),
+                uri: lsp::Uri::from_str("file:///test.rs").unwrap(),
                 range: lsp::Range {
                     start: lsp::Position::new(1, 1),
                     end: lsp::Position::new(1, 5),

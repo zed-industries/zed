@@ -158,7 +158,7 @@ pub struct RemoteWorktree {
 #[derive(Clone)]
 pub struct Snapshot {
     id: WorktreeId,
-    abs_path: SanitizedPath,
+    abs_path: Arc<SanitizedPath>,
     root_name: String,
     root_char_bag: CharBag,
     entries_by_path: SumTree<Entry>,
@@ -457,7 +457,7 @@ enum ScanState {
         scanning: bool,
     },
     RootUpdated {
-        new_path: Option<SanitizedPath>,
+        new_path: Option<Arc<SanitizedPath>>,
     },
 }
 
@@ -763,8 +763,8 @@ impl Worktree {
 
     pub fn abs_path(&self) -> Arc<Path> {
         match self {
-            Worktree::Local(worktree) => worktree.abs_path.clone().into(),
-            Worktree::Remote(worktree) => worktree.abs_path.clone().into(),
+            Worktree::Local(worktree) => SanitizedPath::cast_arc(worktree.abs_path.clone()),
+            Worktree::Remote(worktree) => SanitizedPath::cast_arc(worktree.abs_path.clone()),
         }
     }
 
@@ -1775,36 +1775,54 @@ impl LocalWorktree {
             };
             absolutize_path
         };
-        let abs_path = abs_new_path.clone();
-        let fs = self.fs.clone();
-        let case_sensitive = self.fs_case_sensitive;
-        let rename = cx.background_spawn(async move {
-            let abs_old_path = abs_old_path?;
-            let abs_new_path = abs_new_path;
 
-            let abs_old_path_lower = abs_old_path.to_str().map(|p| p.to_lowercase());
-            let abs_new_path_lower = abs_new_path.to_str().map(|p| p.to_lowercase());
+        let fs = self.fs.clone();
+        let abs_path = abs_new_path.clone();
+        let case_sensitive = self.fs_case_sensitive;
+
+        let do_rename = async move |fs: &dyn Fs, old_path: &Path, new_path: &Path, overwrite| {
+            fs.rename(
+                &old_path,
+                &new_path,
+                fs::RenameOptions {
+                    overwrite,
+                    ..fs::RenameOptions::default()
+                },
+            )
+            .await
+            .with_context(|| format!("renaming {old_path:?} into {new_path:?}"))
+        };
+
+        let rename_task = cx.background_spawn(async move {
+            let abs_old_path = abs_old_path?;
 
             // If we're on a case-insensitive FS and we're doing a case-only rename (i.e. `foobar` to `FOOBAR`)
             // we want to overwrite, because otherwise we run into a file-already-exists error.
             let overwrite = !case_sensitive
                 && abs_old_path != abs_new_path
-                && abs_old_path_lower == abs_new_path_lower;
+                && abs_old_path.to_str().map(|p| p.to_lowercase())
+                    == abs_new_path.to_str().map(|p| p.to_lowercase());
 
-            fs.rename(
-                &abs_old_path,
-                &abs_new_path,
-                fs::RenameOptions {
-                    overwrite,
-                    ..Default::default()
-                },
-            )
-            .await
-            .with_context(|| format!("Renaming {abs_old_path:?} into {abs_new_path:?}"))
+            // The directory we're renaming into might not exist yet
+            if let Err(e) = do_rename(fs.as_ref(), &abs_old_path, &abs_new_path, overwrite).await {
+                if let Some(err) = e.downcast_ref::<std::io::Error>()
+                    && err.kind() == std::io::ErrorKind::NotFound
+                {
+                    if let Some(parent) = abs_new_path.parent() {
+                        fs.create_dir(parent)
+                            .await
+                            .with_context(|| format!("creating parent directory {parent:?}"))?;
+                        return do_rename(fs.as_ref(), &abs_old_path, &abs_new_path, overwrite)
+                            .await;
+                    }
+                }
+                return Err(e);
+            }
+            Ok(())
         });
 
         cx.spawn(async move |this, cx| {
-            rename.await?;
+            rename_task.await?;
             Ok(this
                 .update(cx, |this, cx| {
                     let local = this.as_local_mut().unwrap();
@@ -1813,11 +1831,16 @@ impl LocalWorktree {
                         // Otherwise, the FS watcher would do it on the `RootUpdated` event,
                         // but with a noticeable delay, so we handle it proactively.
                         local.update_abs_path_and_refresh(
-                            Some(SanitizedPath::from(abs_path.clone())),
+                            Some(SanitizedPath::new_arc(&abs_path)),
                             cx,
                         );
                         Task::ready(Ok(this.root_entry().cloned()))
                     } else {
+                        // First refresh the parent directory (in case it was newly created)
+                        if let Some(parent) = new_path.parent() {
+                            let _ = local.refresh_entries_for_paths(vec![parent.into()]);
+                        }
+                        // Then refresh the new path
                         local.refresh_entry(new_path.clone(), Some(old_path), cx)
                     }
                 })?
@@ -1968,7 +1991,7 @@ impl LocalWorktree {
         cx: &Context<Worktree>,
     ) -> Option<Task<Result<()>>> {
         let path = self.entry_for_id(entry_id).unwrap().path.clone();
-        let mut rx = self.add_path_prefix_to_scan(path.clone());
+        let mut rx = self.add_path_prefix_to_scan(path);
         Some(cx.background_spawn(async move {
             rx.next().await;
             Ok(())
@@ -2090,7 +2113,7 @@ impl LocalWorktree {
 
     fn update_abs_path_and_refresh(
         &mut self,
-        new_path: Option<SanitizedPath>,
+        new_path: Option<Arc<SanitizedPath>>,
         cx: &Context<Worktree>,
     ) {
         if let Some(new_path) = new_path {
@@ -2340,7 +2363,7 @@ impl Snapshot {
     pub fn new(id: u64, root_name: String, abs_path: Arc<Path>) -> Self {
         Snapshot {
             id: WorktreeId::from_usize(id as usize),
-            abs_path: abs_path.into(),
+            abs_path: SanitizedPath::from_arc(abs_path),
             root_char_bag: root_name.chars().map(|c| c.to_ascii_lowercase()).collect(),
             root_name,
             always_included_entries: Default::default(),
@@ -2368,7 +2391,7 @@ impl Snapshot {
     //
     // This is definitely a bug, but it's not clear if we should handle it here or not.
     pub fn abs_path(&self) -> &Arc<Path> {
-        self.abs_path.as_path()
+        SanitizedPath::cast_arc_ref(&self.abs_path)
     }
 
     fn build_initial_update(&self, project_id: u64, worktree_id: u64) -> proto::UpdateWorktree {
@@ -2464,7 +2487,7 @@ impl Snapshot {
         Some(removed_entry.path)
     }
 
-    fn update_abs_path(&mut self, abs_path: SanitizedPath, root_name: String) {
+    fn update_abs_path(&mut self, abs_path: Arc<SanitizedPath>, root_name: String) {
         self.abs_path = abs_path;
         if root_name != self.root_name {
             self.root_char_bag = root_name.chars().map(|c| c.to_ascii_lowercase()).collect();
@@ -2483,7 +2506,7 @@ impl Snapshot {
             update.removed_entries.len()
         );
         self.update_abs_path(
-            SanitizedPath::from(PathBuf::from_proto(update.abs_path)),
+            SanitizedPath::new_arc(&PathBuf::from_proto(update.abs_path)),
             update.root_name,
         );
 
@@ -3150,16 +3173,6 @@ impl BackgroundScannerState {
             .snapshot
             .work_directory_abs_path(&work_directory)
             .log_err()?;
-
-        if self
-            .snapshot
-            .git_repositories
-            .get(&work_dir_entry.id)
-            .is_some()
-        {
-            log::trace!("existing git repository for {work_directory:?}");
-            return None;
-        }
 
         let dot_git_abs_path: Arc<Path> = self
             .snapshot
@@ -3859,7 +3872,11 @@ impl BackgroundScanner {
                     root_entry.is_ignored = true;
                     state.insert_entry(root_entry.clone(), self.fs.as_ref(), self.watcher.as_ref());
                 }
-                state.enqueue_scan_dir(root_abs_path.into(), &root_entry, &scan_job_tx);
+                state.enqueue_scan_dir(
+                    SanitizedPath::cast_arc(root_abs_path),
+                    &root_entry,
+                    &scan_job_tx,
+                );
             }
         };
 
@@ -3940,8 +3957,9 @@ impl BackgroundScanner {
         self.forcibly_load_paths(&request.relative_paths).await;
 
         let root_path = self.state.lock().snapshot.abs_path.clone();
-        let root_canonical_path = match self.fs.canonicalize(root_path.as_path()).await {
-            Ok(path) => SanitizedPath::from(path),
+        let root_canonical_path = self.fs.canonicalize(root_path.as_path()).await;
+        let root_canonical_path = match &root_canonical_path {
+            Ok(path) => SanitizedPath::new(path),
             Err(err) => {
                 log::error!("failed to canonicalize root path {root_path:?}: {err}");
                 return true;
@@ -3952,7 +3970,7 @@ impl BackgroundScanner {
             .iter()
             .map(|path| {
                 if path.file_name().is_some() {
-                    root_canonical_path.as_path().join(path).to_path_buf()
+                    root_canonical_path.as_path().join(path)
                 } else {
                     root_canonical_path.as_path().to_path_buf()
                 }
@@ -3969,8 +3987,8 @@ impl BackgroundScanner {
         }
 
         self.reload_entries_for_paths(
-            root_path,
-            root_canonical_path,
+            &root_path,
+            &root_canonical_path,
             &request.relative_paths,
             abs_paths,
             None,
@@ -3982,8 +4000,9 @@ impl BackgroundScanner {
 
     async fn process_events(&self, mut abs_paths: Vec<PathBuf>) {
         let root_path = self.state.lock().snapshot.abs_path.clone();
-        let root_canonical_path = match self.fs.canonicalize(root_path.as_path()).await {
-            Ok(path) => SanitizedPath::from(path),
+        let root_canonical_path = self.fs.canonicalize(root_path.as_path()).await;
+        let root_canonical_path = match &root_canonical_path {
+            Ok(path) => SanitizedPath::new(path),
             Err(err) => {
                 let new_path = self
                     .state
@@ -3992,7 +4011,7 @@ impl BackgroundScanner {
                     .root_file_handle
                     .clone()
                     .and_then(|handle| handle.current_path(&self.fs).log_err())
-                    .map(SanitizedPath::from)
+                    .map(|path| SanitizedPath::new_arc(&path))
                     .filter(|new_path| *new_path != root_path);
 
                 if let Some(new_path) = new_path.as_ref() {
@@ -4021,7 +4040,7 @@ impl BackgroundScanner {
         abs_paths.sort_unstable();
         abs_paths.dedup_by(|a, b| a.starts_with(b));
         abs_paths.retain(|abs_path| {
-            let abs_path = SanitizedPath::from(abs_path);
+            let abs_path = &SanitizedPath::new(abs_path);
 
             let snapshot = &self.state.lock().snapshot;
             {
@@ -4064,7 +4083,7 @@ impl BackgroundScanner {
                         return false;
                     };
 
-                if abs_path.0.file_name() == Some(*GITIGNORE) {
+                if abs_path.file_name() == Some(*GITIGNORE) {
                     for (_, repo) in snapshot.git_repositories.iter().filter(|(_, repo)| repo.directory_contains(&relative_path)) {
                         if !dot_git_abs_paths.iter().any(|dot_git_abs_path| dot_git_abs_path == repo.common_dir_abs_path.as_ref()) {
                             dot_git_abs_paths.push(repo.common_dir_abs_path.to_path_buf());
@@ -4103,8 +4122,8 @@ impl BackgroundScanner {
         let (scan_job_tx, scan_job_rx) = channel::unbounded();
         log::debug!("received fs events {:?}", relative_paths);
         self.reload_entries_for_paths(
-            root_path,
-            root_canonical_path,
+            &root_path,
+            &root_canonical_path,
             &relative_paths,
             abs_paths,
             Some(scan_job_tx.clone()),
@@ -4451,8 +4470,8 @@ impl BackgroundScanner {
     /// All list arguments should be sorted before calling this function
     async fn reload_entries_for_paths(
         &self,
-        root_abs_path: SanitizedPath,
-        root_canonical_path: SanitizedPath,
+        root_abs_path: &SanitizedPath,
+        root_canonical_path: &SanitizedPath,
         relative_paths: &[Arc<Path>],
         abs_paths: Vec<PathBuf>,
         scan_queue_tx: Option<Sender<ScanJob>>,
@@ -4480,7 +4499,7 @@ impl BackgroundScanner {
                             }
                         }
 
-                        anyhow::Ok(Some((metadata, SanitizedPath::from(canonical_path))))
+                        anyhow::Ok(Some((metadata, SanitizedPath::new_arc(&canonical_path))))
                     } else {
                         Ok(None)
                     }
@@ -5509,7 +5528,7 @@ impl ProjectEntryId {
         Self(id as usize)
     }
 
-    pub fn to_proto(&self) -> u64 {
+    pub fn to_proto(self) -> u64 {
         self.0 as u64
     }
 
@@ -5517,14 +5536,14 @@ impl ProjectEntryId {
         ProjectEntryId(id)
     }
 
-    pub fn to_usize(&self) -> usize {
+    pub fn to_usize(self) -> usize {
         self.0
     }
 }
 
 #[cfg(any(test, feature = "test-support"))]
 impl CreatedEntry {
-    pub fn to_included(self) -> Option<Entry> {
+    pub fn into_included(self) -> Option<Entry> {
         match self {
             CreatedEntry::Included(entry) => Some(entry),
             CreatedEntry::Excluded { .. } => None,

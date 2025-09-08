@@ -67,6 +67,7 @@ ordered-float.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
 picker.workspace = true
+postage.workspace = true
 project.workspace = true
 prompt_store.workspace = true
 proto.workspace = true
@@ -79,6 +80,7 @@ serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
 settings.workspace = true
+shlex.workspace = true
 smol.workspace = true
 streaming_diff.workspace = true
 task.workspace = true
@@ -104,9 +106,11 @@ zed_actions.workspace = true
 [dev-dependencies]
 acp_thread = { workspace = true, features = ["test-support"] }
 agent = { workspace = true, features = ["test-support"] }
+agent2 = { workspace = true, features = ["test-support"] }
 assistant_context = { workspace = true, features = ["test-support"] }
 assistant_tools.workspace = true
 buffer_diff = { workspace = true, features = ["test-support"] }
+db = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, "features" = ["test-support"] }
 indoc.workspace = true

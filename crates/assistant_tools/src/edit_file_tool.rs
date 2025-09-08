@@ -11,11 +11,13 @@ use assistant_tool::{
     AnyToolCard, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput, ToolUseStatus,
 };
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
-use editor::{Editor, EditorMode, MinimapVisibility, MultiBuffer, PathKey};
+use editor::{
+    Editor, EditorMode, MinimapVisibility, MultiBuffer, PathKey, multibuffer_context_lines,
+};
 use futures::StreamExt;
 use gpui::{
     Animation, AnimationExt, AnyWindowHandle, App, AppContext, AsyncApp, Entity, Task,
-    TextStyleRefinement, Transformation, WeakEntity, percentage, pulsating_between, px,
+    TextStyleRefinement, WeakEntity, pulsating_between, px,
 };
 use indoc::formatdoc;
 use language::{
@@ -42,7 +44,7 @@ use std::{
     time::Duration,
 };
 use theme::ThemeSettings;
-use ui::{Disclosure, Tooltip, prelude::*};
+use ui::{CommonAnimationExt, Disclosure, Tooltip, prelude::*};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -376,7 +378,7 @@ impl Tool for EditFileTool {
 
             let output = EditFileToolOutput {
                 original_path: project_path.path.to_path_buf(),
-                new_text: new_text.clone(),
+                new_text,
                 old_text,
                 raw_output: Some(agent_output),
             };
@@ -474,7 +476,7 @@ impl Tool for EditFileTool {
                             PathKey::for_buffer(&buffer, cx),
                             buffer,
                             diff_hunk_ranges,
-                            editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                            multibuffer_context_lines(cx),
                             cx,
                         );
                         multibuffer.add_diff(buffer_diff, cx);
@@ -643,7 +645,7 @@ impl EditFileToolCard {
             diff
         });
 
-        self.buffer = Some(buffer.clone());
+        self.buffer = Some(buffer);
         self.base_text = Some(base_text.into());
         self.buffer_diff = Some(buffer_diff.clone());
 
@@ -703,7 +705,7 @@ impl EditFileToolCard {
                 PathKey::for_buffer(buffer, cx),
                 buffer.clone(),
                 ranges,
-                editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                multibuffer_context_lines(cx),
                 cx,
             );
             let end = multibuffer.len(cx);
@@ -776,7 +778,6 @@ impl EditFileToolCard {
 
         let buffer_diff = cx.spawn({
             let buffer = buffer.clone();
-            let language_registry = language_registry.clone();
             async move |_this, cx| {
                 build_buffer_diff(base_text, &buffer, &language_registry, cx).await
             }
@@ -792,7 +793,7 @@ impl EditFileToolCard {
                         path_key,
                         buffer,
                         ranges,
-                        editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                        multibuffer_context_lines(cx),
                         cx,
                     );
                     multibuffer.add_diff(buffer_diff.clone(), cx);
@@ -863,7 +864,6 @@ impl ToolCard for EditFileToolCard {
             )
             .on_click({
                 let path = self.path.clone();
-                let workspace = workspace.clone();
                 move |_, window, cx| {
                     workspace
                         .update(cx, {
@@ -939,11 +939,7 @@ impl ToolCard for EditFileToolCard {
                     Icon::new(IconName::ArrowCircle)
                         .size(IconSize::XSmall)
                         .color(Color::Info)
-                        .with_animation(
-                            "arrow-circle",
-                            Animation::new(Duration::from_secs(2)).repeat(),
-                            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                        ),
+                        .with_rotate_animation(2),
                 )
             })
             .when_some(error_message, |header, error_message| {
@@ -1356,8 +1352,7 @@ mod tests {
             mode: mode.clone(),
         };
 
-        let result = cx.update(|cx| resolve_path(&input, project, cx));
-        result
+        cx.update(|cx| resolve_path(&input, project, cx))
     }
 
     fn assert_resolved_path_eq(path: anyhow::Result<ProjectPath>, expected: &str) {

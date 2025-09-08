@@ -174,11 +174,9 @@ pub fn hover_at_inlay(
 
                 let subscription = this
                     .update(cx, |_, cx| {
-                        if let Some(parsed_content) = &parsed_content {
-                            Some(cx.observe(parsed_content, |_, _, cx| cx.notify()))
-                        } else {
-                            None
-                        }
+                        parsed_content.as_ref().map(|parsed_content| {
+                            cx.observe(parsed_content, |_, _, cx| cx.notify())
+                        })
                     })
                     .ok()
                     .flatten();
@@ -430,7 +428,7 @@ fn show_hover(
             };
 
             let hovers_response = if let Some(hover_request) = hover_request {
-                hover_request.await
+                hover_request.await.unwrap_or_default()
             } else {
                 Vec::new()
             };
@@ -450,11 +448,9 @@ fn show_hover(
                 let scroll_handle = ScrollHandle::new();
                 let subscription = this
                     .update(cx, |_, cx| {
-                        if let Some(parsed_content) = &parsed_content {
-                            Some(cx.observe(parsed_content, |_, _, cx| cx.notify()))
-                        } else {
-                            None
-                        }
+                        parsed_content.as_ref().map(|parsed_content| {
+                            cx.observe(parsed_content, |_, _, cx| cx.notify())
+                        })
                     })
                     .ok()
                     .flatten();
@@ -502,11 +498,9 @@ fn show_hover(
                 hover_highlights.push(range.clone());
                 let subscription = this
                     .update(cx, |_, cx| {
-                        if let Some(parsed_content) = &parsed_content {
-                            Some(cx.observe(parsed_content, |_, _, cx| cx.notify()))
-                        } else {
-                            None
-                        }
+                        parsed_content.as_ref().map(|parsed_content| {
+                            cx.observe(parsed_content, |_, _, cx| cx.notify())
+                        })
                     })
                     .ok()
                     .flatten();
@@ -603,18 +597,15 @@ async fn parse_blocks(
         })
         .join("\n\n");
 
-    let rendered_block = cx
-        .new_window_entity(|_window, cx| {
-            Markdown::new(
-                combined_text.into(),
-                language_registry.cloned(),
-                language.map(|language| language.name()),
-                cx,
-            )
-        })
-        .ok();
-
-    rendered_block
+    cx.new_window_entity(|_window, cx| {
+        Markdown::new(
+            combined_text.into(),
+            language_registry.cloned(),
+            language.map(|language| language.name()),
+            cx,
+        )
+    })
+    .ok()
 }
 
 pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
@@ -626,7 +617,7 @@ pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 
     let mut base_text_style = window.text_style();
     base_text_style.refine(&TextStyleRefinement {
-        font_family: Some(ui_font_family.clone()),
+        font_family: Some(ui_font_family),
         font_fallbacks: ui_font_fallbacks,
         color: Some(cx.theme().colors().editor_foreground),
         ..Default::default()
@@ -675,7 +666,7 @@ pub fn diagnostics_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 
     let mut base_text_style = window.text_style();
     base_text_style.refine(&TextStyleRefinement {
-        font_family: Some(ui_font_family.clone()),
+        font_family: Some(ui_font_family),
         font_fallbacks: ui_font_fallbacks,
         color: Some(cx.theme().colors().editor_foreground),
         ..Default::default()
@@ -905,7 +896,7 @@ impl InfoPopover {
             .into_any_element()
     }
 
-    pub fn scroll(&self, amount: &ScrollAmount, window: &mut Window, cx: &mut Context<Editor>) {
+    pub fn scroll(&self, amount: ScrollAmount, window: &mut Window, cx: &mut Context<Editor>) {
         let mut current = self.scroll_handle.offset();
         current.y -= amount.pixels(
             window.line_height(),

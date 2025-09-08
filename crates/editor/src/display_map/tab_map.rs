@@ -116,7 +116,7 @@ impl TabMap {
                             state.new.end = edit.new.end;
                             Some(None) // Skip this edit, it's merged
                         } else {
-                            let new_state = edit.clone();
+                            let new_state = edit;
                             let result = Some(Some(state.clone())); // Yield the previous edit
                             **state = new_state;
                             result
@@ -611,7 +611,7 @@ mod tests {
     fn test_expand_tabs(cx: &mut gpui::App) {
         let buffer = MultiBuffer::build_simple("", cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
 
@@ -628,7 +628,7 @@ mod tests {
 
         let buffer = MultiBuffer::build_simple(input, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, mut tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
 
@@ -675,7 +675,7 @@ mod tests {
 
         let buffer = MultiBuffer::build_simple(input, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, mut tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
 
@@ -689,7 +689,7 @@ mod tests {
 
         let buffer = MultiBuffer::build_simple(input, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
 
@@ -736,9 +736,9 @@ mod tests {
 
     #[gpui::test(iterations = 100)]
     fn test_random_tabs(cx: &mut gpui::App, mut rng: StdRng) {
-        let tab_size = NonZeroU32::new(rng.gen_range(1..=4)).unwrap();
-        let len = rng.gen_range(0..30);
-        let buffer = if rng.r#gen() {
+        let tab_size = NonZeroU32::new(rng.random_range(1..=4)).unwrap();
+        let len = rng.random_range(0..30);
+        let buffer = if rng.random() {
             let text = util::RandomCharIter::new(&mut rng)
                 .take(len)
                 .collect::<String>();
@@ -749,7 +749,7 @@ mod tests {
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         log::info!("Buffer text: {:?}", buffer_snapshot.text());
 
-        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         log::info!("InlayMap text: {:?}", inlay_snapshot.text());
         let (mut fold_map, _) = FoldMap::new(inlay_snapshot.clone());
         fold_map.randomly_mutate(&mut rng);
@@ -758,7 +758,7 @@ mod tests {
         let (inlay_snapshot, _) = inlay_map.randomly_mutate(&mut 0, &mut rng);
         log::info!("InlayMap text: {:?}", inlay_snapshot.text());
 
-        let (mut tab_map, _) = TabMap::new(fold_snapshot.clone(), tab_size);
+        let (mut tab_map, _) = TabMap::new(fold_snapshot, tab_size);
         let tabs_snapshot = tab_map.set_max_expansion_column(32);
 
         let text = text::Rope::from(tabs_snapshot.text().as_str());
@@ -769,11 +769,11 @@ mod tests {
         );
 
         for _ in 0..5 {
-            let end_row = rng.gen_range(0..=text.max_point().row);
-            let end_column = rng.gen_range(0..=text.line_len(end_row));
+            let end_row = rng.random_range(0..=text.max_point().row);
+            let end_column = rng.random_range(0..=text.line_len(end_row));
             let mut end = TabPoint(text.clip_point(Point::new(end_row, end_column), Bias::Right));
-            let start_row = rng.gen_range(0..=text.max_point().row);
-            let start_column = rng.gen_range(0..=text.line_len(start_row));
+            let start_row = rng.random_range(0..=text.max_point().row);
+            let start_column = rng.random_range(0..=text.line_len(start_row));
             let mut start =
                 TabPoint(text.clip_point(Point::new(start_row, start_column), Bias::Left));
             if start > end {

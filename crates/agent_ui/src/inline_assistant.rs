@@ -144,7 +144,8 @@ impl InlineAssistant {
             let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
                 return;
             };
-            let enabled = AgentSettings::get_global(cx).enabled;
+            let enabled = !DisableAiSettings::get_global(cx).disable_ai
+                && AgentSettings::get_global(cx).enabled;
             terminal_panel.update(cx, |terminal_panel, cx| {
                 terminal_panel.set_assistant_enabled(enabled, cx)
             });
@@ -1532,13 +1533,11 @@ impl InlineAssistant {
             .and_then(|item| item.act_as::<Editor>(cx))
         {
             Some(InlineAssistTarget::Editor(workspace_editor))
-        } else if let Some(terminal_view) = workspace
-            .active_item(cx)
-            .and_then(|item| item.act_as::<TerminalView>(cx))
-        {
-            Some(InlineAssistTarget::Terminal(terminal_view))
         } else {
-            None
+            workspace
+                .active_item(cx)
+                .and_then(|item| item.act_as::<TerminalView>(cx))
+                .map(InlineAssistTarget::Terminal)
         }
     }
 }
@@ -1693,7 +1692,7 @@ impl InlineAssist {
             }),
             range,
             codegen: codegen.clone(),
-            workspace: workspace.clone(),
+            workspace,
             _subscriptions: vec![
                 window.on_focus_in(&prompt_editor_focus_handle, cx, move |_, cx| {
                     InlineAssistant::update_global(cx, |this, cx| {

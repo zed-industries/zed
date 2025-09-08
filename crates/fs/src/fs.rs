@@ -20,6 +20,9 @@ use std::os::fd::{AsFd, AsRawFd};
 #[cfg(unix)]
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
 
+#[cfg(any(target_os = "macos", target_os = "freebsd"))]
+use std::mem::MaybeUninit;
+
 use async_tar::Archive;
 use futures::{AsyncRead, Stream, StreamExt, future::BoxFuture};
 use git::repository::{GitRepository, RealGitRepository};
@@ -261,14 +264,15 @@ impl FileHandle for std::fs::File {
         };
 
         let fd = self.as_fd();
-        let mut path_buf: [libc::c_char; libc::PATH_MAX as usize] = [0; libc::PATH_MAX as usize];
+        let mut path_buf = MaybeUninit::<[u8; libc::PATH_MAX as usize]>::uninit();
 
         let result = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETPATH, path_buf.as_mut_ptr()) };
         if result == -1 {
             anyhow::bail!("fcntl returned -1".to_string());
         }
 
-        let c_str = unsafe { CStr::from_ptr(path_buf.as_ptr()) };
+        // SAFETY: `fcntl` will initialize the path buffer.
+        let c_str = unsafe { CStr::from_ptr(path_buf.as_ptr().cast()) };
         let path = PathBuf::from(OsStr::from_bytes(c_str.to_bytes()));
         Ok(path)
     }
@@ -296,15 +300,16 @@ impl FileHandle for std::fs::File {
         };
 
         let fd = self.as_fd();
-        let mut kif: libc::kinfo_file = unsafe { std::mem::zeroed() };
+        let mut kif = MaybeUninit::<libc::kinfo_file>::uninit();
         kif.kf_structsize = libc::KINFO_FILE_SIZE;
 
-        let result = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_KINFO, &mut kif) };
+        let result = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_KINFO, kif.as_mut_ptr()) };
         if result == -1 {
             anyhow::bail!("fcntl returned -1".to_string());
         }
 
-        let c_str = unsafe { CStr::from_ptr(kif.kf_path.as_ptr()) };
+        // SAFETY: `fcntl` will initialize the kif.
+        let c_str = unsafe { CStr::from_ptr(kif.assume_init().kf_path.as_ptr()) };
         let path = PathBuf::from(OsStr::from_bytes(c_str.to_bytes()));
         Ok(path)
     }
@@ -495,7 +500,8 @@ impl Fs for RealFs {
         };
         // todo(windows)
         // When new version of `windows-rs` release, make this operation `async`
-        let path = SanitizedPath::from(path.canonicalize()?);
+        let path = path.canonicalize()?;
+        let path = SanitizedPath::new(&path);
         let path_string = path.to_string();
         let file = StorageFile::GetFileFromPathAsync(&HSTRING::from(path_string))?.get()?;
         file.DeleteAsync(StorageDeleteOption::Default)?.get()?;
@@ -522,7 +528,8 @@ impl Fs for RealFs {
 
         // todo(windows)
         // When new version of `windows-rs` release, make this operation `async`
-        let path = SanitizedPath::from(path.canonicalize()?);
+        let path = path.canonicalize()?;
+        let path = SanitizedPath::new(&path);
         let path_string = path.to_string();
         let folder = StorageFolder::GetFolderFromPathAsync(&HSTRING::from(path_string))?.get()?;
         folder.DeleteAsync(StorageDeleteOption::Default)?.get()?;
@@ -783,7 +790,7 @@ impl Fs for RealFs {
             {
                 target = parent.join(target);
                 if let Ok(canonical) = self.canonicalize(&target).await {
-                    target = SanitizedPath::from(canonical).as_path().to_path_buf();
+                    target = SanitizedPath::new(&canonical).as_path().to_path_buf();
                 }
             }
             watcher.add(&target).ok();
@@ -1960,7 +1967,7 @@ impl FileHandle for FakeHandle {
         };
 
         if state.try_entry(&target, false).is_some() {
-            return Ok(target.clone());
+            return Ok(target);
         }
         anyhow::bail!("fake fd target not found")
     }
@@ -2256,7 +2263,7 @@ impl Fs for FakeFs {
 
     async fn load(&self, path: &Path) -> Result<String> {
         let content = self.load_internal(path).await?;
-        Ok(String::from_utf8(content.clone())?)
+        Ok(String::from_utf8(content)?)
     }
 
     async fn load_bytes(&self, path: &Path) -> Result<Vec<u8>> {
@@ -2412,19 +2419,18 @@ impl Fs for FakeFs {
             tx,
             original_path: path.to_owned(),
             fs_state: self.state.clone(),
-            prefixes: Mutex::new(vec![path.to_owned()]),
+            prefixes: Mutex::new(vec![path]),
         });
         (
             Box::pin(futures::StreamExt::filter(rx, {
                 let watcher = watcher.clone();
                 move |events| {
                     let result = events.iter().any(|evt_path| {
-                        let result = watcher
+                        watcher
                             .prefixes
                             .lock()
                             .iter()
-                            .any(|prefix| evt_path.path.starts_with(prefix));
-                        result
+                            .any(|prefix| evt_path.path.starts_with(prefix))
                     });
                     let executor = executor.clone();
                     async move {

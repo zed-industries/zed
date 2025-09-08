@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "0.201.0"
+version = "0.204.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -20,10 +20,10 @@ path = "src/main.rs"
 
 [dependencies]
 activity_indicator.workspace = true
+acp_tools.workspace = true
 agent.workspace = true
 agent_ui.workspace = true
 agent_settings.workspace = true
-agent_servers.workspace = true
 anyhow.workspace = true
 askpass.workspace = true
 assets.workspace = true
@@ -33,6 +33,7 @@ audio.workspace = true
 auto_update.workspace = true
 auto_update_ui.workspace = true
 backtrace = "0.3"
+bincode.workspace = true
 breadcrumbs.workspace = true
 call.workspace = true
 channel.workspace = true
@@ -60,6 +61,7 @@ extensions_ui.workspace = true
 feature_flags.workspace = true
 feedback.workspace = true
 file_finder.workspace = true
+system_specs.workspace = true
 fs.workspace = true
 futures.workspace = true
 git.workspace = true
@@ -87,9 +89,11 @@ language.workspace = true
 language_extension.workspace = true
 language_model.workspace = true
 language_models.workspace = true
+language_onboarding.workspace = true
 language_selector.workspace = true
 language_tools.workspace = true
 languages = { workspace = true, features = ["load-grammars"] }
+line_ending_selector.workspace = true
 libc.workspace = true
 log.workspace = true
 markdown.workspace = true
@@ -128,6 +132,7 @@ serde_json.workspace = true
 session.workspace = true
 settings.workspace = true
 settings_ui.workspace = true
+keymap_editor.workspace = true
 shellexpand.workspace = true
 smol.workspace = true
 snippet_provider.workspace = true
@@ -161,6 +166,7 @@ web_search_providers.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+zed_env_vars.workspace = true
 zeta.workspace = true
 zlog.workspace = true
 zlog_settings.workspace = true
@@ -185,6 +191,7 @@ itertools.workspace = true
 language = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
+settings_ui = { workspace = true, features = ["test-support"] }
 terminal_view = { workspace = true, features = ["test-support"] }
 tree-sitter-md.workspace = true
 tree-sitter-rust.workspace = true

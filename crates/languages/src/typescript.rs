@@ -557,12 +557,13 @@ struct TypeScriptVersions {
 #[async_trait(?Send)]
 impl LspAdapter for TypeScriptLspAdapter {
     fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
+        Self::SERVER_NAME
     }
 
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
+        _: &AsyncApp,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         Ok(Box::new(TypeScriptVersions {
             typescript_version: self.node.npm_package_latest_version("typescript").await?,
@@ -879,12 +880,13 @@ impl LspAdapter for EsLintLspAdapter {
     }
 
     fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
+        Self::SERVER_NAME
     }
 
     async fn fetch_latest_server_version(
         &self,
         _delegate: &dyn LspAdapterDelegate,
+        _: &AsyncApp,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         let url = build_asset_url(
             "zed-industries/vscode-eslint",

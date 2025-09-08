@@ -49,6 +49,10 @@ impl VimTestContext {
         Self::new_with_lsp(
             EditorLspTestContext::new_typescript(
                 lsp::ServerCapabilities {
+                    completion_provider: Some(lsp::CompletionOptions {
+                        trigger_characters: Some(vec![".".to_string()]),
+                        ..Default::default()
+                    }),
                     rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
                         prepare_provider: Some(true),
                         work_done_progress_options: Default::default(),
@@ -64,7 +68,7 @@ impl VimTestContext {
 
     pub fn init_keybindings(enabled: bool, cx: &mut App) {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(enabled));
+            store.update_user_settings::<VimModeSetting>(cx, |s| s.vim_mode = Some(enabled));
         });
         let default_key_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
             "keymaps/default-macos.json",
@@ -130,7 +134,7 @@ impl VimTestContext {
     pub fn enable_vim(&mut self) {
         self.cx.update(|_, cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(true));
+                store.update_user_settings::<VimModeSetting>(cx, |s| s.vim_mode = Some(true));
             });
         })
     }
@@ -138,7 +142,7 @@ impl VimTestContext {
     pub fn disable_vim(&mut self) {
         self.cx.update(|_, cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(false));
+                store.update_user_settings::<VimModeSetting>(cx, |s| s.vim_mode = Some(false));
             });
         })
     }
@@ -147,7 +151,7 @@ impl VimTestContext {
         self.cx.update(|_, cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings::<vim_mode_setting::HelixModeSetting>(cx, |s| {
-                    *s = Some(true)
+                    s.helix_mode = Some(true)
                 });
             });
         })
@@ -225,7 +229,7 @@ impl VimTestContext {
         VimClipboard {
             editor: self
                 .read_from_clipboard()
-                .map(|item| item.text().unwrap().to_string())
+                .map(|item| item.text().unwrap())
                 .unwrap_or_default(),
         }
     }

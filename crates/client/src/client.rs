@@ -31,7 +31,7 @@ use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EnvelopedMessage, PeerId, RequestMessage};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 use std::{
     any::TypeId,
     convert::TryFrom,
@@ -66,6 +66,8 @@ pub static IMPERSONATE_LOGIN: LazyLock<Option<String>> = LazyLock::new(|| {
         .and_then(|s| if s.is_empty() { None } else { Some(s) })
 });
 
+pub static USE_WEB_LOGIN: LazyLock<bool> = LazyLock::new(|| std::env::var("ZED_WEB_LOGIN").is_ok());
+
 pub static ADMIN_API_TOKEN: LazyLock<Option<String>> = LazyLock::new(|| {
     std::env::var("ZED_ADMIN_API_TOKEN")
         .ok()
@@ -94,7 +96,8 @@ actions!(
     ]
 );
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
+#[settings_key(None)]
 pub struct ClientSettingsContent {
     server_url: Option<String>,
 }
@@ -105,8 +108,6 @@ pub struct ClientSettings {
 }
 
 impl Settings for ClientSettings {
-    const KEY: Option<&'static str> = None;
-
     type FileContent = ClientSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
@@ -120,7 +121,8 @@ impl Settings for ClientSettings {
     fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
-#[derive(Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
+#[settings_key(None)]
 pub struct ProxySettingsContent {
     proxy: Option<String>,
 }
@@ -131,8 +133,6 @@ pub struct ProxySettings {
 }
 
 impl Settings for ProxySettings {
-    const KEY: Option<&'static str> = None;
-
     type FileContent = ProxySettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
@@ -181,7 +181,7 @@ pub fn init(client: &Arc<Client>, cx: &mut App) {
     });
 
     cx.on_action({
-        let client = client.clone();
+        let client = client;
         move |_: &Reconnect, cx| {
             if let Some(client) = client.upgrade() {
                 cx.spawn(async move |cx| {
@@ -285,6 +285,7 @@ pub enum Status {
     },
     ConnectionLost,
     Reauthenticating,
+    Reauthenticated,
     Reconnecting,
     ReconnectionError {
         next_reconnection: Instant,
@@ -294,6 +295,21 @@ pub enum Status {
 impl Status {
     pub fn is_connected(&self) -> bool {
         matches!(self, Self::Connected { .. })
+    }
+
+    pub fn was_connected(&self) -> bool {
+        matches!(
+            self,
+            Self::ConnectionLost
+                | Self::Reauthenticating
+                | Self::Reauthenticated
+                | Self::Reconnecting
+        )
+    }
+
+    /// Returns whether the client is currently connected or was connected at some point.
+    pub fn is_or_was_connected(&self) -> bool {
+        self.is_connected() || self.was_connected()
     }
 
     pub fn is_signing_in(&self) -> bool {
@@ -509,7 +525,8 @@ pub struct TelemetrySettings {
 }
 
 /// Control what info is collected by Zed.
-#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, Debug, SettingsUi, SettingsKey)]
+#[settings_key(key = "telemetry")]
 pub struct TelemetrySettingsContent {
     /// Send debug info like crash reports.
     ///
@@ -522,8 +539,6 @@ pub struct TelemetrySettingsContent {
 }
 
 impl settings::Settings for TelemetrySettings {
-    const KEY: Option<&'static str> = Some("telemetry");
-
     type FileContent = TelemetrySettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
@@ -673,7 +688,7 @@ impl Client {
                     #[cfg(any(test, feature = "test-support"))]
                     let mut rng = StdRng::seed_from_u64(0);
                     #[cfg(not(any(test, feature = "test-support")))]
-                    let mut rng = StdRng::from_entropy();
+                    let mut rng = StdRng::from_os_rng();
 
                     let mut delay = INITIAL_RECONNECTION_DELAY;
                     loop {
@@ -703,8 +718,9 @@ impl Client {
                                 },
                                 cx,
                             );
-                            let jitter =
-                                Duration::from_millis(rng.gen_range(0..delay.as_millis() as u64));
+                            let jitter = Duration::from_millis(
+                                rng.random_range(0..delay.as_millis() as u64),
+                            );
                             cx.background_executor().timer(delay + jitter).await;
                             delay = cmp::min(delay * 2, MAX_RECONNECTION_DELAY);
                         } else {
@@ -791,7 +807,7 @@ impl Client {
             Arc::new(move |subscriber, envelope, client, cx| {
                 let subscriber = subscriber.downcast::<E>().unwrap();
                 let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
-                handler(subscriber, *envelope, client.clone(), cx).boxed_local()
+                handler(subscriber, *envelope, client, cx).boxed_local()
             }),
         );
         if prev_handler.is_some() {
@@ -855,11 +871,13 @@ impl Client {
         try_provider: bool,
         cx: &AsyncApp,
     ) -> Result<Credentials> {
-        if self.status().borrow().is_signed_out() {
+        let is_reauthenticating = if self.status().borrow().is_signed_out() {
             self.set_status(Status::Authenticating, cx);
+            false
         } else {
             self.set_status(Status::Reauthenticating, cx);
-        }
+            true
+        };
 
         let mut credentials = None;
 
@@ -917,7 +935,14 @@ impl Client {
         self.cloud_client
             .set_credentials(credentials.user_id as u32, credentials.access_token.clone());
         self.state.write().credentials = Some(credentials.clone());
-        self.set_status(Status::Authenticated, cx);
+        self.set_status(
+            if is_reauthenticating {
+                Status::Reauthenticated
+            } else {
+                Status::Authenticated
+            },
+            cx,
+        );
 
         Ok(credentials)
     }
@@ -1029,11 +1054,12 @@ impl Client {
             Status::SignedOut | Status::Authenticated => true,
             Status::ConnectionError
             | Status::ConnectionLost
-            | Status::Authenticating { .. }
+            | Status::Authenticating
             | Status::AuthenticationError
-            | Status::Reauthenticating { .. }
+            | Status::Reauthenticating
+            | Status::Reauthenticated
             | Status::ReconnectionError { .. } => false,
-            Status::Connected { .. } | Status::Connecting { .. } | Status::Reconnecting { .. } => {
+            Status::Connected { .. } | Status::Connecting | Status::Reconnecting => {
                 return ConnectionResult::Result(Ok(()));
             }
             Status::UpgradeRequired => {
@@ -1290,19 +1316,21 @@ impl Client {
                 "http" => Http,
                 _ => Err(anyhow!("invalid rpc url: {}", rpc_url))?,
             };
-            let rpc_host = rpc_url
-                .host_str()
-                .zip(rpc_url.port_or_known_default())
-                .context("missing host in rpc url")?;
 
-            let stream = {
-                let handle = cx.update(|cx| gpui_tokio::Tokio::handle(cx)).ok().unwrap();
-                let _guard = handle.enter();
-                match proxy {
-                    Some(proxy) => connect_proxy_stream(&proxy, rpc_host).await?,
-                    None => Box::new(TcpStream::connect(rpc_host).await?),
+            let stream = gpui_tokio::Tokio::spawn_result(cx, {
+                let rpc_url = rpc_url.clone();
+                async move {
+                    let rpc_host = rpc_url
+                        .host_str()
+                        .zip(rpc_url.port_or_known_default())
+                        .context("missing host in rpc url")?;
+                    Ok(match proxy {
+                        Some(proxy) => connect_proxy_stream(&proxy, rpc_host).await?,
+                        None => Box::new(TcpStream::connect(rpc_host).await?),
+                    })
                 }
-            };
+            })?
+            .await?;
 
             log::info!("connected to rpc endpoint {}", rpc_url);
 
@@ -1390,11 +1418,13 @@ impl Client {
                     if let Some((login, token)) =
                         IMPERSONATE_LOGIN.as_ref().zip(ADMIN_API_TOKEN.as_ref())
                     {
-                        eprintln!("authenticate as admin {login}, {token}");
+                        if !*USE_WEB_LOGIN {
+                            eprintln!("authenticate as admin {login}, {token}");
 
-                        return this
-                            .authenticate_as_admin(http, login.clone(), token.clone())
-                            .await;
+                            return this
+                                .authenticate_as_admin(http, login.clone(), token.clone())
+                                .await;
+                        }
                     }
 
                     // Start an HTTP server to receive the redirect from Zed's sign-in page.
@@ -1664,21 +1694,10 @@ impl Client {
             );
             cx.spawn(async move |_| match future.await {
                 Ok(()) => {
-                    log::debug!(
-                        "rpc message handled. client_id:{}, sender_id:{:?}, type:{}",
-                        client_id,
-                        original_sender_id,
-                        type_name
-                    );
+                    log::debug!("rpc message handled. client_id:{client_id}, sender_id:{original_sender_id:?}, type:{type_name}");
                 }
                 Err(error) => {
-                    log::error!(
-                        "error handling message. client_id:{}, sender_id:{:?}, type:{}, error:{:?}",
-                        client_id,
-                        original_sender_id,
-                        type_name,
-                        error
-                    );
+                    log::error!("error handling message. client_id:{client_id}, sender_id:{original_sender_id:?}, type:{type_name}, error:{error:#}");
                 }
             })
             .detach();
@@ -1902,10 +1921,7 @@ mod tests {
         assert!(matches!(status.next().await, Some(Status::Connecting)));
 
         executor.advance_clock(CONNECTION_TIMEOUT);
-        assert!(matches!(
-            status.next().await,
-            Some(Status::ConnectionError { .. })
-        ));
+        assert!(matches!(status.next().await, Some(Status::ConnectionError)));
         auth_and_connect.await.into_response().unwrap_err();
 
         // Allow the connection to be established.
@@ -1929,10 +1945,7 @@ mod tests {
             })
         });
         executor.advance_clock(2 * INITIAL_RECONNECTION_DELAY);
-        assert!(matches!(
-            status.next().await,
-            Some(Status::Reconnecting { .. })
-        ));
+        assert!(matches!(status.next().await, Some(Status::Reconnecting)));
 
         executor.advance_clock(CONNECTION_TIMEOUT);
         assert!(matches!(
@@ -2048,10 +2061,7 @@ mod tests {
         assert_eq!(*auth_count.lock(), 1);
         assert_eq!(*dropped_auth_count.lock(), 0);
 
-        let _authenticate = cx.spawn({
-            let client = client.clone();
-            |cx| async move { client.connect(false, &cx).await }
-        });
+        let _authenticate = cx.spawn(|cx| async move { client.connect(false, &cx).await });
         executor.run_until_parked();
         assert_eq!(*auth_count.lock(), 2);
         assert_eq!(*dropped_auth_count.lock(), 1);
