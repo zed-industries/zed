@@ -3079,6 +3079,8 @@ impl ScrollHandle {
             return;
         };
 
+        dbg!(ix, state.child_bounds.len(), bounds, state.child_bounds.clone());
+
         let mut scroll_offset = state.offset.borrow_mut();
 
         if state.overflow.y == Overflow::Scroll {
