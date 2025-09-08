@@ -1,13 +1,16 @@
 use std::{
     sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
     },
     time::Duration,
 };
 
 use crossbeam::queue::ArrayQueue;
 use rodio::{ChannelCount, Sample, SampleRate, Source};
+
+#[derive(Debug)]
+pub struct ReplayDurationTooShort;
 
 pub trait RodioExt: Source + Sized {
     fn process_buffer<const N: usize, F>(self, callback: F) -> ProcessBuffer<N, Self, F>
@@ -16,7 +19,11 @@ pub trait RodioExt: Source + Sized {
     fn inspect_buffer<const N: usize, F>(self, callback: F) -> InspectBuffer<N, Self, F>
     where
         F: FnMut(&[Sample; N]);
-    fn replayable(self, duration: Duration) -> (Replay, Replayable<Self>);
+    fn replayable(
+        self,
+        duration: Duration,
+    ) -> Result<(Replay, Replayable<Self>), ReplayDurationTooShort>;
+    fn take_samples(self, n: usize) -> TakeSamples<Self>;
 }
 
 impl<S: Source> RodioExt for S {
@@ -42,32 +49,100 @@ impl<S: Source> RodioExt for S {
             free: 0,
         }
     }
-    fn replayable(self, duration: Duration) -> (Replay, Replayable<Self>) {
-        let samples_per_second = self.sample_rate().get() * self.channels().get() as u32;
+    /// Maintains a live replay with a history of at least `duration` seconds.
+    ///
+    /// Note:
+    /// History can be 100ms longer if the source drops before or while the
+    /// replay is being read
+    ///
+    /// # Errors
+    /// If duration is smaller then 100ms
+    fn replayable(
+        self,
+        duration: Duration,
+    ) -> Result<(Replay, Replayable<Self>), ReplayDurationTooShort> {
+        if duration < Duration::from_millis(100) {
+            return Err(ReplayDurationTooShort);
+        }
+
+        let samples_per_second = self.sample_rate().get() as usize * self.channels().get() as usize;
         let samples_to_queue = duration.as_secs_f64() * samples_per_second as f64;
         let samples_to_queue =
             (samples_to_queue as usize).next_multiple_of(self.channels().get().into());
 
         let chunk_size =
-            samples_to_queue.min(1000usize.next_multiple_of(self.channels().get().into()));
+            (samples_per_second.div_ceil(10)).next_multiple_of(self.channels().get() as usize);
         let chunks_to_queue = samples_to_queue.div_ceil(chunk_size);
 
+        let is_active = Arc::new(AtomicBool::new(true));
         let queue = Arc::new(ReplayQueue::new(chunks_to_queue, chunk_size));
-        (
+        Ok((
             Replay {
                 rx: Arc::clone(&queue),
                 buffer: Vec::new().into_iter(),
                 sleep_duration: duration / 2,
                 sample_rate: self.sample_rate(),
                 channel_count: self.channels(),
+                source_is_active: is_active.clone(),
             },
             Replayable {
                 tx: queue,
                 inner: self,
                 buffer: Vec::with_capacity(chunk_size),
                 chunk_size,
+                is_active,
             },
-        )
+        ))
+    }
+    fn take_samples(self, n: usize) -> TakeSamples<S> {
+        TakeSamples {
+            inner: self,
+            left_to_take: n,
+        }
+    }
+}
+
+pub struct TakeSamples<S> {
+    inner: S,
+    left_to_take: usize,
+}
+
+impl<S: Source> Iterator for TakeSamples<S> {
+    type Item = Sample;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.left_to_take == 0 {
+            None
+        } else {
+            self.left_to_take -= 1;
+            self.inner.next()
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (0, Some(self.left_to_take))
+    }
+}
+
+impl<S: Source> Source for TakeSamples<S> {
+    fn current_span_len(&self) -> Option<usize> {
+        None // does not support spans
+    }
+
+    fn channels(&self) -> ChannelCount {
+        self.inner.channels()
+    }
+
+    fn sample_rate(&self) -> SampleRate {
+        self.inner.sample_rate()
+    }
+
+    fn total_duration(&self) -> Option<Duration> {
+        Some(Duration::from_secs_f64(
+            self.left_to_take as f64
+                / self.sample_rate().get() as f64
+                / self.channels().get() as f64,
+        ))
     }
 }
 
@@ -79,7 +154,7 @@ struct ReplayQueue {
     /// the normal chunk size. This is always equal to the
     /// size of the last element in the queue.
     /// (so normally chunk_size)
-    last_chunk_len: AtomicUsize,
+    last_chunk: Mutex<Vec<Sample>>,
 }
 
 impl ReplayQueue {
@@ -87,21 +162,29 @@ impl ReplayQueue {
         Self {
             inner: ArrayQueue::new(queue_len),
             normal_chunk_len: chunk_size,
-            last_chunk_len: AtomicUsize::new(chunk_size),
+            last_chunk: Mutex::new(Vec::new()),
         }
     }
+    /// Returns the length in samples
     fn len(&self) -> usize {
         self.inner.len().saturating_sub(1) * self.normal_chunk_len
-            + self.last_chunk_len.load(Ordering::Acquire)
+            + self
+                .last_chunk
+                .lock()
+                .expect("Self::push_last can not poison this lock")
+                .len()
     }
 
     fn pop(&self) -> Option<Vec<Sample>> {
-        self.inner.pop()
+        self.inner.pop() // removes element that was inserted first
     }
 
-    fn push_last(&self, samples: Vec<Sample>) {
-        self.last_chunk_len.store(samples.len(), Ordering::Release);
-        let _pushed_out_of_ringbuf = self.inner.force_push(samples);
+    fn push_last(&self, mut samples: Vec<Sample>) {
+        let mut last_chunk = self
+            .last_chunk
+            .lock()
+            .expect("Self::len can not poison this lock");
+        std::mem::swap(&mut *last_chunk, &mut samples);
     }
 
     fn push_normal(&self, samples: Vec<Sample>) {
@@ -148,6 +231,10 @@ where
         self.next = 0;
         Some(self.buffer[0])
     }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
 }
 
 impl<const N: usize, S, F> Source for ProcessBuffer<N, S, F>
@@ -156,7 +243,6 @@ where
     F: FnMut(&mut [Sample; N]),
 {
     fn current_span_len(&self) -> Option<usize> {
-        // TODO dvdsk this should be a spanless Source
         None
     }
 
@@ -209,6 +295,10 @@ where
 
         Some(sample)
     }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
 }
 
 impl<const N: usize, S, F> Source for InspectBuffer<N, S, F>
@@ -217,7 +307,6 @@ where
     F: FnMut(&[Sample; N]),
 {
     fn current_span_len(&self) -> Option<usize> {
-        // TODO dvdsk this should be a spanless Source
         None
     }
 
@@ -240,6 +329,7 @@ pub struct Replayable<S: Source> {
     buffer: Vec<Sample>,
     chunk_size: usize,
     tx: Arc<ReplayQueue>,
+    is_active: Arc<AtomicBool>,
 }
 
 impl<S: Source> Iterator for Replayable<S> {
@@ -255,14 +345,18 @@ impl<S: Source> Iterator for Replayable<S> {
         } else {
             let last_chunk = std::mem::take(&mut self.buffer);
             self.tx.push_last(last_chunk);
+            self.is_active.store(false, Ordering::Relaxed);
             None
         }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
     }
 }
 
 impl<S: Source> Source for Replayable<S> {
     fn current_span_len(&self) -> Option<usize> {
-        // Todo dvdsk should be spanless too
         self.inner.current_span_len()
     }
 
@@ -286,21 +380,27 @@ pub struct Replay {
     sleep_duration: Duration,
     sample_rate: SampleRate,
     channel_count: ChannelCount,
+    source_is_active: Arc<AtomicBool>,
 }
 
 impl Replay {
     pub fn source_is_active(&self) -> bool {
-        Arc::strong_count(&self.rx) == 2
+        // - source could return None and not drop
+        // - source could be dropped before returning None
+        self.source_is_active.load(Ordering::Relaxed) && Arc::strong_count(&self.rx) < 2
     }
 
-    /// Returns duration of what is in the buffer and
-    /// can be returned without blocking.
+    /// Duration of what is in the buffer and can be returned without blocking.
     pub fn duration_ready(&self) -> Duration {
         let samples_per_second = self.channels().get() as u32 * self.sample_rate().get();
-        let samples_queued = self.rx.len() + self.buffer.len();
 
-        let seconds_queued = samples_queued as f64 / samples_per_second as f64;
+        let seconds_queued = self.samples_ready() as f64 / samples_per_second as f64;
         Duration::from_secs_f64(seconds_queued)
+    }
+
+    /// Number of samples in the buffer and can be returned without blocking.
+    pub fn samples_ready(&self) -> usize {
+        self.rx.len() + self.buffer.len()
     }
 }
 
@@ -324,6 +424,10 @@ impl Iterator for Replay {
 
             std::thread::sleep(self.sleep_duration);
         }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        ((self.rx.len() + self.buffer.len()), None)
     }
 }
 
@@ -424,7 +528,9 @@ mod tests {
         fn continues_after_history() {
             let input = test_source();
 
-            let (mut replay, mut source) = input.replayable(Duration::from_secs(3));
+            let (mut replay, mut source) = input
+                .replayable(Duration::from_secs(3))
+                .expect("longer then 100ms");
 
             source.by_ref().take(3).count();
             let yielded: Vec<Sample> = replay.by_ref().take(3).collect();
@@ -439,31 +545,49 @@ mod tests {
         fn keeps_only_latest() {
             let input = test_source();
 
-            let (mut replay, mut source) = input.replayable(Duration::from_secs(2));
+            let (mut replay, mut source) = input
+                .replayable(Duration::from_secs(2))
+                .expect("longer then 100ms");
 
             source.by_ref().take(5).count(); // get all items but do not end the source
             let yielded: Vec<Sample> = replay.by_ref().take(2).collect();
-            // Note we do not get the last element, it has not been send yet
-            // due to buffering.
-            assert_eq!(&yielded, &SAMPLES[2..4]);
-
+            assert_eq!(&yielded, &SAMPLES[3..5]);
             source.count(); // exhaust source
-            let yielded: Vec<Sample> = replay.collect();
-            assert_eq!(&yielded, &[SAMPLES[4]]);
+            assert_eq!(replay.next(), None);
         }
 
         #[test]
         fn keeps_correct_amount_of_seconds() {
-            let input = StaticSamplesBuffer::new(nz!(16_000), nz!(1), &[0.0; 40_000]);
+            let input = StaticSamplesBuffer::new(nz!(1), nz!(16_000), &[0.0; 40_000]);
 
-            let (replay, mut source) = input.replayable(Duration::from_secs(2));
+            let (replay, mut source) = input
+                .replayable(Duration::from_secs(2))
+                .expect("longer then 100ms");
 
-            source.by_ref().count();
-            let n_yielded = replay.count();
-            assert_eq!(
-                n_yielded as u32,
-                source.sample_rate().get() * source.channels().get() as u32 * 2
-            );
+            // exhaust but do not yet end source
+            source.by_ref().take(40_000).count();
+
+            // take all samples we can without blocking
+            let ready = replay.samples_ready();
+            let n_yielded = replay.take_samples(ready).count();
+
+            let max = source.sample_rate().get() * source.channels().get() as u32 * 2;
+            let margin = 16_000 / 10; // 100ms
+            assert!(n_yielded as u32 >= max - margin);
+        }
+
+        #[test]
+        fn samples_ready() {
+            let input = StaticSamplesBuffer::new(nz!(1), nz!(16_000), &[0.0; 40_000]);
+            let (mut replay, source) = input
+                .replayable(Duration::from_secs(2))
+                .expect("longer then 100ms");
+            assert_eq!(replay.by_ref().samples_ready(), 0);
+
+            source.take(8000).count(); // half a second
+            let margin = 16_000 / 10; // 100ms
+            let ready = replay.samples_ready();
+            assert!(ready >= 8000 - margin);
         }
     }
 }

@@ -22,6 +22,7 @@ use livekit::webrtc::{
 use log::info;
 use parking_lot::Mutex;
 use rodio::Source;
+use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::cell::RefCell;
 use std::sync::Weak;
@@ -55,7 +56,13 @@ pub(crate) fn play_remote_audio_track(
                 s.stop();
             }
         });
-    audio::Audio::play_voip_stream(stream, track.name(), cx).context("Could not play audio")?;
+
+    let speaker: Speaker = serde_urlencoded::from_str(&track.name()).unwrap_or_else(|_| Speaker {
+        name: track.name(),
+        is_staff: false,
+    });
+    audio::Audio::play_voip_stream(stream, speaker.name, speaker.is_staff, cx)
+        .context("Could not play audio")?;
 
     let on_drop = util::defer(move || {
         stop_handle_clone.store(true, Ordering::Relaxed);
@@ -141,7 +148,8 @@ impl AudioStack {
 
     pub(crate) fn capture_local_microphone_track(
         &self,
-        user_name: &str,
+        user_name: String,
+        is_staff: bool,
         cx: &AsyncApp,
     ) -> Result<(crate::LocalAudioTrack, AudioStream)> {
         let source = NativeAudioSource::new(
@@ -152,8 +160,14 @@ impl AudioStack {
             10,
         );
 
+        let track_name = serde_urlencoded::to_string(Speaker {
+            name: user_name,
+            is_staff,
+        })
+        .context("Could not encode user information in track name")?;
+
         let track = track::LocalAudioTrack::create_audio_track(
-            user_name,
+            &track_name,
             RtcAudioSource::Native(source.clone()),
         );
 
@@ -170,9 +184,14 @@ impl AudioStack {
         let rodio_pipeline =
             AudioSettings::try_read_global(cx, |setting| setting.rodio_audio).unwrap_or_default();
         let capture_task = if rodio_pipeline {
-            // TODO global might not yet have been initialized
             info!("Using experimental.rodio_audio audio pipeline");
-            audio::Audio::open_microphone(cx.clone(), frame_tx)?;
+            let voip_parts = audio::VoipParts::new(cx)?;
+            thread::spawn(move || {
+                // microphone is non send on mac
+                let microphone = audio::Audio::open_microphone(voip_parts)?;
+                send_to_livekit(frame_tx, microphone);
+                Ok::<(), anyhow::Error>(())
+            });
             Task::ready(Ok(()))
         } else {
             self.executor.spawn(async move {
@@ -353,6 +372,36 @@ impl AudioStack {
 
             device_change_listener.next().await;
             drop(end_on_drop_tx)
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct Speaker {
+    name: String,
+    is_staff: bool,
+}
+
+fn send_to_livekit(frame_tx: UnboundedSender<AudioFrame<'static>>, mut microphone: impl Source) {
+    use cpal::Sample;
+    loop {
+        let sampled: Vec<_> = microphone
+            .by_ref()
+            .take(audio::BUFFER_SIZE)
+            .map(|s| s.to_sample())
+            .collect();
+
+        if frame_tx
+            .unbounded_send(AudioFrame {
+                sample_rate: SAMPLE_RATE.get(),
+                num_channels: CHANNEL_COUNT.get() as u32,
+                samples_per_channel: sampled.len() as u32 / CHANNEL_COUNT.get() as u32,
+                data: Cow::Owned(sampled),
+            })
+            .is_err()
+        {
+            // must rx has dropped or is not consuming
+            break;
         }
     }
 }

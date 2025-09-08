@@ -97,12 +97,13 @@ impl Room {
 
     pub async fn publish_local_microphone_track(
         &self,
-        user_name: &str,
+        user_name: String,
+        is_staff: bool,
         cx: &mut AsyncApp,
     ) -> Result<(LocalTrackPublication, playback::AudioStream)> {
         let (track, stream) = self
             .playback
-            .capture_local_microphone_track(user_name, &cx)?;
+            .capture_local_microphone_track(user_name, is_staff, &cx)?;
         let publication = self
             .local_participant()
             .publish_track(

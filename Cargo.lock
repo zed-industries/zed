@@ -1388,7 +1388,6 @@ dependencies = [
  "async-tar",
  "collections",
  "crossbeam",
- "futures 0.3.31",
  "gpui",
  "libwebrtc",
  "log",
@@ -2618,6 +2617,7 @@ dependencies = [
  "audio",
  "client",
  "collections",
+ "feature_flags",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -9418,7 +9418,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc2f4eb4bc735547cfed7c0a4922cbd04a4655978c09b54f1f7b228750664c34"
 dependencies = [
  "cfg-if",
- "windows-targets 0.48.5",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -9672,6 +9672,7 @@ dependencies = [
  "scap",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "settings",
  "sha2",
  "simplelog",
@@ -13882,7 +13883,6 @@ dependencies = [
  "rtrb",
  "symphonia",
  "thiserror 2.0.12",
- "tracing",
 ]
 
 [[package]]
@@ -18960,7 +18960,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -19997,6 +19997,7 @@ dependencies = [
  "libsqlite3-sys",
  "linux-raw-sys 0.4.15",
  "linux-raw-sys 0.9.4",
+ "livekit-runtime",
  "log",
  "lyon",
  "lyon_path",
@@ -20551,7 +20552,6 @@ dependencies = [
  "languages",
  "libc",
  "line_ending_selector",
- "livekit_client",
  "log",
  "markdown",
  "markdown_preview",
