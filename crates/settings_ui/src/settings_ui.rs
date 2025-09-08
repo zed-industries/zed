@@ -159,6 +159,7 @@ struct UiEntry {
     generate_items: Option<(
         SettingsUiItem,
         fn(&serde_json::Value, &App) -> Vec<SettingsUiEntryMetaData>,
+        SmallVec<[SharedString; 1]>,
     )>,
 }
 
@@ -248,8 +249,17 @@ fn build_tree_item(
         SettingsUiItem::DynamicMap(SettingsUiItemDynamicMap {
             item: generate_settings_ui_item,
             determine_items,
+            defaults_path,
         }) => {
-            tree[index].generate_items = Some((generate_settings_ui_item(), determine_items));
+            tree[index].generate_items = Some((
+                generate_settings_ui_item(),
+                determine_items,
+                defaults_path
+                    .into_iter()
+                    .copied()
+                    .map(SharedString::new_static)
+                    .collect(),
+            ));
         }
         SettingsUiItem::None => {
             return;
@@ -425,7 +435,9 @@ fn render_content(
                     cx,
                 );
             }
-        } else if let Some((settings_ui_item, generate_items)) = child.generate_items.as_ref() {
+        } else if let Some((settings_ui_item, generate_items, defaults_path)) =
+            child.generate_items.as_ref()
+        {
             let generated_items = generate_items(settings_value.read(), cx);
             let mut ui_items = Vec::with_capacity(generated_items.len());
             for item in generated_items {
@@ -451,16 +463,16 @@ fn render_content(
                     ui_items[item_index].path = None;
                     ui_items[item_index].title = item.title.clone();
                     ui_items[item_index].documentation = item.documentation.clone();
-                    // todo! this only works for language settings because they're top level, need way for DynamicMap to provide path for this
 
-                    // push instead of setting on ui item so that the path isn't pushed to default_path as well
+                    // push path instead of setting path on ui item so that the path isn't pushed to default_path as well
+                    // when we recurse
                     path.push(item.path.clone());
                     element = render_recursive(
                         &ui_items,
                         item_index,
                         path,
                         element,
-                        &mut Some(SmallVec::new()),
+                        &mut Some(defaults_path.clone()),
                         window,
                         cx,
                     );

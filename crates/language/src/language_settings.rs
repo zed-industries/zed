@@ -334,6 +334,7 @@ impl SettingsUi for LanguageToSettingsMap {
     fn settings_ui_item() -> settings::SettingsUiItem {
         settings::SettingsUiItem::DynamicMap(settings::SettingsUiItemDynamicMap {
             item: LanguageSettingsContent::settings_ui_item,
+            defaults_path: &[],
             determine_items: |settings_value, cx| {
                 use settings::SettingsUiEntryMetaData;
 

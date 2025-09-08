@@ -121,6 +121,7 @@ pub struct SettingsUiEntryMetaData {
 pub struct SettingsUiItemDynamicMap {
     pub item: fn() -> SettingsUiItem,
     pub determine_items: fn(&serde_json::Value, &App) -> Vec<SettingsUiEntryMetaData>,
+    pub defaults_path: &'static [&'static str],
 }
 
 #[derive(Clone)]
