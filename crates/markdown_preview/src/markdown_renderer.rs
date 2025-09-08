@@ -266,7 +266,7 @@ fn render_markdown_list_item(
     };
     let bullet = div().mr(cx.scaled_rems(0.5)).child(bullet);
 
-    let contents_with_spacing: Vec<AnyElement> = parsed
+    let contents: Vec<AnyElement> = parsed
         .content
         .iter()
         .map(|c| render_markdown_block(c, cx))
@@ -278,7 +278,7 @@ fn render_markdown_list_item(
         .children(vec![
             bullet,
             v_flex()
-                .children(contents_with_spacing)
+                .children(contents)
                 .gap(cx.scaled_rems(1.0))
                 .pr(cx.scaled_rems(1.0))
                 .w_full(),
