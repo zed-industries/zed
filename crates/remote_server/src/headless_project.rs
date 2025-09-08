@@ -517,7 +517,7 @@ impl HeadlessProject {
             let buffer_store = this.buffer_store.clone();
             let buffer = this
                 .buffer_store
-                .update(cx, |buffer_store, cx| buffer_store.create_buffer(cx));
+                .update(cx, |buffer_store, cx| buffer_store.create_buffer(true, cx));
             anyhow::Ok((buffer_store, buffer))
         })??;
 

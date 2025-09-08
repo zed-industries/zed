@@ -1130,7 +1130,7 @@ impl SerializableItem for Editor {
 
                     // First create the empty buffer
                     let buffer = project
-                        .update(cx, |project, cx| project.create_buffer(cx))?
+                        .update(cx, |project, cx| project.create_buffer(true, cx))?
                         .await?;
 
                     // Then set the text so that the dirty bit is set correctly
@@ -1238,7 +1238,7 @@ impl SerializableItem for Editor {
                 ..
             } => window.spawn(cx, async move |cx| {
                 let buffer = project
-                    .update(cx, |project, cx| project.create_buffer(cx))?
+                    .update(cx, |project, cx| project.create_buffer(true, cx))?
                     .await?;
 
                 cx.update(|window, cx| {
