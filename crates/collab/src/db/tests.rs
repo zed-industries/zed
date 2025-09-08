@@ -75,10 +75,10 @@ impl TestDb {
         static LOCK: Mutex<()> = Mutex::new(());
 
         let _guard = LOCK.lock();
-        let mut rng = StdRng::from_entropy();
+        let mut rng = StdRng::from_os_rng();
         let url = format!(
             "postgres://postgres@localhost/zed-test-{}",
-            rng.r#gen::<u128>()
+            rng.random::<u128>()
         );
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_io()

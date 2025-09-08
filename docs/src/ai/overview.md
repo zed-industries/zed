@@ -14,7 +14,7 @@ Learn how to get started using AI with Zed and all its capabilities.
 
 ## Agentic Editing
 
-- [Agent Panel](./agent-panel.md): Create and manage interactions with language models.
+- [Agent Panel](./agent-panel.md): Create and manage interactions with LLM agents.
 
 - [Rules](./rules.md): How to define rules for AI interactions.
 

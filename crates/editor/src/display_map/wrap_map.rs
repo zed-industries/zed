@@ -1215,12 +1215,12 @@ mod tests {
             .unwrap_or(10);
 
         let text_system = cx.read(|cx| cx.text_system().clone());
-        let mut wrap_width = if rng.gen_bool(0.1) {
+        let mut wrap_width = if rng.random_bool(0.1) {
             None
         } else {
-            Some(px(rng.gen_range(0.0..=1000.0)))
+            Some(px(rng.random_range(0.0..=1000.0)))
         };
-        let tab_size = NonZeroU32::new(rng.gen_range(1..=4)).unwrap();
+        let tab_size = NonZeroU32::new(rng.random_range(1..=4)).unwrap();
 
         let font = test_font();
         let _font_id = text_system.resolve_font(&font);
@@ -1230,10 +1230,10 @@ mod tests {
         log::info!("Wrap width: {:?}", wrap_width);
 
         let buffer = cx.update(|cx| {
-            if rng.r#gen() {
+            if rng.random() {
                 MultiBuffer::build_random(&mut rng, cx)
             } else {
-                let len = rng.gen_range(0..10);
+                let len = rng.random_range(0..10);
                 let text = util::RandomCharIter::new(&mut rng)
                     .take(len)
                     .collect::<String>();
@@ -1281,12 +1281,12 @@ mod tests {
             log::info!("{} ==============================================", _i);
 
             let mut buffer_edits = Vec::new();
-            match rng.gen_range(0..=100) {
+            match rng.random_range(0..=100) {
                 0..=19 => {
-                    wrap_width = if rng.gen_bool(0.2) {
+                    wrap_width = if rng.random_bool(0.2) {
                         None
                     } else {
-                        Some(px(rng.gen_range(0.0..=1000.0)))
+                        Some(px(rng.random_range(0.0..=1000.0)))
                     };
                     log::info!("Setting wrap width to {:?}", wrap_width);
                     wrap_map.update(cx, |map, cx| map.set_wrap_width(wrap_width, cx));
@@ -1317,7 +1317,7 @@ mod tests {
                 _ => {
                     buffer.update(cx, |buffer, cx| {
                         let subscription = buffer.subscribe();
-                        let edit_count = rng.gen_range(1..=5);
+                        let edit_count = rng.random_range(1..=5);
                         buffer.randomly_mutate(&mut rng, edit_count, cx);
                         buffer_snapshot = buffer.snapshot(cx);
                         buffer_edits.extend(subscription.consume());
@@ -1341,7 +1341,7 @@ mod tests {
             snapshot.verify_chunks(&mut rng);
             edits.push((snapshot, wrap_edits));
 
-            if wrap_map.read_with(cx, |map, _| map.is_rewrapping()) && rng.gen_bool(0.4) {
+            if wrap_map.read_with(cx, |map, _| map.is_rewrapping()) && rng.random_bool(0.4) {
                 log::info!("Waiting for wrapping to finish");
                 while wrap_map.read_with(cx, |map, _| map.is_rewrapping()) {
                     notifications.next().await.unwrap();
@@ -1479,8 +1479,8 @@ mod tests {
     impl WrapSnapshot {
         fn verify_chunks(&mut self, rng: &mut impl Rng) {
             for _ in 0..5 {
-                let mut end_row = rng.gen_range(0..=self.max_point().row());
-                let start_row = rng.gen_range(0..=end_row);
+                let mut end_row = rng.random_range(0..=self.max_point().row());
+                let start_row = rng.random_range(0..=end_row);
                 end_row += 1;
 
                 let mut expected_text = self.text_chunks(start_row).collect::<String>();

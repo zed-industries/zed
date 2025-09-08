@@ -204,6 +204,7 @@ impl LspAdapter for ExtensionLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
+        _: &AsyncApp,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         unreachable!("get_language_server_command is overridden")
     }

@@ -14,6 +14,7 @@ collections.workspace = true
 futures.workspace = true
 indoc.workspace = true
 libsqlite3-sys.workspace = true
+log.workspace = true
 parking_lot.workspace = true
 smol.workspace = true
 sqlformat.workspace = true

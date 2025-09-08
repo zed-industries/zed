@@ -1,6 +1,7 @@
 use std::{
     cell::RefCell,
     ffi::OsStr,
+    mem::ManuallyDrop,
     path::{Path, PathBuf},
     rc::{Rc, Weak},
     sync::Arc,
@@ -17,7 +18,7 @@ use windows::{
     UI::ViewManagement::UISettings,
     Win32::{
         Foundation::*,
-        Graphics::Gdi::*,
+        Graphics::{Direct3D11::ID3D11Device, Gdi::*},
         Security::Credentials::*,
         System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*},
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
@@ -55,6 +56,7 @@ pub(crate) struct WindowsPlatformState {
     jump_list: JumpList,
     // NOTE: standard cursor handles don't need to close.
     pub(crate) current_cursor: Option<HCURSOR>,
+    directx_devices: ManuallyDrop<DirectXDevices>,
 }
 
 #[derive(Default)]
@@ -69,15 +71,17 @@ struct PlatformCallbacks {
 }
 
 impl WindowsPlatformState {
-    fn new() -> Self {
+    fn new(directx_devices: DirectXDevices) -> Self {
         let callbacks = PlatformCallbacks::default();
         let jump_list = JumpList::new();
         let current_cursor = load_cursor(CursorStyle::Arrow);
+        let directx_devices = ManuallyDrop::new(directx_devices);
 
         Self {
             callbacks,
             jump_list,
             current_cursor,
+            directx_devices,
             menus: Vec::new(),
         }
     }
@@ -88,15 +92,25 @@ impl WindowsPlatform {
         unsafe {
             OleInitialize(None).context("unable to initialize Windows OLE")?;
         }
+        let directx_devices = DirectXDevices::new().context("Creating DirectX devices")?;
         let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
-        let validation_number = rand::random::<usize>();
+        let validation_number = if usize::BITS == 64 {
+            rand::random::<u64>() as usize
+        } else {
+            rand::random::<u32>() as usize
+        };
         let raw_window_handles = Arc::new(RwLock::new(SmallVec::new()));
+        let text_system = Arc::new(
+            DirectWriteTextSystem::new(&directx_devices)
+                .context("Error creating DirectWriteTextSystem")?,
+        );
         register_platform_window_class();
         let mut context = PlatformWindowCreateContext {
             inner: None,
             raw_window_handles: Arc::downgrade(&raw_window_handles),
             validation_number,
             main_receiver: Some(main_receiver),
+            directx_devices: Some(directx_devices),
         };
         let result = unsafe {
             CreateWindowExW(
@@ -125,12 +139,7 @@ impl WindowsPlatform {
             .is_ok_and(|value| value == "true" || value == "1");
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
-        let directx_devices = DirectXDevices::new(disable_direct_composition)
-            .context("Unable to init directx devices.")?;
-        let text_system = Arc::new(
-            DirectWriteTextSystem::new(&directx_devices)
-                .context("Error creating DirectWriteTextSystem")?,
-        );
+
         let drop_target_helper: IDropTargetHelper = unsafe {
             CoCreateInstance(&CLSID_DragDropHelper, None, CLSCTX_INPROC_SERVER)
                 .context("Error creating drop target helper.")?
@@ -181,6 +190,7 @@ impl WindowsPlatform {
             main_receiver: self.inner.main_receiver.clone(),
             platform_window_handle: self.handle,
             disable_direct_composition: self.disable_direct_composition,
+            directx_devices: (*self.inner.state.borrow().directx_devices).clone(),
         }
     }
 
@@ -228,19 +238,30 @@ impl WindowsPlatform {
     }
 
     fn begin_vsync_thread(&self) {
+        let mut directx_device = (*self.inner.state.borrow().directx_devices).clone();
+        let platform_window: SafeHwnd = self.handle.into();
+        let validation_number = self.inner.validation_number;
         let all_windows = Arc::downgrade(&self.raw_window_handles);
+        let text_system = Arc::downgrade(&self.text_system);
         std::thread::spawn(move || {
             let vsync_provider = VSyncProvider::new();
             loop {
                 vsync_provider.wait_for_vsync();
+                if check_device_lost(&directx_device.device) {
+                    handle_gpu_device_lost(
+                        &mut directx_device,
+                        platform_window.as_raw(),
+                        validation_number,
+                        &all_windows,
+                        &text_system,
+                    );
+                }
                 let Some(all_windows) = all_windows.upgrade() else {
                     break;
                 };
                 for hwnd in all_windows.read().iter() {
                     unsafe {
-                        RedrawWindow(Some(hwnd.as_raw()), None, None, RDW_INVALIDATE)
-                            .ok()
-                            .log_err();
+                        let _ = RedrawWindow(Some(hwnd.as_raw()), None, None, RDW_INVALIDATE);
                     }
                 }
             }
@@ -647,7 +668,9 @@ impl Platform for WindowsPlatform {
 
 impl WindowsPlatformInner {
     fn new(context: &mut PlatformWindowCreateContext) -> Result<Rc<Self>> {
-        let state = RefCell::new(WindowsPlatformState::new());
+        let state = RefCell::new(WindowsPlatformState::new(
+            context.directx_devices.take().unwrap(),
+        ));
         Ok(Rc::new(Self {
             state,
             raw_window_handles: context.raw_window_handles.clone(),
@@ -667,7 +690,8 @@ impl WindowsPlatformInner {
             WM_GPUI_CLOSE_ONE_WINDOW
             | WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD
             | WM_GPUI_DOCK_MENU_ACTION
-            | WM_GPUI_KEYBOARD_LAYOUT_CHANGED => self.handle_gpui_events(msg, wparam, lparam),
+            | WM_GPUI_KEYBOARD_LAYOUT_CHANGED
+            | WM_GPUI_GPU_DEVICE_LOST => self.handle_gpui_events(msg, wparam, lparam),
             _ => None,
         };
         if let Some(result) = handled {
@@ -692,6 +716,7 @@ impl WindowsPlatformInner {
             WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD => self.run_foreground_task(),
             WM_GPUI_DOCK_MENU_ACTION => self.handle_dock_action_event(lparam.0 as _),
             WM_GPUI_KEYBOARD_LAYOUT_CHANGED => self.handle_keyboard_layout_change(),
+            WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(lparam),
             _ => unreachable!(),
         }
     }
@@ -749,6 +774,18 @@ impl WindowsPlatformInner {
         self.state.borrow_mut().callbacks.keyboard_layout_change = Some(callback);
         Some(0)
     }
+
+    fn handle_device_lost(&self, lparam: LPARAM) -> Option<isize> {
+        let mut lock = self.state.borrow_mut();
+        let directx_devices = lparam.0 as *const DirectXDevices;
+        let directx_devices = unsafe { &*directx_devices };
+        unsafe {
+            ManuallyDrop::drop(&mut lock.directx_devices);
+        }
+        lock.directx_devices = ManuallyDrop::new(directx_devices.clone());
+
+        Some(0)
+    }
 }
 
 impl Drop for WindowsPlatform {
@@ -758,6 +795,14 @@ impl Drop for WindowsPlatform {
                 .context("Destroying platform window")
                 .log_err();
             OleUninitialize();
+        }
+    }
+}
+
+impl Drop for WindowsPlatformState {
+    fn drop(&mut self) {
+        unsafe {
+            ManuallyDrop::drop(&mut self.directx_devices);
         }
     }
 }
@@ -772,6 +817,7 @@ pub(crate) struct WindowCreationInfo {
     pub(crate) main_receiver: flume::Receiver<Runnable>,
     pub(crate) platform_window_handle: HWND,
     pub(crate) disable_direct_composition: bool,
+    pub(crate) directx_devices: DirectXDevices,
 }
 
 struct PlatformWindowCreateContext {
@@ -779,6 +825,7 @@ struct PlatformWindowCreateContext {
     raw_window_handles: std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
     validation_number: usize,
     main_receiver: Option<flume::Receiver<Runnable>>,
+    directx_devices: Option<DirectXDevices>,
 }
 
 fn open_target(target: impl AsRef<OsStr>) -> Result<()> {
@@ -949,6 +996,80 @@ fn load_icon() -> Result<HICON> {
 fn should_auto_hide_scrollbars() -> Result<bool> {
     let ui_settings = UISettings::new()?;
     Ok(ui_settings.AutoHideScrollBars()?)
+}
+
+fn check_device_lost(device: &ID3D11Device) -> bool {
+    let device_state = unsafe { device.GetDeviceRemovedReason() };
+    match device_state {
+        Ok(_) => false,
+        Err(err) => {
+            log::error!("DirectX device lost detected: {:?}", err);
+            true
+        }
+    }
+}
+
+fn handle_gpu_device_lost(
+    directx_devices: &mut DirectXDevices,
+    platform_window: HWND,
+    validation_number: usize,
+    all_windows: &std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
+    text_system: &std::sync::Weak<DirectWriteTextSystem>,
+) {
+    // Here we wait a bit to ensure the the system has time to recover from the device lost state.
+    // If we don't wait, the final drawing result will be blank.
+    std::thread::sleep(std::time::Duration::from_millis(350));
+
+    try_to_recover_from_device_lost(
+        || {
+            DirectXDevices::new()
+                .context("Failed to recreate new DirectX devices after device lost")
+        },
+        |new_devices| *directx_devices = new_devices,
+        || {
+            log::error!("Failed to recover DirectX devices after multiple attempts.");
+            // Do something here?
+            // At this point, the device loss is considered unrecoverable.
+            // std::process::exit(1);
+        },
+    );
+    log::info!("DirectX devices successfully recreated.");
+
+    unsafe {
+        SendMessageW(
+            platform_window,
+            WM_GPUI_GPU_DEVICE_LOST,
+            Some(WPARAM(validation_number)),
+            Some(LPARAM(directx_devices as *const _ as _)),
+        );
+    }
+
+    if let Some(text_system) = text_system.upgrade() {
+        text_system.handle_gpu_lost(&directx_devices);
+    }
+    if let Some(all_windows) = all_windows.upgrade() {
+        for window in all_windows.read().iter() {
+            unsafe {
+                SendMessageW(
+                    window.as_raw(),
+                    WM_GPUI_GPU_DEVICE_LOST,
+                    Some(WPARAM(validation_number)),
+                    Some(LPARAM(directx_devices as *const _ as _)),
+                );
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        for window in all_windows.read().iter() {
+            unsafe {
+                SendMessageW(
+                    window.as_raw(),
+                    WM_GPUI_FORCE_UPDATE_WINDOW,
+                    Some(WPARAM(validation_number)),
+                    None,
+                );
+            }
+        }
+    }
 }
 
 const PLATFORM_WINDOW_CLASS_NAME: PCWSTR = w!("Zed::PlatformWindow");

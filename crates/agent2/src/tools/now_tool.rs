@@ -11,6 +11,7 @@ use crate::{AgentTool, ToolCallEventStream};
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[schemars(inline)]
 pub enum Timezone {
     /// Use UTC for the datetime.
     Utc,
