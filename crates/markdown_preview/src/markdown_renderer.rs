@@ -269,19 +269,7 @@ fn render_markdown_list_item(
     let contents_with_spacing: Vec<AnyElement> = parsed
         .content
         .iter()
-        .enumerate()
-        .map(|(i, c)| {
-            let block = render_markdown_block(c, cx);
-            if i > 0 {
-                div()
-                    .mt(cx.scaled_rems(0.5))
-                    .mb(cx.scaled_rems(0.5))
-                    .child(block)
-                    .into_any_element()
-            } else {
-                block
-            }
-        })
+        .map(|c| render_markdown_block(c, cx))
         .collect();
 
     let item = h_flex()
@@ -289,9 +277,9 @@ fn render_markdown_list_item(
         .items_start()
         .children(vec![
             bullet,
-            div()
-                .flex_col()
+            v_flex()
                 .children(contents_with_spacing)
+                .gap(cx.scaled_rems(1.0))
                 .pr(cx.scaled_rems(1.0))
                 .w_full(),
         ]);
