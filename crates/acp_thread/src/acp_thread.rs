@@ -1646,23 +1646,8 @@ impl AcpThread {
         let Some(truncate) = self.connection.truncate(&self.session_id, cx) else {
             return Task::ready(Err(anyhow!("not supported")));
         };
-        let Some(message) = self.user_message(&id) else {
-            return Task::ready(Err(anyhow!("message not found")));
-        };
 
-        let checkpoint = message
-            .checkpoint
-            .as_ref()
-            .map(|c| c.git_checkpoint.clone());
-
-        let git_store = self.project.read(cx).git_store().clone();
         cx.spawn(async move |this, cx| {
-            if let Some(checkpoint) = checkpoint {
-                git_store
-                    .update(cx, |git, cx| git.restore_checkpoint(checkpoint, cx))?
-                    .await?;
-            }
-
             cx.update(|cx| truncate.run(id.clone(), cx))?.await?;
             this.update(cx, |this, cx| {
                 if let Some((ix, _)) = this.user_message_mut(&id) {
@@ -1670,7 +1655,11 @@ impl AcpThread {
                     this.entries.truncate(ix);
                     cx.emit(AcpThreadEvent::EntriesRemoved(range));
                 }
-            })
+                this.action_log()
+                    .update(cx, |action_log, cx| action_log.reject_all_edits(cx))
+            })?
+            .await;
+            Ok(())
         })
     }
 

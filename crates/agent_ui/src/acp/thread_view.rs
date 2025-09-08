@@ -913,7 +913,7 @@ impl AcpThreadView {
                 }
             }
             ViewEvent::MessageEditorEvent(editor, MessageEditorEvent::Send) => {
-                self.regenerate(event.entry_index, editor, window, cx);
+                self.regenerate(event.entry_index, editor.clone(), window, cx);
             }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Cancel) => {
                 self.cancel_editing(&Default::default(), window, cx);
@@ -1137,7 +1137,7 @@ impl AcpThreadView {
     fn regenerate(
         &mut self,
         entry_ix: usize,
-        message_editor: &Entity<MessageEditor>,
+        message_editor: Entity<MessageEditor>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1154,16 +1154,18 @@ impl AcpThreadView {
             return;
         };
 
-        let contents = message_editor.update(cx, |message_editor, cx| message_editor.contents(cx));
-
-        let task = cx.spawn(async move |_, cx| {
-            let contents = contents.await?;
+        cx.spawn_in(window, async move |this, cx| {
             thread
                 .update(cx, |thread, cx| thread.rewind(user_message_id, cx))?
                 .await?;
-            Ok(contents)
-        });
-        self.send_impl(task, window, cx);
+            let contents =
+                message_editor.update(cx, |message_editor, cx| message_editor.contents(cx))?;
+            this.update_in(cx, |this, window, cx| {
+                this.send_impl(contents, window, cx);
+            })?;
+            anyhow::Ok(())
+        })
+        .detach();
     }
 
     fn open_agent_diff(&mut self, _: &OpenAgentDiff, window: &mut Window, cx: &mut Context<Self>) {
@@ -1775,7 +1777,7 @@ impl AcpThreadView {
                                                             let editor = editor.clone();
                                                             move |this, _, window, cx| {
                                                                 this.regenerate(
-                                                                    entry_ix, &editor, window, cx,
+                                                                    entry_ix, editor.clone(), window, cx,
                                                                 );
                                                             }
                                                         })).into_any_element()
