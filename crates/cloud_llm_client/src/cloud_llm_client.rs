@@ -86,32 +86,6 @@ pub enum Plan {
     ZedProTrial,
 }
 
-impl Plan {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Plan::ZedFree => "zed_free",
-            Plan::ZedPro => "zed_pro",
-            Plan::ZedProTrial => "zed_pro_trial",
-        }
-    }
-
-    pub fn model_requests_limit(&self) -> UsageLimit {
-        match self {
-            Plan::ZedPro => UsageLimit::Limited(500),
-            Plan::ZedProTrial => UsageLimit::Limited(150),
-            Plan::ZedFree => UsageLimit::Limited(50),
-        }
-    }
-
-    pub fn edit_predictions_limit(&self) -> UsageLimit {
-        match self {
-            Plan::ZedPro => UsageLimit::Unlimited,
-            Plan::ZedProTrial => UsageLimit::Unlimited,
-            Plan::ZedFree => UsageLimit::Limited(2_000),
-        }
-    }
-}
-
 impl FromStr for Plan {
     type Err = anyhow::Error;
 
