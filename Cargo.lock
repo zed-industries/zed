@@ -9230,6 +9230,7 @@ dependencies = [
  "project",
  "ui",
  "workspace",
+ "workspace-hack",
 ]
 
 [[package]]
