@@ -45,7 +45,7 @@
         ] @injection.content)
     ]
 
-    (#match? @comment "^\\/\\*\\s?sql\\s?\\*\\/") ; /* sql */ or /*sql*/
+    (#match? @comment "^\\/\\*\\s*sql\\s*\\*\\/") ; /* sql */ or /*sql*/
     (#set! injection.language "sql")
 )
 
@@ -81,7 +81,7 @@
         ] @injection.content)
     ]
 
-    (#match? @comment "^\\/\\*\\s?json\\s?\\*\\/") ; /* json */ or /*json*/
+    (#match? @comment "^\\/\\*\\s*json\\s*\\*\\/") ; /* json */ or /*json*/
     (#set! injection.language "json")
 )
 
@@ -117,7 +117,7 @@
         ] @injection.content)
     ]
 
-    (#match? @comment "^\\/\\*\\s?yaml\\s?\\*\\/") ; /* yaml */ or /*yaml*/
+    (#match? @comment "^\\/\\*\\s*yaml\\s*\\*\\/") ; /* yaml */ or /*yaml*/
     (#set! injection.language "yaml")
 )
 
@@ -153,7 +153,7 @@
         ] @injection.content)
     ]
 
-    (#match? @comment "^\\/\\*\\s?xml\\s?\\*\\/") ; /* xml */ or /*xml*/
+    (#match? @comment "^\\/\\*\\s*xml\\s*\\*\\/") ; /* xml */ or /*xml*/
     (#set! injection.language "xml")
 )
 
@@ -189,7 +189,7 @@
         ] @injection.content)
     ]
 
-    (#match? @comment "^\\/\\*\\s?html\\s?\\*\\/") ; /* html */ or /*html*/
+    (#match? @comment "^\\/\\*\\s*html\\s*\\*\\/") ; /* html */ or /*html*/
     (#set! injection.language "html")
 )
 
@@ -225,7 +225,7 @@
         ] @injection.content)
     ]
 
-    (#match? @comment "^\\/\\*\\s?js\\s?\\*\\/") ; /* js */ or /*js*/
+    (#match? @comment "^\\/\\*\\s*js\\s*\\*\\/") ; /* js */ or /*js*/
     (#set! injection.language "javascript")
 )
 
@@ -261,7 +261,7 @@
         ] @injection.content)
     ]
 
-    (#match? @comment "^\\/\\*\\s?css\\s?\\*\\/") ; /* css */ or /*css*/
+    (#match? @comment "^\\/\\*\\s*css\\s*\\*\\/") ; /* css */ or /*css*/
     (#set! injection.language "css")
 )
 
@@ -297,7 +297,7 @@
         ] @injection.content)
     ]
 
-    (#match? @comment "^\\/\\*\\s?lua\\s?\\*\\/") ; /* lua */ or /*lua*/
+    (#match? @comment "^\\/\\*\\s*lua\\s*\\*\\/") ; /* lua */ or /*lua*/
     (#set! injection.language "lua")
 )
 
@@ -333,7 +333,7 @@
         ] @injection.content)
     ]
 
-    (#match? @comment "^\\/\\*\\s?bash\\s?\\*\\/") ; /* bash */ or /*bash*/
+    (#match? @comment "^\\/\\*\\s*bash\\s*\\*\\/") ; /* bash */ or /*bash*/
     (#set! injection.language "bash")
 )
 
@@ -369,6 +369,6 @@
         ] @injection.content)
     ]
 
-    (#match? @comment "^\\/\\*\\s?csv\\s?\\*\\/") ; /* csv */ or /*csv*/
+    (#match? @comment "^\\/\\*\\s*csv\\s*\\*\\/") ; /* csv */ or /*csv*/
     (#set! injection.language "csv")
 )
