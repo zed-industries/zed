@@ -48,6 +48,7 @@ use ui::{
     Callout, CommonAnimationExt, Disclosure, Divider, DividerColor, ElevationIndex, KeyBinding,
     PopoverMenuHandle, Scrollbar, ScrollbarState, SpinnerLabel, TintColor, Tooltip, prelude::*,
 };
+use util::debug_panic;
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use workspace::{CollaboratorId, Workspace};
 use zed_actions::agent::{Chat, ToggleModelSelector};
@@ -1359,6 +1360,15 @@ impl AcpThreadView {
                 }
 
                 self.available_commands.replace(available_commands);
+            }
+            AcpThreadEvent::ModeUpdated(mode) => {
+                if let Some(mode_selector) = self.mode_selector.as_ref() {
+                    mode_selector.update(cx, |mode_selector, cx| {
+                        mode_selector.set_mode(mode.clone(), cx);
+                    });
+                } else {
+                    debug_panic!("Got an update but no modes were provided");
+                }
             }
         }
         cx.notify();

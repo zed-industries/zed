@@ -805,6 +805,7 @@ pub enum AcpThreadEvent {
     PromptCapabilitiesUpdated,
     Refusal,
     AvailableCommandsUpdated(Vec<acp::AvailableCommand>),
+    ModeUpdated(acp::SessionModeId),
 }
 
 impl EventEmitter<AcpThreadEvent> for AcpThread {}
@@ -1006,6 +1007,9 @@ impl AcpThread {
             }
             acp::SessionUpdate::AvailableCommandsUpdate { available_commands } => {
                 cx.emit(AcpThreadEvent::AvailableCommandsUpdated(available_commands))
+            }
+            acp::SessionUpdate::CurrentModeUpdate { current_mode_id } => {
+                cx.emit(AcpThreadEvent::ModeUpdated(current_mode_id))
             }
         }
         Ok(())
@@ -1307,25 +1311,26 @@ impl AcpThread {
     ) -> Result<BoxFuture<'static, acp::RequestPermissionOutcome>> {
         let (tx, rx) = oneshot::channel();
 
-        if AgentSettings::get_global(cx).always_allow_tool_actions {
-            // Don't use AllowAlways, because then if you were to turn off always_allow_tool_actions,
-            // some tools would (incorrectly) continue to auto-accept.
-            if let Some(allow_once_option) = options.iter().find_map(|option| {
-                if matches!(option.kind, acp::PermissionOptionKind::AllowOnce) {
-                    Some(option.id.clone())
-                } else {
-                    None
-                }
-            }) {
-                self.upsert_tool_call_inner(tool_call, ToolCallStatus::Pending, cx)?;
-                return Ok(async {
-                    acp::RequestPermissionOutcome::Selected {
-                        option_id: allow_once_option,
-                    }
-                }
-                .boxed());
-            }
-        }
+        // todo! only for gemini?
+        // if AgentSettings::get_global(cx).always_allow_tool_actions {
+        //     // Don't use AllowAlways, because then if you were to turn off always_allow_tool_actions,
+        //     // some tools would (incorrectly) continue to auto-accept.
+        //     if let Some(allow_once_option) = options.iter().find_map(|option| {
+        //         if matches!(option.kind, acp::PermissionOptionKind::AllowOnce) {
+        //             Some(option.id.clone())
+        //         } else {
+        //             None
+        //         }
+        //     }) {
+        //         self.upsert_tool_call_inner(tool_call, ToolCallStatus::Pending, cx)?;
+        //         return Ok(async {
+        //             acp::RequestPermissionOutcome::Selected {
+        //                 option_id: allow_once_option,
+        //             }
+        //         }
+        //         .boxed());
+        //     }
+        // }
 
         let status = ToolCallStatus::WaitingForConfirmation {
             options,

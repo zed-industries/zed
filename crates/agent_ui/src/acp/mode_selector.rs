@@ -32,8 +32,8 @@ impl ModeSelector {
         self.set_mode(all_modes[next_index].id.clone(), cx);
     }
 
-    fn set_mode(&mut self, mode: acp::SessionModeId, cx: &mut Context<Self>) {
-        let task = self.connection.set_mode(mode.clone(), cx);
+    pub fn set_mode(&mut self, mode: acp::SessionModeId, cx: &mut Context<Self>) {
+        let task = self.connection.set_mode(mode, cx);
         self.setting_mode = true;
         cx.notify();
 
