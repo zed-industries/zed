@@ -6374,7 +6374,7 @@ impl LspStore {
                                 
                                 result
                             };
-                            
+
                             let has_overlap = if is_file_start_auto_import {
                                 // This is an auto-import at the start of the file - don't consider it overlapping
                                 false
