@@ -24,6 +24,7 @@ client.workspace = true
 collections.workspace = true
 dap.workspace = true
 extension.workspace = true
+extension_cli.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
@@ -52,6 +53,7 @@ util.workspace = true
 wasmparser.workspace = true
 wasmtime-wasi.workspace = true
 wasmtime.workspace = true
+workspace.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]

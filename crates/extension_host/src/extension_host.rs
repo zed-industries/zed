@@ -33,7 +33,7 @@ use futures::{
 };
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, Task, WeakEntity,
-    actions,
+    Window, actions,
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{
@@ -55,12 +55,14 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use task::SpawnInTerminal;
 use url::Url;
 use util::{ResultExt, paths::RemotePathBuf};
 use wasm_host::{
     WasmExtension, WasmHost,
     wit::{is_supported_wasm_api_version, wasm_api_version_range},
 };
+use workspace::Workspace;
 
 pub use extension::{
     ExtensionLibraryKind, GrammarManifestEntry, OldExtensionManifest, SchemaVersion,
@@ -1005,27 +1007,58 @@ impl ExtensionStore {
         })
     }
 
-    pub fn rebuild_dev_extension(&mut self, extension_id: Arc<str>, cx: &mut Context<Self>) {
+    pub fn rebuild_dev_extension(
+        &mut self,
+        extension_id: Arc<str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(Some(workspace)) = window.root::<Workspace>() else {
+            return;
+        };
         let path = self.installed_dir.join(extension_id.as_ref());
-        let builder = self.builder.clone();
-        let fs = self.fs.clone();
-
+        let compile = workspace.update(cx, |workspace, cx| {
+            workspace.spawn_in_terminal(
+                SpawnInTerminal {
+                    id: task::TaskId(format!("rebuild-{}", extension_id)),
+                    full_label: format!("Rebuild extension {}", extension_id),
+                    label: format!("Rebuild extension {}", extension_id),
+                    command: None,
+                    args: Default::default(),
+                    command_label: format!("Rebuild extension {}", extension_id),
+                    cwd: Some(path.clone()),
+                    env: [("RUST_LOG".into(), "info".into())].into_iter().collect(),
+                    use_new_terminal: false,
+                    allow_concurrent_runs: false,
+                    reveal: task::RevealStrategy::Always,
+                    reveal_target: task::RevealTarget::Dock,
+                    hide: task::HideStrategy::Never,
+                    shell: task::Shell::WithArguments {
+                        // todo!()
+                        program: std::env::current_exe()
+                            .ok()
+                            .map(|p| p.to_string_lossy().to_string())
+                            .unwrap(),
+                        args: dbg!(vec![
+                            "--build-extension".into(),
+                            path.to_string_lossy().to_string(),
+                        ]),
+                        title_override: None,
+                    },
+                    show_summary: true,
+                    show_command: true,
+                    show_rerun: true,
+                },
+                window,
+                cx,
+            )
+        });
         match self.outstanding_operations.entry(extension_id.clone()) {
             btree_map::Entry::Occupied(_) => return,
             btree_map::Entry::Vacant(e) => e.insert(ExtensionOperation::Upgrade),
         };
 
         cx.notify();
-        let compile = cx.background_spawn(async move {
-            let mut manifest = ExtensionManifest::load(fs, &path).await?;
-            builder
-                .compile_extension(
-                    &path,
-                    &mut manifest,
-                    CompileExtensionOptions { release: true },
-                )
-                .await
-        });
 
         cx.spawn(async move |this, cx| {
             let result = compile.await;
@@ -1035,12 +1068,12 @@ impl ExtensionStore {
                 cx.notify();
             })?;
 
-            if result.is_ok() {
+            if let Some(Ok(_)) = &result {
                 this.update(cx, |this, cx| this.reload(Some(extension_id), cx))?
                     .await;
             }
 
-            result
+            result.ok_or_else(|| anyhow!("rebuild cancelled"))?
         })
         .detach_and_log_err(cx)
     }

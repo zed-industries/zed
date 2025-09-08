@@ -37,6 +37,7 @@ use settings::{BaseKeymap, Settings, SettingsStore, watch_config_file};
 use std::{
     env,
     io::{self, IsTerminal},
+    os,
     path::{Path, PathBuf},
     process,
     sync::Arc,
@@ -180,6 +181,22 @@ pub fn main() {
     // `zed --askpass` Makes zed operate in nc/netcat mode for use with askpass
     if let Some(socket) = &args.askpass {
         askpass::main(socket);
+        return;
+    }
+
+    // `zed --askpass` Makes zed operate in nc/netcat mode for use with askpass
+    if let Some(source_dir) = args.build_extension {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let scratch_dir = source_dir.join("build");
+                if let Err(err) = extension_cli::run(source_dir, scratch_dir).await {
+                    eprintln!("{:?}", err);
+                    process::exit(1);
+                }
+            });
         return;
     }
 
@@ -1225,6 +1242,10 @@ struct Args {
     /// process communicating over a socket.
     #[arg(long, hide = true)]
     crash_handler: Option<PathBuf>,
+
+    /// Used for running the extension CLI
+    #[arg(long, hide = true)]
+    build_extension: Option<PathBuf>,
 
     /// Run zed in the foreground, only used on Windows, to match the behavior on macOS.
     #[arg(long)]

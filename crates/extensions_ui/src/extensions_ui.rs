@@ -602,9 +602,9 @@ impl ExtensionsPage {
                                 .disabled(matches!(status, ExtensionStatus::Upgrading))
                                 .on_click({
                                     let extension_id = extension.id.clone();
-                                    move |_, _, cx| {
+                                    move |_, window, cx| {
                                         ExtensionStore::global(cx).update(cx, |store, cx| {
-                                            store.rebuild_dev_extension(extension_id.clone(), cx)
+                                            store.rebuild_dev_extension(extension_id.clone(), window, cx)
                                         });
                                     }
                                 }),

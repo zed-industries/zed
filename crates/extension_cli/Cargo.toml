@@ -12,6 +12,10 @@ workspace = true
 name = "zed-extension"
 path = "src/main.rs"
 
+[lib]
+name = "extension_cli"
+path = "src/extension_cli.rs"
+
 [dependencies]
 anyhow.workspace = true
 clap = { workspace = true, features = ["derive"] }
