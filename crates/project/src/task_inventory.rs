@@ -149,10 +149,7 @@ pub enum TaskSourceKind {
         abs_path: PathBuf,
     },
     /// Languages-specific tasks coming from extensions.
-    Language {
-        name: SharedString,
-        abs_path: PathBuf,
-    },
+    Language { name: SharedString },
     /// Language-specific tasks coming from LSP servers.
     Lsp {
         language_name: SharedString,
@@ -235,7 +232,7 @@ impl TaskSourceKind {
             } => {
                 format!("{id_base}_{id}_{}", directory_in_worktree.display())
             }
-            Self::Language { name, abs_path } => format!("language_{name}_{}", abs_path.display()),
+            Self::Language { name } => format!("language_{name}"),
             Self::Lsp {
                 server,
                 language_name,
@@ -398,7 +395,6 @@ impl Inventory {
 
         let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
             name: language.name().into(),
-            abs_path: PathBuf::new(),
         });
         let language_tasks = language
             .filter(|language| {
@@ -443,7 +439,6 @@ impl Inventory {
         let language = location.and_then(|location| location.buffer.read(cx).language());
         let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
             name: language.name().into(),
-            abs_path: PathBuf::new(),
         });
         let file = location.and_then(|location| location.buffer.read(cx).file().cloned());
 
