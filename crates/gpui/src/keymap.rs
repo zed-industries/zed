@@ -163,16 +163,7 @@ impl Keymap {
         }
 
         matched_bindings.sort_by(|(depth_a, ix_a, binding_a), (depth_b, ix_b, binding_b)| {
-            // Sort by context depth
-            depth_b.cmp(depth_a).then_with(|| {
-                // If context depths are equal, sort by source precedence
-                // User keymaps should take highest precedence
-                let source_a = binding_a.meta.map(|m| m.0).unwrap_or(0);
-                let source_b = binding_b.meta.map(|m| m.0).unwrap_or(0);
-
-                // KeybindSource precedence: User (0) > Vim (1) > Base (2) > Default (3)
-                source_a.cmp(&source_b).then(ix_b.cmp(ix_a))
-            })
+            depth_b.cmp(depth_a).then(ix_b.cmp(ix_a))
         });
 
         let mut bindings: SmallVec<[_; 1]> = SmallVec::new();
