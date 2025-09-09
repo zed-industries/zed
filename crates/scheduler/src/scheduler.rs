@@ -19,7 +19,6 @@ use std::{
 };
 
 pub trait Scheduler: Send + Sync {
-    // todo!("consider not taking sessions")
     fn block(
         &self,
         session_id: Option<SessionId>,
