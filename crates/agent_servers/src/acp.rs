@@ -30,8 +30,6 @@ pub struct AcpConnection {
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
     auth_methods: Vec<acp::AuthMethod>,
     agent_capabilities: acp::AgentCapabilities,
-    default_mode: Option<acp::SessionModeId>,
-    root_dir: PathBuf,
     // NB: Don't move this into the wait_task, since we need to ensure the process is
     // killed on drop (setting kill_on_drop on the command seems to not always work).
     child: smol::process::Child,
@@ -70,11 +68,8 @@ impl AcpConnection {
             .current_dir(root_dir)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
-        if !is_remote {
-            child.current_dir(root_dir);
-        }
-        let mut child = child.spawn()?;
+            .stderr(std::process::Stdio::piped())
+            .spawn()?;
 
         let stdout = child.stdout.take().context("Failed to take stdout")?;
         let stdin = child.stdin.take().context("Failed to take stdin")?;
