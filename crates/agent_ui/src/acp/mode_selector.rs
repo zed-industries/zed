@@ -82,16 +82,48 @@ impl ModeSelector {
         ContextMenu::build(window, cx, move |mut menu, _window, cx| {
             let all_modes = self.connection.all_modes();
             let current_mode = self.connection.current_mode();
+            let default_mode = self.agent_server.default_mode(cx);
 
             for mode in all_modes {
-                let selected = mode.id == current_mode;
+                let is_selected = &mode.id == &current_mode;
+                let is_default = Some(&mode.id) == default_mode.as_ref();
                 let entry = ContextMenuEntry::new(mode.name.clone())
-                    .toggleable(IconPosition::End, selected);
+                    .toggleable(IconPosition::End, is_selected);
 
                 let entry = if let Some(description) = &mode.description {
                     entry.documentation_aside(ui::DocumentationSide::Left, {
                         let description = description.clone();
-                        move |_| ui::Label::new(description.clone()).into_any_element()
+
+                        move |cx| {
+                            v_flex()
+                                .gap_1()
+                                .child(Label::new(description.clone()))
+                                .child(
+                                    h_flex()
+                                        .pt_1()
+                                        .border_t_1()
+                                        .border_color(cx.theme().colors().border_variant)
+                                        .gap_0p5()
+                                        .text_sm()
+                                        .text_color(Color::Muted.color(cx))
+                                        .child("Hold")
+                                        .child(div().pt_0p5().children(ui::render_modifiers(
+                                            &gpui::Modifiers::secondary_key(),
+                                            PlatformStyle::platform(),
+                                            None,
+                                            Some(ui::TextSize::Default.rems(cx).into()),
+                                            true,
+                                        )))
+                                        .child(div().map(|this| {
+                                            if is_default {
+                                                this.child("to also unset as default")
+                                            } else {
+                                                this.child("to also set as default")
+                                            }
+                                        })),
+                                )
+                                .into_any_element()
+                        }
                     })
                 } else {
                     entry
@@ -100,9 +132,21 @@ impl ModeSelector {
                 menu.push_item(entry.handler({
                     let mode_id = mode.id.clone();
                     let weak_self = weak_self.clone();
-                    move |_window, cx| {
+                    move |window, cx| {
                         weak_self
                             .update(cx, |this, cx| {
+                                if window.modifiers().secondary() {
+                                    this.agent_server.set_default_mode(
+                                        if is_default {
+                                            None
+                                        } else {
+                                            Some(mode_id.clone())
+                                        },
+                                        this.fs.clone(),
+                                        cx,
+                                    );
+                                }
+
                                 this.set_mode(mode_id.clone(), cx);
                             })
                             .ok();
@@ -110,36 +154,7 @@ impl ModeSelector {
                 }));
             }
 
-            let is_default = self.agent_server.default_mode(cx).as_ref() == Some(&current_mode);
-            menu.separator().item(
-                ContextMenuEntry::new("Set as default")
-                    .toggleable(IconPosition::End, is_default)
-                    .handler({
-                        let weak_self = weak_self.clone();
-                        let current_mode = current_mode.clone();
-                        move |window, cx| {
-                            // todo!
-                            let weak_self = weak_self.clone();
-                            let current_mode = current_mode.clone();
-                            window.defer(cx, move |window, cx| {
-                                weak_self
-                                    .update(cx, |this, cx| {
-                                        this.agent_server.set_default_mode(
-                                            if is_default {
-                                                None
-                                            } else {
-                                                Some(current_mode.clone())
-                                            },
-                                            this.fs.clone(),
-                                            cx,
-                                        );
-                                        this.menu_handle.show(window, cx);
-                                    })
-                                    .ok();
-                            });
-                        }
-                    }),
-            )
+            menu.key_context("ModeSelector")
         })
     }
 }
