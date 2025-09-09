@@ -482,6 +482,7 @@ dependencies = [
  "client",
  "cloud_llm_client",
  "component",
+ "feature_flags",
  "gpui",
  "language_model",
  "serde",
