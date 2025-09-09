@@ -601,12 +601,12 @@ impl SettingsStore {
     pub fn update_settings_file_at_path(
         &self,
         fs: Arc<dyn Fs>,
-        path: &[&str],
+        path: &[impl AsRef<str>],
         new_value: serde_json::Value,
     ) -> oneshot::Receiver<Result<()>> {
         let key_path = path
             .into_iter()
-            .cloned()
+            .map(AsRef::as_ref)
             .map(SharedString::new)
             .collect::<Vec<_>>();
         let update = move |mut old_text: String, cx: AsyncApp| {

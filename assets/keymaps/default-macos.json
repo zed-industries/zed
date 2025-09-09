@@ -379,13 +379,20 @@
     }
   },
   {
+    "context": "AcpThread > ModeSelector",
+    "bindings": {
+      "cmd-enter": "menu::Confirm"
+    }
+  },
+  {
     "context": "AcpThread > Editor && !use_modifier_to_send",
     "use_key_equivalents": true,
     "bindings": {
       "enter": "agent::Chat",
       "shift-ctrl-r": "agent::OpenAgentDiff",
       "cmd-shift-y": "agent::KeepAll",
-      "cmd-shift-n": "agent::RejectAll"
+      "cmd-shift-n": "agent::RejectAll",
+      "shift-tab": "agent::CycleModeSelector"
     }
   },
   {
@@ -395,7 +402,8 @@
       "cmd-enter": "agent::Chat",
       "shift-ctrl-r": "agent::OpenAgentDiff",
       "cmd-shift-y": "agent::KeepAll",
-      "cmd-shift-n": "agent::RejectAll"
+      "cmd-shift-n": "agent::RejectAll",
+      "shift-tab": "agent::CycleModeSelector"
     }
   },
   {
@@ -649,7 +657,7 @@
       "alt-shift-enter": "toast::RunAction",
       "cmd-shift-s": "workspace::SaveAs",
       "cmd-shift-n": "workspace::NewWindow",
-      "ctrl-`": "terminal_panel::ToggleFocus",
+      "ctrl-`": "terminal_panel::Toggle",
       "cmd-1": ["workspace::ActivatePane", 0],
       "cmd-2": ["workspace::ActivatePane", 1],
       "cmd-3": ["workspace::ActivatePane", 2],
@@ -690,6 +698,7 @@
       "cmd-?": "agent::ToggleFocus",
       "cmd-alt-s": "workspace::SaveAll",
       "cmd-k m": "language_selector::Toggle",
+      "cmd-k cmd-m": "toolchain::AddToolchain",
       "escape": "workspace::Unfollow",
       "cmd-k cmd-left": "workspace::ActivatePaneLeft",
       "cmd-k cmd-right": "workspace::ActivatePaneRight",
@@ -1092,6 +1101,13 @@
     "use_key_equivalents": true,
     "bindings": {
       "tab": "channel_modal::ToggleMode"
+    }
+  },
+  {
+    "context": "ToolchainSelector",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-shift-a": "toolchain::AddToolchain"
     }
   },
   {

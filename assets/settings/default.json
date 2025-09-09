@@ -1,4 +1,5 @@
 {
+  "project_name": null,
   // The name of the Zed theme to use for the UI.
   //
   // `mode` is one of:
@@ -740,16 +741,6 @@
     // Default width of the collaboration panel.
     "default_width": 240
   },
-  "chat_panel": {
-    // When to show the chat panel button in the status bar.
-    // Can be 'never', 'always', or 'when_in_call',
-    // or a boolean (interpreted as 'never'/'always').
-    "button": "when_in_call",
-    // Where to dock the chat panel. Can be 'left' or 'right'.
-    "dock": "right",
-    // Default width of the chat panel.
-    "default_width": 240
-  },
   "git_panel": {
     // Whether to show the git panel button in the status bar.
     "button": true,
@@ -838,6 +829,9 @@
       // }
     ],
     // When enabled, the agent can run potentially destructive actions without asking for your confirmation.
+    //
+    // Note: This setting has no effect on external agents that support permission modes, such as Claude Code.
+    //       You can set `agent_servers.claude.default_mode` to `bypassPermissions` to skip all permission requests.
     "always_allow_tool_actions": false,
     // When enabled, the agent will stream edits.
     "stream_edits": false,
@@ -962,7 +956,7 @@
     // Show git status colors in the editor tabs.
     "git_status": false,
     // Position of the close button on the editor tabs.
-    // One of: ["right", "left", "hidden"]
+    // One of: ["right", "left"]
     "close_position": "right",
     // Whether to show the file icon for a tab.
     "file_icons": false,
@@ -1204,6 +1198,10 @@
       "show_commit_summary": false,
       // The minimum column number to show the inline blame information at
       "min_column": 0
+    },
+    // Control which information is shown in the branch picker.
+    "branch_picker": {
+      "show_author_name": true
     },
     // How git hunks are displayed visually in the editor.
     // This setting can take two values:

@@ -150,6 +150,7 @@ pub struct CommitSummary {
     pub subject: SharedString,
     /// This is a unix timestamp
     pub commit_timestamp: i64,
+    pub author_name: SharedString,
     pub has_parent: bool,
 }
 
@@ -987,6 +988,7 @@ impl GitRepository for RealGitRepository {
                     "%(upstream)",
                     "%(upstream:track)",
                     "%(committerdate:unix)",
+                    "%(authorname)",
                     "%(contents:subject)",
                 ]
                 .join("%00");
@@ -1814,6 +1816,7 @@ impl GitBinary {
             output.status.success(),
             GitBinaryCommandError {
                 stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
                 status: output.status,
             }
         );
@@ -1836,9 +1839,10 @@ impl GitBinary {
 }
 
 #[derive(Error, Debug)]
-#[error("Git command failed: {stdout}")]
+#[error("Git command failed:\n{stdout}{stderr}\n")]
 struct GitBinaryCommandError {
     stdout: String,
+    stderr: String,
     status: ExitStatus,
 }
 
@@ -2020,6 +2024,7 @@ fn parse_branch_input(input: &str) -> Result<Vec<Branch>> {
         let upstream_name = fields.next().context("no upstream")?.to_string();
         let upstream_tracking = parse_upstream_track(fields.next().context("no upstream:track")?)?;
         let commiterdate = fields.next().context("no committerdate")?.parse::<i64>()?;
+        let author_name = fields.next().context("no authorname")?.to_string().into();
         let subject: SharedString = fields
             .next()
             .context("no contents:subject")?
@@ -2033,6 +2038,7 @@ fn parse_branch_input(input: &str) -> Result<Vec<Branch>> {
                 sha: head_sha,
                 subject,
                 commit_timestamp: commiterdate,
+                author_name: author_name,
                 has_parent: !parent_sha.is_empty(),
             }),
             upstream: if upstream_name.is_empty() {
@@ -2343,7 +2349,7 @@ mod tests {
     fn test_branches_parsing() {
         // suppress "help: octal escapes are not supported, `\0` is always null"
         #[allow(clippy::octal_escapes)]
-        let input = "*\0060964da10574cd9bf06463a53bf6e0769c5c45e\0\0refs/heads/zed-patches\0refs/remotes/origin/zed-patches\0\01733187470\0generated protobuf\n";
+        let input = "*\0060964da10574cd9bf06463a53bf6e0769c5c45e\0\0refs/heads/zed-patches\0refs/remotes/origin/zed-patches\0\01733187470\0John Doe\0generated protobuf\n";
         assert_eq!(
             parse_branch_input(input).unwrap(),
             vec![Branch {
@@ -2360,6 +2366,7 @@ mod tests {
                     sha: "060964da10574cd9bf06463a53bf6e0769c5c45e".into(),
                     subject: "generated protobuf".into(),
                     commit_timestamp: 1733187470,
+                    author_name: SharedString::new("John Doe"),
                     has_parent: false,
                 })
             }]

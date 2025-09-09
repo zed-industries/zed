@@ -5,19 +5,19 @@ use collections::HashMap;
 use futures::AsyncBufReadExt;
 use gpui::{App, Task};
 use gpui::{AsyncApp, SharedString};
-use language::Toolchain;
 use language::ToolchainList;
 use language::ToolchainLister;
 use language::language_settings::language_settings;
 use language::{ContextLocation, LanguageToolchainStore};
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
 use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
+use language::{Toolchain, ToolchainMetadata};
 use lsp::LanguageServerBinary;
 use lsp::LanguageServerName;
 use node_runtime::{NodeRuntime, VersionStrategy};
 use pet_core::Configuration;
 use pet_core::os_environment::Environment;
-use pet_core::python_environment::PythonEnvironmentKind;
+use pet_core::python_environment::{PythonEnvironment, PythonEnvironmentKind};
 use project::Fs;
 use project::lsp_store::language_server_settings;
 use serde_json::{Value, json};
@@ -35,7 +35,7 @@ use std::{
     sync::Arc,
 };
 use task::{ShellKind, TaskTemplate, TaskTemplates, VariableName};
-use util::ResultExt;
+use util::{ResultExt, maybe};
 
 pub(crate) struct PyprojectTomlManifestProvider;
 
@@ -87,6 +87,18 @@ fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
 }
 
+/// Pyright assigns each completion item a `sortText` of the form `XX.YYYY.name`.
+/// Where `XX` is the sorting category, `YYYY` is based on most recent usage,
+/// and `name` is the symbol name itself.
+///
+/// The problem with it is that Pyright adjusts the sort text based on previous resolutions (items for which we've issued `completion/resolve` call have their sortText adjusted),
+/// which - long story short - makes completion items list non-stable. Pyright probably relies on VSCode's implementation detail.
+/// see https://github.com/microsoft/pyright/blob/95ef4e103b9b2f129c9320427e51b73ea7cf78bd/packages/pyright-internal/src/languageService/completionProvider.ts#LL2873
+fn process_pyright_completions(items: &mut [lsp::CompletionItem]) {
+    for item in items {
+        item.sort_text.take();
+    }
+}
 pub struct PythonLspAdapter {
     node: NodeRuntime,
 }
@@ -232,26 +244,7 @@ impl LspAdapter for PythonLspAdapter {
     }
 
     async fn process_completions(&self, items: &mut [lsp::CompletionItem]) {
-        // Pyright assigns each completion item a `sortText` of the form `XX.YYYY.name`.
-        // Where `XX` is the sorting category, `YYYY` is based on most recent usage,
-        // and `name` is the symbol name itself.
-        //
-        // Because the symbol name is included, there generally are not ties when
-        // sorting by the `sortText`, so the symbol's fuzzy match score is not taken
-        // into account. Here, we remove the symbol name from the sortText in order
-        // to allow our own fuzzy score to be used to break ties.
-        //
-        // see https://github.com/microsoft/pyright/blob/95ef4e103b9b2f129c9320427e51b73ea7cf78bd/packages/pyright-internal/src/languageService/completionProvider.ts#LL2873
-        for item in items {
-            let Some(sort_text) = &mut item.sort_text else {
-                continue;
-            };
-            let mut parts = sort_text.split('.');
-            let Some(first) = parts.next() else { continue };
-            let Some(second) = parts.next() else { continue };
-            let Some(_) = parts.next() else { continue };
-            sort_text.replace_range(first.len() + second.len() + 1.., "");
-        }
+        process_pyright_completions(items);
     }
 
     async fn label_for_completion(
@@ -262,20 +255,34 @@ impl LspAdapter for PythonLspAdapter {
         let label = &item.label;
         let grammar = language.grammar()?;
         let highlight_id = match item.kind? {
-            lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method")?,
-            lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function")?,
-            lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type")?,
-            lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant")?,
-            _ => return None,
+            lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method"),
+            lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function"),
+            lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type"),
+            lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant"),
+            lsp::CompletionItemKind::VARIABLE => grammar.highlight_id_for_name("variable"),
+            _ => {
+                return None;
+            }
         };
         let filter_range = item
             .filter_text
             .as_deref()
             .and_then(|filter| label.find(filter).map(|ix| ix..ix + filter.len()))
             .unwrap_or(0..label.len());
+        let mut text = label.clone();
+        if let Some(completion_details) = item
+            .label_details
+            .as_ref()
+            .and_then(|details| details.description.as_ref())
+        {
+            write!(&mut text, " {}", completion_details).ok();
+        }
         Some(language::CodeLabel {
-            text: label.clone(),
-            runs: vec![(0..label.len(), highlight_id)],
+            runs: highlight_id
+                .map(|id| (0..label.len(), id))
+                .into_iter()
+                .collect(),
+            text,
             filter_range,
         })
     }
@@ -688,17 +695,7 @@ fn python_env_kind_display(k: &PythonEnvironmentKind) -> &'static str {
     }
 }
 
-pub(crate) struct PythonToolchainProvider {
-    term: SharedString,
-}
-
-impl Default for PythonToolchainProvider {
-    fn default() -> Self {
-        Self {
-            term: SharedString::new_static("Virtual Environment"),
-        }
-    }
-}
+pub(crate) struct PythonToolchainProvider;
 
 static ENV_PRIORITY_LIST: &[PythonEnvironmentKind] = &[
     // Prioritize non-Conda environments.
@@ -744,9 +741,6 @@ async fn get_worktree_venv_declaration(worktree_root: &Path) -> Option<String> {
 
 #[async_trait]
 impl ToolchainLister for PythonToolchainProvider {
-    fn manifest_name(&self) -> language::ManifestName {
-        ManifestName::from(SharedString::new_static("pyproject.toml"))
-    }
     async fn list(
         &self,
         worktree_root: PathBuf,
@@ -847,32 +841,7 @@ impl ToolchainLister for PythonToolchainProvider {
 
         let mut toolchains: Vec<_> = toolchains
             .into_iter()
-            .filter_map(|toolchain| {
-                let mut name = String::from("Python");
-                if let Some(version) = &toolchain.version {
-                    _ = write!(name, " {version}");
-                }
-
-                let name_and_kind = match (&toolchain.name, &toolchain.kind) {
-                    (Some(name), Some(kind)) => {
-                        Some(format!("({name}; {})", python_env_kind_display(kind)))
-                    }
-                    (Some(name), None) => Some(format!("({name})")),
-                    (None, Some(kind)) => Some(format!("({})", python_env_kind_display(kind))),
-                    (None, None) => None,
-                };
-
-                if let Some(nk) = name_and_kind {
-                    _ = write!(name, " {nk}");
-                }
-
-                Some(Toolchain {
-                    name: name.into(),
-                    path: toolchain.executable.as_ref()?.to_str()?.to_owned().into(),
-                    language_name: LanguageName::new("Python"),
-                    as_json: serde_json::to_value(toolchain.clone()).ok()?,
-                })
-            })
+            .filter_map(venv_to_toolchain)
             .collect();
         toolchains.dedup();
         ToolchainList {
@@ -881,9 +850,34 @@ impl ToolchainLister for PythonToolchainProvider {
             groups: Default::default(),
         }
     }
-    fn term(&self) -> SharedString {
-        self.term.clone()
+    fn meta(&self) -> ToolchainMetadata {
+        ToolchainMetadata {
+            term: SharedString::new_static("Virtual Environment"),
+            new_toolchain_placeholder: SharedString::new_static(
+                "A path to the python3 executable within a virtual environment, or path to virtual environment itself",
+            ),
+            manifest_name: ManifestName::from(SharedString::new_static("pyproject.toml")),
+        }
     }
+
+    async fn resolve(
+        &self,
+        path: PathBuf,
+        env: Option<HashMap<String, String>>,
+    ) -> anyhow::Result<Toolchain> {
+        let env = env.unwrap_or_default();
+        let environment = EnvironmentApi::from_env(&env);
+        let locators = pet::locators::create_locators(
+            Arc::new(pet_conda::Conda::from(&environment)),
+            Arc::new(pet_poetry::Poetry::from(&environment)),
+            &environment,
+        );
+        let toolchain = pet::resolve::resolve_environment(&path, &locators, &environment)
+            .context("Could not find a virtual environment in provided path")?;
+        let venv = toolchain.resolved.unwrap_or(toolchain.discovered);
+        venv_to_toolchain(venv).context("Could not convert a venv into a toolchain")
+    }
+
     async fn activation_script(
         &self,
         toolchain: &Toolchain,
@@ -901,6 +895,13 @@ impl ToolchainLister for PythonToolchainProvider {
             Some(PythonEnvironmentKind::Pixi) => {
                 let env = toolchain.name.as_deref().unwrap_or("default");
                 activation_script.push(format!("pixi shell -e {env}"))
+            }
+            Some(PythonEnvironmentKind::Conda) => {
+                if let Some(name) = &toolchain.name {
+                    activation_script.push(format!("conda activate {name}"));
+                } else {
+                    activation_script.push("conda activate".to_string());
+                }
             }
             Some(PythonEnvironmentKind::Venv | PythonEnvironmentKind::VirtualEnv) => {
                 if let Some(prefix) = &toolchain.prefix {
@@ -947,6 +948,31 @@ impl ToolchainLister for PythonToolchainProvider {
         }
         activation_script
     }
+}
+
+fn venv_to_toolchain(venv: PythonEnvironment) -> Option<Toolchain> {
+    let mut name = String::from("Python");
+    if let Some(ref version) = venv.version {
+        _ = write!(name, " {version}");
+    }
+
+    let name_and_kind = match (&venv.name, &venv.kind) {
+        (Some(name), Some(kind)) => Some(format!("({name}; {})", python_env_kind_display(kind))),
+        (Some(name), None) => Some(format!("({name})")),
+        (None, Some(kind)) => Some(format!("({})", python_env_kind_display(kind))),
+        (None, None) => None,
+    };
+
+    if let Some(nk) = name_and_kind {
+        _ = write!(name, " {nk}");
+    }
+
+    Some(Toolchain {
+        name: name.into(),
+        path: venv.executable.as_ref()?.to_str()?.to_owned().into(),
+        language_name: LanguageName::new("Python"),
+        as_json: serde_json::to_value(venv).ok()?,
+    })
 }
 
 pub struct EnvironmentApi<'a> {
@@ -1471,26 +1497,7 @@ impl LspAdapter for BasedPyrightLspAdapter {
     }
 
     async fn process_completions(&self, items: &mut [lsp::CompletionItem]) {
-        // Pyright assigns each completion item a `sortText` of the form `XX.YYYY.name`.
-        // Where `XX` is the sorting category, `YYYY` is based on most recent usage,
-        // and `name` is the symbol name itself.
-        //
-        // Because the symbol name is included, there generally are not ties when
-        // sorting by the `sortText`, so the symbol's fuzzy match score is not taken
-        // into account. Here, we remove the symbol name from the sortText in order
-        // to allow our own fuzzy score to be used to break ties.
-        //
-        // see https://github.com/microsoft/pyright/blob/95ef4e103b9b2f129c9320427e51b73ea7cf78bd/packages/pyright-internal/src/languageService/completionProvider.ts#LL2873
-        for item in items {
-            let Some(sort_text) = &mut item.sort_text else {
-                continue;
-            };
-            let mut parts = sort_text.split('.');
-            let Some(first) = parts.next() else { continue };
-            let Some(second) = parts.next() else { continue };
-            let Some(_) = parts.next() else { continue };
-            sort_text.replace_range(first.len() + second.len() + 1.., "");
-        }
+        process_pyright_completions(items);
     }
 
     async fn label_for_completion(
@@ -1501,20 +1508,34 @@ impl LspAdapter for BasedPyrightLspAdapter {
         let label = &item.label;
         let grammar = language.grammar()?;
         let highlight_id = match item.kind? {
-            lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method")?,
-            lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function")?,
-            lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type")?,
-            lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant")?,
-            _ => return None,
+            lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method"),
+            lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function"),
+            lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type"),
+            lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant"),
+            lsp::CompletionItemKind::VARIABLE => grammar.highlight_id_for_name("variable"),
+            _ => {
+                return None;
+            }
         };
         let filter_range = item
             .filter_text
             .as_deref()
             .and_then(|filter| label.find(filter).map(|ix| ix..ix + filter.len()))
             .unwrap_or(0..label.len());
+        let mut text = label.clone();
+        if let Some(completion_details) = item
+            .label_details
+            .as_ref()
+            .and_then(|details| details.description.as_ref())
+        {
+            write!(&mut text, " {}", completion_details).ok();
+        }
         Some(language::CodeLabel {
-            text: label.clone(),
-            runs: vec![(0..label.len(), highlight_id)],
+            runs: highlight_id
+                .map(|id| (0..label.len(), id))
+                .into_iter()
+                .collect(),
+            text,
             filter_range,
         })
     }
@@ -1600,23 +1621,37 @@ impl LspAdapter for BasedPyrightLspAdapter {
                     }
                 }
 
-                // Always set the python interpreter path
-                // Get or create the python section
-                let python = object
+                // Set both pythonPath and defaultInterpreterPath for compatibility
+                if let Some(python) = object
                     .entry("python")
                     .or_insert(Value::Object(serde_json::Map::default()))
                     .as_object_mut()
-                    .unwrap();
-
-                // Set both pythonPath and defaultInterpreterPath for compatibility
-                python.insert(
-                    "pythonPath".to_owned(),
-                    Value::String(interpreter_path.clone()),
-                );
-                python.insert(
-                    "defaultInterpreterPath".to_owned(),
-                    Value::String(interpreter_path),
-                );
+                {
+                    python.insert(
+                        "pythonPath".to_owned(),
+                        Value::String(interpreter_path.clone()),
+                    );
+                    python.insert(
+                        "defaultInterpreterPath".to_owned(),
+                        Value::String(interpreter_path),
+                    );
+                }
+                // Basedpyright by default uses `strict` type checking, we tone it down as to not surpris users
+                maybe!({
+                    let basedpyright = object
+                        .entry("basedpyright")
+                        .or_insert(Value::Object(serde_json::Map::default()));
+                    let analysis = basedpyright
+                        .as_object_mut()?
+                        .entry("analysis")
+                        .or_insert(Value::Object(serde_json::Map::default()));
+                    if let serde_json::map::Entry::Vacant(v) =
+                        analysis.as_object_mut()?.entry("typeCheckingMode")
+                    {
+                        v.insert(Value::String("standard".to_owned()));
+                    }
+                    Some(())
+                });
             }
 
             user_settings

@@ -1030,6 +1030,7 @@ pub struct Editor {
     inline_diagnostics_update: Task<()>,
     inline_diagnostics_enabled: bool,
     diagnostics_enabled: bool,
+    word_completions_enabled: bool,
     inline_diagnostics: Vec<(Anchor, InlineDiagnostic)>,
     soft_wrap_mode_override: Option<language_settings::SoftWrap>,
     hard_wrap: Option<usize>,
@@ -1794,7 +1795,7 @@ impl Editor {
         let font_size = style.font_size.to_pixels(window.rem_size());
         let editor = cx.entity().downgrade();
         let fold_placeholder = FoldPlaceholder {
-            constrain_width: true,
+            constrain_width: false,
             render: Arc::new(move |fold_id, fold_range, cx| {
                 let editor = editor.clone();
                 div()
@@ -2163,6 +2164,7 @@ impl Editor {
             },
             inline_diagnostics_enabled: full_mode,
             diagnostics_enabled: full_mode,
+            word_completions_enabled: full_mode,
             inline_value_cache: InlineValueCache::new(inlay_hint_settings.show_value_hints),
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
             gutter_hovered: false,
@@ -2617,7 +2619,7 @@ impl Editor {
         cx: &mut Context<Workspace>,
     ) -> Task<Result<Entity<Editor>>> {
         let project = workspace.project().clone();
-        let create = project.update(cx, |project, cx| project.create_buffer(cx));
+        let create = project.update(cx, |project, cx| project.create_buffer(true, cx));
 
         cx.spawn_in(window, async move |workspace, cx| {
             let buffer = create.await?;
@@ -2655,7 +2657,7 @@ impl Editor {
         cx: &mut Context<Workspace>,
     ) {
         let project = workspace.project().clone();
-        let create = project.update(cx, |project, cx| project.create_buffer(cx));
+        let create = project.update(cx, |project, cx| project.create_buffer(true, cx));
 
         cx.spawn_in(window, async move |workspace, cx| {
             let buffer = create.await?;
@@ -4892,8 +4894,15 @@ impl Editor {
             });
 
         match completions_source {
-            Some(CompletionsMenuSource::Words) => {
-                self.show_word_completions(&ShowWordCompletions, window, cx)
+            Some(CompletionsMenuSource::Words { .. }) => {
+                self.open_or_update_completions_menu(
+                    Some(CompletionsMenuSource::Words {
+                        ignore_threshold: false,
+                    }),
+                    None,
+                    window,
+                    cx,
+                );
             }
             Some(CompletionsMenuSource::Normal)
             | Some(CompletionsMenuSource::SnippetChoices)
@@ -5401,7 +5410,14 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_or_update_completions_menu(Some(CompletionsMenuSource::Words), None, window, cx);
+        self.open_or_update_completions_menu(
+            Some(CompletionsMenuSource::Words {
+                ignore_threshold: true,
+            }),
+            None,
+            window,
+            cx,
+        );
     }
 
     pub fn show_completions(
@@ -5450,9 +5466,13 @@ impl Editor {
 
         drop(multibuffer_snapshot);
 
+        let mut ignore_word_threshold = false;
         let provider = match requested_source {
             Some(CompletionsMenuSource::Normal) | None => self.completion_provider.clone(),
-            Some(CompletionsMenuSource::Words) => None,
+            Some(CompletionsMenuSource::Words { ignore_threshold }) => {
+                ignore_word_threshold = ignore_threshold;
+                None
+            }
             Some(CompletionsMenuSource::SnippetChoices) => {
                 log::error!("bug: SnippetChoices requested_source is not handled");
                 None
@@ -5573,10 +5593,12 @@ impl Editor {
             .as_ref()
             .is_none_or(|query| !query.chars().any(|c| c.is_digit(10)));
 
-        let omit_word_completions = match &query {
-            Some(query) => query.chars().count() < completion_settings.words_min_length,
-            None => completion_settings.words_min_length != 0,
-        };
+        let omit_word_completions = !self.word_completions_enabled
+            || (!ignore_word_threshold
+                && match &query {
+                    Some(query) => query.chars().count() < completion_settings.words_min_length,
+                    None => completion_settings.words_min_length != 0,
+                });
 
         let (mut words, provider_responses) = match &provider {
             Some(provider) => {
@@ -11391,14 +11413,17 @@ impl Editor {
         let mut edits = Vec::new();
         let mut selection_adjustment = 0i32;
 
-        for selection in self.selections.all::<usize>(cx) {
+        for selection in self.selections.all_adjusted(cx) {
             let selection_is_empty = selection.is_empty();
 
             let (start, end) = if selection_is_empty {
                 let (word_range, _) = buffer.surrounding_word(selection.start, false);
                 (word_range.start, word_range.end)
             } else {
-                (selection.start, selection.end)
+                (
+                    buffer.point_to_offset(selection.start),
+                    buffer.point_to_offset(selection.end),
+                )
             };
 
             let text = buffer.text_for_range(start..end).collect::<String>();
@@ -11409,7 +11434,8 @@ impl Editor {
                 start: (start as i32 - selection_adjustment) as usize,
                 end: ((start + text.len()) as i32 - selection_adjustment) as usize,
                 goal: SelectionGoal::None,
-                ..selection
+                id: selection.id,
+                reversed: selection.reversed,
             });
 
             selection_adjustment += old_length - text.len() as i32;
@@ -14920,9 +14946,13 @@ impl Editor {
                 }
 
                 let mut new_range = old_range.clone();
-                while let Some((_node, containing_range)) =
-                    buffer.syntax_ancestor(new_range.clone())
+                while let Some((node, containing_range)) = buffer.syntax_ancestor(new_range.clone())
                 {
+                    if !node.is_named() {
+                        new_range = node.start_byte()..node.end_byte();
+                        continue;
+                    }
+
                     new_range = match containing_range {
                         MultiOrSingleBufferOffsetRange::Single(_) => break,
                         MultiOrSingleBufferOffsetRange::Multi(range) => range,
@@ -15110,6 +15140,104 @@ impl Editor {
                 s.select(selections);
             });
         });
+    }
+
+    pub fn select_next_syntax_node(
+        &mut self,
+        _: &SelectNextSyntaxNode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let old_selections: Box<[_]> = self.selections.all::<usize>(cx).into();
+        if old_selections.is_empty() {
+            return;
+        }
+
+        self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
+
+        let buffer = self.buffer.read(cx).snapshot(cx);
+        let mut selected_sibling = false;
+
+        let new_selections = old_selections
+            .iter()
+            .map(|selection| {
+                let old_range = selection.start..selection.end;
+
+                if let Some(node) = buffer.syntax_next_sibling(old_range) {
+                    let new_range = node.byte_range();
+                    selected_sibling = true;
+                    Selection {
+                        id: selection.id,
+                        start: new_range.start,
+                        end: new_range.end,
+                        goal: SelectionGoal::None,
+                        reversed: selection.reversed,
+                    }
+                } else {
+                    selection.clone()
+                }
+            })
+            .collect::<Vec<_>>();
+
+        if selected_sibling {
+            self.change_selections(
+                SelectionEffects::scroll(Autoscroll::fit()),
+                window,
+                cx,
+                |s| {
+                    s.select(new_selections);
+                },
+            );
+        }
+    }
+
+    pub fn select_prev_syntax_node(
+        &mut self,
+        _: &SelectPreviousSyntaxNode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let old_selections: Box<[_]> = self.selections.all::<usize>(cx).into();
+        if old_selections.is_empty() {
+            return;
+        }
+
+        self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
+
+        let buffer = self.buffer.read(cx).snapshot(cx);
+        let mut selected_sibling = false;
+
+        let new_selections = old_selections
+            .iter()
+            .map(|selection| {
+                let old_range = selection.start..selection.end;
+
+                if let Some(node) = buffer.syntax_prev_sibling(old_range) {
+                    let new_range = node.byte_range();
+                    selected_sibling = true;
+                    Selection {
+                        id: selection.id,
+                        start: new_range.start,
+                        end: new_range.end,
+                        goal: SelectionGoal::None,
+                        reversed: selection.reversed,
+                    }
+                } else {
+                    selection.clone()
+                }
+            })
+            .collect::<Vec<_>>();
+
+        if selected_sibling {
+            self.change_selections(
+                SelectionEffects::scroll(Autoscroll::fit()),
+                window,
+                cx,
+                |s| {
+                    s.select(new_selections);
+                },
+            );
+        }
     }
 
     fn refresh_runnables(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<()> {
@@ -15817,6 +15945,87 @@ impl Editor {
                     point..point
                 }))
             })
+        }
+    }
+
+    pub fn go_to_next_document_highlight(
+        &mut self,
+        _: &GoToNextDocumentHighlight,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.go_to_document_highlight_before_or_after_position(Direction::Next, window, cx);
+    }
+
+    pub fn go_to_prev_document_highlight(
+        &mut self,
+        _: &GoToPreviousDocumentHighlight,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.go_to_document_highlight_before_or_after_position(Direction::Prev, window, cx);
+    }
+
+    pub fn go_to_document_highlight_before_or_after_position(
+        &mut self,
+        direction: Direction,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
+        let snapshot = self.snapshot(window, cx);
+        let buffer = &snapshot.buffer_snapshot;
+        let position = self.selections.newest::<Point>(cx).head();
+        let anchor_position = buffer.anchor_after(position);
+
+        // Get all document highlights (both read and write)
+        let mut all_highlights = Vec::new();
+
+        if let Some((_, read_highlights)) = self
+            .background_highlights
+            .get(&HighlightKey::Type(TypeId::of::<DocumentHighlightRead>()))
+        {
+            all_highlights.extend(read_highlights.iter());
+        }
+
+        if let Some((_, write_highlights)) = self
+            .background_highlights
+            .get(&HighlightKey::Type(TypeId::of::<DocumentHighlightWrite>()))
+        {
+            all_highlights.extend(write_highlights.iter());
+        }
+
+        if all_highlights.is_empty() {
+            return;
+        }
+
+        // Sort highlights by position
+        all_highlights.sort_by(|a, b| a.start.cmp(&b.start, buffer));
+
+        let target_highlight = match direction {
+            Direction::Next => {
+                // Find the first highlight after the current position
+                all_highlights
+                    .iter()
+                    .find(|highlight| highlight.start.cmp(&anchor_position, buffer).is_gt())
+            }
+            Direction::Prev => {
+                // Find the last highlight before the current position
+                all_highlights
+                    .iter()
+                    .rev()
+                    .find(|highlight| highlight.end.cmp(&anchor_position, buffer).is_lt())
+            }
+        };
+
+        if let Some(highlight) = target_highlight {
+            let destination = highlight.start.to_point(buffer);
+            let autoscroll = Autoscroll::center();
+
+            self.unfold_ranges(&[destination..destination], false, false, cx);
+            self.change_selections(SelectionEffects::scroll(autoscroll), window, cx, |s| {
+                s.select_ranges([destination..destination]);
+            });
         }
     }
 
@@ -17115,6 +17324,10 @@ impl Editor {
         self.dismiss_diagnostics(cx);
         self.inline_diagnostics_update = Task::ready(());
         self.inline_diagnostics.clear();
+    }
+
+    pub fn disable_word_completions(&mut self) {
+        self.word_completions_enabled = false;
     }
 
     pub fn diagnostics_enabled(&self) -> bool {
@@ -18968,6 +19181,8 @@ impl Editor {
         }
     }
 
+    /// Returns the project path for the editor's buffer, if any buffer is
+    /// opened in the editor.
     pub fn project_path(&self, cx: &App) -> Option<ProjectPath> {
         if let Some(buffer) = self.buffer.read(cx).as_singleton() {
             buffer.read(cx).project_path(cx)

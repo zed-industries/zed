@@ -12,7 +12,7 @@ pub enum DebugPanelDockPosition {
     Right,
 }
 
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, SettingsUi, SettingsKey)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, SettingsUi, SettingsKey)]
 #[serde(default)]
 // todo(settings_ui) @ben: I'm pretty sure not having the fields be optional here is a bug,
 // it means the defaults will override previously set values if a single key is missing
