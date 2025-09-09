@@ -1,9 +1,11 @@
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::fmt::{Display, Formatter};
 use std::mem;
+use std::ops::Deref;
 use std::path::StripPrefixError;
 use std::sync::{Arc, OnceLock};
 use std::{
@@ -13,9 +15,13 @@ use std::{
 };
 
 /// Returns the path to the user's home directory.
-pub fn home_dir() -> &'static PathBuf {
-    static HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
-    HOME_DIR.get_or_init(|| dirs::home_dir().expect("failed to determine home directory"))
+pub fn home_dir() -> &'static SanitizedPathBuf {
+    static HOME_DIR: OnceLock<SanitizedPathBuf> = OnceLock::new();
+    HOME_DIR.get_or_init(|| {
+        dirs::home_dir()
+            .expect("failed to determine home directory")
+            .into()
+    })
 }
 
 pub trait PathExt {
@@ -160,8 +166,8 @@ impl SanitizedPath {
         self.0.extension()
     }
 
-    pub fn join<P: AsRef<Path>>(&self, path: P) -> PathBuf {
-        self.0.join(path)
+    pub fn join<P: AsRef<Path>>(&self, path: P) -> SanitizedPathBuf {
+        self.0.join(path).into()
     }
 
     pub fn parent(&self) -> Option<&Self> {
@@ -221,6 +227,116 @@ impl From<&SanitizedPath> for PathBuf {
 impl AsRef<Path> for SanitizedPath {
     fn as_ref(&self) -> &Path {
         &self.0
+    }
+}
+
+/// In memory, this is identical to `PathBuf`. On non-Windows conversions to this type are no-ops. On
+/// windows, these conversions sanitize UNC paths by removing the `\\\\?\\` prefix.
+#[derive(Default, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[repr(transparent)]
+pub struct SanitizedPathBuf(PathBuf);
+
+impl SanitizedPathBuf {
+    pub fn new() -> Self {
+        PathBuf::new().into()
+    }
+
+    pub fn exists(&self) -> bool {
+        self.0.exists()
+    }
+
+    pub fn push<P: AsRef<Path>>(&mut self, path: P) {
+        if path.as_ref().is_absolute() {
+            self.0.push(SanitizedPath::new(path.as_ref()).as_path());
+        } else {
+            self.0.push(path);
+        }
+    }
+
+    pub fn is_relative(&self) -> bool {
+        self.0.is_relative()
+    }
+
+    pub fn canonicalize(&self) -> std::io::Result<Self> {
+        Ok(self.0.canonicalize()?.into())
+    }
+
+    pub fn join<P: AsRef<Path>>(&self, path: P) -> SanitizedPathBuf {
+        self.0.join(SanitizedPath::new(path.as_ref())).into()
+    }
+
+    pub fn display(&self) -> std::path::Display<'_> {
+        self.0.display()
+    }
+
+    pub fn to_string_lossy(&self) -> Cow<'_, str> {
+        self.0.to_string_lossy()
+    }
+
+    pub fn as_path(&self) -> &SanitizedPath {
+        SanitizedPath::unchecked_new(self)
+    }
+}
+
+impl std::fmt::Debug for SanitizedPathBuf {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl AsRef<PathBuf> for SanitizedPathBuf {
+    fn as_ref(&self) -> &PathBuf {
+        &self.0
+    }
+}
+
+impl Deref for SanitizedPathBuf {
+    type Target = SanitizedPath;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_path()
+    }
+}
+
+impl AsRef<SanitizedPath> for SanitizedPathBuf {
+    fn as_ref(&self) -> &SanitizedPath {
+        self.as_path()
+    }
+}
+
+impl AsRef<OsStr> for SanitizedPathBuf {
+    fn as_ref(&self) -> &OsStr {
+        self.0.as_os_str()
+    }
+}
+
+impl AsRef<Path> for SanitizedPathBuf {
+    fn as_ref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl From<PathBuf> for SanitizedPathBuf {
+    fn from(path: PathBuf) -> Self {
+        Self::from(path.as_path())
+    }
+}
+
+impl From<&SanitizedPath> for SanitizedPathBuf {
+    fn from(value: &SanitizedPath) -> Self {
+        Self(PathBuf::from(value.as_path()))
+    }
+}
+
+impl From<&Path> for SanitizedPathBuf {
+    fn from(path: &Path) -> Self {
+        Self(PathBuf::from(dunce::simplified(path)))
+    }
+}
+
+impl From<&str> for SanitizedPathBuf {
+    fn from(path: &str) -> Self {
+        PathBuf::from(path).into()
     }
 }
 
@@ -759,11 +875,11 @@ fn natural_sort(a: &str, b: &str) -> Ordering {
 }
 
 pub fn compare_paths(
-    (path_a, a_is_file): (&Path, bool),
-    (path_b, b_is_file): (&Path, bool),
+    (path_a, a_is_file): (&SanitizedPath, bool),
+    (path_b, b_is_file): (&SanitizedPath, bool),
 ) -> Ordering {
-    let mut components_a = path_a.components().peekable();
-    let mut components_b = path_b.components().peekable();
+    let mut components_a = path_a.as_path().components().peekable();
+    let mut components_b = path_b.as_path().components().peekable();
 
     loop {
         match (components_a.next(), components_b.next()) {
@@ -824,37 +940,37 @@ mod tests {
     #[test]
     fn compare_paths_with_dots() {
         let mut paths = vec![
-            (Path::new("test_dirs"), false),
-            (Path::new("test_dirs/1.46"), false),
-            (Path::new("test_dirs/1.46/bar_1"), true),
-            (Path::new("test_dirs/1.46/bar_2"), true),
-            (Path::new("test_dirs/1.45"), false),
-            (Path::new("test_dirs/1.45/foo_2"), true),
-            (Path::new("test_dirs/1.45/foo_1"), true),
+            (SanitizedPath::new("test_dirs"), false),
+            (SanitizedPath::new("test_dirs/1.46"), false),
+            (SanitizedPath::new("test_dirs/1.46/bar_1"), true),
+            (SanitizedPath::new("test_dirs/1.46/bar_2"), true),
+            (SanitizedPath::new("test_dirs/1.45"), false),
+            (SanitizedPath::new("test_dirs/1.45/foo_2"), true),
+            (SanitizedPath::new("test_dirs/1.45/foo_1"), true),
         ];
         paths.sort_by(|&a, &b| compare_paths(a, b));
         assert_eq!(
             paths,
             vec![
-                (Path::new("test_dirs"), false),
-                (Path::new("test_dirs/1.45"), false),
-                (Path::new("test_dirs/1.45/foo_1"), true),
-                (Path::new("test_dirs/1.45/foo_2"), true),
-                (Path::new("test_dirs/1.46"), false),
-                (Path::new("test_dirs/1.46/bar_1"), true),
-                (Path::new("test_dirs/1.46/bar_2"), true),
+                (SanitizedPath::new("test_dirs"), false),
+                (SanitizedPath::new("test_dirs/1.45"), false),
+                (SanitizedPath::new("test_dirs/1.45/foo_1"), true),
+                (SanitizedPath::new("test_dirs/1.45/foo_2"), true),
+                (SanitizedPath::new("test_dirs/1.46"), false),
+                (SanitizedPath::new("test_dirs/1.46/bar_1"), true),
+                (SanitizedPath::new("test_dirs/1.46/bar_2"), true),
             ]
         );
         let mut paths = vec![
-            (Path::new("root1/one.txt"), true),
-            (Path::new("root1/one.two.txt"), true),
+            (SanitizedPath::new("root1/one.txt"), true),
+            (SanitizedPath::new("root1/one.two.txt"), true),
         ];
         paths.sort_by(|&a, &b| compare_paths(a, b));
         assert_eq!(
             paths,
             vec![
-                (Path::new("root1/one.txt"), true),
-                (Path::new("root1/one.two.txt"), true),
+                (SanitizedPath::new("root1/one.txt"), true),
+                (SanitizedPath::new("root1/one.two.txt"), true),
             ]
         );
     }
@@ -862,21 +978,21 @@ mod tests {
     #[test]
     fn compare_paths_with_same_name_different_extensions() {
         let mut paths = vec![
-            (Path::new("test_dirs/file.rs"), true),
-            (Path::new("test_dirs/file.txt"), true),
-            (Path::new("test_dirs/file.md"), true),
-            (Path::new("test_dirs/file"), true),
-            (Path::new("test_dirs/file.a"), true),
+            (SanitizedPath::new("test_dirs/file.rs"), true),
+            (SanitizedPath::new("test_dirs/file.txt"), true),
+            (SanitizedPath::new("test_dirs/file.md"), true),
+            (SanitizedPath::new("test_dirs/file"), true),
+            (SanitizedPath::new("test_dirs/file.a"), true),
         ];
         paths.sort_by(|&a, &b| compare_paths(a, b));
         assert_eq!(
             paths,
             vec![
-                (Path::new("test_dirs/file"), true),
-                (Path::new("test_dirs/file.a"), true),
-                (Path::new("test_dirs/file.md"), true),
-                (Path::new("test_dirs/file.rs"), true),
-                (Path::new("test_dirs/file.txt"), true),
+                (SanitizedPath::new("test_dirs/file"), true),
+                (SanitizedPath::new("test_dirs/file.a"), true),
+                (SanitizedPath::new("test_dirs/file.md"), true),
+                (SanitizedPath::new("test_dirs/file.rs"), true),
+                (SanitizedPath::new("test_dirs/file.txt"), true),
             ]
         );
     }
@@ -884,31 +1000,31 @@ mod tests {
     #[test]
     fn compare_paths_case_semi_sensitive() {
         let mut paths = vec![
-            (Path::new("test_DIRS"), false),
-            (Path::new("test_DIRS/foo_1"), true),
-            (Path::new("test_DIRS/foo_2"), true),
-            (Path::new("test_DIRS/bar"), true),
-            (Path::new("test_DIRS/BAR"), true),
-            (Path::new("test_dirs"), false),
-            (Path::new("test_dirs/foo_1"), true),
-            (Path::new("test_dirs/foo_2"), true),
-            (Path::new("test_dirs/bar"), true),
-            (Path::new("test_dirs/BAR"), true),
+            (SanitizedPath::new("test_DIRS"), false),
+            (SanitizedPath::new("test_DIRS/foo_1"), true),
+            (SanitizedPath::new("test_DIRS/foo_2"), true),
+            (SanitizedPath::new("test_DIRS/bar"), true),
+            (SanitizedPath::new("test_DIRS/BAR"), true),
+            (SanitizedPath::new("test_dirs"), false),
+            (SanitizedPath::new("test_dirs/foo_1"), true),
+            (SanitizedPath::new("test_dirs/foo_2"), true),
+            (SanitizedPath::new("test_dirs/bar"), true),
+            (SanitizedPath::new("test_dirs/BAR"), true),
         ];
         paths.sort_by(|&a, &b| compare_paths(a, b));
         assert_eq!(
             paths,
             vec![
-                (Path::new("test_dirs"), false),
-                (Path::new("test_dirs/bar"), true),
-                (Path::new("test_dirs/BAR"), true),
-                (Path::new("test_dirs/foo_1"), true),
-                (Path::new("test_dirs/foo_2"), true),
-                (Path::new("test_DIRS"), false),
-                (Path::new("test_DIRS/bar"), true),
-                (Path::new("test_DIRS/BAR"), true),
-                (Path::new("test_DIRS/foo_1"), true),
-                (Path::new("test_DIRS/foo_2"), true),
+                (SanitizedPath::new("test_dirs"), false),
+                (SanitizedPath::new("test_dirs/bar"), true),
+                (SanitizedPath::new("test_dirs/BAR"), true),
+                (SanitizedPath::new("test_dirs/foo_1"), true),
+                (SanitizedPath::new("test_dirs/foo_2"), true),
+                (SanitizedPath::new("test_DIRS"), false),
+                (SanitizedPath::new("test_DIRS/bar"), true),
+                (SanitizedPath::new("test_DIRS/BAR"), true),
+                (SanitizedPath::new("test_DIRS/foo_1"), true),
+                (SanitizedPath::new("test_DIRS/foo_2"), true),
             ]
         );
     }
@@ -1393,7 +1509,10 @@ mod tests {
     fn test_compare_paths() {
         // Helper function for cleaner tests
         fn compare(a: &str, is_a_file: bool, b: &str, is_b_file: bool) -> Ordering {
-            compare_paths((Path::new(a), is_a_file), (Path::new(b), is_b_file))
+            compare_paths(
+                (SanitizedPath::new(a), is_a_file),
+                (SanitizedPath::new(b), is_b_file),
+            )
         }
 
         // Basic path comparison

@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use smol::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use util::paths::{SanitizedPath, SanitizedPathBuf};
 
 use util::fs::{make_file_executable, remove_matching};
 
@@ -212,7 +213,7 @@ pub async fn latest_release(
         .with_context(|| "Unable to parse Supermaven Agent response".to_string())
 }
 
-pub fn version_path(version: u64) -> PathBuf {
+pub fn version_path(version: u64) -> SanitizedPathBuf {
     supermaven_dir().join(format!(
         "sm-agent-{}{}",
         version,
@@ -220,11 +221,11 @@ pub fn version_path(version: u64) -> PathBuf {
     ))
 }
 
-pub async fn has_version(version_path: &Path) -> bool {
+pub async fn has_version(version_path: &SanitizedPath) -> bool {
     fs::metadata(version_path).await.is_ok_and(|m| m.is_file())
 }
 
-pub async fn get_supermaven_agent_path(client: Arc<dyn HttpClient>) -> Result<PathBuf> {
+pub async fn get_supermaven_agent_path(client: Arc<dyn HttpClient>) -> Result<SanitizedPathBuf> {
     fs::create_dir_all(supermaven_dir())
         .await
         .with_context(|| {
@@ -277,7 +278,7 @@ pub async fn get_supermaven_agent_path(client: Arc<dyn HttpClient>) -> Result<Pa
 
     make_file_executable(&binary_path).await?;
 
-    remove_matching(supermaven_dir(), |file| file != binary_path).await;
+    remove_matching(supermaven_dir(), |file| *file != *binary_path).await;
 
     Ok(binary_path)
 }

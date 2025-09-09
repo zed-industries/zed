@@ -736,7 +736,7 @@ impl Worktree {
             id: self.id().to_proto(),
             root_name: self.root_name().to_string(),
             visible: self.is_visible(),
-            abs_path: self.abs_path().to_proto(),
+            abs_path: self.abs_path().as_path().to_proto(),
         }
     }
 
@@ -761,10 +761,10 @@ impl Worktree {
         }
     }
 
-    pub fn abs_path(&self) -> Arc<Path> {
+    pub fn abs_path(&self) -> Arc<SanitizedPath> {
         match self {
-            Worktree::Local(worktree) => SanitizedPath::cast_arc(worktree.abs_path.clone()),
-            Worktree::Remote(worktree) => SanitizedPath::cast_arc(worktree.abs_path.clone()),
+            Worktree::Local(worktree) => worktree.abs_path.clone(),
+            Worktree::Remote(worktree) => worktree.abs_path.clone(),
         }
     }
 
@@ -1320,6 +1320,7 @@ impl LocalWorktree {
         cx: &mut Context<Worktree>,
     ) {
         let repo_changes = self.changed_repos(&self.snapshot, &mut new_snapshot);
+        dbg!(&self.snapshot, &new_snapshot, &repo_changes, &entry_changes);
         self.snapshot = new_snapshot;
 
         if let Some(share) = self.update_observer.as_mut() {
@@ -4245,6 +4246,7 @@ impl BackgroundScanner {
 
     fn send_status_update(&self, scanning: bool, barrier: SmallVec<[barrier::Sender; 1]>) -> bool {
         let mut state = self.state.lock();
+        dbg!("status_update", &state.snapshot, &scanning);
         if state.changed_paths.is_empty() && scanning {
             return true;
         }
@@ -4767,10 +4769,12 @@ impl BackgroundScanner {
     }
 
     fn update_git_repositories(&self, dot_git_paths: Vec<PathBuf>) {
+        dbg!("Updating git repositories", &dot_git_paths);
         log::trace!("reloading repositories: {dot_git_paths:?}");
         let mut state = self.state.lock();
         let scan_id = state.snapshot.scan_id;
         for dot_git_dir in dot_git_paths {
+            dbg!("available repos", &state.snapshot.git_repositories);
             let existing_repository_entry =
                 state
                     .snapshot
@@ -4798,6 +4802,7 @@ impl BackgroundScanner {
                     );
                 }
                 Some(local_repository) => {
+                    dbg!("Updating repo", &local_repository, scan_id);
                     state.snapshot.git_repositories.update(
                         &local_repository.work_directory_id,
                         |entry| {
