@@ -47,22 +47,15 @@ impl TestExtension {
             },
         )?;
 
-        let ext;
-        let download_type;
-        match platform {
-            // Uncomment this if you want to actually run this extension -
-            // the actual asset is a .zip. But the integration test is simpler
-            // if every platform uses .tar.gz.
-            //
-            // zed::Os::Windows => {
-            //     ext = "zip";
-            //     download_type = zed::DownloadedFileType::Zip;
-            // }
-            _ => {
-                ext = "tar.gz";
-                download_type = zed::DownloadedFileType::GzipTar;
-            }
-        }
+        let ext = "tar.gz";
+        let download_type = zed::DownloadedFileType::GzipTar;
+
+        // Do this if you want to actually run this extension -
+        // the actual asset is a .zip. But the integration test is simpler
+        // if every platform uses .tar.gz.
+        //
+        // ext = "zip";
+        // download_type = zed::DownloadedFileType::Zip;
 
         let asset_name = format!(
             "gleam-{version}-{arch}-{os}.{ext}",
