@@ -2619,7 +2619,7 @@ impl Editor {
         cx: &mut Context<Workspace>,
     ) -> Task<Result<Entity<Editor>>> {
         let project = workspace.project().clone();
-        let create = project.update(cx, |project, cx| project.create_buffer(cx));
+        let create = project.update(cx, |project, cx| project.create_buffer(true, cx));
 
         cx.spawn_in(window, async move |workspace, cx| {
             let buffer = create.await?;
@@ -2657,7 +2657,7 @@ impl Editor {
         cx: &mut Context<Workspace>,
     ) {
         let project = workspace.project().clone();
-        let create = project.update(cx, |project, cx| project.create_buffer(cx));
+        let create = project.update(cx, |project, cx| project.create_buffer(true, cx));
 
         cx.spawn_in(window, async move |workspace, cx| {
             let buffer = create.await?;
@@ -19000,6 +19000,8 @@ impl Editor {
         }
     }
 
+    /// Returns the project path for the editor's buffer, if any buffer is
+    /// opened in the editor.
     pub fn project_path(&self, cx: &App) -> Option<ProjectPath> {
         if let Some(buffer) = self.buffer.read(cx).as_singleton() {
             buffer.read(cx).project_path(cx)
