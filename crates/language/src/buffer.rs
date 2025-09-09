@@ -280,6 +280,14 @@ pub enum Operation {
         /// The language server ID.
         server_id: LanguageServerId,
     },
+
+    /// An update to the line ending type of this buffer.
+    UpdateLineEnding {
+        /// The line ending type.
+        line_ending: LineEnding,
+        /// The buffer's lamport timestamp.
+        lamport_timestamp: clock::Lamport,
+    },
 }
 
 /// An event that occurs in a buffer.
@@ -1234,6 +1242,21 @@ impl Buffer {
 
     pub fn language_registry(&self) -> Option<Arc<LanguageRegistry>> {
         self.syntax_map.lock().language_registry()
+    }
+
+    /// Assign the line ending type to the buffer.
+    pub fn set_line_ending(&mut self, line_ending: LineEnding, cx: &mut Context<Self>) {
+        self.text.set_line_ending(line_ending);
+
+        let lamport_timestamp = self.text.lamport_clock.tick();
+        self.send_operation(
+            Operation::UpdateLineEnding {
+                line_ending,
+                lamport_timestamp,
+            },
+            true,
+            cx,
+        );
     }
 
     /// Assign the buffer a new [`Capability`].
@@ -2552,7 +2575,7 @@ impl Buffer {
             Operation::UpdateSelections { selections, .. } => selections
                 .iter()
                 .all(|s| self.can_resolve(&s.start) && self.can_resolve(&s.end)),
-            Operation::UpdateCompletionTriggers { .. } => true,
+            Operation::UpdateCompletionTriggers { .. } | Operation::UpdateLineEnding { .. } => true,
         }
     }
 
@@ -2616,6 +2639,13 @@ impl Buffer {
                         .insert(server_id, triggers.iter().cloned().collect());
                     self.completion_triggers.extend(triggers);
                 }
+                self.text.lamport_clock.observe(lamport_timestamp);
+            }
+            Operation::UpdateLineEnding {
+                line_ending,
+                lamport_timestamp,
+            } => {
+                self.text.set_line_ending(line_ending);
                 self.text.lamport_clock.observe(lamport_timestamp);
             }
         }
@@ -3424,46 +3454,66 @@ impl BufferSnapshot {
     }
 
     /// Returns the closest syntax node enclosing the given range.
+    /// Positions a tree cursor at the leaf node that contains or touches the given range.
+    /// This is shared logic used by syntax navigation methods.
+    fn position_cursor_at_range(cursor: &mut tree_sitter::TreeCursor, range: &Range<usize>) {
+        // Descend to the first leaf that touches the start of the range.
+        //
+        // If the range is non-empty and the current node ends exactly at the start,
+        // move to the next sibling to find a node that extends beyond the start.
+        //
+        // If the range is empty and the current node starts after the range position,
+        // move to the previous sibling to find the node that contains the position.
+        while cursor.goto_first_child_for_byte(range.start).is_some() {
+            if !range.is_empty() && cursor.node().end_byte() == range.start {
+                cursor.goto_next_sibling();
+            }
+            if range.is_empty() && cursor.node().start_byte() > range.start {
+                cursor.goto_previous_sibling();
+            }
+        }
+    }
+
+    /// Moves the cursor to find a node that contains the given range.
+    /// Returns true if such a node is found, false otherwise.
+    /// This is shared logic used by syntax navigation methods.
+    fn find_containing_node(
+        cursor: &mut tree_sitter::TreeCursor,
+        range: &Range<usize>,
+        strict: bool,
+    ) -> bool {
+        loop {
+            let node_range = cursor.node().byte_range();
+
+            if node_range.start <= range.start
+                && node_range.end >= range.end
+                && (!strict || node_range.len() > range.len())
+            {
+                return true;
+            }
+            if !cursor.goto_parent() {
+                return false;
+            }
+        }
+    }
+
     pub fn syntax_ancestor<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
     ) -> Option<tree_sitter::Node<'a>> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut result: Option<tree_sitter::Node<'a>> = None;
-        'outer: for layer in self
+        for layer in self
             .syntax
             .layers_for_range(range.clone(), &self.text, true)
         {
             let mut cursor = layer.node().walk();
 
-            // Descend to the first leaf that touches the start of the range.
-            //
-            // If the range is non-empty and the current node ends exactly at the start,
-            // move to the next sibling to find a node that extends beyond the start.
-            //
-            // If the range is empty and the current node starts after the range position,
-            // move to the previous sibling to find the node that contains the position.
-            while cursor.goto_first_child_for_byte(range.start).is_some() {
-                if !range.is_empty() && cursor.node().end_byte() == range.start {
-                    cursor.goto_next_sibling();
-                }
-                if range.is_empty() && cursor.node().start_byte() > range.start {
-                    cursor.goto_previous_sibling();
-                }
-            }
+            Self::position_cursor_at_range(&mut cursor, &range);
 
             // Ascend to the smallest ancestor that strictly contains the range.
-            loop {
-                let node_range = cursor.node().byte_range();
-                if node_range.start <= range.start
-                    && node_range.end >= range.end
-                    && node_range.len() > range.len()
-                {
-                    break;
-                }
-                if !cursor.goto_parent() {
-                    continue 'outer;
-                }
+            if !Self::find_containing_node(&mut cursor, &range, true) {
+                continue;
             }
 
             let left_node = cursor.node();
@@ -3501,6 +3551,112 @@ impl BufferSnapshot {
                 continue;
             }
             result = Some(layer_result);
+        }
+
+        result
+    }
+
+    /// Find the previous sibling syntax node at the given range.
+    ///
+    /// This function locates the syntax node that precedes the node containing
+    /// the given range. It searches hierarchically by:
+    /// 1. Finding the node that contains the given range
+    /// 2. Looking for the previous sibling at the same tree level
+    /// 3. If no sibling is found, moving up to parent levels and searching for siblings
+    ///
+    /// Returns `None` if there is no previous sibling at any ancestor level.
+    pub fn syntax_prev_sibling<'a, T: ToOffset>(
+        &'a self,
+        range: Range<T>,
+    ) -> Option<tree_sitter::Node<'a>> {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        let mut result: Option<tree_sitter::Node<'a>> = None;
+
+        for layer in self
+            .syntax
+            .layers_for_range(range.clone(), &self.text, true)
+        {
+            let mut cursor = layer.node().walk();
+
+            Self::position_cursor_at_range(&mut cursor, &range);
+
+            // Find the node that contains the range
+            if !Self::find_containing_node(&mut cursor, &range, false) {
+                continue;
+            }
+
+            // Look for the previous sibling, moving up ancestor levels if needed
+            loop {
+                if cursor.goto_previous_sibling() {
+                    let layer_result = cursor.node();
+
+                    if let Some(previous_result) = &result {
+                        if previous_result.byte_range().end < layer_result.byte_range().end {
+                            continue;
+                        }
+                    }
+                    result = Some(layer_result);
+                    break;
+                }
+
+                // No sibling found at this level, try moving up to parent
+                if !cursor.goto_parent() {
+                    break;
+                }
+            }
+        }
+
+        result
+    }
+
+    /// Find the next sibling syntax node at the given range.
+    ///
+    /// This function locates the syntax node that follows the node containing
+    /// the given range. It searches hierarchically by:
+    /// 1. Finding the node that contains the given range
+    /// 2. Looking for the next sibling at the same tree level
+    /// 3. If no sibling is found, moving up to parent levels and searching for siblings
+    ///
+    /// Returns `None` if there is no next sibling at any ancestor level.
+    pub fn syntax_next_sibling<'a, T: ToOffset>(
+        &'a self,
+        range: Range<T>,
+    ) -> Option<tree_sitter::Node<'a>> {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        let mut result: Option<tree_sitter::Node<'a>> = None;
+
+        for layer in self
+            .syntax
+            .layers_for_range(range.clone(), &self.text, true)
+        {
+            let mut cursor = layer.node().walk();
+
+            Self::position_cursor_at_range(&mut cursor, &range);
+
+            // Find the node that contains the range
+            if !Self::find_containing_node(&mut cursor, &range, false) {
+                continue;
+            }
+
+            // Look for the next sibling, moving up ancestor levels if needed
+            loop {
+                if cursor.goto_next_sibling() {
+                    let layer_result = cursor.node();
+
+                    if let Some(previous_result) = &result {
+                        if previous_result.byte_range().start > layer_result.byte_range().start {
+                            continue;
+                        }
+                    }
+                    result = Some(layer_result);
+                    break;
+                }
+
+                // No sibling found at this level, try moving up to parent
+                if !cursor.goto_parent() {
+                    break;
+                }
+            }
         }
 
         result
@@ -4808,6 +4964,9 @@ impl operation_queue::Operation for Operation {
                 lamport_timestamp, ..
             }
             | Operation::UpdateCompletionTriggers {
+                lamport_timestamp, ..
+            }
+            | Operation::UpdateLineEnding {
                 lamport_timestamp, ..
             } => *lamport_timestamp,
         }

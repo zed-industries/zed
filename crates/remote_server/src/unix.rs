@@ -918,29 +918,33 @@ fn initialize_settings(
     });
 
     let (mut tx, rx) = watch::channel(None);
+    let mut node_settings = None;
     cx.observe_global::<SettingsStore>(move |cx| {
-        let settings = &ProjectSettings::get_global(cx).node;
-        log::info!("Got new node settings: {:?}", settings);
-        let options = NodeBinaryOptions {
-            allow_path_lookup: !settings.ignore_system_version,
-            // TODO: Implement this setting
-            allow_binary_download: true,
-            use_paths: settings.path.as_ref().map(|node_path| {
-                let node_path = PathBuf::from(shellexpand::tilde(node_path).as_ref());
-                let npm_path = settings
-                    .npm_path
-                    .as_ref()
-                    .map(|path| PathBuf::from(shellexpand::tilde(&path).as_ref()));
-                (
-                    node_path.clone(),
-                    npm_path.unwrap_or_else(|| {
-                        let base_path = PathBuf::new();
-                        node_path.parent().unwrap_or(&base_path).join("npm")
-                    }),
-                )
-            }),
-        };
-        tx.send(Some(options)).log_err();
+        let new_node_settings = &ProjectSettings::get_global(cx).node;
+        if Some(new_node_settings) != node_settings.as_ref() {
+            log::info!("Got new node settings: {new_node_settings:?}");
+            let options = NodeBinaryOptions {
+                allow_path_lookup: !new_node_settings.ignore_system_version,
+                // TODO: Implement this setting
+                allow_binary_download: true,
+                use_paths: new_node_settings.path.as_ref().map(|node_path| {
+                    let node_path = PathBuf::from(shellexpand::tilde(node_path).as_ref());
+                    let npm_path = new_node_settings
+                        .npm_path
+                        .as_ref()
+                        .map(|path| PathBuf::from(shellexpand::tilde(&path).as_ref()));
+                    (
+                        node_path.clone(),
+                        npm_path.unwrap_or_else(|| {
+                            let base_path = PathBuf::new();
+                            node_path.parent().unwrap_or(&base_path).join("npm")
+                        }),
+                    )
+                }),
+            };
+            node_settings = Some(new_node_settings.clone());
+            tx.send(Some(options)).ok();
+        }
     })
     .detach();
 

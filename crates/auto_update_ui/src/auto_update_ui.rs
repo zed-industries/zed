@@ -1,5 +1,4 @@
 use auto_update::AutoUpdater;
-use client::proto::UpdateNotification;
 use editor::{Editor, MultiBuffer};
 use gpui::{App, Context, DismissEvent, Entity, Window, actions, prelude::*};
 use http_client::HttpClient;
@@ -88,10 +87,7 @@ fn view_release_notes_locally(
                         .update_in(cx, |workspace, window, cx| {
                             let project = workspace.project().clone();
                             let buffer = project.update(cx, |project, cx| {
-                                let buffer = project.create_local_buffer("", markdown, cx);
-                                project
-                                    .mark_buffer_as_non_searchable(buffer.read(cx).remote_id(), cx);
-                                buffer
+                                project.create_local_buffer("", markdown, false, cx)
                             });
                             buffer.update(cx, |buffer, cx| {
                                 buffer.edit([(0..0, body.release_notes)], None, cx)
@@ -140,6 +136,8 @@ pub fn notify_if_app_was_updated(cx: &mut App) {
     if let ReleaseChannel::Nightly = ReleaseChannel::global(cx) {
         return;
     }
+
+    struct UpdateNotification;
 
     let should_show_notification = updater.read(cx).should_show_update_notification(cx);
     cx.spawn(async move |cx| {

@@ -21,7 +21,7 @@ use remote::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsUi};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Color, CommonAnimationExt, Context, Icon, IconName, IconSize, InteractiveElement,
@@ -121,15 +121,14 @@ pub struct SshProject {
     pub paths: Vec<String>,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
+#[settings_key(None)]
 pub struct RemoteSettingsContent {
     pub ssh_connections: Option<Vec<SshConnection>>,
     pub read_ssh_config: Option<bool>,
 }
 
 impl Settings for SshSettings {
-    const KEY: Option<&'static str> = None;
-
     type FileContent = RemoteSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {

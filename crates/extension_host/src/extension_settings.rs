@@ -3,10 +3,11 @@ use collections::HashMap;
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsUi};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 use std::sync::Arc;
 
-#[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema, SettingsUi)]
+#[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema, SettingsUi, SettingsKey)]
+#[settings_key(None)]
 pub struct ExtensionSettings {
     /// The extensions that should be automatically installed by Zed.
     ///
@@ -38,8 +39,6 @@ impl ExtensionSettings {
 }
 
 impl Settings for ExtensionSettings {
-    const KEY: Option<&'static str> = None;
-
     type FileContent = Self;
 
     fn load(sources: SettingsSources<Self::FileContent>, _cx: &mut App) -> Result<Self> {

@@ -26,6 +26,8 @@ messages!(
     (ActivateToolchain, Foreground),
     (ActiveToolchain, Foreground),
     (ActiveToolchainResponse, Foreground),
+    (ResolveToolchain, Background),
+    (ResolveToolchainResponse, Background),
     (AddNotification, Foreground),
     (AddProjectCollaborator, Foreground),
     (AddWorktree, Foreground),
@@ -102,6 +104,8 @@ messages!(
     (GetPathMetadata, Background),
     (GetPathMetadataResponse, Background),
     (GetPermalinkToLine, Foreground),
+    (GetProcesses, Background),
+    (GetProcessesResponse, Background),
     (GetPermalinkToLineResponse, Foreground),
     (GetProjectSymbols, Background),
     (GetProjectSymbolsResponse, Background),
@@ -278,6 +282,7 @@ messages!(
     (UpdateUserChannels, Foreground),
     (UpdateWorktree, Foreground),
     (UpdateWorktreeSettings, Foreground),
+    (UpdateUserSettings, Background),
     (UpdateRepository, Foreground),
     (RemoveRepository, Foreground),
     (UsersResponse, Foreground),
@@ -314,6 +319,11 @@ messages!(
     (GitClone, Background),
     (GitCloneResponse, Background),
     (ToggleLspLogs, Background),
+    (GetAgentServerCommand, Background),
+    (AgentServerCommand, Background),
+    (ExternalAgentsUpdated, Background),
+    (ExternalAgentLoadingStatusUpdated, Background),
+    (NewExternalAgentVersionAvailable, Background),
 );
 
 request_messages!(
@@ -456,6 +466,7 @@ request_messages!(
     (ListToolchains, ListToolchainsResponse),
     (ActivateToolchain, Ack),
     (ActiveToolchain, ActiveToolchainResponse),
+    (ResolveToolchain, ResolveToolchainResponse),
     (GetPathMetadata, GetPathMetadataResponse),
     (GetCrashFiles, GetCrashFilesResponse),
     (CancelLanguageServerWork, Ack),
@@ -484,6 +495,8 @@ request_messages!(
     (GetDefaultBranch, GetDefaultBranchResponse),
     (GitClone, GitCloneResponse),
     (ToggleLspLogs, Ack),
+    (GetProcesses, GetProcessesResponse),
+    (GetAgentServerCommand, AgentServerCommand)
 );
 
 lsp_messages!(
@@ -583,6 +596,7 @@ entity_messages!(
     UpdateRepository,
     RemoveRepository,
     UpdateWorktreeSettings,
+    UpdateUserSettings,
     LspExtExpandMacro,
     LspExtOpenDocs,
     LspExtRunnables,
@@ -607,7 +621,9 @@ entity_messages!(
     ListToolchains,
     ActivateToolchain,
     ActiveToolchain,
+    ResolveToolchain,
     GetPathMetadata,
+    GetProcesses,
     CancelLanguageServerWork,
     RegisterBufferWithLanguageServers,
     GitShow,
@@ -634,7 +650,11 @@ entity_messages!(
     GetDocumentDiagnostics,
     PullWorkspaceDiagnostics,
     GetDefaultBranch,
-    GitClone
+    GitClone,
+    GetAgentServerCommand,
+    ExternalAgentsUpdated,
+    ExternalAgentLoadingStatusUpdated,
+    NewExternalAgentVersionAvailable,
 );
 
 entity_messages!(

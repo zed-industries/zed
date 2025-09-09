@@ -116,7 +116,7 @@ Non-negative `float` values
 
 ## Allow Rewrap
 
-- Description: Controls where the `editor::Rewrap` action is allowed in the current language scope
+- Description: Controls where the {#action editor::Rewrap} action is allowed in the current language scope
 - Setting: `allow_rewrap`
 - Default: `"in_comments"`
 
@@ -178,7 +178,7 @@ Note: This setting has no effect in Vim mode, as rewrap is already allowed every
 
 You can find the names of your currently installed extensions by listing the subfolders under the [extension installation location](./extensions/installing-extensions.md#installation-location):
 
-On MacOS:
+On macOS:
 
 ```sh
 ls ~/Library/Application\ Support/Zed/extensions/installed/
@@ -294,7 +294,7 @@ Define extensions which should be installed (`true`) or never installed (`false`
 
 **Options**
 
-1. VSCode
+1. VS Code
 
 ```json
 {
@@ -326,7 +326,7 @@ Define extensions which should be installed (`true`) or never installed (`false`
 }
 ```
 
-5. SublimeText
+5. Sublime Text
 
 ```json
 {
@@ -2192,7 +2192,7 @@ Example:
 
 ## Go to Definition Fallback
 
-- Description: What to do when the "go to definition" action fails to find a definition
+- Description: What to do when the {#action editor::GoToDefinition} action fails to find a definition
 - Setting: `go_to_definition_fallback`
 - Default: `"find_all_references"`
 
@@ -2383,7 +2383,7 @@ Example:
 
 **Options**
 
-Run the `icon theme selector: toggle` action in the command palette to see a current list of valid icon themes names.
+Run the {#action icon_theme_selector::Toggle} action in the command palette to see a current list of valid icon themes names.
 
 ### Light
 
@@ -2393,7 +2393,7 @@ Run the `icon theme selector: toggle` action in the command palette to see a cur
 
 **Options**
 
-Run the `icon theme selector: toggle` action in the command palette to see a current list of valid icon themes names.
+Run the {#action icon_theme_selector::Toggle} action in the command palette to see a current list of valid icon themes names.
 
 ## Image Viewer
 
@@ -2469,7 +2469,7 @@ The following languages have inlay hints preconfigured by Zed:
 - [Go](https://docs.zed.dev/languages/go)
 - [Rust](https://docs.zed.dev/languages/rust)
 - [Svelte](https://docs.zed.dev/languages/svelte)
-- [Typescript](https://docs.zed.dev/languages/typescript)
+- [TypeScript](https://docs.zed.dev/languages/typescript)
 
 Use the `lsp` section for the server configuration. Examples are provided in the corresponding language documentation.
 
@@ -2699,7 +2699,7 @@ Positive `integer` values or `null` for unlimited tabs
 
 **Options**
 
-1. Maps to `Alt` on Linux and Windows and to `Option` on MacOS:
+1. Maps to `Alt` on Linux and Windows and to `Option` on macOS:
 
 ```json
 {
@@ -2707,7 +2707,7 @@ Positive `integer` values or `null` for unlimited tabs
 }
 ```
 
-2. Maps `Control` on Linux and Windows and to `Command` on MacOS:
+2. Maps `Control` on Linux and Windows and to `Command` on macOS:
 
 ```json
 {
@@ -2832,7 +2832,7 @@ Configuration object for defining settings profiles. Example:
 
   - Double-clicking on the file
   - Double-clicking on the tab header
-  - Using the `project_panel::OpenPermanent` action
+  - Using the {#action project_panel::OpenPermanent} action
   - Editing the file
   - Dragging the file to a different pane
 
@@ -4053,7 +4053,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 
 **Options**
 
-Run the `theme selector: toggle` action in the command palette to see a current list of valid themes names.
+Run the {#action theme_selector::Toggle} action in the command palette to see a current list of valid themes names.
 
 ### Light
 
@@ -4063,7 +4063,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 **Options**
 
-Run the `theme selector: toggle` action in the command palette to see a current list of valid themes names.
+Run the {#action theme_selector::Toggle} action in the command palette to see a current list of valid themes names.
 
 ## Title Bar
 
@@ -4394,28 +4394,6 @@ Visit [the Configuration page](./ai/configuration.md) under the AI section to le
 - `button`: Whether to show the collaboration panel button in the status bar
 - `dock`: Where to dock the collaboration panel. Can be `left` or `right`
 - `default_width`: Default width of the collaboration panel
-
-## Chat Panel
-
-- Description: Customizations for the chat panel.
-- Setting: `chat_panel`
-- Default:
-
-```json
-{
-  "chat_panel": {
-    "button": "when_in_call",
-    "dock": "right",
-    "default_width": 240
-  }
-}
-```
-
-**Options**
-
-- `button`: When to show the chat panel button in the status bar. Can be `never`, `always`, or `when_in_call`.
-- `dock`: Where to dock the chat panel. Can be 'left' or 'right'
-- `default_width`: Default width of the chat panel
 
 ## Debugger
 
