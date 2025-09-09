@@ -65,7 +65,7 @@ If you would like to add a new icon to the Zed icon theme, [open a Discussion](h
 
 ## Bird's-eye view of Zed
 
-We suggest you keep the [zed glossary](docs/src/development/GLOSSARY.md) at your side when starting out. It lists and explains some of the structures and terms you will see throughout the codebase.
+We suggest you keep the [zed glossary](docs/src/development/glossary.md) at your side when starting out. It lists and explains some of the structures and terms you will see throughout the codebase.
 
 Zed is made up of several smaller crates - let's go over those you're most likely to interact with:
 

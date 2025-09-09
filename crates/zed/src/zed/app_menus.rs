@@ -1,6 +1,7 @@
 use collab_ui::collab_panel;
 use gpui::{Menu, MenuItem, OsAction};
 use terminal_view::terminal_panel;
+use zed_actions::ToggleFocus as ToggleDebugPanel;
 
 pub fn app_menus() -> Vec<Menu> {
     use zed_actions::Quit;
@@ -126,6 +127,11 @@ pub fn app_menus() -> Vec<Menu> {
                 ),
                 MenuItem::action("Expand Selection", editor::actions::SelectLargerSyntaxNode),
                 MenuItem::action("Shrink Selection", editor::actions::SelectSmallerSyntaxNode),
+                MenuItem::action("Select Next Sibling", editor::actions::SelectNextSyntaxNode),
+                MenuItem::action(
+                    "Select Previous Sibling",
+                    editor::actions::SelectPreviousSyntaxNode,
+                ),
                 MenuItem::separator(),
                 MenuItem::action("Add Cursor Above", editor::actions::AddSelectionAbove),
                 MenuItem::action("Add Cursor Below", editor::actions::AddSelectionBelow),
@@ -175,6 +181,7 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::action("Outline Panel", outline_panel::ToggleFocus),
                 MenuItem::action("Collab Panel", collab_panel::ToggleFocus),
                 MenuItem::action("Terminal Panel", terminal_panel::ToggleFocus),
+                MenuItem::action("Debugger Panel", ToggleDebugPanel),
                 MenuItem::separator(),
                 MenuItem::action("Diagnostics", diagnostics::Deploy),
                 MenuItem::separator(),

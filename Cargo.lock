@@ -308,22 +308,18 @@ dependencies = [
  "libc",
  "log",
  "nix 0.29.0",
- "node_runtime",
- "paths",
  "project",
  "reqwest_client",
- "schemars",
- "semver",
  "serde",
  "serde_json",
  "settings",
  "smol",
+ "task",
  "tempfile",
  "thiserror 2.0.12",
  "ui",
  "util",
  "watch",
- "which 6.0.3",
  "workspace-hack",
 ]
 
@@ -486,6 +482,7 @@ dependencies = [
  "client",
  "cloud_llm_client",
  "component",
+ "feature_flags",
  "gpui",
  "language_model",
  "serde",
@@ -2354,19 +2351,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "blake3"
-version = "1.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3888aaa89e4b2a40fca9848e400f6a658a5a3978de7be858e209cafa8be9a4a0"
-dependencies = [
- "arrayref",
- "arrayvec",
- "cc",
- "cfg-if",
- "constant_time_eq 0.3.1",
-]
-
-[[package]]
 name = "block"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2901,11 +2885,9 @@ dependencies = [
  "language",
  "log",
  "postage",
- "rand 0.9.1",
  "release_channel",
  "rpc",
  "settings",
- "sum_tree",
  "text",
  "time",
  "util",
@@ -3072,7 +3054,6 @@ dependencies = [
  "clock",
  "cloud_api_client",
  "cloud_llm_client",
- "cocoa 0.26.0",
  "collections",
  "credentials_provider",
  "derive_more",
@@ -3085,6 +3066,7 @@ dependencies = [
  "http_client_tls",
  "httparse",
  "log",
+ "objc2-foundation",
  "parking_lot",
  "paths",
  "postage",
@@ -3393,12 +3375,10 @@ dependencies = [
  "collections",
  "db",
  "editor",
- "emojis",
  "futures 0.3.31",
  "fuzzy",
  "gpui",
  "http_client",
- "language",
  "log",
  "menu",
  "notifications",
@@ -3406,7 +3386,6 @@ dependencies = [
  "pretty_assertions",
  "project",
  "release_channel",
- "rich_text",
  "rpc",
  "schemars",
  "serde",
@@ -3517,6 +3496,7 @@ name = "component"
 version = "0.1.0"
 dependencies = [
  "collections",
+ "documented",
  "gpui",
  "inventory",
  "parking_lot",
@@ -3578,12 +3558,6 @@ name = "constant_time_eq"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "245097e9a4535ee1e3e3931fcfcd55a796a44c643e8596ff6566d68f09b87bbc"
-
-[[package]]
-name = "constant_time_eq"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c74b8349d32d297c9134b8c88677813a227df8f779daa29bfc29c183fe3dca6"
 
 [[package]]
 name = "context_server"
@@ -6166,17 +6140,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "futures-batch"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f444c45a1cb86f2a7e301469fd50a82084a60dadc25d94529a8312276ecb71a"
-dependencies = [
- "futures 0.3.31",
- "futures-timer",
- "pin-utils",
-]
-
-[[package]]
 name = "futures-channel"
 version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6270,12 +6233,6 @@ name = "futures-task"
 version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f90f7dce0722e95104fcb095585910c0977252f286e354b5e3bd38902cd99988"
-
-[[package]]
-name = "futures-timer"
-version = "3.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f288b0a4f20f9a56b5d1da57e2227c661b7b16168e2f72365f57b63326e29b24"
 
 [[package]]
 name = "futures-util"
@@ -9217,6 +9174,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "language_onboarding"
+version = "0.1.0"
+dependencies = [
+ "db",
+ "editor",
+ "gpui",
+ "project",
+ "ui",
+ "workspace",
+ "workspace-hack",
+]
+
+[[package]]
 name = "language_selector"
 version = "0.1.0"
 dependencies = [
@@ -9278,7 +9248,6 @@ dependencies = [
  "chrono",
  "collections",
  "dap",
- "feature_flags",
  "futures 0.3.31",
  "gpui",
  "http_client",
@@ -9512,6 +9481,21 @@ dependencies = [
  "libc",
  "pkg-config",
  "vcpkg",
+]
+
+[[package]]
+name = "line_ending_selector"
+version = "0.1.0"
+dependencies = [
+ "editor",
+ "gpui",
+ "language",
+ "picker",
+ "project",
+ "ui",
+ "util",
+ "workspace",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -12620,6 +12604,7 @@ dependencies = [
  "remote",
  "rpc",
  "schemars",
+ "semver",
  "serde",
  "serde_json",
  "settings",
@@ -12639,6 +12624,7 @@ dependencies = [
  "unindent",
  "url",
  "util",
+ "watch",
  "which 6.0.3",
  "workspace-hack",
  "worktree",
@@ -14667,49 +14653,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0f7d95a54511e0c7be3f51e8867aa8cf35148d7b9445d44de2f943e2b206e749"
 
 [[package]]
-name = "semantic_index"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arrayvec",
- "blake3",
- "client",
- "clock",
- "collections",
- "feature_flags",
- "fs",
- "futures 0.3.31",
- "futures-batch",
- "gpui",
- "heed",
- "http_client",
- "language",
- "language_model",
- "languages",
- "log",
- "open_ai",
- "parking_lot",
- "project",
- "reqwest_client",
- "serde",
- "serde_json",
- "settings",
- "sha2",
- "smol",
- "streaming-iterator",
- "tempfile",
- "theme",
- "tree-sitter",
- "ui",
- "unindent",
- "util",
- "workspace",
- "workspace-hack",
- "worktree",
- "zlog",
-]
-
-[[package]]
 name = "semantic_version"
 version = "0.1.0"
 dependencies = [
@@ -15326,6 +15269,7 @@ dependencies = [
  "futures 0.3.31",
  "indoc",
  "libsqlite3-sys",
+ "log",
  "parking_lot",
  "smol",
  "sqlformat",
@@ -16980,10 +16924,15 @@ checksum = "bfb942dfe1d8e29a7ee7fcbde5bd2b9a25fb89aa70caea2eba3bee836ff41076"
 name = "toolchain_selector"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "convert_case 0.8.0",
  "editor",
+ "file_finder",
+ "futures 0.3.31",
  "fuzzy",
  "gpui",
  "language",
+ "menu",
  "picker",
  "project",
  "ui",
@@ -20428,7 +20377,6 @@ dependencies = [
  "acp_tools",
  "activity_indicator",
  "agent",
- "agent_servers",
  "agent_settings",
  "agent_ui",
  "anyhow",
@@ -20492,10 +20440,12 @@ dependencies = [
  "language_extension",
  "language_model",
  "language_models",
+ "language_onboarding",
  "language_selector",
  "language_tools",
  "languages",
  "libc",
+ "line_ending_selector",
  "livekit_client",
  "log",
  "markdown",
@@ -20823,6 +20773,7 @@ dependencies = [
  "language_model",
  "log",
  "menu",
+ "parking_lot",
  "postage",
  "project",
  "rand 0.9.1",
@@ -20895,7 +20846,7 @@ dependencies = [
  "aes",
  "byteorder",
  "bzip2",
- "constant_time_eq 0.1.5",
+ "constant_time_eq",
  "crc32fast",
  "crossbeam-utils",
  "flate2",
