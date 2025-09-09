@@ -84,6 +84,10 @@ type NSDragOperation = NSUInteger;
 const NSDragOperationNone: NSDragOperation = 0;
 #[allow(non_upper_case_globals)]
 const NSDragOperationCopy: NSDragOperation = 1;
+#[allow(non_upper_case_globals)]
+const NSTextAutocorrectionTypeNo: NSInteger = 1;
+#[allow(non_upper_case_globals)]
+const NSTextInlinePredictionTypeNone: NSInteger = 1;
 #[derive(PartialEq)]
 pub enum UserTabbingPreference {
     Never,
@@ -279,6 +283,26 @@ unsafe fn build_classes() {
                 decl.add_method(
                     sel!(isAutomaticTextReplacementEnabled),
                     no as extern "C" fn(&Object, Sel) -> BOOL,
+                );
+                decl.add_method(
+                    sel!(isContinuousSpellCheckingEnabled),
+                    no as extern "C" fn(&Object, Sel) -> BOOL,
+                );
+                decl.add_method(
+                    sel!(isGrammarCheckingEnabled),
+                    no as extern "C" fn(&Object, Sel) -> BOOL,
+                );
+                decl.add_method(
+                    sel!(isSmartInsertDeleteEnabled),
+                    no as extern "C" fn(&Object, Sel) -> BOOL,
+                );
+                decl.add_method(
+                    sel!(autocorrectionType),
+                    autocorrection_type_no as extern "C" fn(&Object, Sel) -> NSInteger,
+                );
+                decl.add_method(
+                    sel!(inlinePredictionType),
+                    inline_prediction_type_none as extern "C" fn(&Object, Sel) -> NSInteger,
                 );
             }
             decl.register()
@@ -1633,6 +1657,14 @@ extern "C" fn yes(_: &Object, _: Sel) -> BOOL {
 
 extern "C" fn no(_: &Object, _: Sel) -> BOOL {
     NO
+}
+
+extern "C" fn autocorrection_type_no(_: &Object, _: Sel) -> NSInteger {
+    NSTextAutocorrectionTypeNo
+}
+
+extern "C" fn inline_prediction_type_none(_: &Object, _: Sel) -> NSInteger {
+    NSTextInlinePredictionTypeNone
 }
 
 extern "C" fn dealloc_window(this: &Object, _: Sel) {
