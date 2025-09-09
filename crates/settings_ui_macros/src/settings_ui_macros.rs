@@ -151,64 +151,27 @@ fn generate_ui_item_body(
             settings::SettingsUiItem::None
         },
         (Some(_), _, Data::Struct(data_struct)) => {
-            let struct_serde_attrs = parse_serde_attributes(&input.attrs);
-            let fields = data_struct
-                .fields
-                .iter()
-                .filter(|field| {
-                    !field.attrs.iter().any(|attr| {
-                        let mut has_skip = false;
-                        if attr.path().is_ident("settings_ui") {
-                            let _ = attr.parse_nested_meta(|meta| {
-                                if meta.path.is_ident("skip") {
-                                    has_skip = true;
-                                }
-                                Ok(())
-                            });
-                        }
-
-                        has_skip
-                    })
-                })
-                .map(|field| {
-                    let field_serde_attrs = parse_serde_attributes(&field.attrs);
-                    let name = field.ident.clone().expect("tuple fields").to_string();
-                    let doc_str = parse_documentation_from_attrs(&field.attrs);
-
-                    (
-                        name.to_title_case(),
-                        doc_str,
-                        field_serde_attrs.flatten.not().then(|| {
-                            struct_serde_attrs.apply_rename_to_field(&field_serde_attrs, &name)
-                        }),
-                        field.ty.to_token_stream(),
-                    )
-                })
-                // todo(settings_ui): Re-format field name as nice title, and support setting different title with attr
-                .map(|(title, doc_str, path, ty)| {
-                    map_ui_item_to_entry(path.as_deref(), &title, doc_str.as_deref(), ty)
-                });
-
-            quote! {
-                settings::SettingsUiItem::Group(settings::SettingsUiItemGroup{ items: vec![#(#fields),*] })
-            }
+            let parent_serde_attrs = parse_serde_attributes(&input.attrs);
+            item_group_from_fields(&data_struct.fields, &parent_serde_attrs)
         }
         (None, _, Data::Enum(data_enum)) => {
             let serde_attrs = parse_serde_attributes(&input.attrs);
             let length = data_enum.variants.len();
 
-            let variants = data_enum.variants.iter().map(|variant| {
-                let string = variant.ident.clone().to_string();
+            let mut variants = Vec::with_capacity(length);
+            let mut labels = Vec::with_capacity(length);
 
-                let title = string.to_title_case();
-                let string = serde_attrs.rename_all.apply(&string);
+            for variant in &data_enum.variants {
+                // todo(settings_ui): Can #[serde(rename = )] be on enum variants?
+                let ident = variant.ident.clone().to_string();
+                let variant_name = serde_attrs.rename_all.apply(&ident);
+                let title = variant_name.to_title_case();
 
-                (string, title)
-            });
+                variants.push(variant_name);
+                labels.push(title);
+            }
 
-            let (variants, labels): (Vec<_>, Vec<_>) = variants.unzip();
-
-            if length > 6 {
+            let variants_select = if length > 6 {
                 quote! {
                     settings::SettingsUiItem::Single(settings::SettingsUiItemSingle::DropDown{ variants: &[#(#variants),*], labels: &[#(#labels),*] })
                 }
@@ -216,7 +179,88 @@ fn generate_ui_item_body(
                 quote! {
                     settings::SettingsUiItem::Single(settings::SettingsUiItemSingle::ToggleGroup{ variants: &[#(#variants),*], labels: &[#(#labels),*] })
                 }
+            };
+            let is_not_union = data_enum.variants.iter().all(|v| v.fields.is_empty());
+            if is_not_union {
+                return variants_select;
             }
+            // else: Union!
+
+            // todo(settings_ui)
+            if serde_attrs.untagged {
+                return quote! {
+                    settings::SettingsUiItem::None
+                };
+            }
+            // todo(settings_ui)
+            if data_enum
+                .variants
+                .iter()
+                .any(|v| v.fields.iter().any(|f| f.ident.is_some()))
+            {
+                return quote! {
+                    settings::SettingsUiItem::None
+                };
+            }
+
+            let options = data_enum.variants.iter().map(|variant| {
+                let name = &variant.ident;
+                quote! {
+                    settings::SettingsUiEntry {
+                        path: None,
+                        title: stringify!(#name),
+                        documentation: None,
+                        item: settings::SettingsUiItem::None,
+                    }
+                }
+            });
+            let defaults = data_enum.variants.iter().map(|variant| {
+                quote! {
+                    serde_json::Value::Null
+                }
+            });
+            // todo(settings_ui): Identify #[default] attr and use it for index, defaulting to 0
+            let default_variant_index: usize = 0;
+            let determine_option_fn = {
+                let match_arms = data_enum
+                    .variants
+                    .iter()
+                    .enumerate()
+                    .map(|(index, variant)| {
+                        let variant_name = &variant.ident;
+                        // todo(settings_ui): Can use explicit discriminant if present
+                        let variant_body = if variant.fields.is_empty() {
+                            quote! {}
+                        } else if variant.fields.iter().any(|f| f.ident.is_some()) {
+                            quote! { { .. } }
+                        } else {
+                            quote! { (..) }
+                        };
+                        quote! {
+                            Ok(#variant_name #variant_body) => #index
+                        }
+                    });
+                let enum_name = &input.ident;
+                quote! {
+                    |value: &serde_json::Value, _cx: &gpui::App| -> usize {
+                        use #enum_name::*;
+                        match serde_json::from_value::<#enum_name>(value.clone()) {
+                            #(#match_arms),*,
+                            Err(_) => #default_variant_index,
+                        }
+                    }
+                }
+            };
+            // todo(settings_ui) should probably always use toggle group for unions, dropdown makes less sense
+            return quote! {
+                settings::SettingsUiItem::Union(settings::SettingsUiItemUnion {
+                    defaults: vec![#(#defaults),*],
+                    labels: &[#(#labels),*],
+                    options: vec![#(#options),*],
+                    determine_option: #determine_option_fn,
+                })
+            };
+            // panic!("Unhandled");
         }
         // todo(settings_ui) discriminated unions
         (_, _, Data::Enum(_)) => quote! {
@@ -225,10 +269,54 @@ fn generate_ui_item_body(
     }
 }
 
+fn item_group_from_fields(fields: &syn::Fields, parent_serde_attrs: &SerdeOptions) -> TokenStream {
+    let group_items = fields
+        .iter()
+        .filter(|field| {
+            !field.attrs.iter().any(|attr| {
+                let mut has_skip = false;
+                if attr.path().is_ident("settings_ui") {
+                    let _ = attr.parse_nested_meta(|meta| {
+                        if meta.path.is_ident("skip") {
+                            has_skip = true;
+                        }
+                        Ok(())
+                    });
+                }
+
+                has_skip
+            })
+        })
+        .map(|field| {
+            let field_serde_attrs = parse_serde_attributes(&field.attrs);
+            let name = field.ident.clone().expect("tuple fields").to_string();
+            let doc_str = parse_documentation_from_attrs(&field.attrs);
+
+            (
+                name.to_title_case(),
+                doc_str,
+                field_serde_attrs
+                    .flatten
+                    .not()
+                    .then(|| parent_serde_attrs.apply_rename_to_field(&field_serde_attrs, &name)),
+                field.ty.to_token_stream(),
+            )
+        })
+        // todo(settings_ui): Re-format field name as nice title, and support setting different title with attr
+        .map(|(title, doc_str, path, ty)| {
+            map_ui_item_to_entry(path.as_deref(), &title, doc_str.as_deref(), ty)
+        });
+
+    quote! {
+        settings::SettingsUiItem::Group(settings::SettingsUiItemGroup{ items: vec![#(#group_items),*] })
+    }
+}
+
 struct SerdeOptions {
     rename_all: SerdeRenameAll,
     rename: Option<String>,
     flatten: bool,
+    untagged: bool,
     _alias: Option<String>, // todo(settings_ui)
 }
 
@@ -264,6 +352,7 @@ fn parse_serde_attributes(attrs: &[syn::Attribute]) -> SerdeOptions {
         rename_all: SerdeRenameAll::None,
         rename: None,
         flatten: false,
+        untagged: false,
         _alias: None,
     };
 
@@ -296,6 +385,8 @@ fn parse_serde_attributes(attrs: &[syn::Attribute]) -> SerdeOptions {
                 meta.input.parse::<Token![=]>()?;
                 let lit = meta.input.parse::<LitStr>()?.value();
                 options.rename = Some(lit);
+            } else if meta.path.is_ident("untagged") {
+                options.untagged = true;
             }
             Ok(())
         })
