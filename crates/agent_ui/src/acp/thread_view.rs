@@ -1635,7 +1635,7 @@ impl AcpThreadView {
 
         thread
             .update(cx, |thread, cx| {
-                thread.restore_checkpoint(message_id.clone(), cx);
+                thread.restore_checkpoint(message_id.clone(), cx)
             })
             .detach_and_log_err(cx);
     }
