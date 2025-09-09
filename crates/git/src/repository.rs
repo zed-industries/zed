@@ -1837,7 +1837,7 @@ impl GitBinary {
 }
 
 #[derive(Error, Debug)]
-#[error("Git command failed: {stdout} {stderr}")]
+#[error("Git command failed:\n{stdout}{stderr}\n")]
 struct GitBinaryCommandError {
     stdout: String,
     stderr: String,
