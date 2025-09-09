@@ -491,13 +491,24 @@ impl acp::Client for ClientDelegate {
         &self,
         arguments: acp::RequestPermissionRequest,
     ) -> Result<acp::RequestPermissionResponse, acp::Error> {
+        let sessions_ref = self.sessions.borrow();
+        let session = sessions_ref
+            .get(&arguments.session_id)
+            .context("Failed to get session")?;
+        let respect_always_allow_setting = session.session_modes.is_none();
+        let thread = session.thread.clone();
+        drop(sessions_ref);
+
         let cx = &mut self.cx.clone();
 
-        let task = self
-            .session_thread(&arguments.session_id)?
-            .update(cx, |thread, cx| {
-                thread.request_tool_call_authorization(arguments.tool_call, arguments.options, cx)
-            })??;
+        let task = thread.update(cx, |thread, cx| {
+            thread.request_tool_call_authorization(
+                arguments.tool_call,
+                arguments.options,
+                respect_always_allow_setting,
+                cx,
+            )
+        })??;
 
         let outcome = task.await;
 

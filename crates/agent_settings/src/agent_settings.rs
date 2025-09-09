@@ -269,6 +269,10 @@ pub struct AgentSettingsContent {
     /// Whenever a tool action would normally wait for your confirmation
     /// that you allow it, always choose to allow it.
     ///
+    /// This setting has no effect on external agents that support permission modes, such as Claude Code.
+    ///
+    /// Set `agent_servers.claude.default_mode` to `bypassPermissions`, to disable all permission requests when using Claude Code.
+    ///
     /// Default: false
     always_allow_tool_actions: Option<bool>,
     /// Where to show a popup notification when the agent is waiting for user input.
