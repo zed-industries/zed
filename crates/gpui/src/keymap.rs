@@ -162,7 +162,7 @@ impl Keymap {
             }
         }
 
-        matched_bindings.sort_by(|(depth_a, ix_a, binding_a), (depth_b, ix_b, binding_b)| {
+        matched_bindings.sort_by(|(depth_a, ix_a, _), (depth_b, ix_b, _)| {
             depth_b.cmp(depth_a).then(ix_b.cmp(ix_a))
         });
 
