@@ -828,7 +828,7 @@
       // }
     ],
     // When enabled, the agent can run potentially destructive actions without asking for your confirmation.
-    // 
+    //
     // Note: This setting has no effect on external agents that support permission modes, such as Claude Code.
     //       You can set `agent_servers.claude.default_mode` to `bypassPermissions` to skip all permission requests.
     "always_allow_tool_actions": false,
