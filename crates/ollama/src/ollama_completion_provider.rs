@@ -1,51 +1,25 @@
-use crate::{GenerateOptions, GenerateRequest, Model, generate};
+use crate::{AvailableModel, GenerateOptions, GenerateRequest, generate};
 use anyhow::{Context as AnyhowContext, Result};
-use futures::StreamExt;
-use std::{path::Path, sync::Arc, time::Duration};
-
 use edit_prediction::{Direction, EditPrediction, EditPredictionProvider};
+use futures::StreamExt;
 use gpui::{App, AppContext, Context, Entity, EntityId, Global, Subscription, Task};
 use http_client::HttpClient;
 use language::{Anchor, Buffer, ToOffset};
-use settings::SettingsStore;
-
 use project::Project;
+use settings::SettingsStore;
+use std::{path::Path, sync::Arc, time::Duration};
 
 pub const OLLAMA_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 const OLLAMA_EDIT_PREDICTION_LENGTH: i32 = 150;
 const OLLAMA_EDIT_PREDICTION_TEMP: f32 = 0.1;
 const OLLAMA_EDIT_PREDICTION_TOP_P: f32 = 0.95;
 
-// Structure for passing settings model data without circular dependencies
-#[derive(Clone, Debug)]
-pub struct SettingsModel {
-    pub name: String,
-    pub display_name: Option<String>,
-    pub max_tokens: u64,
-    pub supports_tools: Option<bool>,
-    pub supports_images: Option<bool>,
-    pub supports_thinking: Option<bool>,
-}
-
-impl SettingsModel {
-    pub fn to_model(&self) -> Model {
-        Model::new(
-            &self.name,
-            self.display_name.as_deref(),
-            Some(self.max_tokens),
-            self.supports_tools,
-            self.supports_images,
-            self.supports_thinking,
-        )
-    }
-}
-
 // Global Ollama service for managing models across all providers
 pub struct State {
     http_client: Arc<dyn HttpClient>,
     api_url: String,
     api_key: Option<String>,
-    available_models: Vec<Model>,
+    available_models: Vec<AvailableModel>,
     fetch_models_task: Option<Task<Result<()>>>,
     _settings_subscription: Subscription,
 }
@@ -88,7 +62,7 @@ impl State {
         cx.set_global(GlobalOllamaState(service));
     }
 
-    pub fn available_models(&self) -> &[Model] {
+    pub fn available_models(&self) -> &[AvailableModel] {
         &self.available_models
     }
 
@@ -96,16 +70,8 @@ impl State {
         self.restart_fetch_models_task(cx);
     }
 
-    pub fn set_settings_models(
-        &mut self,
-        settings_models: Vec<SettingsModel>,
-        cx: &mut Context<Self>,
-    ) {
-        // Convert settings models to our Model type
-        self.available_models = settings_models
-            .into_iter()
-            .map(|settings_model| settings_model.to_model())
-            .collect();
+    pub fn set_models(&mut self, available_models: Vec<AvailableModel>, cx: &mut Context<Self>) {
+        self.available_models = available_models;
         self.restart_fetch_models_task(cx);
     }
 
@@ -163,12 +129,12 @@ impl State {
                         let capabilities =
                             crate::show_model(http_client.as_ref(), &api_url, api_key, name)
                                 .await?;
-                        let ollama_model = Model::new(
+                        let ollama_model = AvailableModel::new(
                             name,
                             None,
                             None,
                             Some(capabilities.supports_tools()),
-                            Some(capabilities.supports_vision()),
+                            Some(capabilities.supports_images()),
                             Some(capabilities.supports_thinking()),
                         );
                         Ok(ollama_model)
@@ -240,7 +206,7 @@ impl OllamaCompletionProvider {
         }
     }
 
-    pub fn available_models(&self, cx: &App) -> Vec<Model> {
+    pub fn available_models(&self, cx: &App) -> Vec<AvailableModel> {
         if let Some(service) = State::global(cx) {
             service.read(cx).available_models().to_vec()
         } else {
@@ -380,7 +346,6 @@ impl EditPredictionProvider for OllamaCompletionProvider {
                     stop: stop_tokens,
                 }),
                 keep_alive: None,
-                context: None,
             };
 
             let response = generate(http_client.as_ref(), &api_url, api_key, request)
@@ -905,8 +870,7 @@ mod tests {
         editor_cx.set_state("let items = ˇ");
 
         // Trigger the completion through the provider
-        let buffer =
-            editor_cx.multibuffer(|multibuffer, _| multibuffer.as_singleton().unwrap().clone());
+        let buffer = editor_cx.multibuffer(|multibuffer, _| multibuffer.as_singleton().unwrap());
         let cursor_position = editor_cx.buffer_snapshot().anchor_after(12);
 
         provider.update(cx, |provider, cx| {
@@ -985,8 +949,7 @@ mod tests {
         editor_cx.set_state("fooˇ");
 
         // Trigger the completion through the provider
-        let buffer =
-            editor_cx.multibuffer(|multibuffer, _| multibuffer.as_singleton().unwrap().clone());
+        let buffer = editor_cx.multibuffer(|multibuffer, _| multibuffer.as_singleton().unwrap());
         let cursor_position = editor_cx.buffer_snapshot().anchor_after(3); // After "foo"
 
         provider.update(cx, |provider, cx| {
@@ -1084,18 +1047,20 @@ mod tests {
 
         // Add settings models (including one that overlaps with API)
         let settings_models = vec![
-            SettingsModel {
+            AvailableModel {
                 name: "custom-model-1".to_string(),
                 display_name: Some("Custom Model 1".to_string()),
                 max_tokens: 4096,
+                keep_alive: None,
                 supports_tools: Some(true),
                 supports_images: Some(false),
                 supports_thinking: Some(false),
             },
-            SettingsModel {
+            AvailableModel {
                 name: "shared-model".to_string(), // This should take precedence over API
                 display_name: Some("Custom Shared Model".to_string()),
                 max_tokens: 8192,
+                keep_alive: None,
                 supports_tools: Some(true),
                 supports_images: Some(true),
                 supports_thinking: Some(true),
@@ -1104,7 +1069,7 @@ mod tests {
 
         cx.update(|cx| {
             service.update(cx, |service, cx| {
-                service.set_settings_models(settings_models, cx);
+                service.set_models(settings_models, cx);
             });
         });
 
@@ -1139,7 +1104,7 @@ mod tests {
         );
         assert_eq!(shared_model.max_tokens, 8192);
         assert_eq!(shared_model.supports_tools, Some(true));
-        assert_eq!(shared_model.supports_vision, Some(true));
+        assert_eq!(shared_model.supports_images, Some(true));
         assert_eq!(shared_model.supports_thinking, Some(true));
 
         // API-only model should be included

@@ -32,14 +32,21 @@ impl Default for KeepAlive {
 }
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
-pub struct Model {
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct AvailableModel {
+    /// The model name in the Ollama API (e.g. "llama3.2:latest")
     pub name: String,
+    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
     pub display_name: Option<String>,
+    /// The Context Length parameter to the model (aka num_ctx or n_ctx)
     pub max_tokens: u64,
+    /// The number of seconds to keep the connection open after the last request
     pub keep_alive: Option<KeepAlive>,
+    /// Whether the model supports tools
     pub supports_tools: Option<bool>,
-    pub supports_vision: Option<bool>,
+    /// Whether the model supports images
+    pub supports_images: Option<bool>,
+    /// Whether to enable think mode
     pub supports_thinking: Option<bool>,
 }
 
@@ -65,13 +72,13 @@ fn get_max_tokens(name: &str) -> u64 {
     .clamp(1, MAXIMUM_TOKENS)
 }
 
-impl Model {
+impl AvailableModel {
     pub fn new(
         name: &str,
         display_name: Option<&str>,
         max_tokens: Option<u64>,
         supports_tools: Option<bool>,
-        supports_vision: Option<bool>,
+        supports_images: Option<bool>,
         supports_thinking: Option<bool>,
     ) -> Self {
         Self {
@@ -82,7 +89,7 @@ impl Model {
             max_tokens: max_tokens.unwrap_or_else(|| get_max_tokens(name)),
             keep_alive: Some(KeepAlive::indefinite()),
             supports_tools,
-            supports_vision,
+            supports_images,
             supports_thinking,
         }
     }
@@ -269,7 +276,7 @@ impl ModelShow {
         self.capabilities.iter().any(|v| v == "tools")
     }
 
-    pub fn supports_vision(&self) -> bool {
+    pub fn supports_images(&self) -> bool {
         self.capabilities.iter().any(|v| v == "vision")
     }
 

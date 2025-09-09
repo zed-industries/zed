@@ -11,11 +11,9 @@ use language_model::{
     LanguageModelToolUseId, MessageContent, RateLimiter, Role, StopReason, TokenUsage,
 };
 use ollama::{
-    ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, KeepAlive, OllamaFunctionCall,
+    ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, OllamaFunctionCall,
     OllamaFunctionTool, OllamaToolCall, get_models, show_model, stream_chat_completion,
 };
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -25,6 +23,8 @@ use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
 use crate::ui::InstructionListItem;
+
+pub use ollama::AvailableModel;
 
 const OLLAMA_DOWNLOAD_URL: &str = "https://ollama.com/download";
 const OLLAMA_LIBRARY_URL: &str = "https://ollama.com/library";
@@ -39,24 +39,6 @@ pub struct OllamaSettings {
     pub available_models: Vec<AvailableModel>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct AvailableModel {
-    /// The model name in the Ollama API (e.g. "llama3.2:latest")
-    pub name: String,
-    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
-    pub display_name: Option<String>,
-    /// The Context Length parameter to the model (aka num_ctx or n_ctx)
-    pub max_tokens: u64,
-    /// The number of seconds to keep the connection open after the last request
-    pub keep_alive: Option<KeepAlive>,
-    /// Whether the model supports tools
-    pub supports_tools: Option<bool>,
-    /// Whether the model supports vision
-    pub supports_images: Option<bool>,
-    /// Whether to enable think mode
-    pub supports_thinking: Option<bool>,
-}
-
 pub struct OllamaLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
     state: gpui::Entity<State>,
@@ -64,7 +46,7 @@ pub struct OllamaLanguageModelProvider {
 
 pub struct State {
     http_client: Arc<dyn HttpClient>,
-    available_models: Vec<ollama::Model>,
+    available_models: Vec<AvailableModel>,
     fetch_model_task: Option<Task<Result<()>>>,
     _subscription: Subscription,
 }
@@ -96,12 +78,12 @@ impl State {
                         let name = model.name.as_str();
                         let capabilities =
                             show_model(http_client.as_ref(), &api_url, None, name).await?;
-                        let ollama_model = ollama::Model::new(
+                        let ollama_model = AvailableModel::new(
                             name,
                             None,
                             None,
                             Some(capabilities.supports_tools()),
-                            Some(capabilities.supports_vision()),
+                            Some(capabilities.supports_images()),
                             Some(capabilities.supports_thinking()),
                         );
                         Ok(ollama_model)
@@ -151,7 +133,7 @@ impl OllamaLanguageModelProvider {
         cx.set_global(GlobalOllamaLanguageModelProvider(provider));
     }
 
-    pub fn available_models_for_completion(&self, cx: &App) -> Vec<ollama::Model> {
+    pub fn available_models_for_completion(&self, cx: &App) -> Vec<AvailableModel> {
         self.state.read(cx).available_models.clone()
     }
 
@@ -229,7 +211,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        let mut models: HashMap<String, ollama::Model> = HashMap::new();
+        let mut models: HashMap<String, AvailableModel> = HashMap::new();
 
         // Add models from the Ollama API
         for model in self.state.read(cx).available_models.iter() {
@@ -244,13 +226,13 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         {
             models.insert(
                 model.name.clone(),
-                ollama::Model {
+                AvailableModel {
                     name: model.name.clone(),
                     display_name: model.display_name.clone(),
                     max_tokens: model.max_tokens,
                     keep_alive: model.keep_alive.clone(),
                     supports_tools: model.supports_tools,
-                    supports_vision: model.supports_images,
+                    supports_images: model.supports_images,
                     supports_thinking: model.supports_thinking,
                 },
             );
@@ -297,19 +279,19 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
 
 pub struct OllamaLanguageModel {
     id: LanguageModelId,
-    model: ollama::Model,
+    model: AvailableModel,
     http_client: Arc<dyn HttpClient>,
     request_limiter: RateLimiter,
 }
 
 impl OllamaLanguageModel {
     fn to_ollama_request(&self, request: LanguageModelRequest) -> ChatRequest {
-        let supports_vision = self.model.supports_vision.unwrap_or(false);
+        let supports_images = self.model.supports_images.unwrap_or(false);
 
         let mut messages = Vec::with_capacity(request.messages.len());
 
         for mut msg in request.messages.into_iter() {
-            let images = if supports_vision {
+            let images = if supports_images {
                 msg.content
                     .iter()
                     .filter_map(|content| match content {
@@ -428,7 +410,7 @@ impl LanguageModel for OllamaLanguageModel {
     }
 
     fn supports_images(&self) -> bool {
-        self.model.supports_vision.unwrap_or(false)
+        self.model.supports_images.unwrap_or(false)
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {

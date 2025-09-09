@@ -212,7 +212,7 @@ impl Model {
         self.vendor
     }
 
-    pub fn supports_vision(&self) -> bool {
+    pub fn supports_images(&self) -> bool {
         self.capabilities.supports.vision
     }
 

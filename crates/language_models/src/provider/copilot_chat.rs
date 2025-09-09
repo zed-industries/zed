@@ -231,7 +231,7 @@ impl LanguageModel for CopilotChatLanguageModel {
     }
 
     fn supports_images(&self) -> bool {
-        self.model.supports_vision()
+        self.model.supports_images()
     }
 
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
@@ -503,7 +503,7 @@ fn into_copilot_chat(
                         let content = match &tool_result.content {
                             LanguageModelToolResultContent::Text(text) => text.to_string().into(),
                             LanguageModelToolResultContent::Image(image) => {
-                                if model.supports_vision() {
+                                if model.supports_images() {
                                     ChatMessageContent::Multipart(vec![ChatMessagePart::Image {
                                         image_url: ImageUrl {
                                             url: image.to_base64_url(),
@@ -542,7 +542,7 @@ fn into_copilot_chat(
                                 });
                             }
                         }
-                        MessageContent::Image(image) if model.supports_vision() => {
+                        MessageContent::Image(image) if model.supports_images() => {
                             content_parts.push(ChatMessagePart::Image {
                                 image_url: ImageUrl {
                                     url: image.to_base64_url(),

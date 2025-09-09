@@ -372,7 +372,7 @@ impl Render for EditPredictionButton {
                     IconName::AiOllama // Could add disabled variant
                 };
 
-                let this = cx.entity().clone();
+                let this = cx.entity();
 
                 div().child(
                     PopoverMenu::new("ollama")
@@ -889,7 +889,7 @@ impl EditPredictionButton {
                         max_tokens: model.max_tokens,
                         keep_alive: model.keep_alive.clone(),
                         supports_tools: model.supports_tools,
-                        supports_images: model.supports_vision,
+                        supports_images: model.supports_images,
                         supports_thinking: model.supports_thinking,
                     };
 
@@ -1071,7 +1071,7 @@ impl EditPredictionButton {
                             max_tokens: discovered_model.max_tokens,
                             keep_alive: discovered_model.keep_alive.clone(),
                             supports_tools: discovered_model.supports_tools,
-                            supports_images: discovered_model.supports_vision,
+                            supports_images: discovered_model.supports_images,
                             supports_thinking: discovered_model.supports_thinking,
                         };
 
@@ -1737,7 +1737,7 @@ mod tests {
                         max_tokens: model.max_tokens,
                         keep_alive: model.keep_alive.clone(),
                         supports_tools: model.supports_tools,
-                        supports_images: model.supports_vision,
+                        supports_images: model.supports_images,
                         supports_thinking: model.supports_thinking,
                     };
 
@@ -1827,7 +1827,7 @@ mod tests {
                         max_tokens: model.max_tokens,
                         keep_alive: model.keep_alive.clone(),
                         supports_tools: model.supports_tools,
-                        supports_images: model.supports_vision,
+                        supports_images: model.supports_images,
                         supports_thinking: model.supports_thinking,
                     };
 
@@ -1944,7 +1944,7 @@ mod tests {
                         max_tokens: discovered_model.max_tokens,
                         keep_alive: discovered_model.keep_alive.clone(),
                         supports_tools: discovered_model.supports_tools,
-                        supports_images: discovered_model.supports_vision,
+                        supports_images: discovered_model.supports_images,
                         supports_thinking: discovered_model.supports_thinking,
                     };
 
