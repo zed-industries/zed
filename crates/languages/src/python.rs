@@ -23,7 +23,6 @@ use project::lsp_store::language_server_settings;
 use serde_json::{Value, json};
 use smol::lock::OnceCell;
 use std::cmp::Ordering;
-use std::process;
 
 use parking_lot::Mutex;
 use std::str::FromStr;
