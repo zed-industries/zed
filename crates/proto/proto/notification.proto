@@ -18,6 +18,10 @@ message DeleteNotification {
     uint64 notification_id = 1;
 }
 
+message UpdateNotification {
+    Notification notification = 1;
+}
+
 message MarkNotificationRead {
     uint64 notification_id = 1;
 }

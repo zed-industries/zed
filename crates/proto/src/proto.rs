@@ -271,6 +271,7 @@ messages!(
     (UpdateGitBranch, Background),
     (UpdateInviteInfo, Foreground),
     (UpdateLanguageServer, Foreground),
+    (UpdateNotification, Foreground),
     (UpdateParticipantLocation, Foreground),
     (UpdateProject, Foreground),
     (UpdateProjectCollaborator, Foreground),

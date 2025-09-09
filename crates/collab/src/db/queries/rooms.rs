@@ -1193,6 +1193,7 @@ impl Database {
         self.transaction(|tx| async move {
             self.room_connection_lost(connection, &tx).await?;
             self.channel_buffer_connection_lost(connection, &tx).await?;
+            self.channel_chat_connection_lost(connection, &tx).await?;
             Ok(())
         })
         .await
