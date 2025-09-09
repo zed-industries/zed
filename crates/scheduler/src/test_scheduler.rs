@@ -9,6 +9,7 @@ use rand::prelude::*;
 use std::{
     any::type_name_of_val,
     collections::{BTreeMap, VecDeque},
+    env,
     fmt::Write,
     future::Future,
     mem,
@@ -23,6 +24,8 @@ use std::{
     thread::{self, Thread},
     time::{Duration, Instant},
 };
+
+const PENDING_TRACES_VAR_NAME: &str = "PENDING_TRACES";
 
 pub struct TestScheduler {
     clock: Arc<TestClock>,
@@ -73,6 +76,7 @@ impl TestScheduler {
                 allow_parking: config.allow_parking,
                 timeout_ticks: config.timeout_ticks,
                 next_session_id: SessionId(0),
+                capture_pending_traces: config.capture_pending_traces,
                 pending_traces: BTreeMap::new(),
                 next_trace_id: TraceId(0),
             })),
@@ -190,12 +194,16 @@ impl TestScheduler {
             }
         } else if deadline.is_some() {
             false
-        } else {
+        } else if self.state.lock().capture_pending_traces {
             let mut pending_traces = String::new();
             for (_, trace) in mem::take(&mut self.state.lock().pending_traces) {
                 writeln!(pending_traces, "{:?}", exclude_wakers_from_trace(trace)).unwrap();
             }
             panic!("Parking forbidden. Pending traces:\n{}", pending_traces);
+        } else {
+            panic!(
+                "Parking forbidden. Re-run with {PENDING_TRACES_VAR_NAME}=1 to show pending traces"
+            );
         }
     }
 }
@@ -333,6 +341,7 @@ pub struct TestSchedulerConfig {
     pub seed: u64,
     pub randomize_order: bool,
     pub allow_parking: bool,
+    pub capture_pending_traces: bool,
     pub timeout_ticks: RangeInclusive<usize>,
 }
 
@@ -351,6 +360,8 @@ impl Default for TestSchedulerConfig {
             seed: 0,
             randomize_order: true,
             allow_parking: false,
+            capture_pending_traces: env::var(PENDING_TRACES_VAR_NAME)
+                .map_or(false, |var| var == "1" || var == "true"),
             timeout_ticks: 0..=1000,
         }
     }
@@ -380,6 +391,7 @@ struct SchedulerState {
     allow_parking: bool,
     timeout_ticks: RangeInclusive<usize>,
     next_session_id: SessionId,
+    capture_pending_traces: bool,
     next_trace_id: TraceId,
     pending_traces: BTreeMap<TraceId, Backtrace>,
 }
@@ -404,11 +416,16 @@ struct TracingWaker {
 impl Clone for TracingWaker {
     fn clone(&self) -> Self {
         let mut state = self.state.lock();
-        let id = state.next_trace_id;
-        state.next_trace_id.0 += 1;
-        state.pending_traces.insert(id, Backtrace::new_unresolved());
+        let id = if state.capture_pending_traces {
+            let id = state.next_trace_id;
+            state.next_trace_id.0 += 1;
+            state.pending_traces.insert(id, Backtrace::new_unresolved());
+            Some(id)
+        } else {
+            None
+        };
         Self {
-            id: Some(id),
+            id,
             awoken: self.awoken.clone(),
             thread: self.thread.clone(),
             state: self.state.clone(),

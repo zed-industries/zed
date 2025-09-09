@@ -238,9 +238,14 @@ fn test_block() {
 }
 
 #[test]
-#[should_panic(expected = "Parking forbidden")]
+#[should_panic(expected = "<futures_channel::oneshot::Inner<()>>::recv")]
 fn test_parking_panics() {
-    TestScheduler::once(async |_scheduler| {
+    let config = TestSchedulerConfig {
+        capture_pending_traces: true,
+        ..Default::default()
+    };
+    let scheduler = Arc::new(TestScheduler::new(config));
+    scheduler.foreground().block_on(async {
         let (_tx, rx) = oneshot::channel::<()>();
         rx.await.unwrap(); // This will never complete
     });
