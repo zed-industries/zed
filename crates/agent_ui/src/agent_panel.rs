@@ -3066,6 +3066,8 @@ impl AgentPanel {
             return None;
         }
 
+        let plan = self.user_store.read(cx).plan()?;
+
         Some(
             v_flex()
                 .absolute()
@@ -3074,15 +3076,18 @@ impl AgentPanel {
                 .bg(cx.theme().colors().panel_background)
                 .opacity(0.85)
                 .block_mouse_except_scroll()
-                .child(EndTrialUpsell::new(Arc::new({
-                    let this = cx.entity();
-                    move |_, cx| {
-                        this.update(cx, |_this, cx| {
-                            TrialEndUpsell::set_dismissed(true, cx);
-                            cx.notify();
-                        });
-                    }
-                }))),
+                .child(EndTrialUpsell::new(
+                    plan,
+                    Arc::new({
+                        let this = cx.entity();
+                        move |_, cx| {
+                            this.update(cx, |_this, cx| {
+                                TrialEndUpsell::set_dismissed(true, cx);
+                                cx.notify();
+                            });
+                        }
+                    }),
+                )),
         )
     }
 
@@ -3518,7 +3523,7 @@ impl AgentPanel {
         let error_message = match plan {
             Plan::ZedPro => "Upgrade to usage-based billing for more prompts.",
             Plan::ZedProTrial | Plan::ZedFree => "Upgrade to Zed Pro for more prompts.",
-            Plan::ZedProV2 | Plan::ZedProTrialV2 => "",
+            Plan::ZedProV2 | Plan::ZedProTrialV2 | Plan::ZedFreeV2 => "",
         };
 
         Callout::new()

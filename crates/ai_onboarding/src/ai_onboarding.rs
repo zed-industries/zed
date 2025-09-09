@@ -113,7 +113,7 @@ impl ZedAiOnboarding {
             .into_any_element()
     }
 
-    fn render_free_plan_state(&self, cx: &mut App) -> AnyElement {
+    fn render_free_plan_state(&self, is_v2: bool, cx: &mut App) -> AnyElement {
         if self.account_too_young {
             v_flex()
                 .relative()
@@ -136,9 +136,7 @@ impl ZedAiOnboarding {
                                 )
                                 .child(Divider::horizontal()),
                         )
-                        .child(
-                            PlanDefinitions.pro_plan(cx.has_flag::<BillingV2FeatureFlag>(), true),
-                        )
+                        .child(PlanDefinitions.pro_plan(is_v2, true))
                         .child(
                             Button::new("pro", "Get Started")
                                 .full_width()
@@ -181,7 +179,7 @@ impl ZedAiOnboarding {
                                 )
                                 .child(Divider::horizontal()),
                         )
-                        .child(PlanDefinitions.free_plan(cx.has_flag::<BillingV2FeatureFlag>())),
+                        .child(PlanDefinitions.free_plan(is_v2)),
                 )
                 .when_some(
                     self.dismiss_onboarding.as_ref(),
@@ -219,9 +217,7 @@ impl ZedAiOnboarding {
                                 )
                                 .child(Divider::horizontal()),
                         )
-                        .child(
-                            PlanDefinitions.pro_trial(cx.has_flag::<BillingV2FeatureFlag>(), true),
-                        )
+                        .child(PlanDefinitions.pro_trial(is_v2, true))
                         .child(
                             Button::new("pro", "Start Free Trial")
                                 .full_width()
@@ -311,11 +307,16 @@ impl RenderOnce for ZedAiOnboarding {
     fn render(self, _window: &mut ui::Window, cx: &mut App) -> impl IntoElement {
         if matches!(self.sign_in_status, SignInStatus::SignedIn) {
             match self.plan {
-                None | Some(Plan::ZedFree) => self.render_free_plan_state(cx),
-                Some(Plan::ZedProTrial) => self.render_trial_state(false, cx),
-                Some(Plan::ZedProTrialV2) => self.render_trial_state(true, cx),
-                Some(Plan::ZedPro) => self.render_pro_plan_state(false, cx),
-                Some(Plan::ZedProV2) => self.render_pro_plan_state(true, cx),
+                None => self.render_free_plan_state(cx.has_flag::<BillingV2FeatureFlag>(), cx),
+                Some(plan @ (Plan::ZedFree | Plan::ZedFreeV2)) => {
+                    self.render_free_plan_state(plan.is_v2(), cx)
+                }
+                Some(plan @ (Plan::ZedProTrial | Plan::ZedProTrialV2)) => {
+                    self.render_trial_state(plan.is_v2(), cx)
+                }
+                Some(plan @ (Plan::ZedPro | Plan::ZedProV2)) => {
+                    self.render_pro_plan_state(plan.is_v2(), cx)
+                }
             }
         } else {
             self.render_sign_in_disclaimer(cx)

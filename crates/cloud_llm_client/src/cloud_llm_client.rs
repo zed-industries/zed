@@ -80,6 +80,7 @@ pub enum Plan {
     #[default]
     #[serde(alias = "Free")]
     ZedFree,
+    ZedFreeV2,
     #[serde(alias = "ZedPro")]
     ZedPro,
     ZedProV2,
@@ -88,14 +89,23 @@ pub enum Plan {
     ZedProTrialV2,
 }
 
+impl Plan {
+    pub fn is_v2(&self) -> bool {
+        matches!(self, Plan::ZedFreeV2 | Plan::ZedProV2 | Plan::ZedProTrialV2)
+    }
+}
+
 impl FromStr for Plan {
     type Err = anyhow::Error;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
             "zed_free" => Ok(Plan::ZedFree),
+            "zed_free_v2" => Ok(Plan::ZedFreeV2),
             "zed_pro" => Ok(Plan::ZedPro),
+            "zed_pro_v2" => Ok(Plan::ZedProV2),
             "zed_pro_trial" => Ok(Plan::ZedProTrial),
+            "zed_pro_trial_v2" => Ok(Plan::ZedProTrialV2),
             plan => Err(anyhow::anyhow!("invalid plan: {plan:?}")),
         }
     }
