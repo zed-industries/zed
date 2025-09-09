@@ -255,20 +255,34 @@ impl LspAdapter for PythonLspAdapter {
         let label = &item.label;
         let grammar = language.grammar()?;
         let highlight_id = match item.kind? {
-            lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method")?,
-            lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function")?,
-            lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type")?,
-            lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant")?,
-            _ => return None,
+            lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method"),
+            lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function"),
+            lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type"),
+            lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant"),
+            lsp::CompletionItemKind::VARIABLE => grammar.highlight_id_for_name("variable"),
+            _ => {
+                return None;
+            }
         };
         let filter_range = item
             .filter_text
             .as_deref()
             .and_then(|filter| label.find(filter).map(|ix| ix..ix + filter.len()))
             .unwrap_or(0..label.len());
+        let mut text = label.clone();
+        if let Some(completion_details) = item
+            .label_details
+            .as_ref()
+            .and_then(|details| details.description.as_ref())
+        {
+            write!(&mut text, " {}", completion_details).ok();
+        }
         Some(language::CodeLabel {
-            text: label.clone(),
-            runs: vec![(0..label.len(), highlight_id)],
+            runs: highlight_id
+                .map(|id| (0..label.len(), id))
+                .into_iter()
+                .collect(),
+            text,
             filter_range,
         })
     }
@@ -1494,20 +1508,34 @@ impl LspAdapter for BasedPyrightLspAdapter {
         let label = &item.label;
         let grammar = language.grammar()?;
         let highlight_id = match item.kind? {
-            lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method")?,
-            lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function")?,
-            lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type")?,
-            lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant")?,
-            _ => return None,
+            lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method"),
+            lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function"),
+            lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type"),
+            lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant"),
+            lsp::CompletionItemKind::VARIABLE => grammar.highlight_id_for_name("variable"),
+            _ => {
+                return None;
+            }
         };
         let filter_range = item
             .filter_text
             .as_deref()
             .and_then(|filter| label.find(filter).map(|ix| ix..ix + filter.len()))
             .unwrap_or(0..label.len());
+        let mut text = label.clone();
+        if let Some(completion_details) = item
+            .label_details
+            .as_ref()
+            .and_then(|details| details.description.as_ref())
+        {
+            write!(&mut text, " {}", completion_details).ok();
+        }
         Some(language::CodeLabel {
-            text: label.clone(),
-            runs: vec![(0..label.len(), highlight_id)],
+            runs: highlight_id
+                .map(|id| (0..label.len(), id))
+                .into_iter()
+                .collect(),
+            text,
             filter_range,
         })
     }
