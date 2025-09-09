@@ -7,7 +7,7 @@ pub struct PlanDefinitions;
 impl PlanDefinitions {
     pub const AI_DESCRIPTION: &'static str = "Zed offers a complete agentic experience, with robust editing and reviewing features to collaborate with AI.";
 
-    pub fn free_plan(&self) -> impl IntoElement {
+    pub fn free_plan(&self, _is_v2: bool) -> impl IntoElement {
         List::new()
             .child(ListBulletItem::new("50 prompts with Claude models"))
             .child(ListBulletItem::new("2,000 accepted edit predictions"))

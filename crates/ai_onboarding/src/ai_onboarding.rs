@@ -181,7 +181,7 @@ impl ZedAiOnboarding {
                                 )
                                 .child(Divider::horizontal()),
                         )
-                        .child(PlanDefinitions.free_plan()),
+                        .child(PlanDefinitions.free_plan(cx.has_flag::<BillingV2FeatureFlag>())),
                 )
                 .when_some(
                     self.dismiss_onboarding.as_ref(),

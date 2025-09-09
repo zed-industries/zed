@@ -63,7 +63,7 @@ impl RenderOnce for EndTrialUpsell {
                     )
                     .child(Divider::horizontal()),
             )
-            .child(PlanDefinitions.free_plan());
+            .child(PlanDefinitions.free_plan(cx.has_flag::<BillingV2FeatureFlag>()));
 
         AgentPanelOnboardingCard::new()
             .child(Headline::new("Your Zed Pro Trial has expired"))

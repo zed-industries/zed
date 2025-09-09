@@ -82,7 +82,7 @@ impl RenderOnce for AiUpsellCard {
                     )
                     .child(Divider::horizontal()),
             )
-            .child(PlanDefinitions.free_plan());
+            .child(PlanDefinitions.free_plan(cx.has_flag::<BillingV2FeatureFlag>()));
 
         let grid_bg = h_flex()
             .absolute()
