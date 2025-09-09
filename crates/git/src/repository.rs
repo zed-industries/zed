@@ -1814,6 +1814,7 @@ impl GitBinary {
             output.status.success(),
             GitBinaryCommandError {
                 stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
                 status: output.status,
             }
         );
@@ -1836,9 +1837,10 @@ impl GitBinary {
 }
 
 #[derive(Error, Debug)]
-#[error("Git command failed: {stdout}")]
+#[error("Git command failed:\n{stdout}{stderr}\n")]
 struct GitBinaryCommandError {
     stdout: String,
+    stderr: String,
     status: ExitStatus,
 }
 
