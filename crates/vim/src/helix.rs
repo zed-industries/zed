@@ -3,15 +3,10 @@ mod object;
 mod select;
 
 use editor::display_map::DisplaySnapshot;
-<<<<<<< HEAD
-use editor::{DisplayPoint, Editor, SelectionEffects, ToOffset, ToPoint, movement};
-use gpui::actions;
-=======
 use editor::{
     DisplayPoint, Editor, HideMouseCursorOrigin, SelectionEffects, ToOffset, ToPoint, movement,
 };
-use gpui::{Action, actions};
->>>>>>> origin/main
+use gpui::actions;
 use gpui::{Context, Window};
 use language::{CharClassifier, CharKind, Point};
 use text::{Bias, SelectionGoal};
@@ -40,6 +35,7 @@ actions!(
 );
 
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
+    Vim::action(editor, cx, Vim::helix_select_lines);
     Vim::action(editor, cx, Vim::helix_insert);
     Vim::action(editor, cx, Vim::helix_append);
     Vim::action(editor, cx, Vim::helix_yank);
