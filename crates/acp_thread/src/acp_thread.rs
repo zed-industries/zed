@@ -1716,20 +1716,6 @@ impl AcpThread {
             })
     }
 
-    fn user_message(&self, id: &UserMessageId) -> Option<&UserMessage> {
-        self.entries.iter().find_map(|entry| {
-            if let AgentThreadEntry::UserMessage(message) = entry {
-                if message.id.as_ref() == Some(id) {
-                    Some(message)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        })
-    }
-
     fn user_message_mut(&mut self, id: &UserMessageId) -> Option<(usize, &mut UserMessage)> {
         self.entries.iter_mut().enumerate().find_map(|(ix, entry)| {
             if let AgentThreadEntry::UserMessage(message) = entry {
