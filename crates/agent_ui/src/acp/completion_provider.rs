@@ -1066,13 +1066,21 @@ struct MentionCompletion {
 impl MentionCompletion {
     fn try_parse(allow_non_file_mentions: bool, line: &str, offset_to_line: usize) -> Option<Self> {
         let last_mention_start = line.rfind('@')?;
-        if last_mention_start >= line.len() {
-            return Some(Self::default());
+
+        // No whitespace immediately after '@'
+        if line[last_mention_start + 1..]
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_whitespace())
+        {
+            return None;
         }
+
+        //  Must be a word boundary before '@'
         if last_mention_start > 0
-            && line
+            && line[..last_mention_start]
                 .chars()
-                .nth(last_mention_start - 1)
+                .last()
                 .is_some_and(|c| !c.is_whitespace())
         {
             return None;
@@ -1085,7 +1093,9 @@ impl MentionCompletion {
 
         let mut parts = rest_of_line.split_whitespace();
         let mut end = last_mention_start + 1;
+
         if let Some(mode_text) = parts.next() {
+            // Safe since we check no leading whitespace above
             end += mode_text.len();
 
             if let Some(parsed_mode) = ContextPickerMode::try_from(mode_text).ok()
@@ -1277,6 +1287,24 @@ mod tests {
                 mode: None,
                 argument: Some("main".to_string()),
             })
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse(true, "Lorem@symbol", 0),
+            None,
+            "Should not parse mention inside word"
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse(true, "Lorem @ file", 0),
+            None,
+            "Should not parse with a space after @"
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse(true, "@ file", 0),
+            None,
+            "Should not parse with a space after @ at the start of the line"
         );
     }
 }
