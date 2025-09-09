@@ -14,7 +14,7 @@ use syn::{Data, DeriveInput, LitStr, Token, parse_macro_input};
 /// # Example
 ///
 /// ```
-/// use settings::SettingsUi;
+/// use settings_ui_macros::SettingsUi;
 ///
 /// #[derive(SettingsUi)]
 /// #[settings_ui(group = "Standard")]

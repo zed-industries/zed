@@ -14888,6 +14888,7 @@ dependencies = [
  "heck 0.5.0",
  "proc-macro2",
  "quote",
+ "settings",
  "syn 2.0.101",
  "workspace-hack",
 ]
