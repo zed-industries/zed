@@ -3005,6 +3005,9 @@ impl AgentPanel {
             _ => {
                 let history_is_empty = if cx.has_flag::<GeminiAndNativeFeatureFlag>() {
                     self.acp_history_store.read(cx).is_empty(cx)
+                        && self
+                            .history_store
+                            .update(cx, |store, cx| store.recent_entries(1, cx).is_empty())
                 } else {
                     self.history_store
                         .update(cx, |store, cx| store.recent_entries(1, cx).is_empty())
