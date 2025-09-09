@@ -612,7 +612,9 @@ impl DirectXRenderer {
             let render_params: IDWriteRenderingParams1 =
                 factory.CreateRenderingParams().unwrap().cast().unwrap();
             FontInfo {
+                // TODO kb where to get that for Linux?
                 gamma_ratios: Self::get_gamma_ratios(render_params.GetGamma()),
+                // TODO kb where to get that for Linux?
                 grayscale_enhanced_contrast: render_params.GetGrayscaleEnhancedContrast(),
             }
         })

@@ -258,6 +258,9 @@ impl BladePipelines {
             }),
             mono_sprites: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "mono-sprites",
+                // TODO kb determine new alpha correction shader data and pass it in
+                // most probably changes this `ShaderMonoSpritesData`
+                // for that, we repeat the code from directx_renderer.rs::get_font_info
                 data_layouts: &[&ShaderMonoSpritesData::layout()],
                 vertex: shader.at("vs_mono_sprite"),
                 vertex_fetches: &[],
