@@ -1020,12 +1020,6 @@ impl AgentConfiguration {
                     name.clone(),
                     ExternalAgent::Custom {
                         name: name.clone().into(),
-                        default_mode: custom_settings.get(&name.0).and_then(|settings| {
-                            settings
-                                .default_mode
-                                .clone()
-                                .map(|m| agent_client_protocol::SessionModeId(m.into()))
-                        }),
                         command: custom_settings
                             .get(&name.0)
                             .map(|settings| settings.command.clone())

@@ -267,7 +267,6 @@ pub enum AgentType {
     Custom {
         name: SharedString,
         command: AgentServerCommand,
-        default_mode: Option<agent_client_protocol::SessionModeId>,
     },
 }
 
@@ -297,15 +296,7 @@ impl From<ExternalAgent> for AgentType {
         match value {
             ExternalAgent::Gemini => Self::Gemini,
             ExternalAgent::ClaudeCode => Self::ClaudeCode,
-            ExternalAgent::Custom {
-                name,
-                command,
-                default_mode,
-            } => Self::Custom {
-                name,
-                command,
-                default_mode,
-            },
+            ExternalAgent::Custom { name, command } => Self::Custom { name, command },
             ExternalAgent::NativeAgent => Self::NativeAgent,
         }
     }
@@ -1945,16 +1936,8 @@ impl AgentPanel {
                     cx,
                 )
             }
-            AgentType::Custom {
-                name,
-                command,
-                default_mode,
-            } => self.external_thread(
-                Some(crate::ExternalAgent::Custom {
-                    name,
-                    command,
-                    default_mode,
-                }),
+            AgentType::Custom { name, command } => self.external_thread(
+                Some(crate::ExternalAgent::Custom { name, command }),
                 None,
                 None,
                 window,
@@ -2741,14 +2724,6 @@ impl AgentPanel {
                                                                                     settings.command.clone()
                                                                                 })
                                                                                 .unwrap_or(placeholder_command()),
-                                                                            default_mode: custom_settings
-                                                                                .get(&agent_name.0)
-                                                                                .and_then(|settings| {
-                                                                                    settings
-                                                                                        .default_mode
-                                                                                        .clone()
-                                                                                        .map(|m| agent_client_protocol::SessionModeId(m.into()))
-                                                                                }),
                                                                         },
                                                                         window,
                                                                         cx,
