@@ -1738,7 +1738,7 @@ impl GitPanel {
         self.pending_commit = Some(task);
     }
 
-    fn uncommit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn uncommit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
