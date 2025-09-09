@@ -26,5 +26,3 @@ float apply_contrast_and_gamma_correction(float sample, float3 color, float enha
     float contrasted = enhance_contrast(sample, enhanced_contrast);
     return apply_alpha_correction(contrasted, brightness, gamma_ratios);
 }
-
-// TODO kb copy over to the blade backend (new file near shaders.wgsl)

@@ -615,6 +615,7 @@ impl DirectXRenderer {
                 // TODO kb where to get that for Linux?
                 gamma_ratios: Self::get_gamma_ratios(render_params.GetGamma()),
                 // TODO kb where to get that for Linux?
+                // [0.0..1.0]
                 grayscale_enhanced_contrast: render_params.GetGrayscaleEnhancedContrast(),
             }
         })
