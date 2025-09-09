@@ -6,7 +6,7 @@ use std::ops::{Not, Range};
 
 use anyhow::Context as _;
 use command_palette_hooks::CommandPaletteFilter;
-use editor::EditorSettingsControls;
+use editor::{Editor, EditorSettingsControls};
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
 use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, ReadGlobal, ScrollHandle, actions};
 use settings::{
@@ -612,6 +612,7 @@ fn render_item_single(
         SettingsUiItemSingle::DropDown { .. } => {
             unimplemented!("This")
         }
+        SettingsUiItemSingle::TextField => render_text_field(settings_value, window, cx),
     }
 }
 
@@ -796,6 +797,54 @@ fn render_switch_field(
         },
     )
     .into_any_element()
+}
+
+fn render_text_field(
+    value: SettingsValue<serde_json::Value>,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let value = downcast_any_item::<String>(value);
+    let path = value.path.clone();
+    let editor = window.use_state(cx, {
+        let path = path.clone();
+        move |window, cx| {
+            let mut editor = Editor::single_line(window, cx);
+
+            cx.observe_global_in::<SettingsStore>(window, move |editor, window, cx| {
+                let user_settings = SettingsStore::global(cx).raw_user_settings();
+                if let Some(value) = read_settings_value_from_path(&user_settings, &path).cloned()
+                    && let Some(value) = value.as_str()
+                {
+                    editor.set_text(value, window, cx);
+                }
+            })
+            .detach();
+
+            editor.set_text(value.read().clone(), window, cx);
+            editor
+        }
+    });
+
+    let weak_editor = editor.downgrade();
+    let theme_colors = cx.theme().colors();
+
+    div()
+        .child(editor)
+        .bg(theme_colors.editor_background)
+        .border_1()
+        .rounded_lg()
+        .border_color(theme_colors.border)
+        .on_action::<menu::Confirm>({
+            move |_, _, cx| {
+                let new_value = weak_editor.read_with(cx, |editor, cx| editor.text(cx)).ok();
+
+                if let Some(new_value) = new_value {
+                    SettingsValue::write_value(&path, serde_json::Value::String(new_value), cx);
+                }
+            }
+        })
+        .into_any_element()
 }
 
 fn render_toggle_button_group(
