@@ -820,7 +820,11 @@ impl KeymapFile {
                         .split_whitespace()
                         .map(|source| {
                             let keystroke = Keystroke::parse(source)?;
-                            Ok(KeybindingKeystroke::new(keystroke, false, keyboard_mapper))
+                            Ok(KeybindingKeystroke::new_with_mapper(
+                                keystroke,
+                                false,
+                                keyboard_mapper,
+                            ))
                         })
                         .collect::<Result<Vec<_>, InvalidKeystrokeError>>()
                     else {
@@ -830,7 +834,7 @@ impl KeymapFile {
                         || !keystrokes
                             .iter()
                             .zip(target.keystrokes)
-                            .all(|(a, b)| a.inner.should_match(b))
+                            .all(|(a, b)| a.inner().should_match(b))
                     {
                         continue;
                     }
@@ -1065,7 +1069,7 @@ mod tests {
         keystrokes
             .split(' ')
             .map(|s| {
-                KeybindingKeystroke::new(
+                KeybindingKeystroke::new_with_mapper(
                     Keystroke::parse(s).expect("Keystrokes valid"),
                     false,
                     &DummyKeyboardMapper,
@@ -1090,6 +1094,24 @@ mod tests {
                 {
                     "bindings": {
                         "ctrl-a": "zed::SomeAction"
+                    }
+                }
+            ]"#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            "[]",
+            KeybindUpdateOperation::add(KeybindUpdateTarget {
+                keystrokes: &parse_keystrokes("\\ a"),
+                action_name: "zed::SomeAction",
+                context: None,
+                action_arguments: None,
+            }),
+            r#"[
+                {
+                    "bindings": {
+                        "\\ a": "zed::SomeAction"
                     }
                 }
             ]"#
@@ -1302,6 +1324,79 @@ mod tests {
             r#"[
                 {
                     "bindings": {
+                        "\\ a": "zed::SomeAction"
+                    }
+                }
+            ]"#
+            .unindent(),
+            KeybindUpdateOperation::Replace {
+                target: KeybindUpdateTarget {
+                    keystrokes: &parse_keystrokes("\\ a"),
+                    action_name: "zed::SomeAction",
+                    context: None,
+                    action_arguments: None,
+                },
+                source: KeybindUpdateTarget {
+                    keystrokes: &parse_keystrokes("\\ b"),
+                    action_name: "zed::SomeOtherAction",
+                    context: None,
+                    action_arguments: Some(r#"{"foo": "bar"}"#),
+                },
+                target_keybind_source: KeybindSource::User,
+            },
+            r#"[
+                {
+                    "bindings": {
+                        "\\ b": [
+                            "zed::SomeOtherAction",
+                            {
+                                "foo": "bar"
+                            }
+                        ]
+                    }
+                }
+            ]"#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"[
+                {
+                    "bindings": {
+                        "\\ a": "zed::SomeAction"
+                    }
+                }
+            ]"#
+            .unindent(),
+            KeybindUpdateOperation::Replace {
+                target: KeybindUpdateTarget {
+                    keystrokes: &parse_keystrokes("\\ a"),
+                    action_name: "zed::SomeAction",
+                    context: None,
+                    action_arguments: None,
+                },
+                source: KeybindUpdateTarget {
+                    keystrokes: &parse_keystrokes("\\ a"),
+                    action_name: "zed::SomeAction",
+                    context: None,
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::User,
+            },
+            r#"[
+                {
+                    "bindings": {
+                        "\\ a": "zed::SomeAction"
+                    }
+                }
+            ]"#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"[
+                {
+                    "bindings": {
                         "ctrl-a": "zed::SomeAction"
                     }
                 }
@@ -1474,6 +1569,37 @@ mod tests {
                 target: KeybindUpdateTarget {
                     context: Some("SomeContext"),
                     keystrokes: &parse_keystrokes("a"),
+                    action_name: "foo::bar",
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::User,
+            },
+            r#"[
+                {
+                    "context": "SomeContext",
+                    "bindings": {
+                        "c": "foo::baz",
+                    }
+                },
+            ]"#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"[
+                {
+                    "context": "SomeContext",
+                    "bindings": {
+                        "\\ a": "foo::bar",
+                        "c": "foo::baz",
+                    }
+                },
+            ]"#
+            .unindent(),
+            KeybindUpdateOperation::Remove {
+                target: KeybindUpdateTarget {
+                    context: Some("SomeContext"),
+                    keystrokes: &parse_keystrokes("\\ a"),
                     action_name: "foo::bar",
                     action_arguments: None,
                 },

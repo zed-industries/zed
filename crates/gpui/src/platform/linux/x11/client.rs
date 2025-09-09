@@ -62,8 +62,7 @@ use crate::{
     AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
     LinuxKeyboardLayout, Modifiers, ModifiersChangedEvent, MouseButton, Pixels, Platform,
     PlatformDisplay, PlatformInput, PlatformKeyboardLayout, Point, RequestFrameOptions,
-    ScaledPixels, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
-    modifiers_from_xinput_info, point, px,
+    ScrollDelta, Size, TouchPhase, WindowParams, X11Window, modifiers_from_xinput_info, point, px,
 };
 
 /// Value for DeviceId parameters which selects all devices.
@@ -252,7 +251,7 @@ impl X11ClientStatePtr {
         }
     }
 
-    pub fn update_ime_position(&self, bounds: Bounds<ScaledPixels>) {
+    pub fn update_ime_position(&self, bounds: Bounds<Pixels>) {
         let Some(client) = self.get_client() else {
             return;
         };
@@ -270,6 +269,7 @@ impl X11ClientStatePtr {
             state.ximc = Some(ximc);
             return;
         };
+        let scaled_bounds = bounds.scale(state.scale_factor);
         let ic_attributes = ximc
             .build_ic_attributes()
             .push(
@@ -282,8 +282,8 @@ impl X11ClientStatePtr {
                 b.push(
                     xim::AttributeName::SpotLocation,
                     xim::Point {
-                        x: u32::from(bounds.origin.x + bounds.size.width) as i16,
-                        y: u32::from(bounds.origin.y + bounds.size.height) as i16,
+                        x: u32::from(scaled_bounds.origin.x + scaled_bounds.size.width) as i16,
+                        y: u32::from(scaled_bounds.origin.y + scaled_bounds.size.height) as i16,
                     },
                 );
             })
@@ -703,14 +703,14 @@ impl X11Client {
                 state.xim_handler = Some(xim_handler);
                 return;
             };
-            if let Some(area) = window.get_ime_area() {
+            if let Some(scaled_area) = window.get_ime_area() {
                 ic_attributes =
                     ic_attributes.nested_list(xim::AttributeName::PreeditAttributes, |b| {
                         b.push(
                             xim::AttributeName::SpotLocation,
                             xim::Point {
-                                x: u32::from(area.origin.x + area.size.width) as i16,
-                                y: u32::from(area.origin.y + area.size.height) as i16,
+                                x: u32::from(scaled_area.origin.x + scaled_area.size.width) as i16,
+                                y: u32::from(scaled_area.origin.y + scaled_area.size.height) as i16,
                             },
                         );
                     });
@@ -1351,7 +1351,7 @@ impl X11Client {
         drop(state);
         window.handle_ime_preedit(text);
 
-        if let Some(area) = window.get_ime_area() {
+        if let Some(scaled_area) = window.get_ime_area() {
             let ic_attributes = ximc
                 .build_ic_attributes()
                 .push(
@@ -1364,8 +1364,8 @@ impl X11Client {
                     b.push(
                         xim::AttributeName::SpotLocation,
                         xim::Point {
-                            x: u32::from(area.origin.x + area.size.width) as i16,
-                            y: u32::from(area.origin.y + area.size.height) as i16,
+                            x: u32::from(scaled_area.origin.x + scaled_area.size.width) as i16,
+                            y: u32::from(scaled_area.origin.y + scaled_area.size.height) as i16,
                         },
                     );
                 })

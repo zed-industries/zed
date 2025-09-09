@@ -227,7 +227,7 @@ pub async fn verify_access_token(
 
 #[cfg(test)]
 mod test {
-    use rand::thread_rng;
+    use rand::prelude::*;
     use scrypt::password_hash::{PasswordHasher, SaltString};
     use sea_orm::EntityTrait;
 
@@ -358,9 +358,42 @@ mod test {
                 None,
                 None,
                 params,
-                &SaltString::generate(thread_rng()),
+                &SaltString::generate(PasswordHashRngCompat::new()),
             )
             .map_err(anyhow::Error::new)?
             .to_string())
     }
+
+    // TODO: remove once we password_hash v0.6 is released.
+    struct PasswordHashRngCompat(rand::rngs::ThreadRng);
+
+    impl PasswordHashRngCompat {
+        fn new() -> Self {
+            Self(rand::rng())
+        }
+    }
+
+    impl scrypt::password_hash::rand_core::RngCore for PasswordHashRngCompat {
+        fn next_u32(&mut self) -> u32 {
+            self.0.next_u32()
+        }
+
+        fn next_u64(&mut self) -> u64 {
+            self.0.next_u64()
+        }
+
+        fn fill_bytes(&mut self, dest: &mut [u8]) {
+            self.0.fill_bytes(dest);
+        }
+
+        fn try_fill_bytes(
+            &mut self,
+            dest: &mut [u8],
+        ) -> Result<(), scrypt::password_hash::rand_core::Error> {
+            self.fill_bytes(dest);
+            Ok(())
+        }
+    }
+
+    impl scrypt::password_hash::rand_core::CryptoRng for PasswordHashRngCompat {}
 }

@@ -1,9 +1,9 @@
-use std::{rc::Rc, time::Duration};
+use std::rc::Rc;
 
 use collections::HashMap;
-use gpui::{Animation, AnimationExt as _, Entity, Transformation, WeakEntity, percentage};
+use gpui::{Entity, WeakEntity};
 use project::debugger::session::{ThreadId, ThreadStatus};
-use ui::{ContextMenu, DropdownMenu, DropdownStyle, Indicator, prelude::*};
+use ui::{CommonAnimationExt, ContextMenu, DropdownMenu, DropdownStyle, Indicator, prelude::*};
 use util::{maybe, truncate_and_trailoff};
 
 use crate::{
@@ -113,23 +113,6 @@ impl DebugPanel {
                 }
             };
             session_entries.push(root_entry);
-
-            session_entries.extend(
-                sessions_with_children
-                    .by_ref()
-                    .take_while(|(session, _)| {
-                        session
-                            .read(cx)
-                            .session(cx)
-                            .read(cx)
-                            .parent_id(cx)
-                            .is_some()
-                    })
-                    .map(|(session, _)| SessionListEntry {
-                        leaf: session.clone(),
-                        ancestors: vec![],
-                    }),
-            );
         }
 
         let weak = cx.weak_entity();
@@ -152,11 +135,7 @@ impl DebugPanel {
             Icon::new(IconName::ArrowCircle)
                 .size(IconSize::Small)
                 .color(Color::Muted)
-                .with_animation(
-                    "arrow-circle",
-                    Animation::new(Duration::from_secs(2)).repeat(),
-                    |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                )
+                .with_rotate_animation(2)
                 .into_any_element()
         } else {
             match running_state.thread_status(cx).unwrap_or_default() {

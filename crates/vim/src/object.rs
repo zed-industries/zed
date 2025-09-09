@@ -1510,7 +1510,7 @@ pub fn end_of_paragraph(map: &DisplaySnapshot, display_point: DisplayPoint) -> D
     map.max_point()
 }
 
-fn surrounding_markers(
+pub fn surrounding_markers(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
     around: bool,

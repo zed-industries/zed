@@ -31,7 +31,7 @@ use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EnvelopedMessage, PeerId, RequestMessage};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 use std::{
     any::TypeId,
     convert::TryFrom,
@@ -96,7 +96,8 @@ actions!(
     ]
 );
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
+#[settings_key(None)]
 pub struct ClientSettingsContent {
     server_url: Option<String>,
 }
@@ -107,8 +108,6 @@ pub struct ClientSettings {
 }
 
 impl Settings for ClientSettings {
-    const KEY: Option<&'static str> = None;
-
     type FileContent = ClientSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
@@ -122,7 +121,8 @@ impl Settings for ClientSettings {
     fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
-#[derive(Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
+#[settings_key(None)]
 pub struct ProxySettingsContent {
     proxy: Option<String>,
 }
@@ -133,8 +133,6 @@ pub struct ProxySettings {
 }
 
 impl Settings for ProxySettings {
-    const KEY: Option<&'static str> = None;
-
     type FileContent = ProxySettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
@@ -287,6 +285,7 @@ pub enum Status {
     },
     ConnectionLost,
     Reauthenticating,
+    Reauthenticated,
     Reconnecting,
     ReconnectionError {
         next_reconnection: Instant,
@@ -296,6 +295,21 @@ pub enum Status {
 impl Status {
     pub fn is_connected(&self) -> bool {
         matches!(self, Self::Connected { .. })
+    }
+
+    pub fn was_connected(&self) -> bool {
+        matches!(
+            self,
+            Self::ConnectionLost
+                | Self::Reauthenticating
+                | Self::Reauthenticated
+                | Self::Reconnecting
+        )
+    }
+
+    /// Returns whether the client is currently connected or was connected at some point.
+    pub fn is_or_was_connected(&self) -> bool {
+        self.is_connected() || self.was_connected()
     }
 
     pub fn is_signing_in(&self) -> bool {
@@ -511,7 +525,8 @@ pub struct TelemetrySettings {
 }
 
 /// Control what info is collected by Zed.
-#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, Debug, SettingsUi, SettingsKey)]
+#[settings_key(key = "telemetry")]
 pub struct TelemetrySettingsContent {
     /// Send debug info like crash reports.
     ///
@@ -524,8 +539,6 @@ pub struct TelemetrySettingsContent {
 }
 
 impl settings::Settings for TelemetrySettings {
-    const KEY: Option<&'static str> = Some("telemetry");
-
     type FileContent = TelemetrySettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
@@ -675,7 +688,7 @@ impl Client {
                     #[cfg(any(test, feature = "test-support"))]
                     let mut rng = StdRng::seed_from_u64(0);
                     #[cfg(not(any(test, feature = "test-support")))]
-                    let mut rng = StdRng::from_entropy();
+                    let mut rng = StdRng::from_os_rng();
 
                     let mut delay = INITIAL_RECONNECTION_DELAY;
                     loop {
@@ -705,8 +718,9 @@ impl Client {
                                 },
                                 cx,
                             );
-                            let jitter =
-                                Duration::from_millis(rng.gen_range(0..delay.as_millis() as u64));
+                            let jitter = Duration::from_millis(
+                                rng.random_range(0..delay.as_millis() as u64),
+                            );
                             cx.background_executor().timer(delay + jitter).await;
                             delay = cmp::min(delay * 2, MAX_RECONNECTION_DELAY);
                         } else {
@@ -857,11 +871,13 @@ impl Client {
         try_provider: bool,
         cx: &AsyncApp,
     ) -> Result<Credentials> {
-        if self.status().borrow().is_signed_out() {
+        let is_reauthenticating = if self.status().borrow().is_signed_out() {
             self.set_status(Status::Authenticating, cx);
+            false
         } else {
             self.set_status(Status::Reauthenticating, cx);
-        }
+            true
+        };
 
         let mut credentials = None;
 
@@ -919,7 +935,14 @@ impl Client {
         self.cloud_client
             .set_credentials(credentials.user_id as u32, credentials.access_token.clone());
         self.state.write().credentials = Some(credentials.clone());
-        self.set_status(Status::Authenticated, cx);
+        self.set_status(
+            if is_reauthenticating {
+                Status::Reauthenticated
+            } else {
+                Status::Authenticated
+            },
+            cx,
+        );
 
         Ok(credentials)
     }
@@ -1034,6 +1057,7 @@ impl Client {
             | Status::Authenticating
             | Status::AuthenticationError
             | Status::Reauthenticating
+            | Status::Reauthenticated
             | Status::ReconnectionError { .. } => false,
             Status::Connected { .. } | Status::Connecting | Status::Reconnecting => {
                 return ConnectionResult::Result(Ok(()));
@@ -1670,21 +1694,10 @@ impl Client {
             );
             cx.spawn(async move |_| match future.await {
                 Ok(()) => {
-                    log::debug!(
-                        "rpc message handled. client_id:{}, sender_id:{:?}, type:{}",
-                        client_id,
-                        original_sender_id,
-                        type_name
-                    );
+                    log::debug!("rpc message handled. client_id:{client_id}, sender_id:{original_sender_id:?}, type:{type_name}");
                 }
                 Err(error) => {
-                    log::error!(
-                        "error handling message. client_id:{}, sender_id:{:?}, type:{}, error:{:?}",
-                        client_id,
-                        original_sender_id,
-                        type_name,
-                        error
-                    );
+                    log::error!("error handling message. client_id:{client_id}, sender_id:{original_sender_id:?}, type:{type_name}, error:{error:#}");
                 }
             })
             .detach();

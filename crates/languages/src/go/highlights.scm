@@ -1,13 +1,15 @@
 (identifier) @variable
 
 (type_identifier) @type
-(field_identifier) @variable.member
+(field_identifier) @property
 (package_identifier) @namespace
+
+(label_name) @label
 
 (keyed_element
   .
   (literal_element
-    (identifier) @variable.member))
+    (identifier) @property))
 
 (call_expression
   function: (identifier) @function)

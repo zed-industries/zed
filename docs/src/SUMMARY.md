@@ -157,5 +157,6 @@
   - [FreeBSD](./development/freebsd.md)
   - [Local Collaboration](./development/local-collaboration.md)
   - [Using Debuggers](./development/debuggers.md)
+  - [Glossary](./development/glossary.md)
 - [Release Process](./development/releases.md)
 - [Debugging Crashes](./development/debugging-crashes.md)

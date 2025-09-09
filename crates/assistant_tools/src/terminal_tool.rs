@@ -8,14 +8,14 @@ use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{Tool, ToolCard, ToolResult, ToolUseStatus};
 use futures::{FutureExt as _, future::Shared};
 use gpui::{
-    Animation, AnimationExt, AnyWindowHandle, App, AppContext, Empty, Entity, EntityId, Task,
-    TextStyleRefinement, Transformation, WeakEntity, Window, percentage,
+    AnyWindowHandle, App, AppContext, Empty, Entity, EntityId, Task, TextStyleRefinement,
+    WeakEntity, Window,
 };
 use language::LineEnding;
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
-use project::{Project, terminals::TerminalKind};
+use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -28,7 +28,7 @@ use std::{
 };
 use terminal_view::TerminalView;
 use theme::ThemeSettings;
-use ui::{Disclosure, Tooltip, prelude::*};
+use ui::{CommonAnimationExt, Disclosure, Tooltip, prelude::*};
 use util::{
     ResultExt, get_system_shell, markdown::MarkdownInlineCode, size::format_file_size,
     time::duration_alt_display,
@@ -213,17 +213,16 @@ impl Tool for TerminalTool {
             async move |cx| {
                 let program = program.await;
                 let env = env.await;
-
                 project
                     .update(cx, |project, cx| {
-                        project.create_terminal(
-                            TerminalKind::Task(task::SpawnInTerminal {
+                        project.create_terminal_task(
+                            task::SpawnInTerminal {
                                 command: Some(program),
                                 args,
                                 cwd,
                                 env,
                                 ..Default::default()
-                            }),
+                            },
                             cx,
                         )
                     })?
@@ -523,11 +522,7 @@ impl ToolCard for TerminalToolCard {
                     Icon::new(IconName::ArrowCircle)
                         .size(IconSize::XSmall)
                         .color(Color::Info)
-                        .with_animation(
-                            "arrow-circle",
-                            Animation::new(Duration::from_secs(2)).repeat(),
-                            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                        ),
+                        .with_rotate_animation(2),
                 )
             })
             .when(tool_failed || command_failed, |header| {

@@ -722,11 +722,13 @@ impl Vim {
                     self.normal_motion(motion, active_operator, count, forced_motion, window, cx)
                 }
             }
-            Mode::Visual | Mode::VisualLine | Mode::VisualBlock | Mode::HelixSelect => {
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
                 self.visual_motion(motion, count, window, cx)
             }
 
-            Mode::HelixNormal => self.helix_normal_motion(motion, count, window, cx),
+            Mode::HelixNormal | Mode::HelixSelect => {
+                self.helix_normal_motion(motion, count, window, cx)
+            }
         }
         self.clear_operator(window, cx);
         if let Some(operator) = waiting_operator {

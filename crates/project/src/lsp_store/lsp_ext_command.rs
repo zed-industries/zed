@@ -213,7 +213,7 @@ impl LspCommand for OpenDocs {
     ) -> Result<OpenDocsParams> {
         Ok(OpenDocsParams {
             text_document: lsp::TextDocumentIdentifier {
-                uri: lsp::Url::from_file_path(path).unwrap(),
+                uri: lsp::Uri::from_file_path(path).unwrap(),
             },
             position: point_to_lsp(self.position),
         })
