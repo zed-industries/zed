@@ -659,7 +659,9 @@ impl TitleBar {
                         let user_login = user.github_login.clone();
 
                         let (plan_name, label_color, bg_color) = match plan {
-                            None | Some(Plan::ZedFree) => ("Free", Color::Default, free_chip_bg),
+                            None | Some(Plan::ZedFree | Plan::ZedFreeV2) => {
+                                ("Free", Color::Default, free_chip_bg)
+                            }
                             Some(Plan::ZedProTrial | Plan::ZedProTrialV2) => {
                                 ("Pro Trial", Color::Accent, pro_chip_bg)
                             }
