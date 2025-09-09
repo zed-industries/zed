@@ -15870,9 +15870,11 @@ dependencies = [
  "editor",
  "file_icons",
  "gpui",
+ "project",
  "ui",
  "workspace",
  "workspace-hack",
+ "worktree",
 ]
 
 [[package]]
