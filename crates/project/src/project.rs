@@ -3900,19 +3900,6 @@ impl Project {
         })
     }
 
-    pub fn inlay_hints<T: ToOffset>(
-        &mut self,
-        buffer_handle: Entity<Buffer>,
-        range: Range<T>,
-        cx: &mut Context<Self>,
-    ) -> Task<anyhow::Result<Vec<InlayHint>>> {
-        let buffer = buffer_handle.read(cx);
-        let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
-        self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.inlay_hints(buffer_handle, range, cx)
-        })
-    }
-
     pub fn resolve_inlay_hint(
         &self,
         hint: InlayHint,

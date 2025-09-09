@@ -320,135 +320,136 @@ pub fn update_inlay_link_and_hover_points(
             })
             .max_by_key(|hint| hint.id)
         {
-            let inlay_hint_cache = editor.inlay_hint_cache();
-            let excerpt_id = previous_valid_anchor.excerpt_id;
-            if let Some(cached_hint) = inlay_hint_cache.hint_by_id(excerpt_id, hovered_hint.id) {
-                match cached_hint.resolve_state {
-                    ResolveState::CanResolve(_, _) => {
-                        if let Some(buffer_id) = snapshot
-                            .buffer_snapshot
-                            .buffer_id_for_anchor(previous_valid_anchor)
-                        {
-                            inlay_hint_cache.spawn_hint_resolve(
-                                buffer_id,
-                                excerpt_id,
-                                hovered_hint.id,
-                                window,
-                                cx,
-                            );
-                        }
-                    }
-                    ResolveState::Resolved => {
-                        let mut extra_shift_left = 0;
-                        let mut extra_shift_right = 0;
-                        if cached_hint.padding_left {
-                            extra_shift_left += 1;
-                            extra_shift_right += 1;
-                        }
-                        if cached_hint.padding_right {
-                            extra_shift_right += 1;
-                        }
-                        match cached_hint.label {
-                            project::InlayHintLabel::String(_) => {
-                                if let Some(tooltip) = cached_hint.tooltip {
-                                    hover_popover::hover_at_inlay(
-                                        editor,
-                                        InlayHover {
-                                            tooltip: match tooltip {
-                                                InlayHintTooltip::String(text) => HoverBlock {
-                                                    text,
-                                                    kind: HoverBlockKind::PlainText,
-                                                },
-                                                InlayHintTooltip::MarkupContent(content) => {
-                                                    HoverBlock {
-                                                        text: content.value,
-                                                        kind: content.kind,
-                                                    }
-                                                }
-                                            },
-                                            range: InlayHighlight {
-                                                inlay: hovered_hint.id,
-                                                inlay_position: hovered_hint.position,
-                                                range: extra_shift_left
-                                                    ..hovered_hint.text().len() + extra_shift_right,
-                                            },
-                                        },
-                                        window,
-                                        cx,
-                                    );
-                                    hover_updated = true;
-                                }
-                            }
-                            project::InlayHintLabel::LabelParts(label_parts) => {
-                                let hint_start =
-                                    snapshot.anchor_to_inlay_offset(hovered_hint.position);
-                                if let Some((hovered_hint_part, part_range)) =
-                                    hover_popover::find_hovered_hint_part(
-                                        label_parts,
-                                        hint_start,
-                                        hovered_offset,
-                                    )
-                                {
-                                    let highlight_start =
-                                        (part_range.start - hint_start).0 + extra_shift_left;
-                                    let highlight_end =
-                                        (part_range.end - hint_start).0 + extra_shift_right;
-                                    let highlight = InlayHighlight {
-                                        inlay: hovered_hint.id,
-                                        inlay_position: hovered_hint.position,
-                                        range: highlight_start..highlight_end,
-                                    };
-                                    if let Some(tooltip) = hovered_hint_part.tooltip {
-                                        hover_popover::hover_at_inlay(
-                                            editor,
-                                            InlayHover {
-                                                tooltip: match tooltip {
-                                                    InlayHintLabelPartTooltip::String(text) => {
-                                                        HoverBlock {
-                                                            text,
-                                                            kind: HoverBlockKind::PlainText,
-                                                        }
-                                                    }
-                                                    InlayHintLabelPartTooltip::MarkupContent(
-                                                        content,
-                                                    ) => HoverBlock {
-                                                        text: content.value,
-                                                        kind: content.kind,
-                                                    },
-                                                },
-                                                range: highlight.clone(),
-                                            },
-                                            window,
-                                            cx,
-                                        );
-                                        hover_updated = true;
-                                    }
-                                    if let Some((language_server_id, location)) =
-                                        hovered_hint_part.location
-                                        && secondary_held
-                                        && !editor.has_pending_nonempty_selection()
-                                    {
-                                        go_to_definition_updated = true;
-                                        show_link_definition(
-                                            shift_held,
-                                            editor,
-                                            TriggerPoint::InlayHint(
-                                                highlight,
-                                                location,
-                                                language_server_id,
-                                            ),
-                                            snapshot,
-                                            window,
-                                            cx,
-                                        );
-                                    }
-                                }
-                            }
-                        };
-                    }
-                    ResolveState::Resolving => {}
-                }
-            }
+            // TODO kb
+            // let inlay_hint_cache = editor.inlay_hint_cache();
+            // let excerpt_id = previous_valid_anchor.excerpt_id;
+            // if let Some(cached_hint) = inlay_hint_cache.hint_by_id(excerpt_id, hovered_hint.id) {
+            //     match cached_hint.resolve_state {
+            //         ResolveState::CanResolve(_, _) => {
+            //             if let Some(buffer_id) = snapshot
+            //                 .buffer_snapshot
+            //                 .buffer_id_for_anchor(previous_valid_anchor)
+            //             {
+            //                 inlay_hint_cache.spawn_hint_resolve(
+            //                     buffer_id,
+            //                     excerpt_id,
+            //                     hovered_hint.id,
+            //                     window,
+            //                     cx,
+            //                 );
+            //             }
+            //         }
+            //         ResolveState::Resolved => {
+            //             let mut extra_shift_left = 0;
+            //             let mut extra_shift_right = 0;
+            //             if cached_hint.padding_left {
+            //                 extra_shift_left += 1;
+            //                 extra_shift_right += 1;
+            //             }
+            //             if cached_hint.padding_right {
+            //                 extra_shift_right += 1;
+            //             }
+            //             match cached_hint.label {
+            //                 project::InlayHintLabel::String(_) => {
+            //                     if let Some(tooltip) = cached_hint.tooltip {
+            //                         hover_popover::hover_at_inlay(
+            //                             editor,
+            //                             InlayHover {
+            //                                 tooltip: match tooltip {
+            //                                     InlayHintTooltip::String(text) => HoverBlock {
+            //                                         text,
+            //                                         kind: HoverBlockKind::PlainText,
+            //                                     },
+            //                                     InlayHintTooltip::MarkupContent(content) => {
+            //                                         HoverBlock {
+            //                                             text: content.value,
+            //                                             kind: content.kind,
+            //                                         }
+            //                                     }
+            //                                 },
+            //                                 range: InlayHighlight {
+            //                                     inlay: hovered_hint.id,
+            //                                     inlay_position: hovered_hint.position,
+            //                                     range: extra_shift_left
+            //                                         ..hovered_hint.text().len() + extra_shift_right,
+            //                                 },
+            //                             },
+            //                             window,
+            //                             cx,
+            //                         );
+            //                         hover_updated = true;
+            //                     }
+            //                 }
+            //                 project::InlayHintLabel::LabelParts(label_parts) => {
+            //                     let hint_start =
+            //                         snapshot.anchor_to_inlay_offset(hovered_hint.position);
+            //                     if let Some((hovered_hint_part, part_range)) =
+            //                         hover_popover::find_hovered_hint_part(
+            //                             label_parts,
+            //                             hint_start,
+            //                             hovered_offset,
+            //                         )
+            //                     {
+            //                         let highlight_start =
+            //                             (part_range.start - hint_start).0 + extra_shift_left;
+            //                         let highlight_end =
+            //                             (part_range.end - hint_start).0 + extra_shift_right;
+            //                         let highlight = InlayHighlight {
+            //                             inlay: hovered_hint.id,
+            //                             inlay_position: hovered_hint.position,
+            //                             range: highlight_start..highlight_end,
+            //                         };
+            //                         if let Some(tooltip) = hovered_hint_part.tooltip {
+            //                             hover_popover::hover_at_inlay(
+            //                                 editor,
+            //                                 InlayHover {
+            //                                     tooltip: match tooltip {
+            //                                         InlayHintLabelPartTooltip::String(text) => {
+            //                                             HoverBlock {
+            //                                                 text,
+            //                                                 kind: HoverBlockKind::PlainText,
+            //                                             }
+            //                                         }
+            //                                         InlayHintLabelPartTooltip::MarkupContent(
+            //                                             content,
+            //                                         ) => HoverBlock {
+            //                                             text: content.value,
+            //                                             kind: content.kind,
+            //                                         },
+            //                                     },
+            //                                     range: highlight.clone(),
+            //                                 },
+            //                                 window,
+            //                                 cx,
+            //                             );
+            //                             hover_updated = true;
+            //                         }
+            //                         if let Some((language_server_id, location)) =
+            //                             hovered_hint_part.location
+            //                             && secondary_held
+            //                             && !editor.has_pending_nonempty_selection()
+            //                         {
+            //                             go_to_definition_updated = true;
+            //                             show_link_definition(
+            //                                 shift_held,
+            //                                 editor,
+            //                                 TriggerPoint::InlayHint(
+            //                                     highlight,
+            //                                     location,
+            //                                     language_server_id,
+            //                                 ),
+            //                                 snapshot,
+            //                                 window,
+            //                                 cx,
+            //                             );
+            //                         }
+            //                     }
+            //                 }
+            //             };
+            //         }
+            //         ResolveState::Resolving => {}
+            //     }
+            // }
         }
     }
 
