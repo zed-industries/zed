@@ -1762,12 +1762,11 @@ impl LspAdapter for RuffLspAdapter {
                 .join("ruff"),
             AssetKind::Zip => destination_path.clone().join("ruff.exe"),
         };
-        dbg!(&server_path);
 
         let binary = LanguageServerBinary {
             path: server_path.clone(),
             env: None,
-            arguments: Default::default(),
+            arguments: vec!["server".into()],
         };
 
         let metadata_path = destination_path.with_extension("metadata");
@@ -1803,21 +1802,17 @@ impl LspAdapter for RuffLspAdapter {
                 return Ok(binary);
             }
         }
-        dbg!();
 
         download_server_binary(
             delegate,
-            dbg!(&url),
+            &url,
             expected_digest.as_deref(),
-            dbg!(&destination_path),
-            dbg!(Self::GITHUB_ASSET_KIND),
+            &destination_path,
+            Self::GITHUB_ASSET_KIND,
         )
         .await?;
-        dbg!();
         make_file_executable(&server_path).await?;
-        dbg!();
         remove_matching(&container_dir, |path| path != destination_path).await;
-        dbg!();
         GithubBinaryMetadata::write_to_file(
             &GithubBinaryMetadata {
                 metadata_version: 1,
@@ -1826,7 +1821,6 @@ impl LspAdapter for RuffLspAdapter {
             &metadata_path,
         )
         .await?;
-        dbg!();
 
         Ok(LanguageServerBinary {
             path: server_path,
@@ -1840,6 +1834,7 @@ impl LspAdapter for RuffLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
+        dbg!();
         maybe!(async {
             let mut last = None;
             let mut entries = self.fs.read_dir(&container_dir).await?;
@@ -1851,17 +1846,21 @@ impl LspAdapter for RuffLspAdapter {
                 last = Some(path);
             }
 
+            dbg!(&last);
+
             let path = last.context("no cached binary")?;
-            let path = match RuffLspAdapter::GITHUB_ASSET_KIND {
-                AssetKind::TarGz | AssetKind::Gz => path, // Tar and gzip extract in place.
-                AssetKind::Zip => path.join("ruff.exe"),  // zip contains a .exe
+            let path = match Self::GITHUB_ASSET_KIND {
+                AssetKind::TarGz | AssetKind::Gz => {
+                    path.join(Self::build_asset_name()?.0).join("ruff")
+                }
+                AssetKind::Zip => path.join("ruff.exe"),
             };
 
-            anyhow::Ok(LanguageServerBinary {
+            anyhow::Ok(dbg!(LanguageServerBinary {
                 path,
                 env: None,
                 arguments: vec!["server".into()],
-            })
+            }))
         })
         .await
         .log_err()
