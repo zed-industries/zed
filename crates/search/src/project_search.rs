@@ -36,10 +36,7 @@ use std::{
     pin::pin,
     sync::Arc,
 };
-use ui::{
-    Icon, IconButton, IconButtonShape, IconName, KeyBinding, Label, LabelCommon, LabelSize,
-    Toggleable, Tooltip, h_flex, prelude::*, utils::SearchInputWidth, v_flex,
-};
+use ui::{IconButtonShape, KeyBinding, Toggleable, Tooltip, prelude::*, utils::SearchInputWidth};
 use util::{ResultExt as _, paths::PathMatcher};
 use workspace::{
     DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,

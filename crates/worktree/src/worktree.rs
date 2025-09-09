@@ -4777,8 +4777,10 @@ impl BackgroundScanner {
                     .git_repositories
                     .iter()
                     .find_map(|(_, repo)| {
-                        if repo.common_dir_abs_path.as_ref() == &dot_git_dir
-                            || repo.repository_dir_abs_path.as_ref() == &dot_git_dir
+                        let dot_git_dir = SanitizedPath::new(&dot_git_dir);
+                        if SanitizedPath::new(repo.common_dir_abs_path.as_ref()) == dot_git_dir
+                            || SanitizedPath::new(repo.repository_dir_abs_path.as_ref())
+                                == dot_git_dir
                         {
                             Some(repo.clone())
                         } else {

@@ -329,13 +329,19 @@
     }
   },
   {
+    "context": "AcpThread > ModeSelector",
+    "bindings": {
+      "ctrl-enter": "menu::Confirm"
+    }
+  },
+  {
     "context": "AcpThread > Editor && !use_modifier_to_send",
     "use_key_equivalents": true,
     "bindings": {
       "enter": "agent::Chat",
       "shift-ctrl-r": "agent::OpenAgentDiff",
       "ctrl-shift-y": "agent::KeepAll",
-      "ctrl-shift-n": "agent::RejectAll"
+      "ctrl-shift-n": "agent::RejectAll",
     }
   },
   {
@@ -345,7 +351,8 @@
       "ctrl-enter": "agent::Chat",
       "shift-ctrl-r": "agent::OpenAgentDiff",
       "ctrl-shift-y": "agent::KeepAll",
-      "ctrl-shift-n": "agent::RejectAll"
+      "ctrl-shift-n": "agent::RejectAll",
+      "shift-tab": "agent::CycleModeSelector"
     }
   },
   {

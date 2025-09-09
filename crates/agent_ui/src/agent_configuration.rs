@@ -515,7 +515,7 @@ impl AgentConfiguration {
                 .blend(cx.theme().colors().text_accent.opacity(0.2));
 
             let (plan_name, label_color, bg_color) = match plan {
-                Plan::ZedFree => ("Free", Color::Default, free_chip_bg),
+                Plan::ZedFree | Plan::ZedFreeV2 => ("Free", Color::Default, free_chip_bg),
                 Plan::ZedProTrial | Plan::ZedProTrialV2 => {
                     ("Pro Trial", Color::Accent, pro_chip_bg)
                 }
@@ -1322,6 +1322,7 @@ async fn open_new_agent_servers_entry_in_settings_editor(
                                 args: vec![],
                                 env: Some(HashMap::default()),
                             },
+                            default_mode: None,
                         },
                     );
                 }

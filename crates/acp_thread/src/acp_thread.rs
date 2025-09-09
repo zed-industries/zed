@@ -805,6 +805,7 @@ pub enum AcpThreadEvent {
     PromptCapabilitiesUpdated,
     Refusal,
     AvailableCommandsUpdated(Vec<acp::AvailableCommand>),
+    ModeUpdated(acp::SessionModeId),
 }
 
 impl EventEmitter<AcpThreadEvent> for AcpThread {}
@@ -1006,6 +1007,9 @@ impl AcpThread {
             }
             acp::SessionUpdate::AvailableCommandsUpdate { available_commands } => {
                 cx.emit(AcpThreadEvent::AvailableCommandsUpdated(available_commands))
+            }
+            acp::SessionUpdate::CurrentModeUpdate { current_mode_id } => {
+                cx.emit(AcpThreadEvent::ModeUpdated(current_mode_id))
             }
         }
         Ok(())
@@ -1303,11 +1307,12 @@ impl AcpThread {
         &mut self,
         tool_call: acp::ToolCallUpdate,
         options: Vec<acp::PermissionOption>,
+        respect_always_allow_setting: bool,
         cx: &mut Context<Self>,
     ) -> Result<BoxFuture<'static, acp::RequestPermissionOutcome>> {
         let (tx, rx) = oneshot::channel();
 
-        if AgentSettings::get_global(cx).always_allow_tool_actions {
+        if respect_always_allow_setting && AgentSettings::get_global(cx).always_allow_tool_actions {
             // Don't use AllowAlways, because then if you were to turn off always_allow_tool_actions,
             // some tools would (incorrectly) continue to auto-accept.
             if let Some(allow_once_option) = options.iter().find_map(|option| {

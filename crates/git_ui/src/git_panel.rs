@@ -40,8 +40,7 @@ use gpui::{
 use itertools::Itertools;
 use language::{Buffer, File};
 use language_model::{
-    ConfiguredModel, LanguageModel, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, Role,
+    ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
 use menu::{Confirm, SecondaryConfirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use multi_buffer::ExcerptInfo;
@@ -351,6 +350,7 @@ pub struct GitPanel {
     pending: Vec<PendingOperation>,
     pending_commit: Option<Task<()>>,
     amend_pending: bool,
+    original_commit_message: Option<String>,
     signoff_enabled: bool,
     pending_serialization: Task<()>,
     pub(crate) project: Entity<Project>,
@@ -532,6 +532,7 @@ impl GitPanel {
                 pending: Vec::new(),
                 pending_commit: None,
                 amend_pending: false,
+                original_commit_message: None,
                 signoff_enabled: false,
                 pending_serialization: Task::ready(()),
                 single_staged_entry: None,
@@ -1713,6 +1714,7 @@ impl GitPanel {
                     Ok(()) => {
                         this.commit_editor
                             .update(cx, |editor, cx| editor.clear(window, cx));
+                        this.original_commit_message = None;
                     }
                     Err(e) => this.show_error_toast("commit", e, cx),
                 }
@@ -1857,13 +1859,17 @@ impl GitPanel {
 
     /// Generates a commit message using an LLM.
     pub fn generate_commit_message(&mut self, cx: &mut Context<Self>) {
-        if !self.can_commit() || DisableAiSettings::get_global(cx).disable_ai {
+        if !self.can_commit()
+            || DisableAiSettings::get_global(cx).disable_ai
+            || !agent_settings::AgentSettings::get_global(cx).enabled
+        {
             return;
         }
 
-        let model = match current_language_model(cx) {
-            Some(value) => value,
-            None => return,
+        let Some(ConfiguredModel { provider, model }) =
+            LanguageModelRegistry::read_global(cx).commit_message_model()
+        else {
+            return;
         };
 
         let Some(repo) = self.active_repository.as_ref() else {
@@ -1887,6 +1893,16 @@ impl GitPanel {
                 let _defer = cx.on_drop(&this, |this, _cx| {
                     this.generate_commit_message_task.take();
                 });
+
+                if let Some(task) = cx.update(|cx| {
+                    if !provider.is_authenticated(cx) {
+                        Some(provider.authenticate(cx))
+                    } else {
+                        None
+                    }
+                })? {
+                    task.await.log_err();
+                };
 
                 let mut diff_text = match diff.await {
                     Ok(result) => match result {
@@ -3077,9 +3093,18 @@ impl GitPanel {
         &self,
         cx: &Context<Self>,
     ) -> Option<AnyElement> {
-        current_language_model(cx).is_some().then(|| {
-            if self.generate_commit_message_task.is_some() {
-                return h_flex()
+        if !agent_settings::AgentSettings::get_global(cx).enabled
+            || DisableAiSettings::get_global(cx).disable_ai
+            || LanguageModelRegistry::read_global(cx)
+                .commit_message_model()
+                .is_none()
+        {
+            return None;
+        }
+
+        if self.generate_commit_message_task.is_some() {
+            return Some(
+                h_flex()
                     .gap_1()
                     .child(
                         Icon::new(IconName::ArrowCircle)
@@ -3092,11 +3117,13 @@ impl GitPanel {
                             .size(LabelSize::Small)
                             .color(Color::Muted),
                     )
-                    .into_any_element();
-            }
+                    .into_any_element(),
+            );
+        }
 
-            let can_commit = self.can_commit();
-            let editor_focus_handle = self.commit_editor.focus_handle(cx);
+        let can_commit = self.can_commit();
+        let editor_focus_handle = self.commit_editor.focus_handle(cx);
+        Some(
             IconButton::new("generate-commit-message", IconName::AiEdit)
                 .shape(ui::IconButtonShape::Square)
                 .icon_color(Color::Muted)
@@ -3117,8 +3144,8 @@ impl GitPanel {
                 .on_click(cx.listener(move |this, _event, _window, cx| {
                     this.generate_commit_message(cx);
                 }))
-                .into_any_element()
-        })
+                .into_any_element(),
+        )
     }
 
     pub(crate) fn render_co_authors(&self, cx: &Context<Self>) -> Option<AnyElement> {
@@ -4345,6 +4372,22 @@ impl GitPanel {
     }
 
     pub fn set_amend_pending(&mut self, value: bool, cx: &mut Context<Self>) {
+        if value && !self.amend_pending {
+            let current_message = self.commit_message_buffer(cx).read(cx).text();
+            self.original_commit_message = if current_message.trim().is_empty() {
+                None
+            } else {
+                Some(current_message)
+            };
+        } else if !value && self.amend_pending {
+            let message = self.original_commit_message.take().unwrap_or_default();
+            self.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                let start = buffer.anchor_before(0);
+                let end = buffer.anchor_after(buffer.len());
+                buffer.edit([(start..end, message)], None, cx);
+            });
+        }
+
         self.amend_pending = value;
         self.serialize(cx);
         cx.notify();
@@ -4448,20 +4491,6 @@ impl GitPanel {
             self.load_last_commit_message_if_empty(cx);
         }
     }
-}
-
-fn current_language_model(cx: &Context<'_, GitPanel>) -> Option<Arc<dyn LanguageModel>> {
-    let is_enabled = agent_settings::AgentSettings::get_global(cx).enabled
-        && !DisableAiSettings::get_global(cx).disable_ai;
-
-    is_enabled
-        .then(|| {
-            let ConfiguredModel { provider, model } =
-                LanguageModelRegistry::read_global(cx).commit_message_model()?;
-
-            provider.is_authenticated(cx).then(|| model)
-        })
-        .flatten()
 }
 
 impl Render for GitPanel {
@@ -5489,5 +5518,74 @@ mod tests {
                 Status(GitStatusEntry { staging: StageStatus::Staged, .. }),
             ],
         );
+    }
+
+    #[gpui::test]
+    async fn test_amend_commit_message_handling(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "src": {
+                        "main.rs": "fn main() {}"
+                    }
+                }
+            }),
+        )
+        .await;
+
+        fs.set_status_for_repo(
+            Path::new(path!("/root/project/.git")),
+            &[(Path::new("src/main.rs"), StatusCode::Modified.worktree())],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+        let panel = workspace.update(cx, GitPanel::new).unwrap();
+
+        // Test: User has commit message, enables amend (saves message), then disables (restores message)
+        panel.update(cx, |panel, cx| {
+            panel.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                let start = buffer.anchor_before(0);
+                let end = buffer.anchor_after(buffer.len());
+                buffer.edit([(start..end, "Initial commit message")], None, cx);
+            });
+
+            panel.set_amend_pending(true, cx);
+            assert!(panel.original_commit_message.is_some());
+
+            panel.set_amend_pending(false, cx);
+            let current_message = panel.commit_message_buffer(cx).read(cx).text();
+            assert_eq!(current_message, "Initial commit message");
+            assert!(panel.original_commit_message.is_none());
+        });
+
+        // Test: User has empty commit message, enables amend, then disables (clears message)
+        panel.update(cx, |panel, cx| {
+            panel.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                let start = buffer.anchor_before(0);
+                let end = buffer.anchor_after(buffer.len());
+                buffer.edit([(start..end, "")], None, cx);
+            });
+
+            panel.set_amend_pending(true, cx);
+            assert!(panel.original_commit_message.is_none());
+
+            panel.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                let start = buffer.anchor_before(0);
+                let end = buffer.anchor_after(buffer.len());
+                buffer.edit([(start..end, "Previous commit message")], None, cx);
+            });
+
+            panel.set_amend_pending(false, cx);
+            let current_message = panel.commit_message_buffer(cx).read(cx).text();
+            assert_eq!(current_message, "");
+        });
     }
 }

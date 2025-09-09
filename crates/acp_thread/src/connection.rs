@@ -75,6 +75,15 @@ pub trait AgentConnection {
     fn telemetry(&self) -> Option<Rc<dyn AgentTelemetry>> {
         None
     }
+
+    fn session_modes(
+        &self,
+        _session_id: &acp::SessionId,
+        _cx: &App,
+    ) -> Option<Rc<dyn AgentSessionModes>> {
+        None
+    }
+
     fn into_any(self: Rc<Self>) -> Rc<dyn Any>;
 }
 
@@ -107,6 +116,14 @@ pub trait AgentTelemetry {
         session_id: &acp::SessionId,
         cx: &mut App,
     ) -> Task<Result<serde_json::Value>>;
+}
+
+pub trait AgentSessionModes {
+    fn current_mode(&self) -> acp::SessionModeId;
+
+    fn all_modes(&self) -> Vec<acp::SessionMode>;
+
+    fn set_mode(&self, mode: acp::SessionModeId, cx: &mut App) -> Task<Result<()>>;
 }
 
 #[derive(Debug)]
@@ -397,6 +414,7 @@ mod test_support {
                                     thread.request_tool_call_authorization(
                                         tool_call.clone().into(),
                                         options.clone(),
+                                        false,
                                         cx,
                                     )
                                 })??
