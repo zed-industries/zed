@@ -1,29 +1,18 @@
-use crate::agent_model_selector::AgentModelSelector;
-use crate::buffer_codegen::BufferCodegen;
-use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider};
-use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
-use crate::message_editor::{ContextCreasesAddon, extract_message_creases, insert_message_creases};
-use crate::terminal_codegen::TerminalCodegen;
-use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist, ModelUsageContext};
-use crate::{RemoveAllContext, ToggleContextPicker};
 use agent::{
     context_store::ContextStore,
     thread_store::{TextThreadStore, ThreadStore},
 };
-use client::ErrorExt;
 use collections::VecDeque;
-use db::kvp::Dismissable;
 use editor::actions::Paste;
 use editor::display_map::EditorMargins;
 use editor::{
     ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
     actions::{MoveDown, MoveUp},
 };
-use feature_flags::{FeatureFlagAppExt as _, ZedProFeatureFlag};
 use fs::Fs;
 use gpui::{
-    AnyElement, App, ClickEvent, Context, CursorStyle, Entity, EventEmitter, FocusHandle,
-    Focusable, FontWeight, Subscription, TextStyle, WeakEntity, Window, anchored, deferred, point,
+    AnyElement, App, Context, CursorStyle, Entity, EventEmitter, FocusHandle, Focusable,
+    Subscription, TextStyle, WeakEntity, Window,
 };
 use language_model::{LanguageModel, LanguageModelRegistry};
 use parking_lot::Mutex;
@@ -33,11 +22,18 @@ use std::rc::Rc;
 use std::sync::Arc;
 use theme::ThemeSettings;
 use ui::utils::WithRemSize;
-use ui::{
-    CheckboxWithLabel, IconButtonShape, KeyBinding, Popover, PopoverMenuHandle, Tooltip, prelude::*,
-};
+use ui::{IconButtonShape, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
 use workspace::Workspace;
 use zed_actions::agent::ToggleModelSelector;
+
+use crate::agent_model_selector::AgentModelSelector;
+use crate::buffer_codegen::BufferCodegen;
+use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider};
+use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
+use crate::message_editor::{ContextCreasesAddon, extract_message_creases, insert_message_creases};
+use crate::terminal_codegen::TerminalCodegen;
+use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist, ModelUsageContext};
+use crate::{RemoveAllContext, ToggleContextPicker};
 
 pub struct PromptEditor<T> {
     pub editor: Entity<Editor>,
@@ -144,47 +140,16 @@ impl<T: 'static> Render for PromptEditor<T> {
                                 };
 
                                 let error_message = SharedString::from(error.to_string());
-                                if error.error_code() == proto::ErrorCode::RateLimitExceeded
-                                    && cx.has_flag::<ZedProFeatureFlag>()
-                                {
-                                    el.child(
-                                        v_flex()
-                                            .child(
-                                                IconButton::new(
-                                                    "rate-limit-error",
-                                                    IconName::XCircle,
-                                                )
-                                                .toggle_state(self.show_rate_limit_notice)
-                                                .shape(IconButtonShape::Square)
-                                                .icon_size(IconSize::Small)
-                                                .on_click(
-                                                    cx.listener(Self::toggle_rate_limit_notice),
-                                                ),
-                                            )
-                                            .children(self.show_rate_limit_notice.then(|| {
-                                                deferred(
-                                                    anchored()
-                                                        .position_mode(
-                                                            gpui::AnchoredPositionMode::Local,
-                                                        )
-                                                        .position(point(px(0.), px(24.)))
-                                                        .anchor(gpui::Corner::TopLeft)
-                                                        .child(self.render_rate_limit_notice(cx)),
-                                                )
-                                            })),
-                                    )
-                                } else {
-                                    el.child(
-                                        div()
-                                            .id("error")
-                                            .tooltip(Tooltip::text(error_message))
-                                            .child(
-                                                Icon::new(IconName::XCircle)
-                                                    .size(IconSize::Small)
-                                                    .color(Color::Error),
-                                            ),
-                                    )
-                                }
+                                el.child(
+                                    div()
+                                        .id("error")
+                                        .tooltip(Tooltip::text(error_message))
+                                        .child(
+                                            Icon::new(IconName::XCircle)
+                                                .size(IconSize::Small)
+                                                .color(Color::Error),
+                                        ),
+                                )
                             }),
                     )
                     .child(
@@ -308,19 +273,6 @@ impl<T: 'static> PromptEditor<T> {
 
     fn paste(&mut self, _: &Paste, _window: &mut Window, cx: &mut Context<Self>) {
         crate::active_thread::attach_pasted_images_as_context(&self.context_store, cx);
-    }
-
-    fn toggle_rate_limit_notice(
-        &mut self,
-        _: &ClickEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.show_rate_limit_notice = !self.show_rate_limit_notice;
-        if self.show_rate_limit_notice {
-            window.focus(&self.editor.focus_handle(cx));
-        }
-        cx.notify();
     }
 
     fn handle_prompt_editor_events(
@@ -707,61 +659,6 @@ impl<T: 'static> PromptEditor<T> {
             .into_any_element()
     }
 
-    fn render_rate_limit_notice(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        Popover::new().child(
-            v_flex()
-                .occlude()
-                .p_2()
-                .child(
-                    Label::new("Out of Tokens")
-                        .size(LabelSize::Small)
-                        .weight(FontWeight::BOLD),
-                )
-                .child(Label::new(
-                    "Try Zed Pro for higher limits, a wider range of models, and more.",
-                ))
-                .child(
-                    h_flex()
-                        .justify_between()
-                        .child(CheckboxWithLabel::new(
-                            "dont-show-again",
-                            Label::new("Don't show again"),
-                            if RateLimitNotice::dismissed() {
-                                ui::ToggleState::Selected
-                            } else {
-                                ui::ToggleState::Unselected
-                            },
-                            |selection, _, cx| {
-                                let is_dismissed = match selection {
-                                    ui::ToggleState::Unselected => false,
-                                    ui::ToggleState::Indeterminate => return,
-                                    ui::ToggleState::Selected => true,
-                                };
-
-                                RateLimitNotice::set_dismissed(is_dismissed, cx);
-                            },
-                        ))
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .child(
-                                    Button::new("dismiss", "Dismiss")
-                                        .style(ButtonStyle::Transparent)
-                                        .on_click(cx.listener(Self::toggle_rate_limit_notice)),
-                                )
-                                .child(Button::new("more-info", "More Info").on_click(
-                                    |_event, window, cx| {
-                                        window.dispatch_action(
-                                            Box::new(zed_actions::OpenAccountSettings),
-                                            cx,
-                                        )
-                                    },
-                                )),
-                        ),
-                ),
-        )
-    }
-
     fn render_editor(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors();
 
@@ -978,15 +875,7 @@ impl PromptEditor<BufferCodegen> {
                 self.editor
                     .update(cx, |editor, _| editor.set_read_only(false));
             }
-            CodegenStatus::Error(error) => {
-                if cx.has_flag::<ZedProFeatureFlag>()
-                    && error.error_code() == proto::ErrorCode::RateLimitExceeded
-                    && !RateLimitNotice::dismissed()
-                {
-                    self.show_rate_limit_notice = true;
-                    cx.notify();
-                }
-
+            CodegenStatus::Error(_error) => {
                 self.edited_since_done = false;
                 self.editor
                     .update(cx, |editor, _| editor.set_read_only(false));
@@ -1187,12 +1076,6 @@ impl PromptEditor<TerminalCodegen> {
             PromptEditorMode::Terminal { id, .. } => *id,
         }
     }
-}
-
-struct RateLimitNotice;
-
-impl Dismissable for RateLimitNotice {
-    const KEY: &'static str = "dismissed-rate-limit-notice";
 }
 
 pub enum CodegenStatus {

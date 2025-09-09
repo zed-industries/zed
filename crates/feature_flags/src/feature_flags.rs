@@ -66,9 +66,10 @@ impl FeatureFlag for LlmClosedBetaFeatureFlag {
     const NAME: &'static str = "llm-closed-beta";
 }
 
-pub struct ZedProFeatureFlag {}
-impl FeatureFlag for ZedProFeatureFlag {
-    const NAME: &'static str = "zed-pro";
+pub struct BillingV2FeatureFlag {}
+
+impl FeatureFlag for BillingV2FeatureFlag {
+    const NAME: &'static str = "billing-v2";
 }
 
 pub struct NotebookFeatureFlag;

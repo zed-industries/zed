@@ -1,29 +1,21 @@
-use crate::{AgentServerCommand, AgentServerDelegate};
+use crate::AgentServerDelegate;
 use acp_thread::AgentConnection;
 use agent_client_protocol as acp;
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use gpui::{App, SharedString, Task};
+use project::agent_server_store::ExternalAgentServerName;
 use std::{path::Path, rc::Rc};
 use ui::IconName;
 
 /// A generic agent server implementation for custom user-defined agents
 pub struct CustomAgentServer {
     name: SharedString,
-    command: AgentServerCommand,
     default_mode: Option<acp::SessionModeId>,
 }
 
 impl CustomAgentServer {
-    pub fn new(
-        name: SharedString,
-        command: AgentServerCommand,
-        default_mode: Option<acp::SessionModeId>,
-    ) -> Self {
-        Self {
-            name,
-            command,
-            default_mode,
-        }
+    pub fn new(name: SharedString, default_mode: Option<acp::SessionModeId>) -> Self {
+        Self { name, default_mode }
     }
 }
 
@@ -42,16 +34,36 @@ impl crate::AgentServer for CustomAgentServer {
 
     fn connect(
         &self,
-        root_dir: &Path,
-        _delegate: AgentServerDelegate,
+        root_dir: Option<&Path>,
+        delegate: AgentServerDelegate,
         cx: &mut App,
-    ) -> Task<Result<Rc<dyn AgentConnection>>> {
-        let server_name = self.name();
-        let command = self.command.clone();
-        let root_dir = root_dir.to_path_buf();
+    ) -> Task<Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
+        let name = self.name();
+        let root_dir = root_dir.map(|root_dir| root_dir.to_string_lossy().to_string());
+        let is_remote = delegate.project.read(cx).is_via_remote_server();
         let default_mode = self.default_mode.clone();
+        let store = delegate.store.downgrade();
+
         cx.spawn(async move |cx| {
-            crate::acp::connect(server_name, command, &root_dir, default_mode, cx).await
+            let (command, root_dir, login) = store
+                .update(cx, |store, cx| {
+                    let agent = store
+                        .get_external_agent(&ExternalAgentServerName(name.clone()))
+                        .with_context(|| {
+                            format!("Custom agent server `{}` is not registered", name)
+                        })?;
+                    anyhow::Ok(agent.get_command(
+                        root_dir.as_deref(),
+                        Default::default(),
+                        delegate.status_tx,
+                        delegate.new_version_available,
+                        &mut cx.to_async(),
+                    ))
+                })??
+                .await?;
+            let connection =
+                crate::acp::connect(name, command, root_dir.as_ref(), default_mode, is_remote, cx).await?;
+            Ok((connection, login))
         })
     }
 

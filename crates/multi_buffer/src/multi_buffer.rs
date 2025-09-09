@@ -6095,6 +6095,28 @@ impl MultiBufferSnapshot {
         Some((node, range))
     }
 
+    pub fn syntax_next_sibling<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> Option<tree_sitter::Node<'_>> {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        let mut excerpt = self.excerpt_containing(range.clone())?;
+        excerpt
+            .buffer()
+            .syntax_next_sibling(excerpt.map_range_to_buffer(range))
+    }
+
+    pub fn syntax_prev_sibling<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> Option<tree_sitter::Node<'_>> {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        let mut excerpt = self.excerpt_containing(range.clone())?;
+        excerpt
+            .buffer()
+            .syntax_prev_sibling(excerpt.map_range_to_buffer(range))
+    }
+
     pub fn outline(&self, theme: Option<&SyntaxTheme>) -> Option<Outline<Anchor>> {
         let (excerpt_id, _, buffer) = self.as_singleton()?;
         let outline = buffer.outline(theme)?;

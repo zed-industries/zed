@@ -1,4 +1,3 @@
-use crate::AgentServerCommand;
 use acp_thread::AgentConnection;
 use acp_tools::AcpConnectionRegistry;
 use action_log::ActionLog;
@@ -8,9 +7,11 @@ use collections::HashMap;
 use futures::AsyncBufReadExt as _;
 use futures::io::BufReader;
 use project::Project;
+use project::agent_server_store::AgentServerCommand;
 use serde::Deserialize;
 use util::ResultExt;
 
+use std::path::PathBuf;
 use std::{any::Any, cell::RefCell};
 use std::{path::Path, rc::Rc};
 use thiserror::Error;
@@ -31,6 +32,7 @@ pub struct AcpConnection {
     auth_methods: Vec<acp::AuthMethod>,
     agent_capabilities: acp::AgentCapabilities,
     default_mode: Option<acp::SessionModeId>,
+    root_dir: PathBuf,
     _io_task: Task<Result<()>>,
     _wait_task: Task<Result<()>>,
     _stderr_task: Task<Result<()>>,
@@ -47,10 +49,18 @@ pub async fn connect(
     command: AgentServerCommand,
     root_dir: &Path,
     default_mode: Option<acp::SessionModeId>,
+    is_remote: bool,
     cx: &mut AsyncApp,
 ) -> Result<Rc<dyn AgentConnection>> {
-    let conn =
-        AcpConnection::stdio(server_name, command.clone(), root_dir, default_mode, cx).await?;
+    let conn = AcpConnection::stdio(
+        server_name,
+        command.clone(),
+        root_dir,
+        default_mode,
+        is_remote,
+        cx,
+    )
+    .await?;
     Ok(Rc::new(conn) as _)
 }
 
@@ -62,17 +72,21 @@ impl AcpConnection {
         command: AgentServerCommand,
         root_dir: &Path,
         default_mode: Option<acp::SessionModeId>,
+        is_remote: bool,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
-        let mut child = util::command::new_smol_command(command.path)
+        let mut child = util::command::new_smol_command(command.path);
+        child
             .args(command.args.iter().map(|arg| arg.as_str()))
             .envs(command.env.iter().flatten())
-            .current_dir(root_dir)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()?;
+            .kill_on_drop(true);
+        if !is_remote {
+            child.current_dir(root_dir);
+        }
+        let mut child = child.spawn()?;
 
         let stdout = child.stdout.take().context("Failed to take stdout")?;
         let stdin = child.stdin.take().context("Failed to take stdin")?;
@@ -151,6 +165,7 @@ impl AcpConnection {
 
         Ok(Self {
             auth_methods: response.auth_methods,
+            root_dir: root_dir.to_owned(),
             connection,
             server_name,
             sessions,
@@ -165,6 +180,10 @@ impl AcpConnection {
     pub fn prompt_capabilities(&self) -> &acp::PromptCapabilities {
         &self.agent_capabilities.prompt_capabilities
     }
+
+    pub fn root_dir(&self) -> &Path {
+        &self.root_dir
+    }
 }
 
 impl AgentConnection for AcpConnection {
@@ -177,32 +196,39 @@ impl AgentConnection for AcpConnection {
         let name = self.server_name.clone();
         let conn = self.connection.clone();
         let sessions = self.sessions.clone();
+        let default_mode = self.default_mode.clone();
         let cwd = cwd.to_path_buf();
         let context_server_store = project.read(cx).context_server_store().read(cx);
-        let mcp_servers = context_server_store
-            .configured_server_ids()
-            .iter()
-            .filter_map(|id| {
-                let configuration = context_server_store.configuration_for_server(id)?;
-                let command = configuration.command();
-                Some(acp::McpServer::Stdio {
-                    name: id.0.to_string(),
-                    command: command.path.clone(),
-                    args: command.args.clone(),
-                    env: if let Some(env) = command.env.as_ref() {
-                        env.iter()
-                            .map(|(name, value)| acp::EnvVariable {
-                                name: name.clone(),
-                                value: value.clone(),
-                            })
-                            .collect()
-                    } else {
-                        vec![]
-                    },
+        let mcp_servers = if project.read(cx).is_local() {
+            context_server_store
+                .configured_server_ids()
+                .iter()
+                .filter_map(|id| {
+                    let configuration = context_server_store.configuration_for_server(id)?;
+                    let command = configuration.command();
+                    Some(acp::McpServer::Stdio {
+                        name: id.0.to_string(),
+                        command: command.path.clone(),
+                        args: command.args.clone(),
+                        env: if let Some(env) = command.env.as_ref() {
+                            env.iter()
+                                .map(|(name, value)| acp::EnvVariable {
+                                    name: name.clone(),
+                                    value: value.clone(),
+                                })
+                                .collect()
+                        } else {
+                            vec![]
+                        },
+                    })
                 })
-            })
-            .collect();
-        let default_mode = self.default_mode.clone();
+                .collect()
+        } else {
+            // In SSH projects, the external agent is running on the remote
+            // machine, and currently we only run MCP servers on the local
+            // machine. So don't pass any MCP servers to the agent in that case.
+            Vec::new()
+        };
 
         cx.spawn(async move |cx| {
             let response = conn

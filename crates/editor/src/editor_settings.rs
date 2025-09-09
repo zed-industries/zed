@@ -748,6 +748,7 @@ pub struct ScrollbarAxesContent {
 #[derive(
     Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq, SettingsUi,
 )]
+#[settings_ui(group = "Gutter")]
 pub struct GutterContent {
     /// Whether to show line numbers in the gutter.
     ///
