@@ -294,7 +294,7 @@ Define extensions which should be installed (`true`) or never installed (`false`
 
 **Options**
 
-1. VSCode
+1. VS Code
 
 ```json
 {
