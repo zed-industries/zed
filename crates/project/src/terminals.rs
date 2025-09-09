@@ -49,14 +49,6 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
         let is_via_remote = self.remote_client.is_some();
-        let project_path_context = self
-            .active_entry()
-            .and_then(|entry_id| self.worktree_id_for_entry(entry_id, cx))
-            .or_else(|| self.visible_worktrees(cx).next().map(|wt| wt.read(cx).id()))
-            .map(|worktree_id| ProjectPath {
-                worktree_id,
-                path: Arc::from(Path::new("")),
-            });
 
         let path: Option<Arc<Path>> = if let Some(cwd) = &spawn_task.cwd {
             if is_via_remote {
@@ -124,23 +116,42 @@ impl Project {
             },
         };
 
-        let toolchain = project_path_context
+        let project_path_contexts = self
+            .active_entry()
+            .and_then(|entry_id| self.path_for_entry(entry_id, cx))
+            .into_iter()
+            .chain(
+                self.visible_worktrees(cx)
+                    .map(|wt| wt.read(cx).id())
+                    .map(|worktree_id| ProjectPath {
+                        worktree_id,
+                        path: Arc::from(Path::new("")),
+                    }),
+            );
+        let toolchains = project_path_contexts
             .filter(|_| detect_venv)
-            .map(|p| self.active_toolchain(p, LanguageName::new("Python"), cx));
+            .map(|p| self.active_toolchain(p, LanguageName::new("Python"), cx))
+            .collect::<Vec<_>>();
         let lang_registry = self.languages.clone();
         let fs = self.fs.clone();
         cx.spawn(async move |project, cx| {
             let activation_script = maybe!(async {
-                let toolchain = toolchain?.await?;
-                Some(
-                    lang_registry
+                for toolchain in toolchains {
+                    let Some(toolchain) = toolchain.await else {
+                        continue;
+                    };
+                    let language = lang_registry
                         .language_for_name(&toolchain.language_name.0)
                         .await
-                        .ok()?
-                        .toolchain_lister()?
-                        .activation_script(&toolchain, ShellKind::new(&shell), fs.as_ref())
-                        .await,
-                )
+                        .ok();
+                    let lister = language?.toolchain_lister();
+                    return Some(
+                        lister?
+                            .activation_script(&toolchain, ShellKind::new(&shell), fs.as_ref())
+                            .await,
+                    );
+                }
+                None
             })
             .await
             .unwrap_or_default();
@@ -268,14 +279,6 @@ impl Project {
         cwd: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
-        let project_path_context = self
-            .active_entry()
-            .and_then(|entry_id| self.worktree_id_for_entry(entry_id, cx))
-            .or_else(|| self.visible_worktrees(cx).next().map(|wt| wt.read(cx).id()))
-            .map(|worktree_id| ProjectPath {
-                worktree_id,
-                path: Arc::from(Path::new("")),
-            });
         let path = cwd.map(|p| Arc::from(&*p));
         let is_via_remote = self.remote_client.is_some();
 
@@ -303,9 +306,22 @@ impl Project {
 
         let local_path = if is_via_remote { None } else { path.clone() };
 
-        let toolchain = project_path_context
+        let project_path_contexts = self
+            .active_entry()
+            .and_then(|entry_id| self.path_for_entry(entry_id, cx))
+            .into_iter()
+            .chain(
+                self.visible_worktrees(cx)
+                    .map(|wt| wt.read(cx).id())
+                    .map(|worktree_id| ProjectPath {
+                        worktree_id,
+                        path: Arc::from(Path::new("")),
+                    }),
+            );
+        let toolchains = project_path_contexts
             .filter(|_| detect_venv)
-            .map(|p| self.active_toolchain(p, LanguageName::new("Python"), cx));
+            .map(|p| self.active_toolchain(p, LanguageName::new("Python"), cx))
+            .collect::<Vec<_>>();
         let remote_client = self.remote_client.clone();
         let shell = match &remote_client {
             Some(remote_client) => remote_client
@@ -327,17 +343,22 @@ impl Project {
         let fs = self.fs.clone();
         cx.spawn(async move |project, cx| {
             let activation_script = maybe!(async {
-                let toolchain = toolchain?.await?;
-                let language = lang_registry
-                    .language_for_name(&toolchain.language_name.0)
-                    .await
-                    .ok();
-                let lister = language?.toolchain_lister();
-                Some(
-                    lister?
-                        .activation_script(&toolchain, ShellKind::new(&shell), fs.as_ref())
-                        .await,
-                )
+                for toolchain in toolchains {
+                    let Some(toolchain) = toolchain.await else {
+                        continue;
+                    };
+                    let language = lang_registry
+                        .language_for_name(&toolchain.language_name.0)
+                        .await
+                        .ok();
+                    let lister = language?.toolchain_lister();
+                    return Some(
+                        lister?
+                            .activation_script(&toolchain, ShellKind::new(&shell), fs.as_ref())
+                            .await,
+                    );
+                }
+                None
             })
             .await
             .unwrap_or_default();

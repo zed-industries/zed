@@ -1103,6 +1103,24 @@ mod tests {
         check_keymap_update(
             "[]",
             KeybindUpdateOperation::add(KeybindUpdateTarget {
+                keystrokes: &parse_keystrokes("\\ a"),
+                action_name: "zed::SomeAction",
+                context: None,
+                action_arguments: None,
+            }),
+            r#"[
+                {
+                    "bindings": {
+                        "\\ a": "zed::SomeAction"
+                    }
+                }
+            ]"#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            "[]",
+            KeybindUpdateOperation::add(KeybindUpdateTarget {
                 keystrokes: &parse_keystrokes("ctrl-a"),
                 action_name: "zed::SomeAction",
                 context: None,
@@ -1306,6 +1324,79 @@ mod tests {
             r#"[
                 {
                     "bindings": {
+                        "\\ a": "zed::SomeAction"
+                    }
+                }
+            ]"#
+            .unindent(),
+            KeybindUpdateOperation::Replace {
+                target: KeybindUpdateTarget {
+                    keystrokes: &parse_keystrokes("\\ a"),
+                    action_name: "zed::SomeAction",
+                    context: None,
+                    action_arguments: None,
+                },
+                source: KeybindUpdateTarget {
+                    keystrokes: &parse_keystrokes("\\ b"),
+                    action_name: "zed::SomeOtherAction",
+                    context: None,
+                    action_arguments: Some(r#"{"foo": "bar"}"#),
+                },
+                target_keybind_source: KeybindSource::User,
+            },
+            r#"[
+                {
+                    "bindings": {
+                        "\\ b": [
+                            "zed::SomeOtherAction",
+                            {
+                                "foo": "bar"
+                            }
+                        ]
+                    }
+                }
+            ]"#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"[
+                {
+                    "bindings": {
+                        "\\ a": "zed::SomeAction"
+                    }
+                }
+            ]"#
+            .unindent(),
+            KeybindUpdateOperation::Replace {
+                target: KeybindUpdateTarget {
+                    keystrokes: &parse_keystrokes("\\ a"),
+                    action_name: "zed::SomeAction",
+                    context: None,
+                    action_arguments: None,
+                },
+                source: KeybindUpdateTarget {
+                    keystrokes: &parse_keystrokes("\\ a"),
+                    action_name: "zed::SomeAction",
+                    context: None,
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::User,
+            },
+            r#"[
+                {
+                    "bindings": {
+                        "\\ a": "zed::SomeAction"
+                    }
+                }
+            ]"#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"[
+                {
+                    "bindings": {
                         "ctrl-a": "zed::SomeAction"
                     }
                 }
@@ -1478,6 +1569,37 @@ mod tests {
                 target: KeybindUpdateTarget {
                     context: Some("SomeContext"),
                     keystrokes: &parse_keystrokes("a"),
+                    action_name: "foo::bar",
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::User,
+            },
+            r#"[
+                {
+                    "context": "SomeContext",
+                    "bindings": {
+                        "c": "foo::baz",
+                    }
+                },
+            ]"#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"[
+                {
+                    "context": "SomeContext",
+                    "bindings": {
+                        "\\ a": "foo::bar",
+                        "c": "foo::baz",
+                    }
+                },
+            ]"#
+            .unindent(),
+            KeybindUpdateOperation::Remove {
+                target: KeybindUpdateTarget {
+                    context: Some("SomeContext"),
+                    keystrokes: &parse_keystrokes("\\ a"),
                     action_name: "foo::bar",
                     action_arguments: None,
                 },

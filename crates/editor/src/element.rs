@@ -365,6 +365,8 @@ impl EditorElement {
         register_action(editor, window, Editor::toggle_comments);
         register_action(editor, window, Editor::select_larger_syntax_node);
         register_action(editor, window, Editor::select_smaller_syntax_node);
+        register_action(editor, window, Editor::select_next_syntax_node);
+        register_action(editor, window, Editor::select_prev_syntax_node);
         register_action(editor, window, Editor::unwrap_syntax_node);
         register_action(editor, window, Editor::select_enclosing_symbol);
         register_action(editor, window, Editor::move_to_enclosing_bracket);
@@ -8296,7 +8298,7 @@ impl Element for EditorElement {
                     let (mut snapshot, is_read_only) = self.editor.update(cx, |editor, cx| {
                         (editor.snapshot(window, cx), editor.read_only(cx))
                     });
-                    let style = self.style.clone();
+                    let style = &self.style;
 
                     let rem_size = window.rem_size();
                     let font_id = window.text_system().resolve_font(&style.text.font());
@@ -8771,7 +8773,7 @@ impl Element for EditorElement {
                                     blame.blame_for_rows(&[row_infos], cx).next()
                                 })
                                 .flatten()?;
-                            let mut element = render_inline_blame_entry(blame_entry, &style, cx)?;
+                            let mut element = render_inline_blame_entry(blame_entry, style, cx)?;
                             let inline_blame_padding = ProjectSettings::get_global(cx)
                                 .git
                                 .inline_blame
@@ -8791,7 +8793,7 @@ impl Element for EditorElement {
                     let longest_line_width = layout_line(
                         snapshot.longest_row(),
                         &snapshot,
-                        &style,
+                        style,
                         editor_width,
                         is_row_soft_wrapped,
                         window,
@@ -8949,7 +8951,7 @@ impl Element for EditorElement {
                                 scroll_pixel_position,
                                 newest_selection_head,
                                 editor_width,
-                                &style,
+                                style,
                                 window,
                                 cx,
                             )
@@ -8967,7 +8969,7 @@ impl Element for EditorElement {
                         end_row,
                         line_height,
                         em_width,
-                        &style,
+                        style,
                         window,
                         cx,
                     );
@@ -9112,7 +9114,7 @@ impl Element for EditorElement {
                                     &line_layouts,
                                     newest_selection_head,
                                     newest_selection_point,
-                                    &style,
+                                    style,
                                     window,
                                     cx,
                                 )

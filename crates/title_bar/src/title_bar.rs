@@ -660,8 +660,12 @@ impl TitleBar {
 
                         let (plan_name, label_color, bg_color) = match plan {
                             None | Some(Plan::ZedFree) => ("Free", Color::Default, free_chip_bg),
-                            Some(Plan::ZedProTrial) => ("Pro Trial", Color::Accent, pro_chip_bg),
-                            Some(Plan::ZedPro) => ("Pro", Color::Accent, pro_chip_bg),
+                            Some(Plan::ZedProTrial | Plan::ZedProTrialV2) => {
+                                ("Pro Trial", Color::Accent, pro_chip_bg)
+                            }
+                            Some(Plan::ZedPro | Plan::ZedProV2) => {
+                                ("Pro", Color::Accent, pro_chip_bg)
+                            }
                         };
 
                         menu.custom_entry(
@@ -689,7 +693,7 @@ impl TitleBar {
                             "Settings Profiles",
                             zed_actions::settings_profile_selector::Toggle.boxed_clone(),
                         )
-                        .action("Key Bindings", Box::new(keymap_editor::OpenKeymapEditor))
+                        .action("Keymap Editor", Box::new(keymap_editor::OpenKeymapEditor))
                         .action(
                             "Themes…",
                             zed_actions::theme_selector::Toggle::default().boxed_clone(),

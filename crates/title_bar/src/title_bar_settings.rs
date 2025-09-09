@@ -1,7 +1,7 @@
 use db::anyhow;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsUi};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 
 #[derive(Copy, Clone, Deserialize, Debug)]
 pub struct TitleBarSettings {
@@ -14,8 +14,11 @@ pub struct TitleBarSettings {
     pub show_menus: bool,
 }
 
-#[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi)]
-#[settings_ui(group = "Title Bar", path = "title_bar")]
+#[derive(
+    Copy, Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi, SettingsKey,
+)]
+#[settings_ui(group = "Title Bar")]
+#[settings_key(key = "title_bar")]
 pub struct TitleBarSettingsContent {
     /// Whether to show the branch icon beside branch switcher in the title bar.
     ///
@@ -48,8 +51,6 @@ pub struct TitleBarSettingsContent {
 }
 
 impl Settings for TitleBarSettings {
-    const KEY: Option<&'static str> = Some("title_bar");
-
     type FileContent = TitleBarSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut gpui::App) -> anyhow::Result<Self>

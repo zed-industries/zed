@@ -3317,7 +3317,7 @@ impl Repository {
     ) -> Task<Result<Entity<Buffer>>> {
         cx.spawn(async move |repository, cx| {
             let buffer = buffer_store
-                .update(cx, |buffer_store, cx| buffer_store.create_buffer(cx))?
+                .update(cx, |buffer_store, cx| buffer_store.create_buffer(false, cx))?
                 .await?;
 
             if let Some(language_registry) = language_registry {

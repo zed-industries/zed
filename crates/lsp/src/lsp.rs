@@ -166,6 +166,12 @@ impl<'a> From<&'a str> for LanguageServerName {
     }
 }
 
+impl PartialEq<str> for LanguageServerName {
+    fn eq(&self, other: &str) -> bool {
+        self.0 == other
+    }
+}
+
 /// Handle to a language server RPC activity subscription.
 pub enum Subscription {
     Notification {
