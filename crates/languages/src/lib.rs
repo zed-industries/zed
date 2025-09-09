@@ -394,7 +394,30 @@ fn load_config(name: &str) -> LanguageConfig {
     config
 }
 
+/// Name of the environment variable to provide in order to hot-reload the TreeSitter queries. When
+/// running from the Zed repository root, this should just be set to ".". Otherwise, the Zed
+/// repository root can be specified.
+pub const HOT_RELOAD_BUILTIN_TREE_SITTER_QUERIES: &str = "HOT_RELOAD_BUILTIN_TREE_SITTER_QUERIES";
+pub const TREE_SITTER_QUERIES_SOURCE_PATH: &str = "crates/languages/src/";
+
 fn load_queries(name: &str) -> LanguageQueries {
+    if let Ok(zed_repo_path) = std::env::var(HOT_RELOAD_BUILTIN_TREE_SITTER_QUERIES) {
+        let zed_repo_path = std::path::PathBuf::from(zed_repo_path);
+        match load_queries_from_fs(name, zed_repo_path) {
+            Ok(queries) => return queries,
+            Err(err) => {
+                log::error!(
+                    "Failed to load queries from files (due to {}): {}",
+                    HOT_RELOAD_BUILTIN_TREE_SITTER_QUERIES,
+                    err
+                );
+            }
+        }
+    }
+    load_queries_from_assets(name)
+}
+
+fn load_queries_from_assets(name: &str) -> LanguageQueries {
     let mut result = LanguageQueries::default();
     for path in LanguageDir::iter() {
         if let Some(remainder) = path.strip_prefix(name).and_then(|p| p.strip_prefix('/')) {
@@ -413,4 +436,38 @@ fn load_queries(name: &str) -> LanguageQueries {
         }
     }
     result
+}
+
+fn load_queries_from_fs(
+    name: &str,
+    zed_repo_path: std::path::PathBuf,
+) -> anyhow::Result<LanguageQueries> {
+    let mut queries_dir = zed_repo_path;
+    queries_dir.push(TREE_SITTER_QUERIES_SOURCE_PATH);
+    queries_dir.push(name);
+    if !std::fs::exists(&queries_dir)? {
+        anyhow::bail!("{} does not exist", queries_dir.display());
+    }
+    let mut result = LanguageQueries::default();
+    for entry in std::fs::read_dir(queries_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("scm") {
+            continue;
+        }
+        for (name, query) in QUERY_FILENAME_PREFIXES {
+            if path
+                .file_name()
+                .and_then(|file_name| file_name.to_str())
+                .is_some_and(|file_name| file_name.starts_with(name))
+            {
+                let contents = std::fs::read_to_string(&path)?;
+                match query(&mut result) {
+                    None => *query(&mut result) = Some(contents.into()),
+                    Some(r) => r.to_mut().push_str(contents.as_ref()),
+                }
+            }
+        }
+    }
+    Ok(result)
 }
