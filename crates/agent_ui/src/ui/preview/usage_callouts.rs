@@ -38,7 +38,7 @@ impl RenderOnce for UsageCallout {
 
         let (title, message, button_text, url) = if is_limit_reached {
             match self.plan {
-                Plan::ZedFree => (
+                Plan::ZedFree | Plan::ZedFreeV2 => (
                     "Out of free prompts",
                     "Upgrade to continue, wait for the next reset, or switch to API key."
                         .to_string(),

@@ -40,6 +40,7 @@ impl AgentServer for Gemini {
         let proxy_url = cx.read_global(|settings: &SettingsStore, _| {
             settings.get::<ProxySettings>(None).proxy.clone()
         });
+        let default_mode = self.default_mode(cx);
 
         cx.spawn(async move |cx| {
             let mut extra_env = HashMap::default();
@@ -69,8 +70,15 @@ impl AgentServer for Gemini {
                 command.args.push(proxy_url_value.clone());
             }
 
-            let connection =
-                crate::acp::connect(name, command, root_dir.as_ref(), is_remote, cx).await?;
+            let connection = crate::acp::connect(
+                name,
+                command,
+                root_dir.as_ref(),
+                default_mode,
+                is_remote,
+                cx,
+            )
+            .await?;
             Ok((connection, login))
         })
     }

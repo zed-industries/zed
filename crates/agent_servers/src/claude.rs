@@ -1,10 +1,14 @@
+use agent_client_protocol as acp;
+use fs::Fs;
+use settings::{SettingsStore, update_settings_file};
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::{any::Any, path::PathBuf};
 
 use anyhow::{Context as _, Result};
-use gpui::{App, SharedString, Task};
-use project::agent_server_store::CLAUDE_CODE_NAME;
+use gpui::{App, AppContext as _, SharedString, Task};
+use project::agent_server_store::{AllAgentServersSettings, CLAUDE_CODE_NAME};
 
 use crate::{AgentServer, AgentServerDelegate};
 use acp_thread::AgentConnection;
@@ -30,6 +34,22 @@ impl AgentServer for ClaudeCode {
         ui::IconName::AiClaude
     }
 
+    fn default_mode(&self, cx: &mut App) -> Option<acp::SessionModeId> {
+        let settings = cx.read_global(|settings: &SettingsStore, _| {
+            settings.get::<AllAgentServersSettings>(None).claude.clone()
+        });
+
+        settings
+            .as_ref()
+            .and_then(|s| s.default_mode.clone().map(|m| acp::SessionModeId(m.into())))
+    }
+
+    fn set_default_mode(&self, mode_id: Option<acp::SessionModeId>, fs: Arc<dyn Fs>, cx: &mut App) {
+        update_settings_file::<AllAgentServersSettings>(fs, cx, |settings, _| {
+            settings.claude.get_or_insert_default().default_mode = mode_id.map(|m| m.to_string())
+        });
+    }
+
     fn connect(
         &self,
         root_dir: Option<&Path>,
@@ -40,6 +60,7 @@ impl AgentServer for ClaudeCode {
         let root_dir = root_dir.map(|root_dir| root_dir.to_string_lossy().to_string());
         let is_remote = delegate.project.read(cx).is_via_remote_server();
         let store = delegate.store.downgrade();
+        let default_mode = self.default_mode(cx);
 
         cx.spawn(async move |cx| {
             let (command, root_dir, login) = store
@@ -56,8 +77,15 @@ impl AgentServer for ClaudeCode {
                     ))
                 })??
                 .await?;
-            let connection =
-                crate::acp::connect(name, command, root_dir.as_ref(), is_remote, cx).await?;
+            let connection = crate::acp::connect(
+                name,
+                command,
+                root_dir.as_ref(),
+                default_mode,
+                is_remote,
+                cx,
+            )
+            .await?;
             Ok((connection, login))
         })
     }
