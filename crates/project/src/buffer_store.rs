@@ -482,6 +482,7 @@ impl LocalBufferStore {
             Some(buffer)
         } else {
             this.opened_buffers.remove(&buffer_id);
+            this.non_searchable_buffers.remove(&buffer_id);
             None
         };
 
