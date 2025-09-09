@@ -806,7 +806,6 @@ fn register_actions(
                 }
             }
         })
-        .register_action(install_cli)
         .register_action(|_, _: &install_cli::RegisterZedScheme, window, cx| {
             cx.spawn_in(window, async move |workspace, cx| {
                 install_cli::register_zed_scheme(cx).await?;
@@ -914,6 +913,9 @@ fn register_actions(
         .register_action(|workspace, _: &CaptureAudio, window, cx| {
             capture_audio(workspace, window, cx);
         });
+
+    #[cfg(not(target_os = "windows"))]
+    workspace.register_action(install_cli);
 
     if workspace.project().read(cx).is_via_remote_server() {
         workspace.register_action({
@@ -1030,13 +1032,14 @@ fn about(
     .detach();
 }
 
+#[cfg(not(target_os = "windows"))]
 fn install_cli(
     _: &mut Workspace,
-    _: &install_cli::Install,
+    _: &install_cli::InstallCliBinary,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    install_cli::install_cli(window, cx);
+    install_cli::install_cli_binary(window, cx)
 }
 
 static WAITING_QUIT_CONFIRMATION: AtomicBool = AtomicBool::new(false);

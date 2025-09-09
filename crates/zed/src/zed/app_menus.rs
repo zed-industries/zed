@@ -39,7 +39,8 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::os_submenu("Services", gpui::SystemMenuType::Services),
                 MenuItem::separator(),
                 MenuItem::action("Extensions", zed_actions::Extensions::default()),
-                MenuItem::action("Install CLI", install_cli::Install),
+                #[cfg(not(target_os = "windows"))]
+                MenuItem::action("Install CLI", install_cli::InstallCliBinary),
                 MenuItem::separator(),
                 #[cfg(target_os = "macos")]
                 MenuItem::action("Hide Zed", super::Hide),
