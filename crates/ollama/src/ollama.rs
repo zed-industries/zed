@@ -46,7 +46,7 @@ fn get_max_tokens(name: &str) -> u64 {
     /// Default context length for unknown models.
     const DEFAULT_TOKENS: u64 = 4096;
     /// Magic number. Lets many Ollama models work with ~16GB of ram.
-    /// Models that support context beyond 16k such as codestral (32k) or devstral (128k) will be clampled down to 16k
+    /// Models that support context beyond 16k such as codestral (32k) or devstral (128k) will be clamped down to 16k
     const MAXIMUM_TOKENS: u64 = 16384;
 
     match name.split(':').next().unwrap() {
