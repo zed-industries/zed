@@ -4,20 +4,69 @@ Python support is available natively in Zed.
 
 - Tree-sitter: [tree-sitter-python](https://github.com/zed-industries/tree-sitter-python)
 - Language Servers:
+  - [DetachHead/basedpyright](https://github.com/DetachHead/basedpyright)
+  - [astral-sh/ruff](https://github.com/astral-sh/ruff)
+  - [astral-sh/ty](https://github.com/astral-sh/ty)
   - [microsoft/pyright](https://github.com/microsoft/pyright)
   - [python-lsp/python-lsp-server](https://github.com/python-lsp/python-lsp-server) (PyLSP)
 - Debug Adapter: [debugpy](https://github.com/microsoft/debugpy)
 
 ## Language Servers
 
-Zed supports multiple Python language servers some of which may require configuration to work properly.
+Zed provides several Python language servers by default. By default, [basedpyright](https://github.com/DetachHead/basedpyright) is used as the primary language server, and [Ruff](https://github.com/astral-sh/ruff) is used for formatting. Other language servers are disabled by default, but can be enabled in your settings. For example:
 
-See: [Working with Language Servers](https://zed.dev/docs/configuring-languages#working-with-language-servers) for more information.
+```json
+{
+  "languages": {
+    "Python": {
+      "language_servers": {
+        // Disable basedpyright and enable pylsp, and otherwise use the default configuration.
+        "pylsp", "!basedpyright", ".."
+      }
+    }
+  }
+}
+```
 
-## Virtual Environments in the Terminal {#terminal-detect_venv}
+See: [Working with Language Servers](https://zed.dev/docs/configuring-languages#working-with-language-servers) for more information about how to enable and disable language servers.
 
-Zed will detect Python virtual environments and automatically activate them in terminal if available.
-See: [detect_venv documentation](../configuring-zed.md#terminal-detect_venv) for more.
+### Basedpyright
+
+[basedpyright](https://docs.basedpyright.com/latest/) replaced [Pyright](https://github.com/microsoft/pyright) as the primary Python language server beginning with Zed v0.204.0. It provides support for core language server functionality like navigation (go to definition/find all references) and type checking. Compared to Pyright, it adds support for additional language server features (like inlay hints) and checking rules.
+
+Note that while basedpyright itself defaults to the `recommended` [type-checking mode](https://docs.basedpyright.com/latest/benefits-over-pyright/better-defaults/#typecheckingmode), Zed configures it to use the less-strict `standard` mode by default, which matches the behavior of Pyright. This Zed-specific override is not applied if your project has any basedpyright (or Pyright) configuration (see below), allowing you to configure your preferred type-checking mode in each project.
+
+#### Basedpyright Configuration
+
+basedpyright offers flexible configuration options specified in a JSON-formatted text configuration. By default, the file is called `pyrightconfig.json` and is located within the root directory of your project. basedpyright settings can also be specified in a `[tool.basedpyright]` (or `[tool.pyright]`) section of a `pyproject.toml` file. A `pyrightconfig.json` file always takes precedence over `pyproject.toml` if both are present.
+
+For more information, see the basedpyright [configuration documentation](https://docs.basedpyright.com/latest/configuration/config-files/).
+
+#### Basedpyright Settings
+
+basedpyright also accepts specific LSP-related settings, not necessarily connected to a project. These can be changed in the `lsp` section of your `settings.json`.
+
+For example, in order to:
+
+- use strict type-checking level
+- diagnose all files in the workspace instead of the only open files default
+
+```json
+{
+  "lsp": {
+    "basedpyright": {
+      "settings": {
+        "basedpyright.analysis": {
+          "diagnosticMode": "workspace",
+          "typeCheckingMode": "strict"
+        }
+      }
+    }
+  }
+}
+```
+
+For more information, see the basedpyright [settings documentation](https://docs.basedpyright.com/latest/configuration/language-server-settings/).
 
 ## PyLSP
 
@@ -25,107 +74,31 @@ See: [detect_venv documentation](../configuring-zed.md#terminal-detect_venv) for
 
 See [Python Language Server Configuration](https://github.com/python-lsp/python-lsp-server/blob/develop/CONFIGURATION.md) for more.
 
-## PyRight
+## Virtual environments
 
-### PyRight Configuration
+Many Python projects use [virtual environments](https://docs.python.org/3/library/venv.html) to manage a project-specific Python toolchain and set of installed dependencies; in larger projects, multiple virtual environments may be used, each covering a different part of the codebase. Zed uses the [Python Environment Tools](https://github.com/microsoft/python-environment-tools) library to discover all relevant virtual environments (and other Python toolchains) when opening a project, and it will automatically start language server instances that use the appropriate toolchain and set of dependencies for each part of the codebase.
 
-The [pyright](https://github.com/microsoft/pyright) language server offers flexible configuration options specified in a JSON-formatted text configuration. By default, the file is called `pyrightconfig.json` and is located within the root directory of your project. Pyright settings can also be specified in a `[tool.pyright]` section of a `pyproject.toml` file. A `pyrightconfig.json` file always takes precedence over `pyproject.toml` if both are present.
+## Virtual Environments in the Terminal {#terminal-detect_venv}
 
-For more information, see the Pyright [configuration documentation](https://microsoft.github.io/pyright/#/configuration).
+Zed will detect Python virtual environments and automatically activate them in terminal if available.
+See: [detect_venv documentation](../configuring-zed.md#terminal-detect_venv) for more.
 
-### PyRight Settings
+## Code formatting & Linting
 
-The [pyright](https://github.com/microsoft/pyright) language server also accepts specific LSP-related settings, not necessarily connected to a project. These can be changed in the `lsp` section of your `settings.json`.
+Zed provides the [Ruff](https://docs.astral.sh/ruff/) formatter and linter, which is enabled by default. (Specifically, Zed runs Ruff as an LSP server using the `ruff server` subcommand.) Ruff has many configurable options, which can be set in the following places, among others:
 
-For example, in order to:
+- The `ruff.toml` configuration file
+- The `[tool.ruff]` section of a `pyproject.toml` manifest
+- The language server initialization options, configured in Zed's `settings.json`
 
-- use strict type-checking level
-- diagnose all files in the workspace instead of the only open files default
-- provide the path to a specific Python interpreter
-
-```json
-{
-  "lsp": {
-    "pyright": {
-      "settings": {
-        "python.analysis": {
-          "diagnosticMode": "workspace",
-          "typeCheckingMode": "strict"
-        },
-        "python": {
-          "pythonPath": ".venv/bin/python"
-        }
-      }
-    }
-  }
-}
-```
-
-For more information, see the Pyright [settings documentation](https://microsoft.github.io/pyright/#/settings).
-
-### Pyright Virtual environments
-
-A Python [virtual environment](https://docs.python.org/3/tutorial/venv.html) allows you to store all of a project's dependencies, including the Python interpreter and package manager, in a single directory that's isolated from any other Python projects on your computer.
-
-By default, the Pyright language server will look for Python packages in the default global locations. But you can also configure Pyright to use the packages installed in a given virtual environment.
-
-To do this, create a JSON file called `pyrightconfig.json` at the root of your project. This file must include two keys:
-
-- `venvPath`: a relative path from your project directory to any directory that _contains_ one or more virtual environment directories
-- `venv`: the name of a virtual environment directory
-
-For example, a common approach is to create a virtual environment directory called `.venv` at the root of your project directory with the following commands:
-
-```sh
-# create a virtual environment in the .venv directory
-python3 -m venv .venv
-# set up the current shell to use that virtual environment
-source .venv/bin/activate
-```
-
-Having done that, you would create a `pyrightconfig.json` with the following content:
-
-```json
-{
-  "venvPath": ".",
-  "venv": ".venv"
-}
-```
-
-If you prefer to use a `pyproject.toml` file, you can add the following section:
+For example, to disable all Ruff linting in your project, and configure the formatter to use a custom line width, you can add the following configuration to `ruff.toml` at the root of your project:
 
 ```toml
-[tool.pyright]
-venvPath = "."
-venv = ".venv"
+line-length = 100
+
+[lint]
+exclude = ["*"]
 ```
-
-You can also configure this option directly in your `settings.json` file ([pyright settings](#pyright-settings)), as recommended in [Configuring Your Python Environment](https://microsoft.github.io/pyright/#/import-resolution?id=configuring-your-python-environment).
-
-```json
-{
-  "lsp": {
-    "pyright": {
-      "settings": {
-        "python": {
-          "pythonPath": ".venv/bin/python"
-        }
-      }
-    }
-  }
-}
-```
-
-### Code formatting & Linting
-
-The Pyright language server does not provide code formatting or linting. If you want to detect lint errors and reformat your Python code upon saving, you'll need to set up.
-
-A common tool for formatting Python code is [Ruff](https://docs.astral.sh/ruff/). It is another tool written in Rust, an extremely fast Python linter and code formatter. It is available through the [Ruff extension](https://github.com/zed-industries/zed/tree/main/extensions/ruff/). To configure the Ruff extension to work within Zed, see the setup documentation [here](https://docs.astral.sh/ruff/editors/setup/#zed).
-
-<!--
-TBD: Expand Python Ruff docs.
-TBD: Ruff pyproject.toml, ruff.toml docs. `ruff.configuration`.
--->
 
 ## Debugging
 
