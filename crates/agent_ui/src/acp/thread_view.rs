@@ -913,7 +913,7 @@ impl AcpThreadView {
                 }
             }
             ViewEvent::MessageEditorEvent(editor, MessageEditorEvent::Send) => {
-                self.regenerate(event.entry_index, editor, window, cx);
+                self.regenerate(event.entry_index, editor.clone(), window, cx);
             }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Cancel) => {
                 self.cancel_editing(&Default::default(), window, cx);
@@ -1137,7 +1137,7 @@ impl AcpThreadView {
     fn regenerate(
         &mut self,
         entry_ix: usize,
-        message_editor: &Entity<MessageEditor>,
+        message_editor: Entity<MessageEditor>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1154,16 +1154,18 @@ impl AcpThreadView {
             return;
         };
 
-        let contents = message_editor.update(cx, |message_editor, cx| message_editor.contents(cx));
-
-        let task = cx.spawn(async move |_, cx| {
-            let contents = contents.await?;
+        cx.spawn_in(window, async move |this, cx| {
             thread
                 .update(cx, |thread, cx| thread.rewind(user_message_id, cx))?
                 .await?;
-            Ok(contents)
-        });
-        self.send_impl(task, window, cx);
+            let contents =
+                message_editor.update(cx, |message_editor, cx| message_editor.contents(cx))?;
+            this.update_in(cx, |this, window, cx| {
+                this.send_impl(contents, window, cx);
+            })?;
+            anyhow::Ok(())
+        })
+        .detach();
     }
 
     fn open_agent_diff(&mut self, _: &OpenAgentDiff, window: &mut Window, cx: &mut Context<Self>) {
@@ -1626,14 +1628,16 @@ impl AcpThreadView {
         cx.notify();
     }
 
-    fn rewind(&mut self, message_id: &UserMessageId, cx: &mut Context<Self>) {
+    fn restore_checkpoint(&mut self, message_id: &UserMessageId, cx: &mut Context<Self>) {
         let Some(thread) = self.thread() else {
             return;
         };
+
         thread
-            .update(cx, |thread, cx| thread.rewind(message_id.clone(), cx))
+            .update(cx, |thread, cx| {
+                thread.restore_checkpoint(message_id.clone(), cx)
+            })
             .detach_and_log_err(cx);
-        cx.notify();
     }
 
     fn render_entry(
@@ -1703,8 +1707,9 @@ impl AcpThreadView {
                                         .label_size(LabelSize::XSmall)
                                         .icon_color(Color::Muted)
                                         .color(Color::Muted)
+                                        .tooltip(Tooltip::text("Restores all files in the project to the content they had at this point in the conversation."))
                                         .on_click(cx.listener(move |this, _, _window, cx| {
-                                            this.rewind(&message_id, cx);
+                                            this.restore_checkpoint(&message_id, cx);
                                         }))
                                 )
                                 .child(Divider::horizontal())
@@ -1775,7 +1780,7 @@ impl AcpThreadView {
                                                             let editor = editor.clone();
                                                             move |this, _, window, cx| {
                                                                 this.regenerate(
-                                                                    entry_ix, &editor, window, cx,
+                                                                    entry_ix, editor.clone(), window, cx,
                                                                 );
                                                             }
                                                         })).into_any_element()
