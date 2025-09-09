@@ -20,6 +20,7 @@ use std::{
         atomic::{AtomicBool, Ordering::SeqCst},
     },
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
+    thread::{self, Thread},
     time::{Duration, Instant},
 };
 
@@ -27,6 +28,7 @@ pub struct TestScheduler {
     clock: Arc<TestClock>,
     rng: Arc<Mutex<StdRng>>,
     state: Arc<Mutex<SchedulerState>>,
+    thread: Thread,
 }
 
 impl TestScheduler {
@@ -75,6 +77,7 @@ impl TestScheduler {
                 next_trace_id: TraceId(0),
             })),
             clock: Arc::new(TestClock::new()),
+            thread: thread::current(),
         }
     }
 
@@ -173,6 +176,28 @@ impl TestScheduler {
         self.clock.advance(duration);
         self.run();
     }
+
+    fn park(&self, deadline: Option<Instant>) -> bool {
+        if self.state.lock().allow_parking {
+            if let Some(deadline) = deadline {
+                let now = Instant::now();
+                let timeout = deadline.saturating_duration_since(now);
+                thread::park_timeout(timeout);
+                now.elapsed() < timeout
+            } else {
+                thread::park();
+                true
+            }
+        } else if deadline.is_some() {
+            false
+        } else {
+            let mut pending_traces = String::new();
+            for (_, trace) in mem::take(&mut self.state.lock().pending_traces) {
+                writeln!(pending_traces, "{:?}", exclude_wakers_from_trace(trace)).unwrap();
+            }
+            panic!("Parking forbidden. Pending traces:\n{}", pending_traces);
+        }
+    }
 }
 
 impl Scheduler for TestScheduler {
@@ -193,13 +218,12 @@ impl Scheduler for TestScheduler {
             self.state.lock().blocked_sessions.push(session_id);
         }
 
-        let (parker, unparker) = parking::pair();
         let deadline = timeout.map(|timeout| Instant::now() + timeout);
         let awoken = Arc::new(AtomicBool::new(false));
         let waker = Box::new(TracingWaker {
             id: None,
             awoken: awoken.clone(),
-            unparker: unparker.clone(),
+            thread: self.thread.clone(),
             state: self.state.clone(),
         });
         let waker = unsafe { Waker::new(Box::into_raw(waker) as *const (), &WAKER_VTABLE) };
@@ -230,18 +254,8 @@ impl Scheduler for TestScheduler {
             let stepped = stepped.unwrap_or(true);
             let awoken = awoken.swap(false, SeqCst);
             if !stepped && !awoken && !self.advance_clock_to_next_timer() {
-                if self.state.lock().allow_parking {
-                    if !park(&parker, deadline) {
-                        break;
-                    }
-                } else if deadline.is_some() {
+                if !self.park(deadline) {
                     break;
-                } else {
-                    let mut pending_traces = String::new();
-                    for (_, trace) in mem::take(&mut self.state.lock().pending_traces) {
-                        writeln!(pending_traces, "{:?}", exclude_wakers_from_trace(trace)).unwrap();
-                    }
-                    panic!("Parking forbidden. Pending traces:\n{}", pending_traces);
                 }
             }
         }
@@ -272,13 +286,14 @@ impl Scheduler for TestScheduler {
                 runnable,
             },
         );
+        drop(state);
+        self.thread.unpark();
     }
 
     fn schedule_background(&self, runnable: Runnable) {
         let mut state = self.state.lock();
-        let rng = &mut *self.rng.lock();
         let ix = if state.randomize_order {
-            rng.random_range(0..=state.runnables.len())
+            self.rng.lock().random_range(0..=state.runnables.len())
         } else {
             state.runnables.len()
         };
@@ -289,6 +304,8 @@ impl Scheduler for TestScheduler {
                 runnable,
             },
         );
+        drop(state);
+        self.thread.unpark();
     }
 
     fn timer(&self, duration: Duration) -> Timer {
@@ -380,7 +397,7 @@ struct TraceId(usize);
 struct TracingWaker {
     id: Option<TraceId>,
     awoken: Arc<AtomicBool>,
-    unparker: parking::Unparker,
+    thread: Thread,
     state: Arc<Mutex<SchedulerState>>,
 }
 
@@ -393,7 +410,7 @@ impl Clone for TracingWaker {
         Self {
             id: Some(id),
             awoken: self.awoken.clone(),
-            unparker: self.unparker.clone(),
+            thread: self.thread.clone(),
             state: self.state.clone(),
         }
     }
@@ -417,7 +434,7 @@ impl TracingWaker {
             self.state.lock().pending_traces.remove(&id);
         }
         self.awoken.store(true, SeqCst);
-        self.unparker.unpark();
+        self.thread.unpark();
     }
 
     fn clone_raw(waker: *const ()) -> RawWaker {
@@ -459,15 +476,6 @@ impl Future for Yield {
             cx.waker().wake_by_ref();
             Poll::Pending
         }
-    }
-}
-
-fn park(parker: &parking::Parker, deadline: Option<Instant>) -> bool {
-    if let Some(deadline) = deadline {
-        parker.park_deadline(deadline)
-    } else {
-        parker.park();
-        true
     }
 }
 

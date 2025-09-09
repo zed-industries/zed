@@ -2367,6 +2367,7 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
 
         watch_settings(fs.clone(), cx);
     });
+    cx.run_until_parked();
 
     let templates = Templates::new();
 
