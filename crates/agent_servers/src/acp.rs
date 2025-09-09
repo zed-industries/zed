@@ -9,6 +9,7 @@ use futures::AsyncBufReadExt as _;
 use futures::io::BufReader;
 use project::Project;
 use serde::Deserialize;
+use util::ResultExt as _;
 
 use std::{any::Any, cell::RefCell};
 use std::{path::Path, rc::Rc};
@@ -29,6 +30,11 @@ pub struct AcpConnection {
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
     auth_methods: Vec<acp::AuthMethod>,
     agent_capabilities: acp::AgentCapabilities,
+    default_mode: Option<acp::SessionModeId>,
+    root_dir: PathBuf,
+    // NB: Don't move this into the wait_task, since we need to ensure the process is
+    // killed on drop (setting kill_on_drop on the command seems to not always work).
+    child: smol::process::Child,
     _io_task: Task<Result<()>>,
     _wait_task: Task<Result<()>>,
     _stderr_task: Task<Result<()>>,
@@ -64,9 +70,11 @@ impl AcpConnection {
             .current_dir(root_dir)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()?;
+            .stderr(std::process::Stdio::piped());
+        if !is_remote {
+            child.current_dir(root_dir);
+        }
+        let mut child = child.spawn()?;
 
         let stdout = child.stdout.take().context("Failed to take stdout")?;
         let stdin = child.stdin.take().context("Failed to take stdin")?;
@@ -102,8 +110,9 @@ impl AcpConnection {
 
         let wait_task = cx.spawn({
             let sessions = sessions.clone();
+            let status_fut = child.status();
             async move |cx| {
-                let status = child.status().await?;
+                let status = status_fut.await?;
 
                 for session in sessions.borrow().values() {
                     session
@@ -152,11 +161,19 @@ impl AcpConnection {
             _io_task: io_task,
             _wait_task: wait_task,
             _stderr_task: stderr_task,
+            child,
         })
     }
 
     pub fn prompt_capabilities(&self) -> &acp::PromptCapabilities {
         &self.agent_capabilities.prompt_capabilities
+    }
+}
+
+impl Drop for AcpConnection {
+    fn drop(&mut self) {
+        // See the comment on the child field.
+        self.child.kill().log_err();
     }
 }
 
