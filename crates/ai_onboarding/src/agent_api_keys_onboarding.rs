@@ -1,8 +1,6 @@
 use gpui::{Action, IntoElement, ParentElement, RenderOnce, point};
 use language_model::{LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID};
-use ui::{Divider, List, prelude::*};
-
-use crate::BulletItem;
+use ui::{Divider, List, ListBulletItem, prelude::*};
 
 pub struct ApiKeysWithProviders {
     configured_providers: Vec<(IconName, SharedString)>,
@@ -13,7 +11,7 @@ impl ApiKeysWithProviders {
         cx.subscribe(
             &LanguageModelRegistry::global(cx),
             |this: &mut Self, _registry, event: &language_model::Event, cx| match event {
-                language_model::Event::ProviderStateChanged
+                language_model::Event::ProviderStateChanged(_)
                 | language_model::Event::AddedProvider(_)
                 | language_model::Event::RemovedProvider(_) => {
                     this.configured_providers = Self::compute_configured_providers(cx)
@@ -35,7 +33,7 @@ impl ApiKeysWithProviders {
             .filter(|provider| {
                 provider.is_authenticated(cx) && provider.id() != ZED_CLOUD_PROVIDER_ID
             })
-            .map(|provider| (provider.icon(), provider.name().0.clone()))
+            .map(|provider| (provider.icon(), provider.name().0))
             .collect()
     }
 }
@@ -128,7 +126,7 @@ impl RenderOnce for ApiKeysWithoutProviders {
                     )
                     .child(Divider::horizontal()),
             )
-            .child(List::new().child(BulletItem::new(
+            .child(List::new().child(ListBulletItem::new(
                 "Add your own keys to use AI without signing in.",
             )))
             .child(
@@ -136,10 +134,7 @@ impl RenderOnce for ApiKeysWithoutProviders {
                     .full_width()
                     .style(ButtonStyle::Outlined)
                     .on_click(move |_, window, cx| {
-                        window.dispatch_action(
-                            zed_actions::agent::OpenConfiguration.boxed_clone(),
-                            cx,
-                        );
+                        window.dispatch_action(zed_actions::agent::OpenSettings.boxed_clone(), cx);
                     }),
             )
     }

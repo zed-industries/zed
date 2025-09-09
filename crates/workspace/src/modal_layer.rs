@@ -141,10 +141,10 @@ impl ModalLayer {
         }
 
         if let Some(active_modal) = self.active_modal.take() {
-            if let Some(previous_focus) = active_modal.previous_focus_handle {
-                if active_modal.focus_handle.contains_focused(window, cx) {
-                    previous_focus.focus(window);
-                }
+            if let Some(previous_focus) = active_modal.previous_focus_handle
+                && active_modal.focus_handle.contains_focused(window, cx)
+            {
+                previous_focus.focus(window);
             }
             cx.notify();
         }

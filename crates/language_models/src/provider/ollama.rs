@@ -11,8 +11,8 @@ use language_model::{
     LanguageModelToolUseId, MessageContent, RateLimiter, Role, StopReason, TokenUsage,
 };
 use ollama::{
-    ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, KeepAlive, OllamaFunctionTool,
-    OllamaToolCall, get_models, show_model, stream_chat_completion,
+    ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, KeepAlive, OllamaFunctionCall,
+    OllamaFunctionTool, OllamaToolCall, get_models, show_model, stream_chat_completion,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -192,12 +192,16 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         IconName::AiOllama
     }
 
-    fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        self.provided_models(cx).into_iter().next()
+    fn default_model(&self, _: &App) -> Option<Arc<dyn LanguageModel>> {
+        // We shouldn't try to select default model, because it might lead to a load call for an unloaded model.
+        // In a constrained environment where user might not have enough resources it'll be a bad UX to select something
+        // to load by default.
+        None
     }
 
-    fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        self.default_model(cx)
+    fn default_fast_model(&self, _: &App) -> Option<Arc<dyn LanguageModel>> {
+        // See explanation for default_model.
+        None
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -233,7 +237,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
             .map(|model| {
                 Arc::new(OllamaLanguageModel {
                     id: LanguageModelId::from(model.name.clone()),
-                    model: model.clone(),
+                    model,
                     http_client: self.http_client.clone(),
                     request_limiter: RateLimiter::new(4),
                 }) as Arc<dyn LanguageModel>
@@ -251,7 +255,12 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView {
+    fn configuration_view(
+        &self,
+        _target_agent: language_model::ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyView {
         let state = self.state.clone();
         cx.new(|cx| ConfigurationView::new(state, window, cx))
             .into()
@@ -273,59 +282,85 @@ impl OllamaLanguageModel {
     fn to_ollama_request(&self, request: LanguageModelRequest) -> ChatRequest {
         let supports_vision = self.model.supports_vision.unwrap_or(false);
 
-        ChatRequest {
-            model: self.model.name.clone(),
-            messages: request
-                .messages
-                .into_iter()
-                .map(|msg| {
-                    let images = if supports_vision {
-                        msg.content
-                            .iter()
-                            .filter_map(|content| match content {
-                                MessageContent::Image(image) => Some(image.source.to_string()),
-                                _ => None,
-                            })
-                            .collect::<Vec<String>>()
-                    } else {
-                        vec![]
-                    };
+        let mut messages = Vec::with_capacity(request.messages.len());
 
-                    match msg.role {
-                        Role::User => ChatMessage::User {
+        for mut msg in request.messages.into_iter() {
+            let images = if supports_vision {
+                msg.content
+                    .iter()
+                    .filter_map(|content| match content {
+                        MessageContent::Image(image) => Some(image.source.to_string()),
+                        _ => None,
+                    })
+                    .collect::<Vec<String>>()
+            } else {
+                vec![]
+            };
+
+            match msg.role {
+                Role::User => {
+                    for tool_result in msg
+                        .content
+                        .extract_if(.., |x| matches!(x, MessageContent::ToolResult(..)))
+                    {
+                        match tool_result {
+                            MessageContent::ToolResult(tool_result) => {
+                                messages.push(ChatMessage::Tool {
+                                    tool_name: tool_result.tool_name.to_string(),
+                                    content: tool_result.content.to_str().unwrap_or("").to_string(),
+                                })
+                            }
+                            _ => unreachable!("Only tool result should be extracted"),
+                        }
+                    }
+                    if !msg.content.is_empty() {
+                        messages.push(ChatMessage::User {
                             content: msg.string_contents(),
                             images: if images.is_empty() {
                                 None
                             } else {
                                 Some(images)
                             },
-                        },
-                        Role::Assistant => {
-                            let content = msg.string_contents();
-                            let thinking =
-                                msg.content.into_iter().find_map(|content| match content {
-                                    MessageContent::Thinking { text, .. } if !text.is_empty() => {
-                                        Some(text)
-                                    }
-                                    _ => None,
-                                });
-                            ChatMessage::Assistant {
-                                content,
-                                tool_calls: None,
-                                images: if images.is_empty() {
-                                    None
-                                } else {
-                                    Some(images)
-                                },
-                                thinking,
-                            }
-                        }
-                        Role::System => ChatMessage::System {
-                            content: msg.string_contents(),
-                        },
+                        })
                     }
-                })
-                .collect(),
+                }
+                Role::Assistant => {
+                    let content = msg.string_contents();
+                    let mut thinking = None;
+                    let mut tool_calls = Vec::new();
+                    for content in msg.content.into_iter() {
+                        match content {
+                            MessageContent::Thinking { text, .. } if !text.is_empty() => {
+                                thinking = Some(text)
+                            }
+                            MessageContent::ToolUse(tool_use) => {
+                                tool_calls.push(OllamaToolCall::Function(OllamaFunctionCall {
+                                    name: tool_use.name.to_string(),
+                                    arguments: tool_use.input,
+                                }));
+                            }
+                            _ => (),
+                        }
+                    }
+                    messages.push(ChatMessage::Assistant {
+                        content,
+                        tool_calls: Some(tool_calls),
+                        images: if images.is_empty() {
+                            None
+                        } else {
+                            Some(images)
+                        },
+                        thinking,
+                    })
+                }
+                Role::System => messages.push(ChatMessage::System {
+                    content: msg.string_contents(),
+                }),
+            }
+        }
+        ChatRequest {
+            model: self.model.name.clone(),
+            messages,
             keep_alive: self.model.keep_alive.clone().unwrap_or_default(),
             stream: true,
             options: Some(ChatOptions {
@@ -338,7 +373,11 @@ impl OllamaLanguageModel {
                 .model
                 .supports_thinking
                 .map(|supports_thinking| supports_thinking && request.thinking_allowed),
-            tools: request.tools.into_iter().map(tool_into_ollama).collect(),
+            tools: if self.model.supports_tools.unwrap_or(false) {
+                request.tools.into_iter().map(tool_into_ollama).collect()
+            } else {
+                vec![]
+            },
         }
     }
 }
@@ -468,6 +507,9 @@ fn map_to_language_model_completion_events(
                     events.push(Ok(LanguageModelCompletionEvent::Text(content)));
                 }
                 ChatMessage::System { content } => {
+                    events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+                }
+                ChatMessage::Tool { content, .. } => {
                     events.push(Ok(LanguageModelCompletionEvent::Text(content)));
                 }
                 ChatMessage::Assistant {
@@ -604,7 +646,7 @@ impl Render for ConfigurationView {
                                             Button::new("ollama-site", "Ollama")
                                                 .style(ButtonStyle::Subtle)
                                                 .icon(IconName::ArrowUpRight)
-                                                .icon_size(IconSize::XSmall)
+                                                .icon_size(IconSize::Small)
                                                 .icon_color(Color::Muted)
                                                 .on_click(move |_, _, cx| cx.open_url(OLLAMA_SITE))
                                                 .into_any_element(),
@@ -617,7 +659,7 @@ impl Render for ConfigurationView {
                                             )
                                             .style(ButtonStyle::Subtle)
                                             .icon(IconName::ArrowUpRight)
-                                            .icon_size(IconSize::XSmall)
+                                            .icon_size(IconSize::Small)
                                             .icon_color(Color::Muted)
                                             .on_click(move |_, _, cx| {
                                                 cx.open_url(OLLAMA_DOWNLOAD_URL)
@@ -627,10 +669,10 @@ impl Render for ConfigurationView {
                                     }
                                 })
                                 .child(
-                                    Button::new("view-models", "All Models")
+                                    Button::new("view-models", "View All Models")
                                         .style(ButtonStyle::Subtle)
                                         .icon(IconName::ArrowUpRight)
-                                        .icon_size(IconSize::XSmall)
+                                        .icon_size(IconSize::Small)
                                         .icon_color(Color::Muted)
                                         .on_click(move |_, _, cx| cx.open_url(OLLAMA_LIBRARY_URL)),
                                 ),
@@ -654,7 +696,7 @@ impl Render for ConfigurationView {
                                     Button::new("retry_ollama_models", "Connect")
                                         .icon_position(IconPosition::Start)
                                         .icon_size(IconSize::XSmall)
-                                        .icon(IconName::Play)
+                                        .icon(IconName::PlayFilled)
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             this.retry_connection(cx)
                                         })),

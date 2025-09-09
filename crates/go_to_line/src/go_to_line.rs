@@ -103,11 +103,11 @@ impl GoToLine {
                             return;
                         };
                         editor.update(cx, |editor, cx| {
-                            if let Some(placeholder_text) = editor.placeholder_text() {
-                                if editor.text(cx).is_empty() {
-                                    let placeholder_text = placeholder_text.to_string();
-                                    editor.set_text(placeholder_text, window, cx);
-                                }
+                            if let Some(placeholder_text) = editor.placeholder_text()
+                                && editor.text(cx).is_empty()
+                            {
+                                let placeholder_text = placeholder_text.to_string();
+                                editor.set_text(placeholder_text, window, cx);
                             }
                         });
                     }
@@ -157,7 +157,7 @@ impl GoToLine {
                 self.prev_scroll_position.take();
                 cx.emit(DismissEvent)
             }
-            editor::EditorEvent::BufferEdited { .. } => self.highlight_current_line(cx),
+            editor::EditorEvent::BufferEdited => self.highlight_current_line(cx),
             _ => {}
         }
     }
@@ -712,7 +712,7 @@ mod tests {
     ) -> Entity<GoToLine> {
         cx.dispatch_action(editor::actions::ToggleGoToLine);
         workspace.update(cx, |workspace, cx| {
-            workspace.active_modal::<GoToLine>(cx).unwrap().clone()
+            workspace.active_modal::<GoToLine>(cx).unwrap()
         })
     }
 

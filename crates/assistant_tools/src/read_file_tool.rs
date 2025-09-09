@@ -1,6 +1,7 @@
 use crate::schema::json_schema_for;
+use action_log::ActionLog;
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolResult};
+use assistant_tool::{Tool, ToolResult};
 use assistant_tool::{ToolResultContent, outline};
 use gpui::{AnyWindowHandle, App, Entity, Task};
 use project::{ImageItem, image_store};
@@ -54,7 +55,7 @@ impl Tool for ReadFileTool {
         "read_file".into()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &Entity<Project>, _: &App) -> bool {
         false
     }
 
@@ -67,7 +68,7 @@ impl Tool for ReadFileTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::ToolRead
+        IconName::ToolSearch
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
@@ -200,7 +201,7 @@ impl Tool for ReadFileTool {
                 buffer
                     .file()
                     .as_ref()
-                    .map_or(true, |file| !file.disk_state().exists())
+                    .is_none_or(|file| !file.disk_state().exists())
             })? {
                 anyhow::bail!("{file_path} not found");
             }
@@ -286,7 +287,7 @@ impl Tool for ReadFileTool {
                         Using the line numbers in this outline, you can call this tool again
                         while specifying the start_line and end_line fields to see the
                         implementations of symbols in the outline.
-                        
+
                         Alternatively, you can fall back to the `grep` tool (if available)
                         to search the file for specific content."
                     }

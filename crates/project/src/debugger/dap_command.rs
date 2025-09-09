@@ -107,7 +107,7 @@ impl<T: DapCommand> DapCommand for Arc<T> {
 
 #[derive(Debug, Hash, PartialEq, Eq)]
 pub struct StepCommand {
-    pub thread_id: u64,
+    pub thread_id: i64,
     pub granularity: Option<SteppingGranularity>,
     pub single_thread: Option<bool>,
 }
@@ -483,7 +483,7 @@ impl DapCommand for ContinueCommand {
 
 #[derive(Debug, Hash, PartialEq, Eq)]
 pub(crate) struct PauseCommand {
-    pub thread_id: u64,
+    pub thread_id: i64,
 }
 
 impl LocalDapCommand for PauseCommand {
@@ -612,7 +612,7 @@ impl DapCommand for DisconnectCommand {
 
 #[derive(Debug, Hash, PartialEq, Eq)]
 pub(crate) struct TerminateThreadsCommand {
-    pub thread_ids: Option<Vec<u64>>,
+    pub thread_ids: Option<Vec<i64>>,
 }
 
 impl LocalDapCommand for TerminateThreadsCommand {
@@ -1182,7 +1182,7 @@ impl DapCommand for LoadedSourcesCommand {
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub(crate) struct StackTraceCommand {
-    pub thread_id: u64,
+    pub thread_id: i64,
     pub start_frame: Option<u64>,
     pub levels: Option<u64>,
 }
@@ -1454,7 +1454,7 @@ impl DapCommand for EvaluateCommand {
             variables_reference: message.variable_reference,
             named_variables: message.named_variables,
             indexed_variables: message.indexed_variables,
-            memory_reference: message.memory_reference.clone(),
+            memory_reference: message.memory_reference,
             value_location_reference: None, //TODO
         })
     }

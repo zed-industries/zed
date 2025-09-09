@@ -2,21 +2,33 @@ use crate::stdout_is_a_pty;
 use anyhow::{Context as _, Result};
 use backtrace::{self, Backtrace};
 use chrono::Utc;
-use client::{TelemetrySettings, telemetry};
+use client::{
+    TelemetrySettings,
+    telemetry::{self, MINIDUMP_ENDPOINT},
+};
 use db::kvp::KEY_VALUE_STORE;
+use futures::AsyncReadExt;
 use gpui::{App, AppContext as _, SemanticVersion};
 use http_client::{self, HttpClient, HttpClientWithUrl, HttpRequestExt, Method};
 use paths::{crashes_dir, crashes_retired_dir};
 use project::Project;
+use proto::{CrashReport, GetCrashFilesResponse};
 use release_channel::{AppCommitSha, RELEASE_CHANNEL, ReleaseChannel};
+use reqwest::multipart::{Form, Part};
 use settings::Settings;
 use smol::stream::StreamExt;
 use std::{
     env,
     ffi::{OsStr, c_void},
-    sync::{Arc, atomic::Ordering},
+    fs,
+    io::Write,
+    panic,
+    sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+    },
+    thread,
 };
-use std::{io::Write, panic, sync::atomic::AtomicU32, thread};
 use telemetry_events::{LocationData, Panic, PanicRequest};
 use url::Url;
 use util::ResultExt;
@@ -37,12 +49,9 @@ pub fn init_panic_hook(
         if prior_panic_count > 0 {
             // Give the panic-ing thread time to write the panic file
             loop {
-                std::thread::yield_now();
+                thread::yield_now();
             }
         }
-
-        let thread = thread::current();
-        let thread_name = thread.name().unwrap_or("<unnamed>");
 
         let payload = info
             .payload()
@@ -50,6 +59,13 @@ pub fn init_panic_hook(
             .map(|s| s.to_string())
             .or_else(|| info.payload().downcast_ref::<String>().cloned())
             .unwrap_or_else(|| "Box<Any>".to_string());
+
+        if *release_channel::RELEASE_CHANNEL != ReleaseChannel::Dev {
+            crashes::handle_panic(payload.clone(), info.location());
+        }
+
+        let thread = thread::current();
+        let thread_name = thread.name().unwrap_or("<unnamed>");
 
         if *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev {
             let location = info.location().unwrap();
@@ -63,7 +79,7 @@ pub fn init_panic_hook(
                 location.column(),
                 match app_commit_sha.as_ref() {
                     Some(commit_sha) => format!(
-                        "https://github.com/zed-industries/zed/blob/{}/src/{}#L{} \
+                        "https://github.com/zed-industries/zed/blob/{}/{}#L{} \
                         (may not be uploaded, line may be incorrect if files modified)\n",
                         commit_sha.full(),
                         location.file(),
@@ -73,7 +89,9 @@ pub fn init_panic_hook(
                 },
                 backtrace,
             );
-            std::process::exit(-1);
+            if MINIDUMP_ENDPOINT.is_none() {
+                std::process::exit(-1);
+            }
         }
         let main_module_base_address = get_main_module_base_address();
 
@@ -132,19 +150,19 @@ pub fn init_panic_hook(
         }
         zlog::flush();
 
-        if !is_pty {
-            if let Some(panic_data_json) = serde_json::to_string(&panic_data).log_err() {
-                let timestamp = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
-                let panic_file_path = paths::logs_dir().join(format!("zed-{timestamp}.panic"));
-                let panic_file = std::fs::OpenOptions::new()
-                    .append(true)
-                    .create(true)
-                    .open(&panic_file_path)
-                    .log_err();
-                if let Some(mut panic_file) = panic_file {
-                    writeln!(&mut panic_file, "{panic_data_json}").log_err();
-                    panic_file.flush().log_err();
-                }
+        if (!is_pty || MINIDUMP_ENDPOINT.is_some())
+            && let Some(panic_data_json) = serde_json::to_string(&panic_data).log_err()
+        {
+            let timestamp = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
+            let panic_file_path = paths::logs_dir().join(format!("zed-{timestamp}.panic"));
+            let panic_file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&panic_file_path)
+                .log_err();
+            if let Some(mut panic_file) = panic_file {
+                writeln!(&mut panic_file, "{panic_data_json}").log_err();
+                panic_file.flush().log_err();
             }
         }
 
@@ -202,41 +220,54 @@ pub fn init(
         let installation_id = installation_id.clone();
         let system_id = system_id.clone();
 
-        if let Some(ssh_client) = project.ssh_client() {
-            ssh_client.update(cx, |client, cx| {
-                if TelemetrySettings::get_global(cx).diagnostics {
-                    let request = client.proto_client().request(proto::GetPanicFiles {});
-                    cx.background_spawn(async move {
-                        let panic_files = request.await?;
-                        for file in panic_files.file_contents {
-                            let panic: Option<Panic> = serde_json::from_str(&file)
-                                .log_err()
-                                .or_else(|| {
-                                    file.lines()
-                                        .next()
-                                        .and_then(|line| serde_json::from_str(line).ok())
-                                })
-                                .unwrap_or_else(|| {
-                                    log::error!("failed to deserialize panic file {:?}", file);
-                                    None
-                                });
+        let Some(remote_client) = project.remote_client() else {
+            return;
+        };
+        remote_client.update(cx, |client, cx| {
+            if !TelemetrySettings::get_global(cx).diagnostics {
+                return;
+            }
+            let request = client.proto_client().request(proto::GetCrashFiles {});
+            cx.background_spawn(async move {
+                let GetCrashFilesResponse {
+                    legacy_panics,
+                    crashes,
+                } = request.await?;
 
-                            if let Some(mut panic) = panic {
-                                panic.session_id = session_id.clone();
-                                panic.system_id = system_id.clone();
-                                panic.installation_id = installation_id.clone();
-
-                                upload_panic(&http_client, &panic_report_url, panic, &mut None)
-                                    .await?;
-                            }
-                        }
-
-                        anyhow::Ok(())
-                    })
-                    .detach_and_log_err(cx);
+                for panic in legacy_panics {
+                    if let Some(mut panic) = serde_json::from_str::<Panic>(&panic).log_err() {
+                        panic.session_id = session_id.clone();
+                        panic.system_id = system_id.clone();
+                        panic.installation_id = installation_id.clone();
+                        upload_panic(&http_client, &panic_report_url, panic, &mut None).await?;
+                    }
                 }
+
+                let Some(endpoint) = MINIDUMP_ENDPOINT.as_ref() else {
+                    return Ok(());
+                };
+                for CrashReport {
+                    metadata,
+                    minidump_contents,
+                } in crashes
+                {
+                    if let Some(metadata) = serde_json::from_str(&metadata).log_err() {
+                        upload_minidump(
+                            http_client.clone(),
+                            endpoint,
+                            minidump_contents,
+                            &metadata,
+                            installation_id.clone(),
+                        )
+                        .await
+                        .log_err();
+                    }
+                }
+
+                anyhow::Ok(())
             })
-        }
+            .detach_and_log_err(cx);
+        })
     })
     .detach();
 }
@@ -433,10 +464,10 @@ pub fn monitor_main_thread_hangs(
                         continue;
                     };
 
-                    if let Some(response) = http_client.send(request).await.log_err() {
-                        if response.status() != 200 {
-                            log::error!("Failed to send hang report: HTTP {:?}", response.status());
-                        }
+                    if let Some(response) = http_client.send(request).await.log_err()
+                        && response.status() != 200
+                    {
+                        log::error!("Failed to send hang report: HTTP {:?}", response.status());
                     }
                 }
             }
@@ -450,16 +481,20 @@ fn upload_panics_and_crashes(
     installation_id: Option<String>,
     cx: &App,
 ) {
-    let telemetry_settings = *client::TelemetrySettings::get_global(cx);
+    if !client::TelemetrySettings::get_global(cx).diagnostics {
+        return;
+    }
     cx.background_spawn(async move {
-        let most_recent_panic =
-            upload_previous_panics(http.clone(), &panic_report_url, telemetry_settings)
-                .await
-                .log_err()
-                .flatten();
-        upload_previous_crashes(http, most_recent_panic, installation_id, telemetry_settings)
+        upload_previous_minidumps(http.clone(), installation_id.clone())
+            .await
+            .warn_on_err();
+        let most_recent_panic = upload_previous_panics(http.clone(), &panic_report_url)
             .await
             .log_err()
+            .flatten();
+        upload_previous_crashes(http, most_recent_panic, installation_id)
+            .await
+            .log_err();
     })
     .detach()
 }
@@ -468,7 +503,6 @@ fn upload_panics_and_crashes(
 async fn upload_previous_panics(
     http: Arc<HttpClientWithUrl>,
     panic_report_url: &Url,
-    telemetry_settings: client::TelemetrySettings,
 ) -> anyhow::Result<Option<(i64, String)>> {
     let mut children = smol::fs::read_dir(paths::logs_dir()).await?;
 
@@ -491,37 +525,206 @@ async fn upload_previous_panics(
             continue;
         }
 
-        if telemetry_settings.diagnostics {
-            let panic_file_content = smol::fs::read_to_string(&child_path)
-                .await
-                .context("error reading panic file")?;
+        let panic_file_content = smol::fs::read_to_string(&child_path)
+            .await
+            .context("error reading panic file")?;
 
-            let panic: Option<Panic> = serde_json::from_str(&panic_file_content)
-                .log_err()
-                .or_else(|| {
-                    panic_file_content
-                        .lines()
-                        .next()
-                        .and_then(|line| serde_json::from_str(line).ok())
-                })
-                .unwrap_or_else(|| {
-                    log::error!("failed to deserialize panic file {:?}", panic_file_content);
-                    None
-                });
+        let panic: Option<Panic> = serde_json::from_str(&panic_file_content)
+            .log_err()
+            .or_else(|| {
+                panic_file_content
+                    .lines()
+                    .next()
+                    .and_then(|line| serde_json::from_str(line).ok())
+            })
+            .unwrap_or_else(|| {
+                log::error!("failed to deserialize panic file {:?}", panic_file_content);
+                None
+            });
 
-            if let Some(panic) = panic {
-                if !upload_panic(&http, &panic_report_url, panic, &mut most_recent_panic).await? {
-                    continue;
-                }
-            }
+        if let Some(panic) = panic
+            && upload_panic(&http, panic_report_url, panic, &mut most_recent_panic).await?
+        {
+            // We've done what we can, delete the file
+            fs::remove_file(child_path)
+                .context("error removing panic")
+                .log_err();
         }
-
-        // We've done what we can, delete the file
-        std::fs::remove_file(child_path)
-            .context("error removing panic")
-            .log_err();
     }
+
     Ok(most_recent_panic)
+}
+
+pub async fn upload_previous_minidumps(
+    http: Arc<HttpClientWithUrl>,
+    installation_id: Option<String>,
+) -> anyhow::Result<()> {
+    let Some(minidump_endpoint) = MINIDUMP_ENDPOINT.as_ref() else {
+        log::warn!("Minidump endpoint not set");
+        return Ok(());
+    };
+
+    let mut children = smol::fs::read_dir(paths::logs_dir()).await?;
+    while let Some(child) = children.next().await {
+        let child = child?;
+        let child_path = child.path();
+        if child_path.extension() != Some(OsStr::new("dmp")) {
+            continue;
+        }
+        let mut json_path = child_path.clone();
+        json_path.set_extension("json");
+        if let Ok(metadata) = serde_json::from_slice(&smol::fs::read(&json_path).await?)
+            && upload_minidump(
+                http.clone(),
+                minidump_endpoint,
+                smol::fs::read(&child_path)
+                    .await
+                    .context("Failed to read minidump")?,
+                &metadata,
+                installation_id.clone(),
+            )
+            .await
+            .log_err()
+            .is_some()
+        {
+            fs::remove_file(child_path).ok();
+            fs::remove_file(json_path).ok();
+        }
+    }
+    Ok(())
+}
+
+async fn upload_minidump(
+    http: Arc<HttpClientWithUrl>,
+    endpoint: &str,
+    minidump: Vec<u8>,
+    metadata: &crashes::CrashInfo,
+    installation_id: Option<String>,
+) -> Result<()> {
+    let mut form = Form::new()
+        .part(
+            "upload_file_minidump",
+            Part::bytes(minidump)
+                .file_name("minidump.dmp")
+                .mime_str("application/octet-stream")?,
+        )
+        .text(
+            "sentry[tags][channel]",
+            metadata.init.release_channel.clone(),
+        )
+        .text("sentry[tags][version]", metadata.init.zed_version.clone())
+        .text("sentry[release]", metadata.init.commit_sha.clone())
+        .text("platform", "rust");
+    let mut panic_message = "".to_owned();
+    if let Some(panic_info) = metadata.panic.as_ref() {
+        panic_message = panic_info.message.clone();
+        form = form
+            .text("sentry[logentry][formatted]", panic_info.message.clone())
+            .text("span", panic_info.span.clone());
+    }
+    if let Some(minidump_error) = metadata.minidump_error.clone() {
+        form = form.text("minidump_error", minidump_error);
+    }
+    if let Some(id) = installation_id.clone() {
+        form = form.text("sentry[user][id]", id)
+    }
+
+    ::telemetry::event!(
+        "Minidump Uploaded",
+        panic_message = panic_message,
+        crashed_version = metadata.init.zed_version.clone(),
+        commit_sha = metadata.init.commit_sha.clone(),
+    );
+
+    let gpu_count = metadata.gpus.len();
+    for (index, gpu) in metadata.gpus.iter().cloned().enumerate() {
+        let system_specs::GpuInfo {
+            device_name,
+            device_pci_id,
+            vendor_name,
+            vendor_pci_id,
+            driver_version,
+            driver_name,
+        } = gpu;
+        let num = if gpu_count == 1 && metadata.active_gpu.is_none() {
+            String::new()
+        } else {
+            index.to_string()
+        };
+        let name = format!("gpu{num}");
+        let root = format!("sentry[contexts][{name}]");
+        form = form
+            .text(
+                format!("{root}[Description]"),
+                "A GPU found on the users system. May or may not be the GPU Zed is running on",
+            )
+            .text(format!("{root}[type]"), "gpu")
+            .text(format!("{root}[name]"), device_name.unwrap_or(name))
+            .text(format!("{root}[id]"), format!("{:#06x}", device_pci_id))
+            .text(
+                format!("{root}[vendor_id]"),
+                format!("{:#06x}", vendor_pci_id),
+            )
+            .text_if_some(format!("{root}[vendor_name]"), vendor_name)
+            .text_if_some(format!("{root}[driver_version]"), driver_version)
+            .text_if_some(format!("{root}[driver_name]"), driver_name);
+    }
+    if let Some(active_gpu) = metadata.active_gpu.clone() {
+        form = form
+            .text(
+                "sentry[contexts][Active_GPU][Description]",
+                "The GPU Zed is running on",
+            )
+            .text("sentry[contexts][Active_GPU][type]", "gpu")
+            .text("sentry[contexts][Active_GPU][name]", active_gpu.device_name)
+            .text(
+                "sentry[contexts][Active_GPU][driver_version]",
+                active_gpu.driver_info,
+            )
+            .text(
+                "sentry[contexts][Active_GPU][driver_name]",
+                active_gpu.driver_name,
+            )
+            .text(
+                "sentry[contexts][Active_GPU][is_software_emulated]",
+                active_gpu.is_software_emulated.to_string(),
+            );
+    }
+
+    // TODO: feature-flag-context, and more of device-context like screen resolution, available ram, device model, etc
+
+    let mut response_text = String::new();
+    let mut response = http.send_multipart_form(endpoint, form).await?;
+    response
+        .body_mut()
+        .read_to_string(&mut response_text)
+        .await?;
+    if !response.status().is_success() {
+        anyhow::bail!("failed to upload minidump: {response_text}");
+    }
+    log::info!("Uploaded minidump. event id: {response_text}");
+    Ok(())
+}
+
+trait FormExt {
+    fn text_if_some(
+        self,
+        label: impl Into<std::borrow::Cow<'static, str>>,
+        value: Option<impl Into<std::borrow::Cow<'static, str>>>,
+    ) -> Self;
+}
+
+impl FormExt for Form {
+    fn text_if_some(
+        self,
+        label: impl Into<std::borrow::Cow<'static, str>>,
+        value: Option<impl Into<std::borrow::Cow<'static, str>>>,
+    ) -> Self {
+        match value {
+            Some(value) => self.text(label.into(), value.into()),
+            None => self,
+        }
+    }
 }
 
 async fn upload_panic(
@@ -562,11 +765,7 @@ async fn upload_previous_crashes(
     http: Arc<HttpClientWithUrl>,
     most_recent_panic: Option<(i64, String)>,
     installation_id: Option<String>,
-    telemetry_settings: client::TelemetrySettings,
 ) -> Result<()> {
-    if !telemetry_settings.diagnostics {
-        return Ok(());
-    }
     let last_uploaded = KEY_VALUE_STORE
         .read_kvp(LAST_CRASH_UPLOADED)?
         .unwrap_or("zed-2024-01-17-221900.ips".to_string()); // don't upload old crash reports from before we had this.

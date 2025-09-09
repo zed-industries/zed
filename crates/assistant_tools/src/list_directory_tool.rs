@@ -1,6 +1,7 @@
 use crate::schema::json_schema_for;
+use action_log::ActionLog;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolResult};
+use assistant_tool::{Tool, ToolResult};
 use gpui::{AnyWindowHandle, App, Entity, Task};
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::{Project, WorktreeSettings};
@@ -45,7 +46,7 @@ impl Tool for ListDirectoryTool {
         "list_directory".into()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &Entity<Project>, _: &App) -> bool {
         false
     }
 

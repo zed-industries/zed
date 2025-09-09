@@ -18,15 +18,19 @@ pub fn capture(directory: &std::path::Path) -> Result<collections::HashMap<Strin
     // In some shells, file descriptors greater than 2 cannot be used in interactive mode,
     // so file descriptor 0 (stdin) is used instead. This impacts zsh, old bash; perhaps others.
     // See: https://github.com/zed-industries/zed/pull/32136#issuecomment-2999645482
-    const ENV_OUTPUT_FD: std::os::fd::RawFd = 0;
-    let redir = match shell_name {
-        Some("rc") => format!(">[1={}]", ENV_OUTPUT_FD), // `[1=0]`
-        _ => format!(">&{}", ENV_OUTPUT_FD),             // `>&0`
+    const FD_STDIN: std::os::fd::RawFd = 0;
+    const FD_STDOUT: std::os::fd::RawFd = 1;
+
+    let (fd_num, redir) = match shell_name {
+        Some("rc") => (FD_STDIN, format!(">[1={}]", FD_STDIN)), // `[1=0]`
+        Some("nu") | Some("tcsh") => (FD_STDOUT, "".to_string()),
+        _ => (FD_STDIN, format!(">&{}", FD_STDIN)), // `>&0`
     };
     command.stdin(Stdio::null());
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
 
+    let mut command_prefix = String::new();
     match shell_name {
         Some("tcsh" | "csh") => {
             // For csh/tcsh, login shell requires passing `-` as 0th argument (instead of `-l`)
@@ -37,18 +41,25 @@ pub fn capture(directory: &std::path::Path) -> Result<collections::HashMap<Strin
             command_string.push_str("emit fish_prompt;");
             command.arg("-l");
         }
+        Some("nu") => {
+            // nu needs special handling for -- options.
+            command_prefix = String::from("^");
+        }
         _ => {
             command.arg("-l");
         }
     }
     // cd into the directory, triggering directory specific side-effects (asdf, direnv, etc)
     command_string.push_str(&format!("cd '{}';", directory.display()));
-    command_string.push_str(&format!("{} --printenv {}", zed_path, redir));
+    command_string.push_str(&format!(
+        "{}{} --printenv {}",
+        command_prefix, zed_path, redir
+    ));
     command.args(["-i", "-c", &command_string]);
 
     super::set_pre_exec_to_start_new_session(&mut command);
 
-    let (env_output, process_output) = spawn_and_read_fd(command, ENV_OUTPUT_FD)?;
+    let (env_output, process_output) = spawn_and_read_fd(command, fd_num)?;
     let env_output = String::from_utf8_lossy(&env_output);
 
     anyhow::ensure!(

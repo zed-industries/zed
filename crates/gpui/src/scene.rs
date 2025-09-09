@@ -8,7 +8,12 @@ use crate::{
     AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, Hsla, Pixels,
     Point, Radians, ScaledPixels, Size, bounds_tree::BoundsTree, point,
 };
-use std::{fmt::Debug, iter::Peekable, ops::Range, slice};
+use std::{
+    fmt::Debug,
+    iter::Peekable,
+    ops::{Add, Range, Sub},
+    slice,
+};
 
 #[allow(non_camel_case_types, unused)]
 pub(crate) type PathVertex_ScaledPixels = PathVertex<ScaledPixels>;
@@ -41,17 +46,6 @@ impl Scene {
         self.monochrome_sprites.clear();
         self.polychrome_sprites.clear();
         self.surfaces.clear();
-    }
-
-    #[cfg_attr(
-        all(
-            any(target_os = "linux", target_os = "freebsd"),
-            not(any(feature = "x11", feature = "wayland"))
-        ),
-        allow(dead_code)
-    )]
-    pub fn paths(&self) -> &[Path<ScaledPixels>] {
-        &self.paths
     }
 
     pub fn len(&self) -> usize {
@@ -482,7 +476,7 @@ pub(crate) struct Underline {
     pub content_mask: ContentMask<ScaledPixels>,
     pub color: Hsla,
     pub thickness: ScaledPixels,
-    pub wavy: bool,
+    pub wavy: u32,
 }
 
 impl From<Underline> for Primitive {
@@ -681,7 +675,7 @@ pub(crate) struct PathId(pub(crate) usize);
 #[derive(Clone, Debug)]
 pub struct Path<P: Clone + Debug + Default + PartialEq> {
     pub(crate) id: PathId,
-    order: DrawOrder,
+    pub(crate) order: DrawOrder,
     pub(crate) bounds: Bounds<P>,
     pub(crate) content_mask: ContentMask<P>,
     pub(crate) vertices: Vec<PathVertex<P>>,
@@ -801,6 +795,16 @@ impl Path<Pixels> {
             st_position: st.2,
             content_mask: Default::default(),
         });
+    }
+}
+
+impl<T> Path<T>
+where
+    T: Clone + Debug + Default + PartialEq + PartialOrd + Add<T, Output = T> + Sub<Output = T>,
+{
+    #[allow(unused)]
+    pub(crate) fn clipped_bounds(&self) -> Bounds<T> {
+        self.bounds.intersect(&self.content_mask.bounds)
     }
 }
 

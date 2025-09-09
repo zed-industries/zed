@@ -18,17 +18,20 @@ brackets = [
     { start = "in", end = "esac", close = false, newline = true, not_in = ["comment", "string"] },
 ]
 
-### WARN: the following is not working when you insert an `elif` just before an else
-### example: (^ is cursor after hitting enter)
-### ```
-### if true; then
-###     foo
-###     elif
-###         ^
-### else
-###     bar
-### fi
-### ```
-increase_indent_pattern = "(^|\\s+|;)(do|then|in|else|elif)\\b.*$"
-decrease_indent_pattern = "(^|\\s+|;)(fi|done|esac|else|elif)\\b.*$"
-# make sure to test each line mode & block mode
+auto_indent_using_last_non_empty_line = false
+increase_indent_pattern = "^\\s*(\\b(else|elif)\\b|([^#]+\\b(do|then|in)\\b)|([\\w\\*]+\\)))\\s*$"
+decrease_indent_patterns = [
+  { pattern = "^\\s*elif\\b.*",    valid_after = ["if", "elif"] },
+  { pattern = "^\\s*else\\b.*",    valid_after = ["if", "elif", "for", "while"] },
+  { pattern = "^\\s*fi\\b.*",      valid_after = ["if", "elif", "else"] },
+  { pattern = "^\\s*done\\b.*",    valid_after = ["for", "while"] },
+  { pattern = "^\\s*esac\\b.*",    valid_after = ["case"] },
+  { pattern = "^\\s*[\\w\\*]+\\)\\s*$", valid_after = ["case_item"] },
+]
+
+# We can't use decrease_indent_patterns simply for elif, because
+# there is bug in tree sitter which throws ERROR on if match.
+#
+# This is workaround. That means, elif will outdents with despite
+# of wrong context. Like using elif after else.
+decrease_indent_pattern = "(^|\\s+|;)(elif)\\b.*$"

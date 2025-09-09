@@ -24,6 +24,7 @@ use rpc::AnyProtoClient;
 use std::sync::LazyLock;
 use std::{cmp::Reverse, ffi::OsStr, mem, path::Path, sync::Arc, time::Duration};
 use util::{ResultExt, TryFutureExt};
+use zed_env_vars::ZED_STATELESS;
 
 pub(crate) fn init(client: &AnyProtoClient) {
     client.add_entity_message_handler(ContextStore::handle_advertise_contexts);
@@ -136,6 +137,27 @@ impl ContextStore {
 
             Ok(this)
         })
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn fake(project: Entity<Project>, cx: &mut Context<Self>) -> Self {
+        Self {
+            contexts: Default::default(),
+            contexts_metadata: Default::default(),
+            context_server_slash_command_ids: Default::default(),
+            host_contexts: Default::default(),
+            fs: project.read(cx).fs().clone(),
+            languages: project.read(cx).languages().clone(),
+            slash_commands: Arc::default(),
+            telemetry: project.read(cx).client().telemetry().clone(),
+            _watch_updates: Task::ready(None),
+            client: project.read(cx).client(),
+            project,
+            project_is_shared: false,
+            client_subscription: None,
+            _project_subscriptions: Default::default(),
+            prompt_builder: Arc::new(PromptBuilder::new(None).unwrap()),
+        }
     }
 
     async fn handle_advertise_contexts(
@@ -299,7 +321,7 @@ impl ContextStore {
                 .client
                 .subscribe_to_entity(remote_id)
                 .log_err()
-                .map(|subscription| subscription.set_entity(&cx.entity(), &mut cx.to_async()));
+                .map(|subscription| subscription.set_entity(&cx.entity(), &cx.to_async()));
             self.advertise_contexts(cx);
         } else {
             self.client_subscription = None;
@@ -767,6 +789,9 @@ impl ContextStore {
     fn reload(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let fs = self.fs.clone();
         cx.spawn(async move |this, cx| {
+            if *ZED_STATELESS {
+                return Ok(());
+            }
             fs.create_dir(contexts_dir()).await?;
 
             let mut paths = fs.read_dir(contexts_dir()).await?;
@@ -836,7 +861,7 @@ impl ContextStore {
                     ContextServerStatus::Running => {
                         self.load_context_server_slash_commands(
                             server_id.clone(),
-                            context_server_store.clone(),
+                            context_server_store,
                             cx,
                         );
                     }
@@ -868,34 +893,33 @@ impl ContextStore {
                 return;
             };
 
-            if protocol.capable(context_server::protocol::ServerCapability::Prompts) {
-                if let Some(response) = protocol
+            if protocol.capable(context_server::protocol::ServerCapability::Prompts)
+                && let Some(response) = protocol
                     .request::<context_server::types::requests::PromptsList>(())
                     .await
                     .log_err()
-                {
-                    let slash_command_ids = response
-                        .prompts
-                        .into_iter()
-                        .filter(assistant_slash_commands::acceptable_prompt)
-                        .map(|prompt| {
-                            log::info!("registering context server command: {:?}", prompt.name);
-                            slash_command_working_set.insert(Arc::new(
-                                assistant_slash_commands::ContextServerSlashCommand::new(
-                                    context_server_store.clone(),
-                                    server.id(),
-                                    prompt,
-                                ),
-                            ))
-                        })
-                        .collect::<Vec<_>>();
-
-                    this.update(cx, |this, _cx| {
-                        this.context_server_slash_command_ids
-                            .insert(server_id.clone(), slash_command_ids);
+            {
+                let slash_command_ids = response
+                    .prompts
+                    .into_iter()
+                    .filter(assistant_slash_commands::acceptable_prompt)
+                    .map(|prompt| {
+                        log::info!("registering context server command: {:?}", prompt.name);
+                        slash_command_working_set.insert(Arc::new(
+                            assistant_slash_commands::ContextServerSlashCommand::new(
+                                context_server_store.clone(),
+                                server.id(),
+                                prompt,
+                            ),
+                        ))
                     })
-                    .log_err();
-                }
+                    .collect::<Vec<_>>();
+
+                this.update(cx, |this, _cx| {
+                    this.context_server_slash_command_ids
+                        .insert(server_id.clone(), slash_command_ids);
+                })
+                .log_err();
             }
         })
         .detach();

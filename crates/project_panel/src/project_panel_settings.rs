@@ -2,7 +2,7 @@ use editor::ShowScrollbar;
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Copy, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -43,9 +43,11 @@ pub struct ProjectPanelSettings {
     pub sticky_scroll: bool,
     pub auto_reveal_entries: bool,
     pub auto_fold_dirs: bool,
+    pub starts_open: bool,
     pub scrollbar: ScrollbarSettings,
     pub show_diagnostics: ShowDiagnostics,
     pub hide_root: bool,
+    pub drag_and_drop: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -90,7 +92,8 @@ pub enum ShowDiagnostics {
     All,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi, SettingsKey)]
+#[settings_key(key = "project_panel")]
 pub struct ProjectPanelSettingsContent {
     /// Whether to show the project panel button in the status bar.
     ///
@@ -139,6 +142,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub auto_fold_dirs: Option<bool>,
+    /// Whether the project panel should open on startup.
+    ///
+    /// Default: true
+    pub starts_open: Option<bool>,
     /// Scrollbar-related settings
     pub scrollbar: Option<ScrollbarSettingsContent>,
     /// Which files containing diagnostic errors/warnings to mark in the project panel.
@@ -155,11 +162,13 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub sticky_scroll: Option<bool>,
+    /// Whether to enable drag-and-drop operations in the project panel.
+    ///
+    /// Default: true
+    pub drag_and_drop: Option<bool>,
 }
 
 impl Settings for ProjectPanelSettings {
-    const KEY: Option<&'static str> = Some("project_panel");
-
     type FileContent = ProjectPanelSettingsContent;
 
     fn load(

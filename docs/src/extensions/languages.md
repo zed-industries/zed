@@ -269,7 +269,7 @@ The `textobjects.scm` file defines rules for navigating by text objects. This wa
 
 Vim provides two levels of granularity for navigating around files. Section-by-section with `[]` etc., and method-by-method with `]m` etc. Even languages that don't support functions and classes can work well by defining similar concepts. For example CSS defines a rule-set as a method, and a media-query as a class.
 
-For languages with closures, these typically should not count as functions in Zed. This is best-effort however, as languages like Javascript do not syntactically differentiate syntactically between closures and top-level function declarations.
+For languages with closures, these typically should not count as functions in Zed. This is best-effort however, as languages like JavaScript do not syntactically differentiate syntactically between closures and top-level function declarations.
 
 For languages with declarations like C, provide queries that match `@class.around` or `@function.around`. The `if` and `ic` text objects will default to these if there is no inside.
 
@@ -402,11 +402,10 @@ If your language server supports additional languages, you can use `language_ids
 
 [language-servers.my-language-server]
 name = "Whatever LSP"
-languages = ["JavaScript", "JSX", "HTML", "CSS"]
+languages = ["JavaScript", "HTML", "CSS"]
 
 [language-servers.my-language-server.language_ids]
 "JavaScript" = "javascript"
-"JSX" = "javascriptreact"
 "TSX" = "typescriptreact"
 "HTML" = "html"
 "CSS" = "css"

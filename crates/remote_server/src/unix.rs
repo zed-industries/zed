@@ -17,15 +17,16 @@ use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use paths::logs_dir;
 use project::project_settings::ProjectSettings;
 
+use proto::CrashReport;
 use release_channel::{AppVersion, RELEASE_CHANNEL, ReleaseChannel};
-use remote::proxy::ProxyLaunchError;
-use remote::ssh_session::ChannelClient;
+use remote::RemoteClient;
 use remote::{
     json_log::LogRecord,
     protocol::{read_message, write_message},
+    proxy::ProxyLaunchError,
 };
 use reqwest_client::ReqwestClient;
-use rpc::proto::{self, Envelope, SSH_PROJECT_ID};
+use rpc::proto::{self, Envelope, REMOTE_SERVER_PROJECT_ID};
 use rpc::{AnyProtoClient, TypedEnvelope};
 use settings::{Settings, SettingsStore, watch_config_file};
 use smol::channel::{Receiver, Sender};
@@ -35,7 +36,9 @@ use smol::Async;
 use smol::{net::unix::UnixListener, stream::StreamExt as _};
 use std::ffi::OsStr;
 use std::ops::ControlFlow;
+use std::process::ExitStatus;
 use std::str::FromStr;
+use std::sync::LazyLock;
 use std::{env, thread};
 use std::{
     io::Write,
@@ -44,7 +47,15 @@ use std::{
     sync::Arc,
 };
 use telemetry_events::LocationData;
+use thiserror::Error;
 use util::ResultExt;
+
+pub static VERSION: LazyLock<&str> = LazyLock::new(|| match *RELEASE_CHANNEL {
+    ReleaseChannel::Stable | ReleaseChannel::Preview => env!("ZED_PKG_VERSION"),
+    ReleaseChannel::Nightly | ReleaseChannel::Dev => {
+        option_env!("ZED_COMMIT_SHA").unwrap_or("missing-zed-commit-sha")
+    }
+});
 
 fn init_logging_proxy() {
     env_logger::builder()
@@ -75,7 +86,7 @@ fn init_logging_server(log_file_path: PathBuf) -> Result<Receiver<Vec<u8>>> {
         fn flush(&mut self) -> std::io::Result<()> {
             self.channel
                 .send_blocking(self.buffer.clone())
-                .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
+                .map_err(std::io::Error::other)?;
             self.buffer.clear();
             self.file.flush()
         }
@@ -109,14 +120,16 @@ fn init_logging_server(log_file_path: PathBuf) -> Result<Receiver<Vec<u8>>> {
     Ok(rx)
 }
 
-fn init_panic_hook() {
-    std::panic::set_hook(Box::new(|info| {
+fn init_panic_hook(session_id: String) {
+    std::panic::set_hook(Box::new(move |info| {
         let payload = info
             .payload()
             .downcast_ref::<&str>()
             .map(|s| s.to_string())
             .or_else(|| info.payload().downcast_ref::<String>().cloned())
             .unwrap_or_else(|| "Box<Any>".to_string());
+
+        crashes::handle_panic(payload.clone(), info.location());
 
         let backtrace = backtrace::Backtrace::new();
         let mut backtrace = backtrace
@@ -144,36 +157,30 @@ fn init_panic_hook() {
         log::error!(
             "panic occurred: {}\nBacktrace:\n{}",
             &payload,
-            (&backtrace).join("\n")
+            backtrace.join("\n")
         );
-
-        let release_channel = *RELEASE_CHANNEL;
-        let version = match release_channel {
-            ReleaseChannel::Stable | ReleaseChannel::Preview => env!("ZED_PKG_VERSION"),
-            ReleaseChannel::Nightly | ReleaseChannel::Dev => {
-                option_env!("ZED_COMMIT_SHA").unwrap_or("missing-zed-commit-sha")
-            }
-        };
 
         let panic_data = telemetry_events::Panic {
             thread: thread_name.into(),
-            payload: payload.clone(),
+            payload,
             location_data: info.location().map(|location| LocationData {
                 file: location.file().into(),
                 line: location.line(),
             }),
-            app_version: format!("remote-server-{version}"),
+            app_version: format!("remote-server-{}", *VERSION),
             app_commit_sha: option_env!("ZED_COMMIT_SHA").map(|sha| sha.into()),
-            release_channel: release_channel.dev_name().into(),
+            release_channel: RELEASE_CHANNEL.dev_name().into(),
             target: env!("TARGET").to_owned().into(),
             os_name: telemetry::os_name(),
             os_version: Some(telemetry::os_version()),
             architecture: env::consts::ARCH.into(),
             panicked_on: Utc::now().timestamp_millis(),
             backtrace,
-            system_id: None,            // Set on SSH client
-            installation_id: None,      // Set on SSH client
-            session_id: "".to_string(), // Set on SSH client
+            system_id: None,       // Set on SSH client
+            installation_id: None, // Set on SSH client
+
+            // used on this end to associate panics with minidumps, but will be replaced on the SSH client
+            session_id: session_id.clone(),
         };
 
         if let Some(panic_data_json) = serde_json::to_string(&panic_data).log_err() {
@@ -194,43 +201,57 @@ fn init_panic_hook() {
     }));
 }
 
-fn handle_panic_requests(project: &Entity<HeadlessProject>, client: &Arc<ChannelClient>) {
-    let client: AnyProtoClient = client.clone().into();
+fn handle_crash_files_requests(project: &Entity<HeadlessProject>, client: &AnyProtoClient) {
     client.add_request_handler(
         project.downgrade(),
-        |_, _: TypedEnvelope<proto::GetPanicFiles>, _cx| async move {
+        |_, _: TypedEnvelope<proto::GetCrashFiles>, _cx| async move {
+            let mut legacy_panics = Vec::new();
+            let mut crashes = Vec::new();
             let mut children = smol::fs::read_dir(paths::logs_dir()).await?;
-            let mut panic_files = Vec::new();
             while let Some(child) = children.next().await {
                 let child = child?;
                 let child_path = child.path();
 
-                if child_path.extension() != Some(OsStr::new("panic")) {
-                    continue;
+                let extension = child_path.extension();
+                if extension == Some(OsStr::new("panic")) {
+                    let filename = if let Some(filename) = child_path.file_name() {
+                        filename.to_string_lossy()
+                    } else {
+                        continue;
+                    };
+
+                    if !filename.starts_with("zed") {
+                        continue;
+                    }
+
+                    let file_contents = smol::fs::read_to_string(&child_path)
+                        .await
+                        .context("error reading panic file")?;
+
+                    legacy_panics.push(file_contents);
+                    smol::fs::remove_file(&child_path)
+                        .await
+                        .context("error removing panic")
+                        .log_err();
+                } else if extension == Some(OsStr::new("dmp")) {
+                    let mut json_path = child_path.clone();
+                    json_path.set_extension("json");
+                    if let Ok(json_content) = smol::fs::read_to_string(&json_path).await {
+                        crashes.push(CrashReport {
+                            metadata: json_content,
+                            minidump_contents: smol::fs::read(&child_path).await?,
+                        });
+                        smol::fs::remove_file(&child_path).await.log_err();
+                        smol::fs::remove_file(&json_path).await.log_err();
+                    } else {
+                        log::error!("Couldn't find json metadata for crash: {child_path:?}");
+                    }
                 }
-                let filename = if let Some(filename) = child_path.file_name() {
-                    filename.to_string_lossy()
-                } else {
-                    continue;
-                };
-
-                if !filename.starts_with("zed") {
-                    continue;
-                }
-
-                let file_contents = smol::fs::read_to_string(&child_path)
-                    .await
-                    .context("error reading panic file")?;
-
-                panic_files.push(file_contents);
-
-                // We've done what we can, delete the file
-                std::fs::remove_file(child_path)
-                    .context("error removing panic")
-                    .log_err();
             }
-            anyhow::Ok(proto::GetPanicFilesResponse {
-                file_contents: panic_files,
+
+            anyhow::Ok(proto::GetCrashFilesResponse {
+                crashes,
+                legacy_panics,
             })
         },
     );
@@ -256,7 +277,7 @@ fn start_server(
     listeners: ServerListeners,
     log_rx: Receiver<Vec<u8>>,
     cx: &mut App,
-) -> Arc<ChannelClient> {
+) -> AnyProtoClient {
     // This is the server idle timeout. If no connection comes in this timeout, the server will shut down.
     const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
@@ -314,7 +335,7 @@ fn start_server(
             let (mut stdin_msg_tx, mut stdin_msg_rx) = mpsc::unbounded::<Envelope>();
             cx.background_spawn(async move {
                 while let Ok(msg) = read_message(&mut stdin_stream, &mut input_buffer).await {
-                    if let Err(_) = stdin_msg_tx.send(msg).await {
+                    if (stdin_msg_tx.send(msg).await).is_err() {
                         break;
                     }
                 }
@@ -375,7 +396,7 @@ fn start_server(
     })
     .detach();
 
-    ChannelClient::new(incoming_rx, outgoing_tx, cx, "server")
+    RemoteClient::proto_client_from_channels(incoming_rx, outgoing_tx, cx, "server")
 }
 
 fn init_paths() -> anyhow::Result<()> {
@@ -409,7 +430,17 @@ pub fn execute_run(
         ControlFlow::Continue(_) => {}
     }
 
-    init_panic_hook();
+    let app = gpui::Application::headless();
+    let id = std::process::id().to_string();
+    app.background_executor()
+        .spawn(crashes::init(crashes::InitCrashHandler {
+            session_id: id.clone(),
+            zed_version: VERSION.to_owned(),
+            release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
+            commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
+        }))
+        .detach();
+    init_panic_hook(id);
     let log_rx = init_logging_server(log_file)?;
     log::info!(
         "starting up. pid_file: {:?}, stdin_socket: {:?}, stdout_socket: {:?}, stderr_socket: {:?}",
@@ -425,7 +456,7 @@ pub fn execute_run(
     let listeners = ServerListeners::new(stdin_socket, stdout_socket, stderr_socket)?;
 
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
-    gpui::Application::headless().run(move |cx| {
+    app.run(move |cx| {
         settings::init(cx);
         let app_version = AppVersion::load(env!("ZED_PKG_VERSION"));
         release_channel::init(app_version, cx);
@@ -486,7 +517,7 @@ pub fn execute_run(
             )
         });
 
-        handle_panic_requests(&project, &session);
+        handle_crash_files_requests(&project, &session);
 
         cx.background_spawn(async move { cleanup_old_binaries() })
             .detach();
@@ -497,7 +528,23 @@ pub fn execute_run(
     Ok(())
 }
 
-#[derive(Clone)]
+#[derive(Debug, Error)]
+pub(crate) enum ServerPathError {
+    #[error("Failed to create server_dir `{path}`")]
+    CreateServerDir {
+        #[source]
+        source: std::io::Error,
+        path: PathBuf,
+    },
+    #[error("Failed to create logs_dir `{path}`")]
+    CreateLogsDir {
+        #[source]
+        source: std::io::Error,
+        path: PathBuf,
+    },
+}
+
+#[derive(Clone, Debug)]
 struct ServerPaths {
     log_file: PathBuf,
     pid_file: PathBuf,
@@ -507,10 +554,19 @@ struct ServerPaths {
 }
 
 impl ServerPaths {
-    fn new(identifier: &str) -> Result<Self> {
+    fn new(identifier: &str) -> Result<Self, ServerPathError> {
         let server_dir = paths::remote_server_state_dir().join(identifier);
-        std::fs::create_dir_all(&server_dir)?;
-        std::fs::create_dir_all(&logs_dir())?;
+        std::fs::create_dir_all(&server_dir).map_err(|source| {
+            ServerPathError::CreateServerDir {
+                source,
+                path: server_dir.clone(),
+            }
+        })?;
+        let log_dir = logs_dir();
+        std::fs::create_dir_all(log_dir).map_err(|source| ServerPathError::CreateLogsDir {
+            source: source,
+            path: log_dir.clone(),
+        })?;
 
         let pid_file = server_dir.join("server.pid");
         let stdin_socket = server_dir.join("stdin.sock");
@@ -528,20 +584,72 @@ impl ServerPaths {
     }
 }
 
-pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
-    init_logging_proxy();
-    init_panic_hook();
+#[derive(Debug, Error)]
+pub(crate) enum ExecuteProxyError {
+    #[error("Failed to init server paths")]
+    ServerPath(#[from] ServerPathError),
 
-    log::info!("starting proxy process. PID: {}", std::process::id());
+    #[error(transparent)]
+    ServerNotRunning(#[from] ProxyLaunchError),
+
+    #[error("Failed to check PidFile '{path}'")]
+    CheckPidFile {
+        #[source]
+        source: CheckPidError,
+        path: PathBuf,
+    },
+
+    #[error("Failed to kill existing server with pid '{pid}'")]
+    KillRunningServer {
+        #[source]
+        source: std::io::Error,
+        pid: u32,
+    },
+
+    #[error("failed to spawn server")]
+    SpawnServer(#[source] SpawnServerError),
+
+    #[error("stdin_task failed")]
+    StdinTask(#[source] anyhow::Error),
+    #[error("stdout_task failed")]
+    StdoutTask(#[source] anyhow::Error),
+    #[error("stderr_task failed")]
+    StderrTask(#[source] anyhow::Error),
+}
+
+pub(crate) fn execute_proxy(
+    identifier: String,
+    is_reconnecting: bool,
+) -> Result<(), ExecuteProxyError> {
+    init_logging_proxy();
 
     let server_paths = ServerPaths::new(&identifier)?;
 
-    let server_pid = check_pid_file(&server_paths.pid_file)?;
+    let id = std::process::id().to_string();
+    smol::spawn(crashes::init(crashes::InitCrashHandler {
+        session_id: id.clone(),
+        zed_version: VERSION.to_owned(),
+        release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
+        commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
+    }))
+    .detach();
+    init_panic_hook(id);
+
+    log::info!("starting proxy process. PID: {}", std::process::id());
+
+    let server_pid = check_pid_file(&server_paths.pid_file).map_err(|source| {
+        ExecuteProxyError::CheckPidFile {
+            source,
+            path: server_paths.pid_file.clone(),
+        }
+    })?;
     let server_running = server_pid.is_some();
     if is_reconnecting {
         if !server_running {
             log::error!("attempted to reconnect, but no server running");
-            anyhow::bail!(ProxyLaunchError::ServerNotRunning);
+            return Err(ExecuteProxyError::ServerNotRunning(
+                ProxyLaunchError::ServerNotRunning,
+            ));
         }
     } else {
         if let Some(pid) = server_pid {
@@ -552,7 +660,7 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
             kill_running_server(pid, &server_paths)?;
         }
 
-        spawn_server(&server_paths)?;
+        spawn_server(&server_paths).map_err(ExecuteProxyError::SpawnServer)?;
     };
 
     let stdin_task = smol::spawn(async move {
@@ -583,7 +691,7 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
                     Err(anyhow!(error))?;
                 }
                 n => {
-                    stderr.write_all(&mut stderr_buffer[..n]).await?;
+                    stderr.write_all(&stderr_buffer[..n]).await?;
                     stderr.flush().await?;
                 }
             }
@@ -592,9 +700,9 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
 
     if let Err(forwarding_result) = smol::block_on(async move {
         futures::select! {
-            result = stdin_task.fuse() => result.context("stdin_task failed"),
-            result = stdout_task.fuse() => result.context("stdout_task failed"),
-            result = stderr_task.fuse() => result.context("stderr_task failed"),
+            result = stdin_task.fuse() => result.map_err(ExecuteProxyError::StdinTask),
+            result = stdout_task.fuse() => result.map_err(ExecuteProxyError::StdoutTask),
+            result = stderr_task.fuse() => result.map_err(ExecuteProxyError::StderrTask),
         }
     }) {
         log::error!(
@@ -607,12 +715,12 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
     Ok(())
 }
 
-fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<()> {
+fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<(), ExecuteProxyError> {
     log::info!("killing existing server with PID {}", pid);
     std::process::Command::new("kill")
         .arg(pid.to_string())
         .output()
-        .context("failed to kill existing server")?;
+        .map_err(|source| ExecuteProxyError::KillRunningServer { source, pid })?;
 
     for file in [
         &paths.pid_file,
@@ -626,18 +734,39 @@ fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<()> {
     Ok(())
 }
 
-fn spawn_server(paths: &ServerPaths) -> Result<()> {
+#[derive(Debug, Error)]
+pub(crate) enum SpawnServerError {
+    #[error("failed to remove stdin socket")]
+    RemoveStdinSocket(#[source] std::io::Error),
+
+    #[error("failed to remove stdout socket")]
+    RemoveStdoutSocket(#[source] std::io::Error),
+
+    #[error("failed to remove stderr socket")]
+    RemoveStderrSocket(#[source] std::io::Error),
+
+    #[error("failed to get current_exe")]
+    CurrentExe(#[source] std::io::Error),
+
+    #[error("failed to launch server process")]
+    ProcessStatus(#[source] std::io::Error),
+
+    #[error("failed to launch and detach server process: {status}\n{paths}")]
+    LaunchStatus { status: ExitStatus, paths: String },
+}
+
+fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
     if paths.stdin_socket.exists() {
-        std::fs::remove_file(&paths.stdin_socket)?;
+        std::fs::remove_file(&paths.stdin_socket).map_err(SpawnServerError::RemoveStdinSocket)?;
     }
     if paths.stdout_socket.exists() {
-        std::fs::remove_file(&paths.stdout_socket)?;
+        std::fs::remove_file(&paths.stdout_socket).map_err(SpawnServerError::RemoveStdoutSocket)?;
     }
     if paths.stderr_socket.exists() {
-        std::fs::remove_file(&paths.stderr_socket)?;
+        std::fs::remove_file(&paths.stderr_socket).map_err(SpawnServerError::RemoveStderrSocket)?;
     }
 
-    let binary_name = std::env::current_exe()?;
+    let binary_name = std::env::current_exe().map_err(SpawnServerError::CurrentExe)?;
     let mut server_process = std::process::Command::new(binary_name);
     server_process
         .arg("run")
@@ -654,11 +783,17 @@ fn spawn_server(paths: &ServerPaths) -> Result<()> {
 
     let status = server_process
         .status()
-        .context("failed to launch server process")?;
-    anyhow::ensure!(
-        status.success(),
-        "failed to launch and detach server process"
-    );
+        .map_err(SpawnServerError::ProcessStatus)?;
+
+    if !status.success() {
+        return Err(SpawnServerError::LaunchStatus {
+            status,
+            paths: format!(
+                "log file: {:?}, pid file: {:?}",
+                paths.log_file, paths.pid_file,
+            ),
+        });
+    }
 
     let mut total_time_waited = std::time::Duration::from_secs(0);
     let wait_duration = std::time::Duration::from_millis(20);
@@ -679,7 +814,15 @@ fn spawn_server(paths: &ServerPaths) -> Result<()> {
     Ok(())
 }
 
-fn check_pid_file(path: &Path) -> Result<Option<u32>> {
+#[derive(Debug, Error)]
+#[error("Failed to remove PID file for missing process (pid `{pid}`")]
+pub(crate) struct CheckPidError {
+    #[source]
+    source: std::io::Error,
+    pid: u32,
+}
+
+fn check_pid_file(path: &Path) -> Result<Option<u32>, CheckPidError> {
     let Some(pid) = std::fs::read_to_string(&path)
         .ok()
         .and_then(|contents| contents.parse::<u32>().ok())
@@ -704,7 +847,7 @@ fn check_pid_file(path: &Path) -> Result<Option<u32>> {
             log::debug!(
                 "Found PID file, but process with that PID does not exist. Removing PID file."
             );
-            std::fs::remove_file(&path).context("Failed to remove PID file")?;
+            std::fs::remove_file(&path).map_err(|source| CheckPidError { source, pid })?;
             Ok(None)
         }
     }
@@ -724,54 +867,37 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    use remote::protocol::read_message_raw;
+    use remote::protocol::{read_message_raw, write_size_prefixed_buffer};
 
     let mut buffer = Vec::new();
     loop {
         read_message_raw(&mut reader, &mut buffer)
             .await
             .with_context(|| format!("failed to read message from {}", socket_name))?;
-
         write_size_prefixed_buffer(&mut writer, &mut buffer)
             .await
             .with_context(|| format!("failed to write message to {}", socket_name))?;
-
         writer.flush().await?;
-
         buffer.clear();
     }
 }
 
-async fn write_size_prefixed_buffer<S: AsyncWrite + Unpin>(
-    stream: &mut S,
-    buffer: &mut Vec<u8>,
-) -> Result<()> {
-    let len = buffer.len() as u32;
-    stream.write_all(len.to_le_bytes().as_slice()).await?;
-    stream.write_all(buffer).await?;
-    Ok(())
-}
-
 fn initialize_settings(
-    session: Arc<ChannelClient>,
+    session: AnyProtoClient,
     fs: Arc<dyn Fs>,
     cx: &mut App,
 ) -> watch::Receiver<Option<NodeBinaryOptions>> {
-    let user_settings_file_rx = watch_config_file(
-        &cx.background_executor(),
-        fs,
-        paths::settings_file().clone(),
-    );
+    let user_settings_file_rx =
+        watch_config_file(cx.background_executor(), fs, paths::settings_file().clone());
 
     handle_settings_file_changes(user_settings_file_rx, cx, {
-        let session = session.clone();
         move |err, _cx| {
             if let Some(e) = err {
                 log::info!("Server settings failed to change: {}", e);
 
                 session
                     .send(proto::Toast {
-                        project_id: SSH_PROJECT_ID,
+                        project_id: REMOTE_SERVER_PROJECT_ID,
                         notification_id: "server-settings-failed".to_string(),
                         message: format!(
                             "Error in settings on remote host {:?}: {}",
@@ -783,7 +909,7 @@ fn initialize_settings(
             } else {
                 session
                     .send(proto::HideToast {
-                        project_id: SSH_PROJECT_ID,
+                        project_id: REMOTE_SERVER_PROJECT_ID,
                         notification_id: "server-settings-failed".to_string(),
                     })
                     .log_err();
@@ -792,29 +918,33 @@ fn initialize_settings(
     });
 
     let (mut tx, rx) = watch::channel(None);
+    let mut node_settings = None;
     cx.observe_global::<SettingsStore>(move |cx| {
-        let settings = &ProjectSettings::get_global(cx).node;
-        log::info!("Got new node settings: {:?}", settings);
-        let options = NodeBinaryOptions {
-            allow_path_lookup: !settings.ignore_system_version,
-            // TODO: Implement this setting
-            allow_binary_download: true,
-            use_paths: settings.path.as_ref().map(|node_path| {
-                let node_path = PathBuf::from(shellexpand::tilde(node_path).as_ref());
-                let npm_path = settings
-                    .npm_path
-                    .as_ref()
-                    .map(|path| PathBuf::from(shellexpand::tilde(&path).as_ref()));
-                (
-                    node_path.clone(),
-                    npm_path.unwrap_or_else(|| {
-                        let base_path = PathBuf::new();
-                        node_path.parent().unwrap_or(&base_path).join("npm")
-                    }),
-                )
-            }),
-        };
-        tx.send(Some(options)).log_err();
+        let new_node_settings = &ProjectSettings::get_global(cx).node;
+        if Some(new_node_settings) != node_settings.as_ref() {
+            log::info!("Got new node settings: {new_node_settings:?}");
+            let options = NodeBinaryOptions {
+                allow_path_lookup: !new_node_settings.ignore_system_version,
+                // TODO: Implement this setting
+                allow_binary_download: true,
+                use_paths: new_node_settings.path.as_ref().map(|node_path| {
+                    let node_path = PathBuf::from(shellexpand::tilde(node_path).as_ref());
+                    let npm_path = new_node_settings
+                        .npm_path
+                        .as_ref()
+                        .map(|path| PathBuf::from(shellexpand::tilde(&path).as_ref()));
+                    (
+                        node_path.clone(),
+                        npm_path.unwrap_or_else(|| {
+                            let base_path = PathBuf::new();
+                            node_path.parent().unwrap_or(&base_path).join("npm")
+                        }),
+                    )
+                }),
+            };
+            node_settings = Some(new_node_settings.clone());
+            tx.send(Some(options)).ok();
+        }
     })
     .detach();
 
@@ -855,7 +985,8 @@ pub fn handle_settings_file_changes(
 
 fn read_proxy_settings(cx: &mut Context<HeadlessProject>) -> Option<Url> {
     let proxy_str = ProxySettings::get_global(cx).proxy.to_owned();
-    let proxy_url = proxy_str
+
+    proxy_str
         .as_ref()
         .and_then(|input: &String| {
             input
@@ -863,8 +994,7 @@ fn read_proxy_settings(cx: &mut Context<HeadlessProject>) -> Option<Url> {
                 .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
                 .ok()
         })
-        .or_else(read_proxy_from_env);
-    proxy_url
+        .or_else(read_proxy_from_env)
 }
 
 fn daemonize() -> Result<ControlFlow<()>> {
@@ -915,13 +1045,13 @@ fn cleanup_old_binaries() -> Result<()> {
     for entry in std::fs::read_dir(server_dir)? {
         let path = entry?.path();
 
-        if let Some(file_name) = path.file_name() {
-            if let Some(version) = file_name.to_string_lossy().strip_prefix(&prefix) {
-                if !is_new_version(version) && !is_file_in_use(file_name) {
-                    log::info!("removing old remote server binary: {:?}", path);
-                    std::fs::remove_file(&path)?;
-                }
-            }
+        if let Some(file_name) = path.file_name()
+            && let Some(version) = file_name.to_string_lossy().strip_prefix(&prefix)
+            && !is_new_version(version)
+            && !is_file_in_use(file_name)
+        {
+            log::info!("removing old remote server binary: {:?}", path);
+            std::fs::remove_file(&path)?;
         }
     }
 

@@ -41,16 +41,14 @@ pub trait Summary: Clone {
     fn add_summary(&mut self, summary: &Self, cx: &Self::Context);
 }
 
-/// This type exists because we can't implement Summary for () without causing
-/// type resolution errors
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct Unit;
-
-impl Summary for Unit {
+/// Catch-all implementation for when you need something that implements [`Summary`] without a specific type.
+/// We implement it on a &'static, as that avoids blanket impl collisions with `impl<T: Summary> Dimension for T`
+/// (as we also need unit type to be a fill-in dimension)
+impl Summary for &'static () {
     type Context = ();
 
     fn zero(_: &()) -> Self {
-        Unit
+        &()
     }
 
     fn add_summary(&mut self, _: &Self, _: &()) {}
@@ -96,44 +94,37 @@ impl<'a, S: Summary, D: Dimension<'a, S> + Ord> SeekTarget<'a, S, D> for D {
 }
 
 impl<'a, T: Summary> Dimension<'a, T> for () {
-    fn zero(_: &T::Context) -> Self {
-        ()
-    }
+    fn zero(_: &T::Context) -> Self {}
 
     fn add_summary(&mut self, _: &'a T, _: &T::Context) {}
 }
 
-impl<'a, T: Summary, D1: Dimension<'a, T>, D2: Dimension<'a, T>> Dimension<'a, T> for (D1, D2) {
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Dimensions<D1, D2, D3 = ()>(pub D1, pub D2, pub D3);
+
+impl<'a, T: Summary, D1: Dimension<'a, T>, D2: Dimension<'a, T>, D3: Dimension<'a, T>>
+    Dimension<'a, T> for Dimensions<D1, D2, D3>
+{
     fn zero(cx: &T::Context) -> Self {
-        (D1::zero(cx), D2::zero(cx))
+        Dimensions(D1::zero(cx), D2::zero(cx), D3::zero(cx))
     }
 
     fn add_summary(&mut self, summary: &'a T, cx: &T::Context) {
         self.0.add_summary(summary, cx);
         self.1.add_summary(summary, cx);
+        self.2.add_summary(summary, cx);
     }
 }
 
-impl<'a, S, D1, D2> SeekTarget<'a, S, (D1, D2)> for D1
-where
-    S: Summary,
-    D1: SeekTarget<'a, S, D1> + Dimension<'a, S>,
-    D2: Dimension<'a, S>,
-{
-    fn cmp(&self, cursor_location: &(D1, D2), cx: &S::Context) -> Ordering {
-        self.cmp(&cursor_location.0, cx)
-    }
-}
-
-impl<'a, S, D1, D2, D3> SeekTarget<'a, S, ((D1, D2), D3)> for D1
+impl<'a, S, D1, D2, D3> SeekTarget<'a, S, Dimensions<D1, D2, D3>> for D1
 where
     S: Summary,
     D1: SeekTarget<'a, S, D1> + Dimension<'a, S>,
     D2: Dimension<'a, S>,
     D3: Dimension<'a, S>,
 {
-    fn cmp(&self, cursor_location: &((D1, D2), D3), cx: &S::Context) -> Ordering {
-        self.cmp(&cursor_location.0.0, cx)
+    fn cmp(&self, cursor_location: &Dimensions<D1, D2, D3>, cx: &S::Context) -> Ordering {
+        self.cmp(&cursor_location.0, cx)
     }
 }
 
@@ -681,11 +672,11 @@ impl<T: KeyedItem> SumTree<T> {
         *self = {
             let mut cursor = self.cursor::<T::Key>(cx);
             let mut new_tree = cursor.slice(&item.key(), Bias::Left);
-            if let Some(cursor_item) = cursor.item() {
-                if cursor_item.key() == item.key() {
-                    replaced = Some(cursor_item.clone());
-                    cursor.next();
-                }
+            if let Some(cursor_item) = cursor.item()
+                && cursor_item.key() == item.key()
+            {
+                replaced = Some(cursor_item.clone());
+                cursor.next();
             }
             new_tree.push(item, cx);
             new_tree.append(cursor.suffix(), cx);
@@ -699,11 +690,11 @@ impl<T: KeyedItem> SumTree<T> {
         *self = {
             let mut cursor = self.cursor::<T::Key>(cx);
             let mut new_tree = cursor.slice(key, Bias::Left);
-            if let Some(item) = cursor.item() {
-                if item.key() == *key {
-                    removed = Some(item.clone());
-                    cursor.next();
-                }
+            if let Some(item) = cursor.item()
+                && item.key() == *key
+            {
+                removed = Some(item.clone());
+                cursor.next();
             }
             new_tree.append(cursor.suffix(), cx);
             new_tree
@@ -735,7 +726,7 @@ impl<T: KeyedItem> SumTree<T> {
 
                 if old_item
                     .as_ref()
-                    .map_or(false, |old_item| old_item.key() < new_key)
+                    .is_some_and(|old_item| old_item.key() < new_key)
                 {
                     new_tree.extend(buffered_items.drain(..), cx);
                     let slice = cursor.slice(&new_key, Bias::Left);
@@ -743,11 +734,11 @@ impl<T: KeyedItem> SumTree<T> {
                     old_item = cursor.item();
                 }
 
-                if let Some(old_item) = old_item {
-                    if old_item.key() == new_key {
-                        removed.push(old_item.clone());
-                        cursor.next();
-                    }
+                if let Some(old_item) = old_item
+                    && old_item.key() == new_key
+                {
+                    removed.push(old_item.clone());
+                    cursor.next();
                 }
 
                 match edit {
@@ -918,7 +909,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::{distributions, prelude::*};
+    use rand::{distr::StandardUniform, prelude::*};
     use std::cmp;
 
     #[ctor::ctor]
@@ -960,24 +951,24 @@ mod tests {
 
             let rng = &mut rng;
             let mut tree = SumTree::<u8>::default();
-            let count = rng.gen_range(0..10);
-            if rng.r#gen() {
-                tree.extend(rng.sample_iter(distributions::Standard).take(count), &());
+            let count = rng.random_range(0..10);
+            if rng.random() {
+                tree.extend(rng.sample_iter(StandardUniform).take(count), &());
             } else {
                 let items = rng
-                    .sample_iter(distributions::Standard)
+                    .sample_iter(StandardUniform)
                     .take(count)
                     .collect::<Vec<_>>();
                 tree.par_extend(items, &());
             }
 
             for _ in 0..num_operations {
-                let splice_end = rng.gen_range(0..tree.extent::<Count>(&()).0 + 1);
-                let splice_start = rng.gen_range(0..splice_end + 1);
-                let count = rng.gen_range(0..10);
+                let splice_end = rng.random_range(0..tree.extent::<Count>(&()).0 + 1);
+                let splice_start = rng.random_range(0..splice_end + 1);
+                let count = rng.random_range(0..10);
                 let tree_end = tree.extent::<Count>(&());
                 let new_items = rng
-                    .sample_iter(distributions::Standard)
+                    .sample_iter(StandardUniform)
                     .take(count)
                     .collect::<Vec<u8>>();
 
@@ -987,7 +978,7 @@ mod tests {
                 tree = {
                     let mut cursor = tree.cursor::<Count>(&());
                     let mut new_tree = cursor.slice(&Count(splice_start), Bias::Right);
-                    if rng.r#gen() {
+                    if rng.random() {
                         new_tree.extend(new_items, &());
                     } else {
                         new_tree.par_extend(new_items, &());
@@ -1014,7 +1005,7 @@ mod tests {
                     .filter(|(_, item)| (item & 1) == 0)
                     .collect::<Vec<_>>();
 
-                let mut item_ix = if rng.r#gen() {
+                let mut item_ix = if rng.random() {
                     filter_cursor.next();
                     0
                 } else {
@@ -1031,12 +1022,12 @@ mod tests {
                     filter_cursor.next();
                     item_ix += 1;
 
-                    while item_ix > 0 && rng.gen_bool(0.2) {
+                    while item_ix > 0 && rng.random_bool(0.2) {
                         log::info!("prev");
                         filter_cursor.prev();
                         item_ix -= 1;
 
-                        if item_ix == 0 && rng.gen_bool(0.2) {
+                        if item_ix == 0 && rng.random_bool(0.2) {
                             filter_cursor.prev();
                             assert_eq!(filter_cursor.item(), None);
                             assert_eq!(filter_cursor.start().0, 0);
@@ -1048,9 +1039,9 @@ mod tests {
 
                 let mut before_start = false;
                 let mut cursor = tree.cursor::<Count>(&());
-                let start_pos = rng.gen_range(0..=reference_items.len());
+                let start_pos = rng.random_range(0..=reference_items.len());
                 cursor.seek(&Count(start_pos), Bias::Right);
-                let mut pos = rng.gen_range(start_pos..=reference_items.len());
+                let mut pos = rng.random_range(start_pos..=reference_items.len());
                 cursor.seek_forward(&Count(pos), Bias::Right);
 
                 for i in 0..10 {
@@ -1093,10 +1084,18 @@ mod tests {
             }
 
             for _ in 0..10 {
-                let end = rng.gen_range(0..tree.extent::<Count>(&()).0 + 1);
-                let start = rng.gen_range(0..end + 1);
-                let start_bias = if rng.r#gen() { Bias::Left } else { Bias::Right };
-                let end_bias = if rng.r#gen() { Bias::Left } else { Bias::Right };
+                let end = rng.random_range(0..tree.extent::<Count>(&()).0 + 1);
+                let start = rng.random_range(0..end + 1);
+                let start_bias = if rng.random() {
+                    Bias::Left
+                } else {
+                    Bias::Right
+                };
+                let end_bias = if rng.random() {
+                    Bias::Left
+                } else {
+                    Bias::Right
+                };
 
                 let mut cursor = tree.cursor::<Count>(&());
                 cursor.seek(&Count(start), start_bias);

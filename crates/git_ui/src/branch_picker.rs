@@ -13,7 +13,7 @@ use project::git_store::Repository;
 use std::sync::Arc;
 use time::OffsetDateTime;
 use time_format::format_local_timestamp;
-use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
+use ui::{HighlightedLabel, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
@@ -48,7 +48,7 @@ pub fn open(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let repository = workspace.project().read(cx).active_repository(cx).clone();
+    let repository = workspace.project().read(cx).active_repository(cx);
     let style = BranchListStyle::Modal;
     workspace.toggle_modal(window, cx, |window, cx| {
         BranchList::new(repository, style, rems(34.), window, cx)
@@ -90,11 +90,21 @@ impl BranchList {
         let all_branches_request = repository
             .clone()
             .map(|repository| repository.update(cx, |repository, _| repository.branches()));
+        let default_branch_request = repository
+            .clone()
+            .map(|repository| repository.update(cx, |repository, _| repository.default_branch()));
 
         cx.spawn_in(window, async move |this, cx| {
             let mut all_branches = all_branches_request
                 .context("No active repository")?
                 .await??;
+            let default_branch = default_branch_request
+                .context("No active repository")?
+                .await
+                .map(Result::ok)
+                .ok()
+                .flatten()
+                .flatten();
 
             let all_branches = cx
                 .background_spawn(async move {
@@ -112,10 +122,13 @@ impl BranchList {
                     all_branches.retain(|branch| !remote_upstreams.contains(&branch.ref_name));
 
                     all_branches.sort_by_key(|branch| {
-                        branch
-                            .most_recent_commit
-                            .as_ref()
-                            .map(|commit| 0 - commit.commit_timestamp)
+                        (
+                            !branch.is_head, // Current branch (is_head=true) comes first
+                            branch
+                                .most_recent_commit
+                                .as_ref()
+                                .map(|commit| 0 - commit.commit_timestamp),
+                        )
                     });
 
                     all_branches
@@ -124,6 +137,7 @@ impl BranchList {
 
             this.update_in(cx, |this, window, cx| {
                 this.picker.update(cx, |picker, cx| {
+                    picker.delegate.default_branch = default_branch;
                     picker.delegate.all_branches = Some(all_branches);
                     picker.refresh(window, cx);
                 })
@@ -133,7 +147,7 @@ impl BranchList {
         })
         .detach_and_log_err(cx);
 
-        let delegate = BranchListDelegate::new(repository.clone(), style);
+        let delegate = BranchListDelegate::new(repository, style);
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
 
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| {
@@ -169,6 +183,7 @@ impl Focusable for BranchList {
 impl Render for BranchList {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
+            .key_context("GitBranchSelector")
             .w(self.width)
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .child(self.picker.clone())
@@ -192,6 +207,7 @@ struct BranchEntry {
 pub struct BranchListDelegate {
     matches: Vec<BranchEntry>,
     all_branches: Option<Vec<Branch>>,
+    default_branch: Option<SharedString>,
     repo: Option<Entity<Repository>>,
     style: BranchListStyle,
     selected_index: usize,
@@ -206,6 +222,7 @@ impl BranchListDelegate {
             repo,
             style,
             all_branches: None,
+            default_branch: None,
             selected_index: 0,
             last_query: Default::default(),
             modifiers: Default::default(),
@@ -214,6 +231,7 @@ impl BranchListDelegate {
 
     fn create_branch(
         &self,
+        from_branch: Option<SharedString>,
         new_branch_name: SharedString,
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
@@ -223,6 +241,11 @@ impl BranchListDelegate {
         };
         let new_branch_name = new_branch_name.to_string().replace(' ', "-");
         cx.spawn(async move |_, cx| {
+            if let Some(based_branch) = from_branch {
+                repo.update(cx, |repo, _| repo.change_branch(based_branch.to_string()))?
+                    .await??;
+            }
+
             repo.update(cx, |repo, _| {
                 repo.create_branch(new_branch_name.to_string())
             })?
@@ -321,7 +344,6 @@ impl PickerDelegate for BranchListDelegate {
             };
             picker
                 .update(cx, |picker, _| {
-                    #[allow(clippy::nonminimal_bool)]
                     if !query.is_empty()
                         && !matches
                             .first()
@@ -353,12 +375,22 @@ impl PickerDelegate for BranchListDelegate {
         })
     }
 
-    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let Some(entry) = self.matches.get(self.selected_index()) else {
             return;
         };
         if entry.is_new {
-            self.create_branch(entry.branch.name().to_owned().into(), window, cx);
+            let from_branch = if secondary {
+                self.default_branch.clone()
+            } else {
+                None
+            };
+            self.create_branch(
+                from_branch,
+                entry.branch.name().to_owned().into(),
+                window,
+                cx,
+            );
             return;
         }
 
@@ -439,6 +471,28 @@ impl PickerDelegate for BranchListDelegate {
             })
             .unwrap_or_else(|| (None, None));
 
+        let icon = if let Some(default_branch) = self.default_branch.clone()
+            && entry.is_new
+        {
+            Some(
+                IconButton::new("branch-from-default", IconName::GitBranchAlt)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.delegate.set_selected_index(ix, window, cx);
+                        this.delegate.confirm(true, window, cx);
+                    }))
+                    .tooltip(move |window, cx| {
+                        Tooltip::for_action(
+                            format!("Create branch based off default: {default_branch}"),
+                            &menu::SecondaryConfirm,
+                            window,
+                            cx,
+                        )
+                    }),
+            )
+        } else {
+            None
+        };
+
         let branch_name = if entry.is_new {
             h_flex()
                 .gap_1()
@@ -504,7 +558,8 @@ impl PickerDelegate for BranchListDelegate {
                                     .color(Color::Muted)
                             }))
                         }),
-                ),
+                )
+                .end_slot::<IconButton>(icon),
         )
     }
 

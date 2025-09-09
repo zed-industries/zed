@@ -4,7 +4,7 @@ pub use lsp_types::request::*;
 pub use lsp_types::*;
 
 use anyhow::{Context as _, Result, anyhow};
-use collections::HashMap;
+use collections::{BTreeMap, HashMap};
 use futures::{
     AsyncRead, AsyncWrite, Future, FutureExt,
     channel::oneshot::{self, Canceled},
@@ -29,7 +29,7 @@ use std::{
     ffi::{OsStr, OsString},
     fmt,
     io::Write,
-    ops::{Deref, DerefMut},
+    ops::DerefMut,
     path::PathBuf,
     pin::Pin,
     sync::{
@@ -40,12 +40,12 @@ use std::{
     time::{Duration, Instant},
 };
 use std::{path::Path, process::Stdio};
-use util::{ConnectionResult, ResultExt, TryFutureExt};
+use util::{ConnectionResult, ResultExt, TryFutureExt, redact};
 
 const JSON_RPC_VERSION: &str = "2.0";
 const CONTENT_LEN_HEADER: &str = "Content-Length: ";
 
-const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
+pub const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 type NotificationHandler = Box<dyn Send + FnMut(Option<RequestId>, Value, &mut AsyncApp)>;
@@ -62,7 +62,7 @@ pub enum IoKind {
 
 /// Represents a launchable language server. This can either be a standalone binary or the path
 /// to a runtime with arguments to instruct it to launch the actual language server file.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct LanguageServerBinary {
     pub path: PathBuf,
     pub arguments: Vec<OsString>,
@@ -100,8 +100,8 @@ pub struct LanguageServer {
     io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
     output_done_rx: Mutex<Option<barrier::Receiver>>,
     server: Arc<Mutex<Option<Child>>>,
-    workspace_folders: Arc<Mutex<BTreeSet<Url>>>,
-    root_uri: Url,
+    workspace_folders: Option<Arc<Mutex<BTreeSet<Uri>>>>,
+    root_uri: Uri,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -163,6 +163,12 @@ impl LanguageServerName {
 impl<'a> From<&'a str> for LanguageServerName {
     fn from(str: &'a str) -> LanguageServerName {
         LanguageServerName(str.to_string().into())
+    }
+}
+
+impl PartialEq<str> for LanguageServerName {
+    fn eq(&self, other: &str) -> bool {
+        self.0 == other
     }
 }
 
@@ -242,7 +248,7 @@ struct Notification<'a, T> {
 
 /// Language server RPC notification message before it is deserialized into a concrete type.
 #[derive(Debug, Clone, Deserialize)]
-struct AnyNotification {
+struct NotificationOrRequest {
     #[serde(default)]
     id: Option<RequestId>,
     method: String,
@@ -252,7 +258,10 @@ struct AnyNotification {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Error {
+    code: i64,
     message: String,
+    #[serde(default)]
+    data: Option<serde_json::Value>,
 }
 
 pub trait LspRequestFuture<O>: Future<Output = ConnectionResult<O>> {
@@ -307,7 +316,7 @@ impl LanguageServer {
         binary: LanguageServerBinary,
         root_path: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
-        workspace_folders: Arc<Mutex<BTreeSet<Url>>>,
+        workspace_folders: Option<Arc<Mutex<BTreeSet<Uri>>>>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
         let working_dir = if root_path.is_dir() {
@@ -315,6 +324,8 @@ impl LanguageServer {
         } else {
             root_path.parent().unwrap_or_else(|| Path::new("/"))
         };
+        let root_uri = Uri::from_file_path(&working_dir)
+            .map_err(|()| anyhow!("{working_dir:?} is not a valid URI"))?;
 
         log::info!(
             "starting language server process. binary path: {:?}, working directory: {:?}, args: {:?}",
@@ -342,8 +353,6 @@ impl LanguageServer {
         let stdin = server.stdin.take().unwrap();
         let stdout = server.stdout.take().unwrap();
         let stderr = server.stderr.take().unwrap();
-        let root_uri = Url::from_file_path(&working_dir)
-            .map_err(|()| anyhow!("{working_dir:?} is not a valid URI"))?;
         let server = Self::new_internal(
             server_id,
             server_name,
@@ -364,6 +373,7 @@ impl LanguageServer {
                     notification.method,
                     serde_json::to_string_pretty(&notification.params).unwrap(),
                 );
+                false
             },
         );
 
@@ -380,8 +390,8 @@ impl LanguageServer {
         server: Option<Child>,
         code_action_kinds: Option<Vec<CodeActionKind>>,
         binary: LanguageServerBinary,
-        root_uri: Url,
-        workspace_folders: Arc<Mutex<BTreeSet<Url>>>,
+        root_uri: Uri,
+        workspace_folders: Option<Arc<Mutex<BTreeSet<Uri>>>>,
         cx: &mut AsyncApp,
         on_unhandled_notification: F,
     ) -> Self
@@ -389,7 +399,7 @@ impl LanguageServer {
         Stdin: AsyncWrite + Unpin + Send + 'static,
         Stdout: AsyncRead + Unpin + Send + 'static,
         Stderr: AsyncRead + Unpin + Send + 'static,
-        F: FnMut(AnyNotification) + 'static + Send + Sync + Clone,
+        F: Fn(&NotificationOrRequest) -> bool + 'static + Send + Sync + Clone,
     {
         let (outbound_tx, outbound_rx) = channel::unbounded::<String>();
         let (output_done_tx, output_done_rx) = barrier::channel();
@@ -400,14 +410,34 @@ impl LanguageServer {
         let io_handlers = Arc::new(Mutex::new(HashMap::default()));
 
         let stdout_input_task = cx.spawn({
-            let on_unhandled_notification = on_unhandled_notification.clone();
+            let unhandled_notification_wrapper = {
+                let response_channel = outbound_tx.clone();
+                async move |msg: NotificationOrRequest| {
+                    let did_handle = on_unhandled_notification(&msg);
+                    if !did_handle && let Some(message_id) = msg.id {
+                        let response = AnyResponse {
+                            jsonrpc: JSON_RPC_VERSION,
+                            id: message_id,
+                            error: Some(Error {
+                                code: -32601,
+                                message: format!("Unrecognized method `{}`", msg.method),
+                                data: None,
+                            }),
+                            result: None,
+                        };
+                        if let Ok(response) = serde_json::to_string(&response) {
+                            response_channel.send(response).await.ok();
+                        }
+                    }
+                }
+            };
             let notification_handlers = notification_handlers.clone();
             let response_handlers = response_handlers.clone();
             let io_handlers = io_handlers.clone();
             async move |cx| {
-                Self::handle_input(
+                Self::handle_incoming_messages(
                     stdout,
-                    on_unhandled_notification,
+                    unhandled_notification_wrapper,
                     notification_handlers,
                     response_handlers,
                     io_handlers,
@@ -421,19 +451,19 @@ impl LanguageServer {
             .map(|stderr| {
                 let io_handlers = io_handlers.clone();
                 let stderr_captures = stderr_capture.clone();
-                cx.spawn(async move |_| {
+                cx.background_spawn(async move {
                     Self::handle_stderr(stderr, io_handlers, stderr_captures)
                         .log_err()
                         .await
                 })
             })
             .unwrap_or_else(|| Task::ready(None));
-        let input_task = cx.spawn(async move |_| {
+        let input_task = cx.background_spawn(async move {
             let (stdout, stderr) = futures::join!(stdout_input_task, stderr_input_task);
             stdout.or(stderr)
         });
         let output_task = cx.background_spawn({
-            Self::handle_output(
+            Self::handle_outgoing_messages(
                 stdin,
                 outbound_rx,
                 output_done_tx,
@@ -479,9 +509,9 @@ impl LanguageServer {
         self.code_action_kinds.clone()
     }
 
-    async fn handle_input<Stdout, F>(
+    async fn handle_incoming_messages<Stdout>(
         stdout: Stdout,
-        mut on_unhandled_notification: F,
+        on_unhandled_notification: impl AsyncFn(NotificationOrRequest) + 'static + Send,
         notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
@@ -489,7 +519,6 @@ impl LanguageServer {
     ) -> anyhow::Result<()>
     where
         Stdout: AsyncRead + Unpin + Send + 'static,
-        F: FnMut(AnyNotification) + 'static + Send,
     {
         use smol::stream::StreamExt;
         let stdout = BufReader::new(stdout);
@@ -506,15 +535,19 @@ impl LanguageServer {
             cx.background_executor().clone(),
         );
 
-        while let Some(msg) = input_handler.notifications_channel.next().await {
-            {
+        while let Some(msg) = input_handler.incoming_messages.next().await {
+            let unhandled_message = {
                 let mut notification_handlers = notification_handlers.lock();
                 if let Some(handler) = notification_handlers.get_mut(msg.method.as_str()) {
                     handler(msg.id, msg.params.unwrap_or(Value::Null), cx);
+                    None
                 } else {
-                    drop(notification_handlers);
-                    on_unhandled_notification(msg);
+                    Some(msg)
                 }
+            };
+
+            if let Some(msg) = unhandled_message {
+                on_unhandled_notification(msg).await;
             }
 
             // Don't starve the main thread when receiving lots of notifications at once.
@@ -558,7 +591,7 @@ impl LanguageServer {
         }
     }
 
-    async fn handle_output<Stdin>(
+    async fn handle_outgoing_messages<Stdin>(
         stdin: Stdin,
         outbound_rx: channel::Receiver<String>,
         output_done_tx: barrier::Sender,
@@ -595,16 +628,26 @@ impl LanguageServer {
     }
 
     pub fn default_initialize_params(&self, pull_diagnostics: bool, cx: &App) -> InitializeParams {
-        let workspace_folders = self
-            .workspace_folders
-            .lock()
-            .iter()
-            .cloned()
-            .map(|uri| WorkspaceFolder {
-                name: Default::default(),
-                uri,
-            })
-            .collect::<Vec<_>>();
+        let workspace_folders = self.workspace_folders.as_ref().map_or_else(
+            || {
+                vec![WorkspaceFolder {
+                    name: Default::default(),
+                    uri: self.root_uri.clone(),
+                }]
+            },
+            |folders| {
+                folders
+                    .lock()
+                    .iter()
+                    .cloned()
+                    .map(|uri| WorkspaceFolder {
+                        name: Default::default(),
+                        uri,
+                    })
+                    .collect()
+            },
+        );
+
         #[allow(deprecated)]
         InitializeParams {
             process_id: None,
@@ -614,7 +657,7 @@ impl LanguageServer {
             capabilities: ClientCapabilities {
                 general: Some(GeneralClientCapabilities {
                     position_encodings: Some(vec![PositionEncodingKind::UTF16]),
-                    ..Default::default()
+                    ..GeneralClientCapabilities::default()
                 }),
                 workspace: Some(WorkspaceClientCapabilities {
                     configuration: Some(true),
@@ -628,6 +671,7 @@ impl LanguageServer {
                     workspace_folders: Some(true),
                     symbol: Some(WorkspaceSymbolClientCapabilities {
                         resolve_support: None,
+                        dynamic_registration: Some(true),
                         ..WorkspaceSymbolClientCapabilities::default()
                     }),
                     inlay_hint: Some(InlayHintWorkspaceClientCapabilities {
@@ -651,21 +695,21 @@ impl LanguageServer {
                         ..WorkspaceEditClientCapabilities::default()
                     }),
                     file_operations: Some(WorkspaceFileOperationsClientCapabilities {
-                        dynamic_registration: Some(false),
+                        dynamic_registration: Some(true),
                         did_rename: Some(true),
                         will_rename: Some(true),
-                        ..Default::default()
+                        ..WorkspaceFileOperationsClientCapabilities::default()
                     }),
                     apply_edit: Some(true),
                     execute_command: Some(ExecuteCommandClientCapabilities {
-                        dynamic_registration: Some(false),
+                        dynamic_registration: Some(true),
                     }),
-                    ..Default::default()
+                    ..WorkspaceClientCapabilities::default()
                 }),
                 text_document: Some(TextDocumentClientCapabilities {
                     definition: Some(GotoCapability {
                         link_support: Some(true),
-                        dynamic_registration: None,
+                        dynamic_registration: Some(true),
                     }),
                     code_action: Some(CodeActionClientCapabilities {
                         code_action_literal_support: Some(CodeActionLiteralSupport {
@@ -688,7 +732,8 @@ impl LanguageServer {
                                 "command".to_string(),
                             ],
                         }),
-                        ..Default::default()
+                        dynamic_registration: Some(true),
+                        ..CodeActionClientCapabilities::default()
                     }),
                     completion: Some(CompletionClientCapabilities {
                         completion_item: Some(CompletionItemCapability {
@@ -710,7 +755,11 @@ impl LanguageServer {
                                     InsertTextMode::ADJUST_INDENTATION,
                                 ],
                             }),
-                            ..Default::default()
+                            documentation_format: Some(vec![
+                                MarkupKind::Markdown,
+                                MarkupKind::PlainText,
+                            ]),
+                            ..CompletionItemCapability::default()
                         }),
                         insert_text_mode: Some(InsertTextMode::ADJUST_INDENTATION),
                         completion_list: Some(CompletionListCapability {
@@ -723,18 +772,20 @@ impl LanguageServer {
                             ]),
                         }),
                         context_support: Some(true),
-                        ..Default::default()
+                        dynamic_registration: Some(true),
+                        ..CompletionClientCapabilities::default()
                     }),
                     rename: Some(RenameClientCapabilities {
                         prepare_support: Some(true),
                         prepare_support_default_behavior: Some(
                             PrepareSupportDefaultBehavior::IDENTIFIER,
                         ),
-                        ..Default::default()
+                        dynamic_registration: Some(true),
+                        ..RenameClientCapabilities::default()
                     }),
                     hover: Some(HoverClientCapabilities {
                         content_format: Some(vec![MarkupKind::Markdown]),
-                        dynamic_registration: None,
+                        dynamic_registration: Some(true),
                     }),
                     inlay_hint: Some(InlayHintClientCapabilities {
                         resolve_support: Some(InlayHintResolveClientCapabilities {
@@ -746,7 +797,7 @@ impl LanguageServer {
                                 "label.command".to_string(),
                             ],
                         }),
-                        dynamic_registration: Some(false),
+                        dynamic_registration: Some(true),
                     }),
                     publish_diagnostics: Some(PublishDiagnosticsClientCapabilities {
                         related_information: Some(true),
@@ -777,26 +828,29 @@ impl LanguageServer {
                             }),
                             active_parameter_support: Some(true),
                         }),
+                        dynamic_registration: Some(true),
                         ..SignatureHelpClientCapabilities::default()
                     }),
                     synchronization: Some(TextDocumentSyncClientCapabilities {
                         did_save: Some(true),
+                        dynamic_registration: Some(true),
                         ..TextDocumentSyncClientCapabilities::default()
                     }),
                     code_lens: Some(CodeLensClientCapabilities {
-                        dynamic_registration: Some(false),
+                        dynamic_registration: Some(true),
                     }),
                     document_symbol: Some(DocumentSymbolClientCapabilities {
                         hierarchical_document_symbol_support: Some(true),
+                        dynamic_registration: Some(true),
                         ..DocumentSymbolClientCapabilities::default()
                     }),
                     diagnostic: Some(DiagnosticClientCapabilities {
-                        dynamic_registration: Some(false),
+                        dynamic_registration: Some(true),
                         related_document_support: Some(true),
                     })
                     .filter(|_| pull_diagnostics),
                     color_provider: Some(DocumentColorClientCapabilities {
-                        dynamic_registration: Some(false),
+                        dynamic_registration: Some(true),
                     }),
                     ..TextDocumentClientCapabilities::default()
                 }),
@@ -809,7 +863,7 @@ impl LanguageServer {
                     show_message: Some(ShowMessageRequestClientCapabilities {
                         message_action_item: None,
                     }),
-                    ..Default::default()
+                    ..WindowClientCapabilities::default()
                 }),
             },
             trace: None,
@@ -821,8 +875,7 @@ impl LanguageServer {
                 }
             }),
             locale: None,
-
-            ..Default::default()
+            ..InitializeParams::default()
         }
     }
 
@@ -836,7 +889,7 @@ impl LanguageServer {
         configuration: Arc<DidChangeConfigurationParams>,
         cx: &App,
     ) -> Task<Result<Arc<Self>>> {
-        cx.spawn(async move |_| {
+        cx.background_spawn(async move {
             let response = self
                 .request::<request::Initialize>(params)
                 .await
@@ -877,39 +930,41 @@ impl LanguageServer {
 
             let server = self.server.clone();
             let name = self.name.clone();
+            let server_id = self.server_id;
             let mut timer = self.executor.timer(SERVER_SHUTDOWN_TIMEOUT).fuse();
-            Some(
-                async move {
-                    log::debug!("language server shutdown started");
+            Some(async move {
+                log::debug!("language server shutdown started");
 
-                    select! {
-                        request_result = shutdown_request.fuse() => {
-                            match request_result {
-                                ConnectionResult::Timeout => {
-                                    log::warn!("timeout waiting for language server {name} to shutdown");
-                                },
-                                ConnectionResult::ConnectionReset => {},
-                                ConnectionResult::Result(r) => r?,
-                            }
+                select! {
+                    request_result = shutdown_request.fuse() => {
+                        match request_result {
+                            ConnectionResult::Timeout => {
+                                log::warn!("timeout waiting for language server {name} (id {server_id}) to shutdown");
+                            },
+                            ConnectionResult::ConnectionReset => {
+                                log::warn!("language server {name} (id {server_id}) closed the shutdown request connection");
+                            },
+                            ConnectionResult::Result(Err(e)) => {
+                                log::error!("Shutdown request failure, server {name} (id {server_id}): {e:#}");
+                            },
+                            ConnectionResult::Result(Ok(())) => {}
                         }
-
-                        _ = timer => {
-                            log::info!("timeout waiting for language server {name} to shutdown");
-                        },
                     }
 
-                    response_handlers.lock().take();
-                    Self::notify_internal::<notification::Exit>(&outbound_tx, &()).ok();
-                    outbound_tx.close();
-                    output_done.recv().await;
-                    server.lock().take().map(|mut child| child.kill());
-                    log::debug!("language server shutdown finished");
-
-                    drop(tasks);
-                    anyhow::Ok(())
+                    _ = timer => {
+                        log::info!("timeout waiting for language server {name} (id {server_id}) to shutdown");
+                    },
                 }
-                .log_err(),
-            )
+
+                response_handlers.lock().take();
+                Self::notify_internal::<notification::Exit>(&outbound_tx, &()).ok();
+                outbound_tx.close();
+                output_done.recv().await;
+                server.lock().take().map(|mut child| child.kill());
+                drop(tasks);
+                log::debug!("language server shutdown finished");
+                Some(())
+            })
         } else {
             None
         }
@@ -1024,7 +1079,9 @@ impl LanguageServer {
                                                 jsonrpc: JSON_RPC_VERSION,
                                                 id,
                                                 value: LspResult::Error(Some(Error {
+                                                    code: lsp_types::error_codes::REQUEST_FAILED,
                                                     message: error.to_string(),
+                                                    data: None,
                                                 })),
                                             },
                                         };
@@ -1045,7 +1102,9 @@ impl LanguageServer {
                                 id,
                                 result: None,
                                 error: Some(Error {
+                                    code: -32700, // Parse error
                                     message: error.to_string(),
+                                    data: None,
                                 }),
                             };
                             if let Some(response) = serde_json::to_string(&response).log_err() {
@@ -1297,7 +1356,7 @@ impl LanguageServer {
     }
 
     /// Add new workspace folder to the list.
-    pub fn add_workspace_folder(&self, uri: Url) {
+    pub fn add_workspace_folder(&self, uri: Uri) {
         if self
             .capabilities()
             .workspace
@@ -1313,7 +1372,10 @@ impl LanguageServer {
             return;
         }
 
-        let is_new_folder = self.workspace_folders.lock().insert(uri.clone());
+        let Some(workspace_folders) = self.workspace_folders.as_ref() else {
+            return;
+        };
+        let is_new_folder = workspace_folders.lock().insert(uri.clone());
         if is_new_folder {
             let params = DidChangeWorkspaceFoldersParams {
                 event: WorkspaceFoldersChangeEvent {
@@ -1327,8 +1389,9 @@ impl LanguageServer {
             self.notify::<DidChangeWorkspaceFolders>(&params).ok();
         }
     }
-    /// Add new workspace folder to the list.
-    pub fn remove_workspace_folder(&self, uri: Url) {
+
+    /// Remove existing workspace folder from the list.
+    pub fn remove_workspace_folder(&self, uri: Uri) {
         if self
             .capabilities()
             .workspace
@@ -1343,7 +1406,10 @@ impl LanguageServer {
         {
             return;
         }
-        let was_removed = self.workspace_folders.lock().remove(&uri);
+        let Some(workspace_folders) = self.workspace_folders.as_ref() else {
+            return;
+        };
+        let was_removed = workspace_folders.lock().remove(&uri);
         if was_removed {
             let params = DidChangeWorkspaceFoldersParams {
                 event: WorkspaceFoldersChangeEvent {
@@ -1357,8 +1423,11 @@ impl LanguageServer {
             self.notify::<DidChangeWorkspaceFolders>(&params).ok();
         }
     }
-    pub fn set_workspace_folders(&self, folders: BTreeSet<Url>) {
-        let mut workspace_folders = self.workspace_folders.lock();
+    pub fn set_workspace_folders(&self, folders: BTreeSet<Uri>) {
+        let Some(workspace_folders) = self.workspace_folders.as_ref() else {
+            return;
+        };
+        let mut workspace_folders = workspace_folders.lock();
 
         let old_workspace_folders = std::mem::take(&mut *workspace_folders);
         let added: Vec<_> = folders
@@ -1387,13 +1456,16 @@ impl LanguageServer {
         }
     }
 
-    pub fn workspace_folders(&self) -> impl Deref<Target = BTreeSet<Url>> + '_ {
-        self.workspace_folders.lock()
+    pub fn workspace_folders(&self) -> BTreeSet<Uri> {
+        self.workspace_folders.as_ref().map_or_else(
+            || BTreeSet::from_iter([self.root_uri.clone()]),
+            |folders| folders.lock().clone(),
+        )
     }
 
     pub fn register_buffer(
         &self,
-        uri: Url,
+        uri: Uri,
         language_id: String,
         version: i32,
         initial_text: String,
@@ -1404,7 +1476,7 @@ impl LanguageServer {
         .ok();
     }
 
-    pub fn unregister_buffer(&self, uri: Url) {
+    pub fn unregister_buffer(&self, uri: Uri) {
         self.notify::<notification::DidCloseTextDocument>(&DidCloseTextDocumentParams {
             text_document: TextDocumentIdentifier::new(uri),
         })
@@ -1445,6 +1517,33 @@ impl fmt::Debug for LanguageServer {
             .field("id", &self.server_id.0)
             .field("name", &self.name)
             .finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for LanguageServerBinary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut debug = f.debug_struct("LanguageServerBinary");
+        debug.field("path", &self.path);
+        debug.field("arguments", &self.arguments);
+
+        if let Some(env) = &self.env {
+            let redacted_env: BTreeMap<String, String> = env
+                .iter()
+                .map(|(key, value)| {
+                    let redacted_value = if redact::should_redact(key) {
+                        "REDACTED".to_string()
+                    } else {
+                        value.clone()
+                    };
+                    (key.clone(), redacted_value)
+                })
+                .collect();
+            debug.field("env", &Some(redacted_env));
+        } else {
+            debug.field("env", &self.env);
+        }
+
+        debug.finish()
     }
 }
 
@@ -1494,7 +1593,7 @@ impl FakeLanguageServer {
         let server_name = LanguageServerName(name.clone().into());
         let process_name = Arc::from(name.as_str());
         let root = Self::root_path();
-        let workspace_folders: Arc<Mutex<BTreeSet<Url>>> = Default::default();
+        let workspace_folders: Arc<Mutex<BTreeSet<Uri>>> = Default::default();
         let mut server = LanguageServer::new_internal(
             server_id,
             server_name.clone(),
@@ -1506,9 +1605,9 @@ impl FakeLanguageServer {
             None,
             binary.clone(),
             root,
-            workspace_folders.clone(),
+            Some(workspace_folders.clone()),
             cx,
-            |_| {},
+            |_| false,
         );
         server.process_name = process_name;
         let fake = FakeLanguageServer {
@@ -1525,15 +1624,16 @@ impl FakeLanguageServer {
                     None,
                     binary,
                     Self::root_path(),
-                    workspace_folders,
+                    Some(workspace_folders),
                     cx,
                     move |msg| {
                         notifications_tx
                             .try_send((
                                 msg.method.to_string(),
-                                msg.params.unwrap_or(Value::Null).to_string(),
+                                msg.params.as_ref().unwrap_or(&Value::Null).to_string(),
                             ))
                             .ok();
+                        true
                     },
                 );
                 server.process_name = name.as_str().into();
@@ -1563,13 +1663,13 @@ impl FakeLanguageServer {
         (server, fake)
     }
     #[cfg(target_os = "windows")]
-    fn root_path() -> Url {
-        Url::from_file_path("C:/").unwrap()
+    fn root_path() -> Uri {
+        Uri::from_file_path("C:/").unwrap()
     }
 
     #[cfg(not(target_os = "windows"))]
-    fn root_path() -> Url {
-        Url::from_file_path("/").unwrap()
+    fn root_path() -> Uri {
+        Uri::from_file_path("/").unwrap()
     }
 }
 
@@ -1585,7 +1685,7 @@ impl LanguageServer {
             workspace_symbol_provider: Some(OneOf::Left(true)),
             implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
             type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
-            ..Default::default()
+            ..ServerCapabilities::default()
         }
     }
 }
@@ -1771,7 +1871,7 @@ mod tests {
         server
             .notify::<notification::DidOpenTextDocument>(&DidOpenTextDocumentParams {
                 text_document: TextDocumentItem::new(
-                    Url::from_str("file://a/b").unwrap(),
+                    Uri::from_str("file://a/b").unwrap(),
                     "rust".to_string(),
                     0,
                     "".to_string(),
@@ -1792,7 +1892,7 @@ mod tests {
             message: "ok".to_string(),
         });
         fake.notify::<notification::PublishDiagnostics>(&PublishDiagnosticsParams {
-            uri: Url::from_str("file://b/c").unwrap(),
+            uri: Uri::from_str("file://b/c").unwrap(),
             version: Some(5),
             diagnostics: vec![],
         });
@@ -1811,7 +1911,7 @@ mod tests {
     #[gpui::test]
     fn test_deserialize_string_digit_id() {
         let json = r#"{"jsonrpc":"2.0","id":"2","method":"workspace/configuration","params":{"items":[{"scopeUri":"file:///Users/mph/Devel/personal/hello-scala/","section":"metals"}]}}"#;
-        let notification = serde_json::from_str::<AnyNotification>(json)
+        let notification = serde_json::from_str::<NotificationOrRequest>(json)
             .expect("message with string id should be parsed");
         let expected_id = RequestId::Str("2".to_string());
         assert_eq!(notification.id, Some(expected_id));
@@ -1820,7 +1920,7 @@ mod tests {
     #[gpui::test]
     fn test_deserialize_string_id() {
         let json = r#"{"jsonrpc":"2.0","id":"anythingAtAll","method":"workspace/configuration","params":{"items":[{"scopeUri":"file:///Users/mph/Devel/personal/hello-scala/","section":"metals"}]}}"#;
-        let notification = serde_json::from_str::<AnyNotification>(json)
+        let notification = serde_json::from_str::<NotificationOrRequest>(json)
             .expect("message with string id should be parsed");
         let expected_id = RequestId::Str("anythingAtAll".to_string());
         assert_eq!(notification.id, Some(expected_id));
@@ -1829,7 +1929,7 @@ mod tests {
     #[gpui::test]
     fn test_deserialize_int_id() {
         let json = r#"{"jsonrpc":"2.0","id":2,"method":"workspace/configuration","params":{"items":[{"scopeUri":"file:///Users/mph/Devel/personal/hello-scala/","section":"metals"}]}}"#;
-        let notification = serde_json::from_str::<AnyNotification>(json)
+        let notification = serde_json::from_str::<NotificationOrRequest>(json)
             .expect("message with string id should be parsed");
         let expected_id = RequestId::Int(2);
         assert_eq!(notification.id, Some(expected_id));

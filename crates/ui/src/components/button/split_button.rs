@@ -12,6 +12,7 @@ use super::ButtonLike;
 pub enum SplitButtonStyle {
     Filled,
     Outlined,
+    Transparent,
 }
 
 /// /// A button with two parts: a primary action on the left and a secondary action on the right.
@@ -44,10 +45,17 @@ impl SplitButton {
 
 impl RenderOnce for SplitButton {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let is_filled_or_outlined = matches!(
+            self.style,
+            SplitButtonStyle::Filled | SplitButtonStyle::Outlined
+        );
+
         h_flex()
             .rounded_sm()
-            .border_1()
-            .border_color(cx.theme().colors().border.opacity(0.5))
+            .when(is_filled_or_outlined, |this| {
+                this.border_1()
+                    .border_color(cx.theme().colors().border.opacity(0.8))
+            })
             .child(div().flex_grow().child(self.left))
             .child(
                 div()

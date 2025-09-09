@@ -473,7 +473,7 @@ fn test_editing_text_in_diff_hunks(cx: &mut TestAppContext) {
     let base_text = "one\ntwo\nfour\nfive\nsix\nseven\n";
     let text = "one\ntwo\nTHREE\nfour\nfive\nseven\n";
     let buffer = cx.new(|cx| Buffer::local(text, cx));
-    let diff = cx.new(|cx| BufferDiff::new_with_base_text(&base_text, &buffer, cx));
+    let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
     let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
 
     let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
@@ -2250,11 +2250,11 @@ impl ReferenceMultibuffer {
             let base_buffer = diff.base_text();
 
             let mut offset = buffer_range.start;
-            let mut hunks = diff
+            let hunks = diff
                 .hunks_intersecting_range(excerpt.range.clone(), buffer, cx)
                 .peekable();
 
-            while let Some(hunk) = hunks.next() {
+            for hunk in hunks {
                 // Ignore hunks that are outside the excerpt range.
                 let mut hunk_range = hunk.buffer_range.to_offset(buffer);
 
@@ -2265,14 +2265,14 @@ impl ReferenceMultibuffer {
                 }
 
                 if !excerpt.expanded_diff_hunks.iter().any(|expanded_anchor| {
-                    expanded_anchor.to_offset(&buffer).max(buffer_range.start)
+                    expanded_anchor.to_offset(buffer).max(buffer_range.start)
                         == hunk_range.start.max(buffer_range.start)
                 }) {
                     log::trace!("skipping a hunk that's not marked as expanded");
                     continue;
                 }
 
-                if !hunk.buffer_range.start.is_valid(&buffer) {
+                if !hunk.buffer_range.start.is_valid(buffer) {
                     log::trace!("skipping hunk with deleted start: {:?}", hunk.range);
                     continue;
                 }
@@ -2449,7 +2449,7 @@ impl ReferenceMultibuffer {
                     return false;
                 }
                 while let Some(hunk) = hunks.peek() {
-                    match hunk.buffer_range.start.cmp(&hunk_anchor, &buffer) {
+                    match hunk.buffer_range.start.cmp(hunk_anchor, &buffer) {
                         cmp::Ordering::Less => {
                             hunks.next();
                         }
@@ -2491,12 +2491,12 @@ async fn test_random_set_ranges(cx: &mut TestAppContext, mut rng: StdRng) {
 
     for _ in 0..operations {
         let snapshot = buf.update(cx, |buf, _| buf.snapshot());
-        let num_ranges = rng.gen_range(0..=10);
+        let num_ranges = rng.random_range(0..=10);
         let max_row = snapshot.max_point().row;
         let mut ranges = (0..num_ranges)
             .map(|_| {
-                let start = rng.gen_range(0..max_row);
-                let end = rng.gen_range(start + 1..max_row + 1);
+                let start = rng.random_range(0..max_row);
+                let end = rng.random_range(start + 1..max_row + 1);
                 Point::row_range(start..end)
             })
             .collect::<Vec<_>>();
@@ -2519,8 +2519,8 @@ async fn test_random_set_ranges(cx: &mut TestAppContext, mut rng: StdRng) {
         let mut seen_ranges = Vec::default();
 
         for (_, buf, range) in snapshot.excerpts() {
-            let start = range.context.start.to_point(&buf);
-            let end = range.context.end.to_point(&buf);
+            let start = range.context.start.to_point(buf);
+            let end = range.context.end.to_point(buf);
             seen_ranges.push(start..end);
 
             if let Some(last_end) = last_end.take() {
@@ -2562,11 +2562,11 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
     let mut needs_diff_calculation = false;
 
     for _ in 0..operations {
-        match rng.gen_range(0..100) {
+        match rng.random_range(0..100) {
             0..=14 if !buffers.is_empty() => {
                 let buffer = buffers.choose(&mut rng).unwrap();
                 buffer.update(cx, |buf, cx| {
-                    let edit_count = rng.gen_range(1..5);
+                    let edit_count = rng.random_range(1..5);
                     buf.randomly_edit(&mut rng, edit_count, cx);
                     log::info!("buffer text:\n{}", buf.text());
                     needs_diff_calculation = true;
@@ -2577,11 +2577,11 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                 multibuffer.update(cx, |multibuffer, cx| {
                     let ids = multibuffer.excerpt_ids();
                     let mut excerpts = HashSet::default();
-                    for _ in 0..rng.gen_range(0..ids.len()) {
+                    for _ in 0..rng.random_range(0..ids.len()) {
                         excerpts.extend(ids.choose(&mut rng).copied());
                     }
 
-                    let line_count = rng.gen_range(0..5);
+                    let line_count = rng.random_range(0..5);
 
                     let excerpt_ixs = excerpts
                         .iter()
@@ -2600,7 +2600,7 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
             }
             20..=29 if !reference.excerpts.is_empty() => {
                 let mut ids_to_remove = vec![];
-                for _ in 0..rng.gen_range(1..=3) {
+                for _ in 0..rng.random_range(1..=3) {
                     let Some(excerpt) = reference.excerpts.choose(&mut rng) else {
                         break;
                     };
@@ -2620,8 +2620,12 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                 let multibuffer =
                     multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
                 let offset =
-                    multibuffer.clip_offset(rng.gen_range(0..=multibuffer.len()), Bias::Left);
-                let bias = if rng.r#gen() { Bias::Left } else { Bias::Right };
+                    multibuffer.clip_offset(rng.random_range(0..=multibuffer.len()), Bias::Left);
+                let bias = if rng.random() {
+                    Bias::Left
+                } else {
+                    Bias::Right
+                };
                 log::info!("Creating anchor at {} with bias {:?}", offset, bias);
                 anchors.push(multibuffer.anchor_at(offset, bias));
                 anchors.sort_by(|a, b| a.cmp(b, &multibuffer));
@@ -2654,7 +2658,7 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
             45..=55 if !reference.excerpts.is_empty() => {
                 multibuffer.update(cx, |multibuffer, cx| {
                     let snapshot = multibuffer.snapshot(cx);
-                    let excerpt_ix = rng.gen_range(0..reference.excerpts.len());
+                    let excerpt_ix = rng.random_range(0..reference.excerpts.len());
                     let excerpt = &reference.excerpts[excerpt_ix];
                     let start = excerpt.range.start;
                     let end = excerpt.range.end;
@@ -2691,7 +2695,7 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                 });
             }
             _ => {
-                let buffer_handle = if buffers.is_empty() || rng.gen_bool(0.4) {
+                let buffer_handle = if buffers.is_empty() || rng.random_bool(0.4) {
                     let mut base_text = util::RandomCharIter::new(&mut rng)
                         .take(256)
                         .collect::<String>();
@@ -2708,7 +2712,7 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                     buffers.choose(&mut rng).unwrap()
                 };
 
-                let prev_excerpt_ix = rng.gen_range(0..=reference.excerpts.len());
+                let prev_excerpt_ix = rng.random_range(0..=reference.excerpts.len());
                 let prev_excerpt_id = reference
                     .excerpts
                     .get(prev_excerpt_ix)
@@ -2716,8 +2720,8 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                 let excerpt_ix = (prev_excerpt_ix + 1).min(reference.excerpts.len());
 
                 let (range, anchor_range) = buffer_handle.read_with(cx, |buffer, _| {
-                    let end_row = rng.gen_range(0..=buffer.max_point().row);
-                    let start_row = rng.gen_range(0..=end_row);
+                    let end_row = rng.random_range(0..=buffer.max_point().row);
+                    let start_row = rng.random_range(0..=end_row);
                     let end_ix = buffer.point_to_offset(Point::new(end_row, 0));
                     let start_ix = buffer.point_to_offset(Point::new(start_row, 0));
                     let anchor_range = buffer.anchor_before(start_ix)..buffer.anchor_after(end_ix);
@@ -2739,9 +2743,8 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                     let id = buffer_handle.read(cx).remote_id();
                     if multibuffer.diff_for(id).is_none() {
                         let base_text = base_texts.get(&id).unwrap();
-                        let diff = cx.new(|cx| {
-                            BufferDiff::new_with_base_text(base_text, &buffer_handle, cx)
-                        });
+                        let diff = cx
+                            .new(|cx| BufferDiff::new_with_base_text(base_text, buffer_handle, cx));
                         reference.add_diff(diff.clone(), cx);
                         multibuffer.add_diff(diff, cx)
                     }
@@ -2767,7 +2770,7 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
             }
         }
 
-        if rng.gen_bool(0.3) {
+        if rng.random_bool(0.3) {
             multibuffer.update(cx, |multibuffer, cx| {
                 old_versions.push((multibuffer.snapshot(cx), multibuffer.subscribe()));
             })
@@ -2816,7 +2819,7 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
         pretty_assertions::assert_eq!(actual_row_infos, expected_row_infos);
 
         for _ in 0..5 {
-            let start_row = rng.gen_range(0..=expected_row_infos.len());
+            let start_row = rng.random_range(0..=expected_row_infos.len());
             assert_eq!(
                 snapshot
                     .row_infos(MultiBufferRow(start_row as u32))
@@ -2873,8 +2876,8 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
 
         let text_rope = Rope::from(expected_text.as_str());
         for _ in 0..10 {
-            let end_ix = text_rope.clip_offset(rng.gen_range(0..=text_rope.len()), Bias::Right);
-            let start_ix = text_rope.clip_offset(rng.gen_range(0..=end_ix), Bias::Left);
+            let end_ix = text_rope.clip_offset(rng.random_range(0..=text_rope.len()), Bias::Right);
+            let start_ix = text_rope.clip_offset(rng.random_range(0..=end_ix), Bias::Left);
 
             let text_for_range = snapshot
                 .text_for_range(start_ix..end_ix)
@@ -2909,7 +2912,7 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
         }
 
         for _ in 0..10 {
-            let end_ix = text_rope.clip_offset(rng.gen_range(0..=text_rope.len()), Bias::Right);
+            let end_ix = text_rope.clip_offset(rng.random_range(0..=text_rope.len()), Bias::Right);
             assert_eq!(
                 snapshot.reversed_chars_at(end_ix).collect::<String>(),
                 expected_text[..end_ix].chars().rev().collect::<String>(),
@@ -2917,8 +2920,8 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
         }
 
         for _ in 0..10 {
-            let end_ix = rng.gen_range(0..=text_rope.len());
-            let start_ix = rng.gen_range(0..=end_ix);
+            let end_ix = rng.random_range(0..=text_rope.len());
+            let start_ix = rng.random_range(0..=end_ix);
             assert_eq!(
                 snapshot
                     .bytes_in_range(start_ix..end_ix)
@@ -3593,24 +3596,20 @@ fn assert_position_translation(snapshot: &MultiBufferSnapshot) {
 
     for (anchors, bias) in [(&left_anchors, Bias::Left), (&right_anchors, Bias::Right)] {
         for (ix, (offset, anchor)) in offsets.iter().zip(anchors).enumerate() {
-            if ix > 0 {
-                if *offset == 252 {
-                    if offset > &offsets[ix - 1] {
-                        let prev_anchor = left_anchors[ix - 1];
-                        assert!(
-                            anchor.cmp(&prev_anchor, snapshot).is_gt(),
-                            "anchor({}, {bias:?}).cmp(&anchor({}, {bias:?}).is_gt()",
-                            offsets[ix],
-                            offsets[ix - 1],
-                        );
-                        assert!(
-                            prev_anchor.cmp(&anchor, snapshot).is_lt(),
-                            "anchor({}, {bias:?}).cmp(&anchor({}, {bias:?}).is_lt()",
-                            offsets[ix - 1],
-                            offsets[ix],
-                        );
-                    }
-                }
+            if ix > 0 && *offset == 252 && offset > &offsets[ix - 1] {
+                let prev_anchor = left_anchors[ix - 1];
+                assert!(
+                    anchor.cmp(&prev_anchor, snapshot).is_gt(),
+                    "anchor({}, {bias:?}).cmp(&anchor({}, {bias:?}).is_gt()",
+                    offsets[ix],
+                    offsets[ix - 1],
+                );
+                assert!(
+                    prev_anchor.cmp(anchor, snapshot).is_lt(),
+                    "anchor({}, {bias:?}).cmp(&anchor({}, {bias:?}).is_lt()",
+                    offsets[ix - 1],
+                    offsets[ix],
+                );
             }
         }
     }

@@ -17,7 +17,7 @@ use std::{
     sync::Arc,
     usize,
 };
-use sum_tree::{Bias, Cursor, FilterCursor, SumTree, Summary, TreeMap};
+use sum_tree::{Bias, Cursor, Dimensions, FilterCursor, SumTree, Summary, TreeMap};
 use ui::IntoElement as _;
 use util::post_inc;
 
@@ -98,7 +98,9 @@ impl FoldPoint {
     }
 
     pub fn to_inlay_point(self, snapshot: &FoldSnapshot) -> InlayPoint {
-        let mut cursor = snapshot.transforms.cursor::<(FoldPoint, InlayPoint)>(&());
+        let mut cursor = snapshot
+            .transforms
+            .cursor::<Dimensions<FoldPoint, InlayPoint>>(&());
         cursor.seek(&self, Bias::Right);
         let overshoot = self.0 - cursor.start().0.0;
         InlayPoint(cursor.start().1.0 + overshoot)
@@ -107,7 +109,7 @@ impl FoldPoint {
     pub fn to_offset(self, snapshot: &FoldSnapshot) -> FoldOffset {
         let mut cursor = snapshot
             .transforms
-            .cursor::<(FoldPoint, TransformSummary)>(&());
+            .cursor::<Dimensions<FoldPoint, TransformSummary>>(&());
         cursor.seek(&self, Bias::Right);
         let overshoot = self.0 - cursor.start().1.output.lines;
         let mut offset = cursor.start().1.output.len;
@@ -287,25 +289,25 @@ impl FoldMapWriter<'_> {
             let ChunkRendererId::Fold(id) = id else {
                 continue;
             };
-            if let Some(metadata) = self.0.snapshot.fold_metadata_by_id.get(&id).cloned() {
-                if Some(new_width) != metadata.width {
-                    let buffer_start = metadata.range.start.to_offset(buffer);
-                    let buffer_end = metadata.range.end.to_offset(buffer);
-                    let inlay_range = inlay_snapshot.to_inlay_offset(buffer_start)
-                        ..inlay_snapshot.to_inlay_offset(buffer_end);
-                    edits.push(InlayEdit {
-                        old: inlay_range.clone(),
-                        new: inlay_range.clone(),
-                    });
+            if let Some(metadata) = self.0.snapshot.fold_metadata_by_id.get(&id).cloned()
+                && Some(new_width) != metadata.width
+            {
+                let buffer_start = metadata.range.start.to_offset(buffer);
+                let buffer_end = metadata.range.end.to_offset(buffer);
+                let inlay_range = inlay_snapshot.to_inlay_offset(buffer_start)
+                    ..inlay_snapshot.to_inlay_offset(buffer_end);
+                edits.push(InlayEdit {
+                    old: inlay_range.clone(),
+                    new: inlay_range.clone(),
+                });
 
-                    self.0.snapshot.fold_metadata_by_id.insert(
-                        id,
-                        FoldMetadata {
-                            range: metadata.range,
-                            width: Some(new_width),
-                        },
-                    );
-                }
+                self.0.snapshot.fold_metadata_by_id.insert(
+                    id,
+                    FoldMetadata {
+                        range: metadata.range,
+                        width: Some(new_width),
+                    },
+                );
             }
         }
 
@@ -415,18 +417,18 @@ impl FoldMap {
             cursor.seek(&InlayOffset(0), Bias::Right);
 
             while let Some(mut edit) = inlay_edits_iter.next() {
-                if let Some(item) = cursor.item() {
-                    if !item.is_fold() {
-                        new_transforms.update_last(
-                            |transform| {
-                                if !transform.is_fold() {
-                                    transform.summary.add_summary(&item.summary, &());
-                                    cursor.next();
-                                }
-                            },
-                            &(),
-                        );
-                    }
+                if let Some(item) = cursor.item()
+                    && !item.is_fold()
+                {
+                    new_transforms.update_last(
+                        |transform| {
+                            if !transform.is_fold() {
+                                transform.summary.add_summary(&item.summary, &());
+                                cursor.next();
+                            }
+                        },
+                        &(),
+                    );
                 }
                 new_transforms.append(cursor.slice(&edit.old.start, Bias::Left), &());
                 edit.new.start -= edit.old.start - *cursor.start();
@@ -489,14 +491,14 @@ impl FoldMap {
 
                 while folds
                     .peek()
-                    .map_or(false, |(_, fold_range)| fold_range.start < edit.new.end)
+                    .is_some_and(|(_, fold_range)| fold_range.start < edit.new.end)
                 {
                     let (fold, mut fold_range) = folds.next().unwrap();
                     let sum = new_transforms.summary();
 
                     assert!(fold_range.start.0 >= sum.input.len);
 
-                    while folds.peek().map_or(false, |(next_fold, next_fold_range)| {
+                    while folds.peek().is_some_and(|(next_fold, next_fold_range)| {
                         next_fold_range.start < fold_range.end
                             || (next_fold_range.start == fold_range.end
                                 && fold.placeholder.merge_adjacent
@@ -567,19 +569,20 @@ impl FoldMap {
                 let mut old_transforms = self
                     .snapshot
                     .transforms
-                    .cursor::<(InlayOffset, FoldOffset)>(&());
-                let mut new_transforms = new_transforms.cursor::<(InlayOffset, FoldOffset)>(&());
+                    .cursor::<Dimensions<InlayOffset, FoldOffset>>(&());
+                let mut new_transforms =
+                    new_transforms.cursor::<Dimensions<InlayOffset, FoldOffset>>(&());
 
                 for mut edit in inlay_edits {
                     old_transforms.seek(&edit.old.start, Bias::Left);
-                    if old_transforms.item().map_or(false, |t| t.is_fold()) {
+                    if old_transforms.item().is_some_and(|t| t.is_fold()) {
                         edit.old.start = old_transforms.start().0;
                     }
                     let old_start =
                         old_transforms.start().1.0 + (edit.old.start - old_transforms.start().0).0;
 
                     old_transforms.seek_forward(&edit.old.end, Bias::Right);
-                    if old_transforms.item().map_or(false, |t| t.is_fold()) {
+                    if old_transforms.item().is_some_and(|t| t.is_fold()) {
                         old_transforms.next();
                         edit.old.end = old_transforms.start().0;
                     }
@@ -587,14 +590,14 @@ impl FoldMap {
                         old_transforms.start().1.0 + (edit.old.end - old_transforms.start().0).0;
 
                     new_transforms.seek(&edit.new.start, Bias::Left);
-                    if new_transforms.item().map_or(false, |t| t.is_fold()) {
+                    if new_transforms.item().is_some_and(|t| t.is_fold()) {
                         edit.new.start = new_transforms.start().0;
                     }
                     let new_start =
                         new_transforms.start().1.0 + (edit.new.start - new_transforms.start().0).0;
 
                     new_transforms.seek_forward(&edit.new.end, Bias::Right);
-                    if new_transforms.item().map_or(false, |t| t.is_fold()) {
+                    if new_transforms.item().is_some_and(|t| t.is_fold()) {
                         new_transforms.next();
                         edit.new.end = new_transforms.start().0;
                     }
@@ -651,7 +654,9 @@ impl FoldSnapshot {
     pub fn text_summary_for_range(&self, range: Range<FoldPoint>) -> TextSummary {
         let mut summary = TextSummary::default();
 
-        let mut cursor = self.transforms.cursor::<(FoldPoint, InlayPoint)>(&());
+        let mut cursor = self
+            .transforms
+            .cursor::<Dimensions<FoldPoint, InlayPoint>>(&());
         cursor.seek(&range.start, Bias::Right);
         if let Some(transform) = cursor.item() {
             let start_in_transform = range.start.0 - cursor.start().0.0;
@@ -700,9 +705,11 @@ impl FoldSnapshot {
     }
 
     pub fn to_fold_point(&self, point: InlayPoint, bias: Bias) -> FoldPoint {
-        let mut cursor = self.transforms.cursor::<(InlayPoint, FoldPoint)>(&());
+        let mut cursor = self
+            .transforms
+            .cursor::<Dimensions<InlayPoint, FoldPoint>>(&());
         cursor.seek(&point, Bias::Right);
-        if cursor.item().map_or(false, |t| t.is_fold()) {
+        if cursor.item().is_some_and(|t| t.is_fold()) {
             if bias == Bias::Left || point == cursor.start().0 {
                 cursor.start().1
             } else {
@@ -734,7 +741,9 @@ impl FoldSnapshot {
         }
 
         let fold_point = FoldPoint::new(start_row, 0);
-        let mut cursor = self.transforms.cursor::<(FoldPoint, InlayPoint)>(&());
+        let mut cursor = self
+            .transforms
+            .cursor::<Dimensions<FoldPoint, InlayPoint>>(&());
         cursor.seek(&fold_point, Bias::Left);
 
         let overshoot = fold_point.0 - cursor.start().0.0;
@@ -779,7 +788,7 @@ impl FoldSnapshot {
         let inlay_offset = self.inlay_snapshot.to_inlay_offset(buffer_offset);
         let mut cursor = self.transforms.cursor::<InlayOffset>(&());
         cursor.seek(&inlay_offset, Bias::Right);
-        cursor.item().map_or(false, |t| t.placeholder.is_some())
+        cursor.item().is_some_and(|t| t.placeholder.is_some())
     }
 
     pub fn is_line_folded(&self, buffer_row: MultiBufferRow) -> bool {
@@ -816,7 +825,9 @@ impl FoldSnapshot {
         language_aware: bool,
         highlights: Highlights<'a>,
     ) -> FoldChunks<'a> {
-        let mut transform_cursor = self.transforms.cursor::<(FoldOffset, InlayOffset)>(&());
+        let mut transform_cursor = self
+            .transforms
+            .cursor::<Dimensions<FoldOffset, InlayOffset>>(&());
         transform_cursor.seek(&range.start, Bias::Right);
 
         let inlay_start = {
@@ -828,7 +839,7 @@ impl FoldSnapshot {
 
         let inlay_end = if transform_cursor
             .item()
-            .map_or(true, |transform| transform.is_fold())
+            .is_none_or(|transform| transform.is_fold())
         {
             inlay_start
         } else if range.end < transform_end.0 {
@@ -871,7 +882,9 @@ impl FoldSnapshot {
     }
 
     pub fn clip_point(&self, point: FoldPoint, bias: Bias) -> FoldPoint {
-        let mut cursor = self.transforms.cursor::<(FoldPoint, InlayPoint)>(&());
+        let mut cursor = self
+            .transforms
+            .cursor::<Dimensions<FoldPoint, InlayPoint>>(&());
         cursor.seek(&point, Bias::Right);
         if let Some(transform) = cursor.item() {
             let transform_start = cursor.start().0.0;
@@ -1196,7 +1209,7 @@ impl<'a> sum_tree::Dimension<'a, FoldSummary> for usize {
 
 #[derive(Clone)]
 pub struct FoldRows<'a> {
-    cursor: Cursor<'a, Transform, (FoldPoint, InlayPoint)>,
+    cursor: Cursor<'a, Transform, Dimensions<FoldPoint, InlayPoint>>,
     input_rows: InlayBufferRows<'a>,
     fold_point: FoldPoint,
 }
@@ -1313,7 +1326,7 @@ impl DerefMut for ChunkRendererContext<'_, '_> {
 }
 
 pub struct FoldChunks<'a> {
-    transform_cursor: Cursor<'a, Transform, (FoldOffset, InlayOffset)>,
+    transform_cursor: Cursor<'a, Transform, Dimensions<FoldOffset, InlayOffset>>,
     inlay_chunks: InlayChunks<'a>,
     inlay_chunk: Option<(InlayOffset, InlayChunk<'a>)>,
     inlay_offset: InlayOffset,
@@ -1335,7 +1348,7 @@ impl FoldChunks<'_> {
         let inlay_end = if self
             .transform_cursor
             .item()
-            .map_or(true, |transform| transform.is_fold())
+            .is_none_or(|transform| transform.is_fold())
         {
             inlay_start
         } else if range.end < transform_end.0 {
@@ -1448,9 +1461,9 @@ impl FoldOffset {
     pub fn to_point(self, snapshot: &FoldSnapshot) -> FoldPoint {
         let mut cursor = snapshot
             .transforms
-            .cursor::<(FoldOffset, TransformSummary)>(&());
+            .cursor::<Dimensions<FoldOffset, TransformSummary>>(&());
         cursor.seek(&self, Bias::Right);
-        let overshoot = if cursor.item().map_or(true, |t| t.is_fold()) {
+        let overshoot = if cursor.item().is_none_or(|t| t.is_fold()) {
             Point::new(0, (self.0 - cursor.start().0.0) as u32)
         } else {
             let inlay_offset = cursor.start().1.input.len + self.0 - cursor.start().0.0;
@@ -1462,7 +1475,9 @@ impl FoldOffset {
 
     #[cfg(test)]
     pub fn to_inlay_offset(self, snapshot: &FoldSnapshot) -> InlayOffset {
-        let mut cursor = snapshot.transforms.cursor::<(FoldOffset, InlayOffset)>(&());
+        let mut cursor = snapshot
+            .transforms
+            .cursor::<Dimensions<FoldOffset, InlayOffset>>(&());
         cursor.seek(&self, Bias::Right);
         let overshoot = self.0 - cursor.start().0.0;
         InlayOffset(cursor.start().1.0 + overshoot)
@@ -1542,7 +1557,7 @@ mod tests {
         let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
         let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         let mut map = FoldMap::new(inlay_snapshot.clone()).0;
 
         let (mut writer, _, _) = map.write(inlay_snapshot, vec![]);
@@ -1621,7 +1636,7 @@ mod tests {
         let buffer = MultiBuffer::build_simple("abcdefghijkl", cx);
         let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot);
 
         {
             let mut map = FoldMap::new(inlay_snapshot.clone()).0;
@@ -1697,7 +1712,7 @@ mod tests {
         let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
         let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         let mut map = FoldMap::new(inlay_snapshot.clone()).0;
 
         let (mut writer, _, _) = map.write(inlay_snapshot.clone(), vec![]);
@@ -1705,7 +1720,7 @@ mod tests {
             (Point::new(0, 2)..Point::new(2, 2), FoldPlaceholder::test()),
             (Point::new(3, 1)..Point::new(4, 1), FoldPlaceholder::test()),
         ]);
-        let (snapshot, _) = map.read(inlay_snapshot.clone(), vec![]);
+        let (snapshot, _) = map.read(inlay_snapshot, vec![]);
         assert_eq!(snapshot.text(), "aa⋯cccc\nd⋯eeeee");
 
         let buffer_snapshot = buffer.update(cx, |buffer, cx| {
@@ -1732,7 +1747,7 @@ mod tests {
             (Point::new(1, 2)..Point::new(3, 2), FoldPlaceholder::test()),
             (Point::new(3, 1)..Point::new(4, 1), FoldPlaceholder::test()),
         ]);
-        let (snapshot, _) = map.read(inlay_snapshot.clone(), vec![]);
+        let (snapshot, _) = map.read(inlay_snapshot, vec![]);
         let fold_ranges = snapshot
             .folds_in_range(Point::new(1, 0)..Point::new(1, 3))
             .map(|fold| {
@@ -1756,9 +1771,9 @@ mod tests {
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
 
-        let len = rng.gen_range(0..10);
+        let len = rng.random_range(0..10);
         let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
-        let buffer = if rng.r#gen() {
+        let buffer = if rng.random() {
             MultiBuffer::build_simple(&text, cx)
         } else {
             MultiBuffer::build_random(&mut rng, cx)
@@ -1767,7 +1782,7 @@ mod tests {
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let mut map = FoldMap::new(inlay_snapshot.clone()).0;
 
-        let (mut initial_snapshot, _) = map.read(inlay_snapshot.clone(), vec![]);
+        let (mut initial_snapshot, _) = map.read(inlay_snapshot, vec![]);
         let mut snapshot_edits = Vec::new();
 
         let mut next_inlay_id = 0;
@@ -1775,7 +1790,7 @@ mod tests {
             log::info!("text: {:?}", buffer_snapshot.text());
             let mut buffer_edits = Vec::new();
             let mut inlay_edits = Vec::new();
-            match rng.gen_range(0..=100) {
+            match rng.random_range(0..=100) {
                 0..=39 => {
                     snapshot_edits.extend(map.randomly_mutate(&mut rng));
                 }
@@ -1785,7 +1800,7 @@ mod tests {
                 }
                 _ => buffer.update(cx, |buffer, cx| {
                     let subscription = buffer.subscribe();
-                    let edit_count = rng.gen_range(1..=5);
+                    let edit_count = rng.random_range(1..=5);
                     buffer.randomly_mutate(&mut rng, edit_count, cx);
                     buffer_snapshot = buffer.snapshot(cx);
                     let edits = subscription.consume().into_inner();
@@ -1902,10 +1917,14 @@ mod tests {
             }
 
             for _ in 0..5 {
-                let mut start = snapshot
-                    .clip_offset(FoldOffset(rng.gen_range(0..=snapshot.len().0)), Bias::Left);
-                let mut end = snapshot
-                    .clip_offset(FoldOffset(rng.gen_range(0..=snapshot.len().0)), Bias::Right);
+                let mut start = snapshot.clip_offset(
+                    FoldOffset(rng.random_range(0..=snapshot.len().0)),
+                    Bias::Left,
+                );
+                let mut end = snapshot.clip_offset(
+                    FoldOffset(rng.random_range(0..=snapshot.len().0)),
+                    Bias::Right,
+                );
                 if start > end {
                     mem::swap(&mut start, &mut end);
                 }
@@ -1960,8 +1979,8 @@ mod tests {
 
             for _ in 0..5 {
                 let end =
-                    buffer_snapshot.clip_offset(rng.gen_range(0..=buffer_snapshot.len()), Right);
-                let start = buffer_snapshot.clip_offset(rng.gen_range(0..=end), Left);
+                    buffer_snapshot.clip_offset(rng.random_range(0..=buffer_snapshot.len()), Right);
+                let start = buffer_snapshot.clip_offset(rng.random_range(0..=end), Left);
                 let expected_folds = map
                     .snapshot
                     .folds
@@ -1986,10 +2005,10 @@ mod tests {
 
             let text = snapshot.text();
             for _ in 0..5 {
-                let start_row = rng.gen_range(0..=snapshot.max_point().row());
-                let start_column = rng.gen_range(0..=snapshot.line_len(start_row));
-                let end_row = rng.gen_range(0..=snapshot.max_point().row());
-                let end_column = rng.gen_range(0..=snapshot.line_len(end_row));
+                let start_row = rng.random_range(0..=snapshot.max_point().row());
+                let start_column = rng.random_range(0..=snapshot.line_len(start_row));
+                let end_row = rng.random_range(0..=snapshot.max_point().row());
+                let end_column = rng.random_range(0..=snapshot.line_len(end_row));
                 let mut start =
                     snapshot.clip_point(FoldPoint::new(start_row, start_column), Bias::Left);
                 let mut end = snapshot.clip_point(FoldPoint::new(end_row, end_column), Bias::Right);
@@ -2094,17 +2113,17 @@ mod tests {
             rng: &mut impl Rng,
         ) -> Vec<(FoldSnapshot, Vec<FoldEdit>)> {
             let mut snapshot_edits = Vec::new();
-            match rng.gen_range(0..=100) {
+            match rng.random_range(0..=100) {
                 0..=39 if !self.snapshot.folds.is_empty() => {
                     let inlay_snapshot = self.snapshot.inlay_snapshot.clone();
                     let buffer = &inlay_snapshot.buffer;
                     let mut to_unfold = Vec::new();
-                    for _ in 0..rng.gen_range(1..=3) {
-                        let end = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Right);
-                        let start = buffer.clip_offset(rng.gen_range(0..=end), Left);
+                    for _ in 0..rng.random_range(1..=3) {
+                        let end = buffer.clip_offset(rng.random_range(0..=buffer.len()), Right);
+                        let start = buffer.clip_offset(rng.random_range(0..=end), Left);
                         to_unfold.push(start..end);
                     }
-                    let inclusive = rng.r#gen();
+                    let inclusive = rng.random();
                     log::info!("unfolding {:?} (inclusive: {})", to_unfold, inclusive);
                     let (mut writer, snapshot, edits) = self.write(inlay_snapshot, vec![]);
                     snapshot_edits.push((snapshot, edits));
@@ -2115,9 +2134,9 @@ mod tests {
                     let inlay_snapshot = self.snapshot.inlay_snapshot.clone();
                     let buffer = &inlay_snapshot.buffer;
                     let mut to_fold = Vec::new();
-                    for _ in 0..rng.gen_range(1..=2) {
-                        let end = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Right);
-                        let start = buffer.clip_offset(rng.gen_range(0..=end), Left);
+                    for _ in 0..rng.random_range(1..=2) {
+                        let end = buffer.clip_offset(rng.random_range(0..=buffer.len()), Right);
+                        let start = buffer.clip_offset(rng.random_range(0..=end), Left);
                         to_fold.push((start..end, FoldPlaceholder::test()));
                     }
                     log::info!("folding {:?}", to_fold);
