@@ -11,11 +11,18 @@ use theme::Appearance;
 /// # Examples
 ///
 /// ```
+/// use gpui::{App, Hsla, KeybindingKeystroke, Keystroke};
 /// use ui::prelude::*;
+/// use ui::{KeyBinding, KeybindingHint};
 ///
-/// let hint = KeybindingHint::new(KeyBinding::from_str("Ctrl+S"))
+/// # fn example(cx: &App) {
+/// let hint = KeybindingHint::new(
+///     KeyBinding::new(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-s").unwrap())], cx),
+///     Hsla::black()
+/// )
 ///     .prefix("Save:")
 ///     .size(Pixels::from(14.0));
+/// # }
 /// ```
 #[derive(Debug, IntoElement, RegisterComponent)]
 pub struct KeybindingHint {
@@ -35,9 +42,16 @@ impl KeybindingHint {
     /// # Examples
     ///
     /// ```
+    /// use gpui::{App, Hsla, KeybindingKeystroke, Keystroke};
     /// use ui::prelude::*;
+    /// use ui::{KeyBinding, KeybindingHint};
     ///
-    /// let hint = KeybindingHint::new(KeyBinding::from_str("Ctrl+C"), Hsla::new(0.0, 0.0, 0.0, 1.0));
+    /// # fn example(cx: &App) {
+    /// let hint = KeybindingHint::new(
+    ///     KeyBinding::new(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-c").unwrap())], cx),
+    ///     Hsla::black()
+    /// );
+    /// # }
     /// ```
     pub fn new(keybinding: KeyBinding, background_color: Hsla) -> Self {
         Self {
@@ -57,9 +71,17 @@ impl KeybindingHint {
     /// # Examples
     ///
     /// ```
+    /// use gpui::{App, Hsla, KeybindingKeystroke, Keystroke};
     /// use ui::prelude::*;
+    /// use ui::{KeyBinding, KeybindingHint};
     ///
-    /// let hint = KeybindingHint::with_prefix("Copy:", KeyBinding::from_str("Ctrl+C"), Hsla::new(0.0, 0.0, 0.0, 1.0));
+    /// # fn example(cx: &App) {
+    /// let hint = KeybindingHint::with_prefix(
+    ///     "Copy:",
+    ///     KeyBinding::new(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-c").unwrap())], cx),
+    ///     Hsla::black()
+    /// );
+    /// # }
     /// ```
     pub fn with_prefix(
         prefix: impl Into<SharedString>,
@@ -83,9 +105,17 @@ impl KeybindingHint {
     /// # Examples
     ///
     /// ```
+    /// use gpui::{App, Hsla, KeybindingKeystroke, Keystroke};
     /// use ui::prelude::*;
+    /// use ui::{KeyBinding, KeybindingHint};
     ///
-    /// let hint = KeybindingHint::with_suffix(KeyBinding::from_str("Ctrl+V"), "Paste", Hsla::new(0.0, 0.0, 0.0, 1.0));
+    /// # fn example(cx: &App) {
+    /// let hint = KeybindingHint::with_suffix(
+    ///     KeyBinding::new(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-v").unwrap())], cx),
+    ///     "Paste",
+    ///     Hsla::black()
+    /// );
+    /// # }
     /// ```
     pub fn with_suffix(
         keybinding: KeyBinding,
@@ -108,10 +138,17 @@ impl KeybindingHint {
     /// # Examples
     ///
     /// ```
+    /// use gpui::{App, Hsla, KeybindingKeystroke, Keystroke};
     /// use ui::prelude::*;
+    /// use ui::{KeyBinding, KeybindingHint};
     ///
-    /// let hint = KeybindingHint::new(KeyBinding::from_str("Ctrl+X"))
+    /// # fn example(cx: &App) {
+    /// let hint = KeybindingHint::new(
+    ///     KeyBinding::new(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-x").unwrap())], cx),
+    ///     Hsla::black()
+    /// )
     ///     .prefix("Cut:");
+    /// # }
     /// ```
     pub fn prefix(mut self, prefix: impl Into<SharedString>) -> Self {
         self.prefix = Some(prefix.into());
@@ -125,10 +162,17 @@ impl KeybindingHint {
     /// # Examples
     ///
     /// ```
+    /// use gpui::{App, Hsla, KeybindingKeystroke, Keystroke};
     /// use ui::prelude::*;
+    /// use ui::{KeyBinding, KeybindingHint};
     ///
-    /// let hint = KeybindingHint::new(KeyBinding::from_str("Ctrl+F"))
+    /// # fn example(cx: &App) {
+    /// let hint = KeybindingHint::new(
+    ///     KeyBinding::new(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-f").unwrap())], cx),
+    ///     Hsla::black()
+    /// )
     ///     .suffix("Find");
+    /// # }
     /// ```
     pub fn suffix(mut self, suffix: impl Into<SharedString>) -> Self {
         self.suffix = Some(suffix.into());
@@ -142,10 +186,17 @@ impl KeybindingHint {
     /// # Examples
     ///
     /// ```
+    /// use gpui::{App, Hsla, KeybindingKeystroke, Keystroke};
     /// use ui::prelude::*;
+    /// use ui::{KeyBinding, KeybindingHint};
     ///
-    /// let hint = KeybindingHint::new(KeyBinding::from_str("Ctrl+Z"))
+    /// # fn example(cx: &App) {
+    /// let hint = KeybindingHint::new(
+    ///     KeyBinding::new(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-z").unwrap())], cx),
+    ///     Hsla::black()
+    /// )
     ///     .size(Pixels::from(16.0));
+    /// # }
     /// ```
     pub fn size(mut self, size: impl Into<Option<Pixels>>) -> Self {
         self.size = size.into();
