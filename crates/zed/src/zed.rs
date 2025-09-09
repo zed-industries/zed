@@ -553,8 +553,6 @@ fn initialize_panels(
         let git_panel = GitPanel::load(workspace_handle.clone(), cx.clone());
         let channels_panel =
             collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
-        let chat_panel =
-            collab_ui::chat_panel::ChatPanel::load(workspace_handle.clone(), cx.clone());
         let notification_panel = collab_ui::notification_panel::NotificationPanel::load(
             workspace_handle.clone(),
             cx.clone(),
@@ -567,7 +565,6 @@ fn initialize_panels(
             terminal_panel,
             git_panel,
             channels_panel,
-            chat_panel,
             notification_panel,
             debug_panel,
         ) = futures::try_join!(
@@ -576,7 +573,6 @@ fn initialize_panels(
             git_panel,
             terminal_panel,
             channels_panel,
-            chat_panel,
             notification_panel,
             debug_panel,
         )?;
@@ -587,7 +583,6 @@ fn initialize_panels(
             workspace.add_panel(terminal_panel, window, cx);
             workspace.add_panel(git_panel, window, cx);
             workspace.add_panel(channels_panel, window, cx);
-            workspace.add_panel(chat_panel, window, cx);
             workspace.add_panel(notification_panel, window, cx);
             workspace.add_panel(debug_panel, window, cx);
         })?;
@@ -863,14 +858,6 @@ fn register_actions(
              window: &mut Window,
              cx: &mut Context<Workspace>| {
                 workspace.toggle_panel_focus::<collab_ui::collab_panel::CollabPanel>(window, cx);
-            },
-        )
-        .register_action(
-            |workspace: &mut Workspace,
-             _: &collab_ui::chat_panel::ToggleFocus,
-             window: &mut Window,
-             cx: &mut Context<Workspace>| {
-                workspace.toggle_panel_focus::<collab_ui::chat_panel::ChatPanel>(window, cx);
             },
         )
         .register_action(
@@ -4475,7 +4462,6 @@ mod tests {
                 "branches",
                 "buffer_search",
                 "channel_modal",
-                "chat_panel",
                 "cli",
                 "client",
                 "collab",
