@@ -4454,14 +4454,13 @@ fn current_language_model(cx: &Context<'_, GitPanel>) -> Option<Arc<dyn Language
     let is_enabled = agent_settings::AgentSettings::get_global(cx).enabled
         && !DisableAiSettings::get_global(cx).disable_ai;
 
-    is_enabled
-        .then(|| {
-            let ConfiguredModel { provider, model } =
-                LanguageModelRegistry::read_global(cx).commit_message_model()?;
+    if !is_enabled {
+        return None;
+    }
 
-            provider.is_authenticated(cx).then(|| model)
-        })
-        .flatten()
+    LanguageModelRegistry::read_global(cx)
+        .authenticated_commit_message_model(cx)
+        .map(|m| m.model)
 }
 
 impl Render for GitPanel {

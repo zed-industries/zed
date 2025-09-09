@@ -366,6 +366,33 @@ impl LanguageModelRegistry {
             .or_else(|| self.default_model.clone())
     }
 
+    pub fn authenticated_commit_message_model(&self, cx: &App) -> Option<ConfiguredModel> {
+        #[cfg(debug_assertions)]
+        if std::env::var("ZED_SIMULATE_NO_LLM_PROVIDER").is_ok() {
+            return None;
+        }
+
+        if let Some(model) = &self.commit_message_model {
+            if model.provider.is_authenticated(cx) {
+                return Some(model.clone());
+            }
+        }
+
+        if let Some(model) = &self.default_fast_model {
+            if model.provider.is_authenticated(cx) {
+                return Some(model.clone());
+            }
+        }
+
+        if let Some(model) = &self.default_model {
+            if model.provider.is_authenticated(cx) {
+                return Some(model.clone());
+            }
+        }
+
+        None
+    }
+
     pub fn thread_summary_model(&self) -> Option<ConfiguredModel> {
         #[cfg(debug_assertions)]
         if std::env::var("ZED_SIMULATE_NO_LLM_PROVIDER").is_ok() {
