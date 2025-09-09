@@ -3474,7 +3474,7 @@ pub struct LspStore {
     pub lsp_server_capabilities: HashMap<LanguageServerId, lsp::ServerCapabilities>,
     lsp_document_colors: HashMap<BufferId, DocumentColorData>,
     lsp_code_lens: HashMap<BufferId, CodeLensData>,
-    inlay_hint_data: HashMap<BufferId, BufferInlayHints>,
+    pub inlay_hint_data: HashMap<BufferId, BufferInlayHints>,
     running_lsp_requests: HashMap<TypeId, (Global, HashMap<LspRequestId, Task<()>>)>,
 }
 

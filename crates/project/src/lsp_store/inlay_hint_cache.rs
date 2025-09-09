@@ -95,6 +95,24 @@ impl BufferInlayHints {
         &mut self.fetches_by_chunks[chunk.id]
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn all_cached_hints(&self) -> Vec<InlayHint> {
+        self.hints_by_chunks
+            .iter()
+            .filter_map(|hints| hints.as_ref())
+            .flat_map(|hints| hints.values().cloned())
+            .flatten()
+            .collect()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn all_fetched_hints(&self) -> Vec<CacheInlayHintsTask> {
+        self.fetches_by_chunks
+            .iter()
+            .filter_map(|fetches| fetches.clone())
+            .collect()
+    }
+
     pub fn remove_server_data(&mut self, for_server: LanguageServerId) {
         for (chunk_index, hints) in self.hints_by_chunks.iter_mut().enumerate() {
             if let Some(hints) = hints {
