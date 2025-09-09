@@ -531,7 +531,7 @@ impl Vim {
                 search_bar.select_last_match(window, cx);
                 search_bar.replace_all(&Default::default(), window, cx);
                 editor.update(cx, |editor, cx| editor.clear_search_within_ranges(cx));
-                let _ = search_bar.search(&search_bar.query(cx), None, true, window, cx);
+                let _ = search_bar.search(&search_bar.query(cx), None, false, window, cx);
                 vim.update(cx, |vim, cx| {
                     vim.move_cursor(
                         Motion::StartOfLine {
