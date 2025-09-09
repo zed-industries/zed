@@ -101,6 +101,7 @@ use std::{
     borrow::Cow,
     cell::RefCell,
     cmp::{Ordering, Reverse},
+    collections::hash_map,
     convert::TryInto,
     ffi::OsStr,
     future::ready,
@@ -6411,6 +6412,7 @@ impl LspStore {
 
     pub fn inlay_hints_2(
         &mut self,
+        invalidate_cache: bool,
         buffer: Entity<Buffer>,
         range: Range<text::Anchor>,
         cx: &mut Context<Self>,
@@ -6435,8 +6437,16 @@ impl LspStore {
             .collect::<Vec<_>>();
         for row_chunk in applicable_chunks {
             match (
-                existing_inlay_hints.cached_hints(&row_chunk).clone(),
-                existing_inlay_hints.fetched_hints(&row_chunk),
+                existing_inlay_hints
+                    .cached_hints(&row_chunk)
+                    .as_mut()
+                    .filter(|_| !invalidate_cache)
+                    .cloned(),
+                existing_inlay_hints
+                    .fetched_hints(&row_chunk)
+                    .as_ref()
+                    .filter(|_| !invalidate_cache)
+                    .cloned(),
             ) {
                 (None, None) => {
                     ranges_to_query.push((
@@ -6501,12 +6511,31 @@ impl LspStore {
                 )
                 .await;
                 let mut combined_hints = cached_inlay_hints;
-                lsp_store.update(cx, |lsp_store, _| {
-                    let Some(buffer_hints) = lsp_store.inlay_hint_data.get_mut(&buffer_id) else {
+                lsp_store.update(cx, |lsp_store, cx| {
+                    let buffer_hints = match lsp_store.inlay_hint_data.entry(buffer_id) {
+                        hash_map::Entry::Occupied(o) => {
+                            let cached_hints = o.into_mut();
+                            if invalidate_cache {
+                                cached_hints.hints_by_chunks =
+                                    vec![None; cached_hints.buffer_chunks.len()];
+                                cached_hints.fetches_by_chunks =
+                                    vec![None; cached_hints.buffer_chunks.len()];
+                            }
+                            Some(cached_hints)
+                        }
+                        hash_map::Entry::Vacant(v) => {
+                            if !invalidate_cache {
+                                None
+                            } else {
+                                Some(v.insert(BufferInlayHints::new(&buffer, cx)))
+                            }
+                        }
+                    };
+                    let Some(buffer_hints) = buffer_hints else {
                         combined_hints.clear();
                         return;
                     };
-                    if buffer_hints.chunks_for_version != buffer_version {
+                    if !invalidate_cache && buffer_hints.chunks_for_version != buffer_version {
                         combined_hints.clear();
                         return;
                     }

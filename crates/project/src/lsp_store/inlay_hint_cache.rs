@@ -16,9 +16,9 @@ pub type CacheInlayHintsTask = Shared<Task<Result<CacheInlayHints, Arc<anyhow::E
 pub struct BufferInlayHints {
     pub chunks_for_version: Global,
     snapshot: BufferSnapshot,
-    buffer_chunks: Vec<BufferChunk>,
-    hints_by_chunks: Vec<Option<CacheInlayHints>>,
-    fetches_by_chunks: Vec<Option<CacheInlayHintsTask>>,
+    pub(super) buffer_chunks: Vec<BufferChunk>,
+    pub(super) hints_by_chunks: Vec<Option<CacheInlayHints>>,
+    pub(super) fetches_by_chunks: Vec<Option<CacheInlayHintsTask>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -46,15 +46,14 @@ impl BufferInlayHints {
         let buffer = buffer.read(cx);
         let snapshot = buffer.snapshot();
         let buffer_point_range = (0..buffer.len()).to_point(&snapshot);
-        let buffer_row_range = buffer_point_range.start.row..buffer_point_range.end.row;
-        // TODO kb recheck
+        let buffer_row_range = buffer_point_range.start.row..=buffer_point_range.end.row;
         let buffer_chunks = buffer_row_range
             .clone()
             .step_by(MAX_ROWS_IN_A_CHUNK as usize)
             .enumerate()
             .map(|(id, chunk_start)| {
                 let chunk_end =
-                    std::cmp::min(chunk_start + MAX_ROWS_IN_A_CHUNK, buffer_row_range.end);
+                    std::cmp::min(chunk_start + MAX_ROWS_IN_A_CHUNK, *buffer_row_range.end());
                 BufferChunk {
                     id,
                     start: chunk_start,
@@ -77,11 +76,10 @@ impl BufferInlayHints {
         range: &Range<text::Anchor>,
     ) -> impl Iterator<Item = BufferChunk> {
         let point_range = range.to_point(&self.snapshot);
-        let row_range = point_range.start.row..point_range.end.row;
+        let row_range = point_range.start.row..=point_range.end.row;
         self.buffer_chunks
             .iter()
             .filter(move |chunk_range| {
-                // TODO kb recheck
                 row_range.contains(&chunk_range.start) || row_range.contains(&chunk_range.end)
             })
             .copied()
