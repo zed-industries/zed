@@ -4,7 +4,8 @@ Zed has a very customizable key binding system — you can tweak everything to w
 
 ## Predefined keymaps
 
-If you're used to a specific editor's defaults you can set a `base_keymap` in your [settings file](./configuring-zed.md). We currently have:
+If you're used to a specific editor's defaults, you can set a `base_keymap` in your [settings file](./configuring-zed.md).
+We currently support:
 
 - VS Code (default)
 - Atom
@@ -12,9 +13,13 @@ If you're used to a specific editor's defaults you can set a `base_keymap` in yo
 - JetBrains
 - Sublime Text
 - TextMate
+- Cursor
 - None (disables _all_ key bindings)
 
-You can also enable `vim_mode` or `helix_mode`, which add modal bindings. For more information, see the documentation for [Vim mode](./vim.md) and [Helix mode](./helix.md).
+This setting can also be changed via the command palette through the `zed: toggle base keymap selector` action.
+
+You can also enable `vim_mode` or `helix_mode`, which add modal bindings.
+For more information, see the documentation for [Vim mode](./vim.md) and [Helix mode](./helix.md).
 
 ## User keymaps
 
