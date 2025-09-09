@@ -304,6 +304,10 @@ unsafe fn build_classes() {
                     sel!(inlinePredictionType),
                     inline_prediction_type_none as extern "C" fn(&Object, Sel) -> NSInteger,
                 );
+                decl.add_method(
+                    sel!(textContentType),
+                    return_nil as extern "C" fn(&Object, Sel) -> id,
+                );
             }
             decl.register()
         };
@@ -1665,6 +1669,10 @@ extern "C" fn autocorrection_type_no(_: &Object, _: Sel) -> NSInteger {
 
 extern "C" fn inline_prediction_type_none(_: &Object, _: Sel) -> NSInteger {
     NSTextInlinePredictionTypeNone
+}
+
+extern "C" fn return_nil(_: &Object, _: Sel) -> id {
+    nil
 }
 
 extern "C" fn dealloc_window(this: &Object, _: Sel) {
