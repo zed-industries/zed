@@ -178,7 +178,7 @@ Note: This setting has no effect in Vim mode, as rewrap is already allowed every
 
 You can find the names of your currently installed extensions by listing the subfolders under the [extension installation location](./extensions/installing-extensions.md#installation-location):
 
-On MacOS:
+On macOS:
 
 ```sh
 ls ~/Library/Application\ Support/Zed/extensions/installed/
@@ -2699,7 +2699,7 @@ Positive `integer` values or `null` for unlimited tabs
 
 **Options**
 
-1. Maps to `Alt` on Linux and Windows and to `Option` on MacOS:
+1. Maps to `Alt` on Linux and Windows and to `Option` on macOS:
 
 ```json
 {
@@ -2707,7 +2707,7 @@ Positive `integer` values or `null` for unlimited tabs
 }
 ```
 
-2. Maps `Control` on Linux and Windows and to `Command` on MacOS:
+2. Maps `Control` on Linux and Windows and to `Command` on macOS:
 
 ```json
 {
@@ -2829,7 +2829,6 @@ Configuration object for defining settings profiles. Example:
 - Description:
   Preview tabs allow you to open files in preview mode, where they close automatically when you switch to another file unless you explicitly pin them. This is useful for quickly viewing files without cluttering your workspace. Preview tabs display their file names in italics. \
    There are several ways to convert a preview tab into a regular tab:
-
   - Double-clicking on the file
   - Double-clicking on the tab header
   - Using the {#action project_panel::OpenPermanent} action
