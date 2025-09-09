@@ -109,7 +109,7 @@ struct ExcerptQuery {
 }
 
 impl InvalidationStrategy {
-    fn should_invalidate(&self) -> bool {
+    pub fn should_invalidate(&self) -> bool {
         matches!(
             self,
             InvalidationStrategy::RefreshRequested | InvalidationStrategy::BufferEdited

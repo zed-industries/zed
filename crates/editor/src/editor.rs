@@ -1203,7 +1203,6 @@ struct LspInlayHintData {
     invalidate_debounce: Option<Duration>,
     append_debounce: Option<Duration>,
     inlays_for_version: Option<clock::Global>,
-    inlays: HashMap<BufferId, Vec<InlayId>>,
     inlay_tasks: HashMap<BufferId, HashMap<Range<BufferRow>, Task<()>>>,
 }
 
@@ -1213,7 +1212,6 @@ impl LspInlayHintData {
             modifiers_override: false,
             enabled: settings.enabled,
             enabled_in_settings: settings.enabled,
-            inlays: HashMap::default(),
             inlays_for_version: None,
             inlay_tasks: HashMap::default(),
             invalidate_debounce: debounce_value(settings.edit_debounce_ms),
@@ -1250,8 +1248,7 @@ impl LspInlayHintData {
 
     fn clear(&mut self) {
         self.inlay_tasks.clear();
-        // TODO kb splice!?
-        self.inlays.clear();
+        // TODO kb splice!? We have to splice inlays inside the editor!
     }
 
     /// Checks inlay hint settings for enabled hint kinds and general enabled state.
@@ -1294,7 +1291,7 @@ impl LspInlayHintData {
             (true, false) => {
                 self.modifiers_override = false;
                 self.allowed_hint_kinds = new_allowed_hint_kinds;
-                if self.inlays.is_empty() {
+                if visible_hints.is_empty() {
                     ControlFlow::Break(None)
                 } else {
                     self.clear();
@@ -5441,7 +5438,7 @@ impl Editor {
             return;
         }
 
-        {
+        let invalidate_cache = {
             let Some(inlay_hints) = self.inlay_hints.as_mut() else {
                 return;
             };
@@ -5521,7 +5518,8 @@ impl Editor {
                     (InvalidationStrategy::RefreshRequested, None)
                 }
             };
-        }
+            invalidate_cache
+        };
 
         let Some(semantics_provider) = self.semantics_provider.clone() else {
             return;
@@ -5536,9 +5534,12 @@ impl Editor {
                 buffer_snapshot.anchor_before(range.start)..buffer_snapshot.anchor_after(range.end);
             let buffer_point_range = buffer_anchor_range.to_point(&buffer_snapshot);
 
-            let Some(new_hints) =
-                semantics_provider.inlay_hints_2(buffer, buffer_anchor_range.clone(), cx)
-            else {
+            let Some(new_hints) = semantics_provider.inlay_hints_2(
+                invalidate_cache.should_invalidate(),
+                buffer,
+                buffer_anchor_range.clone(),
+                cx,
+            ) else {
                 return;
             };
             let hints_range = buffer_point_range.start.row..buffer_point_range.end.row;
@@ -5553,6 +5554,11 @@ impl Editor {
                         let new_hints = new_hints.await;
                         editor
                             .update(cx, |editor, cx| {
+                                let visible_inlay_hint_ids = editor
+                                    .visible_inlay_hints(cx)
+                                    .iter()
+                                    .map(|inlay| inlay.id)
+                                    .collect::<Vec<_>>();
                                 let multi_buffer_snapshot = editor.buffer.read(cx).snapshot(cx);
                                 let Some(buffer_snapshot) =
                                     multi_buffer_snapshot.buffer_for_excerpt(excerpt_id)
@@ -5566,23 +5572,22 @@ impl Editor {
                                         inlay_hints.inlay_tasks.entry(buffer_id).or_default();
                                     match new_hints {
                                         Ok(new_hints) => {
-                                            if inlay_hints.inlays_for_version.as_ref().is_some_and(
+                                            if inlay_hints.inlays_for_version.as_ref().is_none_or(
                                                 |inlays_for_version| {
                                                     !inlays_for_version
                                                         .changed_since(&buffer_version)
                                                 },
                                             ) {
-                                                let hints_to_remove = if inlay_hints
-                                                    .inlays_for_version
-                                                    .as_ref()
-                                                    .is_some_and(|inlays_for_version| {
-                                                        buffer_version
-                                                            .changed_since(&inlays_for_version)
-                                                    }) {
-                                                    inlay_hints
-                                                        .inlays
-                                                        .remove(&buffer_id)
-                                                        .unwrap_or_default()
+                                                let hints_to_remove = if invalidate_cache
+                                                    .should_invalidate()
+                                                    || inlay_hints
+                                                        .inlays_for_version
+                                                        .as_ref()
+                                                        .is_none_or(|inlays_for_version| {
+                                                            buffer_version
+                                                                .changed_since(&inlays_for_version)
+                                                        }) {
+                                                    visible_inlay_hint_ids
                                                 } else {
                                                     Vec::new()
                                                 };
@@ -5591,17 +5596,17 @@ impl Editor {
                                                     .flat_map(|hints| hints.into_values().flatten())
                                                     .dedup()
                                                     .filter_map(|lsp_hint| {
-                                                        if buffer_anchor_range
-                                                            .start
+                                                        if lsp_hint
+                                                            .position
                                                             .cmp(
-                                                                &lsp_hint.position,
+                                                                &buffer_anchor_range.start,
                                                                 buffer_snapshot,
                                                             )
                                                             .is_ge()
-                                                            && buffer_anchor_range
-                                                                .end
+                                                            && lsp_hint
+                                                                .position
                                                                 .cmp(
-                                                                    &lsp_hint.position,
+                                                                    &buffer_anchor_range.end,
                                                                     buffer_snapshot,
                                                                 )
                                                                 .is_le()
@@ -23061,6 +23066,7 @@ pub trait SemanticsProvider {
 
     fn inlay_hints_2(
         &self,
+        _invalidate_cache: bool,
         _buffer: Entity<Buffer>,
         _range: Range<text::Anchor>,
         _cx: &mut App,
@@ -23585,13 +23591,14 @@ impl SemanticsProvider for Entity<Project> {
 
     fn inlay_hints_2(
         &self,
+        invalidate_cache: bool,
         buffer: Entity<Buffer>,
         range: Range<text::Anchor>,
         cx: &mut App,
     ) -> Option<Task<Result<HashMap<Range<BufferRow>, HashMap<LanguageServerId, Vec<InlayHint>>>>>>
     {
         let new_hints = self.read(cx).lsp_store().update(cx, |lsp_store, cx| {
-            lsp_store.inlay_hints_2(buffer, range, cx)
+            lsp_store.inlay_hints_2(invalidate_cache, buffer, range, cx)
         });
         Some(new_hints)
     }
