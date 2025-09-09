@@ -22,20 +22,17 @@ test-support = [
 
 [dependencies]
 anyhow.workspace = true
+edit_prediction.workspace = true
 futures.workspace = true
 gpui.workspace = true
 http_client.workspace = true
-edit_prediction.workspace = true
 language.workspace = true
-
 log.workspace = true
-
 project.workspace = true
-settings.workspace = true
 schemars = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
-text.workspace = true
+settings.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]
