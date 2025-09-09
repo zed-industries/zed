@@ -567,7 +567,6 @@ pub fn main() {
         language_model::init(app_state.client.clone(), cx);
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         agent_settings::init(cx);
-        agent_servers::init(cx);
         acp_tools::init(cx);
         web_search::init(cx);
         web_search_providers::init(app_state.client.clone(), cx);
@@ -1420,30 +1419,35 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut App) {
 fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>, cx: &mut App) {
     use std::time::Duration;
 
-    let path = {
-        let p = Path::new("crates/languages/src");
-        let Ok(full_path) = p.canonicalize() else {
+    cx.background_spawn(async move {
+        let languages_src = Path::new("crates/languages/src");
+        let Some(languages_src) = fs.canonicalize(languages_src).await.log_err() else {
             return;
         };
-        full_path
-    };
 
-    cx.spawn(async move |_| {
-        let (mut events, _) = fs.watch(path.as_path(), Duration::from_millis(100)).await;
+        let (mut events, watcher) = fs.watch(&languages_src, Duration::from_millis(100)).await;
+
+        // add subdirectories since fs.watch is not recursive on Linux
+        if let Some(mut paths) = fs.read_dir(&languages_src).await.log_err() {
+            while let Some(path) = paths.next().await {
+                if let Some(path) = path.log_err()
+                    && fs.is_dir(&path).await
+                {
+                    watcher.add(&path).log_err();
+                }
+            }
+        }
+
         while let Some(event) = events.next().await {
-            let has_language_file = event.iter().any(|event| {
-                event
-                    .path
-                    .extension()
-                    .map(|ext| ext.to_string_lossy().as_ref() == "scm")
-                    .unwrap_or(false)
-            });
+            let has_language_file = event
+                .iter()
+                .any(|event| event.path.extension().is_some_and(|ext| ext == "scm"));
             if has_language_file {
                 languages.reload();
             }
         }
     })
-    .detach()
+    .detach();
 }
 
 #[cfg(not(debug_assertions))]

@@ -1,5 +1,4 @@
 use auto_update::AutoUpdater;
-use client::proto::UpdateNotification;
 use editor::{Editor, MultiBuffer};
 use gpui::{App, Context, DismissEvent, Entity, Window, actions, prelude::*};
 use http_client::HttpClient;
@@ -137,6 +136,8 @@ pub fn notify_if_app_was_updated(cx: &mut App) {
     if let ReleaseChannel::Nightly = ReleaseChannel::global(cx) {
         return;
     }
+
+    struct UpdateNotification;
 
     let should_show_notification = updater.read(cx).should_show_update_notification(cx);
     cx.spawn(async move |cx| {

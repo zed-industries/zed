@@ -196,9 +196,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.2.0-alpha.6"
+version = "0.2.0-alpha.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d02292efd75080932b6466471d428c70e2ac06908ae24792fc7c36ecbaf67ca"
+checksum = "08539e8d6b2ccca6cd00afdd42211698f7677adef09108a09414c11f1f45fdaf"
 dependencies = [
  "anyhow",
  "async-broadcast",
@@ -308,22 +308,18 @@ dependencies = [
  "libc",
  "log",
  "nix 0.29.0",
- "node_runtime",
- "paths",
  "project",
  "reqwest_client",
- "schemars",
- "semver",
  "serde",
  "serde_json",
  "settings",
  "smol",
+ "task",
  "tempfile",
  "thiserror 2.0.12",
  "ui",
  "util",
  "watch",
- "which 6.0.3",
  "workspace-hack",
 ]
 
@@ -486,6 +482,7 @@ dependencies = [
  "client",
  "cloud_llm_client",
  "component",
+ "feature_flags",
  "gpui",
  "language_model",
  "serde",
@@ -2886,11 +2883,9 @@ dependencies = [
  "language",
  "log",
  "postage",
- "rand 0.9.1",
  "release_channel",
  "rpc",
  "settings",
- "sum_tree",
  "text",
  "time",
  "util",
@@ -3378,12 +3373,10 @@ dependencies = [
  "collections",
  "db",
  "editor",
- "emojis",
  "futures 0.3.31",
  "fuzzy",
  "gpui",
  "http_client",
- "language",
  "log",
  "menu",
  "notifications",
@@ -3391,7 +3384,6 @@ dependencies = [
  "pretty_assertions",
  "project",
  "release_channel",
- "rich_text",
  "rpc",
  "schemars",
  "serde",
@@ -9192,6 +9184,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "language_onboarding"
+version = "0.1.0"
+dependencies = [
+ "db",
+ "editor",
+ "gpui",
+ "project",
+ "ui",
+ "workspace",
+ "workspace-hack",
+]
+
+[[package]]
 name = "language_selector"
 version = "0.1.0"
 dependencies = [
@@ -9253,7 +9258,6 @@ dependencies = [
  "chrono",
  "collections",
  "dap",
- "feature_flags",
  "futures 0.3.31",
  "gpui",
  "http_client",
@@ -12622,6 +12626,7 @@ dependencies = [
  "remote",
  "rpc",
  "schemars",
+ "semver",
  "serde",
  "serde_json",
  "settings",
@@ -12641,6 +12646,7 @@ dependencies = [
  "unindent",
  "url",
  "util",
+ "watch",
  "which 6.0.3",
  "workspace-hack",
  "worktree",
@@ -14359,9 +14365,9 @@ name = "scheduler"
 version = "0.1.0"
 dependencies = [
  "async-task",
+ "backtrace",
  "chrono",
  "futures 0.3.31",
- "parking",
  "parking_lot",
  "rand 0.9.1",
  "workspace-hack",
@@ -14882,6 +14888,7 @@ dependencies = [
  "editor",
  "feature_flags",
  "gpui",
+ "menu",
  "serde",
  "serde_json",
  "settings",
@@ -15880,9 +15887,11 @@ dependencies = [
  "editor",
  "file_icons",
  "gpui",
+ "project",
  "ui",
  "workspace",
  "workspace-hack",
+ "worktree",
 ]
 
 [[package]]
@@ -20384,7 +20393,6 @@ dependencies = [
  "acp_tools",
  "activity_indicator",
  "agent",
- "agent_servers",
  "agent_settings",
  "agent_ui",
  "anyhow",
@@ -20448,6 +20456,7 @@ dependencies = [
  "language_extension",
  "language_model",
  "language_models",
+ "language_onboarding",
  "language_selector",
  "language_tools",
  "languages",

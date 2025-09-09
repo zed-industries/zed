@@ -20,7 +20,7 @@ use multi_buffer::ToPoint;
 use pretty_assertions::assert_eq;
 use project::{Project, project_settings::DiagnosticSeverity};
 use ui::{App, BorrowAppContext, px};
-use util::test::{marked_text_offsets, marked_text_ranges};
+use util::test::{generate_marked_text, marked_text_offsets, marked_text_ranges};
 
 #[cfg(test)]
 #[ctor::ctor]
@@ -104,13 +104,14 @@ pub fn assert_text_with_selections(
     marked_text: &str,
     cx: &mut Context<Editor>,
 ) {
-    let (unmarked_text, text_ranges) = marked_text_ranges(marked_text, true);
+    let (unmarked_text, _text_ranges) = marked_text_ranges(marked_text, true);
     assert_eq!(editor.text(cx), unmarked_text, "text doesn't match");
-    assert_eq!(
-        editor.selections.ranges(cx),
-        text_ranges,
-        "selections don't match",
+    let actual = generate_marked_text(
+        &editor.text(cx),
+        &editor.selections.ranges(cx),
+        marked_text.contains("«"),
     );
+    assert_eq!(actual, marked_text, "Selections don't match");
 }
 
 // RA thinks this is dead code even though it is used in a whole lot of tests

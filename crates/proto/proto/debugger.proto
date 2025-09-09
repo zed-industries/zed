@@ -3,6 +3,7 @@ package zed.messages;
 
 import "core.proto";
 import "buffer.proto";
+import "task.proto";
 
 enum BreakpointState {
     Enabled = 0;
@@ -531,14 +532,6 @@ message DebugScenario {
     optional TcpHost connection = 5;
     optional bool stop_on_entry = 6;
     optional string configuration = 7;
-}
-
-message SpawnInTerminal {
-    string label = 1;
-    optional string command = 2;
-    repeated string args = 3;
-    map<string, string> env = 4;
-    optional string cwd = 5;
 }
 
 message LogToDebugConsole {

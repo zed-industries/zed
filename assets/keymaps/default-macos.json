@@ -379,13 +379,20 @@
     }
   },
   {
+    "context": "AcpThread > ModeSelector",
+    "bindings": {
+      "cmd-enter": "menu::Confirm"
+    }
+  },
+  {
     "context": "AcpThread > Editor && !use_modifier_to_send",
     "use_key_equivalents": true,
     "bindings": {
       "enter": "agent::Chat",
       "shift-ctrl-r": "agent::OpenAgentDiff",
       "cmd-shift-y": "agent::KeepAll",
-      "cmd-shift-n": "agent::RejectAll"
+      "cmd-shift-n": "agent::RejectAll",
+      "shift-tab": "agent::CycleModeSelector"
     }
   },
   {
@@ -395,7 +402,8 @@
       "cmd-enter": "agent::Chat",
       "shift-ctrl-r": "agent::OpenAgentDiff",
       "cmd-shift-y": "agent::KeepAll",
-      "cmd-shift-n": "agent::RejectAll"
+      "cmd-shift-n": "agent::RejectAll",
+      "shift-tab": "agent::CycleModeSelector"
     }
   },
   {
@@ -536,8 +544,10 @@
       "alt-down": "editor::MoveLineDown",
       "alt-shift-up": "editor::DuplicateLineUp",
       "alt-shift-down": "editor::DuplicateLineDown",
-      "ctrl-shift-right": "editor::SelectLargerSyntaxNode", // Expand Selection
-      "ctrl-shift-left": "editor::SelectSmallerSyntaxNode", // Shrink Selection
+      "cmd-ctrl-left": "editor::SelectSmallerSyntaxNode", // Shrink selection
+      "cmd-ctrl-right": "editor::SelectLargerSyntaxNode", // Expand selection
+      "cmd-ctrl-up": "editor::SelectPreviousSyntaxNode", // Move selection up
+      "cmd-ctrl-down": "editor::SelectNextSyntaxNode", // Move selection down
       "cmd-d": ["editor::SelectNext", { "replace_newest": false }], // editor.action.addSelectionToNextFindMatch / find_under_expand
       "cmd-shift-l": "editor::SelectAllMatches", // Select all occurrences of current selection
       "cmd-f2": "editor::SelectAllMatches", // Select all occurrences of current word
