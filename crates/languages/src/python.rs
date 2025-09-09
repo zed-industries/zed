@@ -2,9 +2,13 @@ use anyhow::{Context as _, ensure};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
-use futures::AsyncBufReadExt;
+use dap::adapters::latest_github_release;
+use futures::{AsyncBufReadExt, StreamExt as _};
 use gpui::{App, Task};
 use gpui::{AsyncApp, SharedString};
+#[cfg(target_os = "macos")]
+use http_client::github::AssetKind;
+use http_client::github::GitHubLspBinaryVersion;
 use language::ToolchainList;
 use language::ToolchainLister;
 use language::language_settings::language_settings;
@@ -23,6 +27,8 @@ use project::lsp_store::language_server_settings;
 use serde_json::{Value, json};
 use smol::lock::OnceCell;
 use std::cmp::Ordering;
+use std::env::consts;
+use util::fs::{make_file_executable, remove_matching};
 
 use parking_lot::Mutex;
 use std::str::FromStr;
@@ -36,6 +42,8 @@ use std::{
 };
 use task::{ShellKind, TaskTemplate, TaskTemplates, VariableName};
 use util::{ResultExt, maybe};
+
+use crate::github_download::{GithubBinaryMetadata, download_server_binary};
 
 pub(crate) struct PyprojectTomlManifestProvider;
 
@@ -1658,62 +1666,55 @@ impl LspAdapter for BasedPyrightLspAdapter {
 }
 
 pub(crate) struct RuffLspAdapter {
-    python_venv_base: OnceCell<Result<Arc<Path>, String>>,
+    fs: Arc<dyn Fs>,
+}
+
+#[cfg(target_os = "macos")]
+impl RuffLspAdapter {
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
+    const ARCH_SERVER_NAME: &str = "apple-darwin";
+}
+
+#[cfg(target_os = "linux")]
+impl RuffLspAdapter {
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
+    const ARCH_SERVER_NAME: &str = "unknown-linux-gnu";
+}
+
+#[cfg(target_os = "freebsd")]
+impl RuffLspAdapter {
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
+    const ARCH_SERVER_NAME: &str = "unknown-freebsd";
+}
+
+#[cfg(target_os = "windows")]
+impl RuffLspAdapter {
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::Zip;
+    const ARCH_SERVER_NAME: &str = "pc-windows-msvc";
 }
 
 impl RuffLspAdapter {
     const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("ruff");
-    const BINARY_NAME: &'static str = "ruff";
 
-    pub(crate) fn new() -> Self {
-        Self {
-            python_venv_base: OnceCell::new(),
+    pub fn new(cx: &mut App) -> RuffLspAdapter {
+        RuffLspAdapter {
+            fs: <dyn Fs>::global(cx),
         }
     }
 
-    async fn ensure_venv(delegate: &dyn LspAdapterDelegate) -> Result<Arc<Path>> {
-        let python_path = Self::find_base_python(delegate)
-            .await
-            .context("Could not find Python installation for ruff")?;
-        let work_dir = delegate
-            .language_server_download_dir(&Self::SERVER_NAME)
-            .await
-            .context("Could not get working directory for ruff")?;
-        let mut path = PathBuf::from(work_dir.as_ref());
-        path.push("ruff-venv");
-        if !path.exists() {
-            util::command::new_smol_command(python_path)
-                .arg("-m")
-                .arg("venv")
-                .arg("ruff-venv")
-                .current_dir(work_dir)
-                .spawn()?
-                .output()
-                .await?;
-        }
-
-        Ok(path.into())
-    }
-
-    // Find "baseline", user python version from which we'll create our own venv.
-    async fn find_base_python(delegate: &dyn LspAdapterDelegate) -> Option<PathBuf> {
-        for path in ["python3", "python"] {
-            if let Some(path) = delegate.which(path.as_ref()).await {
-                return Some(path);
-            }
-        }
-        None
-    }
-
-    async fn base_venv(&self, delegate: &dyn LspAdapterDelegate) -> Result<Arc<Path>, String> {
-        self.python_venv_base
-            .get_or_init(move || async move {
-                Self::ensure_venv(delegate)
-                    .await
-                    .map_err(|e| format!("{e}"))
-            })
-            .await
-            .clone()
+    fn build_asset_name() -> Result<(String, String)> {
+        let arch = match consts::ARCH {
+            "x86" => "i686",
+            _ => consts::ARCH,
+        };
+        let os = Self::ARCH_SERVER_NAME;
+        let suffix = match consts::OS {
+            "windows" => "zip",
+            _ => "tar.gz",
+        };
+        let asset_name = format!("ruff-{arch}-{os}.{suffix}");
+        let asset_stem = format!("ruff-{arch}-{os}");
+        Ok((asset_stem, asset_name))
     }
 }
 
@@ -1723,69 +1724,112 @@ impl LspAdapter for RuffLspAdapter {
         Self::SERVER_NAME
     }
 
-    async fn initialization_options(
-        self: Arc<Self>,
-        _: &dyn Fs,
-        _: &Arc<dyn LspAdapterDelegate>,
-    ) -> Result<Option<Value>> {
-        Ok(None)
-    }
-
-    async fn check_if_user_installed(
-        &self,
-        delegate: &dyn LspAdapterDelegate,
-        toolchain: Option<Toolchain>,
-        _: &AsyncApp,
-    ) -> Option<LanguageServerBinary> {
-        if let Some(bin) = delegate.which(Self::BINARY_NAME.as_ref()).await {
-            let env = delegate.shell_env().await;
-            Some(LanguageServerBinary {
-                path: bin,
-                env: Some(env),
-                arguments: vec!["server".into()],
-            })
-        } else {
-            let path = Path::new(toolchain?.path.as_ref())
-                .parent()?
-                .join(Self::BINARY_NAME);
-            path.exists().then(|| LanguageServerBinary {
-                path,
-                arguments: vec!["server".into()],
-                env: None,
-            })
-        }
-    }
-
     async fn fetch_latest_server_version(
         &self,
-        _: &dyn LspAdapterDelegate,
+        delegate: &dyn LspAdapterDelegate,
         _: &AsyncApp,
-    ) -> Result<Box<dyn 'static + Any + Send>> {
-        Ok(Box::new(()) as Box<_>)
+    ) -> Result<Box<dyn 'static + Send + Any>> {
+        let release =
+            latest_github_release("astral-sh/ruff", true, false, delegate.http_client()).await?;
+        let (_, asset_name) = Self::build_asset_name()?;
+        let asset = release
+            .assets
+            .into_iter()
+            .find(|asset| asset.name == asset_name)
+            .with_context(|| format!("no asset found matching `{asset_name:?}`"))?;
+        Ok(Box::new(GitHubLspBinaryVersion {
+            name: release.tag_name,
+            url: asset.browser_download_url,
+            digest: asset.digest,
+        }))
     }
 
     async fn fetch_server_binary(
         &self,
-        _latest_version: Box<dyn 'static + Send + Any>,
-        _container_dir: PathBuf,
+        latest_version: Box<dyn 'static + Send + Any>,
+        container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let venv = self.base_venv(delegate).await.map_err(|e| anyhow!(e))?;
-        let pip_path = venv.join(BINARY_DIR).join("pip3");
-        ensure!(
-            util::command::new_smol_command(pip_path.as_path())
-                .arg("install")
-                .arg("ruff")
-                .arg("-U")
-                .output()
-                .await?
-                .status
-                .success(),
-            "ruff installation failed"
-        );
-        let ruff = venv.join(BINARY_DIR).join(Self::BINARY_NAME);
+        let GitHubLspBinaryVersion {
+            name,
+            url,
+            digest: expected_digest,
+        } = *latest_version.downcast::<GitHubLspBinaryVersion>().unwrap();
+        let destination_path = container_dir.join(format!("ruff-{name}"));
+        let server_path = match Self::GITHUB_ASSET_KIND {
+            AssetKind::TarGz | AssetKind::Gz => destination_path
+                .join(Self::build_asset_name()?.0)
+                .join("ruff"),
+            AssetKind::Zip => destination_path.clone().join("ruff.exe"),
+        };
+        dbg!(&server_path);
+
+        let binary = LanguageServerBinary {
+            path: server_path.clone(),
+            env: None,
+            arguments: Default::default(),
+        };
+
+        let metadata_path = destination_path.with_extension("metadata");
+        let metadata = GithubBinaryMetadata::read_from_file(&metadata_path)
+            .await
+            .ok();
+        if let Some(metadata) = metadata {
+            let validity_check = async || {
+                delegate
+                    .try_exec(LanguageServerBinary {
+                        path: server_path.clone(),
+                        arguments: vec!["--version".into()],
+                        env: None,
+                    })
+                    .await
+                    .inspect_err(|err| {
+                        log::warn!("Unable to run {server_path:?} asset, redownloading: {err}",)
+                    })
+            };
+            if let (Some(actual_digest), Some(expected_digest)) =
+                (&metadata.digest, &expected_digest)
+            {
+                if actual_digest == expected_digest {
+                    if validity_check().await.is_ok() {
+                        return Ok(binary);
+                    }
+                } else {
+                    log::info!(
+                        "SHA-256 mismatch for {destination_path:?} asset, downloading new asset. Expected: {expected_digest}, Got: {actual_digest}"
+                    );
+                }
+            } else if validity_check().await.is_ok() {
+                return Ok(binary);
+            }
+        }
+        dbg!();
+
+        download_server_binary(
+            delegate,
+            dbg!(&url),
+            expected_digest.as_deref(),
+            dbg!(&destination_path),
+            dbg!(Self::GITHUB_ASSET_KIND),
+        )
+        .await?;
+        dbg!();
+        make_file_executable(&server_path).await?;
+        dbg!();
+        remove_matching(&container_dir, |path| path != destination_path).await;
+        dbg!();
+        GithubBinaryMetadata::write_to_file(
+            &GithubBinaryMetadata {
+                metadata_version: 1,
+                digest: expected_digest,
+            },
+            &metadata_path,
+        )
+        .await?;
+        dbg!();
+
         Ok(LanguageServerBinary {
-            path: ruff,
+            path: server_path,
             env: None,
             arguments: vec!["server".into()],
         })
@@ -1793,26 +1837,34 @@ impl LspAdapter for RuffLspAdapter {
 
     async fn cached_server_binary(
         &self,
-        _container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
+        container_dir: PathBuf,
+        _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        let venv = self.base_venv(delegate).await.ok()?;
-        let ruff = venv.join(BINARY_DIR).join(Self::BINARY_NAME);
-        Some(LanguageServerBinary {
-            path: ruff,
-            env: None,
-            arguments: vec!["server".into()],
-        })
-    }
+        maybe!(async {
+            let mut last = None;
+            let mut entries = self.fs.read_dir(&container_dir).await?;
+            while let Some(entry) = entries.next().await {
+                let path = entry?;
+                if path.extension().is_some_and(|ext| ext == "metadata") {
+                    continue;
+                }
+                last = Some(path);
+            }
 
-    async fn workspace_configuration(
-        self: Arc<Self>,
-        _: &dyn Fs,
-        _adapter: &Arc<dyn LspAdapterDelegate>,
-        _toolchain: Option<Toolchain>,
-        _cx: &mut AsyncApp,
-    ) -> Result<Value> {
-        Ok(json!({}))
+            let path = last.context("no cached binary")?;
+            let path = match RuffLspAdapter::GITHUB_ASSET_KIND {
+                AssetKind::TarGz | AssetKind::Gz => path, // Tar and gzip extract in place.
+                AssetKind::Zip => path.join("ruff.exe"),  // zip contains a .exe
+            };
+
+            anyhow::Ok(LanguageServerBinary {
+                path,
+                env: None,
+                arguments: vec!["server".into()],
+            })
+        })
+        .await
+        .log_err()
     }
 }
 
