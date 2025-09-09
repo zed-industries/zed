@@ -2469,7 +2469,7 @@ The following languages have inlay hints preconfigured by Zed:
 - [Go](https://docs.zed.dev/languages/go)
 - [Rust](https://docs.zed.dev/languages/rust)
 - [Svelte](https://docs.zed.dev/languages/svelte)
-- [Typescript](https://docs.zed.dev/languages/typescript)
+- [TypeScript](https://docs.zed.dev/languages/typescript)
 
 Use the `lsp` section for the server configuration. Examples are provided in the corresponding language documentation.
 
