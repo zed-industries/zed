@@ -122,10 +122,13 @@ impl BranchList {
                     all_branches.retain(|branch| !remote_upstreams.contains(&branch.ref_name));
 
                     all_branches.sort_by_key(|branch| {
-                        branch
-                            .most_recent_commit
-                            .as_ref()
-                            .map(|commit| 0 - commit.commit_timestamp)
+                        (
+                            !branch.is_head, // Current branch (is_head=true) comes first
+                            branch
+                                .most_recent_commit
+                                .as_ref()
+                                .map(|commit| 0 - commit.commit_timestamp),
+                        )
                     });
 
                     all_branches
