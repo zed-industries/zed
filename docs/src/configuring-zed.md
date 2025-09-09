@@ -2023,6 +2023,9 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
     "inline_blame": {
       "enabled": true
     },
+    "branch_picker": {
+      "show_author_name": true
+    },
     "hunk_style": "staged_hollow"
   }
 }
@@ -2149,6 +2152,36 @@ Example:
   "git": {
     "inline_blame": {
       "padding": 10
+    }
+  }
+}
+```
+
+### Branch Picker
+
+- Description: Configuration related to the branch picker.
+- Setting: `branch_picker`
+- Default:
+
+```json
+{
+  "git": {
+    "branch_picker": {
+      "show_author_name": false
+    }
+  }
+}
+```
+
+**Options**
+
+1. Show the author name in the branch picker:
+
+```json
+{
+  "git": {
+    "branch_picker": {
+      "show_author_name": true
     }
   }
 }

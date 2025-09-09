@@ -1199,6 +1199,10 @@
       // The minimum column number to show the inline blame information at
       "min_column": 0
     },
+    // Control which information is shown in the branch picker.
+    "branch_picker": {
+      "show_author_name": true
+    },
     // How git hunks are displayed visually in the editor.
     // This setting can take two values:
     //
