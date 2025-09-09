@@ -1,6 +1,6 @@
 # Key bindings
 
-Zed has a very customizable key binding system — you can tweak everything to work exactly how your fingers expect!
+Zed has a very customizable key binding system—you can tweak everything to work exactly how your fingers expect!
 
 ## Predefined keymaps
 
@@ -23,11 +23,12 @@ For more information, see the documentation for [Vim mode](./vim.md) and [Helix 
 
 ## User keymaps
 
-Zed reads your keymap from `~/.config/zed/keymap.json`. You can open the file within Zed with {#action zed::OpenKeymap} from the command palette or to spawn the Zed Keymap Editor ({#action zed::OpenKeymapEditor}) use {#kb zed::OpenKeymapEditor}.
+Zed reads your keymap from `~/.config/zed/keymap.json`, which you can open with the {#action zed::OpenKeymap} action from the command palette.
+You can also edit your keymap through the Zed Keymap Editor, accessible via the {#action zed::OpenKeymapEditor} action or the {#kb zed::OpenKeymapEditor} keybinding.
 
-The file contains a JSON array of objects with `"bindings"`. If no `"context"` is set the bindings are always active. If it is set the binding is only active when the [context matches](#contexts).
+The `keymap.json` file contains a JSON array of objects with `"bindings"`. If no `"context"` is set the bindings are always active. If it is set the binding is only active when the [context matches](#contexts).
 
-Within each binding section a [key sequence](#keybinding-syntax) is mapped to an [action](#actions). If conflicts are detected they are resolved as [described below](#precedence).
+Within each binding section a [key sequence](#keybinding-syntax) is mapped to [an action](#actions). If conflicts are detected, they are resolved as [described below](#precedence).
 
 If you are using a non-QWERTY, Latin-character keyboard, you may want to set `use_key_equivalents` to `true`. See [Non-QWERTY keyboards](#non-qwerty-keyboards) for more information.
 
