@@ -6,11 +6,11 @@ Zed has a very customizable key binding system — you can tweak everything to w
 
 If you're used to a specific editor's defaults you can set a `base_keymap` in your [settings file](./configuring-zed.md). We currently have:
 
-- VSCode (default)
+- VS Code (default)
 - Atom
 - Emacs (Beta)
 - JetBrains
-- SublimeText
+- Sublime Text
 - TextMate
 - None (disables _all_ key bindings)
 
