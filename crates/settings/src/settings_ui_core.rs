@@ -43,6 +43,7 @@ pub struct SettingsUiEntry {
 #[derive(Clone)]
 pub enum SettingsUiItemSingle {
     SwitchField,
+    TextField,
     /// A numeric stepper for a specific type of number
     NumericStepper(NumType),
     ToggleGroup {
@@ -147,6 +148,18 @@ impl SettingsUi for bool {
 impl SettingsUi for Option<bool> {
     fn settings_ui_item() -> SettingsUiItem {
         SettingsUiItem::Single(SettingsUiItemSingle::SwitchField)
+    }
+}
+
+impl SettingsUi for String {
+    fn settings_ui_item() -> SettingsUiItem {
+        SettingsUiItem::Single(SettingsUiItemSingle::TextField)
+    }
+}
+
+impl SettingsUi for SettingsUiItem {
+    fn settings_ui_item() -> SettingsUiItem {
+        SettingsUiItem::Single(SettingsUiItemSingle::TextField)
     }
 }
 

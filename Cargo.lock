@@ -14871,6 +14871,7 @@ dependencies = [
  "editor",
  "feature_flags",
  "gpui",
+ "menu",
  "serde",
  "serde_json",
  "settings",
