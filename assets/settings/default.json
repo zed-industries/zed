@@ -952,7 +952,7 @@
     // Show git status colors in the editor tabs.
     "git_status": false,
     // Position of the close button on the editor tabs.
-    // One of: ["right", "left", "hidden"]
+    // One of: ["right", "left"]
     "close_position": "right",
     // Whether to show the file icon for a tab.
     "file_icons": false,

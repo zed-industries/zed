@@ -116,7 +116,7 @@ Non-negative `float` values
 
 ## Allow Rewrap
 
-- Description: Controls where the `editor::Rewrap` action is allowed in the current language scope
+- Description: Controls where the {#action editor::Rewrap} action is allowed in the current language scope
 - Setting: `allow_rewrap`
 - Default: `"in_comments"`
 
@@ -2192,7 +2192,7 @@ Example:
 
 ## Go to Definition Fallback
 
-- Description: What to do when the "go to definition" action fails to find a definition
+- Description: What to do when the {#action editor::GoToDefinition} action fails to find a definition
 - Setting: `go_to_definition_fallback`
 - Default: `"find_all_references"`
 
@@ -2383,7 +2383,7 @@ Example:
 
 **Options**
 
-Run the `icon theme selector: toggle` action in the command palette to see a current list of valid icon themes names.
+Run the {#action icon_theme_selector::Toggle} action in the command palette to see a current list of valid icon themes names.
 
 ### Light
 
@@ -2393,7 +2393,7 @@ Run the `icon theme selector: toggle` action in the command palette to see a cur
 
 **Options**
 
-Run the `icon theme selector: toggle` action in the command palette to see a current list of valid icon themes names.
+Run the {#action icon_theme_selector::Toggle} action in the command palette to see a current list of valid icon themes names.
 
 ## Image Viewer
 
@@ -2832,7 +2832,7 @@ Configuration object for defining settings profiles. Example:
 
   - Double-clicking on the file
   - Double-clicking on the tab header
-  - Using the `project_panel::OpenPermanent` action
+  - Using the {#action project_panel::OpenPermanent} action
   - Editing the file
   - Dragging the file to a different pane
 
@@ -4053,7 +4053,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 
 **Options**
 
-Run the `theme selector: toggle` action in the command palette to see a current list of valid themes names.
+Run the {#action theme_selector::Toggle} action in the command palette to see a current list of valid themes names.
 
 ### Light
 
@@ -4063,7 +4063,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 **Options**
 
-Run the `theme selector: toggle` action in the command palette to see a current list of valid themes names.
+Run the {#action theme_selector::Toggle} action in the command palette to see a current list of valid themes names.
 
 ## Title Bar
 

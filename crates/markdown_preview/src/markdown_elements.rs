@@ -155,7 +155,7 @@ pub struct ParsedMarkdownText {
     /// Where the text is located in the source Markdown document.
     pub source_range: Range<usize>,
     /// The text content stripped of any formatting symbols.
-    pub contents: String,
+    pub contents: SharedString,
     /// The list of highlights contained in the Markdown document.
     pub highlights: Vec<(Range<usize>, MarkdownHighlight)>,
     /// The regions of the various ranges in the Markdown document.

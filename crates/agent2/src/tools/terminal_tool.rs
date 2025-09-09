@@ -60,7 +60,11 @@ impl AgentTool for TerminalTool {
         acp::ToolKind::Execute
     }
 
-    fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString {
+    fn initial_title(
+        &self,
+        input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
         if let Ok(input) = input {
             let mut lines = input.command.lines();
             let first_line = lines.next().unwrap_or_default();
@@ -93,7 +97,7 @@ impl AgentTool for TerminalTool {
             Err(err) => return Task::ready(Err(err)),
         };
 
-        let authorize = event_stream.authorize(self.initial_title(Ok(input.clone())), cx);
+        let authorize = event_stream.authorize(self.initial_title(Ok(input.clone()), cx), cx);
         cx.spawn(async move |cx| {
             authorize.await?;
 

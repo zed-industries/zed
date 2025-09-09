@@ -529,12 +529,16 @@ pub async fn stream_completion(
 pub async fn list_models(
     client: &dyn HttpClient,
     api_url: &str,
+    api_key: &str,
 ) -> Result<Vec<Model>, OpenRouterError> {
-    let uri = format!("{api_url}/models");
+    let uri = format!("{api_url}/models/user");
     let request_builder = HttpRequest::builder()
         .method(Method::GET)
         .uri(uri)
-        .header("Accept", "application/json");
+        .header("Accept", "application/json")
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("HTTP-Referer", "https://zed.dev")
+        .header("X-Title", "Zed Editor");
 
     let request = request_builder
         .body(AsyncBody::default())

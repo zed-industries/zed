@@ -32,6 +32,7 @@ use gpui::{
 };
 use image_viewer::ImageInfo;
 use language::Capability;
+use language_onboarding::BasedPyrightBanner;
 use language_tools::lsp_button::{self, LspButton};
 use language_tools::lsp_log_view::LspLogToolbarItemView;
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
@@ -988,6 +989,8 @@ fn initialize_pane(
             toolbar.add_item(project_diff_toolbar, window, cx);
             let agent_diff_toolbar = cx.new(AgentDiffToolbar::new);
             toolbar.add_item(agent_diff_toolbar, window, cx);
+            let basedpyright_banner = cx.new(|cx| BasedPyrightBanner::new(workspace, cx));
+            toolbar.add_item(basedpyright_banner, window, cx);
         })
     });
 }
@@ -1154,7 +1157,7 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut Contex
                         };
                         let project = workspace.project().clone();
                         let buffer = project.update(cx, |project, cx| {
-                            project.create_local_buffer(&log, None, cx)
+                            project.create_local_buffer(&log, None, false, cx)
                         });
 
                         let buffer = cx
@@ -1304,15 +1307,31 @@ pub fn handle_keymap_file_changes(
     })
     .detach();
 
-    let mut current_layout_id = cx.keyboard_layout().id().to_string();
-    cx.on_keyboard_layout_change(move |cx| {
-        let next_layout_id = cx.keyboard_layout().id();
-        if next_layout_id != current_layout_id {
-            current_layout_id = next_layout_id.to_string();
-            keyboard_layout_tx.unbounded_send(()).ok();
-        }
-    })
-    .detach();
+    #[cfg(target_os = "windows")]
+    {
+        let mut current_layout_id = cx.keyboard_layout().id().to_string();
+        cx.on_keyboard_layout_change(move |cx| {
+            let next_layout_id = cx.keyboard_layout().id();
+            if next_layout_id != current_layout_id {
+                current_layout_id = next_layout_id.to_string();
+                keyboard_layout_tx.unbounded_send(()).ok();
+            }
+        })
+        .detach();
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let mut current_mapping = cx.keyboard_mapper().get_key_equivalents().cloned();
+        cx.on_keyboard_layout_change(move |cx| {
+            let next_mapping = cx.keyboard_mapper().get_key_equivalents();
+            if current_mapping.as_ref() != next_mapping {
+                current_mapping = next_mapping.cloned();
+                keyboard_layout_tx.unbounded_send(()).ok();
+            }
+        })
+        .detach();
+    }
 
     load_default_keymap(cx);
 
@@ -1720,7 +1739,7 @@ fn open_telemetry_log_file(
 
             workspace.update_in( cx, |workspace, window, cx| {
                 let project = workspace.project().clone();
-                let buffer = project.update(cx, |project, cx| project.create_local_buffer(&content, json, cx));
+                let buffer = project.update(cx, |project, cx| project.create_local_buffer(&content, json,false, cx));
                 let buffer = cx.new(|cx| {
                     MultiBuffer::singleton(buffer, cx).with_title("Telemetry Log".into())
                 });
@@ -1759,7 +1778,8 @@ fn open_bundled_file(
                 workspace.with_local_workspace(window, cx, |workspace, window, cx| {
                     let project = workspace.project();
                     let buffer = project.update(cx, move |project, cx| {
-                        let buffer = project.create_local_buffer(text.as_ref(), language, cx);
+                        let buffer =
+                            project.create_local_buffer(text.as_ref(), language, false, cx);
                         buffer.update(cx, |buffer, cx| {
                             buffer.set_capability(Capability::ReadOnly, cx);
                         });
@@ -4352,6 +4372,8 @@ mod tests {
                     | "vim::PushJump"
                     | "vim::PushDigraph"
                     | "vim::PushLiteral"
+                    | "vim::PushHelixNext"
+                    | "vim::PushHelixPrevious"
                     | "vim::Number"
                     | "vim::SelectRegister"
                     | "git::StageAndNext"

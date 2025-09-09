@@ -11,12 +11,37 @@ pub struct CollaborationPanelSettings {
     pub default_width: Pixels,
 }
 
-#[derive(Deserialize, Debug, SettingsKey)]
-#[settings_key(key = "notification_panel")]
-pub struct NotificationPanelSettings {
-    pub button: bool,
+#[derive(Clone, Copy, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum ChatPanelButton {
+    Never,
+    Always,
+    #[default]
+    WhenInCall,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct ChatPanelSettings {
+    pub button: ChatPanelButton,
     pub dock: DockPosition,
     pub default_width: Pixels,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi, SettingsKey)]
+#[settings_key(key = "chat_panel")]
+pub struct ChatPanelSettingsContent {
+    /// When to show the panel button in the status bar.
+    ///
+    /// Default: only when in a call
+    pub button: Option<ChatPanelButton>,
+    /// Where to dock the panel.
+    ///
+    /// Default: right
+    pub dock: Option<DockPosition>,
+    /// Default width of the panel in pixels.
+    ///
+    /// Default: 240
+    pub default_width: Option<f32>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi, SettingsKey)]
@@ -33,6 +58,30 @@ pub struct PanelSettingsContent {
     /// Default width of the panel in pixels.
     ///
     /// Default: 240
+    pub default_width: Option<f32>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct NotificationPanelSettings {
+    pub button: bool,
+    pub dock: DockPosition,
+    pub default_width: Pixels,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi, SettingsKey)]
+#[settings_key(key = "notification_panel")]
+pub struct NotificationPanelSettingsContent {
+    /// Whether to show the panel button in the status bar.
+    ///
+    /// Default: true
+    pub button: Option<bool>,
+    /// Where to dock the panel.
+    ///
+    /// Default: right
+    pub dock: Option<DockPosition>,
+    /// Default width of the panel in pixels.
+    ///
+    /// Default: 300
     pub default_width: Option<f32>,
 }
 
@@ -60,7 +109,7 @@ impl Settings for CollaborationPanelSettings {
 }
 
 impl Settings for NotificationPanelSettings {
-    type FileContent = PanelSettingsContent;
+    type FileContent = NotificationPanelSettingsContent;
 
     fn load(
         sources: SettingsSources<Self::FileContent>,
