@@ -65,9 +65,9 @@ use crate::ui::{
     AgentNotification, AgentNotificationEvent, BurnModeTooltip, UnavailableEditingTooltip,
 };
 use crate::{
-    AgentDiffPane, AgentPanel, ContinueThread, ContinueWithBurnMode, CycleModeSelector,
-    ExpandMessageEditor, Follow, KeepAll, OpenAgentDiff, OpenHistory, RejectAll, ToggleBurnMode,
-    ToggleProfileSelector,
+    AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, ContinueThread, ContinueWithBurnMode,
+    CycleModeSelector, ExpandMessageEditor, Follow, KeepAll, OpenAgentDiff, OpenHistory, RejectAll,
+    RejectOnce, ToggleBurnMode, ToggleProfileSelector,
 };
 
 pub const MIN_EDITOR_LINES: usize = 4;
@@ -2167,6 +2167,7 @@ impl AcpThreadView {
                             options,
                             entry_ix,
                             tool_call.id.clone(),
+                            window,
                             cx,
                         ))
                         .into_any(),
@@ -2469,6 +2470,7 @@ impl AcpThreadView {
         options: &[acp::PermissionOption],
         entry_ix: usize,
         tool_call_id: acp::ToolCallId,
+        window: &Window,
         cx: &Context<Self>,
     ) -> Div {
         h_flex()
@@ -2500,15 +2502,42 @@ impl AcpThreadView {
                         let option_id = SharedString::from(option.id.0.clone());
                         Button::new((option_id, entry_ix), option.name.clone())
                             .map(|this| match option.kind {
-                                acp::PermissionOptionKind::AllowOnce => {
-                                    this.icon(IconName::Check).icon_color(Color::Success)
-                                }
-                                acp::PermissionOptionKind::AllowAlways => {
-                                    this.icon(IconName::CheckDouble).icon_color(Color::Success)
-                                }
-                                acp::PermissionOptionKind::RejectOnce => {
-                                    this.icon(IconName::Close).icon_color(Color::Error)
-                                }
+                                acp::PermissionOptionKind::AllowOnce => this
+                                    .icon(IconName::Check)
+                                    .icon_color(Color::Success)
+                                    .key_binding(
+                                        KeyBinding::for_action_in(
+                                            &AllowOnce,
+                                            &self.focus_handle.clone(),
+                                            window,
+                                            cx,
+                                        )
+                                        .map(|kb| kb.size(rems_from_px(10.))),
+                                    ),
+                                acp::PermissionOptionKind::AllowAlways => this
+                                    .icon(IconName::CheckDouble)
+                                    .icon_color(Color::Success)
+                                    .key_binding(
+                                        KeyBinding::for_action_in(
+                                            &AllowAlways,
+                                            &self.focus_handle.clone(),
+                                            window,
+                                            cx,
+                                        )
+                                        .map(|kb| kb.size(rems_from_px(10.))),
+                                    ),
+                                acp::PermissionOptionKind::RejectOnce => this
+                                    .icon(IconName::Close)
+                                    .icon_color(Color::Error)
+                                    .key_binding(
+                                        KeyBinding::for_action_in(
+                                            &RejectOnce,
+                                            &self.focus_handle.clone(),
+                                            window,
+                                            cx,
+                                        )
+                                        .map(|kb| kb.size(rems_from_px(10.))),
+                                    ),
                                 acp::PermissionOptionKind::RejectAlways => {
                                     this.icon(IconName::Close).icon_color(Color::Error)
                                 }
@@ -3978,6 +4007,47 @@ impl AcpThreadView {
             .detach();
     }
 
+    fn allow_always(&mut self, _: &AllowAlways, window: &mut Window, cx: &mut Context<Self>) {
+        self.authorize_pending_tool_call(acp::PermissionOptionKind::AllowAlways, window, cx)
+    }
+
+    fn allow_once(&mut self, _: &AllowOnce, window: &mut Window, cx: &mut Context<Self>) {
+        self.authorize_pending_tool_call(acp::PermissionOptionKind::AllowOnce, window, cx)
+    }
+
+    fn reject_once(&mut self, _: &RejectOnce, window: &mut Window, cx: &mut Context<Self>) {
+        self.authorize_pending_tool_call(acp::PermissionOptionKind::RejectOnce, window, cx)
+    }
+
+    fn authorize_pending_tool_call(
+        &mut self,
+        kind: acp::PermissionOptionKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((tool_call, option)) = util::maybe!({
+            let entry = self.thread()?.read(cx).entries().last()?;
+            let AgentThreadEntry::ToolCall(tool_call) = entry else {
+                return None;
+            };
+            let ToolCallStatus::WaitingForConfirmation { options, .. } = &tool_call.status else {
+                return None;
+            };
+            let option = options.iter().find(|o| o.kind == kind)?;
+            Some((tool_call, option))
+        }) else {
+            return;
+        };
+
+        self.authorize_tool_call(
+            tool_call.id.clone(),
+            option.id.clone(),
+            option.kind,
+            window,
+            cx,
+        );
+    }
+
     fn render_burn_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let thread = self.as_native_thread(cx)?.read(cx);
 
@@ -5299,6 +5369,9 @@ impl Render for AcpThreadView {
             .on_action(cx.listener(Self::toggle_burn_mode))
             .on_action(cx.listener(Self::keep_all))
             .on_action(cx.listener(Self::reject_all))
+            .on_action(cx.listener(Self::allow_always))
+            .on_action(cx.listener(Self::allow_once))
+            .on_action(cx.listener(Self::reject_once))
             .track_focus(&self.focus_handle)
             .bg(cx.theme().colors().panel_background)
             .child(match &self.thread_state {
