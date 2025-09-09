@@ -5005,6 +5005,7 @@ impl AcpThreadView {
             cloud_llm_client::Plan::ZedProTrial | cloud_llm_client::Plan::ZedFree => {
                 "Upgrade to Zed Pro for more prompts."
             }
+            cloud_llm_client::Plan::ZedProV2 | cloud_llm_client::Plan::ZedProTrialV2 => "",
         };
 
         Callout::new()
