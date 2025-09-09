@@ -1322,6 +1322,7 @@ async fn open_new_agent_servers_entry_in_settings_editor(
                                 args: vec![],
                                 env: Some(HashMap::default()),
                             },
+                            default_mode: None,
                         },
                     );
                 }

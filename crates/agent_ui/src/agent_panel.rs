@@ -2717,10 +2717,13 @@ impl AgentPanel {
                                                                 panel.update(cx, |panel, cx| {
                                                                     panel.new_agent_thread(
                                                                         AgentType::Custom {
-                                                                            name: agent_name
-                                                                                .clone()
-                                                                                .into(),
-                                                                            command: custom_settings.get(&agent_name.0).map(|settings| settings.command.clone()).unwrap_or(placeholder_command())
+                                                                            name: agent_name.clone().into(),
+                                                                            command: custom_settings
+                                                                                .get(&agent_name.0)
+                                                                                .map(|settings| {
+                                                                                    settings.command.clone()
+                                                                                })
+                                                                                .unwrap_or(placeholder_command()),
                                                                         },
                                                                         window,
                                                                         cx,

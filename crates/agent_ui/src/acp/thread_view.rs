@@ -54,6 +54,7 @@ use zed_actions::assistant::OpenRulesLibrary;
 
 use super::entry_view_state::EntryViewState;
 use crate::acp::AcpModelSelectorPopover;
+use crate::acp::ModeSelector;
 use crate::acp::entry_view_state::{EntryViewEvent, ViewEvent};
 use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::agent_diff::AgentDiff;
@@ -64,8 +65,9 @@ use crate::ui::{
     AgentNotification, AgentNotificationEvent, BurnModeTooltip, UnavailableEditingTooltip,
 };
 use crate::{
-    AgentDiffPane, AgentPanel, ContinueThread, ContinueWithBurnMode, ExpandMessageEditor, Follow,
-    KeepAll, OpenAgentDiff, OpenHistory, RejectAll, ToggleBurnMode, ToggleProfileSelector,
+    AgentDiffPane, AgentPanel, ContinueThread, ContinueWithBurnMode, CycleModeSelector,
+    ExpandMessageEditor, Follow, KeepAll, OpenAgentDiff, OpenHistory, RejectAll, ToggleBurnMode,
+    ToggleProfileSelector,
 };
 
 pub const MIN_EDITOR_LINES: usize = 4;
@@ -298,6 +300,7 @@ enum ThreadState {
     Ready {
         thread: Entity<AcpThread>,
         title_editor: Option<Entity<Editor>>,
+        mode_selector: Option<Entity<ModeSelector>>,
         _subscriptions: Vec<Subscription>,
     },
     LoadError(LoadError),
@@ -396,6 +399,7 @@ impl AcpThreadView {
             message_editor,
             model_selector: None,
             profile_selector: None,
+
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
             list_state: list_state.clone(),
@@ -594,6 +598,23 @@ impl AcpThreadView {
                                     })
                                 });
 
+                        let mode_selector = thread
+                            .read(cx)
+                            .connection()
+                            .session_modes(thread.read(cx).session_id(), cx)
+                            .map(|session_modes| {
+                                let fs = this.project.read(cx).fs().clone();
+                                let focus_handle = this.focus_handle(cx);
+                                cx.new(|_cx| {
+                                    ModeSelector::new(
+                                        session_modes,
+                                        this.agent.clone(),
+                                        fs,
+                                        focus_handle,
+                                    )
+                                })
+                            });
+
                         let mut subscriptions = vec![
                             cx.subscribe_in(&thread, window, Self::handle_thread_event),
                             cx.observe(&action_log, |_, _, cx| cx.notify()),
@@ -615,9 +636,11 @@ impl AcpThreadView {
                             } else {
                                 None
                             };
+
                         this.thread_state = ThreadState::Ready {
                             thread,
                             title_editor,
+                            mode_selector,
                             _subscriptions: subscriptions,
                         };
                         this.message_editor.focus_handle(cx).focus(window);
@@ -764,6 +787,15 @@ impl AcpThreadView {
     pub fn thread(&self) -> Option<&Entity<AcpThread>> {
         match &self.thread_state {
             ThreadState::Ready { thread, .. } => Some(thread),
+            ThreadState::Unauthenticated { .. }
+            | ThreadState::Loading { .. }
+            | ThreadState::LoadError { .. } => None,
+        }
+    }
+
+    pub fn mode_selector(&self) -> Option<&Entity<ModeSelector>> {
+        match &self.thread_state {
+            ThreadState::Ready { mode_selector, .. } => mode_selector.as_ref(),
             ThreadState::Unauthenticated { .. }
             | ThreadState::Loading { .. }
             | ThreadState::LoadError { .. } => None,
@@ -1364,6 +1396,10 @@ impl AcpThreadView {
                 }
 
                 self.available_commands.replace(available_commands);
+            }
+            AcpThreadEvent::ModeUpdated(_mode) => {
+                // The connection keeps track of the mode
+                cx.notify();
             }
         }
         cx.notify();
@@ -2055,6 +2091,7 @@ impl AcpThreadView {
                 acp::ToolKind::Execute => IconName::ToolTerminal,
                 acp::ToolKind::Think => IconName::ToolThink,
                 acp::ToolKind::Fetch => IconName::ToolWeb,
+                acp::ToolKind::SwitchMode => IconName::ArrowRightLeft,
                 acp::ToolKind::Other => IconName::ToolHammer,
             })
         }
@@ -2105,59 +2142,67 @@ impl AcpThreadView {
                 })
         };
 
-        let tool_output_display = if is_open {
-            match &tool_call.status {
-                ToolCallStatus::WaitingForConfirmation { options, .. } => v_flex()
-                    .w_full()
-                    .children(tool_call.content.iter().map(|content| {
-                        div()
-                            .child(self.render_tool_call_content(
-                                entry_ix,
-                                content,
-                                tool_call,
-                                use_card_layout,
-                                window,
-                                cx,
-                            ))
-                            .into_any_element()
-                    }))
-                    .child(self.render_permission_buttons(
-                        options,
-                        entry_ix,
-                        tool_call.id.clone(),
-                        cx,
-                    ))
-                    .into_any(),
-                ToolCallStatus::Pending | ToolCallStatus::InProgress
-                    if is_edit
-                        && tool_call.content.is_empty()
-                        && self.as_native_connection(cx).is_some() =>
-                {
-                    self.render_diff_loading(cx).into_any()
-                }
-                ToolCallStatus::Pending
-                | ToolCallStatus::InProgress
-                | ToolCallStatus::Completed
-                | ToolCallStatus::Failed
-                | ToolCallStatus::Canceled => v_flex()
-                    .w_full()
-                    .children(tool_call.content.iter().map(|content| {
-                        div().child(self.render_tool_call_content(
+        let tool_output_display =
+            if is_open {
+                match &tool_call.status {
+                    ToolCallStatus::WaitingForConfirmation { options, .. } => v_flex()
+                        .w_full()
+                        .children(tool_call.content.iter().enumerate().map(
+                            |(content_ix, content)| {
+                                div()
+                                    .child(self.render_tool_call_content(
+                                        entry_ix,
+                                        content,
+                                        content_ix,
+                                        tool_call,
+                                        use_card_layout,
+                                        window,
+                                        cx,
+                                    ))
+                                    .into_any_element()
+                            },
+                        ))
+                        .child(self.render_permission_buttons(
+                            tool_call.kind,
+                            options,
                             entry_ix,
-                            content,
-                            tool_call,
-                            use_card_layout,
-                            window,
+                            tool_call.id.clone(),
                             cx,
                         ))
-                    }))
-                    .into_any(),
-                ToolCallStatus::Rejected => Empty.into_any(),
-            }
-            .into()
-        } else {
-            None
-        };
+                        .into_any(),
+                    ToolCallStatus::Pending | ToolCallStatus::InProgress
+                        if is_edit
+                            && tool_call.content.is_empty()
+                            && self.as_native_connection(cx).is_some() =>
+                    {
+                        self.render_diff_loading(cx).into_any()
+                    }
+                    ToolCallStatus::Pending
+                    | ToolCallStatus::InProgress
+                    | ToolCallStatus::Completed
+                    | ToolCallStatus::Failed
+                    | ToolCallStatus::Canceled => v_flex()
+                        .w_full()
+                        .children(tool_call.content.iter().enumerate().map(
+                            |(content_ix, content)| {
+                                div().child(self.render_tool_call_content(
+                                    entry_ix,
+                                    content,
+                                    content_ix,
+                                    tool_call,
+                                    use_card_layout,
+                                    window,
+                                    cx,
+                                ))
+                            },
+                        ))
+                        .into_any(),
+                    ToolCallStatus::Rejected => Empty.into_any(),
+                }
+                .into()
+            } else {
+                None
+            };
 
         v_flex()
             .map(|this| {
@@ -2282,6 +2327,7 @@ impl AcpThreadView {
         &self,
         entry_ix: usize,
         content: &ToolCallContent,
+        context_ix: usize,
         tool_call: &ToolCall,
         card_layout: bool,
         window: &Window,
@@ -2295,6 +2341,7 @@ impl AcpThreadView {
                     self.render_markdown_output(
                         markdown.clone(),
                         tool_call.id.clone(),
+                        context_ix,
                         card_layout,
                         window,
                         cx,
@@ -2314,6 +2361,7 @@ impl AcpThreadView {
         &self,
         markdown: Entity<Markdown>,
         tool_call_id: acp::ToolCallId,
+        context_ix: usize,
         card_layout: bool,
         window: &Window,
         cx: &Context<Self>,
@@ -2330,11 +2378,13 @@ impl AcpThreadView {
                     .border_color(self.tool_card_border_color(cx))
             })
             .when(card_layout, |this| {
-                this.p_2()
-                    .border_t_1()
-                    .border_color(self.tool_card_border_color(cx))
+                this.px_2().pb_2().when(context_ix > 0, |this| {
+                    this.border_t_1()
+                        .pt_2()
+                        .border_color(self.tool_card_border_color(cx))
+                })
             })
-            .text_sm()
+            .text_xs()
             .text_color(cx.theme().colors().text_muted)
             .child(self.render_markdown(markdown, default_markdown_style(false, false, window, cx)))
             .when(!card_layout, |this| {
@@ -2415,6 +2465,7 @@ impl AcpThreadView {
 
     fn render_permission_buttons(
         &self,
+        kind: acp::ToolKind,
         options: &[acp::PermissionOption],
         entry_ix: usize,
         tool_call_id: acp::ToolCallId,
@@ -2422,53 +2473,65 @@ impl AcpThreadView {
     ) -> Div {
         h_flex()
             .py_1()
-            .pl_2()
-            .pr_1()
+            .px_1()
             .gap_1()
             .justify_between()
             .flex_wrap()
             .border_t_1()
             .border_color(self.tool_card_border_color(cx))
-            .child(
+            .when(kind != acp::ToolKind::SwitchMode, |this| {
+                this.pl_2().child(
+                    div().min_w(rems_from_px(145.)).child(
+                        LoadingLabel::new("Waiting for Confirmation").size(LabelSize::Small),
+                    ),
+                )
+            })
+            .child({
                 div()
-                    .min_w(rems_from_px(145.))
-                    .child(LoadingLabel::new("Waiting for Confirmation").size(LabelSize::Small)),
-            )
-            .child(h_flex().gap_0p5().children(options.iter().map(|option| {
-                let option_id = SharedString::from(option.id.0.clone());
-                Button::new((option_id, entry_ix), option.name.clone())
-                    .map(|this| match option.kind {
-                        acp::PermissionOptionKind::AllowOnce => {
-                            this.icon(IconName::Check).icon_color(Color::Success)
-                        }
-                        acp::PermissionOptionKind::AllowAlways => {
-                            this.icon(IconName::CheckDouble).icon_color(Color::Success)
-                        }
-                        acp::PermissionOptionKind::RejectOnce => {
-                            this.icon(IconName::Close).icon_color(Color::Error)
-                        }
-                        acp::PermissionOptionKind::RejectAlways => {
-                            this.icon(IconName::Close).icon_color(Color::Error)
+                    .map(|this| {
+                        if kind == acp::ToolKind::SwitchMode {
+                            this.w_full().v_flex()
+                        } else {
+                            this.h_flex()
                         }
                     })
-                    .icon_position(IconPosition::Start)
-                    .icon_size(IconSize::XSmall)
-                    .label_size(LabelSize::Small)
-                    .on_click(cx.listener({
-                        let tool_call_id = tool_call_id.clone();
-                        let option_id = option.id.clone();
-                        let option_kind = option.kind;
-                        move |this, _, window, cx| {
-                            this.authorize_tool_call(
-                                tool_call_id.clone(),
-                                option_id.clone(),
-                                option_kind,
-                                window,
-                                cx,
-                            );
-                        }
+                    .gap_0p5()
+                    .children(options.iter().map(|option| {
+                        let option_id = SharedString::from(option.id.0.clone());
+                        Button::new((option_id, entry_ix), option.name.clone())
+                            .map(|this| match option.kind {
+                                acp::PermissionOptionKind::AllowOnce => {
+                                    this.icon(IconName::Check).icon_color(Color::Success)
+                                }
+                                acp::PermissionOptionKind::AllowAlways => {
+                                    this.icon(IconName::CheckDouble).icon_color(Color::Success)
+                                }
+                                acp::PermissionOptionKind::RejectOnce => {
+                                    this.icon(IconName::Close).icon_color(Color::Error)
+                                }
+                                acp::PermissionOptionKind::RejectAlways => {
+                                    this.icon(IconName::Close).icon_color(Color::Error)
+                                }
+                            })
+                            .icon_position(IconPosition::Start)
+                            .icon_size(IconSize::XSmall)
+                            .label_size(LabelSize::Small)
+                            .on_click(cx.listener({
+                                let tool_call_id = tool_call_id.clone();
+                                let option_id = option.id.clone();
+                                let option_kind = option.kind;
+                                move |this, _, window, cx| {
+                                    this.authorize_tool_call(
+                                        tool_call_id.clone(),
+                                        option_id.clone(),
+                                        option_kind,
+                                        window,
+                                        cx,
+                                    );
+                                }
+                            }))
                     }))
-            })))
+            })
     }
 
     fn render_diff_loading(&self, cx: &Context<Self>) -> AnyElement {
@@ -3729,6 +3792,15 @@ impl AcpThreadView {
             .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
                 if let Some(profile_selector) = this.profile_selector.as_ref() {
                     profile_selector.read(cx).menu_handle().toggle(window, cx);
+                } else if let Some(mode_selector) = this.mode_selector() {
+                    mode_selector.read(cx).menu_handle().toggle(window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &CycleModeSelector, window, cx| {
+                if let Some(mode_selector) = this.mode_selector() {
+                    mode_selector.update(cx, |mode_selector, cx| {
+                        mode_selector.cycle_mode(window, cx);
+                    });
                 }
             }))
             .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
@@ -3795,6 +3867,7 @@ impl AcpThreadView {
                             .gap_1()
                             .children(self.render_token_usage(cx))
                             .children(self.profile_selector.clone())
+                            .children(self.mode_selector().cloned())
                             .children(self.model_selector.clone())
                             .child(self.render_send_button(cx)),
                     ),
