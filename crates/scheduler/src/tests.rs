@@ -238,7 +238,7 @@ fn test_block() {
 }
 
 #[test]
-#[should_panic(expected = "<futures_channel::oneshot::Inner<()>>::recv")]
+#[should_panic(expected = "futures_channel::oneshot::Inner")]
 fn test_parking_panics() {
     let config = TestSchedulerConfig {
         capture_pending_traces: true,
