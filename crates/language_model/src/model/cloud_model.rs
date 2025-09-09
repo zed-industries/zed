@@ -36,6 +36,7 @@ impl fmt::Display for ModelRequestLimitReachedError {
             Plan::ZedProTrial => {
                 "Model request limit reached. Upgrade to Zed Pro for more requests."
             }
+            Plan::ZedProV2 | Plan::ZedProTrialV2 => "Model request limit reached.",
         };
 
         write!(f, "{message}")

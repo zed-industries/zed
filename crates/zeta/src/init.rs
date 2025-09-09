@@ -86,7 +86,7 @@ fn feature_gate_predict_edits_actions(cx: &mut App) {
             if is_ai_disabled {
                 filter.hide_action_types(&zeta_all_action_types);
             } else if has_feature_flag {
-                filter.show_action_types(rate_completion_action_types.iter());
+                filter.show_action_types(&rate_completion_action_types);
             } else {
                 filter.hide_action_types(&rate_completion_action_types);
             }
@@ -98,7 +98,7 @@ fn feature_gate_predict_edits_actions(cx: &mut App) {
         if !DisableAiSettings::get_global(cx).disable_ai {
             if is_enabled {
                 CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                    filter.show_action_types(rate_completion_action_types.iter());
+                    filter.show_action_types(&rate_completion_action_types);
                 });
             } else {
                 CommandPaletteFilter::update_global(cx, |filter, _cx| {

@@ -36,10 +36,7 @@ use std::{
     pin::pin,
     sync::Arc,
 };
-use ui::{
-    Icon, IconButton, IconButtonShape, IconName, KeyBinding, Label, LabelCommon, LabelSize,
-    Toggleable, Tooltip, h_flex, prelude::*, utils::SearchInputWidth, v_flex,
-};
+use ui::{IconButtonShape, KeyBinding, Toggleable, Tooltip, prelude::*, utils::SearchInputWidth};
 use util::{ResultExt as _, paths::PathMatcher};
 use workspace::{
     DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
@@ -3201,6 +3198,7 @@ pub mod tests {
                 .read(cx)
                 .entry_for_path(&(worktree_id, "a").into(), cx)
                 .expect("no entry for /a/ directory")
+                .clone()
         });
         assert!(a_dir_entry.is_dir());
         window

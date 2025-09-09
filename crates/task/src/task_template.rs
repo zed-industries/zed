@@ -333,15 +333,16 @@ fn substitute_all_template_variables_in_str<A: AsRef<str>>(
             if let Some(substituted_variable) = variable_names.get(variable_name) {
                 substituted_variables.insert(substituted_variable.clone());
             }
-
-            let mut name = name.as_ref().to_owned();
-            // Got a task variable hit
-            if !default.is_empty() {
-                name.push_str(default);
-            }
-            return Ok(Some(name));
+            // Got a task variable hit - use the variable value, ignore default
+            return Ok(Some(name.as_ref().to_owned()));
         } else if variable_name.starts_with(ZED_VARIABLE_NAME_PREFIX) {
-            bail!("Unknown variable name: {variable_name}");
+            // Unknown ZED variable - use default if available
+            if !default.is_empty() {
+                // Strip the colon and return the default value
+                return Ok(Some(default[1..].to_owned()));
+            } else {
+                bail!("Unknown variable name: {variable_name}");
+            }
         }
         // This is an unknown variable.
         // We should not error out, as they may come from user environment (e.g. $PATH). That means that the variable substitution might not be perfect.
@@ -890,6 +891,83 @@ mod tests {
         assert_eq!(
             resolved.env["PROJECT_ENV_WILL_BE_OVERWRITTEN"],
             "overwritten"
+        );
+    }
+
+    #[test]
+    fn test_variable_default_values() {
+        let task_with_defaults = TaskTemplate {
+            label: "test with defaults".to_string(),
+            command: format!(
+                "echo ${{{}}}",
+                VariableName::File.to_string() + ":fallback.txt"
+            ),
+            args: vec![
+                "${ZED_MISSING_VAR:default_value}".to_string(),
+                format!("${{{}}}", VariableName::Row.to_string() + ":42"),
+            ],
+            ..TaskTemplate::default()
+        };
+
+        // Test 1: When ZED_FILE exists, should use actual value and ignore default
+        let context_with_file = TaskContext {
+            cwd: None,
+            task_variables: TaskVariables::from_iter(vec![
+                (VariableName::File, "actual_file.rs".to_string()),
+                (VariableName::Row, "123".to_string()),
+            ]),
+            project_env: HashMap::default(),
+        };
+
+        let resolved = task_with_defaults
+            .resolve_task(TEST_ID_BASE, &context_with_file)
+            .expect("Should resolve task with existing variables");
+
+        assert_eq!(
+            resolved.resolved.command.unwrap(),
+            "echo actual_file.rs",
+            "Should use actual ZED_FILE value, not default"
+        );
+        assert_eq!(
+            resolved.resolved.args,
+            vec!["default_value", "123"],
+            "Should use default for missing var, actual value for existing var"
+        );
+
+        // Test 2: When ZED_FILE doesn't exist, should use default value
+        let context_without_file = TaskContext {
+            cwd: None,
+            task_variables: TaskVariables::from_iter(vec![(VariableName::Row, "456".to_string())]),
+            project_env: HashMap::default(),
+        };
+
+        let resolved = task_with_defaults
+            .resolve_task(TEST_ID_BASE, &context_without_file)
+            .expect("Should resolve task using default values");
+
+        assert_eq!(
+            resolved.resolved.command.unwrap(),
+            "echo fallback.txt",
+            "Should use default value when ZED_FILE is missing"
+        );
+        assert_eq!(
+            resolved.resolved.args,
+            vec!["default_value", "456"],
+            "Should use defaults for missing vars"
+        );
+
+        // Test 3: Missing ZED variable without default should fail
+        let task_no_default = TaskTemplate {
+            label: "test no default".to_string(),
+            command: "${ZED_MISSING_NO_DEFAULT}".to_string(),
+            ..TaskTemplate::default()
+        };
+
+        assert!(
+            task_no_default
+                .resolve_task(TEST_ID_BASE, &TaskContext::default())
+                .is_none(),
+            "Should fail when ZED variable has no default and doesn't exist"
         );
     }
 }

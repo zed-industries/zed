@@ -1,59 +1,20 @@
-use language_models::provider::anthropic::AnthropicLanguageModelProvider;
-use settings::SettingsStore;
 use std::path::Path;
 use std::rc::Rc;
 use std::{any::Any, path::PathBuf};
 
-use anyhow::Result;
-use gpui::{App, AppContext as _, SharedString, Task};
+use anyhow::{Context as _, Result};
+use gpui::{App, SharedString, Task};
+use project::agent_server_store::CLAUDE_CODE_NAME;
 
-use crate::{AgentServer, AgentServerDelegate, AllAgentServersSettings};
+use crate::{AgentServer, AgentServerDelegate};
 use acp_thread::AgentConnection;
 
 #[derive(Clone)]
 pub struct ClaudeCode;
 
-pub struct ClaudeCodeLoginCommand {
+pub struct AgentServerLoginCommand {
     pub path: PathBuf,
     pub arguments: Vec<String>,
-}
-
-impl ClaudeCode {
-    const BINARY_NAME: &'static str = "claude-code-acp";
-    const PACKAGE_NAME: &'static str = "@zed-industries/claude-code-acp";
-
-    pub fn login_command(
-        delegate: AgentServerDelegate,
-        cx: &mut App,
-    ) -> Task<Result<ClaudeCodeLoginCommand>> {
-        let settings = cx.read_global(|settings: &SettingsStore, _| {
-            settings.get::<AllAgentServersSettings>(None).claude.clone()
-        });
-
-        cx.spawn(async move |cx| {
-            let mut command = if let Some(settings) = settings {
-                settings.command
-            } else {
-                cx.update(|cx| {
-                    delegate.get_or_npm_install_builtin_agent(
-                        Self::BINARY_NAME.into(),
-                        Self::PACKAGE_NAME.into(),
-                        "node_modules/@anthropic-ai/claude-code/cli.js".into(),
-                        true,
-                        Some("0.2.5".parse().unwrap()),
-                        cx,
-                    )
-                })?
-                .await?
-            };
-            command.args.push("/login".into());
-
-            Ok(ClaudeCodeLoginCommand {
-                path: command.path,
-                arguments: command.args,
-            })
-        })
-    }
 }
 
 impl AgentServer for ClaudeCode {
@@ -71,16 +32,14 @@ impl AgentServer for ClaudeCode {
 
     fn connect(
         &self,
-        root_dir: &Path,
+        root_dir: Option<&Path>,
         delegate: AgentServerDelegate,
         cx: &mut App,
-    ) -> Task<Result<Rc<dyn AgentConnection>>> {
-        let root_dir = root_dir.to_path_buf();
-        let fs = delegate.project().read(cx).fs().clone();
-        let server_name = self.name();
-        let settings = cx.read_global(|settings: &SettingsStore, _| {
-            settings.get::<AllAgentServersSettings>(None).claude.clone()
-        });
+    ) -> Task<Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
+        let name = self.name();
+        let root_dir = root_dir.map(|root_dir| root_dir.to_string_lossy().to_string());
+        let is_remote = delegate.project.read(cx).is_via_remote_server();
+        let store = delegate.store.downgrade();
 
         // Get the project environment variables for the root directory
         let project_env = delegate.project().update(cx, |project, cx| {
@@ -92,54 +51,23 @@ impl AgentServer for ClaudeCode {
         });
 
         cx.spawn(async move |cx| {
-            let mut command = if let Some(settings) = settings {
-                settings.command
-            } else {
-                cx.update(|cx| {
-                    delegate.get_or_npm_install_builtin_agent(
-                        Self::BINARY_NAME.into(),
-                        Self::PACKAGE_NAME.into(),
-                        format!("node_modules/{}/dist/index.js", Self::PACKAGE_NAME).into(),
-                        true,
-                        None,
-                        cx,
-                    )
-                })?
-                .await?
-            };
-
-            // Merge project environment variables (from .env files, etc.)
-            if let Some(project_env) = project_env
-                && let Some(env) = dbg!(project_env.await)
-            {
-                if let Some(command_env) = &mut command.env {
-                    command_env.extend(
-                        env.iter()
-                            .map(|(key, val)| dbg!((key.clone(), val.clone()))),
-                    );
-                }
-            }
-
-            // Add the API key if available (project-specific env may override this)
-            if let Some(api_key) = cx
-                .update(AnthropicLanguageModelProvider::api_key)?
-                .await
-                .ok()
-            {
-                command
-                    .env
-                    .get_or_insert_default()
-                    .insert("ANTHROPIC_API_KEY".to_owned(), api_key.key);
-            }
-
-            let root_dir_exists = fs.is_dir(&root_dir).await;
-            anyhow::ensure!(
-                root_dir_exists,
-                "Session root {} does not exist or is not a directory",
-                root_dir.to_string_lossy()
-            );
-
-            crate::acp::connect(server_name, command.clone(), &root_dir, cx).await
+            let (command, root_dir, login) = store
+                .update(cx, |store, cx| {
+                    let agent = store
+                        .get_external_agent(&CLAUDE_CODE_NAME.into())
+                        .context("Claude Code is not registered")?;
+                    anyhow::Ok(agent.get_command(
+                        root_dir.as_deref(),
+                        Default::default(),
+                        delegate.status_tx,
+                        delegate.new_version_available,
+                        &mut cx.to_async(),
+                    ))
+                })??
+                .await?;
+            let connection =
+                crate::acp::connect(name, command, root_dir.as_ref(), is_remote, cx).await?;
+            Ok((connection, login))
         })
     }
 
