@@ -176,9 +176,18 @@ impl TestScheduler {
     }
 
     pub fn advance_clock(&self, duration: Duration) {
-        self.run();
-        self.clock.advance(duration);
-        self.run();
+        let next_now = self.clock.now() + duration;
+        loop {
+            self.run();
+            if let Some(timer) = self.state.lock().timers.first()
+                && timer.expiration <= next_now
+            {
+                self.clock.advance(timer.expiration - self.clock.now());
+            } else {
+                break;
+            }
+        }
+        self.clock.advance(next_now - self.clock.now());
     }
 
     fn park(&self, deadline: Option<Instant>) -> bool {
