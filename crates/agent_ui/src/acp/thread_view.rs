@@ -4025,16 +4025,19 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((tool_call, option)) = util::maybe!({
-            let entry = self.thread()?.read(cx).entries().last()?;
-            let AgentThreadEntry::ToolCall(tool_call) = entry else {
-                return None;
-            };
-            let ToolCallStatus::WaitingForConfirmation { options, .. } = &tool_call.status else {
-                return None;
-            };
-            let option = options.iter().find(|o| o.kind == kind)?;
-            Some((tool_call, option))
+        let Some(thread) = self.thread() else {
+            return;
+        };
+
+        let Some((tool_call, option)) = thread.read(cx).entries().iter().find_map(|entry| {
+            if let AgentThreadEntry::ToolCall(tool_call) = entry
+                && let ToolCallStatus::WaitingForConfirmation { options, .. } = &tool_call.status
+            {
+                let option = options.iter().find(|o| o.kind == kind)?;
+                Some((tool_call, option))
+            } else {
+                None
+            }
         }) else {
             return;
         };
