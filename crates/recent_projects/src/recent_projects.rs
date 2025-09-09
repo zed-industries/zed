@@ -1,4 +1,5 @@
 pub mod disconnected_overlay;
+mod p2p_connection;
 mod remote_connections;
 mod remote_servers;
 mod ssh_config;

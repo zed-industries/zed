@@ -306,6 +306,22 @@ impl RemoteClient {
         )
     }
 
+    pub fn p2p(
+        unique_identifier: ConnectionIdentifier,
+        connection_options: IrohConnectionOptions,
+        cancellation: oneshot::Receiver<()>,
+        delegate: Arc<dyn RemoteClientDelegate>,
+        cx: &mut App,
+    ) -> Task<Result<Option<Entity<Self>>>> {
+        Self::new(
+            unique_identifier,
+            RemoteConnectionOptions::Iroh(connection_options),
+            cancellation,
+            delegate,
+            cx,
+        )
+    }
+
     pub fn new(
         unique_identifier: ConnectionIdentifier,
         connection_options: RemoteConnectionOptions,

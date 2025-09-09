@@ -17,7 +17,7 @@ use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use release_channel::ReleaseChannel;
 use remote::{
     ConnectionIdentifier, IrohConnectionOptions, RemoteClient, RemoteConnectionOptions,
-    RemotePlatform, SshPortForwardOption,
+    RemotePlatform, SshPortForwardOption, ZedIrohTicket,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -32,43 +32,31 @@ use workspace::{AppState, ModalView, Workspace};
 
 #[derive(Deserialize)]
 pub struct P2pSettings {
-    pub ssh_connections: Option<Vec<P2pConnection>>,
+    pub p2p_connections: Option<Vec<P2pConnection>>,
     /// Whether to read ~/.ssh/config for ssh connection sources.
     #[serde(default = "default_true")]
     pub read_ssh_config: bool,
 }
 
 impl P2pSettings {
-    pub fn ssh_connections(&self) -> impl Iterator<Item = P2pConnection> + use<> {
-        self.ssh_connections.clone().into_iter().flatten()
+    pub fn p2p_connections(&self) -> impl Iterator<Item = P2pConnection> + use<> {
+        self.p2p_connections.clone().into_iter().flatten()
     }
 
-    pub fn fill_connection_options_from_settings(&self, options: &mut P2pConnectionOptions) {
-        for conn in self.ssh_connections() {
-            if conn.host == options.host
-                && conn.username == options.username
-                && conn.port == options.port
-            {
+    pub fn fill_connection_options_from_settings(&self, options: &mut IrohConnectionOptions) {
+        for conn in self.p2p_connections() {
+            if conn.ticket == options.ticket.to_string() {
                 options.nickname = conn.nickname;
-                options.upload_binary_over_ssh = conn.upload_binary_over_ssh.unwrap_or_default();
-                options.args = Some(conn.args);
-                options.port_forwards = conn.port_forwards;
                 break;
             }
         }
     }
 
-    pub fn connection_options_for(
-        &self,
-        host: String,
-        port: Option<u16>,
-        username: Option<String>,
-    ) -> P2pConnectionOptions {
-        let mut options = P2pConnectionOptions {
-            host,
-            port,
-            username,
-            ..Default::default()
+    pub fn connection_options_for(&self, ticket: ZedIrohTicket) -> IrohConnectionOptions {
+        let mut options = IrohConnectionOptions {
+            ticket,
+            port_forwards: None,
+            nickname: None,
         };
         self.fill_connection_options_from_settings(&mut options);
         options
@@ -77,41 +65,20 @@ impl P2pSettings {
 
 #[derive(Clone, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct P2pConnection {
-    pub host: SharedString,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub username: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub port: Option<u16>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    #[serde(default)]
-    pub args: Vec<String>,
+    pub ticket: String,
     #[serde(default)]
     pub projects: BTreeSet<SshProject>,
     /// Name to use for this server in UI.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nickname: Option<String>,
-    // By default Zed will download the binary to the host directly.
-    // If this is set to true, Zed will download the binary to your local machine,
-    // and then upload it over the SSH connection. Useful if your SSH server has
-    // limited outbound internet access.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub upload_binary_over_ssh: Option<bool>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub port_forwards: Option<Vec<SshPortForwardOption>>,
 }
 
-impl From<P2pConnection> for P2pConnectionOptions {
+impl From<P2pConnection> for IrohConnectionOptions {
     fn from(val: P2pConnection) -> Self {
-        P2pConnectionOptions {
-            host: val.host.into(),
-            username: val.username,
-            port: val.port,
-            password: None,
-            args: Some(val.args),
+        IrohConnectionOptions {
+            ticket: val.ticket.parse().expect("invalid ticket"),
+            port_forwards: Default::default(),
             nickname: val.nickname,
-            upload_binary_over_ssh: val.upload_binary_over_ssh.unwrap_or_default(),
-            port_forwards: val.port_forwards,
         }
     }
 }
@@ -542,25 +509,23 @@ impl RemoteClientDelegate {
 
 pub fn connect_p2p(
     unique_identifier: ConnectionIdentifier,
-    connection_options: P2pConnectionOptions,
+    connection_options: IrohConnectionOptions,
     ui: Entity<P2pConnectionPrompt>,
     window: &mut Window,
     cx: &mut App,
 ) -> Task<Result<Option<Entity<RemoteClient>>>> {
     let window = window.window_handle();
-    let known_password = connection_options.password.clone();
     let (tx, rx) = oneshot::channel();
     ui.update(cx, |ui, _cx| ui.set_cancellation_tx(tx));
 
-    // TODO(b5) implement remote::RemoteClient::p2p ...but we may not need the entire RemoteClient struct?
-    remote::RemoteClient::ssh(
+    remote::RemoteClient::p2p(
         unique_identifier,
         connection_options,
         rx,
         Arc::new(RemoteClientDelegate {
             window,
             ui: ui.downgrade(),
-            known_password,
+            known_password: None,
         }),
         cx,
     )
