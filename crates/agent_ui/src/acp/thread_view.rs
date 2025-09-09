@@ -1628,14 +1628,16 @@ impl AcpThreadView {
         cx.notify();
     }
 
-    fn rewind(&mut self, message_id: &UserMessageId, cx: &mut Context<Self>) {
+    fn restore_checkpoint(&mut self, message_id: &UserMessageId, cx: &mut Context<Self>) {
         let Some(thread) = self.thread() else {
             return;
         };
+
         thread
-            .update(cx, |thread, cx| thread.rewind(message_id.clone(), cx))
+            .update(cx, |thread, cx| {
+                thread.restore_checkpoint(message_id.clone(), cx);
+            })
             .detach_and_log_err(cx);
-        cx.notify();
     }
 
     fn render_entry(
@@ -1705,8 +1707,9 @@ impl AcpThreadView {
                                         .label_size(LabelSize::XSmall)
                                         .icon_color(Color::Muted)
                                         .color(Color::Muted)
+                                        .tooltip(Tooltip::text("Restores all files in the project to the content they had at this point in the conversation."))
                                         .on_click(cx.listener(move |this, _, _window, cx| {
-                                            this.rewind(&message_id, cx);
+                                            this.restore_checkpoint(&message_id, cx);
                                         }))
                                 )
                                 .child(Divider::horizontal())

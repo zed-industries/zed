@@ -1640,8 +1640,38 @@ impl AcpThread {
         cx.foreground_executor().spawn(send_task)
     }
 
+    /// Restores the git working tree to the state at the given checkpoint (if one exists)
+    pub fn restore_checkpoint(
+        &mut self,
+        id: UserMessageId,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let Some((_, message)) = self.user_message_mut(&id) else {
+            return Task::ready(Err(anyhow!("message not found")));
+        };
+
+        let checkpoint = message
+            .checkpoint
+            .as_ref()
+            .map(|c| c.git_checkpoint.clone());
+        let rewind = self.rewind(id.clone(), cx);
+        let git_store = self.project.read(cx).git_store().clone();
+
+        cx.spawn(async move |_, cx| {
+            rewind.await?;
+            if let Some(checkpoint) = checkpoint {
+                git_store
+                    .update(cx, |git, cx| git.restore_checkpoint(checkpoint, cx))?
+                    .await?;
+            }
+
+            Ok(())
+        })
+    }
+
     /// Rewinds this thread to before the entry at `index`, removing it and all
-    /// subsequent entries while reverting any changes made from that point.
+    /// subsequent entries while rejecting any action_log changes made from that point.
+    /// Unlike `restore_checkpoint`, this method does not restore from git.
     pub fn rewind(&mut self, id: UserMessageId, cx: &mut Context<Self>) -> Task<Result<()>> {
         let Some(truncate) = self.connection.truncate(&self.session_id, cx) else {
             return Task::ready(Err(anyhow!("not supported")));
@@ -2659,7 +2689,7 @@ mod tests {
                 let AgentThreadEntry::UserMessage(message) = &thread.entries[2] else {
                     panic!("unexpected entries {:?}", thread.entries)
                 };
-                thread.rewind(message.id.clone().unwrap(), cx)
+                thread.restore_checkpoint(message.id.clone().unwrap(), cx)
             })
             .await
             .unwrap();
