@@ -436,16 +436,6 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         self.0.hover(&buffer, position, cx)
     }
 
-    fn inlay_hints(
-        &self,
-        buffer: Entity<Buffer>,
-        range: Range<text::Anchor>,
-        cx: &mut App,
-    ) -> Option<Task<anyhow::Result<Vec<project::InlayHint>>>> {
-        let buffer = self.to_base(&buffer, &[range.start, range.end], cx)?;
-        self.0.inlay_hints(buffer, range, cx)
-    }
-
     fn inline_values(
         &self,
         _: Entity<Buffer>,

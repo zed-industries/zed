@@ -3597,7 +3597,6 @@ impl LspStore {
         client.add_entity_request_handler(Self::handle_apply_code_action_kind);
         client.add_entity_request_handler(Self::handle_resolve_completion_documentation);
         client.add_entity_request_handler(Self::handle_apply_code_action);
-        client.add_entity_request_handler(Self::handle_inlay_hints);
         client.add_entity_request_handler(Self::handle_get_project_symbols);
         client.add_entity_request_handler(Self::handle_resolve_inlay_hint);
         client.add_entity_request_handler(Self::handle_get_color_presentation);
@@ -6355,62 +6354,6 @@ impl LspStore {
     }
 
     pub fn inlay_hints(
-        &mut self,
-        buffer: Entity<Buffer>,
-        range: Range<Anchor>,
-        cx: &mut Context<Self>,
-    ) -> Task<anyhow::Result<Vec<InlayHint>>> {
-        let range_start = range.start;
-        let range_end = range.end;
-        let buffer_id = buffer.read(cx).remote_id().into();
-        let request = InlayHints { range };
-
-        if let Some((client, project_id)) = self.upstream_client() {
-            if !self.is_capable_for_proto_request(&buffer, &request, cx) {
-                return Task::ready(Ok(Vec::new()));
-            }
-            let proto_request = proto::InlayHints {
-                project_id,
-                buffer_id,
-                start: Some(serialize_anchor(&range_start)),
-                end: Some(serialize_anchor(&range_end)),
-                version: serialize_version(&buffer.read(cx).version()),
-            };
-            cx.spawn(async move |project, cx| {
-                let response = client
-                    .request(proto_request)
-                    .await
-                    .context("inlay hints proto request")?;
-                LspCommand::response_from_proto(
-                    request,
-                    response,
-                    project.upgrade().context("No project")?,
-                    buffer.clone(),
-                    cx.clone(),
-                )
-                .await
-                .context("inlay hints proto response conversion")
-            })
-        } else {
-            let lsp_request_task = self.request_lsp(
-                buffer.clone(),
-                LanguageServerToQuery::FirstCapable,
-                request,
-                cx,
-            );
-            cx.spawn(async move |_, cx| {
-                buffer
-                    .update(cx, |buffer, _| {
-                        buffer.wait_for_edits(vec![range_start.timestamp, range_end.timestamp])
-                    })?
-                    .await
-                    .context("waiting for inlay hint request range edits")?;
-                lsp_request_task.await.context("inlay hints LSP request")
-            })
-        }
-    }
-
-    pub fn inlay_hints_2(
         &mut self,
         invalidate_cache: bool,
         buffer: Entity<Buffer>,
@@ -9432,51 +9375,6 @@ impl LspStore {
             lsp_store.pull_workspace_diagnostics(server_id);
         })?;
         Ok(proto::Ack {})
-    }
-
-    async fn handle_inlay_hints(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::InlayHints>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::InlayHintsResponse> {
-        let sender_id = envelope.original_sender_id().unwrap_or_default();
-        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
-        let buffer = this.update(&mut cx, |this, cx| {
-            this.buffer_store.read(cx).get_existing(buffer_id)
-        })??;
-        buffer
-            .update(&mut cx, |buffer, _| {
-                buffer.wait_for_version(deserialize_version(&envelope.payload.version))
-            })?
-            .await
-            .with_context(|| format!("waiting for version for buffer {}", buffer.entity_id()))?;
-
-        let start = envelope
-            .payload
-            .start
-            .and_then(deserialize_anchor)
-            .context("missing range start")?;
-        let end = envelope
-            .payload
-            .end
-            .and_then(deserialize_anchor)
-            .context("missing range end")?;
-        let buffer_hints = this
-            .update(&mut cx, |lsp_store, cx| {
-                lsp_store.inlay_hints(buffer.clone(), start..end, cx)
-            })?
-            .await
-            .context("inlay hints fetch")?;
-
-        this.update(&mut cx, |project, cx| {
-            InlayHints::response_to_proto(
-                buffer_hints,
-                project,
-                sender_id,
-                &buffer.read(cx).version(),
-                cx,
-            )
-        })
     }
 
     async fn handle_get_color_presentation(
