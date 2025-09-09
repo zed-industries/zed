@@ -273,6 +273,7 @@ macro_rules! register_extension {
 
         #[unsafe(export_name = "init-extension")]
         pub extern "C" fn __init_extension() {
+            #[cfg(target_os = "wasi")]
             unsafe {
                 __wasilibc_cwd = std::ffi::CString::new(std::env::var("PWD").unwrap())
                     .unwrap()
