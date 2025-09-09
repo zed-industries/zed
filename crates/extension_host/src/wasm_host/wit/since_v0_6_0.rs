@@ -1023,9 +1023,11 @@ impl ExtensionImports for WasmState {
 
             self.host.fs.create_dir(&extension_work_dir).await?;
 
-            let destination_path = self
-                .host
-                .writeable_path_from_extension(&self.manifest.id, &path)?;
+            let destination_path = self.host.writeable_path_from_extension(
+                &self.manifest.id,
+                self.requires_relative_paths_for_fs,
+                &path,
+            )?;
 
             let mut response = self
                 .host
@@ -1080,9 +1082,11 @@ impl ExtensionImports for WasmState {
     }
 
     async fn make_file_executable(&mut self, path: String) -> wasmtime::Result<Result<(), String>> {
-        let path = self
-            .host
-            .writeable_path_from_extension(&self.manifest.id, Path::new(&path))?;
+        let path = self.host.writeable_path_from_extension(
+            &self.manifest.id,
+            self.requires_relative_paths_for_fs,
+            Path::new(&path),
+        )?;
 
         make_file_executable(&path)
             .await

@@ -37,12 +37,16 @@ use std::{
     sync::Arc,
 };
 use task::{DebugScenario, SpawnInTerminal, TaskTemplate, ZedDebugConfig};
+use util::paths::SanitizedPath;
 use wasmtime::{
     CacheStore, Engine, Store,
     component::{Component, ResourceTable},
 };
 use wasmtime_wasi::{self as wasi, WasiView};
 use wit::Extension;
+
+const FIRST_VERSION_TO_REQUIRE_RELATIVE_PATHS_FOR_FS: SemanticVersion =
+    SemanticVersion::new(0, 7, 0);
 
 pub struct WasmHost {
     engine: Engine,
@@ -491,6 +495,7 @@ pub struct WasmState {
     ctx: wasi::WasiCtx,
     pub host: Arc<WasmHost>,
     pub(crate) capability_granter: CapabilityGranter,
+    requires_relative_paths_for_fs: bool,
 }
 
 type MainThreadCall = Box<dyn Send + for<'a> FnOnce(&'a mut AsyncApp) -> LocalBoxFuture<'a, ()>>;
@@ -607,11 +612,14 @@ impl WasmHost {
 
             let component = Component::from_binary(&this.engine, &wasm_bytes)
                 .context("failed to compile wasm component")?;
-
+            let requires_relative_paths_for_fs =
+                zed_api_version >= FIRST_VERSION_TO_REQUIRE_RELATIVE_PATHS_FOR_FS;
             let mut store = wasmtime::Store::new(
                 &this.engine,
                 WasmState {
-                    ctx: this.build_wasi_ctx(&manifest).await?,
+                    ctx: this
+                        .build_wasi_ctx(&manifest, requires_relative_paths_for_fs)
+                        .await?,
                     manifest: manifest.clone(),
                     table: ResourceTable::new(),
                     host: this.clone(),
@@ -619,6 +627,7 @@ impl WasmHost {
                         this.granted_capabilities.clone(),
                         manifest.clone(),
                     ),
+                    requires_relative_paths_for_fs,
                 },
             );
             // Store will yield after 1 tick, and get a new deadline of 1 tick after each yield.
@@ -657,7 +666,11 @@ impl WasmHost {
         })
     }
 
-    async fn build_wasi_ctx(&self, manifest: &Arc<ExtensionManifest>) -> Result<wasi::WasiCtx> {
+    async fn build_wasi_ctx(
+        &self,
+        manifest: &Arc<ExtensionManifest>,
+        requires_relative_paths: bool,
+    ) -> Result<wasi::WasiCtx> {
         let extension_work_dir = self.work_dir.join(manifest.id.as_ref());
         self.fs
             .create_dir(&extension_work_dir)
@@ -666,23 +679,40 @@ impl WasmHost {
 
         let file_perms = wasi::FilePerms::all();
         let dir_perms = wasi::DirPerms::all();
+        let path = SanitizedPath::new(&extension_work_dir);
 
-        Ok(wasi::WasiCtxBuilder::new()
-            .inherit_stdio()
-            .preopened_dir(&extension_work_dir, ".", dir_perms, file_perms)?
-            .preopened_dir(
+        let mut ctx = wasi::WasiCtxBuilder::new();
+        ctx.inherit_stdio()
+            .env("PWD", path.to_string())
+            .env("RUST_BACKTRACE", "full");
+
+        ctx.preopened_dir(&path, ".", dir_perms, file_perms)?;
+
+        if !requires_relative_paths {
+            ctx.preopened_dir(
                 &extension_work_dir,
                 extension_work_dir.to_string_lossy(),
                 dir_perms,
                 file_perms,
-            )?
-            .env("PWD", extension_work_dir.to_string_lossy())
-            .env("RUST_BACKTRACE", "full")
-            .build())
+            )?;
+        }
+
+        Ok(ctx.build())
     }
 
-    pub fn writeable_path_from_extension(&self, id: &Arc<str>, path: &Path) -> Result<PathBuf> {
+    pub fn writeable_path_from_extension(
+        &self,
+        id: &Arc<str>,
+        require_relative_paths: bool,
+        path: &Path,
+    ) -> Result<PathBuf> {
         let extension_work_dir = self.work_dir.join(id.as_ref());
+        if require_relative_paths {
+            anyhow::ensure!(
+                path.is_relative(),
+                "extensions must use relative paths to access their work directory"
+            )
+        }
         let path = normalize_path(&extension_work_dir.join(path));
         anyhow::ensure!(
             path.starts_with(&extension_work_dir),

@@ -16,10 +16,8 @@ impl TestExtension {
     ) -> Result<String> {
         let (platform, arch) = zed::current_platform();
 
-        println!(
-            "current_dir: {}",
-            std::env::current_dir().unwrap().display()
-        );
+        let current_dir = std::env::current_dir().unwrap();
+        println!("current_dir: {}", current_dir.display());
 
         let command = match platform {
             zed::Os::Linux | zed::Os::Mac => Command::new("echo"),
@@ -52,13 +50,17 @@ impl TestExtension {
         let ext;
         let download_type;
         match platform {
-            zed::Os::Mac | zed::Os::Linux => {
+            // Uncomment this if you want to actually run this extension -
+            // the actual asset is a .zip. But the integration test is simpler
+            // if every platform uses .tar.gz.
+            //
+            // zed::Os::Windows => {
+            //     ext = "zip";
+            //     download_type = zed::DownloadedFileType::Zip;
+            // }
+            _ => {
                 ext = "tar.gz";
                 download_type = zed::DownloadedFileType::GzipTar;
-            }
-            zed::Os::Windows => {
-                ext = "zip";
-                download_type = zed::DownloadedFileType::Zip;
             }
         }
 
@@ -94,6 +96,11 @@ impl TestExtension {
 
             zed::download_file(&asset.download_url, &version_dir, download_type)
                 .map_err(|e| format!("failed to download file: {e}"))?;
+
+            zed::set_language_server_installation_status(
+                language_server_id,
+                &zed::LanguageServerInstallationStatus::None,
+            );
 
             let entries =
                 fs::read_dir(".").map_err(|e| format!("failed to list working directory {e}"))?;

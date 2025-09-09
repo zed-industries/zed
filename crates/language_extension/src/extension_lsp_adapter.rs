@@ -125,6 +125,11 @@ impl ExtensionLanguageServerProxy for LanguageServerRegistryProxy {
         language_server_id: LanguageServerName,
         status: BinaryStatus,
     ) {
+        log::debug!(
+            "updating binary status for {} to {:?}",
+            language_server_id,
+            status
+        );
         self.language_registry
             .update_lsp_binary_status(language_server_id, status);
     }

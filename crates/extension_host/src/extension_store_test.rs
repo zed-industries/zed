@@ -618,6 +618,10 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
                                     {
                                         "name": format!("gleam-{version}-aarch64-unknown-linux-musl.tar.gz"),
                                         "browser_download_url": asset_download_uri
+                                    },
+                                    {
+                                        "name": format!("gleam-{version}-x86_64-pc-windows-msvc.tar.gz"),
+                                        "browser_download_url": asset_download_uri
                                     }
                                 ]
                             }
@@ -826,7 +830,9 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     // Reload the extension, clearing its cache.
     // Start a new instance of the language server.
     extension_store
-        .update(cx, |store, cx| store.reload(Some("gleam".into()), cx))
+        .update(cx, |store, cx| {
+            store.reload(Some("test-extension".into()), cx)
+        })
         .await;
     cx.executor().run_until_parked();
     project.update(cx, |project, cx| {
