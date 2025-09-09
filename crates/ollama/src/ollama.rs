@@ -116,7 +116,6 @@ pub struct GenerateRequest {
     pub stream: bool,
     pub options: Option<GenerateOptions>,
     pub keep_alive: Option<KeepAlive>,
-    pub context: Option<Vec<i64>>,
 }
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
@@ -133,7 +132,6 @@ pub struct GenerateOptions {
 pub struct GenerateResponse {
     pub response: String,
     pub done: bool,
-    pub context: Option<Vec<i64>>,
     pub total_duration: Option<u64>,
     pub load_duration: Option<u64>,
     pub prompt_eval_count: Option<i32>,
@@ -599,7 +597,6 @@ mod tests {
                 stop: None,
             }),
             keep_alive: None,
-            context: None,
         };
 
         let json = serde_json::to_string(&request).unwrap();
@@ -848,7 +845,6 @@ mod tests {
                 stop: None,
             }),
             keep_alive: None,
-            context: None,
         };
 
         // Test with API key
@@ -879,7 +875,6 @@ mod tests {
                 stop: Some(vec!["<EOT>".to_string()]),
             }),
             keep_alive: None,
-            context: None,
         };
 
         let json = serde_json::to_string(&request).unwrap();
