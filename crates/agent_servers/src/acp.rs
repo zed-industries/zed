@@ -9,7 +9,7 @@ use futures::io::BufReader;
 use project::Project;
 use project::agent_server_store::AgentServerCommand;
 use serde::Deserialize;
-use util::ResultExt;
+use util::ResultExt as _;
 
 use std::path::PathBuf;
 use std::{any::Any, cell::RefCell};
@@ -33,6 +33,9 @@ pub struct AcpConnection {
     agent_capabilities: acp::AgentCapabilities,
     default_mode: Option<acp::SessionModeId>,
     root_dir: PathBuf,
+    // NB: Don't move this into the wait_task, since we need to ensure the process is
+    // killed on drop (setting kill_on_drop on the command seems to not always work).
+    child: smol::process::Child,
     _io_task: Task<Result<()>>,
     _wait_task: Task<Result<()>>,
     _stderr_task: Task<Result<()>>,
@@ -81,8 +84,7 @@ impl AcpConnection {
             .envs(command.env.iter().flatten())
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true);
+            .stderr(std::process::Stdio::piped());
         if !is_remote {
             child.current_dir(root_dir);
         }
@@ -122,8 +124,9 @@ impl AcpConnection {
 
         let wait_task = cx.spawn({
             let sessions = sessions.clone();
+            let status_fut = child.status();
             async move |cx| {
-                let status = child.status().await?;
+                let status = status_fut.await?;
 
                 for session in sessions.borrow().values() {
                     session
@@ -174,6 +177,7 @@ impl AcpConnection {
             _io_task: io_task,
             _wait_task: wait_task,
             _stderr_task: stderr_task,
+            child,
         })
     }
 
@@ -183,6 +187,13 @@ impl AcpConnection {
 
     pub fn root_dir(&self) -> &Path {
         &self.root_dir
+    }
+}
+
+impl Drop for AcpConnection {
+    fn drop(&mut self) {
+        // See the comment on the child field.
+        self.child.kill().log_err();
     }
 }
 
