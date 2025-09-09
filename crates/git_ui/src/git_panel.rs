@@ -90,6 +90,8 @@ actions!(
         FocusChanges,
         /// Toggles automatic co-author suggestions.
         ToggleFillCoAuthors,
+        /// Toggles sorting entries by path vs status.
+        ToggleSortByPath,
     ]
 );
 
@@ -118,6 +120,7 @@ struct GitMenuState {
     has_staged_changes: bool,
     has_unstaged_changes: bool,
     has_new_changes: bool,
+    sort_by_path: bool,
 }
 
 fn git_panel_context_menu(
@@ -158,6 +161,16 @@ fn git_panel_context_menu(
                 !state.has_new_changes,
                 "Trash Untracked Files",
                 TrashUntrackedFiles.boxed_clone(),
+            )
+            .separator()
+            .entry(
+                if state.sort_by_path {
+                    "Sort by Status"
+                } else {
+                    "Sort by Path"
+                },
+                Some(Box::new(ToggleSortByPath)),
+                move |window, cx| window.dispatch_action(Box::new(ToggleSortByPath), cx),
             )
     })
 }
@@ -2547,6 +2560,24 @@ impl GitPanel {
         cx.notify();
     }
 
+    fn toggle_sort_by_path(
+        &mut self,
+        _: &ToggleSortByPath,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let current_setting = GitPanelSettings::get_global(cx).sort_by_path;
+        if let Some(workspace) = self.workspace.upgrade() {
+            let workspace = workspace.read(cx);
+            let fs = workspace.app_state().fs.clone();
+            cx.update_global::<SettingsStore, _>(|store, _cx| {
+                store.update_settings_file::<GitPanelSettings>(fs, move |settings, _cx| {
+                    settings.sort_by_path = Some(!current_setting);
+                });
+            });
+        }
+    }
+
     fn fill_co_authors(&mut self, message: &mut String, cx: &mut Context<Self>) {
         const CO_AUTHOR_PREFIX: &str = "Co-authored-by: ";
 
@@ -3081,6 +3112,7 @@ impl GitPanel {
                         has_staged_changes,
                         has_unstaged_changes,
                         has_new_changes,
+                        sort_by_path: GitPanelSettings::get_global(cx).sort_by_path,
                     },
                     window,
                     cx,
@@ -4133,6 +4165,7 @@ impl GitPanel {
                 has_staged_changes: self.has_staged_changes(),
                 has_unstaged_changes: self.has_unstaged_changes(),
                 has_new_changes: self.new_count > 0,
+                sort_by_path: GitPanelSettings::get_global(cx).sort_by_path,
             },
             window,
             cx,
@@ -4546,6 +4579,7 @@ impl Render for GitPanel {
             .when(has_write_access && has_co_authors, |git_panel| {
                 git_panel.on_action(cx.listener(Self::toggle_fill_co_authors))
             })
+            .on_action(cx.listener(Self::toggle_sort_by_path))
             .on_hover(cx.listener(move |this, hovered, window, cx| {
                 if *hovered {
                     this.horizontal_scrollbar.show(cx);
