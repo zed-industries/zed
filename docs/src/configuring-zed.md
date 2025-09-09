@@ -326,7 +326,7 @@ Define extensions which should be installed (`true`) or never installed (`false`
 }
 ```
 
-5. SublimeText
+5. Sublime Text
 
 ```json
 {
