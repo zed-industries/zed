@@ -55,7 +55,7 @@ fn get_max_tokens(name: &str) -> u64 {
         "aya" | "codegemma" | "gemma" | "gemma2" | "llama3" | "starcoder" => 8192,
         "codellama" | "starcoder2" => 16384,
         "codestral" | "dolphin-mixtral" | "llava" | "magistral" | "mistral" | "mixstral" | "qwen2" | "qwen2.5-coder" => 32768,
-        "command-r" | "deepseek-coder-v2" | "deepseek-r1" | "deepseek-v3" | "devstral" | "gemma3" | "gpt-oss"
+        "cogito" | "command-r" | "deepseek-coder-v2" | "deepseek-r1" | "deepseek-v3" | "devstral" | "gemma3" | "gpt-oss"
         | "granite3.3" | "llama3.1" | "llama3.2" | "llama3.3" | "mistral-nemo" | "phi3" | "phi3.5" | "phi4"
         | "qwen3" | "yi-coder" => 128000,
         _ => DEFAULT_TOKENS,
