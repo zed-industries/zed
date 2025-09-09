@@ -7303,34 +7303,35 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) -> Option<()> {
         let file = File::from_dyn(buffer.read(cx).file())?;
-        let worktree_id = file.worktree_id(cx);
         let abs_path = file.as_local()?.abs_path(cx);
         let text_document = lsp::TextDocumentIdentifier {
             uri: file_path_to_lsp_url(&abs_path).log_err()?,
         };
         let local = self.as_local()?;
 
-        for server in local.language_servers_for_worktree(worktree_id) {
-            if let Some(include_text) = include_text(server.as_ref()) {
-                let text = if include_text {
-                    Some(buffer.read(cx).text())
-                } else {
-                    None
-                };
-                server
-                    .notify::<lsp::notification::DidSaveTextDocument>(
-                        &lsp::DidSaveTextDocumentParams {
-                            text_document: text_document.clone(),
-                            text,
-                        },
-                    )
-                    .ok();
-            }
-        }
-
         let language_servers = buffer.update(cx, |buffer, cx| {
             local.language_server_ids_for_buffer(buffer, cx)
         });
+        for language_server_id in &language_servers {
+            if let Some(server) = local.language_server_for_id(*language_server_id) {
+                if let Some(include_text) = include_text(server.as_ref()) {
+                    let text = if include_text {
+                        Some(buffer.read(cx).text())
+                    } else {
+                        None
+                    };
+                    server
+                        .notify::<lsp::notification::DidSaveTextDocument>(
+                            &lsp::DidSaveTextDocumentParams {
+                                text_document: text_document.clone(),
+                                text,
+                            },
+                        )
+                        .ok();
+                }
+            }
+        }
+
         for language_server_id in language_servers {
             self.simulate_disk_based_diagnostics_events_if_needed(language_server_id, cx);
         }
