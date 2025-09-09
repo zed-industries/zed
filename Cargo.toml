@@ -460,6 +460,7 @@ aws-sdk-bedrockruntime = { version = "1.80.0", features = [
 ] }
 aws-smithy-runtime-api = { version = "1.7.4", features = ["http-1x", "client"] }
 aws-smithy-types = { version = "1.3.0", features = ["http-body-1-x"] }
+backtrace = "0.3"
 base64 = "0.22"
 bincode = "1.2.1"
 bitflags = "2.6.0"
@@ -567,7 +568,6 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
 open = "5.0.0"
 ordered-float = "2.1.1"
 palette = { version = "0.7.5", default-features = false, features = ["std"] }
-parking = "2.0"
 parking_lot = "0.12.1"
 partial-json-fixer = "0.5.3"
 parse_int = "0.9"
