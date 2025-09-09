@@ -331,7 +331,7 @@
   {
     "context": "AcpThread > ModeSelector",
     "bindings": {
-      "cmd-enter": "menu::Confirm"
+      "ctrl-enter": "menu::Confirm"
     }
   },
   {
