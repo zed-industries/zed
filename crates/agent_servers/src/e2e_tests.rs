@@ -1,6 +1,6 @@
-use crate::{AgentServer, AgentServerDelegate};
 #[cfg(test)]
-use crate::{AgentServerCommand, CustomAgentServerSettings};
+use crate::BuiltinAgentServerSettings;
+use crate::{AgentServer, AgentServerDelegate};
 use acp_thread::{AcpThread, AgentThreadEntry, ToolCall, ToolCallStatus};
 use agent_client_protocol as acp;
 use futures::{FutureExt, StreamExt, channel::mpsc, select};
@@ -473,13 +473,9 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
         #[cfg(test)]
         crate::AllAgentServersSettings::override_global(
             crate::AllAgentServersSettings {
-                claude: Some(CustomAgentServerSettings {
-                    command: AgentServerCommand {
-                        path: "claude-code-acp".into(),
-                        args: vec![],
-                        env: None,
-                    },
-                    default_mode: None,
+                claude: Some(BuiltinAgentServerSettings {
+                    path: Some("claude-code-acp".into()),
+                    ..Default::default()
                 }),
                 gemini: Some(crate::gemini::tests::local_command().into()),
                 custom: collections::HashMap::default(),

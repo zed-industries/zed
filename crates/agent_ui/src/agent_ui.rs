@@ -72,10 +72,8 @@ actions!(
         ToggleOptionsMenu,
         /// Deletes the recently opened thread from history.
         DeleteRecentlyOpenThread,
-        /// Toggles the profile selector for switching between agent profiles.
+        /// Toggles the profile or mode selector for switching between agent profiles.
         ToggleProfileSelector,
-        /// Toggles the mode selector menu for switching between session modes.
-        ToggleModeSelector,
         /// Cycles through available session modes.
         CycleModeSelector,
         /// Removes all added context from the current conversation.
@@ -175,7 +173,7 @@ enum ExternalAgent {
     Custom {
         name: SharedString,
         command: AgentServerCommand,
-        default_mode: Option<String>,
+        default_mode: Option<agent_client_protocol::SessionModeId>,
     },
 }
 

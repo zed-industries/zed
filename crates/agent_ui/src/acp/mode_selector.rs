@@ -1,25 +1,39 @@
 use acp_thread::AgentSessionModes;
 use agent_client_protocol as acp;
-use gpui::{Context, Entity, WeakEntity, Window, prelude::*};
-use std::rc::Rc;
+use agent_servers::AgentServer;
+use fs::Fs;
+use gpui::{Context, Entity, FocusHandle, WeakEntity, Window, prelude::*};
+use std::{rc::Rc, sync::Arc};
 use ui::{
-    Button, ContextMenu, ContextMenuEntry, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
+    Button, ContextMenu, ContextMenuEntry, KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip,
+    prelude::*,
 };
 
-use crate::ToggleModeSelector;
+use crate::{CycleModeSelector, ToggleProfileSelector};
 
 pub struct ModeSelector {
     connection: Rc<dyn AgentSessionModes>,
+    agent_server: Rc<dyn AgentServer>,
     menu_handle: PopoverMenuHandle<ContextMenu>,
+    focus_handle: FocusHandle,
+    fs: Arc<dyn Fs>,
     setting_mode: bool,
 }
 
 impl ModeSelector {
-    pub fn new(session_modes: Rc<dyn AgentSessionModes>) -> Self {
+    pub fn new(
+        session_modes: Rc<dyn AgentSessionModes>,
+        agent_server: Rc<dyn AgentServer>,
+        fs: Arc<dyn Fs>,
+        focus_handle: FocusHandle,
+    ) -> Self {
         Self {
             connection: session_modes,
+            agent_server,
             menu_handle: PopoverMenuHandle::default(),
+            fs,
             setting_mode: false,
+            focus_handle,
         }
     }
 
@@ -65,13 +79,14 @@ impl ModeSelector {
     ) -> Entity<ContextMenu> {
         let weak_self = cx.weak_entity();
 
-        ContextMenu::build(window, cx, move |mut menu, _window, _cx| {
+        ContextMenu::build(window, cx, move |mut menu, _window, cx| {
             let all_modes = self.connection.all_modes();
             let current_mode = self.connection.current_mode();
 
             for mode in all_modes {
+                let selected = mode.id == current_mode;
                 let entry = ContextMenuEntry::new(mode.name.clone())
-                    .toggleable(IconPosition::End, mode.id == current_mode);
+                    .toggleable(IconPosition::End, selected);
 
                 let entry = if let Some(description) = &mode.description {
                     entry.documentation_aside(ui::DocumentationSide::Left, {
@@ -95,7 +110,36 @@ impl ModeSelector {
                 }));
             }
 
-            menu
+            let is_default = self.agent_server.default_mode(cx).as_ref() == Some(&current_mode);
+            menu.separator().item(
+                ContextMenuEntry::new("Set as default")
+                    .toggleable(IconPosition::End, is_default)
+                    .handler({
+                        let weak_self = weak_self.clone();
+                        let current_mode = current_mode.clone();
+                        move |window, cx| {
+                            // todo!
+                            let weak_self = weak_self.clone();
+                            let current_mode = current_mode.clone();
+                            window.defer(cx, move |window, cx| {
+                                weak_self
+                                    .update(cx, |this, cx| {
+                                        this.agent_server.set_default_mode(
+                                            if is_default {
+                                                None
+                                            } else {
+                                                Some(current_mode.clone())
+                                            },
+                                            this.fs.clone(),
+                                            cx,
+                                        );
+                                        this.menu_handle.show(window, cx);
+                                    })
+                                    .ok();
+                            });
+                        }
+                    }),
+            )
         })
     }
 }
@@ -112,6 +156,7 @@ impl Render for ModeSelector {
             .unwrap_or_else(|| "Unknown".into());
 
         let this = cx.entity();
+
         let trigger_button = Button::new("mode-selector-trigger", current_mode_name)
             .label_size(LabelSize::Small)
             .style(ButtonStyle::Subtle)
@@ -123,10 +168,45 @@ impl Render for ModeSelector {
             .disabled(self.setting_mode);
 
         PopoverMenu::new("mode-selector")
-            .trigger_with_tooltip(trigger_button, move |window, cx| {
-                Tooltip::for_action("Toggle Mode Menu", &ToggleModeSelector, window, cx)
-            })
-            .anchor(gpui::Corner::BottomLeft)
+            .trigger_with_tooltip(
+                trigger_button,
+                Tooltip::element({
+                    let focus_handle = self.focus_handle.clone();
+                    move |window, cx| {
+                        v_flex()
+                            .gap_1()
+                            .child(
+                                h_flex()
+                                    .pb_1()
+                                    .gap_2()
+                                    .justify_between()
+                                    .border_b_1()
+                                    .border_color(cx.theme().colors().border_variant)
+                                    .child(Label::new("Cycle Through Modes"))
+                                    .children(KeyBinding::for_action_in(
+                                        &CycleModeSelector,
+                                        &focus_handle,
+                                        window,
+                                        cx,
+                                    )),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .justify_between()
+                                    .child(Label::new("Toggle Mode Menu"))
+                                    .children(KeyBinding::for_action_in(
+                                        &ToggleProfileSelector,
+                                        &focus_handle,
+                                        window,
+                                        cx,
+                                    )),
+                            )
+                            .into_any()
+                    }
+                }),
+            )
+            .anchor(gpui::Corner::BottomRight)
             .with_handle(self.menu_handle.clone())
             .menu(move |window, cx| {
                 Some(this.update(cx, |this, cx| this.build_context_menu(window, cx)))

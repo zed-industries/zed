@@ -2,7 +2,7 @@ use crate::AgentServerCommand;
 use acp_thread::AgentConnection;
 use acp_tools::AcpConnectionRegistry;
 use action_log::ActionLog;
-use agent_client_protocol::{self as acp, Agent as _, ErrorCode, SessionModeId};
+use agent_client_protocol::{self as acp, Agent as _, ErrorCode};
 use anyhow::anyhow;
 use collections::HashMap;
 use futures::AsyncBufReadExt as _;
@@ -46,7 +46,7 @@ pub async fn connect(
     server_name: SharedString,
     command: AgentServerCommand,
     root_dir: &Path,
-    default_mode: Option<String>,
+    default_mode: Option<acp::SessionModeId>,
     cx: &mut AsyncApp,
 ) -> Result<Rc<dyn AgentConnection>> {
     let conn =
@@ -61,7 +61,7 @@ impl AcpConnection {
         server_name: SharedString,
         command: AgentServerCommand,
         root_dir: &Path,
-        default_mode: Option<String>,
+        default_mode: Option<acp::SessionModeId>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
         let mut child = util::command::new_smol_command(command.path)
@@ -155,7 +155,7 @@ impl AcpConnection {
             server_name,
             sessions,
             agent_capabilities: response.agent_capabilities,
-            default_mode: default_mode.map(|mode| SessionModeId(mode.into())),
+            default_mode,
             _io_task: io_task,
             _wait_task: wait_task,
             _stderr_task: stderr_task,

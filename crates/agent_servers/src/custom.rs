@@ -1,5 +1,6 @@
 use crate::{AgentServerCommand, AgentServerDelegate};
 use acp_thread::AgentConnection;
+use agent_client_protocol as acp;
 use anyhow::Result;
 use gpui::{App, SharedString, Task};
 use std::{path::Path, rc::Rc};
@@ -9,14 +10,14 @@ use ui::IconName;
 pub struct CustomAgentServer {
     name: SharedString,
     command: AgentServerCommand,
-    default_mode: Option<String>,
+    default_mode: Option<acp::SessionModeId>,
 }
 
 impl CustomAgentServer {
     pub fn new(
         name: SharedString,
         command: AgentServerCommand,
-        default_mode: Option<String>,
+        default_mode: Option<acp::SessionModeId>,
     ) -> Self {
         Self {
             name,

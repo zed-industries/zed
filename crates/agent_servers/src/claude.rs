@@ -1,6 +1,9 @@
-use settings::SettingsStore;
+use agent_client_protocol as acp;
+use fs::Fs;
+use settings::{SettingsStore, update_settings_file};
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::{any::Any, path::PathBuf};
 
 use anyhow::Result;
@@ -30,21 +33,22 @@ impl ClaudeCode {
         });
 
         cx.spawn(async move |cx| {
-            let mut command = if let Some(settings) = settings {
-                settings.command
-            } else {
-                cx.update(|cx| {
-                    delegate.get_or_npm_install_builtin_agent(
-                        Self::BINARY_NAME.into(),
-                        Self::PACKAGE_NAME.into(),
-                        "node_modules/@anthropic-ai/claude-code/cli.js".into(),
-                        true,
-                        Some("0.2.5".parse().unwrap()),
-                        cx,
-                    )
-                })?
-                .await?
-            };
+            let mut command =
+                if let Some(custom_command) = settings.and_then(|s| s.custom_command()) {
+                    custom_command
+                } else {
+                    cx.update(|cx| {
+                        delegate.get_or_npm_install_builtin_agent(
+                            Self::BINARY_NAME.into(),
+                            Self::PACKAGE_NAME.into(),
+                            "node_modules/@anthropic-ai/claude-code/cli.js".into(),
+                            true,
+                            Some("0.2.5".parse().unwrap()),
+                            cx,
+                        )
+                    })?
+                    .await?
+                };
             command.args.push("/login".into());
 
             Ok(ClaudeCodeLoginCommand {
@@ -68,6 +72,20 @@ impl AgentServer for ClaudeCode {
         ui::IconName::AiClaude
     }
 
+    fn default_mode(&self, cx: &mut App) -> Option<acp::SessionModeId> {
+        let settings = cx.read_global(|settings: &SettingsStore, _| {
+            settings.get::<AllAgentServersSettings>(None).claude.clone()
+        });
+
+        settings.as_ref().and_then(|s| s.default_mode.clone())
+    }
+
+    fn set_default_mode(&self, mode_id: Option<acp::SessionModeId>, fs: Arc<dyn Fs>, cx: &mut App) {
+        update_settings_file::<AllAgentServersSettings>(fs, cx, |settings, _| {
+            settings.claude.get_or_insert_default().default_mode = mode_id;
+        });
+    }
+
     fn connect(
         &self,
         root_dir: &Path,
@@ -83,21 +101,22 @@ impl AgentServer for ClaudeCode {
 
         cx.spawn(async move |cx| {
             let default_mode = settings.as_ref().and_then(|s| s.default_mode.clone());
-            let mut command = if let Some(settings) = settings {
-                settings.command
-            } else {
-                cx.update(|cx| {
-                    delegate.get_or_npm_install_builtin_agent(
-                        Self::BINARY_NAME.into(),
-                        Self::PACKAGE_NAME.into(),
-                        format!("node_modules/{}/dist/index.js", Self::PACKAGE_NAME).into(),
-                        true,
-                        None,
-                        cx,
-                    )
-                })?
-                .await?
-            };
+            let mut command =
+                if let Some(custom_command) = settings.and_then(|s| s.custom_command()) {
+                    custom_command
+                } else {
+                    cx.update(|cx| {
+                        delegate.get_or_npm_install_builtin_agent(
+                            Self::BINARY_NAME.into(),
+                            Self::PACKAGE_NAME.into(),
+                            format!("node_modules/{}/dist/index.js", Self::PACKAGE_NAME).into(),
+                            true,
+                            None,
+                            cx,
+                        )
+                    })?
+                    .await?
+                };
 
             command
                 .env

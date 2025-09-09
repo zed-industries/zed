@@ -335,7 +335,6 @@
       "shift-ctrl-r": "agent::OpenAgentDiff",
       "ctrl-shift-y": "agent::KeepAll",
       "ctrl-shift-n": "agent::RejectAll",
-      "shift-tab": "agent::CycleModeSelector"
     }
   },
   {

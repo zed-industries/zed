@@ -263,7 +263,7 @@ pub enum AgentType {
     Custom {
         name: SharedString,
         command: AgentServerCommand,
-        default_mode: Option<String>,
+        default_mode: Option<agent_client_protocol::SessionModeId>,
     },
 }
 

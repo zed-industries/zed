@@ -69,7 +69,7 @@ use crate::ui::{
 use crate::{
     AgentDiffPane, AgentPanel, ContinueThread, ContinueWithBurnMode, CycleModeSelector,
     ExpandMessageEditor, Follow, KeepAll, OpenAgentDiff, OpenHistory, RejectAll, ToggleBurnMode,
-    ToggleModeSelector, ToggleProfileSelector,
+    ToggleProfileSelector,
 };
 
 pub const MIN_EDITOR_LINES: usize = 4;
@@ -273,7 +273,6 @@ pub struct AcpThreadView {
     focus_handle: FocusHandle,
     model_selector: Option<Entity<AcpModelSelectorPopover>>,
     profile_selector: Option<Entity<ProfileSelector>>,
-    mode_selector: Option<Entity<ModeSelector>>,
     notifications: Vec<WindowHandle<AgentNotification>>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
     thread_retry_status: Option<RetryStatus>,
@@ -302,6 +301,7 @@ enum ThreadState {
     Ready {
         thread: Entity<AcpThread>,
         title_editor: Option<Entity<Editor>>,
+        mode_selector: Option<Entity<ModeSelector>>,
         _subscriptions: Vec<Subscription>,
     },
     LoadError(LoadError),
@@ -399,7 +399,7 @@ impl AcpThreadView {
             message_editor,
             model_selector: None,
             profile_selector: None,
-            mode_selector: None,
+
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
             list_state: list_state.clone(),
@@ -585,11 +585,22 @@ impl AcpThreadView {
                                     })
                                 });
 
-                        this.mode_selector = thread
+                        let mode_selector = thread
                             .read(cx)
                             .connection()
                             .session_modes(thread.read(cx).session_id(), cx)
-                            .map(|session_modes| cx.new(|_cx| ModeSelector::new(session_modes)));
+                            .map(|session_modes| {
+                                let fs = this.project.read(cx).fs().clone();
+                                let focus_handle = this.focus_handle(cx);
+                                cx.new(|_cx| {
+                                    ModeSelector::new(
+                                        session_modes,
+                                        this.agent.clone(),
+                                        fs,
+                                        focus_handle,
+                                    )
+                                })
+                            });
 
                         let mut subscriptions = vec![
                             cx.subscribe_in(&thread, window, Self::handle_thread_event),
@@ -616,6 +627,7 @@ impl AcpThreadView {
                         this.thread_state = ThreadState::Ready {
                             thread,
                             title_editor,
+                            mode_selector,
                             _subscriptions: subscriptions,
                         };
                         this.message_editor.focus_handle(cx).focus(window);
@@ -762,6 +774,15 @@ impl AcpThreadView {
     pub fn thread(&self) -> Option<&Entity<AcpThread>> {
         match &self.thread_state {
             ThreadState::Ready { thread, .. } => Some(thread),
+            ThreadState::Unauthenticated { .. }
+            | ThreadState::Loading { .. }
+            | ThreadState::LoadError { .. } => None,
+        }
+    }
+
+    pub fn mode_selector(&self) -> Option<&Entity<ModeSelector>> {
+        match &self.thread_state {
+            ThreadState::Ready { mode_selector, .. } => mode_selector.as_ref(),
             ThreadState::Unauthenticated { .. }
             | ThreadState::Loading { .. }
             | ThreadState::LoadError { .. } => None,
@@ -1362,7 +1383,7 @@ impl AcpThreadView {
                 self.available_commands.replace(available_commands);
             }
             AcpThreadEvent::ModeUpdated(mode) => {
-                if let Some(mode_selector) = self.mode_selector.as_ref() {
+                if let Some(mode_selector) = self.mode_selector() {
                     mode_selector.update(cx, |mode_selector, cx| {
                         mode_selector.set_mode(mode.clone(), cx);
                     });
@@ -3753,15 +3774,12 @@ impl AcpThreadView {
             .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
                 if let Some(profile_selector) = this.profile_selector.as_ref() {
                     profile_selector.read(cx).menu_handle().toggle(window, cx);
-                }
-            }))
-            .on_action(cx.listener(|this, _: &ToggleModeSelector, window, cx| {
-                if let Some(mode_selector) = this.mode_selector.as_ref() {
+                } else if let Some(mode_selector) = this.mode_selector() {
                     mode_selector.read(cx).menu_handle().toggle(window, cx);
                 }
             }))
             .on_action(cx.listener(|this, _: &CycleModeSelector, window, cx| {
-                if let Some(mode_selector) = this.mode_selector.as_ref() {
+                if let Some(mode_selector) = this.mode_selector() {
                     mode_selector.update(cx, |mode_selector, cx| {
                         mode_selector.cycle_mode(window, cx);
                     });
@@ -3831,7 +3849,7 @@ impl AcpThreadView {
                             .gap_1()
                             .children(self.render_token_usage(cx))
                             .children(self.profile_selector.clone())
-                            .children(self.mode_selector.clone())
+                            .children(self.mode_selector().cloned())
                             .children(self.model_selector.clone())
                             .child(self.render_send_button(cx)),
                     ),
