@@ -514,10 +514,24 @@ impl acp::Client for ClientDelegate {
         &self,
         notification: acp::SessionNotification,
     ) -> Result<(), acp::Error> {
-        self.session_thread(&notification.session_id)?
-            .update(&mut self.cx.clone(), |thread, cx| {
-                thread.handle_session_update(notification.update, cx)
-            })??;
+        let sessions = self.sessions.borrow();
+        let session = sessions
+            .get(&notification.session_id)
+            .context("Failed to get session")?;
+
+        if let acp::SessionUpdate::CurrentModeUpdate { current_mode_id } = &notification.update {
+            if let Some(session_modes) = &session.session_modes {
+                session_modes.borrow_mut().current_mode_id = current_mode_id.clone();
+            } else {
+                log::error!(
+                    "Got a `CurrentModeUpdate` notification, but they agent didn't specify `modes` during setting setup."
+                );
+            }
+        }
+
+        session.thread.update(&mut self.cx.clone(), |thread, cx| {
+            thread.handle_session_update(notification.update, cx)
+        })??;
 
         Ok(())
     }

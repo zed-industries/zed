@@ -1382,14 +1382,9 @@ impl AcpThreadView {
 
                 self.available_commands.replace(available_commands);
             }
-            AcpThreadEvent::ModeUpdated(mode) => {
-                if let Some(mode_selector) = self.mode_selector() {
-                    mode_selector.update(cx, |mode_selector, cx| {
-                        mode_selector.set_mode(mode.clone(), cx);
-                    });
-                } else {
-                    debug_panic!("Got an update but no modes were provided");
-                }
+            AcpThreadEvent::ModeUpdated(_mode) => {
+                // The connection keeps track of the mode
+                cx.notify();
             }
         }
         cx.notify();
