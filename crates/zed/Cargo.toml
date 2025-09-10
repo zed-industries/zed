@@ -170,6 +170,9 @@ zed_env_vars.workspace = true
 zeta.workspace = true
 zlog.workspace = true
 zlog_settings.workspace = true
+futures-util = "0.3.31"
+aec-rs = "1.0.0"
+webrtc-audio-processing = "0.4.0"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true

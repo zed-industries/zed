@@ -1,10 +1,13 @@
 use crate::AcpThread;
 use agent_client_protocol::{self as acp};
 use anyhow::Result;
+
 use collections::IndexMap;
+
 use gpui::{Entity, SharedString, Task};
 use language_model::LanguageModelProviderId;
 use project::Project;
+
 use serde::{Deserialize, Serialize};
 use std::{any::Any, error::Error, fmt, path::Path, rc::Rc, sync::Arc};
 use ui::{App, IconName};
@@ -85,6 +88,10 @@ pub trait AgentConnection {
     }
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any>;
+
+    fn is_realtime(&self, _session_id: &acp::SessionId, _cx: &mut App) -> bool {
+        false
+    }
 }
 
 impl dyn AgentConnection {

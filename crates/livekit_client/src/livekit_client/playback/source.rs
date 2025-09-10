@@ -9,7 +9,12 @@ fn frame_to_samplesbuffer(frame: AudioFrame) -> SamplesBuffer {
     let samples = frame.data.iter().copied();
     let samples = SampleTypeConverter::<_, _>::new(samples);
     let samples: Vec<f32> = samples.collect();
-    SamplesBuffer::new(frame.num_channels as u16, frame.sample_rate, samples)
+
+    SamplesBuffer::new(
+        rodio::ChannelCount::new(frame.num_channels as u16).expect("value must be nonzero"),
+        rodio::SampleRate::new(frame.sample_rate).expect("value must be nonzero"),
+        samples,
+    )
 }
 
 pub struct LiveKitStream {
