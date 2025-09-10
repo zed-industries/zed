@@ -209,9 +209,19 @@ exclude = ["*"]
 
 ## Debugging
 
-Zed supports zero-configuration debugging of Python module entry points and pytest tests.
-Run {#action debugger::Start} ({#kb debugger::Start}) to see a contextual list for the current project.
-For greater control, you can add debug configurations to `.zed/debug.json`. See the examples below.
+Zed supports Python debugging through the `debugpy` adapter. You can start with no configuration or define custom launch profiles in `.zed/debug.json`.
+
+### Start Debugging with No Setup
+Zed can automatically detect debuggable Python entry points. Press F4 (or run debugger: start from the Command Palette) to see available options for your current project.
+This works for:
+- Python scripts
+- Modules
+-  pytest tests
+
+Zed uses `debugpy` under the hood, but no manual adapter configuration is required.
+
+### Define Custom Debug Configurations
+For reusable setups, create a `.zed/debug.json` file in your project root. This gives you more control over how Zed runs and debugs your code.
 
 ### Debug Active File
 
@@ -225,10 +235,11 @@ For greater control, you can add debug configurations to `.zed/debug.json`. See 
   }
 ]
 ```
+This runs the file currently open in the editor.
 
-### Flask App
+### Debug a Flask App
 
-For a common Flask Application with a file structure similar to the following:
+For projects using Flask, you can define a full launch configuration:
 
 ```
 .venv/
@@ -270,3 +281,34 @@ requirements.txt
   }
 ]
 ```
+These can be combined to tailor the experience for web servers, test runners, or custom scripts.
+
+## Troubleshoot and Maintain a Productive Python Setup
+Zed is designed to minimize configuration overhead, but occasional issues can still arise—especially around environments, language servers, or tooling. Here's how to keep your Python setup working smoothly.
+
+### Resolve Language Server Startup Issues
+If a language server isn't responding or features like diagnostics or autocomplete aren't available:
+- Confirm the language server is installed and available in your environment (e.g., `pyright` or `pylsp`).
+- Verify your `settings.json` or `pyrightconfig.json` is syntactically correct.
+- Restart Zed to reinitialize language server connections.
+- If using a virtual environment, check that the language server is installed inside that environment.
+
+### Diagnose Environment Detection Failures
+Zed will attempt to detect and activate a virtual environment in its terminal using `detect_venv`. If this fails:
+- Confirm your environment is located at `.venv/` in the project root.
+- Ensure the environment was created using `python3 -m venv .venv`.
+- Manually activate the environment in the terminal to verify it's working.
+- If using Pyright, ensure venvPath and venv are correctly set in `pyrightconfig.json`.
+
+### Keep Zed and Language Tools Up to Date
+Outdated tools can cause silent failures or missing features. Periodically:
+- Update Zed from [zed.dev](https://zed.dev) or using the in-app updater.
+- Run `pip install --upgrade` for tools like `pyright`, `pylsp`, `flake8`, etc.
+- Recreate your virtual environment if dependencies become inconsistent or corrupted.
+
+### Review Logs and Terminal Output
+If something breaks and it's unclear why:
+- Check the Zed terminal for environment activation logs or Python errors.
+- Use verbose flags (e.g., --verbose for some CLI tools) to get more detailed output.
+- Validate that paths and environment variables are what you expect.
+- Taking a few minutes to inspect the output can often reveal the root cause faster than reconfiguring settings blindly.
