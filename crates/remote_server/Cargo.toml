@@ -24,8 +24,6 @@ test-support = ["fs/test-support"]
 [dependencies]
 anyhow.workspace = true
 askpass.workspace = true
-backtrace = "0.3"
-chrono.workspace = true
 clap.workspace = true
 client.workspace = true
 dap_adapters.workspace = true
@@ -61,7 +59,6 @@ settings.workspace = true
 shellexpand.workspace = true
 smol.workspace = true
 sysinfo.workspace = true
-telemetry_events.workspace = true
 util.workspace = true
 watch.workspace = true
 worktree.workspace = true

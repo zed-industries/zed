@@ -1,8 +1,8 @@
 use crate::HeadlessProject;
 use crate::headless_project::HeadlessAppState;
 use anyhow::{Context as _, Result, anyhow};
-use chrono::Utc;
-use client::{ProxySettings, telemetry};
+use client::ProxySettings;
+use util::ResultExt;
 
 use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
@@ -31,24 +31,21 @@ use rpc::{AnyProtoClient, TypedEnvelope};
 use settings::{Settings, SettingsStore, watch_config_file};
 use smol::channel::{Receiver, Sender};
 use smol::io::AsyncReadExt;
-
 use smol::Async;
 use smol::{net::unix::UnixListener, stream::StreamExt as _};
-use std::ffi::OsStr;
-use std::ops::ControlFlow;
-use std::process::ExitStatus;
-use std::str::FromStr;
-use std::sync::LazyLock;
-use std::{env, thread};
+use thiserror::Error;
 use std::{
+    env,
+    ffi::OsStr,
+    fs::File,
     io::Write,
     mem,
+    ops::ControlFlow,
     path::{Path, PathBuf},
-    sync::Arc,
+    process::ExitStatus,
+    str::FromStr,
+    sync::{Arc, LazyLock},
 };
-use telemetry_events::LocationData;
-use thiserror::Error;
-use util::ResultExt;
 
 pub static VERSION: LazyLock<&str> = LazyLock::new(|| match *RELEASE_CHANNEL {
     ReleaseChannel::Stable | ReleaseChannel::Preview => env!("ZED_PKG_VERSION"),
@@ -71,12 +68,12 @@ fn init_logging_proxy() {
 
 fn init_logging_server(log_file_path: PathBuf) -> Result<Receiver<Vec<u8>>> {
     struct MultiWrite {
-        file: std::fs::File,
+        file: File,
         channel: Sender<Vec<u8>>,
         buffer: Vec<u8>,
     }
 
-    impl std::io::Write for MultiWrite {
+    impl Write for MultiWrite {
         fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
             let written = self.file.write(buf)?;
             self.buffer.extend_from_slice(&buf[..written]);
@@ -168,10 +165,7 @@ fn handle_crash_files_requests(project: &Entity<HeadlessProject>, client: &AnyPr
                 }
             }
 
-            anyhow::Ok(proto::GetCrashFilesResponse {
-                crashes,
-                legacy_panics,
-            })
+            anyhow::Ok(proto::GetCrashFilesResponse { crashes })
         },
     );
 }
@@ -353,7 +347,7 @@ pub fn execute_run(
     let id = std::process::id().to_string();
     app.background_executor()
         .spawn(crashes::init(crashes::InitCrashHandler {
-            session_id: id.clone(),
+            session_id: id,
             zed_version: VERSION.to_owned(),
             release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
             commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
@@ -545,7 +539,7 @@ pub(crate) fn execute_proxy(
 
     let id = std::process::id().to_string();
     smol::spawn(crashes::init(crashes::InitCrashHandler {
-        session_id: id.clone(),
+        session_id: id,
         zed_version: VERSION.to_owned(),
         release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
         commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
