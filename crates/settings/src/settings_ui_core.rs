@@ -109,7 +109,7 @@ impl<T: serde::Serialize> SettingsValue<T> {
 #[derive(Clone)]
 pub struct SettingsUiItemUnion {
     /// Must be the same length as `labels` and `options`
-    pub defaults: Vec<serde_json::Value>,
+    pub defaults: Box<[serde_json::Value]>,
     /// Must be the same length as defaults` and `options`
     pub labels: &'static [&'static str],
     /// Must be the same length as `defaults` and `labels`

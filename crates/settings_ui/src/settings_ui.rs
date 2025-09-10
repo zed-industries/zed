@@ -435,7 +435,8 @@ fn render_recursive(
                 }
             },
         )));
-        // we don't add descendants for unit options
+        // we don't add descendants for unit options, so we adjust the selected index
+        // by the number of options we didn't add descendants for, to get the descendant index
         let selected_descendant_index = selected_index
             - dynamic_render.options[..selected_index]
                 .iter()

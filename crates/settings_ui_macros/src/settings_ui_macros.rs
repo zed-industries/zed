@@ -65,7 +65,7 @@ pub fn derive_settings_ui(input: proc_macro::TokenStream) -> proc_macro::TokenSt
 
     let doc_str = parse_documentation_from_attrs(&input.attrs);
 
-    let ui_item_fn_body = generate_ui_item_body(group_name.as_ref(), path_name.as_ref(), &input);
+    let ui_item_fn_body = generate_ui_item_body(group_name.as_ref(), &input);
 
     // todo(settings_ui): make group name optional, repurpose group as tag indicating item is group, and have "title" tag for custom title
     let title = group_name.unwrap_or(input.ident.to_string().to_title_case());
@@ -140,29 +140,35 @@ fn map_ui_item_to_entry(
 
 fn ui_item_from_type(ty: TokenStream) -> TokenStream {
     let ty = extract_type_from_option(ty);
+    return trait_method_call(ty, quote! {settings::SettingsUi}, quote! {settings_ui_item});
+}
+
+fn trait_method_call(
+    ty: TokenStream,
+    trait_name: TokenStream,
+    method_name: TokenStream,
+) -> TokenStream {
     // doing the <ty as settings::SettingsUi> makes the error message better:
     //  -> "#ty Doesn't implement settings::SettingsUi" instead of "no item "settings_ui_item" for #ty"
     // and ensures safety against name conflicts
+    //
+    // todo(settings_ui): Turn `Vec<T>` into `Vec::<T>` here as well
     quote! {
-        <#ty as settings::SettingsUi>::settings_ui_item()
+        <#ty as #trait_name>::#method_name()
     }
 }
 
-fn generate_ui_item_body(
-    group_name: Option<&String>,
-    path_name: Option<&String>,
-    input: &syn::DeriveInput,
-) -> TokenStream {
-    match (group_name, path_name, &input.data) {
-        (_, _, Data::Union(_)) => unimplemented!("Derive SettingsUi for Unions"),
-        (None, _, Data::Struct(_)) => quote! {
+fn generate_ui_item_body(group_name: Option<&String>, input: &syn::DeriveInput) -> TokenStream {
+    match (group_name, &input.data) {
+        (_, Data::Union(_)) => unimplemented!("Derive SettingsUi for Unions"),
+        (None, Data::Struct(_)) => quote! {
             settings::SettingsUiItem::None
         },
-        (Some(_), _, Data::Struct(data_struct)) => {
+        (Some(_), Data::Struct(data_struct)) => {
             let parent_serde_attrs = parse_serde_attributes(&input.attrs);
             item_group_from_fields(&data_struct.fields, &parent_serde_attrs)
         }
-        (None, _, Data::Enum(data_enum)) => {
+        (None, Data::Enum(data_enum)) => {
             let serde_attrs = parse_serde_attributes(&input.attrs);
             let length = data_enum.variants.len();
 
@@ -179,18 +185,17 @@ fn generate_ui_item_body(
                 labels.push(title);
             }
 
-            let variants_select = if length > 6 {
-                quote! {
-                    settings::SettingsUiItem::Single(settings::SettingsUiItemSingle::DropDown{ variants: &[#(#variants),*], labels: &[#(#labels),*] })
-                }
-            } else {
-                quote! {
-                    settings::SettingsUiItem::Single(settings::SettingsUiItemSingle::ToggleGroup{ variants: &[#(#variants),*], labels: &[#(#labels),*] })
-                }
-            };
             let is_not_union = data_enum.variants.iter().all(|v| v.fields.is_empty());
             if is_not_union {
-                return variants_select;
+                return if length > 6 {
+                    quote! {
+                        settings::SettingsUiItem::Single(settings::SettingsUiItemSingle::DropDown{ variants: &[#(#variants),*], labels: &[#(#labels),*] })
+                    }
+                } else {
+                    quote! {
+                        settings::SettingsUiItem::Single(settings::SettingsUiItemSingle::ToggleGroup{ variants: &[#(#variants),*], labels: &[#(#labels),*] })
+                    }
+                };
             }
             // else: Union!
             let enum_name = &input.ident;
@@ -223,11 +228,11 @@ fn generate_ui_item_body(
                         let field_type_is_option = option_inner_type(field.ty.to_token_stream()).is_some();
                         let field_default = if field_type_is_option {
                             quote! {
-                                Some(Default::default())
+                                None
                             }
                         } else {
                             quote! {
-                                Default::default()
+                                ::std::default::Default::default()
                             }
                         };
 
@@ -268,7 +273,7 @@ fn generate_ui_item_body(
             // todo(settings_ui) should probably always use toggle group for unions, dropdown makes less sense
             return quote! {
                 settings::SettingsUiItem::Union(settings::SettingsUiItemUnion {
-                    defaults: vec![#(#defaults),*],
+                    defaults: Box::new([#(#defaults),*]),
                     labels: &[#(#labels),*],
                     options: Box::new([#(#options),*]),
                     determine_option: #determine_option_fn,
@@ -277,7 +282,7 @@ fn generate_ui_item_body(
             // panic!("Unhandled");
         }
         // todo(settings_ui) discriminated unions
-        (_, _, Data::Enum(_)) => quote! {
+        (_, Data::Enum(_)) => quote! {
             settings::SettingsUiItem::None
         },
     }
