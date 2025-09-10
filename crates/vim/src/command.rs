@@ -23,6 +23,7 @@ use std::{
     ops::{Deref, Range},
     path::{Path, PathBuf},
     process::Stdio,
+    rc::Rc,
     str::Chars,
     sync::{Arc, OnceLock},
     time::Instant,
@@ -665,10 +666,10 @@ struct VimCommand {
     action_name: Option<&'static str>,
     bang_action: Option<Box<dyn Action>>,
     args: Option<
-        Box<dyn Fn(Box<dyn Action>, String) -> Option<Box<dyn Action>> + Send + Sync + 'static>,
+        Rc<dyn Fn(Box<dyn Action>, String) -> Option<Box<dyn Action>> + Send + Sync + 'static>,
     >,
     range: Option<
-        Box<
+        Rc<
             dyn Fn(Box<dyn Action>, &CommandRange) -> Option<Box<dyn Action>>
                 + Send
                 + Sync
@@ -676,7 +677,24 @@ struct VimCommand {
         >,
     >,
     has_count: bool,
-    filename_autocomplete: Option<fn() -> Self>,
+    has_filename: bool,
+}
+
+// todo!() remove once the lifecycle stuff is sorted out
+impl Clone for VimCommand {
+    fn clone(&self) -> Self {
+        Self {
+            prefix: self.prefix,
+            suffix: self.suffix,
+            action: self.action.as_ref().map(|action| action.boxed_clone()),
+            action_name: self.action_name,
+            bang_action: self.bang_action.as_ref().map(|action| action.boxed_clone()),
+            args: self.args.clone(),
+            range: self.range.clone(),
+            has_count: self.has_count,
+            has_filename: self.has_filename,
+        }
+    }
 }
 
 impl VimCommand {
@@ -708,7 +726,16 @@ impl VimCommand {
         mut self,
         f: impl Fn(Box<dyn Action>, String) -> Option<Box<dyn Action>> + Send + Sync + 'static,
     ) -> Self {
-        self.args = Some(Box::new(f));
+        self.args = Some(Rc::new(f));
+        self
+    }
+
+    fn filename(
+        mut self,
+        f: impl Fn(Box<dyn Action>, String) -> Option<Box<dyn Action>> + Send + Sync + 'static,
+    ) -> Self {
+        self.args = Some(Rc::new(f));
+        self.has_filename = true;
         self
     }
 
@@ -716,7 +743,7 @@ impl VimCommand {
         mut self,
         f: impl Fn(Box<dyn Action>, &CommandRange) -> Option<Box<dyn Action>> + Send + Sync + 'static,
     ) -> Self {
-        self.range = Some(Box::new(f));
+        self.range = Some(Rc::new(f));
         self
     }
 
@@ -725,9 +752,12 @@ impl VimCommand {
         self
     }
 
-    fn filename_autocompletion(mut self, command: fn() -> Self) -> Self {
-        self.filename_autocomplete = Some(command);
-        self
+    fn set_arg(&self, action: &Box<dyn Action>, arg: &str) -> Option<Box<dyn Action>> {
+        if let Some(args) = &self.args {
+            args(action.boxed_clone(), arg.to_owned())
+        } else {
+            None
+        }
     }
 
     fn generate_filename_completions(
@@ -737,10 +767,6 @@ impl VimCommand {
         workspace: WeakEntity<Workspace>,
         cx: &mut App,
     ) -> Task<Vec<String>> {
-        if self.filename_autocomplete.is_none() {
-            return Task::ready(Vec::new());
-        }
-
         let Some((args, _)) = self.get_command_args_bang(query.to_string()) else {
             return Task::ready(Vec::new());
         };
@@ -1077,86 +1103,54 @@ impl CommandRange {
     }
 }
 
-fn write_command() -> VimCommand {
-    VimCommand::new(
-        ("w", "rite"),
-        workspace::Save {
-            save_intent: Some(SaveIntent::Save),
-        },
-    )
-    .bang(workspace::Save {
-        save_intent: Some(SaveIntent::Overwrite),
-    })
-    .args(|action, args| {
-        Some(
-            VimSave {
-                save_intent: action
-                    .as_any()
-                    .downcast_ref::<workspace::Save>()
-                    .and_then(|action| action.save_intent),
-                filename: args,
-            }
-            .boxed_clone(),
+fn generate_commands(_: &App) -> Vec<VimCommand> {
+    vec![
+        VimCommand::new(
+            ("w", "rite"),
+            workspace::Save {
+                save_intent: Some(SaveIntent::Save),
+            },
         )
-    })
-    .filename_autocompletion(write_command)
-}
-
-fn edit_command() -> VimCommand {
-    VimCommand::new(("e", "dit"), editor::actions::ReloadFile)
-        .bang(editor::actions::ReloadFile)
-        .args(|_, args| Some(VimEdit { filename: args }.boxed_clone()))
-        .filename_autocompletion(edit_command)
-}
-
-fn split_command() -> VimCommand {
-    VimCommand::new(("sp", "lit"), workspace::SplitHorizontal)
-        .args(|_, args| {
+        .bang(workspace::Save {
+            save_intent: Some(SaveIntent::Overwrite),
+        })
+        .filename(|action, filename| {
+            Some(
+                VimSave {
+                    save_intent: action
+                        .as_any()
+                        .downcast_ref::<workspace::Save>()
+                        .and_then(|action| action.save_intent),
+                    filename,
+                }
+                .boxed_clone(),
+            )
+        }),
+        VimCommand::new(("e", "dit"), editor::actions::ReloadFile)
+            .bang(editor::actions::ReloadFile)
+            .filename(|_, filename| Some(VimEdit { filename }.boxed_clone())),
+        VimCommand::new(("sp", "lit"), workspace::SplitHorizontal).filename(|_, filename| {
             Some(
                 VimSplit {
                     vertical: false,
-                    filename: args,
+                    filename: filename,
                 }
                 .boxed_clone(),
             )
-        })
-        .filename_autocompletion(split_command)
-}
-
-fn vsplit_command() -> VimCommand {
-    VimCommand::new(("vs", "plit"), workspace::SplitVertical)
-        .args(|_, args| {
+        }),
+        VimCommand::new(("vs", "plit"), workspace::SplitVertical).filename(|_, filename| {
             Some(
                 VimSplit {
                     vertical: true,
-                    filename: args,
+                    filename,
                 }
                 .boxed_clone(),
             )
-        })
-        .filename_autocompletion(vsplit_command)
-}
-
-fn tabnew_command() -> VimCommand {
-    VimCommand::new(("tabnew", ""), workspace::NewFile)
-        .args(|_action, args| Some(VimEdit { filename: args }.boxed_clone()))
-        .filename_autocompletion(tabnew_command)
-}
-
-fn tabedit_command() -> VimCommand {
-    VimCommand::new(("tabe", "dit"), workspace::NewFile)
-        .args(|_action, args| Some(VimEdit { filename: args }.boxed_clone()))
-        .filename_autocompletion(tabedit_command)
-}
-
-fn generate_commands(_: &App) -> Vec<VimCommand> {
-    vec![
-        write_command(),
-        edit_command(),
-        split_command(),
-        vsplit_command(),
-        tabedit_command(),
-        tabnew_command(),
+        }),
+        VimCommand::new(("tabe", "dit"), workspace::NewFile)
+            .filename(|_action, filename| Some(VimEdit { filename }.boxed_clone())),
+        VimCommand::new(("tabnew", ""), workspace::NewFile)
+            .filename(|_action, filename| Some(VimEdit { filename }.boxed_clone())),
         VimCommand::new(
             ("q", "uit"),
             workspace::CloseActiveItem {
@@ -1406,6 +1400,9 @@ struct VimCommands(Vec<VimCommand>);
 // safety: we only ever access this from the main thread (as ensured by the cx argument)
 // actions are not Sync so we can't otherwise use a OnceLock.
 unsafe impl Sync for VimCommands {}
+
+// todo!() remove once the lifecycle stuff is sorted out
+unsafe impl Send for VimCommands {}
 impl Global for VimCommands {}
 
 fn commands(cx: &App) -> &Vec<VimCommand> {
@@ -1456,7 +1453,7 @@ pub fn command_interceptor(
         input = &input[1..];
     }
 
-    let (range, query) = VimCommand::parse_range(input);
+    let (_, query) = VimCommand::parse_range(input);
     let range_prefix = input[0..(input.len() - query.len())].to_string();
     let has_trailing_space = query.ends_with(" ");
     let query_str = query.as_str().trim();
@@ -1464,9 +1461,11 @@ pub fn command_interceptor(
     let formatted_input = format!(":{}", input);
     let (mut all_results, vim_command) =
         vim_command_intercept_results(&formatted_input, workspace.clone(), cx);
+    let vim_command = vim_command.cloned();
 
     let task = if let Some(command) = vim_command
-        && let Some(filename_autocomplete) = command.filename_autocomplete
+        && let Some(action) = all_results.pop().map(|result| result.action)
+        && command.has_filename
     {
         let task =
             command.generate_filename_completions(query_str, has_trailing_space, workspace, cx);
@@ -1477,16 +1476,12 @@ pub fn command_interceptor(
         let command_string = range_prefix.clone() + prefix + suffix;
         let colon_string = ":".to_owned() + &command_string;
 
-        cx.background_spawn(async move {
+        cx.spawn(async move |_| {
             let filenames = task.await;
             let mut results = Vec::new();
 
             for filename in filenames {
-                let Some(action) = filename_autocomplete().parse(
-                    &format!("{} {}", command_string, filename),
-                    &range,
-                    None,
-                ) else {
+                let Some(action) = command.set_arg(&action, &filename) else {
                     continue;
                 };
 
