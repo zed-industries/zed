@@ -13,6 +13,7 @@ use language::{
 };
 use lsp::LanguageServerId;
 use multi_buffer::{Anchor, ExcerptId, MultiBuffer, MultiBufferSnapshot};
+use project::lsp_store::RowChunkCachedHints;
 use text::{BufferId, OffsetRangeExt as _};
 use ui::{Context, Window};
 use util::post_inc;
@@ -441,64 +442,70 @@ impl Editor {
                                         inlay_hints.inlay_tasks.entry(buffer_id).or_default();
                                     match new_hints {
                                         Ok(new_hints) => {
-                                            if inlay_hints.inlays_for_version.as_ref().is_none_or(
-                                                |inlays_for_version| {
-                                                    !inlays_for_version
+                                            let mut hints_to_remove = Vec::new();
+                                            match &inlay_hints.inlays_for_version {
+                                                Some(inlays_for_version) => {
+                                                    if !inlays_for_version
                                                         .changed_since(&buffer_version)
-                                                },
-                                            ) {
-                                                let hints_to_remove = if invalidate_cache
-                                                    .should_invalidate()
-                                                    || inlay_hints
-                                                        .inlays_for_version
-                                                        .as_ref()
-                                                        .is_none_or(|inlays_for_version| {
-                                                            buffer_version
-                                                                .changed_since(&inlays_for_version)
-                                                        }) {
-                                                    visible_inlay_hint_ids
-                                                } else {
-                                                    Vec::new()
-                                                };
-                                                let hints_to_insert = new_hints
-                                                    .into_values()
-                                                    .flat_map(|hints| hints.into_values().flatten())
-                                                    .dedup()
-                                                    .filter_map(|lsp_hint| {
-                                                        if lsp_hint
-                                                            .position
-                                                            .cmp(
-                                                                &buffer_anchor_range.start,
-                                                                buffer_snapshot,
-                                                            )
-                                                            .is_ge()
-                                                            && lsp_hint
-                                                                .position
-                                                                .cmp(
-                                                                    &buffer_anchor_range.end,
-                                                                    buffer_snapshot,
-                                                                )
-                                                                .is_le()
+                                                    {
+                                                        if invalidate_cache.should_invalidate()
+                                                            || buffer_version
+                                                                .changed_since(inlays_for_version)
                                                         {
-                                                            let position = multi_buffer_snapshot
-                                                                .anchor_in_excerpt(
-                                                                    excerpt_id,
-                                                                    lsp_hint.position,
-                                                                )?;
-                                                            return Some(Inlay::hint(
-                                                                post_inc(&mut editor.next_inlay_id),
-                                                                position,
-                                                                &lsp_hint,
-                                                            ));
+                                                            inlay_tasks.clear();
+                                                            hints_to_remove
+                                                                .extend(visible_inlay_hint_ids);
                                                         }
-                                                        None
-                                                    })
-                                                    .collect();
-                                                update_data =
-                                                    Some((hints_to_remove, hints_to_insert));
-                                                inlay_hints.inlays_for_version =
-                                                    Some(buffer_version);
+                                                    }
+                                                }
+                                                None => {}
                                             }
+
+                                            let hints_to_insert = new_hints
+                                            .into_iter()
+                                            .flat_map(
+                                                |(chunk, RowChunkCachedHints { cached, hints })| {
+                                                    let was_fetched =
+                                                        inlay_tasks.contains_key(&chunk);
+                                                    hints
+                                                        .into_values()
+                                                        .filter(move |_| !cached || !was_fetched)
+                                                        .flatten()
+                                                        .dedup()
+                                                },
+                                            )
+                                            .filter_map(|lsp_hint| {
+                                                if lsp_hint
+                                                    .position
+                                                    .cmp(
+                                                        &buffer_anchor_range.start,
+                                                        buffer_snapshot,
+                                                    )
+                                                    .is_ge()
+                                                    && lsp_hint
+                                                        .position
+                                                        .cmp(
+                                                            &buffer_anchor_range.end,
+                                                            buffer_snapshot,
+                                                        )
+                                                        .is_le()
+                                                {
+                                                    let position = multi_buffer_snapshot
+                                                        .anchor_in_excerpt(
+                                                            excerpt_id,
+                                                            lsp_hint.position,
+                                                        )?;
+                                                    return Some(Inlay::hint(
+                                                        post_inc(&mut editor.next_inlay_id),
+                                                        position,
+                                                        &lsp_hint,
+                                                    ));
+                                                }
+                                                None
+                                            })
+                                            .collect();
+                                            update_data = Some((hints_to_remove, hints_to_insert));
+                                            inlay_hints.inlays_for_version = Some(buffer_version);
                                         }
                                         // TODO kb who should log and clean up the errored state? Could we do that with `lsp_store_cx.spawn`?
                                         Err(_) => {}

@@ -28,7 +28,6 @@ use crate::{
     lsp_command::{self, *},
     lsp_store::{
         self,
-        inlay_hint_cache::CacheInlayHints,
         log_store::{GlobalLogStore, LanguageServerKind},
     },
     manifest_tree::{
@@ -125,6 +124,7 @@ use util::{
 
 pub use fs::*;
 pub use language::Location;
+pub use lsp_store::inlay_hint_cache::RowChunkCachedHints;
 #[cfg(any(test, feature = "test-support"))]
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
 pub use worktree::{
@@ -6359,7 +6359,7 @@ impl LspStore {
         buffer: Entity<Buffer>,
         range: Range<text::Anchor>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<HashMap<Range<BufferRow>, CacheInlayHints>>> {
+    ) -> Task<Result<HashMap<Range<BufferRow>, RowChunkCachedHints>>> {
         let buffer_version = buffer.read(cx).version();
         let buffer_snapshot = buffer.read(cx).snapshot();
         let buffer_id = buffer.read(cx).remote_id();
@@ -6429,7 +6429,18 @@ impl LspStore {
         }
 
         if hint_fetch_tasks.is_empty() && ranges_to_query.is_empty() {
-            Task::ready(Ok(cached_inlay_hints))
+            Task::ready(Ok(cached_inlay_hints
+                .into_iter()
+                .map(|(row_chunk, hints)| {
+                    (
+                        row_chunk,
+                        RowChunkCachedHints {
+                            hints,
+                            cached: true,
+                        },
+                    )
+                })
+                .collect()))
         } else {
             cx.spawn(async move |lsp_store, cx| {
                 lsp_store.update(cx, |lsp_store, cx| {
@@ -6455,7 +6466,18 @@ impl LspStore {
                         .map(|(chunk, task)| async move { (chunk, task.await) }),
                 )
                 .await;
-                let mut combined_hints = cached_inlay_hints;
+                let mut combined_hints = cached_inlay_hints
+                    .into_iter()
+                    .map(|(chunk, cached_hints)| {
+                        (
+                            chunk,
+                            RowChunkCachedHints {
+                                hints: cached_hints,
+                                cached: true,
+                            },
+                        )
+                    })
+                    .collect::<HashMap<_, _>>();
                 lsp_store.update(cx, |lsp_store, cx| {
                     let buffer_hints = match lsp_store.inlay_hint_data.entry(buffer_id) {
                         hash_map::Entry::Occupied(o) => {
@@ -6490,9 +6512,13 @@ impl LspStore {
                             Ok(new_hints) => {
                                 let combined_hints = combined_hints
                                     .entry(chunk.start..chunk.end)
-                                    .or_insert_with(HashMap::default);
+                                    .or_insert_with(|| RowChunkCachedHints {
+                                        hints: HashMap::default(),
+                                        cached: false,
+                                    });
                                 for (server_id, new_hints) in new_hints {
                                     combined_hints
+                                        .hints
                                         .entry(server_id)
                                         .or_insert_with(Vec::new)
                                         .extend(new_hints.clone());
