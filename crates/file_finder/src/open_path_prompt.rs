@@ -392,10 +392,11 @@ impl PickerDelegate for OpenPathDelegate {
                 let should_prepend_with_current_dir = this
                     .read_with(cx, |picker, _| {
                         !input_is_empty
-                            && !matches!(
-                                picker.delegate.directory_state,
-                                DirectoryState::Create { .. }
-                            )
+                            && match &picker.delegate.directory_state {
+                                DirectoryState::List { error, .. } => error.is_none(),
+                                DirectoryState::Create { .. } => false,
+                                DirectoryState::None { .. } => false,
+                            }
                     })
                     .unwrap_or(false);
                 if should_prepend_with_current_dir {

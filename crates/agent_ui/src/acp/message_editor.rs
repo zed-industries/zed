@@ -91,7 +91,7 @@ impl MessageEditor {
         prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
         available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
         agent_name: SharedString,
-        placeholder: impl Into<Arc<str>>,
+        placeholder: &str,
         mode: EditorMode,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -117,7 +117,7 @@ impl MessageEditor {
             let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
 
             let mut editor = Editor::new(mode, buffer, None, window, cx);
-            editor.set_placeholder_text(placeholder, cx);
+            editor.set_placeholder_text(placeholder, window, cx);
             editor.set_show_indent_guides(false, cx);
             editor.set_soft_wrap();
             editor.set_use_modal_editing(true);
@@ -699,10 +699,15 @@ impl MessageEditor {
             self.project.read(cx).fs().clone(),
             self.history_store.clone(),
         ));
-        let delegate = AgentServerDelegate::new(self.project.clone(), None, None);
-        let connection = server.connect(Path::new(""), delegate, cx);
+        let delegate = AgentServerDelegate::new(
+            self.project.read(cx).agent_server_store().clone(),
+            self.project.clone(),
+            None,
+            None,
+        );
+        let connection = server.connect(None, delegate, cx);
         cx.spawn(async move |_, cx| {
-            let agent = connection.await?;
+            let (agent, _) = connection.await?;
             let agent = agent.downcast::<agent2::NativeAgentConnection>().unwrap();
             let summary = agent
                 .0

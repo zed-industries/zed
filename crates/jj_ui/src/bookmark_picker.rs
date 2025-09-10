@@ -182,7 +182,7 @@ impl PickerDelegate for BookmarkPickerDelegate {
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let entry = &self.matches[ix];
+        let entry = &self.matches.get(ix)?;
 
         Some(
             ListItem::new(ix)

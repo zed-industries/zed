@@ -6095,9 +6095,31 @@ impl MultiBufferSnapshot {
         Some((node, range))
     }
 
+    pub fn syntax_next_sibling<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> Option<tree_sitter::Node<'_>> {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        let mut excerpt = self.excerpt_containing(range.clone())?;
+        excerpt
+            .buffer()
+            .syntax_next_sibling(excerpt.map_range_to_buffer(range))
+    }
+
+    pub fn syntax_prev_sibling<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> Option<tree_sitter::Node<'_>> {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        let mut excerpt = self.excerpt_containing(range.clone())?;
+        excerpt
+            .buffer()
+            .syntax_prev_sibling(excerpt.map_range_to_buffer(range))
+    }
+
     pub fn outline(&self, theme: Option<&SyntaxTheme>) -> Option<Outline<Anchor>> {
         let (excerpt_id, _, buffer) = self.as_singleton()?;
-        let outline = buffer.outline(theme)?;
+        let outline = buffer.outline(theme);
         Some(Outline::new(
             outline
                 .items
@@ -6142,7 +6164,6 @@ impl MultiBufferSnapshot {
                 .buffer
                 .symbols_containing(anchor.text_anchor, theme)
                 .into_iter()
-                .flatten()
                 .flat_map(|item| {
                     Some(OutlineItem {
                         depth: item.depth,
@@ -7719,12 +7740,21 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
                 let diff_transform_end = diff_transform_end.min(self.range.end);
 
                 if diff_transform_end < chunk_end {
-                    let (before, after) =
-                        chunk.text.split_at(diff_transform_end - self.range.start);
+                    let split_idx = diff_transform_end - self.range.start;
+                    let (before, after) = chunk.text.split_at(split_idx);
                     self.range.start = diff_transform_end;
+                    let mask = (1 << split_idx) - 1;
+                    let chars = chunk.chars & mask;
+                    let tabs = chunk.tabs & mask;
+
                     chunk.text = after;
+                    chunk.chars = chunk.chars >> split_idx;
+                    chunk.tabs = chunk.tabs >> split_idx;
+
                     Some(Chunk {
                         text: before,
+                        chars,
+                        tabs,
                         ..chunk.clone()
                     })
                 } else {
@@ -7768,6 +7798,7 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
                     self.range.start += "\n".len();
                     Chunk {
                         text: "\n",
+                        chars: 1u128,
                         ..Default::default()
                     }
                 };
@@ -7864,9 +7895,11 @@ impl<'a> Iterator for ExcerptChunks<'a> {
 
         if self.footer_height > 0 {
             let text = unsafe { str::from_utf8_unchecked(&NEWLINES[..self.footer_height]) };
+            let chars = (1 << self.footer_height) - 1;
             self.footer_height = 0;
             return Some(Chunk {
                 text,
+                chars,
                 ..Default::default()
             });
         }

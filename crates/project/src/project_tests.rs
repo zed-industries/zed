@@ -3876,7 +3876,7 @@ async fn test_save_file_spawns_language_server(cx: &mut gpui::TestAppContext) {
     );
 
     let buffer = project
-        .update(cx, |this, cx| this.create_buffer(cx))
+        .update(cx, |this, cx| this.create_buffer(false, cx))
         .unwrap()
         .await;
     project.update(cx, |this, cx| {
@@ -4088,7 +4088,9 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
     let languages = project.update(cx, |project, _| project.languages().clone());
     languages.add(rust_lang());
 
-    let buffer = project.update(cx, |project, cx| project.create_local_buffer("", None, cx));
+    let buffer = project.update(cx, |project, cx| {
+        project.create_local_buffer("", None, false, cx)
+    });
     buffer.update(cx, |buffer, cx| {
         buffer.edit([(0..0, "abc")], None, cx);
         assert!(buffer.is_dirty());
@@ -5585,9 +5587,7 @@ async fn test_search_with_buffer_exclusions(cx: &mut gpui::TestAppContext) {
 
     let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
     let _buffer = project.update(cx, |project, cx| {
-        let buffer = project.create_local_buffer("file", None, cx);
-        project.mark_buffer_as_non_searchable(buffer.read(cx).remote_id(), cx);
-        buffer
+        project.create_local_buffer("file", None, false, cx)
     });
 
     assert_eq!(

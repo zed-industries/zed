@@ -987,7 +987,7 @@ impl ContextProvider for BasicContextProvider {
         let buffer = location.buffer.read(cx);
         let buffer_snapshot = buffer.snapshot();
         let symbols = buffer_snapshot.symbols_containing(location.range.start, None);
-        let symbol = symbols.unwrap_or_default().last().map(|symbol| {
+        let symbol = symbols.last().map(|symbol| {
             let range = symbol
                 .name_ranges
                 .last()

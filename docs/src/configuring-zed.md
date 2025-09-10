@@ -178,7 +178,7 @@ Note: This setting has no effect in Vim mode, as rewrap is already allowed every
 
 You can find the names of your currently installed extensions by listing the subfolders under the [extension installation location](./extensions/installing-extensions.md#installation-location):
 
-On MacOS:
+On macOS:
 
 ```sh
 ls ~/Library/Application\ Support/Zed/extensions/installed/
@@ -294,7 +294,7 @@ Define extensions which should be installed (`true`) or never installed (`false`
 
 **Options**
 
-1. VSCode
+1. VS Code
 
 ```json
 {
@@ -326,7 +326,7 @@ Define extensions which should be installed (`true`) or never installed (`false`
 }
 ```
 
-5. SublimeText
+5. Sublime Text
 
 ```json
 {
@@ -2023,6 +2023,9 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
     "inline_blame": {
       "enabled": true
     },
+    "branch_picker": {
+      "show_author_name": true
+    },
     "hunk_style": "staged_hollow"
   }
 }
@@ -2149,6 +2152,36 @@ Example:
   "git": {
     "inline_blame": {
       "padding": 10
+    }
+  }
+}
+```
+
+### Branch Picker
+
+- Description: Configuration related to the branch picker.
+- Setting: `branch_picker`
+- Default:
+
+```json
+{
+  "git": {
+    "branch_picker": {
+      "show_author_name": false
+    }
+  }
+}
+```
+
+**Options**
+
+1. Show the author name in the branch picker:
+
+```json
+{
+  "git": {
+    "branch_picker": {
+      "show_author_name": true
     }
   }
 }
@@ -2469,7 +2502,7 @@ The following languages have inlay hints preconfigured by Zed:
 - [Go](https://docs.zed.dev/languages/go)
 - [Rust](https://docs.zed.dev/languages/rust)
 - [Svelte](https://docs.zed.dev/languages/svelte)
-- [Typescript](https://docs.zed.dev/languages/typescript)
+- [TypeScript](https://docs.zed.dev/languages/typescript)
 
 Use the `lsp` section for the server configuration. Examples are provided in the corresponding language documentation.
 
@@ -2699,7 +2732,7 @@ Positive `integer` values or `null` for unlimited tabs
 
 **Options**
 
-1. Maps to `Alt` on Linux and Windows and to `Option` on MacOS:
+1. Maps to `Alt` on Linux and Windows and to `Option` on macOS:
 
 ```json
 {
@@ -2707,7 +2740,7 @@ Positive `integer` values or `null` for unlimited tabs
 }
 ```
 
-2. Maps `Control` on Linux and Windows and to `Command` on MacOS:
+2. Maps `Control` on Linux and Windows and to `Command` on macOS:
 
 ```json
 {
@@ -4394,28 +4427,6 @@ Visit [the Configuration page](./ai/configuration.md) under the AI section to le
 - `button`: Whether to show the collaboration panel button in the status bar
 - `dock`: Where to dock the collaboration panel. Can be `left` or `right`
 - `default_width`: Default width of the collaboration panel
-
-## Chat Panel
-
-- Description: Customizations for the chat panel.
-- Setting: `chat_panel`
-- Default:
-
-```json
-{
-  "chat_panel": {
-    "button": "when_in_call",
-    "dock": "right",
-    "default_width": 240
-  }
-}
-```
-
-**Options**
-
-- `button`: When to show the chat panel button in the status bar. Can be `never`, `always`, or `when_in_call`.
-- `dock`: Where to dock the chat panel. Can be 'left' or 'right'
-- `default_width`: Default width of the chat panel
 
 ## Debugger
 
