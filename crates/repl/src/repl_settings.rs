@@ -41,10 +41,6 @@ fn default_max_number_of_columns() -> usize {
     DEFAULT_NUM_COLUMNS
 }
 
-fn max_number_of_columns() -> usize {
-    DEFAULT_NUM_COLUMNS
-}
-
 // Optional: implement Default for programmatic instantiation
 impl Default for ReplSettings {
     fn default() -> Self {
