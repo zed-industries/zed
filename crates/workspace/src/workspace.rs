@@ -1668,8 +1668,15 @@ impl Workspace {
 
             window
                 .update(cx, |workspace, window, cx| {
+                    // Activate the window, then ensure focus lands on the active pane/editor.
+                    // On Windows, activation after opening items can
+                    // steal focus away from the editor. Explicitly focusing the active pane
+                    // restores the expected behavior when opening files into a new window.
                     window.activate_window();
                     workspace.update_history(cx);
+                    workspace
+                        .active_pane
+                        .update(cx, |pane, cx| window.focus(&pane.focus_handle(cx)));
                 })
                 .log_err();
             Ok((window, opened_items))
