@@ -62,7 +62,16 @@ pub fn open_settings_editor(
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action_renderer(|div, _, _, cx| {
-            if cx.has_flag::<SettingsUiFeatureFlag>() {
+            let settings_ui_actions = [std::any::TypeId::of::<OpenSettingsEditor>()];
+            let has_flag = cx.has_flag::<SettingsUiFeatureFlag>();
+            command_palette_hooks::CommandPaletteFilter::update_global(cx, |filter, _| {
+                if has_flag {
+                    filter.show_action_types(&settings_ui_actions);
+                } else {
+                    filter.hide_action_types(&settings_ui_actions);
+                }
+            });
+            if has_flag {
                 div.on_action(cx.listener(open_settings_editor))
             } else {
                 div

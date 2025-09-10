@@ -23,7 +23,7 @@ impl FeatureFlags {
             return true;
         }
 
-        if (cfg!(debug_assertions) || self.staff) && T::enabled_for_staff() {
+        if (cfg!(debug_assertions) || self.staff) && !*ZED_DISABLE_STAFF && T::enabled_for_staff() {
             return true;
         }
 
@@ -211,7 +211,8 @@ impl FeatureFlagAppExt for App {
         self.try_global::<FeatureFlags>()
             .map(|flags| flags.has_flag::<T>())
             .unwrap_or_else(|| {
-                (cfg!(debug_assertions) && T::enabled_for_staff()) || T::enabled_for_all()
+                (cfg!(debug_assertions) && T::enabled_for_staff() && !*ZED_DISABLE_STAFF)
+                    || T::enabled_for_all()
             })
     }
 
