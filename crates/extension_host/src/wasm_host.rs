@@ -688,13 +688,8 @@ impl WasmHost {
 
         ctx.preopened_dir(&path, ".", dir_perms, file_perms)?;
 
-        if !requires_relative_paths {
-            ctx.preopened_dir(
-                &extension_work_dir,
-                extension_work_dir.to_string_lossy(),
-                dir_perms,
-                file_perms,
-            )?;
+        if !requires_relative_paths || cfg!(target_os = "windows") {
+            ctx.preopened_dir(&extension_work_dir, path.to_string(), dir_perms, file_perms)?;
         }
 
         Ok(ctx.build())

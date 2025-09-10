@@ -19,6 +19,8 @@ impl TestExtension {
         let current_dir = std::env::current_dir().unwrap();
         println!("current_dir: {}", current_dir.display());
 
+        std::fs::write("test.txt", b"Hello!").unwrap();
+
         let command = match platform {
             zed::Os::Linux | zed::Os::Mac => Command::new("echo"),
             zed::Os::Windows => Command::new("cmd").args(["/C", "echo"]),
