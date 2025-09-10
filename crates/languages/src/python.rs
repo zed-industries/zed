@@ -756,21 +756,16 @@ fn get_venv_parent_dir(env: &PythonEnvironment) -> Option<PathBuf> {
         return None;
     }
 
+    // Check to be sure we are a virtual environment using pet's most generic
+    // virtual environment type, VirtualEnv
     let venv = env
         .executable
         .as_ref()
         .and_then(|p| p.parent())
-        .and_then(|p| p.parent());
+        .and_then(|p| p.parent())
+        .filter(|p| is_virtualenv_dir(*p))?;
 
-    // Check to be sure we are a virtual environment using pet's most generic
-    // virtual environment type, VirtualEnv
-    if let Some(venv) = venv
-        && is_virtualenv_dir(venv)
-    {
-        venv.parent().map(|parent| parent.to_path_buf())
-    } else {
-        None
-    }
+    venv.parent().map(|parent| parent.to_path_buf())
 }
 
 #[async_trait]
@@ -836,12 +831,14 @@ impl ToolchainLister for PythonToolchainProvider {
                 let lhs_project = lhs
                     .project
                     .as_ref()
-                    .or(get_venv_parent_dir(lhs).as_ref())
+                    .map(|p| p.to_path_buf())
+                    .or_else(|| get_venv_parent_dir(lhs))
                     .map(|p| p.to_path_buf());
                 let rhs_project = rhs
                     .project
                     .as_ref()
-                    .or(get_venv_parent_dir(rhs).as_ref())
+                    .map(|p| p.to_path_buf())
+                    .or_else(|| get_venv_parent_dir(rhs))
                     .map(|p| p.to_path_buf());
                 match (&lhs_project, &rhs_project) {
                     (Some(l), Some(r)) => (r == &wr).cmp(&(l == &wr)),
