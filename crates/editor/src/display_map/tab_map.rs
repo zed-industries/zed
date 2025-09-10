@@ -73,7 +73,7 @@ impl TabMap {
                     false,
                     Highlights::default(),
                 ) {
-                    // todo!(performance use tabs bitmask)
+                    // todo(performance use tabs bitmask)
                     for (ix, _) in chunk.text.match_indices('\t') {
                         let offset_from_edit = offset_from_edit + (ix as u32);
                         if first_tab_offset.is_none() {
@@ -340,7 +340,6 @@ impl TabSnapshot {
             .to_buffer_point(inlay_point)
     }
 
-    /// todo!(performance use tabs bitmask)
     fn expand_tabs<'a, I>(&self, mut cursor: TabStopCursor<'a, I>, column: u32) -> u32
     where
         I: Iterator<Item = Chunk<'a>>,
@@ -552,7 +551,6 @@ impl TabChunks<'_> {
         self.chunk = Chunk {
             text: &SPACES[0..(to_next_stop as usize)],
             is_tab: true,
-            // todo!(check that this logic is correct)
             chars: (1u128 << to_next_stop) - 1,
             ..Default::default()
         };
@@ -837,7 +835,6 @@ mod tests {
         }
     }
 
-    // todo!(We should have a randomized test here as well)
     #[gpui::test]
     fn test_to_fold_point_panic_reproduction(cx: &mut gpui::App) {
         // This test reproduces a specific panic where to_fold_point returns incorrect results
@@ -1479,8 +1476,6 @@ where
     }
 
     fn is_char_boundary(&self) -> bool {
-        // FIXME: if idx is 128 should we return false or be at the next chunk?
-        // idx might also be 1-indexed instead of 0-indexed, need to double check
         self.current_chunk
             .as_ref()
             .is_some_and(|(chunk, idx)| (chunk.chars & (1 << *idx.min(&127))) != 0)

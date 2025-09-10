@@ -331,7 +331,6 @@ impl<'a> Iterator for InlayChunks<'a> {
                 };
                 chunk.text = suffix;
                 self.output_offset.0 += prefix.len();
-                // FIXME: chunk cloning is wrong because the bitmaps might be off
                 InlayChunk {
                     chunk: Chunk {
                         text: prefix,

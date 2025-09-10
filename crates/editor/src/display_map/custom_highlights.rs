@@ -130,7 +130,6 @@ impl<'a> Iterator for CustomHighlightsChunks<'a> {
             }
         }
 
-        // todo!("Ask if it's ok that i changed the unwraps here")
         let chunk = self
             .buffer_chunk
             .get_or_insert_with(|| self.buffer_chunks.next().unwrap_or_default());
@@ -156,7 +155,6 @@ impl<'a> Iterator for CustomHighlightsChunks<'a> {
 
         chunk.text = suffix;
         self.offset += prefix.len();
-        // FIXME: chunk cloning is wrong because the bitmaps might be off
         let mut prefix = Chunk {
             text: prefix,
             chars,

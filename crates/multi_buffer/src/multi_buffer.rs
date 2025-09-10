@@ -7752,9 +7752,6 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
                     chunk.chars = chunk.chars >> split_idx;
                     chunk.tabs = chunk.tabs >> split_idx;
 
-                    // FIXME: We should be handling bitmap for tabs and chars here
-                    // Because we do a split at operation the bitmaps will be off
-
                     Some(Chunk {
                         text: before,
                         chars,
