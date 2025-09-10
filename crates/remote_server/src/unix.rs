@@ -120,87 +120,6 @@ fn init_logging_server(log_file_path: PathBuf) -> Result<Receiver<Vec<u8>>> {
     Ok(rx)
 }
 
-fn init_panic_hook(session_id: String) {
-    std::panic::set_hook(Box::new(move |info| {
-        let payload = info
-            .payload()
-            .downcast_ref::<&str>()
-            .map(|s| s.to_string())
-            .or_else(|| info.payload().downcast_ref::<String>().cloned())
-            .unwrap_or_else(|| "Box<Any>".to_string());
-
-        crashes::handle_panic(payload.clone(), info.location());
-
-        let backtrace = backtrace::Backtrace::new();
-        let mut backtrace = backtrace
-            .frames()
-            .iter()
-            .flat_map(|frame| {
-                frame
-                    .symbols()
-                    .iter()
-                    .filter_map(|frame| Some(format!("{:#}", frame.name()?)))
-            })
-            .collect::<Vec<_>>();
-
-        // Strip out leading stack frames for rust panic-handling.
-        if let Some(ix) = backtrace
-            .iter()
-            .position(|name| name == "rust_begin_unwind")
-        {
-            backtrace.drain(0..=ix);
-        }
-
-        let thread = thread::current();
-        let thread_name = thread.name().unwrap_or("<unnamed>");
-
-        log::error!(
-            "panic occurred: {}\nBacktrace:\n{}",
-            &payload,
-            backtrace.join("\n")
-        );
-
-        let panic_data = telemetry_events::Panic {
-            thread: thread_name.into(),
-            payload,
-            location_data: info.location().map(|location| LocationData {
-                file: location.file().into(),
-                line: location.line(),
-            }),
-            app_version: format!("remote-server-{}", *VERSION),
-            app_commit_sha: option_env!("ZED_COMMIT_SHA").map(|sha| sha.into()),
-            release_channel: RELEASE_CHANNEL.dev_name().into(),
-            target: env!("TARGET").to_owned().into(),
-            os_name: telemetry::os_name(),
-            os_version: Some(telemetry::os_version()),
-            architecture: env::consts::ARCH.into(),
-            panicked_on: Utc::now().timestamp_millis(),
-            backtrace,
-            system_id: None,       // Set on SSH client
-            installation_id: None, // Set on SSH client
-
-            // used on this end to associate panics with minidumps, but will be replaced on the SSH client
-            session_id: session_id.clone(),
-        };
-
-        if let Some(panic_data_json) = serde_json::to_string(&panic_data).log_err() {
-            let timestamp = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
-            let panic_file_path = paths::logs_dir().join(format!("zed-{timestamp}.panic"));
-            let panic_file = std::fs::OpenOptions::new()
-                .append(true)
-                .create(true)
-                .open(&panic_file_path)
-                .log_err();
-            if let Some(mut panic_file) = panic_file {
-                writeln!(&mut panic_file, "{panic_data_json}").log_err();
-                panic_file.flush().log_err();
-            }
-        }
-
-        std::process::abort();
-    }));
-}
-
 fn handle_crash_files_requests(project: &Entity<HeadlessProject>, client: &AnyProtoClient) {
     client.add_request_handler(
         project.downgrade(),
@@ -440,7 +359,6 @@ pub fn execute_run(
             commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
         }))
         .detach();
-    init_panic_hook(id);
     let log_rx = init_logging_server(log_file)?;
     log::info!(
         "starting up. pid_file: {:?}, stdin_socket: {:?}, stdout_socket: {:?}, stderr_socket: {:?}",
@@ -633,7 +551,6 @@ pub(crate) fn execute_proxy(
         commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
     }))
     .detach();
-    init_panic_hook(id);
 
     log::info!("starting proxy process. PID: {}", std::process::id());
 
