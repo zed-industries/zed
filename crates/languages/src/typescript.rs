@@ -1013,7 +1013,9 @@ mod tests {
     use unindent::Unindent;
     use util::path;
 
-    use crate::typescript::{PackageJsonData, TypeScriptContextProvider};
+    use crate::typescript::{
+        PackageJsonData, TypeScriptContextProvider, replace_test_name_parameters,
+    };
 
     #[gpui::test]
     async fn test_outline(cx: &mut TestAppContext) {
@@ -1223,6 +1225,23 @@ mod tests {
                     Some(path!("/root/sub").into())
                 ),
             ]
+        );
+    }
+    #[test]
+    fn test_escaping_name() {
+        assert_eq!(
+            replace_test_name_parameters("plain test name"),
+            "plain test name"
+        );
+        assert_eq!(
+            replace_test_name_parameters(
+                "should fail to track entity as %s if there is already tracked entity with similar id"
+            ),
+            "should fail to track entity as (.+?) if there is already tracked entity with similar id"
+        );
+        assert_eq!(
+            replace_test_name_parameters("(Test name in parens)"),
+            "\\(Test name in parens\\)"
         );
     }
 }
