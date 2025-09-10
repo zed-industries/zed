@@ -182,6 +182,7 @@ fn build_tree_item(
     depth: usize,
     prev_index: Option<usize>,
 ) {
+    // let tree: HashMap<Path, UiEntry>;
     let index = tree.len();
     tree.push(UiEntry {
         title: entry.title.into(),
@@ -219,6 +220,7 @@ fn build_tree_item(
             let options = dynamic_render.options.clone();
             tree[index].dynamic_render = Some(dynamic_render);
             for option in options {
+                let Some(option) = option else { continue };
                 let prev_index = tree[index]
                     .descendant_range
                     .is_empty()
@@ -433,7 +435,16 @@ fn render_recursive(
                 }
             },
         )));
-        if let Some(descendant_index) = child.nth_descendant_index(tree, selected_index) {
+        // we don't add descendants for unit options
+        let selected_descendant_index = selected_index
+            - dynamic_render.options[..selected_index]
+                .iter()
+                .filter(|option| option.is_none())
+                .count();
+        if dynamic_render.options[selected_index].is_some()
+            && let Some(descendant_index) =
+                child.nth_descendant_index(tree, selected_descendant_index)
+        {
             element = render_recursive(
                 tree,
                 descendant_index,

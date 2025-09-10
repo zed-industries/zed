@@ -110,10 +110,10 @@ impl<T: serde::Serialize> SettingsValue<T> {
 pub struct SettingsUiItemUnion {
     /// Must be the same length as `labels` and `options`
     pub defaults: Vec<serde_json::Value>,
-    /// Must be the same length as `values` and `options`
+    /// Must be the same length as defaults` and `options`
     pub labels: &'static [&'static str],
-    /// Must be the same length as `values` and `labels`
-    pub options: Vec<SettingsUiEntry>,
+    /// Must be the same length as `defaults` and `labels`
+    pub options: Box<[Option<SettingsUiEntry>]>,
     pub determine_option: fn(&serde_json::Value, &App) -> usize,
 }
 
@@ -145,6 +145,7 @@ pub enum SettingsUiItem {
     Single(SettingsUiItemSingle),
     Union(SettingsUiItemUnion),
     DynamicMap(SettingsUiItemDynamicMap),
+    // Array(SettingsUiItemArray), // code-actions: array of objects, array of string
     None,
 }
 

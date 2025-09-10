@@ -1,5 +1,3 @@
-use std::ops::Not;
-
 use heck::{ToSnakeCase as _, ToTitleCase as _};
 use proc_macro2::TokenStream;
 use quote::{ToTokens, quote};
@@ -126,17 +124,27 @@ fn map_ui_item_to_entry(
     doc_str: Option<&str>,
     ty: TokenStream,
 ) -> TokenStream {
-    let ty = extract_type_from_option(ty);
     // todo(settings_ui): does quote! just work with options?
     let path = path.map_or_else(|| quote! {None}, |path| quote! {Some(#path)});
     let doc_str = doc_str.map_or_else(|| quote! {None}, |doc_str| quote! {Some(#doc_str)});
+    let item = ui_item_from_type(ty);
     quote! {
         settings::SettingsUiEntry {
             title: #title,
             path: #path,
-            item: #ty::settings_ui_item(),
+            item: #item,
             documentation: #doc_str,
         }
+    }
+}
+
+fn ui_item_from_type(ty: TokenStream) -> TokenStream {
+    let ty = extract_type_from_option(ty);
+    // doing the <ty as settings::SettingsUi> makes the error message better:
+    //  -> "#ty Doesn't implement settings::SettingsUi" instead of "no item "settings_ui_item" for #ty"
+    // and ensures safety against name conflicts
+    quote! {
+        <#ty as settings::SettingsUi>::settings_ui_item()
     }
 }
 
@@ -188,15 +196,20 @@ fn generate_ui_item_body(
             let enum_name = &input.ident;
 
             let options = data_enum.variants.iter().map(|variant| {
+                if variant.fields.is_empty() {
+                    return quote! {None};
+                }
                 let name = &variant.ident;
-                quote! {
-                    settings::SettingsUiEntry {
+                let item = item_group_from_fields(&variant.fields, &serde_attrs);
+                // todo(settings_ui): documentation
+                return quote! {
+                    Some(settings::SettingsUiEntry {
                         path: None,
                         title: stringify!(#name),
                         documentation: None,
-                        item: settings::SettingsUiItem::None,
-                    }
-                }
+                        item: #item,
+                    })
+                };
             });
             let defaults = data_enum.variants.iter().map(|variant| {
                 let variant_name = &variant.ident;
@@ -257,7 +270,7 @@ fn generate_ui_item_body(
                 settings::SettingsUiItem::Union(settings::SettingsUiItemUnion {
                     defaults: vec![#(#defaults),*],
                     labels: &[#(#labels),*],
-                    options: vec![#(#options),*],
+                    options: Box::new([#(#options),*]),
                     determine_option: #determine_option_fn,
                 })
             };
@@ -290,16 +303,19 @@ fn item_group_from_fields(fields: &syn::Fields, parent_serde_attrs: &SerdeOption
         })
         .map(|field| {
             let field_serde_attrs = parse_serde_attributes(&field.attrs);
-            let name = field.ident.clone().expect("tuple fields").to_string();
+            let name = field.ident.as_ref().map(ToString::to_string);
+            let title = name.as_ref().map_or_else(
+                || "todo(settings_ui): Titles for tuple fields".to_string(),
+                |name| name.to_title_case(),
+            );
             let doc_str = parse_documentation_from_attrs(&field.attrs);
 
             (
-                name.to_title_case(),
+                title,
                 doc_str,
-                field_serde_attrs
-                    .flatten
-                    .not()
-                    .then(|| parent_serde_attrs.apply_rename_to_field(&field_serde_attrs, &name)),
+                name.filter(|_| !field_serde_attrs.flatten).map(|name| {
+                    parent_serde_attrs.apply_rename_to_field(&field_serde_attrs, &name)
+                }),
                 field.ty.to_token_stream(),
             )
         })

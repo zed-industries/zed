@@ -1004,23 +1004,28 @@ impl AsRef<[Formatter]> for FormatterList {
 }
 
 /// Controls which formatter should be used when formatting code. If there are multiple formatters, they are executed in the order of declaration.
-#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi)]
 #[serde(rename_all = "snake_case")]
 pub enum Formatter {
     /// Format code using the current language server.
-    LanguageServer { name: Option<String> },
+    LanguageServer {
+        #[settings_ui(skip)]
+        name: Option<String>,
+    },
     /// Format code using Zed's Prettier integration.
     #[default]
     Prettier,
     /// Format code using an external command.
     External {
         /// The external program to run.
+        #[settings_ui(skip)]
         command: Arc<str>,
         /// The arguments to pass to the program.
+        #[settings_ui(skip)]
         arguments: Option<Arc<[String]>>,
     },
     /// Files should be formatted using code actions executed by language servers.
-    CodeActions(HashMap<String, bool>),
+    CodeActions(#[settings_ui(skip)] HashMap<String, bool>),
 }
 
 /// The settings for indent guides.
