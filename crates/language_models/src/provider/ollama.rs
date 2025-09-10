@@ -670,19 +670,16 @@ impl ConfigurationView {
         let api_key_editor =
             cx.new(|cx| SingleLineInput::new(window, cx, "63e02e...").label("API key"));
 
-        let api_url = AllLanguageModelSettings::get_global(cx)
-            .ollama
-            .api_url
-            .clone();
-
         let api_url_editor = cx.new(|cx| {
             let input = SingleLineInput::new(window, cx, OLLAMA_API_URL).label("API URL");
-
-            if !api_url.is_empty() {
-                input.editor.update(cx, |editor, cx| {
-                    editor.set_text(&*api_url, window, cx);
-                });
-            }
+            input.editor.update(cx, |editor, cx| {
+                let api_url: Arc<str> = AllLanguageModelSettings::get_global(cx)
+                    .ollama
+                    .api_url
+                    .as_str()
+                    .into();
+                editor.set_text(api_url, window, cx);
+            });
             input
         });
 
@@ -718,34 +715,20 @@ impl ConfigurationView {
 
     fn retry_connection(&self, cx: &mut App) {
         self.state
-            .update(cx, |state, cx| state.fetch_models(cx))
-            .detach_and_log_err(cx);
+            .update(cx, |state, cx| state.restart_fetch_models_task(cx));
     }
 
     fn save_api_key(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
-        let api_key = self
-            .api_key_editor
-            .read(cx)
-            .editor()
-            .read(cx)
-            .text(cx)
-            .trim()
-            .to_string();
-
-        // Don't proceed if no API key is provided and we're not authenticated
-        if api_key.is_empty() && !self.state.read(cx).is_authenticated() {
+        let api_key = self.api_key_editor.read(cx).text(cx).trim().to_string();
+        if api_key.is_empty() {
             return;
         }
 
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
-            if !api_key.is_empty() {
-                state
-                    .update(cx, |state, cx| state.set_api_key(api_key, cx))?
-                    .await
-            } else {
-                Ok(())
-            }
+            state
+                .update(cx, |state, cx| state.set_api_key(api_key, cx))?
+                .await
         })
         .detach_and_log_err(cx);
 
@@ -773,27 +756,11 @@ impl ConfigurationView {
     }
 
     fn save_api_url(&mut self, cx: &mut Context<Self>) {
-        let api_url = self
-            .api_url_editor
-            .read(cx)
-            .editor()
-            .read(cx)
-            .text(cx)
-            .trim()
-            .to_string();
+        let api_url = self.api_url_editor.read(cx).text(cx).trim().to_string();
 
-        let current_url = AllLanguageModelSettings::get_global(cx)
-            .ollama
-            .api_url
-            .clone();
+        let current_url = &AllLanguageModelSettings::get_global(cx).ollama.api_url;
 
-        let effective_current_url = if current_url.is_empty() {
-            OLLAMA_API_URL
-        } else {
-            &current_url
-        };
-
-        if !api_url.is_empty() && api_url != effective_current_url {
+        if !api_url.is_empty() && &api_url != current_url {
             let fs = <dyn Fs>::global(cx);
             update_settings_file::<AllLanguageModelSettings>(fs, cx, move |settings, _| {
                 if let Some(settings) = settings.ollama.as_mut() {
@@ -931,7 +898,8 @@ impl Render for ConfigurationView {
                   }
               )
               .child({
-                  let custom_api_url_set = AllLanguageModelSettings::get_global(cx).ollama.api_url != OLLAMA_API_URL;
+                  let api_url = &AllLanguageModelSettings::get_global(cx).ollama.api_url;
+                  let custom_api_url_set = api_url != OLLAMA_API_URL;
 
                   if custom_api_url_set {
                       v_flex()
@@ -951,11 +919,7 @@ impl Render for ConfigurationView {
                                             .child(
                                                 v_flex()
                                                     .gap_1()
-                                                    .child(
-                                                        Label::new(
-                                                            format!("API URL configured. {}", &AllLanguageModelSettings::get_global(cx).ollama.api_url)
-                                                        )
-                                                    )
+                                                    .child(Label::new(format!("API URL configured. {}", api_url)))
                                             )
                                     )
                                     .child(
