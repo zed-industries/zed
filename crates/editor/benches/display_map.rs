@@ -1,5 +1,5 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use editor::{MultiBuffer, display_map::FoldPoint};
+use editor::MultiBuffer;
 use gpui::TestDispatcher;
 use itertools::Itertools;
 use rand::{Rng, SeedableRng, rngs::StdRng};

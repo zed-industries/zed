@@ -341,7 +341,10 @@ impl TabSnapshot {
     }
 
     /// todo!(performance use tabs bitmask)
-    fn expand_tabs(&self, mut cursor: TabStopCursor, column: u32) -> u32 {
+    fn expand_tabs<'a, I>(&self, mut cursor: TabStopCursor<'a, I>, column: u32) -> u32
+    where
+        I: Iterator<Item = Chunk<'a>>,
+    {
         let tab_size = self.tab_size.get();
 
         let end_column = column.min(self.max_expansion_column);
@@ -371,7 +374,15 @@ impl TabSnapshot {
         expanded_bytes + column.saturating_sub(collapsed_bytes)
     }
 
-    fn collapse_tabs(&self, mut cursor: TabStopCursor, column: u32, bias: Bias) -> (u32, u32, u32) {
+    fn collapse_tabs<'a, I>(
+        &self,
+        mut cursor: TabStopCursor<'a, I>,
+        column: u32,
+        bias: Bias,
+    ) -> (u32, u32, u32)
+    where
+        I: Iterator<Item = Chunk<'a>>,
+    {
         let tab_size = self.tab_size.get();
         let mut collapsed_column = column;
         let mut seek_target = column.min(self.max_expansion_column);
@@ -566,7 +577,7 @@ impl<'a> Iterator for TabChunks<'a> {
             }
         }
 
-        //todo!(improve performance by using tab cursor)
+        //todo(improve performance by using tab cursor)
         for (ix, c) in self.chunk.text.char_indices() {
             match c {
                 '\t' => {
@@ -1421,8 +1432,11 @@ mod tests {
     }
 }
 
-struct TabStopCursor<'a> {
-    chunks: Box<dyn Iterator<Item = Chunk<'a>> + 'a>,
+struct TabStopCursor<'a, I>
+where
+    I: Iterator<Item = Chunk<'a>>,
+{
+    chunks: I,
     byte_offset: u32,
     char_offset: u32,
     /// Chunk
@@ -1430,10 +1444,13 @@ struct TabStopCursor<'a> {
     current_chunk: Option<(Chunk<'a>, u32)>,
 }
 
-impl<'a> TabStopCursor<'a> {
-    fn new(chunks: impl IntoIterator<Item = Chunk<'a>> + 'a) -> Self {
+impl<'a, I> TabStopCursor<'a, I>
+where
+    I: Iterator<Item = Chunk<'a>>,
+{
+    fn new(chunks: impl IntoIterator<Item = Chunk<'a>, IntoIter = I>) -> Self {
         Self {
-            chunks: Box::new(chunks.into_iter()),
+            chunks: chunks.into_iter(),
             byte_offset: 0,
             char_offset: 0,
             current_chunk: None,
