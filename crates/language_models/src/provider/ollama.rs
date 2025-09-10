@@ -927,8 +927,8 @@ impl Render for ConfigurationView {
                 .when(!is_authenticated, |this| {
                     this.child(Self::render_getting_started())
                 })
-                .child(self.render_api_key_editor(cx))
                 .child(self.render_api_url_editor(cx))
+                .child(self.render_api_key_editor(cx))
                 .child(
                     h_flex()
                         .w_full()
