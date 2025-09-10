@@ -1,14 +1,14 @@
 mod appearance_settings_controls;
 
-use std::any::TypeId;
-use std::num::NonZeroU32;
-use std::ops::{Not, Range};
-use std::rc::Rc;
+use std::{
+    num::NonZeroU32,
+    ops::{Not, Range},
+    rc::Rc,
+};
 
 use anyhow::Context as _;
-use command_palette_hooks::CommandPaletteFilter;
 use editor::{Editor, EditorSettingsControls};
-use feature_flags::{FeatureFlag, FeatureFlagViewExt};
+use feature_flags::{FeatureFlag, FeatureFlagAppExt};
 use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, ReadGlobal, ScrollHandle, actions};
 use settings::{
     NumType, SettingsStore, SettingsUiEntry, SettingsUiEntryMetaData, SettingsUiItem,
@@ -20,7 +20,6 @@ use ui::{NumericStepper, SwitchField, ToggleButtonGroup, ToggleButtonSimple, pre
 use workspace::{
     Workspace,
     item::{Item, ItemEvent},
-    with_active_or_new_workspace,
 };
 
 use crate::appearance_settings_controls::AppearanceSettingsControls;
@@ -39,50 +38,36 @@ actions!(
     ]
 );
 
-pub fn init(cx: &mut App) {
-    cx.on_action(|_: &OpenSettingsEditor, cx| {
-        with_active_or_new_workspace(cx, move |workspace, window, cx| {
-            let existing = workspace
-                .active_pane()
-                .read(cx)
-                .items()
-                .find_map(|item| item.downcast::<SettingsPage>());
+pub fn open_settings_editor(
+    workspace: &mut Workspace,
+    _: &OpenSettingsEditor,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    // todo(settings_ui) open in a local workspace if this is remote.
+    let existing = workspace
+        .active_pane()
+        .read(cx)
+        .items()
+        .find_map(|item| item.downcast::<SettingsPage>());
 
-            if let Some(existing) = existing {
-                workspace.activate_item(&existing, true, true, window, cx);
+    if let Some(existing) = existing {
+        workspace.activate_item(&existing, true, true, window, cx);
+    } else {
+        let settings_page = SettingsPage::new(workspace, cx);
+        workspace.add_item_to_active_pane(Box::new(settings_page), None, true, window, cx)
+    }
+}
+
+pub fn init(cx: &mut App) {
+    cx.observe_new(|workspace: &mut Workspace, _, _| {
+        workspace.register_action_renderer(|div, _, _, cx| {
+            if cx.has_flag::<SettingsUiFeatureFlag>() {
+                div.on_action(cx.listener(open_settings_editor))
             } else {
-                let settings_page = SettingsPage::new(workspace, cx);
-                workspace.add_item_to_active_pane(Box::new(settings_page), None, true, window, cx)
+                div
             }
         });
-    });
-
-    cx.observe_new(|_workspace: &mut Workspace, window, cx| {
-        let Some(window) = window else {
-            return;
-        };
-
-        let settings_ui_actions = [TypeId::of::<OpenSettingsEditor>()];
-
-        CommandPaletteFilter::update_global(cx, |filter, _cx| {
-            filter.hide_action_types(&settings_ui_actions);
-        });
-
-        cx.observe_flag::<SettingsUiFeatureFlag, _>(
-            window,
-            move |is_enabled, _workspace, _, cx| {
-                if is_enabled {
-                    CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                        filter.show_action_types(&settings_ui_actions);
-                    });
-                } else {
-                    CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                        filter.hide_action_types(&settings_ui_actions);
-                    });
-                }
-            },
-        )
-        .detach();
     })
     .detach();
 }
