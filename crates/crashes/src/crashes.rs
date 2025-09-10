@@ -176,10 +176,12 @@ impl minidumper::ServerHandler for CrashServer {
                 use io::Write;
                 file.flush().ok();
                 // TODO: clean this up once https://github.com/EmbarkStudios/crash-handling/issues/101 is addressed
-                if let Ok(contents) = fs::read(path) {
-                    file.set_len(0).ok();
-                    zstd::stream::copy_encode(contents.as_slice(), file, 0).ok();
-                }
+                drop(file);
+                let original_file = File::open(&path).unwrap();
+                let compressed_path = path.with_extension("zstd");
+                let compressed_file = File::create(&compressed_path).unwrap();
+                zstd::stream::copy_encode(original_file, compressed_file, 0).ok();
+                fs::rename(&compressed_path, path).unwrap();
                 None
             }
             Err(e) => Some(format!("{e:?}")),
