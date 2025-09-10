@@ -54,6 +54,7 @@ digest = { version = "0.10", features = ["mac", "oid", "std"] }
 either = { version = "1", features = ["serde", "use_std"] }
 euclid = { version = "0.22" }
 event-listener = { version = "5" }
+event-listener-strategy = { version = "0.5" }
 flate2 = { version = "1", features = ["zlib-rs"] }
 form_urlencoded = { version = "1" }
 futures = { version = "0.3", features = ["io-compat"] }
@@ -108,7 +109,6 @@ rustc-hash = { version = "1" }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["fs", "net", "std"] }
 rustls = { version = "0.23", features = ["ring"] }
 rustls-webpki = { version = "0.103", default-features = false, features = ["aws-lc-rs", "ring", "std"] }
-schemars = { version = "1", features = ["chrono04", "indexmap2", "semver1"] }
 sea-orm = { version = "1", features = ["runtime-tokio-rustls", "sqlx-postgres", "sqlx-sqlite"] }
 sea-query-binder = { version = "0.7", default-features = false, features = ["postgres-array", "sqlx-postgres", "sqlx-sqlite", "with-bigdecimal", "with-chrono", "with-json", "with-rust_decimal", "with-time", "with-uuid"] }
 semver = { version = "1", features = ["serde"] }
@@ -183,6 +183,7 @@ digest = { version = "0.10", features = ["mac", "oid", "std"] }
 either = { version = "1", features = ["serde", "use_std"] }
 euclid = { version = "0.22" }
 event-listener = { version = "5" }
+event-listener-strategy = { version = "0.5" }
 flate2 = { version = "1", features = ["zlib-rs"] }
 form_urlencoded = { version = "1" }
 futures = { version = "0.3", features = ["io-compat"] }
@@ -242,7 +243,6 @@ rustc-hash = { version = "1" }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["fs", "net", "std"] }
 rustls = { version = "0.23", features = ["ring"] }
 rustls-webpki = { version = "0.103", default-features = false, features = ["aws-lc-rs", "ring", "std"] }
-schemars = { version = "1", features = ["chrono04", "indexmap2", "semver1"] }
 sea-orm = { version = "1", features = ["runtime-tokio-rustls", "sqlx-postgres", "sqlx-sqlite"] }
 sea-query-binder = { version = "0.7", default-features = false, features = ["postgres-array", "sqlx-postgres", "sqlx-sqlite", "with-bigdecimal", "with-chrono", "with-json", "with-rust_decimal", "with-time", "with-uuid"] }
 semver = { version = "1", features = ["serde"] }
@@ -403,7 +403,6 @@ bytemuck = { version = "1", default-features = false, features = ["min_const_gen
 cipher = { version = "0.4", default-features = false, features = ["block-padding", "rand_core", "zeroize"] }
 codespan-reporting = { version = "0.12" }
 crypto-common = { version = "0.1", default-features = false, features = ["rand_core", "std"] }
-event-listener-strategy = { version = "0.5" }
 flume = { version = "0.11" }
 foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
@@ -444,7 +443,6 @@ bytemuck = { version = "1", default-features = false, features = ["min_const_gen
 cipher = { version = "0.4", default-features = false, features = ["block-padding", "rand_core", "zeroize"] }
 codespan-reporting = { version = "0.12" }
 crypto-common = { version = "0.1", default-features = false, features = ["rand_core", "std"] }
-event-listener-strategy = { version = "0.5" }
 flume = { version = "0.11" }
 foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
@@ -483,7 +481,6 @@ bytemuck = { version = "1", default-features = false, features = ["min_const_gen
 cipher = { version = "0.4", default-features = false, features = ["block-padding", "rand_core", "zeroize"] }
 codespan-reporting = { version = "0.12" }
 crypto-common = { version = "0.1", default-features = false, features = ["rand_core", "std"] }
-event-listener-strategy = { version = "0.5" }
 flume = { version = "0.11" }
 foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
@@ -524,7 +521,6 @@ bytemuck = { version = "1", default-features = false, features = ["min_const_gen
 cipher = { version = "0.4", default-features = false, features = ["block-padding", "rand_core", "zeroize"] }
 codespan-reporting = { version = "0.12" }
 crypto-common = { version = "0.1", default-features = false, features = ["rand_core", "std"] }
-event-listener-strategy = { version = "0.5" }
 flume = { version = "0.11" }
 foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
@@ -572,7 +568,7 @@ tokio-rustls = { version = "0.26", default-features = false, features = ["loggin
 tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
 tower = { version = "0.5", default-features = false, features = ["timeout", "util"] }
-winapi = { version = "0.3", default-features = false, features = ["cfg", "commapi", "consoleapi", "errhandlingapi", "evntrace", "fileapi", "handleapi", "impl-debug", "impl-default", "in6addr", "inaddr", "ioapiset", "knownfolders", "minwinbase", "minwindef", "namedpipeapi", "ntsecapi", "objbase", "processenv", "processthreadsapi", "shlobj", "std", "synchapi", "sysinfoapi", "timezoneapi", "winbase", "windef", "winerror", "winioctl", "winnt", "winreg", "winsock2", "winuser"] }
+winapi = { version = "0.3", default-features = false, features = ["cfg", "commapi", "consoleapi", "evntrace", "fileapi", "handleapi", "impl-debug", "impl-default", "in6addr", "inaddr", "ioapiset", "knownfolders", "minwinbase", "minwindef", "namedpipeapi", "ntsecapi", "objbase", "processenv", "processthreadsapi", "shlobj", "std", "synchapi", "sysinfoapi", "timezoneapi", "winbase", "windef", "winerror", "winioctl", "winnt", "winreg", "winsock2", "winuser"] }
 windows-core = { version = "0.61" }
 windows-numerics = { version = "0.2" }
 windows-sys-73dcd821b1037cfd = { package = "windows-sys", version = "0.59", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Globalization", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_Security_Authentication_Identity", "Win32_Security_Credentials", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Performance", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_Time", "Win32_System_WindowsProgramming", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
@@ -596,7 +592,7 @@ tokio-rustls = { version = "0.26", default-features = false, features = ["loggin
 tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
 tower = { version = "0.5", default-features = false, features = ["timeout", "util"] }
-winapi = { version = "0.3", default-features = false, features = ["cfg", "commapi", "consoleapi", "errhandlingapi", "evntrace", "fileapi", "handleapi", "impl-debug", "impl-default", "in6addr", "inaddr", "ioapiset", "knownfolders", "minwinbase", "minwindef", "namedpipeapi", "ntsecapi", "objbase", "processenv", "processthreadsapi", "shlobj", "std", "synchapi", "sysinfoapi", "timezoneapi", "winbase", "windef", "winerror", "winioctl", "winnt", "winreg", "winsock2", "winuser"] }
+winapi = { version = "0.3", default-features = false, features = ["cfg", "commapi", "consoleapi", "evntrace", "fileapi", "handleapi", "impl-debug", "impl-default", "in6addr", "inaddr", "ioapiset", "knownfolders", "minwinbase", "minwindef", "namedpipeapi", "ntsecapi", "objbase", "processenv", "processthreadsapi", "shlobj", "std", "synchapi", "sysinfoapi", "timezoneapi", "winbase", "windef", "winerror", "winioctl", "winnt", "winreg", "winsock2", "winuser"] }
 windows-core = { version = "0.61" }
 windows-numerics = { version = "0.2" }
 windows-sys-73dcd821b1037cfd = { package = "windows-sys", version = "0.59", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Globalization", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_Security_Authentication_Identity", "Win32_Security_Credentials", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Performance", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_Time", "Win32_System_WindowsProgramming", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
@@ -610,7 +606,6 @@ bytemuck = { version = "1", default-features = false, features = ["min_const_gen
 cipher = { version = "0.4", default-features = false, features = ["block-padding", "rand_core", "zeroize"] }
 codespan-reporting = { version = "0.12" }
 crypto-common = { version = "0.1", default-features = false, features = ["rand_core", "std"] }
-event-listener-strategy = { version = "0.5" }
 flume = { version = "0.11" }
 foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
@@ -651,7 +646,6 @@ bytemuck = { version = "1", default-features = false, features = ["min_const_gen
 cipher = { version = "0.4", default-features = false, features = ["block-padding", "rand_core", "zeroize"] }
 codespan-reporting = { version = "0.12" }
 crypto-common = { version = "0.1", default-features = false, features = ["rand_core", "std"] }
-event-listener-strategy = { version = "0.5" }
 flume = { version = "0.11" }
 foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }

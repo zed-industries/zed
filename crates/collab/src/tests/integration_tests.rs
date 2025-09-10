@@ -2506,7 +2506,7 @@ async fn test_propagate_saves_and_fs_changes(
     });
 
     let new_buffer_a = project_a
-        .update(cx_a, |p, cx| p.create_buffer(cx))
+        .update(cx_a, |p, cx| p.create_buffer(false, cx))
         .await
         .unwrap();
 
@@ -3208,7 +3208,7 @@ async fn test_fs_operations(
         })
         .await
         .unwrap()
-        .to_included()
+        .into_included()
         .unwrap();
 
     worktree_a.read_with(cx_a, |worktree, _| {
@@ -3237,7 +3237,7 @@ async fn test_fs_operations(
         })
         .await
         .unwrap()
-        .to_included()
+        .into_included()
         .unwrap();
 
     worktree_a.read_with(cx_a, |worktree, _| {
@@ -3266,7 +3266,7 @@ async fn test_fs_operations(
         })
         .await
         .unwrap()
-        .to_included()
+        .into_included()
         .unwrap();
 
     worktree_a.read_with(cx_a, |worktree, _| {
@@ -3295,7 +3295,7 @@ async fn test_fs_operations(
         })
         .await
         .unwrap()
-        .to_included()
+        .into_included()
         .unwrap();
 
     project_b
@@ -3304,7 +3304,7 @@ async fn test_fs_operations(
         })
         .await
         .unwrap()
-        .to_included()
+        .into_included()
         .unwrap();
 
     project_b
@@ -3313,7 +3313,7 @@ async fn test_fs_operations(
         })
         .await
         .unwrap()
-        .to_included()
+        .into_included()
         .unwrap();
 
     worktree_a.read_with(cx_a, |worktree, _| {
@@ -4075,7 +4075,7 @@ async fn test_collaborating_with_diagnostics(
         .await;
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
         &lsp::PublishDiagnosticsParams {
-            uri: lsp::Url::from_file_path(path!("/a/a.rs")).unwrap(),
+            uri: lsp::Uri::from_file_path(path!("/a/a.rs")).unwrap(),
             version: None,
             diagnostics: vec![lsp::Diagnostic {
                 severity: Some(lsp::DiagnosticSeverity::WARNING),
@@ -4095,7 +4095,7 @@ async fn test_collaborating_with_diagnostics(
         .unwrap();
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
         &lsp::PublishDiagnosticsParams {
-            uri: lsp::Url::from_file_path(path!("/a/a.rs")).unwrap(),
+            uri: lsp::Uri::from_file_path(path!("/a/a.rs")).unwrap(),
             version: None,
             diagnostics: vec![lsp::Diagnostic {
                 severity: Some(lsp::DiagnosticSeverity::ERROR),
@@ -4169,7 +4169,7 @@ async fn test_collaborating_with_diagnostics(
     // Simulate a language server reporting more errors for a file.
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
         &lsp::PublishDiagnosticsParams {
-            uri: lsp::Url::from_file_path(path!("/a/a.rs")).unwrap(),
+            uri: lsp::Uri::from_file_path(path!("/a/a.rs")).unwrap(),
             version: None,
             diagnostics: vec![
                 lsp::Diagnostic {
@@ -4265,7 +4265,7 @@ async fn test_collaborating_with_diagnostics(
     // Simulate a language server reporting no errors for a file.
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
         &lsp::PublishDiagnosticsParams {
-            uri: lsp::Url::from_file_path(path!("/a/a.rs")).unwrap(),
+            uri: lsp::Uri::from_file_path(path!("/a/a.rs")).unwrap(),
             version: None,
             diagnostics: Vec::new(),
         },
@@ -4372,7 +4372,7 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
     for file_name in file_names {
         fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
             &lsp::PublishDiagnosticsParams {
-                uri: lsp::Url::from_file_path(Path::new(path!("/test")).join(file_name)).unwrap(),
+                uri: lsp::Uri::from_file_path(Path::new(path!("/test")).join(file_name)).unwrap(),
                 version: None,
                 diagnostics: vec![lsp::Diagnostic {
                     severity: Some(lsp::DiagnosticSeverity::WARNING),
@@ -4838,7 +4838,7 @@ async fn test_definition(
         |_, _| async move {
             Ok(Some(lsp::GotoDefinitionResponse::Scalar(
                 lsp::Location::new(
-                    lsp::Url::from_file_path(path!("/root/dir-2/b.rs")).unwrap(),
+                    lsp::Uri::from_file_path(path!("/root/dir-2/b.rs")).unwrap(),
                     lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
                 ),
             )))
@@ -4850,6 +4850,7 @@ async fn test_definition(
     let definitions_1 = project_b
         .update(cx_b, |p, cx| p.definitions(&buffer_b, 23, cx))
         .await
+        .unwrap()
         .unwrap();
     cx_b.read(|cx| {
         assert_eq!(
@@ -4875,7 +4876,7 @@ async fn test_definition(
         |_, _| async move {
             Ok(Some(lsp::GotoDefinitionResponse::Scalar(
                 lsp::Location::new(
-                    lsp::Url::from_file_path(path!("/root/dir-2/b.rs")).unwrap(),
+                    lsp::Uri::from_file_path(path!("/root/dir-2/b.rs")).unwrap(),
                     lsp::Range::new(lsp::Position::new(1, 6), lsp::Position::new(1, 11)),
                 ),
             )))
@@ -4885,6 +4886,7 @@ async fn test_definition(
     let definitions_2 = project_b
         .update(cx_b, |p, cx| p.definitions(&buffer_b, 33, cx))
         .await
+        .unwrap()
         .unwrap();
     cx_b.read(|cx| {
         assert_eq!(definitions_2.len(), 1);
@@ -4912,7 +4914,7 @@ async fn test_definition(
             );
             Ok(Some(lsp::GotoDefinitionResponse::Scalar(
                 lsp::Location::new(
-                    lsp::Url::from_file_path(path!("/root/dir-2/c.rs")).unwrap(),
+                    lsp::Uri::from_file_path(path!("/root/dir-2/c.rs")).unwrap(),
                     lsp::Range::new(lsp::Position::new(0, 5), lsp::Position::new(0, 7)),
                 ),
             )))
@@ -4922,6 +4924,7 @@ async fn test_definition(
     let type_definitions = project_b
         .update(cx_b, |p, cx| p.type_definitions(&buffer_b, 7, cx))
         .await
+        .unwrap()
         .unwrap();
     cx_b.read(|cx| {
         assert_eq!(
@@ -4970,7 +4973,7 @@ async fn test_references(
         "Rust",
         FakeLspAdapter {
             name: "my-fake-lsp-adapter",
-            capabilities: capabilities,
+            capabilities,
             ..FakeLspAdapter::default()
         },
     );
@@ -5046,21 +5049,21 @@ async fn test_references(
     lsp_response_tx
         .unbounded_send(Ok(Some(vec![
             lsp::Location {
-                uri: lsp::Url::from_file_path(path!("/root/dir-1/two.rs")).unwrap(),
+                uri: lsp::Uri::from_file_path(path!("/root/dir-1/two.rs")).unwrap(),
                 range: lsp::Range::new(lsp::Position::new(0, 24), lsp::Position::new(0, 27)),
             },
             lsp::Location {
-                uri: lsp::Url::from_file_path(path!("/root/dir-1/two.rs")).unwrap(),
+                uri: lsp::Uri::from_file_path(path!("/root/dir-1/two.rs")).unwrap(),
                 range: lsp::Range::new(lsp::Position::new(0, 35), lsp::Position::new(0, 38)),
             },
             lsp::Location {
-                uri: lsp::Url::from_file_path(path!("/root/dir-2/three.rs")).unwrap(),
+                uri: lsp::Uri::from_file_path(path!("/root/dir-2/three.rs")).unwrap(),
                 range: lsp::Range::new(lsp::Position::new(0, 37), lsp::Position::new(0, 40)),
             },
         ])))
         .unwrap();
 
-    let references = references.await.unwrap();
+    let references = references.await.unwrap().unwrap();
     executor.run_until_parked();
     project_b.read_with(cx_b, |project, cx| {
         // User is informed that a request is no longer pending.
@@ -5104,7 +5107,7 @@ async fn test_references(
     lsp_response_tx
         .unbounded_send(Err(anyhow!("can't find references")))
         .unwrap();
-    assert_eq!(references.await.unwrap(), []);
+    assert_eq!(references.await.unwrap().unwrap(), []);
 
     // User is informed that the request is no longer pending.
     executor.run_until_parked();
@@ -5505,7 +5508,8 @@ async fn test_lsp_hover(
     // Request hover information as the guest.
     let mut hovers = project_b
         .update(cx_b, |p, cx| p.hover(&buffer_b, 22, cx))
-        .await;
+        .await
+        .unwrap();
     assert_eq!(
         hovers.len(),
         2,
@@ -5621,7 +5625,7 @@ async fn test_project_symbols(
                 lsp::SymbolInformation {
                     name: "TWO".into(),
                     location: lsp::Location {
-                        uri: lsp::Url::from_file_path(path!("/code/crate-2/two.rs")).unwrap(),
+                        uri: lsp::Uri::from_file_path(path!("/code/crate-2/two.rs")).unwrap(),
                         range: lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
                     },
                     kind: lsp::SymbolKind::CONSTANT,
@@ -5733,7 +5737,7 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
         |_, _| async move {
             Ok(Some(lsp::GotoDefinitionResponse::Scalar(
                 lsp::Location::new(
-                    lsp::Url::from_file_path(path!("/root/b.rs")).unwrap(),
+                    lsp::Uri::from_file_path(path!("/root/b.rs")).unwrap(),
                     lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
                 ),
             )))
@@ -5742,7 +5746,7 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
 
     let definitions;
     let buffer_b2;
-    if rng.r#gen() {
+    if rng.random() {
         cx_a.run_until_parked();
         cx_b.run_until_parked();
         definitions = project_b.update(cx_b, |p, cx| p.definitions(&buffer_b1, 23, cx));
@@ -5764,7 +5768,7 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
         definitions = project_b.update(cx_b, |p, cx| p.definitions(&buffer_b1, 23, cx));
     }
 
-    let definitions = definitions.await.unwrap();
+    let definitions = definitions.await.unwrap().unwrap();
     assert_eq!(
         definitions.len(),
         1,

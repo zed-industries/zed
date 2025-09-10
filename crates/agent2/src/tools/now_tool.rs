@@ -11,6 +11,7 @@ use crate::{AgentTool, ToolCallEventStream};
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[schemars(inline)]
 pub enum Timezone {
     /// Use UTC for the datetime.
     Utc,
@@ -32,35 +33,32 @@ impl AgentTool for NowTool {
     type Input = NowToolInput;
     type Output = String;
 
-    fn name(&self) -> SharedString {
-        "now".into()
+    fn name() -> &'static str {
+        "now"
     }
 
-    fn kind(&self) -> acp::ToolKind {
+    fn kind() -> acp::ToolKind {
         acp::ToolKind::Other
     }
 
-    fn initial_title(&self, _input: Result<Self::Input, serde_json::Value>) -> SharedString {
+    fn initial_title(
+        &self,
+        _input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
         "Get current time".into()
     }
 
     fn run(
         self: Arc<Self>,
         input: Self::Input,
-        event_stream: ToolCallEventStream,
+        _event_stream: ToolCallEventStream,
         _cx: &mut App,
     ) -> Task<Result<String>> {
         let now = match input.timezone {
             Timezone::Utc => Utc::now().to_rfc3339(),
             Timezone::Local => Local::now().to_rfc3339(),
         };
-        let content = format!("The current datetime is {now}.");
-
-        event_stream.update_fields(acp::ToolCallUpdateFields {
-            content: Some(vec![content.clone().into()]),
-            ..Default::default()
-        });
-
-        Task::ready(Ok(content))
+        Task::ready(Ok(format!("The current datetime is {now}.")))
     }
 }

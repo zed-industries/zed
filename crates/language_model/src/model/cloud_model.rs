@@ -36,9 +36,24 @@ impl fmt::Display for ModelRequestLimitReachedError {
             Plan::ZedProTrial => {
                 "Model request limit reached. Upgrade to Zed Pro for more requests."
             }
+            Plan::ZedFreeV2 | Plan::ZedProV2 | Plan::ZedProTrialV2 => {
+                "Model request limit reached."
+            }
         };
 
         write!(f, "{message}")
+    }
+}
+
+#[derive(Error, Debug)]
+pub struct ToolUseLimitReachedError;
+
+impl fmt::Display for ToolUseLimitReachedError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "Consecutive tool use limit reached. Enable Burn Mode for unlimited tool use."
+        )
     }
 }
 
@@ -70,7 +85,7 @@ impl LlmApiToken {
 
         let response = client.cloud_client().create_llm_token(system_id).await?;
         *lock = Some(response.token.0.clone());
-        Ok(response.token.0.clone())
+        Ok(response.token.0)
     }
 }
 

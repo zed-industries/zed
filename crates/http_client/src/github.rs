@@ -77,10 +77,10 @@ pub async fn latest_github_release(
         .find(|release| release.pre_release == pre_release)
         .context("finding a prerelease")?;
     release.assets.iter_mut().for_each(|asset| {
-        if let Some(digest) = &mut asset.digest {
-            if let Some(stripped) = digest.strip_prefix("sha256:") {
-                *digest = stripped.to_owned();
-            }
+        if let Some(digest) = &mut asset.digest
+            && let Some(stripped) = digest.strip_prefix("sha256:")
+        {
+            *digest = stripped.to_owned();
         }
     });
     Ok(release)

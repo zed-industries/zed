@@ -27,8 +27,7 @@ use util::paths::PathMatcher;
 /// - DO NOT use HTML entities solely to escape characters in the tool parameters.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct GrepToolInput {
-    /// A regex pattern to search for in the entire project. Note that the regex
-    /// will be parsed by the Rust `regex` crate.
+    /// A regex pattern to search for in the entire project. Note that the regex will be parsed by the Rust `regex` crate.
     ///
     /// Do NOT specify a path here! This will only be matched against the code **content**.
     pub regex: String,
@@ -68,15 +67,19 @@ impl AgentTool for GrepTool {
     type Input = GrepToolInput;
     type Output = String;
 
-    fn name(&self) -> SharedString {
-        "grep".into()
+    fn name() -> &'static str {
+        "grep"
     }
 
-    fn kind(&self) -> acp::ToolKind {
+    fn kind() -> acp::ToolKind {
         acp::ToolKind::Search
     }
 
-    fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString {
+    fn initial_title(
+        &self,
+        input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
         match input {
             Ok(input) => {
                 let page = input.page();
@@ -101,7 +104,7 @@ impl AgentTool for GrepTool {
     fn run(
         self: Arc<Self>,
         input: Self::Input,
-        event_stream: ToolCallEventStream,
+        _event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
         const CONTEXT_LINES: u32 = 2;
@@ -179,15 +182,14 @@ impl AgentTool for GrepTool {
                 // Check if this file should be excluded based on its worktree settings
                 if let Ok(Some(project_path)) = project.read_with(cx, |project, cx| {
                     project.find_project_path(&path, cx)
-                }) {
-                    if cx.update(|cx| {
+                })
+                    && cx.update(|cx| {
                         let worktree_settings = WorktreeSettings::get(Some((&project_path).into()), cx);
                         worktree_settings.is_path_excluded(&project_path.path)
                             || worktree_settings.is_path_private(&project_path.path)
                     }).unwrap_or(false) {
                         continue;
                     }
-                }
 
                 while *parse_status.borrow() != ParseStatus::Idle {
                     parse_status.changed().await?;
@@ -275,40 +277,28 @@ impl AgentTool for GrepTool {
                     output.extend(snapshot.text_for_range(range));
                     output.push_str("\n```\n");
 
-                    if let Some(ancestor_range) = ancestor_range {
-                        if end_row < ancestor_range.end.row {
+                    if let Some(ancestor_range) = ancestor_range
+                        && end_row < ancestor_range.end.row {
                             let remaining_lines = ancestor_range.end.row - end_row;
                             writeln!(output, "\n{} lines remaining in ancestor node. Read the file to see all.", remaining_lines)?;
                         }
-                    }
 
-                    event_stream.update_fields(acp::ToolCallUpdateFields {
-                        content: Some(vec![output.clone().into()]),
-                        ..Default::default()
-                    });
                     matches_found += 1;
                 }
             }
 
-            let output = if matches_found == 0 {
-                "No matches found".to_string()
+            if matches_found == 0 {
+                Ok("No matches found".into())
             } else if has_more_matches {
-                format!(
+                Ok(format!(
                     "Showing matches {}-{} (there were more matches found; use offset: {} to see next page):\n{output}",
                     input.offset + 1,
                     input.offset + matches_found,
                     input.offset + RESULTS_PER_PAGE,
-                )
+                ))
             } else {
-                format!("Found {matches_found} matches:\n{output}")
-            };
-
-            event_stream.update_fields(acp::ToolCallUpdateFields {
-                content: Some(vec![output.clone().into()]),
-                ..Default::default()
-            });
-
-            Ok(output)
+                Ok(format!("Found {matches_found} matches:\n{output}"))
+            }
         })
     }
 }
@@ -331,7 +321,7 @@ mod tests {
         init_test(cx);
         cx.executor().allow_parking();
 
-        let fs = FakeFs::new(cx.executor().clone());
+        let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             path!("/root"),
             serde_json::json!({
@@ -416,7 +406,7 @@ mod tests {
         init_test(cx);
         cx.executor().allow_parking();
 
-        let fs = FakeFs::new(cx.executor().clone());
+        let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             path!("/root"),
             serde_json::json!({
@@ -491,7 +481,7 @@ mod tests {
         init_test(cx);
         cx.executor().allow_parking();
 
-        let fs = FakeFs::new(cx.executor().clone());
+        let fs = FakeFs::new(cx.executor());
 
         // Create test file with syntax structures
         fs.insert_tree(
@@ -776,7 +766,7 @@ mod tests {
                 if cfg!(windows) {
                     result.replace("root\\", "root/")
                 } else {
-                    result.to_string()
+                    result
                 }
             }
             Err(e) => panic!("Failed to run grep tool: {}", e),

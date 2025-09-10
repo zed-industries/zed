@@ -7,7 +7,7 @@ const DEFS_PATH: &str = "#/$defs/";
 ///
 /// This asserts that JsonSchema::schema_name() + "2" does not exist because this indicates that
 /// there are multiple types that use this name, and unfortunately schemars APIs do not support
-/// resolving this ambiguity - see https://github.com/GREsau/schemars/issues/449
+/// resolving this ambiguity - see <https://github.com/GREsau/schemars/issues/449>
 ///
 /// This takes a closure for `schema` because some settings types are not available on the remote
 /// server, and so will crash when attempting to access e.g. GlobalThemeRegistry.
@@ -44,13 +44,12 @@ pub struct DefaultDenyUnknownFields;
 
 impl schemars::transform::Transform for DefaultDenyUnknownFields {
     fn transform(&mut self, schema: &mut schemars::Schema) {
-        if let Some(object) = schema.as_object_mut() {
-            if object.contains_key("properties")
-                && !object.contains_key("additionalProperties")
-                && !object.contains_key("unevaluatedProperties")
-            {
-                object.insert("additionalProperties".to_string(), false.into());
-            }
+        if let Some(object) = schema.as_object_mut()
+            && object.contains_key("properties")
+            && !object.contains_key("additionalProperties")
+            && !object.contains_key("unevaluatedProperties")
+        {
+            object.insert("additionalProperties".to_string(), false.into());
         }
         transform_subschemas(self, schema);
     }

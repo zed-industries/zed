@@ -398,7 +398,7 @@ static DEFAULT_ICON_THEME: LazyLock<Arc<IconTheme>> = LazyLock::new(|| {
         },
         file_stems: icon_keys_by_association(FILE_STEMS_BY_ICON_KEY),
         file_suffixes: icon_keys_by_association(FILE_SUFFIXES_BY_ICON_KEY),
-        file_icons: HashMap::from_iter(FILE_ICONS.into_iter().map(|(ty, path)| {
+        file_icons: HashMap::from_iter(FILE_ICONS.iter().map(|(ty, path)| {
             (
                 ty.to_string(),
                 IconDefinition {

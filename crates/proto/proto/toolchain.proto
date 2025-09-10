@@ -44,3 +44,16 @@ message ActiveToolchain {
 message ActiveToolchainResponse {
     optional Toolchain toolchain = 1;
 }
+
+message ResolveToolchain {
+    uint64 project_id = 1;
+    string abs_path = 2;
+    string language_name = 3;
+}
+
+message ResolveToolchainResponse {
+    oneof response {
+        Toolchain toolchain = 1;
+        string error = 2;
+    }
+}

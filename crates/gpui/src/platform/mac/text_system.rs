@@ -16,7 +16,7 @@ use core_foundation::{
 use core_graphics::{
     base::{CGGlyph, kCGImageAlphaPremultipliedLast},
     color_space::CGColorSpace,
-    context::CGContext,
+    context::{CGContext, CGTextDrawingMode},
     display::CGPoint,
 };
 use core_text::{
@@ -211,11 +211,7 @@ impl MacTextSystemState {
         features: &FontFeatures,
         fallbacks: Option<&FontFallbacks>,
     ) -> Result<SmallVec<[FontId; 4]>> {
-        let name = if name == ".SystemUIFont" {
-            ".AppleSystemUIFont"
-        } else {
-            name
-        };
+        let name = crate::text_system::font_name_with_fallbacks(name, ".AppleSystemUIFont");
 
         let mut font_ids = SmallVec::new();
         let family = self
@@ -323,7 +319,7 @@ impl MacTextSystemState {
     fn is_emoji(&self, font_id: FontId) -> bool {
         self.postscript_names_by_font_id
             .get(&font_id)
-            .map_or(false, |postscript_name| {
+            .is_some_and(|postscript_name| {
                 postscript_name == "AppleColorEmoji" || postscript_name == ".AppleColorEmojiUI"
             })
     }
@@ -400,6 +396,12 @@ impl MacTextSystemState {
             let subpixel_shift = params
                 .subpixel_variant
                 .map(|v| v as f32 / SUBPIXEL_VARIANTS as f32);
+            cx.set_allows_font_smoothing(true);
+            cx.set_should_smooth_fonts(true);
+            cx.set_text_drawing_mode(CGTextDrawingMode::CGTextFill);
+            cx.set_gray_fill_color(0.0, 1.0);
+            cx.set_allows_antialiasing(true);
+            cx.set_should_antialias(true);
             cx.set_allows_font_subpixel_positioning(true);
             cx.set_should_subpixel_position_fonts(true);
             cx.set_allows_font_subpixel_quantization(false);

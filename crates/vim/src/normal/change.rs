@@ -34,7 +34,7 @@ impl Vim {
         } else {
             None
         };
-        self.update_editor(window, cx, |vim, editor, window, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             let text_layout_details = editor.text_layout_details(window);
             editor.transact(window, cx, |editor, window, cx| {
                 // We are swapping to insert mode anyway. Just set the line end clipping behavior now
@@ -111,7 +111,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         let mut objects_found = false;
-        self.update_editor(window, cx, |vim, editor, window, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             // We are swapping to insert mode anyway. Just set the line end clipping behavior now
             editor.set_clip_at_line_ends(false, cx);
             editor.transact(window, cx, |editor, window, cx| {
@@ -155,12 +155,11 @@ fn expand_changed_word_selection(
         let classifier = map
             .buffer_snapshot
             .char_classifier_at(selection.start.to_point(map));
-        let in_word = map
-            .buffer_chars_at(selection.head().to_offset(map, Bias::Left))
+
+        map.buffer_chars_at(selection.head().to_offset(map, Bias::Left))
             .next()
             .map(|(c, _)| !classifier.is_whitespace(c))
-            .unwrap_or_default();
-        in_word
+            .unwrap_or_default()
     };
     if (times.is_none() || times.unwrap() == 1) && is_in_word() {
         let next_char = map

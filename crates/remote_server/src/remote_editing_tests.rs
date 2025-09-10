@@ -22,7 +22,7 @@ use project::{
     Project, ProjectPath,
     search::{SearchQuery, SearchResult},
 };
-use remote::SshRemoteClient;
+use remote::RemoteClient;
 use serde_json::json;
 use settings::{Settings, SettingsLocation, SettingsStore, initial_server_settings_content};
 use smol::stream::StreamExt;
@@ -280,7 +280,8 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
             AllLanguageSettings::get_global(cx)
                 .language(None, Some(&"Rust".into()), cx)
                 .language_servers,
-            ["..."] // local settings are ignored
+            ["from-local-settings"],
+            "User language settings should be synchronized with the server settings"
         )
     });
 
@@ -300,7 +301,8 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
             AllLanguageSettings::get_global(cx)
                 .language(None, Some(&"Rust".into()), cx)
                 .language_servers,
-            ["from-server-settings".to_string()]
+            ["from-server-settings".to_string()],
+            "Server language settings should take precedence over the user settings"
         )
     });
 
@@ -533,7 +535,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
         Ok(Some(lsp::WorkspaceEdit {
             changes: Some(
                 [(
-                    lsp::Url::from_file_path(path!("/code/project1/src/lib.rs")).unwrap(),
+                    lsp::Uri::from_file_path(path!("/code/project1/src/lib.rs")).unwrap(),
                     vec![lsp::TextEdit::new(
                         lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 6)),
                         "two".to_string(),
@@ -1119,7 +1121,7 @@ async fn test_reconnect(cx: &mut TestAppContext, server_cx: &mut TestAppContext)
         buffer.edit([(ix..ix + 1, "100")], None, cx);
     });
 
-    let client = cx.read(|cx| project.read(cx).ssh_client().unwrap());
+    let client = cx.read(|cx| project.read(cx).remote_client().unwrap());
     client
         .update(cx, |client, cx| client.simulate_disconnect(cx))
         .detach();
@@ -1207,7 +1209,7 @@ async fn test_remote_rename_entry(cx: &mut TestAppContext, server_cx: &mut TestA
         })
         .await
         .unwrap()
-        .to_included()
+        .into_included()
         .unwrap();
 
     cx.run_until_parked();
@@ -1782,7 +1784,7 @@ pub async fn init_test(
     });
     init_logger();
 
-    let (opts, ssh_server_client) = SshRemoteClient::fake_server(cx, server_cx);
+    let (opts, ssh_server_client) = RemoteClient::fake_server(cx, server_cx);
     let http_client = Arc::new(BlockedHttpClient);
     let node_runtime = NodeRuntime::unavailable();
     let languages = Arc::new(LanguageRegistry::new(cx.executor()));
@@ -1804,7 +1806,7 @@ pub async fn init_test(
         )
     });
 
-    let ssh = SshRemoteClient::fake_client(opts, cx).await;
+    let ssh = RemoteClient::fake_client(opts, cx).await;
     let project = build_project(ssh, cx);
     project
         .update(cx, {
@@ -1819,7 +1821,7 @@ fn init_logger() {
     zlog::init_test();
 }
 
-fn build_project(ssh: Entity<SshRemoteClient>, cx: &mut TestAppContext) -> Entity<Project> {
+fn build_project(ssh: Entity<RemoteClient>, cx: &mut TestAppContext) -> Entity<Project> {
     cx.update(|cx| {
         if !cx.has_global::<SettingsStore>() {
             let settings_store = SettingsStore::test(cx);
@@ -1845,5 +1847,5 @@ fn build_project(ssh: Entity<SshRemoteClient>, cx: &mut TestAppContext) -> Entit
         language::init(cx);
     });
 
-    cx.update(|cx| Project::ssh(ssh, client, node, user_store, languages, fs, cx))
+    cx.update(|cx| Project::remote(ssh, client, node, user_store, languages, fs, cx))
 }

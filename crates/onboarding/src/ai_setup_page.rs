@@ -19,7 +19,7 @@ use util::ResultExt;
 use workspace::{ModalView, Workspace};
 use zed_actions::agent::OpenSettings;
 
-const FEATURED_PROVIDERS: [&'static str; 4] = ["anthropic", "google", "openai", "ollama"];
+const FEATURED_PROVIDERS: [&str; 4] = ["anthropic", "google", "openai", "ollama"];
 
 fn render_llm_provider_section(
     tab_index: &mut isize,
@@ -188,6 +188,11 @@ fn render_llm_provider_card(
                                 workspace
                                     .update(cx, |workspace, cx| {
                                         workspace.toggle_modal(window, cx, |window, cx| {
+                                            telemetry::event!(
+                                                "Welcome AI Modal Opened",
+                                                provider = provider.name().0,
+                                            );
+
                                             let modal = AiConfigurationModal::new(
                                                 provider.clone(),
                                                 window,
@@ -245,18 +250,23 @@ pub(crate) fn render_ai_setup_page(
                     ToggleState::Selected
                 },
                 |&toggle_state, _, cx| {
-                    let fs = <dyn Fs>::global(cx);
-                    update_settings_file::<DisableAiSettings>(
-                        fs,
-                        cx,
-                        move |ai_settings: &mut Option<bool>, _| {
-                            *ai_settings = match toggle_state {
-                                ToggleState::Indeterminate => None,
-                                ToggleState::Unselected => Some(true),
-                                ToggleState::Selected => Some(false),
-                            };
-                        },
+                    let enabled = match toggle_state {
+                        ToggleState::Indeterminate => {
+                            return;
+                        }
+                        ToggleState::Unselected => true,
+                        ToggleState::Selected => false,
+                    };
+
+                    telemetry::event!(
+                        "Welcome AI Enabled",
+                        toggle = if enabled { "on" } else { "off" },
                     );
+
+                    let fs = <dyn Fs>::global(cx);
+                    update_settings_file::<DisableAiSettings>(fs, cx, move |ai_settings, _| {
+                        ai_settings.disable_ai = Some(enabled);
+                    });
                 },
             )
             .tab_index({
@@ -269,17 +279,13 @@ pub(crate) fn render_ai_setup_page(
             v_flex()
                 .mt_2()
                 .gap_6()
-                .child({
-                    let mut ai_upsell_card =
-                        AiUpsellCard::new(client, &user_store, user_store.read(cx).plan(), cx);
-
-                    ai_upsell_card.tab_index = Some({
-                        tab_index += 1;
-                        tab_index - 1
-                    });
-
-                    ai_upsell_card
-                })
+                .child(
+                    AiUpsellCard::new(client, &user_store, user_store.read(cx).plan(), cx)
+                        .tab_index(Some({
+                            tab_index += 1;
+                            tab_index - 1
+                        })),
+                )
                 .child(render_llm_provider_section(
                     &mut tab_index,
                     workspace,
@@ -315,7 +321,11 @@ impl AiConfigurationModal {
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
-        let configuration_view = selected_provider.configuration_view(window, cx);
+        let configuration_view = selected_provider.configuration_view(
+            language_model::ConfigurationViewTargetAgent::ZedAgent,
+            window,
+            cx,
+        );
 
         Self {
             focus_handle,
@@ -392,7 +402,7 @@ impl AiPrivacyTooltip {
 
 impl Render for AiPrivacyTooltip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        const DESCRIPTION: &'static str = "We believe in opt-in data sharing as the default for building AI products, rather than opt-out. We'll only use or store your data if you affirmatively send it to us. ";
+        const DESCRIPTION: &str = "We believe in opt-in data sharing as the default for building AI products, rather than opt-out. We'll only use or store your data if you affirmatively send it to us. ";
 
         tooltip_container(window, cx, move |this, _, _| {
             this.child(

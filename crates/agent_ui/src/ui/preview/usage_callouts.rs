@@ -38,20 +38,20 @@ impl RenderOnce for UsageCallout {
 
         let (title, message, button_text, url) = if is_limit_reached {
             match self.plan {
-                Plan::ZedFree => (
+                Plan::ZedFree | Plan::ZedFreeV2 => (
                     "Out of free prompts",
                     "Upgrade to continue, wait for the next reset, or switch to API key."
                         .to_string(),
                     "Upgrade",
                     zed_urls::account_url(cx),
                 ),
-                Plan::ZedProTrial => (
+                Plan::ZedProTrial | Plan::ZedProTrialV2 => (
                     "Out of trial prompts",
                     "Upgrade to Zed Pro to continue, or switch to API key.".to_string(),
                     "Upgrade",
                     zed_urls::account_url(cx),
                 ),
-                Plan::ZedPro => (
+                Plan::ZedPro | Plan::ZedProV2 => (
                     "Out of included prompts",
                     "Enable usage-based billing to continue.".to_string(),
                     "Manage",
@@ -80,31 +80,24 @@ impl RenderOnce for UsageCallout {
             }
         };
 
-        let icon = if is_limit_reached {
-            Icon::new(IconName::Close)
-                .color(Color::Error)
-                .size(IconSize::XSmall)
+        let (icon, severity) = if is_limit_reached {
+            (IconName::Close, Severity::Error)
         } else {
-            Icon::new(IconName::Warning)
-                .color(Color::Warning)
-                .size(IconSize::XSmall)
+            (IconName::Warning, Severity::Warning)
         };
 
-        div()
-            .border_t_1()
-            .border_color(cx.theme().colors().border)
-            .child(
-                Callout::new()
-                    .icon(icon)
-                    .title(title)
-                    .description(message)
-                    .primary_action(
-                        Button::new("upgrade", button_text)
-                            .label_size(LabelSize::Small)
-                            .on_click(move |_, _, cx| {
-                                cx.open_url(&url);
-                            }),
-                    ),
+        Callout::new()
+            .icon(icon)
+            .severity(severity)
+            .icon(icon)
+            .title(title)
+            .description(message)
+            .actions_slot(
+                Button::new("upgrade", button_text)
+                    .label_size(LabelSize::Small)
+                    .on_click(move |_, _, cx| {
+                        cx.open_url(&url);
+                    }),
             )
             .into_any_element()
     }

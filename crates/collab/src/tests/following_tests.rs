@@ -970,7 +970,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
     // the follow.
     workspace_b.update_in(cx_b, |workspace, window, cx| {
         workspace.active_pane().update(cx, |pane, cx| {
-            pane.activate_prev_item(true, window, cx);
+            pane.activate_previous_item(&Default::default(), window, cx);
         });
     });
     executor.run_until_parked();
@@ -1073,7 +1073,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
     // Client A cycles through some tabs.
     workspace_a.update_in(cx_a, |workspace, window, cx| {
         workspace.active_pane().update(cx, |pane, cx| {
-            pane.activate_prev_item(true, window, cx);
+            pane.activate_previous_item(&Default::default(), window, cx);
         });
     });
     executor.run_until_parked();
@@ -1117,7 +1117,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
 
     workspace_a.update_in(cx_a, |workspace, window, cx| {
         workspace.active_pane().update(cx, |pane, cx| {
-            pane.activate_prev_item(true, window, cx);
+            pane.activate_previous_item(&Default::default(), window, cx);
         });
     });
     executor.run_until_parked();
@@ -1164,7 +1164,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
 
     workspace_a.update_in(cx_a, |workspace, window, cx| {
         workspace.active_pane().update(cx, |pane, cx| {
-            pane.activate_prev_item(true, window, cx);
+            pane.activate_previous_item(&Default::default(), window, cx);
         });
     });
     executor.run_until_parked();
@@ -2098,7 +2098,7 @@ async fn test_following_after_replacement(cx_a: &mut TestAppContext, cx_b: &mut 
     share_workspace(&workspace, cx_a).await.unwrap();
     let buffer = workspace.update(cx_a, |workspace, cx| {
         workspace.project().update(cx, |project, cx| {
-            project.create_local_buffer(&sample_text(26, 5, 'a'), None, cx)
+            project.create_local_buffer(&sample_text(26, 5, 'a'), None, false, cx)
         })
     });
     let multibuffer = cx_a.new(|cx| {

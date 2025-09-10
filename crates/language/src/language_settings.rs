@@ -5,7 +5,7 @@ use anyhow::Result;
 use collections::{FxHashMap, HashMap, HashSet};
 use ec4rs::{
     Properties as EditorconfigProperties,
-    property::{FinalNewline, IndentSize, IndentStyle, TabWidth, TrimTrailingWs},
+    property::{FinalNewline, IndentSize, IndentStyle, MaxLineLen, TabWidth, TrimTrailingWs},
 };
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{App, Modifiers};
@@ -17,7 +17,8 @@ use serde::{
 };
 
 use settings::{
-    ParameterizedJsonSchema, Settings, SettingsLocation, SettingsSources, SettingsStore,
+    ParameterizedJsonSchema, Settings, SettingsKey, SettingsLocation, SettingsSources,
+    SettingsStore, SettingsUi,
 };
 use shellexpand;
 use std::{borrow::Cow, num::NonZeroU32, path::Path, slice, sync::Arc};
@@ -133,6 +134,8 @@ pub struct LanguageSettings {
     /// Whether to use additional LSP queries to format (and amend) the code after
     /// every "trigger" symbol input, defined by LSP server capabilities.
     pub use_on_type_format: bool,
+    /// Whether indentation should be adjusted based on the context whilst typing.
+    pub auto_indent: bool,
     /// Whether indentation of pasted content should be adjusted based on the context.
     pub auto_indent_on_paste: bool,
     /// Controls how the editor handles the autoclosed characters.
@@ -185,8 +188,8 @@ impl LanguageSettings {
         let rest = available_language_servers
             .iter()
             .filter(|&available_language_server| {
-                !disabled_language_servers.contains(&available_language_server)
-                    && !enabled_language_servers.contains(&available_language_server)
+                !disabled_language_servers.contains(available_language_server)
+                    && !enabled_language_servers.contains(available_language_server)
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -197,7 +200,7 @@ impl LanguageSettings {
                 if language_server.0.as_ref() == Self::REST_OF_LANGUAGE_SERVERS {
                     rest.clone()
                 } else {
-                    vec![language_server.clone()]
+                    vec![language_server]
                 }
             })
             .collect::<Vec<_>>()
@@ -205,7 +208,9 @@ impl LanguageSettings {
 }
 
 /// The provider that supplies edit predictions.
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema, SettingsUi,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum EditPredictionProvider {
     None,
@@ -228,13 +233,14 @@ impl EditPredictionProvider {
 
 /// The settings for edit predictions, such as [GitHub Copilot](https://github.com/features/copilot)
 /// or [Supermaven](https://supermaven.com).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, SettingsUi)]
 pub struct EditPredictionSettings {
     /// The provider that supplies edit predictions.
     pub provider: EditPredictionProvider,
     /// A list of globs representing files that edit predictions should be disabled for.
     /// This list adds to a pre-existing, sensible default set of globs.
     /// Any additional ones you add are combined with them.
+    #[settings_ui(skip)]
     pub disabled_globs: Vec<DisabledGlob>,
     /// Configures how edit predictions are displayed in the buffer.
     pub mode: EditPredictionsMode,
@@ -251,7 +257,7 @@ impl EditPredictionSettings {
         !self.disabled_globs.iter().any(|glob| {
             if glob.is_absolute {
                 file.as_local()
-                    .map_or(false, |local| glob.matcher.is_match(local.abs_path(cx)))
+                    .is_some_and(|local| glob.matcher.is_match(local.abs_path(cx)))
             } else {
                 glob.matcher.is_match(file.path())
             }
@@ -266,7 +272,9 @@ pub struct DisabledGlob {
 }
 
 /// The mode in which edit predictions should be displayed.
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema, SettingsUi,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum EditPredictionsMode {
     /// If provider supports it, display inline when holding modifier key (e.g., alt).
@@ -279,18 +287,24 @@ pub enum EditPredictionsMode {
     Eager,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, SettingsUi)]
 pub struct CopilotSettings {
     /// HTTP/HTTPS proxy to use for Copilot.
+    #[settings_ui(skip)]
     pub proxy: Option<String>,
     /// Disable certificate verification for proxy (not recommended).
     pub proxy_no_verify: Option<bool>,
     /// Enterprise URI for Copilot.
+    #[settings_ui(skip)]
     pub enterprise_uri: Option<String>,
 }
 
 /// The settings for all languages.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey,
+)]
+#[settings_key(None)]
+#[settings_ui(group = "Default Language Settings")]
 pub struct AllLanguageSettingsContent {
     /// The settings for enabling/disabling features.
     #[serde(default)]
@@ -307,6 +321,7 @@ pub struct AllLanguageSettingsContent {
     /// Settings for associating file extensions and filenames
     /// with languages.
     #[serde(default)]
+    #[settings_ui(skip)]
     pub file_types: HashMap<Arc<str>, Vec<String>>,
 }
 
@@ -314,6 +329,37 @@ pub struct AllLanguageSettingsContent {
 /// names in the keys.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct LanguageToSettingsMap(pub HashMap<LanguageName, LanguageSettingsContent>);
+
+impl SettingsUi for LanguageToSettingsMap {
+    fn settings_ui_item() -> settings::SettingsUiItem {
+        settings::SettingsUiItem::DynamicMap(settings::SettingsUiItemDynamicMap {
+            item: LanguageSettingsContent::settings_ui_item,
+            defaults_path: &[],
+            determine_items: |settings_value, cx| {
+                use settings::SettingsUiEntryMetaData;
+
+                // todo(settings_ui): We should be using a global LanguageRegistry, but it's not implemented yet
+                _ = cx;
+
+                let Some(settings_language_map) = settings_value.as_object() else {
+                    return Vec::new();
+                };
+                let mut languages = Vec::with_capacity(settings_language_map.len());
+
+                for language_name in settings_language_map.keys().map(gpui::SharedString::from) {
+                    languages.push(SettingsUiEntryMetaData {
+                        title: language_name.clone(),
+                        path: language_name,
+                        // todo(settings_ui): Implement documentation for each language
+                        // ideally based on the language's official docs from extension or builtin info
+                        documentation: None,
+                    });
+                }
+                return languages;
+            },
+        })
+    }
+}
 
 inventory::submit! {
     ParameterizedJsonSchema {
@@ -339,7 +385,7 @@ inventory::submit! {
 }
 
 /// Controls how completions are processed for this language.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi)]
 #[serde(rename_all = "snake_case")]
 pub struct CompletionSettings {
     /// Controls how words are completed.
@@ -348,6 +394,12 @@ pub struct CompletionSettings {
     /// Default: `fallback`
     #[serde(default = "default_words_completion_mode")]
     pub words: WordsCompletionMode,
+    /// How many characters has to be in the completions query to automatically show the words-based completions.
+    /// Before that value, it's still possible to trigger the words-based completion manually with the corresponding editor command.
+    ///
+    /// Default: 3
+    #[serde(default = "default_3")]
+    pub words_min_length: usize,
     /// Whether to fetch LSP completions or not.
     ///
     /// Default: true
@@ -357,7 +409,7 @@ pub struct CompletionSettings {
     /// When set to 0, waits indefinitely.
     ///
     /// Default: 0
-    #[serde(default = "default_lsp_fetch_timeout_ms")]
+    #[serde(default)]
     pub lsp_fetch_timeout_ms: u64,
     /// Controls how LSP completions are inserted.
     ///
@@ -403,17 +455,19 @@ fn default_lsp_insert_mode() -> LspInsertMode {
     LspInsertMode::ReplaceSuffix
 }
 
-fn default_lsp_fetch_timeout_ms() -> u64 {
-    0
+fn default_3() -> usize {
+    3
 }
 
 /// The settings for a particular language.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, SettingsUi)]
+#[settings_ui(group = "Default")]
 pub struct LanguageSettingsContent {
     /// How many columns a tab should occupy.
     ///
     /// Default: 4
     #[serde(default)]
+    #[settings_ui(skip)]
     pub tab_size: Option<NonZeroU32>,
     /// Whether to indent lines using tab characters, as opposed to multiple
     /// spaces.
@@ -444,6 +498,7 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: []
     #[serde(default)]
+    #[settings_ui(skip)]
     pub wrap_guides: Option<Vec<usize>>,
     /// Indent guide related settings.
     #[serde(default)]
@@ -469,6 +524,7 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: auto
     #[serde(default)]
+    #[settings_ui(skip)]
     pub formatter: Option<SelectedFormatter>,
     /// Zed's Prettier integration settings.
     /// Allows to enable/disable formatting with Prettier
@@ -494,6 +550,7 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: ["..."]
     #[serde(default)]
+    #[settings_ui(skip)]
     pub language_servers: Option<Vec<String>>,
     /// Controls where the `editor::Rewrap` action is allowed for this language.
     ///
@@ -516,6 +573,7 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: []
     #[serde(default)]
+    #[settings_ui(skip)]
     pub edit_predictions_disabled_in: Option<Vec<String>>,
     /// Whether to show tabs and spaces in the editor.
     #[serde(default)]
@@ -555,12 +613,17 @@ pub struct LanguageSettingsContent {
     /// These are not run if formatting is off.
     ///
     /// Default: {} (or {"source.organizeImports": true} for Go).
+    #[settings_ui(skip)]
     pub code_actions_on_format: Option<HashMap<String, bool>>,
     /// Whether to perform linked edits of associated ranges, if the language server supports it.
     /// For example, when editing opening <html> tag, the contents of the closing </html> tag will be edited as well.
     ///
     /// Default: true
     pub linked_edits: Option<bool>,
+    /// Whether indentation should be adjusted based on the context whilst typing.
+    ///
+    /// Default: true
+    pub auto_indent: Option<bool>,
     /// Whether indentation of pasted content should be adjusted based on the context.
     ///
     /// Default: true
@@ -584,11 +647,14 @@ pub struct LanguageSettingsContent {
     /// Preferred debuggers for this language.
     ///
     /// Default: []
+    #[settings_ui(skip)]
     pub debuggers: Option<Vec<String>>,
 }
 
 /// The behavior of `editor::Rewrap`.
-#[derive(Debug, PartialEq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, PartialEq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, SettingsUi,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum RewrapBehavior {
     /// Only rewrap within comments.
@@ -601,12 +667,13 @@ pub enum RewrapBehavior {
 }
 
 /// The contents of the edit prediction settings.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, SettingsUi)]
 pub struct EditPredictionSettingsContent {
     /// A list of globs representing files that edit predictions should be disabled for.
     /// This list adds to a pre-existing, sensible default set of globs.
     /// Any additional ones you add are combined with them.
     #[serde(default)]
+    #[settings_ui(skip)]
     pub disabled_globs: Option<Vec<String>>,
     /// The mode used to display edit predictions in the buffer.
     /// Provider support required.
@@ -621,12 +688,13 @@ pub struct EditPredictionSettingsContent {
     pub enabled_in_text_threads: bool,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, SettingsUi)]
 pub struct CopilotSettingsContent {
     /// HTTP/HTTPS proxy to use for Copilot.
     ///
     /// Default: none
     #[serde(default)]
+    #[settings_ui(skip)]
     pub proxy: Option<String>,
     /// Disable certificate verification for the proxy (not recommended).
     ///
@@ -637,19 +705,21 @@ pub struct CopilotSettingsContent {
     ///
     /// Default: none
     #[serde(default)]
+    #[settings_ui(skip)]
     pub enterprise_uri: Option<String>,
 }
 
 /// The settings for enabling/disabling features.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
 #[serde(rename_all = "snake_case")]
+#[settings_ui(group = "Features")]
 pub struct FeaturesContent {
     /// Determines which edit prediction provider to use.
     pub edit_prediction_provider: Option<EditPredictionProvider>,
 }
 
 /// Controls the soft-wrapping behavior in the editor.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi)]
 #[serde(rename_all = "snake_case")]
 pub enum SoftWrap {
     /// Prefer a single line generally, unless an overly long line is encountered.
@@ -666,7 +736,7 @@ pub enum SoftWrap {
 }
 
 /// Controls the behavior of formatting files when they are saved.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, SettingsUi)]
 pub enum FormatOnSave {
     /// Files should be formatted on save.
     On,
@@ -765,7 +835,7 @@ impl<'de> Deserialize<'de> for FormatOnSave {
 }
 
 /// Controls how whitespace should be displayedin the editor.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi)]
 #[serde(rename_all = "snake_case")]
 pub enum ShowWhitespaceSetting {
     /// Draw whitespace only for the selected text.
@@ -786,7 +856,7 @@ pub enum ShowWhitespaceSetting {
 }
 
 /// Controls which formatter should be used when formatting code.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, SettingsUi)]
 pub enum SelectedFormatter {
     /// Format files using Zed's Prettier integration (if applicable),
     /// or falling back to formatting via language server.
@@ -918,7 +988,9 @@ pub enum Formatter {
 }
 
 /// The settings for indent guides.
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, SettingsUi,
+)]
 pub struct IndentGuideSettings {
     /// Whether to display indent guides in the editor.
     ///
@@ -980,7 +1052,7 @@ pub enum IndentGuideBackgroundColoring {
 }
 
 /// The settings for inlay hints.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, SettingsUi)]
 pub struct InlayHintSettings {
     /// Global switch to toggle hints on and off.
     ///
@@ -1047,7 +1119,7 @@ fn scroll_debounce_ms() -> u64 {
 }
 
 /// The task settings for a particular language.
-#[derive(Debug, Clone, Deserialize, PartialEq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Serialize, JsonSchema, SettingsUi)]
 pub struct LanguageTaskConfig {
     /// Extra task variables to set for a particular language.
     #[serde(default)]
@@ -1125,6 +1197,10 @@ impl AllLanguageSettings {
 }
 
 fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigProperties) {
+    let preferred_line_length = cfg.get::<MaxLineLen>().ok().and_then(|v| match v {
+        MaxLineLen::Value(u) => Some(u as u32),
+        MaxLineLen::Off => None,
+    });
     let tab_size = cfg.get::<IndentSize>().ok().and_then(|v| match v {
         IndentSize::Value(u) => NonZeroU32::new(u as u32),
         IndentSize::UseTabWidth => cfg.get::<TabWidth>().ok().and_then(|w| match w {
@@ -1152,6 +1228,7 @@ fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigPr
             *target = value;
         }
     }
+    merge(&mut settings.preferred_line_length, preferred_line_length);
     merge(&mut settings.tab_size, tab_size);
     merge(&mut settings.hard_tabs, hard_tabs);
     merge(
@@ -1196,8 +1273,6 @@ impl InlayHintKind {
 }
 
 impl settings::Settings for AllLanguageSettings {
-    const KEY: Option<&'static str> = None;
-
     type FileContent = AllLanguageSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
@@ -1457,6 +1532,7 @@ impl settings::Settings for AllLanguageSettings {
             } else {
                 d.completions = Some(CompletionSettings {
                     words: mode,
+                    words_min_length: 3,
                     lsp: true,
                     lsp_fetch_timeout_ms: 0,
                     lsp_insert_mode: LspInsertMode::ReplaceSuffix,
@@ -1517,6 +1593,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     merge(&mut settings.use_autoclose, src.use_autoclose);
     merge(&mut settings.use_auto_surround, src.use_auto_surround);
     merge(&mut settings.use_on_type_format, src.use_on_type_format);
+    merge(&mut settings.auto_indent, src.auto_indent);
     merge(&mut settings.auto_indent_on_paste, src.auto_indent_on_paste);
     merge(
         &mut settings.always_treat_brackets_as_autoclosed,
@@ -1585,7 +1662,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
 /// Allows to enable/disable formatting with Prettier
 /// and configure default Prettier, used when no project-level Prettier installation is found.
 /// Prettier formatting is disabled by default.
-#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, SettingsUi)]
 pub struct PrettierSettings {
     /// Enables or disables formatting with Prettier for a given language.
     #[serde(default)]
@@ -1598,15 +1675,17 @@ pub struct PrettierSettings {
     /// Forces Prettier integration to use specific plugins when formatting files with the language.
     /// The default Prettier will be installed with these plugins.
     #[serde(default)]
+    #[settings_ui(skip)]
     pub plugins: HashSet<String>,
 
     /// Default Prettier options, in the format as in package.json section for Prettier.
     /// If project installs Prettier via its package.json, these options will be ignored.
     #[serde(flatten)]
+    #[settings_ui(skip)]
     pub options: HashMap<String, serde_json::Value>,
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, SettingsUi)]
 pub struct JsxTagAutoCloseSettings {
     /// Enables or disables auto-closing of JSX tags.
     #[serde(default)]
@@ -1786,7 +1865,7 @@ mod tests {
         assert!(!settings.enabled_for_file(&dot_env_file, &cx));
 
         // Test tilde expansion
-        let home = shellexpand::tilde("~").into_owned().to_string();
+        let home = shellexpand::tilde("~").into_owned();
         let home_file = make_test_file(&[&home, "test.rs"]);
         let settings = build_settings(&["~/test.rs"]);
         assert!(!settings.enabled_for_file(&home_file, &cx));
