@@ -356,7 +356,7 @@ impl AcpThreadView {
                 prompt_capabilities.clone(),
                 available_commands.clone(),
                 agent.name(),
-                placeholder,
+                &placeholder,
                 editor::EditorMode::AutoHeight {
                     min_lines: MIN_EDITOR_LINES,
                     max_lines: Some(MAX_EDITOR_LINES),

@@ -445,7 +445,7 @@ impl GitPanel {
             .detach();
 
             let mut was_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
-            cx.observe_global_in::<SettingsStore>(window, move |this, window,  cx| {
+            cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
                 let is_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
                 if is_sort_by_path != was_sort_by_path {
                     this.update_visible_entries(window, cx);
@@ -1053,7 +1053,7 @@ impl GitPanel {
             let filename = path.path.file_name()?.to_string_lossy();
 
             if !entry.status.is_created() {
-                self.perform_checkout(vec![entry.clone()], cx);
+                self.perform_checkout(vec![entry.clone()], window, cx);
             } else {
                 let prompt = prompt(&format!("Trash {}?", filename), None, window, cx);
                 cx.spawn_in(window, async move |_, cx| {
@@ -1082,7 +1082,12 @@ impl GitPanel {
         });
     }
 
-    fn perform_checkout(&mut self, entries: Vec<GitStatusEntry>, cx: &mut Context<Self>) {
+    fn perform_checkout(
+        &mut self,
+        entries: Vec<GitStatusEntry>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let workspace = self.workspace.clone();
         let Some(active_repository) = self.active_repository.clone() else {
             return;
@@ -1142,10 +1147,10 @@ impl GitPanel {
             Ok(())
         });
 
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
 
-            this.update(cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
                 for pending in this.pending.iter_mut() {
                     if pending.op_id == op_id {
                         pending.finished = true;
@@ -1207,10 +1212,10 @@ impl GitPanel {
             window,
             cx,
         );
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             if let Ok(RestoreCancel::RestoreTrackedFiles) = prompt.await {
-                this.update(cx, |this, cx| {
-                    this.perform_checkout(entries, cx);
+                this.update_in(cx, |this, window, cx| {
+                    this.perform_checkout(entries, window, cx);
                 })
                 .ok();
             }

@@ -91,7 +91,7 @@ impl MessageEditor {
         prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
         available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
         agent_name: SharedString,
-        placeholder: impl Into<Arc<str>>,
+        placeholder: &str,
         mode: EditorMode,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -117,7 +117,7 @@ impl MessageEditor {
             let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
 
             let mut editor = Editor::new(mode, buffer, None, window, cx);
-            editor.set_placeholder_text(&placeholder, window, cx);
+            editor.set_placeholder_text(placeholder, window, cx);
             editor.set_show_indent_guides(false, cx);
             editor.set_soft_wrap();
             editor.set_use_modal_editing(true);

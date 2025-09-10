@@ -2841,7 +2841,8 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let multibuffer = MultiBuffer::build_simple(placeholder_text, cx);
+        let multibuffer = cx
+            .new(|cx| MultiBuffer::singleton(cx.new(|cx| Buffer::local(placeholder_text, cx)), cx));
 
         let style = window.text_style();
 
