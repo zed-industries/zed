@@ -420,7 +420,7 @@ pub(crate) fn commit_message_editor(
     commit_editor.set_show_wrap_guides(false, cx);
     commit_editor.set_show_indent_guides(false, cx);
     let placeholder = placeholder.unwrap_or("Enter commit message".into());
-    commit_editor.set_placeholder_text(placeholder, cx);
+    commit_editor.set_placeholder_text(&placeholder, window, cx);
     commit_editor
 }
 
@@ -445,10 +445,10 @@ impl GitPanel {
             .detach();
 
             let mut was_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
-            cx.observe_global::<SettingsStore>(move |this, cx| {
+            cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
                 let is_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
                 if is_sort_by_path != was_sort_by_path {
-                    this.update_visible_entries(cx);
+                    this.update_visible_entries(window, cx);
                 }
                 was_sort_by_path = is_sort_by_path
             })
@@ -1053,7 +1053,7 @@ impl GitPanel {
             let filename = path.path.file_name()?.to_string_lossy();
 
             if !entry.status.is_created() {
-                self.perform_checkout(vec![entry.clone()], cx);
+                self.perform_checkout(vec![entry.clone()], window, cx);
             } else {
                 let prompt = prompt(&format!("Trash {}?", filename), None, window, cx);
                 cx.spawn_in(window, async move |_, cx| {
@@ -1082,7 +1082,12 @@ impl GitPanel {
         });
     }
 
-    fn perform_checkout(&mut self, entries: Vec<GitStatusEntry>, cx: &mut Context<Self>) {
+    fn perform_checkout(
+        &mut self,
+        entries: Vec<GitStatusEntry>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let workspace = self.workspace.clone();
         let Some(active_repository) = self.active_repository.clone() else {
             return;
@@ -1095,7 +1100,7 @@ impl GitPanel {
             entries: entries.clone(),
             finished: false,
         });
-        self.update_visible_entries(cx);
+        self.update_visible_entries(window, cx);
         let task = cx.spawn(async move |_, cx| {
             let tasks: Vec<_> = workspace.update(cx, |workspace, cx| {
                 workspace.project().update(cx, |project, cx| {
@@ -1142,16 +1147,16 @@ impl GitPanel {
             Ok(())
         });
 
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
 
-            this.update(cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
                 for pending in this.pending.iter_mut() {
                     if pending.op_id == op_id {
                         pending.finished = true;
                         if result.is_err() {
                             pending.target_status = TargetStatus::Unchanged;
-                            this.update_visible_entries(cx);
+                            this.update_visible_entries(window, cx);
                         }
                         break;
                     }
@@ -1207,10 +1212,10 @@ impl GitPanel {
             window,
             cx,
         );
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             if let Ok(RestoreCancel::RestoreTrackedFiles) = prompt.await {
-                this.update(cx, |this, cx| {
-                    this.perform_checkout(entries, cx);
+                this.update_in(cx, |this, window, cx| {
+                    this.perform_checkout(entries, window, cx);
                 })
                 .ok();
             }
@@ -2642,7 +2647,7 @@ impl GitPanel {
                         if clear_pending {
                             git_panel.clear_pending();
                         }
-                        git_panel.update_visible_entries(cx);
+                        git_panel.update_visible_entries(window, cx);
                         git_panel.update_scrollbar_properties(window, cx);
                     })
                     .ok();
@@ -2695,7 +2700,7 @@ impl GitPanel {
         self.pending.retain(|v| !v.finished)
     }
 
-    fn update_visible_entries(&mut self, cx: &mut Context<Self>) {
+    fn update_visible_entries(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let bulk_staging = self.bulk_staging.take();
         let last_staged_path_prev_index = bulk_staging
             .as_ref()
@@ -2870,7 +2875,7 @@ impl GitPanel {
         let placeholder_text = suggested_commit_message.unwrap_or("Enter commit message".into());
 
         self.commit_editor.update(cx, |editor, cx| {
-            editor.set_placeholder_text(Arc::from(placeholder_text), cx)
+            editor.set_placeholder_text(&placeholder_text, window, cx)
         });
 
         cx.notify();

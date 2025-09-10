@@ -615,7 +615,7 @@ impl<D: PickerDelegate> Picker<D> {
             Head::Editor(editor) => {
                 let placeholder = self.delegate.placeholder_text(window, cx);
                 editor.update(cx, |editor, cx| {
-                    editor.set_placeholder_text(placeholder, cx);
+                    editor.set_placeholder_text(placeholder.as_ref(), window, cx);
                     cx.notify();
                 });
             }

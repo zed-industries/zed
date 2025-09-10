@@ -3453,12 +3453,15 @@ impl EditorElement {
 
             let placeholder_lines = placeholder_text
                 .as_ref()
-                .map_or("", AsRef::as_ref)
-                .split('\n')
+                .map_or(Vec::new(), |text| text.split('\n').collect::<Vec<_>>());
+
+            let placeholder_line_count = placeholder_lines.len();
+
+            placeholder_lines
+                .into_iter()
                 .skip(rows.start.0 as usize)
                 .chain(iter::repeat(""))
-                .take(rows.len());
-            placeholder_lines
+                .take(cmp::max(rows.len(), placeholder_line_count))
                 .map(move |line| {
                     let run = TextRun {
                         len: line.len(),
@@ -10743,7 +10746,7 @@ mod tests {
         let style = cx.update(|_, cx| editor.read(cx).style().unwrap().clone());
         window
             .update(cx, |editor, window, cx| {
-                editor.set_placeholder_text("hello", cx);
+                editor.set_placeholder_text("hello", window, cx);
                 editor.insert_blocks(
                     [BlockProperties {
                         style: BlockStyle::Fixed,

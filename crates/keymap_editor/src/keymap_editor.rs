@@ -442,7 +442,7 @@ impl KeymapEditor {
 
         let filter_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Filter action names…", cx);
+            editor.set_placeholder_text("Filter action names…", window, cx);
             editor
         });
 
@@ -2804,7 +2804,7 @@ impl ActionArgumentsEditor {
             editor.set_text(arguments, window, cx);
         } else {
             // TODO: default value from schema?
-            editor.set_placeholder_text("Action Arguments", cx);
+            editor.set_placeholder_text("Action Arguments", window, cx);
         }
     }
 

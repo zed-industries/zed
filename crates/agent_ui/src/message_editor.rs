@@ -124,7 +124,7 @@ pub(crate) fn create_editor(
             window,
             cx,
         );
-        editor.set_placeholder_text("Message the agent – @ to include context", cx);
+        editor.set_placeholder_text("Message the agent – @ to include context", window, cx);
         editor.disable_word_completions();
         editor.set_show_indent_guides(false, cx);
         editor.set_soft_wrap();

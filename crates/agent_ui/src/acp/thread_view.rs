@@ -250,6 +250,7 @@ impl ThreadFeedbackState {
             );
             editor.set_placeholder_text(
                 "What went wrong? Share your feedback so we can improve.",
+                window,
                 cx,
             );
             editor
@@ -355,7 +356,7 @@ impl AcpThreadView {
                 prompt_capabilities.clone(),
                 available_commands.clone(),
                 agent.name(),
-                placeholder,
+                &placeholder,
                 editor::EditorMode::AutoHeight {
                     min_lines: MIN_EDITOR_LINES,
                     max_lines: Some(MAX_EDITOR_LINES),
