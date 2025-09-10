@@ -2609,7 +2609,7 @@ pub mod tests {
         );
         language.set_theme(&theme);
 
-        let (text, highlighted_ranges) = marked_text_ranges(r#"constˇ «a»: B = "c «d»""#, false);
+        let (text, highlighted_ranges) = marked_text_ranges(r#"constˇ «a»«:» B = "c «d»""#, false);
 
         let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
         cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
@@ -2658,7 +2658,7 @@ pub mod tests {
             [
                 ("const ".to_string(), None, None),
                 ("a".to_string(), None, Some(Hsla::blue())),
-                (":".to_string(), Some(Hsla::red()), None),
+                (":".to_string(), Some(Hsla::red()), Some(Hsla::blue())),
                 (" B = ".to_string(), None, None),
                 ("\"c ".to_string(), Some(Hsla::green()), None),
                 ("d".to_string(), Some(Hsla::green()), Some(Hsla::blue())),
