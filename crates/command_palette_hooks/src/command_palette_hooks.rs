@@ -127,7 +127,9 @@ impl GlobalCommandPaletteInterceptor {
 
     /// Clears the global interceptor.
     pub fn clear(cx: &mut App) {
-        cx.remove_global::<Self>();
+        if cx.has_global::<Self>() {
+            cx.remove_global::<Self>();
+        }
     }
 
     /// Intercepts the given query from the command palette.

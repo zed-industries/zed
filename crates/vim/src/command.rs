@@ -752,14 +752,6 @@ impl VimCommand {
         self
     }
 
-    fn set_arg(&self, action: &Box<dyn Action>, arg: &str) -> Option<Box<dyn Action>> {
-        if let Some(args) = &self.args {
-            args(action.boxed_clone(), arg.to_owned())
-        } else {
-            None
-        }
-    }
-
     fn generate_filename_completions(
         &self,
         query: &str,
@@ -850,16 +842,14 @@ impl VimCommand {
         &self,
         query: &str,
         range: &Option<CommandRange>,
-        cx: Option<&App>,
+        cx: &App,
     ) -> Option<Box<dyn Action>> {
         let (args, has_bang) = self.get_command_args_bang(query.to_string())?;
         let action = if has_bang && self.bang_action.is_some() {
             self.bang_action.as_ref().unwrap().boxed_clone()
         } else if let Some(action) = self.action.as_ref() {
             action.boxed_clone()
-        } else if let Some(action_name) = self.action_name
-            && let Some(cx) = cx
-        {
+        } else if let Some(action_name) = self.action_name {
             cx.build_action(action_name, None).log_err()?
         } else {
             return None;
@@ -1453,89 +1443,47 @@ pub fn command_interceptor(
         input = &input[1..];
     }
 
-    let (_, query) = VimCommand::parse_range(input);
-    let range_prefix = input[0..(input.len() - query.len())].to_string();
-    let has_trailing_space = query.ends_with(" ");
-    let query_str = query.as_str().trim();
-
-    let formatted_input = format!(":{}", input);
-    let (mut all_results, vim_command) =
-        vim_command_intercept_results(&formatted_input, workspace.clone(), cx);
-    let vim_command = vim_command.cloned();
-
-    let task = if let Some(command) = vim_command
-        && let Some(action) = all_results.pop().map(|result| result.action)
-        && command.has_filename
-    {
-        let task =
-            command.generate_filename_completions(query_str, has_trailing_space, workspace, cx);
-
-        let prefix = command.prefix;
-        let suffix = command.suffix;
-        let query_str = query_str.to_string();
-        let command_string = range_prefix.clone() + prefix + suffix;
-        let colon_string = ":".to_owned() + &command_string;
-
-        cx.spawn(async move |_| {
-            let filenames = task.await;
-            let mut results = Vec::new();
-
-            for filename in filenames {
-                let Some(action) = command.set_arg(&action, &filename) else {
-                    continue;
-                };
-
-                let completed_string = colon_string.clone() + " " + &filename;
-                let query = range_prefix.clone() + &query_str;
-
-                // skip files that are not similar to what has been typed
-                let mut chars = query.chars();
-                if completed_string
-                    .chars()
-                    .fold(chars.next(), |needle, haystack_char| match needle {
-                        Some(c) if c == haystack_char => chars.next(),
-                        _ => needle,
-                    })
-                    .is_some()
-                {
-                    continue;
-                }
-
-                let positions = generate_positions(&completed_string, &query);
-
-                results.push(CommandInterceptResult {
-                    action,
-                    string: completed_string,
-                    positions,
-                });
-            }
-
-            results
-        })
-    } else {
-        Task::ready(Vec::new())
-    };
-
-    cx.background_spawn(async move {
-        all_results.extend(task.await);
-        all_results
-    })
-}
-
-fn vim_command_intercept_results<'a>(
-    mut input: &'a str,
-    workspace: WeakEntity<Workspace>,
-    cx: &'a App,
-) -> (Vec<CommandInterceptResult>, Option<&'a VimCommand>) {
-    while input.starts_with(':') {
-        input = &input[1..];
-    }
-
     let (range, query) = VimCommand::parse_range(input);
     let range_prefix = input[0..(input.len() - query.len())].to_string();
-    let query = query.as_str().trim();
+    let has_trailing_space = query.ends_with(" ");
+    let mut query = query.as_str().trim();
 
-    let action = if range.is_some() && query.is_empty() {
+    let on_matching_lines = (query.starts_with('g') || query.starts_with('v'))
+        .then(|| {
+            let mut global = "global".chars().peekable();
+            let mut new_query = query.chars().peekable();
+            let mut invert = false;
+            if new_query.peek() == Some(&'v') {
+                invert = true;
+                new_query.next();
+                query = &query[1..];
+            }
+            while global
+                .peek()
+                .is_some_and(|char| Some(char) == new_query.peek())
+            {
+                global.next();
+                new_query.next();
+                query = &query[1..];
+            }
+            if !invert && new_query.peek() == Some(&'!') {
+                invert = true;
+                new_query.next();
+                query = &query[1..];
+            }
+            let range = range.clone().unwrap_or(CommandRange {
+                start: Position::Line { row: 0, offset: 0 },
+                end: Some(Position::LastLine { offset: 0 }),
+            });
+            let delimiter = new_query.next().filter(|c| {
+                !c.is_alphanumeric() && *c != '"' && *c != '|' && *c != '\'' && *c != '!'
+            })?;
+            query = &query[1..];
+            Some((new_query, invert, range, delimiter))
+        })
+        .flatten();
+
+    let mut action = if range.is_some() && query.is_empty() {
         Some(
             GoToLine {
                 range: range.clone().unwrap(),
@@ -1559,7 +1507,7 @@ fn vim_command_intercept_results<'a>(
                 command.positions = generate_positions(&command.string, &query);
             }
         }
-        return (commands, None);
+        return Task::ready(commands);
     } else if query.starts_with('s') {
         let mut substitute = "substitute".chars().peekable();
         let mut query = query.chars().peekable();
@@ -1579,64 +1527,97 @@ fn vim_command_intercept_results<'a>(
         } else {
             None
         }
-    } else if query.starts_with('g') || query.starts_with('v') {
-        let mut global = "global".chars().peekable();
-        let mut query = query.chars().peekable();
-        let mut invert = false;
-        if query.peek() == Some(&'v') {
-            invert = true;
-            query.next();
-        }
-        while global.peek().is_some_and(|char| Some(char) == query.peek()) {
-            global.next();
-            query.next();
-        }
-        if !invert && query.peek() == Some(&'!') {
-            invert = true;
-            query.next();
-        }
-        let range = range.clone().unwrap_or(CommandRange {
-            start: Position::Line { row: 0, offset: 0 },
-            end: Some(Position::LastLine { offset: 0 }),
-        });
-        OnMatchingLines::parse(query, invert, range, workspace, cx)
-            .map(|action| action.boxed_clone())
     } else if query.contains('!') {
         ShellExec::parse(query, range.clone())
     } else {
         None
     };
+
+    if let Some((chars, invert, range, delimiter)) = on_matching_lines
+        && let Some(ref inner) = action
+    {
+        action = Some(Box::new(OnMatchingLines::parse(
+            chars,
+            invert,
+            range.clone(),
+            delimiter,
+            inner.boxed_clone(),
+        )));
+    };
+
     if let Some(action) = action {
         let string = input.to_string();
         let positions = generate_positions(&string, &(range_prefix + query));
-        return (
-            vec![CommandInterceptResult {
-                action,
-                string,
-                positions,
-            }],
-            None,
-        );
+        return Task::ready(vec![CommandInterceptResult {
+            action,
+            string,
+            positions,
+        }]);
     }
 
     for command in commands(cx).iter() {
-        if let Some(action) = command.parse(query, &range, Some(cx)) {
-            let mut string = ":".to_owned() + &range_prefix + command.prefix + command.suffix;
+        if let Some(action) = command.parse(query, &range, cx) {
+            let command_string = range_prefix.clone() + command.prefix + command.suffix;
+            let mut display_string = ":".to_owned() + &command_string;
             if query.contains('!') {
-                string.push('!');
+                display_string.push('!');
             }
-            let positions = generate_positions(&string, &(range_prefix + query));
-            return (
-                vec![CommandInterceptResult {
-                    action,
-                    string,
-                    positions,
-                }],
-                Some(command),
-            );
+            let positions = generate_positions(&display_string, &(range_prefix.clone() + query));
+
+            let mut results = vec![CommandInterceptResult {
+                action,
+                string: display_string.clone(),
+                positions,
+            }];
+
+            let query = query.to_owned();
+            let command = command.clone();
+            return cx.spawn(async move |cx| {
+                let query = query.as_str();
+                let Ok(filenames) = cx.update(|cx| {
+                    command.generate_filename_completions(query, has_trailing_space, workspace, cx)
+                }) else {
+                    return results;
+                };
+                let filenames = filenames.await;
+
+                for filename in filenames {
+                    let action = match cx.update(|cx| {
+                        command.parse(&format!("{} {}", command_string, filename), &range, cx)
+                    }) {
+                        Ok(Some(action)) => action,
+                        _ => continue,
+                    };
+
+                    let completed_string = display_string.clone() + " " + &filename;
+                    let query = range_prefix.clone() + query;
+
+                    // skip files that are not similar to what has been typed
+                    let mut chars = query.chars();
+                    if completed_string
+                        .chars()
+                        .fold(chars.next(), |needle, haystack_char| match needle {
+                            Some(c) if c == haystack_char => chars.next(),
+                            _ => needle,
+                        })
+                        .is_some()
+                    {
+                        continue;
+                    }
+
+                    let positions = generate_positions(&completed_string, &query);
+
+                    results.push(CommandInterceptResult {
+                        action,
+                        string: completed_string,
+                        positions,
+                    });
+                }
+                results
+            });
         }
     }
-    (Vec::new(), None)
+    Task::ready(Vec::new())
 }
 
 fn generate_positions(string: &str, query: &str) -> Vec<usize> {
@@ -1680,13 +1661,9 @@ impl OnMatchingLines {
         mut chars: Peekable<Chars>,
         invert: bool,
         range: CommandRange,
-        workspace: WeakEntity<Workspace>,
-        cx: &App,
-    ) -> Option<Self> {
-        let delimiter = chars.next().filter(|c| {
-            !c.is_alphanumeric() && *c != '"' && *c != '|' && *c != '\'' && *c != '!'
-        })?;
-
+        delimiter: char,
+        action: Box<dyn Action>,
+    ) -> Self {
         let mut search = String::new();
         let mut escaped = false;
 
@@ -1711,22 +1688,12 @@ impl OnMatchingLines {
             }
         }
 
-        let command: String = chars.collect();
-
-        let action = WrappedAction(
-            vim_command_intercept_results(&command, workspace, cx)
-                .0
-                .first()?
-                .action
-                .boxed_clone(),
-        );
-
-        Some(Self {
+        Self {
             range,
             search,
             invert,
-            action,
-        })
+            action: WrappedAction(action),
+        }
     }
 
     pub fn run(&self, vim: &mut Vim, window: &mut Window, cx: &mut Context<Vim>) {
