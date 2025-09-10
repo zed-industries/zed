@@ -160,7 +160,7 @@ impl PickerDelegate for FileContextPickerDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let FileMatch { mat, .. } = &self.matches[ix];
+        let FileMatch { mat, .. } = &self.matches.get(ix)?;
 
         Some(
             ListItem::new(ix)

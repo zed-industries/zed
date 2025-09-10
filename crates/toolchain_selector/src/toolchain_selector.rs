@@ -1011,8 +1011,8 @@ impl PickerDelegate for ToolchainSelectorDelegate {
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let mat = &self.matches[ix];
-        let (toolchain, scope) = &self.candidates[mat.candidate_id];
+        let mat = &self.matches.get(ix)?;
+        let (toolchain, scope) = &self.candidates.get(mat.candidate_id)?;
 
         let label = toolchain.name.clone();
         let path = Self::relativize_path(toolchain.path.clone(), &self.worktree_abs_path_root);

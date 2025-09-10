@@ -1599,10 +1599,7 @@ impl PickerDelegate for FileFinderDelegate {
     ) -> Option<Self::ListItem> {
         let settings = FileFinderSettings::get_global(cx);
 
-        let path_match = self
-            .matches
-            .get(ix)
-            .expect("Invalid matches state: no element for index {ix}");
+        let path_match = self.matches.get(ix)?;
 
         let history_icon = match &path_match {
             Match::History { .. } => Icon::new(IconName::HistoryRerun)
