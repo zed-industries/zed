@@ -56,15 +56,21 @@ If you’re using a virtual environment, Zed will attempt to auto-activate it in
 
 ## Configure Python Language Servers in Zed
 
-Zed provides several Python language servers by default. By default, [basedpyright](https://github.com/DetachHead/basedpyright) is the primary language server, and [Ruff](https://github.com/astral-sh/ruff) is used for formatting. Other language servers are disabled by default, but can be enabled in your settings. For example:
+Zed provides several Python language servers out of the box. By default, [basedpyright](https://github.com/DetachHead/basedpyright) is the primary language server, and [Ruff](https://github.com/astral-sh/ruff) is used for formatting.
 
+Other built-in language servers are:
+- [Ty](https://docs.astral.sh/ty/) -- Up-and-coming language server from Astral, built for speed.
+- [Pyright](https://github.com/microsoft/pyright) -- Type-aware language server from Microsoft. Good choice if you want strong type checking with minimal setup.
+- [PyLSP](https://github.com/python-lsp/python-lsp-server) -- A plugin-based language server that integrates with tools like `pycodestyle`, `autopep8`, and `yapf`.
+
+These are disabled by default, but can be enabled in your settings. For example:
 ```json
 {
   "languages": {
     "Python": {
       "language_servers": {
-        // Disable basedpyright and enable pylsp, and otherwise use the default configuration.
-        "pylsp", "!basedpyright", ".."
+        // Disable basedpyright and enable Ty, and otherwise use the default configuration.
+        "ty", "!basedpyright", ".."
       }
     }
   }
