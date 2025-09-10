@@ -5,6 +5,7 @@ use collections::HashMap;
 use futures::future::join_all;
 use gpui::{App, AppContext, AsyncApp, Task};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, build_asset_url};
+use itertools::Itertools as _;
 use language::{
     ContextLocation, ContextProvider, File, LanguageName, LanguageToolchainStore, LspAdapter,
     LspAdapterDelegate, Toolchain,
@@ -508,20 +509,9 @@ fn eslint_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 }
 
 fn replace_test_name_parameters(test_name: &str) -> String {
-    use rand::Rng;
-
     static PATTERN: LazyLock<regex::Regex> =
         LazyLock::new(|| regex::Regex::new(r"(%|\$)[0-9a-zA-Z]+").unwrap());
-    let placeholder = format!(
-        "__zed_{}__",
-        rand::thread_rng()
-            .sample_iter(&rand::distributions::Alphanumeric)
-            .take(6)
-            .map(char::from)
-            .collect::<String>()
-    );
-
-    regex::escape(&PATTERN.replace_all(test_name, &placeholder)).replace(&placeholder, "(.+?)")
+    PATTERN.split(test_name).map(regex::escape).join("(.+?)")
 }
 
 pub struct TypeScriptLspAdapter {
@@ -1243,6 +1233,10 @@ mod tests {
         assert_eq!(
             replace_test_name_parameters("(Test name in parens)"),
             "\\(Test name in parens\\)"
+        );
+        assert_eq!(
+            replace_test_name_parameters("(Test name in parens with %d placeholder)"),
+            "\\(Test name in parens with (.+?) placeholder\\)"
         );
     }
 }
