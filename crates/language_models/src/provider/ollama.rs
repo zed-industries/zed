@@ -938,89 +938,84 @@ impl Render for ConfigurationView {
                 .into_any()
         } else {
             v_flex()
+                .gap_2()
                 .when(!is_authenticated, |this| {
                     this.child(Self::render_getting_started())
                 })
                 .child(self.render_api_key_editor(cx))
                 .child(self.render_api_url_editor(cx))
                 .child(
-                    v_flex().gap_2().child(
-                        h_flex()
-                            .w_full()
-                            .justify_between()
-                            .gap_2()
-                            .child(
-                                h_flex()
-                                    .w_full()
-                                    .gap_2()
-                                    .map(|this| {
-                                        if is_authenticated {
-                                            this.child(
-                                                Button::new("ollama-site", "Ollama")
-                                                    .style(ButtonStyle::Subtle)
-                                                    .icon(IconName::ArrowUpRight)
-                                                    .icon_size(IconSize::XSmall)
-                                                    .icon_color(Color::Muted)
-                                                    .on_click(move |_, _, cx| {
-                                                        cx.open_url(OLLAMA_SITE)
-                                                    })
-                                                    .into_any_element(),
-                                            )
-                                        } else {
-                                            this.child(
-                                                Button::new(
-                                                    "download_ollama_button",
-                                                    "Download Ollama",
-                                                )
+                    h_flex()
+                        .w_full()
+                        .justify_between()
+                        .gap_2()
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .gap_2()
+                                .map(|this| {
+                                    if is_authenticated {
+                                        this.child(
+                                            Button::new("ollama-site", "Ollama")
                                                 .style(ButtonStyle::Subtle)
                                                 .icon(IconName::ArrowUpRight)
                                                 .icon_size(IconSize::XSmall)
                                                 .icon_color(Color::Muted)
-                                                .on_click(move |_, _, cx| {
-                                                    cx.open_url(OLLAMA_DOWNLOAD_URL)
-                                                })
+                                                .on_click(move |_, _, cx| cx.open_url(OLLAMA_SITE))
                                                 .into_any_element(),
+                                        )
+                                    } else {
+                                        this.child(
+                                            Button::new(
+                                                "download_ollama_button",
+                                                "Download Ollama",
                                             )
-                                        }
-                                    })
-                                    .child(
-                                        Button::new("view-models", "View All Models")
                                             .style(ButtonStyle::Subtle)
                                             .icon(IconName::ArrowUpRight)
                                             .icon_size(IconSize::XSmall)
                                             .icon_color(Color::Muted)
                                             .on_click(move |_, _, cx| {
-                                                cx.open_url(OLLAMA_LIBRARY_URL)
-                                            }),
-                                    ),
-                            )
-                            .map(|this| {
-                                if is_authenticated {
-                                    this.child(
-                                        ButtonLike::new("connected")
-                                            .disabled(true)
-                                            .cursor_style(gpui::CursorStyle::Arrow)
-                                            .child(
-                                                h_flex()
-                                                    .gap_2()
-                                                    .child(Indicator::dot().color(Color::Success))
-                                                    .child(Label::new("Connected"))
-                                                    .into_any_element(),
-                                            ),
-                                    )
-                                } else {
-                                    this.child(
-                                        Button::new("retry_ollama_models", "Connect")
-                                            .icon_position(IconPosition::Start)
-                                            .icon_size(IconSize::XSmall)
-                                            .icon(IconName::PlayOutlined)
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.retry_connection(cx)
-                                            })),
-                                    )
-                                }
-                            }),
-                    ),
+                                                cx.open_url(OLLAMA_DOWNLOAD_URL)
+                                            })
+                                            .into_any_element(),
+                                        )
+                                    }
+                                })
+                                .child(
+                                    Button::new("view-models", "View All Models")
+                                        .style(ButtonStyle::Subtle)
+                                        .icon(IconName::ArrowUpRight)
+                                        .icon_size(IconSize::XSmall)
+                                        .icon_color(Color::Muted)
+                                        .on_click(move |_, _, cx| cx.open_url(OLLAMA_LIBRARY_URL)),
+                                ),
+                        )
+                        .map(|this| {
+                            if is_authenticated {
+                                this.child(
+                                    ButtonLike::new("connected")
+                                        .disabled(true)
+                                        .cursor_style(gpui::CursorStyle::Arrow)
+                                        .child(
+                                            h_flex()
+                                                .gap_2()
+                                                .child(Indicator::dot().color(Color::Success))
+                                                .child(Label::new("Connected"))
+                                                .into_any_element(),
+                                        ),
+                                )
+                            } else {
+                                this.child(
+                                    Button::new("retry_ollama_models", "Connect")
+                                        .icon_position(IconPosition::Start)
+                                        .icon_size(IconSize::XSmall)
+                                        .icon(IconName::PlayOutlined)
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.retry_connection(cx)
+                                        })),
+                                )
+                            }
+                        }),
                 )
                 .into_any()
         }
