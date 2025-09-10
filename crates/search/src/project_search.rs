@@ -4114,7 +4114,7 @@ pub mod tests {
         buffer_search_bar
             .update_in(&mut cx, |buffer_search_bar, window, cx| {
                 buffer_search_bar.focus_handle(cx).focus(window);
-                buffer_search_bar.search(buffer_search_query, None, window, cx)
+                buffer_search_bar.search(buffer_search_query, None, true, window, cx)
             })
             .await
             .unwrap();
