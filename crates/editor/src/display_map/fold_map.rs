@@ -360,7 +360,7 @@ impl FoldMap {
         (self.snapshot.clone(), edits)
     }
 
-    pub fn write(
+    pub(crate) fn write(
         &mut self,
         inlay_snapshot: InlaySnapshot,
         edits: Vec<InlayEdit>,
@@ -2114,7 +2114,7 @@ mod tests {
             MultiBuffer::build_random(&mut rng, cx)
         };
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         let (mut fold_map, _) = FoldMap::new(inlay_snapshot.clone());
 
         // Perform random mutations

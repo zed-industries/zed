@@ -232,7 +232,7 @@ impl TabSnapshot {
         }
     }
 
-    pub fn chunks<'a>(
+    pub(crate) fn chunks<'a>(
         &'a self,
         range: Range<TabPoint>,
         language_aware: bool,
@@ -806,7 +806,7 @@ mod tests {
 
         let buffer = MultiBuffer::build_simple(input, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
 
@@ -846,7 +846,7 @@ mod tests {
         let text = "γ\tw⭐\n🍐🍗 \t";
         let buffer = MultiBuffer::build_simple(text, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
 
@@ -885,7 +885,7 @@ mod tests {
 
         let buffer = MultiBuffer::build_simple(&input, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, mut tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
         tab_snapshot.max_expansion_column = rng.random_range(0..323);
@@ -1127,9 +1127,9 @@ mod tests {
         // Create buffer and tab map
         let buffer = MultiBuffer::build_simple(&text, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
-        let (mut tab_map, _) = TabMap::new(fold_snapshot.clone(), tab_size);
+        let (mut tab_map, _) = TabMap::new(fold_snapshot, tab_size);
 
         let mut next_inlay_id = 0;
         let (inlay_snapshot, inlay_edits) = inlay_map.randomly_mutate(&mut next_inlay_id, &mut rng);
@@ -1166,7 +1166,7 @@ mod tests {
         let text = "\tfoo\tbarbarbar\t\tbaz\n";
         let buffer = MultiBuffer::build_simple(text, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let chunks = fold_snapshot.chunks(
             FoldOffset(0)..fold_snapshot.len(),
@@ -1204,7 +1204,7 @@ mod tests {
 
         let buffer = MultiBuffer::build_simple(input, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
 
         let chunks = fold_snapshot.chunks_at(FoldPoint::new(0, 0));
@@ -1328,7 +1328,7 @@ mod tests {
         let text = "\r\t😁foo\tb😀arbar🤯bar\t\tbaz\n";
         let buffer = MultiBuffer::build_simple(text, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let chunks = fold_snapshot.chunks(
             FoldOffset(0)..fold_snapshot.len(),

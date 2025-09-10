@@ -21,13 +21,13 @@ fn to_tab_point_benchmark(c: &mut Criterion) {
 
         let buffer_snapshot = cx.read(|cx| buffer.read(cx).snapshot(cx));
         use editor::display_map::*;
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot.clone());
         let fold_point = fold_snapshot.to_fold_point(
             inlay_snapshot.to_point(InlayOffset(rng.random_range(0..length))),
             Bias::Left,
         );
-        let (_, snapshot) = TabMap::new(fold_snapshot.clone(), NonZeroU32::new(4).unwrap());
+        let (_, snapshot) = TabMap::new(fold_snapshot, NonZeroU32::new(4).unwrap());
 
         (length, snapshot, fold_point)
     };
@@ -65,7 +65,7 @@ fn to_fold_point_benchmark(c: &mut Criterion) {
 
         let buffer_snapshot = cx.read(|cx| buffer.read(cx).snapshot(cx));
         use editor::display_map::*;
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot.clone());
 
         let fold_point = fold_snapshot.to_fold_point(
@@ -73,7 +73,7 @@ fn to_fold_point_benchmark(c: &mut Criterion) {
             Bias::Left,
         );
 
-        let (_, snapshot) = TabMap::new(fold_snapshot.clone(), NonZeroU32::new(4).unwrap());
+        let (_, snapshot) = TabMap::new(fold_snapshot, NonZeroU32::new(4).unwrap());
         let tab_point = snapshot.to_tab_point(fold_point);
 
         (length, snapshot, tab_point)

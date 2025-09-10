@@ -3798,7 +3798,7 @@ fn test_random_chunk_bitmaps_with_diffs(cx: &mut App, mut rng: StdRng) {
     use buffer_diff::BufferDiff;
     use util::RandomCharIter;
 
-    let multibuffer = if rng.r#gen() {
+    let multibuffer = if rng.random() {
         let len = rng.random_range(100..10000);
         let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
         let buffer = cx.new(|cx| Buffer::local(text, cx));
