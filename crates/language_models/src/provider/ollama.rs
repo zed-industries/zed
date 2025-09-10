@@ -826,41 +826,38 @@ impl ConfigurationView {
                   .color(Color::Muted),
               )
         } else {
-            v_flex()
+            h_flex()
+                .p_3()
+                .justify_between()
+                .rounded_md()
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().elevated_surface_background)
                 .child(
                     h_flex()
-                        .p_3()
-                        .justify_between()
-                        .rounded_md()
-                        .border_1()
-                        .border_color(cx.theme().colors().border)
-                        .bg(cx.theme().colors().elevated_surface_background)
+                        .gap_2()
+                        .child(Indicator::dot().color(Color::Success))
                         .child(
-                            h_flex()
-                                .gap_2()
-                                .child(Indicator::dot().color(Color::Success))
-                                .child(
-                                    Label::new(
-                                        if state.api_key_from_env {
-                                            format!("API key set in {OLLAMA_API_KEY_VAR} environment variable.")
-                                        } else {
-                                            "API key configured.".to_string()
-                                        }
-                                    )
-                                )
+                            Label::new(
+                                if state.api_key_from_env {
+                                    format!("API key set in {OLLAMA_API_KEY_VAR} environment variable.")
+                                } else {
+                                    "API key configured.".to_string()
+                                }
+                            )
                         )
-                        .child(
-                            Button::new("reset-api-key", "Reset API Key")
-                                .label_size(LabelSize::Small)
-                                .icon(IconName::Undo)
-                                .icon_size(IconSize::Small)
-                                .icon_position(IconPosition::Start)
-                                .layer(ElevationIndex::ModalSurface)
-                                .when(state.api_key_from_env, |this| {
-                                    this.tooltip(Tooltip::text(format!("To reset your API key, unset the {OLLAMA_API_KEY_VAR} environment variable.")))
-                                })
-                                .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx))),
-                        )
+                )
+                .child(
+                    Button::new("reset-api-key", "Reset API Key")
+                        .label_size(LabelSize::Small)
+                        .icon(IconName::Undo)
+                        .icon_size(IconSize::Small)
+                        .icon_position(IconPosition::Start)
+                        .layer(ElevationIndex::ModalSurface)
+                        .when(state.api_key_from_env, |this| {
+                            this.tooltip(Tooltip::text(format!("To reset your API key, unset the {OLLAMA_API_KEY_VAR} environment variable.")))
+                        })
+                        .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx))),
                 )
         }
     }
@@ -870,46 +867,42 @@ impl ConfigurationView {
         let custom_api_url_set = api_url != OLLAMA_API_URL;
 
         if custom_api_url_set {
-            v_flex().gap_2().child(
-                h_flex()
-                    .p_3()
-                    .justify_between()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(cx.theme().colors().border)
-                    .bg(cx.theme().colors().elevated_surface_background)
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .child(Indicator::dot().color(Color::Success))
-                            .child(
-                                v_flex()
-                                    .gap_1()
-                                    .child(Label::new(format!("API URL configured. {}", api_url))),
-                            ),
-                    )
-                    .child(
-                        Button::new("reset-api-url", "Reset API URL")
-                            .label_size(LabelSize::Small)
-                            .icon(IconName::Undo)
-                            .icon_size(IconSize::Small)
-                            .icon_position(IconPosition::Start)
-                            .layer(ElevationIndex::ModalSurface)
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.reset_api_url(window, cx)),
-                            ),
-                    ),
-            )
+            h_flex()
+                .p_3()
+                .justify_between()
+                .rounded_md()
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().elevated_surface_background)
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(Indicator::dot().color(Color::Success))
+                        .child(
+                            v_flex()
+                                .gap_1()
+                                .child(Label::new(format!("API URL configured. {}", api_url))),
+                        ),
+                )
+                .child(
+                    Button::new("reset-api-url", "Reset API URL")
+                        .label_size(LabelSize::Small)
+                        .icon(IconName::Undo)
+                        .icon_size(IconSize::Small)
+                        .icon_position(IconPosition::Start)
+                        .layer(ElevationIndex::ModalSurface)
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.reset_api_url(window, cx)),
+                        ),
+                )
         } else {
-            v_flex().child(
-                v_flex()
-                    .on_action(cx.listener(|this, _: &menu::Confirm, _window, cx| {
-                        this.save_api_url(cx);
-                        cx.notify();
-                    }))
-                    .gap_2()
-                    .child(self.api_url_editor.clone()),
-            )
+            v_flex()
+                .on_action(cx.listener(|this, _: &menu::Confirm, _window, cx| {
+                    this.save_api_url(cx);
+                    cx.notify();
+                }))
+                .gap_2()
+                .child(self.api_url_editor.clone())
         }
     }
 }
@@ -919,23 +912,19 @@ impl Render for ConfigurationView {
         let is_authenticated = self.state.read(cx).is_authenticated();
 
         if self.loading_models_task.is_some() {
-            div()
+            v_flex()
+                .gap_2()
                 .child(
-                    v_flex()
+                    h_flex()
                         .gap_2()
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .child(Indicator::dot().color(Color::Accent))
-                                .child(Label::new("Connecting to Ollama...")),
-                        )
-                        .child(
-                            Label::new("Checking for available models and server status")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        ),
+                        .child(Indicator::dot().color(Color::Accent))
+                        .child(Label::new("Connecting to Ollama...")),
                 )
-                .into_any()
+                .child(
+                    Label::new("Checking for available models and server status")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
         } else {
             v_flex()
                 .gap_2()
@@ -1017,7 +1006,6 @@ impl Render for ConfigurationView {
                             }
                         }),
                 )
-                .into_any()
         }
     }
 }
