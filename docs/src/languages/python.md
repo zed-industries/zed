@@ -160,7 +160,7 @@ For Pyright, create a `pyrightconfig.json` at the root of your project:
 ```
 
 Or, if you're using pyproject.toml, add:
-``` json 
+``` json
 [tool.pyright]
 venvPath = "."
 venv = ".venv"`
@@ -172,42 +172,6 @@ You can also set the path directly in `settings.json` as shown above. This ensur
 
 Zed will detect Python virtual environments and automatically activate them in terminal if available.
 See: [detect_venv documentation](../configuring-zed.md#terminal-detect_venv) for more.
-
-## Fine-Tune Pyright for Python IDE Features
-Pyright can be configured to match your preferred level of type safety and analysis depth. It supports project-level and workspace-level settings.
-
-### Control Diagnostics and Type Checking
-In your `pyrightconfig.json` or `pyproject.toml`, specify how aggressively Pyright should analyze your code:
-``` json
-{
-  "typeCheckingMode": "strict",
-  "diagnosticMode": "workspace"
-}
-```
-- typeCheckingMode: Accepts "off", "basic", or "strict".
-- diagnosticMode: Use "openFilesOnly" or "workspace" to control scope.
-
-These options can also be set in settings.json under the python.analysis key.
-
-### Set the Python Interpreter Path
-Point Pyright to a specific interpreter—typically within a virtual environment—so it can resolve imports and packages correctly.
-
-In `settings.json`:
-```json
-{
-  "lsp": {
-    "pyright": {
-      "settings": {
-        "python": {
-          "pythonPath": ".venv/bin/python"
-        }
-      }
-    }
-  }
-}
-```
-
-This is useful when working across projects with different environments.
 
 ## Code Formatting & Linting
 
@@ -360,13 +324,19 @@ Zed is designed to minimize configuration overhead, but occasional issues can st
 
 ### Resolve Language Server Startup Issues
 If a language server isn't responding or features like diagnostics or autocomplete aren't available:
-- Confirm the language server is installed and available in your environment (e.g., `pyright` or `pylsp`).
+- Check your Zed log (using the {#action zed::OpenLog} action) for errors related to the language server you're trying to use. This is where you're likely to find useful information if the language server failed to start up at all.
+- Use the language server logs view to understand the lifecycle of the affected language server. You can access this view using the {#action dev::OpenLanguageServerLogs} action, or by clicking the lightning bolt icon in the status bar and selecting your language server. The most useful pieces of data in this view are:
+  - "Server Logs", which shows any errors printed by the language server
+  - "Server Info", which shows details about how the language server was started
 - Verify your `settings.json` or `pyrightconfig.json` is syntactically correct.
-- Restart Zed to reinitialize language server connections.
-- If using a virtual environment, check that the language server is installed inside that environment.
+- Restart Zed to reinitialize language server connections, or try restarting the language server using the {#action editor::RestartLanguageServer}
+
+If the language server is failing to resolve imports, and you're using a virtual environment, make sure that the right environment is chosen in the selector. You can use "Server Info" view to confirm which virtual environment Zed is sending to the language server---look for the `* Configuration` section at the end.
 
 ### Diagnose Environment Detection Failures
-Zed will attempt to detect and activate a virtual environment in its terminal using `detect_venv`. If this fails:
+Zed will attempt to detect and activate a virtual environment when you open a terminal. If this fails:
+- Make sure that the right environment is chosen in the selector.
+- Make sure that you haven't disabled virtual environment detection for terminals by setting [`detect_venv`](../configuring-zed.md#terminal-detect_venv) to `"off"`.
 - Confirm your environment is located at `.venv/` in the project root.
 - Ensure the environment was created using `python3 -m venv .venv`.
 - Manually activate the environment in the terminal to verify it's working.
@@ -381,6 +351,6 @@ Outdated tools can cause silent failures or missing features. Periodically:
 ### Review Logs and Terminal Output
 If something breaks and it's unclear why:
 - Check the Zed terminal for environment activation logs or Python errors.
-- Use verbose flags (e.g., --verbose for some CLI tools) to get more detailed output.
+- Use verbose flags (e.g., `--verbose` for some CLI tools) to get more detailed output.
 - Validate that paths and environment variables are what you expect.
 - Taking a few minutes to inspect the output can often reveal the root cause faster than reconfiguring settings blindly.
