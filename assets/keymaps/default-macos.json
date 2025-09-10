@@ -218,7 +218,7 @@
     }
   },
   {
-    "context": "Editor && !agent_diff",
+    "context": "Editor && !agent_diff && !AgentPanel",
     "use_key_equivalents": true,
     "bindings": {
       "cmd-alt-z": "git::Restore",
@@ -286,7 +286,10 @@
       "cmd-shift-e": "project_panel::ToggleFocus",
       "cmd-ctrl-b": "agent::ToggleBurnMode",
       "cmd-shift-enter": "agent::ContinueThread",
-      "alt-enter": "agent::ContinueWithBurnMode"
+      "alt-enter": "agent::ContinueWithBurnMode",
+      "cmd-y": "agent::AllowOnce",
+      "cmd-alt-y": "agent::AllowAlways",
+      "cmd-d": "agent::RejectOnce"
     }
   },
   {
