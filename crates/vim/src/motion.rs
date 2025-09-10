@@ -2411,7 +2411,7 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
         let mut closest_pair_destination = None;
         let mut closest_distance = usize::MAX;
 
-        for (open_range, close_range) in ranges {
+        for (_, open_range, close_range) in ranges {
             if map.buffer_snapshot.chars_at(open_range.start).next() == Some('<') {
                 if offset > open_range.start && offset < close_range.start {
                     let mut chars = map.buffer_snapshot.chars_at(close_range.start);

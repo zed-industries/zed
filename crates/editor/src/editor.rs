@@ -113,7 +113,6 @@ use gpui::{
     UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
     div, point, prelude::*, pulsating_between, px, relative, size,
 };
-use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight, find_file};
 use hover_popover::{HoverState, hide_hover};
 use indent_guides::ActiveIndentGuidesState;
@@ -209,6 +208,7 @@ use workspace::{
 use crate::{
     code_context_menus::CompletionsMenuSource,
     editor_settings::MultiCursorModifier,
+    highlight_matching_bracket::BracketRefreshReason,
     hover_links::{find_url, find_url_from_range},
     scroll::{ScrollOffset, ScrollPixelOffset},
     signature_help::{SignatureHelpHiddenBy, SignatureHelpState},
@@ -2306,6 +2306,12 @@ impl Editor {
                         editor.hide_signature_help(cx, SignatureHelpHiddenBy::Escape);
                         editor.inline_blame_popover.take();
                     }
+                    // todo! keep this here?
+                    editor.refresh_bracket_highlights(
+                        BracketRefreshReason::ScrollPositionChanged,
+                        window,
+                        cx,
+                    );
                 }
                 EditorEvent::Edited { .. } => {
                     if !vim_enabled(cx) {
@@ -3174,7 +3180,7 @@ impl Editor {
             self.refresh_code_actions(window, cx);
             self.refresh_document_highlights(cx);
             self.refresh_selected_text_highlights(false, window, cx);
-            refresh_matching_bracket_highlights(self, window, cx);
+            self.refresh_bracket_highlights(BracketRefreshReason::SelectionsChanged, window, cx);
             self.update_visible_edit_prediction(window, cx);
             self.edit_prediction_requires_modifier_in_indent_conflict = true;
             linked_editing_ranges::refresh_linked_ranges(self, window, cx);
@@ -20689,7 +20695,7 @@ impl Editor {
                 self.refresh_code_actions(window, cx);
                 self.refresh_selected_text_highlights(true, window, cx);
                 self.refresh_single_line_folds(window, cx);
-                refresh_matching_bracket_highlights(self, window, cx);
+                self.refresh_bracket_highlights(BracketRefreshReason::BufferEdited, window, cx);
                 if self.has_active_edit_prediction() {
                     self.update_visible_edit_prediction(window, cx);
                 }

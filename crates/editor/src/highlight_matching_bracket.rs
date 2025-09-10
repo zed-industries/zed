@@ -1,58 +1,117 @@
 use crate::{Editor, RangeToAnchorExt};
-use gpui::{Context, HighlightStyle, Window};
+use gpui::{Context, HighlightStyle, Hsla, Window};
+use itertools::Itertools;
 use language::CursorShape;
-use theme::ActiveTheme;
+use multi_buffer::ToPoint;
+use text::{Bias, Point};
 
 enum MatchingBracketHighlight {}
 
-pub fn refresh_matching_bracket_highlights(
-    editor: &mut Editor,
-    window: &mut Window,
-    cx: &mut Context<Editor>,
-) {
-    editor.clear_highlights::<MatchingBracketHighlight>(cx);
+struct RainbowBracketHighlight;
 
-    let newest_selection = editor.selections.newest::<usize>(cx);
-    // Don't highlight brackets if the selection isn't empty
-    if !newest_selection.is_empty() {
-        return;
-    }
+#[derive(PartialEq, Eq)]
+pub(crate) enum BracketRefreshReason {
+    BufferEdited,
+    ScrollPositionChanged,
+    SelectionsChanged,
+}
 
-    let snapshot = editor.snapshot(window, cx);
-    let head = newest_selection.head();
-    if head > snapshot.buffer_snapshot.len() {
-        log::error!("bug: cursor offset is out of range while refreshing bracket highlights");
-        return;
-    }
+impl Editor {
+    pub(crate) fn refresh_bracket_highlights(
+        &mut self,
+        refresh_reason: BracketRefreshReason,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        const COLORS: [Hsla; 4] = [gpui::red(), gpui::yellow(), gpui::green(), gpui::blue()];
 
-    let mut tail = head;
-    if (editor.cursor_shape == CursorShape::Block || editor.cursor_shape == CursorShape::Hollow)
-        && head < snapshot.buffer_snapshot.len()
-    {
-        if let Some(tail_ch) = snapshot.buffer_snapshot.chars_at(tail).next() {
+        let snapshot = self.snapshot(window, cx);
+        let multi_buffer_snapshot = &snapshot.buffer_snapshot;
+
+        let multi_buffer_visible_start = snapshot
+            .scroll_anchor
+            .anchor
+            .to_point(multi_buffer_snapshot);
+
+        // todo! deduplicate?
+        let multi_buffer_visible_end = multi_buffer_snapshot.clip_point(
+            multi_buffer_visible_start
+                + Point::new(self.visible_line_count().unwrap_or(40.).ceil() as u32, 0),
+            Bias::Left,
+        );
+
+        let bracket_matches = snapshot
+            .buffer_snapshot
+            .bracket_ranges(multi_buffer_visible_start..multi_buffer_visible_end)
+            .into_iter()
+            .flatten()
+            .into_group_map_by(|&(depth, ..)| depth);
+
+        for (depth, bracket_highlights) in bracket_matches.into_iter() {
+            let style = HighlightStyle {
+                color: Some({
+                    // todo! these colors lack contrast for this/are not actually good for that?
+                    // cx.theme().accents().color_for_index(depth as u32);
+                    COLORS[depth as usize % COLORS.len()]
+                }),
+                ..Default::default()
+            };
+
+            self.highlight_text_key::<RainbowBracketHighlight>(
+                depth,
+                bracket_highlights
+                    .into_iter()
+                    .flat_map(|(_, open, close)| {
+                        [
+                            open.to_anchors(&multi_buffer_snapshot),
+                            close.to_anchors(&multi_buffer_snapshot),
+                        ]
+                    })
+                    .collect(),
+                style,
+                cx,
+            );
+        }
+
+        if refresh_reason == BracketRefreshReason::ScrollPositionChanged {
+            return;
+        }
+        self.clear_highlights::<MatchingBracketHighlight>(cx);
+
+        let newest_selection = self.selections.newest::<usize>(cx);
+        // Don't highlight brackets if the selection isn't empty
+        if !newest_selection.is_empty() {
+            return;
+        }
+
+        let head = newest_selection.head();
+        if head > snapshot.buffer_snapshot.len() {
+            log::error!("bug: cursor offset is out of range while refreshing bracket highlights");
+            return;
+        }
+
+        let mut tail = head;
+        if (self.cursor_shape == CursorShape::Block || self.cursor_shape == CursorShape::Hollow)
+            && head < snapshot.buffer_snapshot.len()
+        {
+            if let Some(tail_ch) = snapshot.buffer_snapshot.chars_at(tail).next() {
             tail += tail_ch.len_utf8();
         }
-    }
+        }
 
-    if let Some((opening_range, closing_range)) = snapshot
-        .buffer_snapshot
-        .innermost_enclosing_bracket_ranges(head..tail, None)
-    {
-        editor.highlight_text::<MatchingBracketHighlight>(
-            vec![
-                opening_range.to_anchors(&snapshot.buffer_snapshot),
-                closing_range.to_anchors(&snapshot.buffer_snapshot),
-            ],
-            HighlightStyle {
-                background_color: Some(
-                    cx.theme()
-                        .colors()
-                        .editor_document_highlight_bracket_background,
-                ),
-                ..Default::default()
-            },
-            cx,
-        )
+        if let Some((opening_range, closing_range)) = snapshot
+            .buffer_snapshot
+            .innermost_enclosing_bracket_ranges(head..tail, None)
+        {
+            self.highlight_background::<MatchingBracketHighlight>(
+                &[
+                    opening_range.to_anchors(&snapshot.buffer_snapshot),
+                    closing_range.to_anchors(&snapshot.buffer_snapshot),
+                ],
+                |theme| theme.colors().editor_document_highlight_bracket_background,
+                cx,
+            )
+        }
     }
 }
 

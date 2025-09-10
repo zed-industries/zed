@@ -821,6 +821,7 @@ pub struct BracketMatch {
     pub open_range: Range<usize>,
     pub close_range: Range<usize>,
     pub newline_only: bool,
+    pub depth: usize,
 }
 
 impl Buffer {
@@ -4054,7 +4055,7 @@ impl BufferSnapshot {
     pub fn all_bracket_ranges(
         &self,
         range: Range<usize>,
-    ) -> impl Iterator<Item = BracketMatch> + '_ {
+    ) -> impl Iterator<Item = BracketMatch> + use<'_> {
         let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
             grammar.brackets_config.as_ref().map(|c| &c.query)
         });
@@ -4064,11 +4065,14 @@ impl BufferSnapshot {
             .map(|grammar| grammar.brackets_config.as_ref().unwrap())
             .collect::<Vec<_>>();
 
+        // todo!
+        let mut depth = 0;
+
         iter::from_fn(move || {
             while let Some(mat) = matches.peek() {
                 let mut open = None;
                 let mut close = None;
-                let config = &configs[mat.grammar_index];
+                let config = configs[mat.grammar_index];
                 let pattern = &config.patterns[mat.pattern_index];
                 for capture in mat.captures {
                     if capture.index == config.open_capture_ix {
@@ -4089,10 +4093,13 @@ impl BufferSnapshot {
                     continue;
                 }
 
+                depth += 1;
+
                 return Some(BracketMatch {
                     open_range,
                     close_range,
                     newline_only: pattern.newline_only,
+                    depth,
                 });
             }
             None

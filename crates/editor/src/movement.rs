@@ -334,7 +334,7 @@ pub fn adjust_greedy_deletion(
             .bracket_ranges(delete_range.clone())
             .into_iter()
             .flatten()
-            .flat_map(|(left_bracket, right_bracket)| {
+            .flat_map(|(_depth, left_bracket, right_bracket)| {
                 [
                     left_bracket.start,
                     left_bracket.end,
