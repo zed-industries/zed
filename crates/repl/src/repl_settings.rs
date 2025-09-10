@@ -6,7 +6,7 @@ use schemars::JsonSchema;
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
 #[settings_key(key = "repl")]
-pub struct REPLSettings {
+pub struct ReplSettings {
     /// Maximum number of lines in the REPL.
     ///
     /// Default: 32
