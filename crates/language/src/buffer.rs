@@ -3701,9 +3701,8 @@ impl BufferSnapshot {
     ///
     /// This method allows passing an optional [`SyntaxTheme`] to
     /// syntax-highlight the returned symbols.
-    pub fn outline(&self, theme: Option<&SyntaxTheme>) -> Option<Outline<Anchor>> {
-        self.outline_items_containing(0..self.len(), true, theme)
-            .map(Outline::new)
+    pub fn outline(&self, theme: Option<&SyntaxTheme>) -> Outline<Anchor> {
+        Outline::new(self.outline_items_containing(0..self.len(), true, theme))
     }
 
     /// Returns all the symbols that contain the given position.
@@ -3714,20 +3713,20 @@ impl BufferSnapshot {
         &self,
         position: T,
         theme: Option<&SyntaxTheme>,
-    ) -> Option<Vec<OutlineItem<Anchor>>> {
+    ) -> Vec<OutlineItem<Anchor>> {
         let position = position.to_offset(self);
         let mut items = self.outline_items_containing(
             position.saturating_sub(1)..self.len().min(position + 1),
             false,
             theme,
-        )?;
+        );
         let mut prev_depth = None;
         items.retain(|item| {
             let result = prev_depth.is_none_or(|prev_depth| item.depth > prev_depth);
             prev_depth = Some(item.depth);
             result
         });
-        Some(items)
+        items
     }
 
     pub fn outline_range_containing<T: ToOffset>(&self, range: Range<T>) -> Option<Range<Point>> {
@@ -3777,21 +3776,19 @@ impl BufferSnapshot {
         range: Range<T>,
         include_extra_context: bool,
         theme: Option<&SyntaxTheme>,
-    ) -> Option<Vec<OutlineItem<Anchor>>> {
+    ) -> Vec<OutlineItem<Anchor>> {
         let range = range.to_offset(self);
         let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
             grammar.outline_config.as_ref().map(|c| &c.query)
         });
-        let configs = matches
-            .grammars()
-            .iter()
-            .map(|g| g.outline_config.as_ref().unwrap())
-            .collect::<Vec<_>>();
 
         let mut items = Vec::new();
         let mut annotation_row_ranges: Vec<Range<u32>> = Vec::new();
         while let Some(mat) = matches.peek() {
-            let config = &configs[mat.grammar_index];
+            let config = matches.grammars()[mat.grammar_index]
+                .outline_config
+                .as_ref()
+                .unwrap();
             if let Some(item) =
                 self.next_outline_item(config, &mat, &range, include_extra_context, theme)
             {
@@ -3870,7 +3867,7 @@ impl BufferSnapshot {
             item_ends_stack.push(item.range.end);
         }
 
-        Some(anchor_items)
+        anchor_items
     }
 
     fn next_outline_item(
