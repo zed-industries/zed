@@ -216,7 +216,9 @@ fn build_tree_item(
             tree[index].render = Some(item);
         }
         SettingsUiItem::Union(dynamic_render) => {
-            // todo! take from item and store other fields instead of clone
+            // todo(settings_ui) take from item and store other fields instead of clone
+            // will also require replacing usage in render_recursive so it can know
+            // which options were actually rendered
             let options = dynamic_render.options.clone();
             tree[index].dynamic_render = Some(dynamic_render);
             for option in options {
