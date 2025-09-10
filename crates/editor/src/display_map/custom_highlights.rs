@@ -150,11 +150,11 @@ impl<'a> Iterator for CustomHighlightsChunks<'a> {
             ..chunk.clone()
         };
         if !self.active_highlights.is_empty() {
-            let mut highlight_style = HighlightStyle::default();
-            for active_highlight in self.active_highlights.values() {
-                highlight_style.highlight(*active_highlight);
-            }
-            prefix.highlight_style = Some(highlight_style);
+            prefix.highlight_style = self
+                .active_highlights
+                .values()
+                .copied()
+                .reduce(|acc, active_highlight| acc.highlight(active_highlight));
         }
         Some(prefix)
     }
