@@ -106,7 +106,6 @@ impl GoToLine {
                             if let Some(placeholder_text) = editor.placeholder_text(cx)
                                 && editor.text(cx).is_empty()
                             {
-                                let placeholder_text = placeholder_text.to_string();
                                 editor.set_text(placeholder_text, window, cx);
                             }
                         });
