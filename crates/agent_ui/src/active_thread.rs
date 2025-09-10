@@ -1742,6 +1742,7 @@ impl ActiveThread {
             );
             editor.set_placeholder_text(
                 "What went wrong? Share your feedback so we can improve.",
+                window,
                 cx,
             );
             editor

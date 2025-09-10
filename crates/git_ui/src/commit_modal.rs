@@ -198,7 +198,7 @@ impl CommitModal {
             && commit_message.is_empty()
         {
             commit_editor.update(cx, |editor, cx| {
-                editor.set_placeholder_text(suggested_commit_message, cx);
+                editor.set_placeholder_text(&suggested_commit_message, window, cx);
             });
         }
 

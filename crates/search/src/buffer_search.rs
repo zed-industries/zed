@@ -154,16 +154,14 @@ impl Render for BufferSearchBar {
             find_in_results,
         } = self.supported_options(cx);
 
-        if self.query_editor.update(cx, |query_editor, _cx| {
-            query_editor.placeholder_text().is_none()
-        }) {
-            self.query_editor.update(cx, |editor, cx| {
-                editor.set_placeholder_text("Search…", cx);
-            });
-        }
+        self.query_editor.update(cx, |query_editor, cx| {
+            if query_editor.placeholder_text(cx).is_none() {
+                query_editor.set_placeholder_text("Search…", window, cx);
+            }
+        });
 
         self.replacement_editor.update(cx, |editor, cx| {
-            editor.set_placeholder_text("Replace with…", cx);
+            editor.set_placeholder_text("Replace with…", window, cx);
         });
 
         let mut color_override = None;

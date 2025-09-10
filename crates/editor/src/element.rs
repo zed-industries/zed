@@ -10743,7 +10743,7 @@ mod tests {
         let style = cx.update(|_, cx| editor.read(cx).style().unwrap().clone());
         window
             .update(cx, |editor, window, cx| {
-                editor.set_placeholder_text("hello", cx);
+                editor.set_placeholder_text("hello", window, cx);
                 editor.insert_blocks(
                     [BlockProperties {
                         style: BlockStyle::Fixed,
