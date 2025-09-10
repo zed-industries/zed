@@ -1263,23 +1263,27 @@ impl Thread {
             );
 
             log::debug!("Calling model.stream_completion, attempt {}", attempt);
-            let mut events = model
-                .stream_completion(request, cx)
-                .await
-                .map_err(|error| anyhow!(error))?;
+            let events_result = model.stream_completion(request, cx).await;
             let mut tool_results = FuturesUnordered::new();
             let mut error = None;
-            while let Some(event) = events.next().await {
-                log::trace!("Received completion event: {:?}", event);
-                match event {
-                    Ok(event) => {
-                        tool_results.extend(this.update(cx, |this, cx| {
-                            this.handle_completion_event(event, event_stream, cx)
-                        })??);
-                    }
-                    Err(err) => {
-                        error = Some(err);
-                        break;
+            match events_result {
+                Err(e) => {
+                    error = Some(e);
+                }
+                Ok(mut events) => {
+                    while let Some(event) = events.next().await {
+                        log::trace!("Received completion event: {:?}", event);
+                        match event {
+                            Ok(event) => {
+                                tool_results.extend(this.update(cx, |this, cx| {
+                                    this.handle_completion_event(event, event_stream, cx)
+                                })??);
+                            }
+                            Err(err) => {
+                                error = Some(err);
+                                break;
+                            }
+                        }
                     }
                 }
             }
@@ -1345,10 +1349,6 @@ impl Thread {
         error: LanguageModelCompletionError,
         attempt: u8,
     ) -> Result<acp_thread::RetryStatus> {
-        if self.completion_mode == CompletionMode::Normal {
-            return Err(anyhow!(error));
-        }
-
         let Some(strategy) = Self::retry_strategy_for(&error) else {
             return Err(anyhow!(error));
         };

@@ -258,8 +258,13 @@ impl XAiLanguageModel {
         &self,
         request: open_ai::Request,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>>>
-    {
+    ) -> BoxFuture<
+        'static,
+        Result<
+            futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>,
+            LanguageModelCompletionError,
+        >,
+    > {
         let http_client = self.http_client.clone();
         let Ok((api_key, api_url)) = cx.read_entity(&self.state, |state, cx| {
             let settings = &AllLanguageModelSettings::get_global(cx).x_ai;
@@ -270,13 +275,18 @@ impl XAiLanguageModel {
             };
             (state.api_key.clone(), api_url)
         }) else {
-            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+            return futures::future::ready(Err(anyhow!("App state dropped").into())).boxed();
         };
 
         let future = self.request_limiter.stream(async move {
             let api_key = api_key.context("Missing xAI API Key")?;
-            let request =
-                open_ai::stream_completion(http_client.as_ref(), &api_url, &api_key, request);
+            let request = open_ai::stream_completion(
+                http_client.as_ref(),
+                PROVIDER_NAME,
+                &api_url,
+                &api_key,
+                request,
+            );
             let response = request.await?;
             Ok(response)
         });
