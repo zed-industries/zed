@@ -9263,7 +9263,7 @@ impl Element for EditorElement {
                     let tab_char = whitespace_map.tab();
                     let tab_len = tab_char.len();
                     let tab_invisible = window.text_system().shape_line(
-                        tab_char.into(),
+                        tab_char,
                         invisible_symbol_font_size,
                         &[TextRun {
                             len: tab_len,
@@ -9279,7 +9279,7 @@ impl Element for EditorElement {
                     let space_char = whitespace_map.space();
                     let space_len = space_char.len();
                     let space_invisible = window.text_system().shape_line(
-                        space_char.into(),
+                        space_char,
                         invisible_symbol_font_size,
                         &[TextRun {
                             len: space_len,
