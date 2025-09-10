@@ -3,17 +3,14 @@ use crate::{
     GoToDefinitionSplit, GoToTypeDefinition, GoToTypeDefinitionSplit, GotoDefinitionKind, InlayId,
     Navigated, PointForPosition, SelectPhase,
     editor_settings::GoToDefinitionFallback,
-    hover_popover::{self, InlayHover},
+    hover_popover::{self},
     scroll::ScrollAmount,
 };
 use gpui::{App, AsyncWindowContext, Context, Entity, Modifiers, Task, Window, px};
 use language::{Bias, ToOffset};
 use linkify::{LinkFinder, LinkKind};
 use lsp::LanguageServerId;
-use project::{
-    HoverBlock, HoverBlockKind, InlayHintLabelPartTooltip, InlayHintTooltip, LocationLink, Project,
-    ResolveState, ResolvedPath,
-};
+use project::{LocationLink, Project, ResolvedPath};
 use settings::Settings;
 use std::ops::Range;
 use theme::ActiveTheme as _;
@@ -925,7 +922,7 @@ mod tests {
         DisplayPoint,
         display_map::ToDisplayPoint,
         editor_tests::init_test,
-        inlay_hint_cache::tests::{cached_hint_labels, visible_hint_labels},
+        inlays::inlay_hints::tests::{cached_hint_labels, visible_hint_labels},
         test::editor_lsp_test_context::EditorLspTestContext,
     };
     use futures::StreamExt;

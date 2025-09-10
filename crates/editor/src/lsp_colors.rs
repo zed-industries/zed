@@ -14,7 +14,7 @@ use util::post_inc;
 
 use crate::{
     DisplayPoint, Editor, EditorSettings, EditorSnapshot, InlayId, InlaySplice, RangeToAnchorExt,
-    display_map::Inlay, editor_settings::DocumentColorsRenderMode,
+    editor_settings::DocumentColorsRenderMode, inlays::Inlay,
 };
 
 #[derive(Debug)]
