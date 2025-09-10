@@ -60,7 +60,7 @@ Zed provides several Python language servers out of the box. By default, [basedp
 
 Other built-in language servers are:
 - [Ty](https://docs.astral.sh/ty/) -- Up-and-coming language server from Astral, built for speed.
-- [Pyright](https://github.com/microsoft/pyright) -- Type-aware language server from Microsoft. Good choice if you want strong type checking with minimal setup.
+- [Pyright](https://github.com/microsoft/pyright) -- The basis for basedpyright.
 - [PyLSP](https://github.com/python-lsp/python-lsp-server) -- A plugin-based language server that integrates with tools like `pycodestyle`, `autopep8`, and `yapf`.
 
 These are disabled by default, but can be enabled in your settings. For example:
