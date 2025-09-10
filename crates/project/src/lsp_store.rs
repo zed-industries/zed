@@ -60,7 +60,7 @@ use language::{
     Bias, BinaryStatus, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel, Diagnostic,
     DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff, File as _, Language, LanguageName,
     LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, ManifestDelegate, ManifestName,
-    Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Toolchain, Transaction,
+    Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPoint, ToPointUtf16, Toolchain, Transaction,
     Unclipped,
     language_settings::{
         FormatOnSave, Formatter, LanguageSettings, SelectedFormatter, language_settings,
@@ -6356,14 +6356,38 @@ impl LspStore {
 
                         for (range, text) in edits {
                             let primary = &completion.replace_range;
-                            let start_within = primary.start.cmp(&range.start, buffer).is_le()
-                                && primary.end.cmp(&range.start, buffer).is_ge();
-                            let end_within = range.start.cmp(&primary.end, buffer).is_le()
-                                && range.end.cmp(&primary.end, buffer).is_ge();
+
+                            // Special case: if both ranges start at the very beginning of the file (line 0, column 0),
+                            // and the primary completion is just an insertion (empty range), then this is likely
+                            // an auto-import scenario and should not be considered overlapping
+                            // https://github.com/zed-industries/zed/issues/26136
+                            let is_file_start_auto_import = {
+                                let snapshot = buffer.snapshot();
+                                let primary_start_point = primary.start.to_point(&snapshot);
+                                let range_start_point = range.start.to_point(&snapshot);
+
+                                let result = primary_start_point.row == 0
+                                    && primary_start_point.column == 0
+                                    && range_start_point.row == 0
+                                    && range_start_point.column == 0;
+
+                                result
+                            };
+
+                            let has_overlap = if is_file_start_auto_import {
+                                false
+                            } else {
+                                let start_within = primary.start.cmp(&range.start, buffer).is_le()
+                                    && primary.end.cmp(&range.start, buffer).is_ge();
+                                let end_within = range.start.cmp(&primary.end, buffer).is_le()
+                                    && range.end.cmp(&primary.end, buffer).is_ge();
+                                let result = start_within || end_within;
+                                result
+                            };
 
                             //Skip additional edits which overlap with the primary completion edit
                             //https://github.com/zed-industries/zed/pull/1871
-                            if !start_within && !end_within {
+                            if !has_overlap {
                                 buffer.edit([(range, text)], None, cx);
                             }
                         }

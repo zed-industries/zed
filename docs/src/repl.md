@@ -114,7 +114,7 @@ ark --install
 TBD: Improve R REPL (Ark Kernel) instructions
 -->
 
-### Typescript: Deno {#typescript-deno}
+### TypeScript: Deno {#typescript-deno}
 
 - [Install Deno](https://docs.deno.com/runtime/manual/getting_started/installation/) and then install the Deno jupyter kernel:
 

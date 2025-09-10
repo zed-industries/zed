@@ -1529,7 +1529,8 @@ impl AgentDiff {
             | AcpThreadEvent::ToolAuthorizationRequired
             | AcpThreadEvent::PromptCapabilitiesUpdated
             | AcpThreadEvent::AvailableCommandsUpdated(_)
-            | AcpThreadEvent::Retry(_) => {}
+            | AcpThreadEvent::Retry(_)
+            | AcpThreadEvent::ModeUpdated(_) => {}
         }
     }
 

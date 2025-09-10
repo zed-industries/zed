@@ -80,35 +80,18 @@ pub enum Plan {
     #[default]
     #[serde(alias = "Free")]
     ZedFree,
+    ZedFreeV2,
     #[serde(alias = "ZedPro")]
     ZedPro,
+    ZedProV2,
     #[serde(alias = "ZedProTrial")]
     ZedProTrial,
+    ZedProTrialV2,
 }
 
 impl Plan {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Plan::ZedFree => "zed_free",
-            Plan::ZedPro => "zed_pro",
-            Plan::ZedProTrial => "zed_pro_trial",
-        }
-    }
-
-    pub fn model_requests_limit(&self) -> UsageLimit {
-        match self {
-            Plan::ZedPro => UsageLimit::Limited(500),
-            Plan::ZedProTrial => UsageLimit::Limited(150),
-            Plan::ZedFree => UsageLimit::Limited(50),
-        }
-    }
-
-    pub fn edit_predictions_limit(&self) -> UsageLimit {
-        match self {
-            Plan::ZedPro => UsageLimit::Unlimited,
-            Plan::ZedProTrial => UsageLimit::Unlimited,
-            Plan::ZedFree => UsageLimit::Limited(2_000),
-        }
+    pub fn is_v2(&self) -> bool {
+        matches!(self, Plan::ZedFreeV2 | Plan::ZedProV2 | Plan::ZedProTrialV2)
     }
 }
 
@@ -118,8 +101,11 @@ impl FromStr for Plan {
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
             "zed_free" => Ok(Plan::ZedFree),
+            "zed_free_v2" => Ok(Plan::ZedFreeV2),
             "zed_pro" => Ok(Plan::ZedPro),
+            "zed_pro_v2" => Ok(Plan::ZedProV2),
             "zed_pro_trial" => Ok(Plan::ZedProTrial),
+            "zed_pro_trial_v2" => Ok(Plan::ZedProTrialV2),
             plan => Err(anyhow::anyhow!("invalid plan: {plan:?}")),
         }
     }
@@ -353,6 +339,12 @@ mod tests {
 
         let plan = serde_json::from_value::<Plan>(json!("zed_pro_trial")).unwrap();
         assert_eq!(plan, Plan::ZedProTrial);
+
+        let plan = serde_json::from_value::<Plan>(json!("zed_pro_v2")).unwrap();
+        assert_eq!(plan, Plan::ZedProV2);
+
+        let plan = serde_json::from_value::<Plan>(json!("zed_pro_trial_v2")).unwrap();
+        assert_eq!(plan, Plan::ZedProTrialV2);
     }
 
     #[test]

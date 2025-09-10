@@ -38,20 +38,20 @@ impl RenderOnce for UsageCallout {
 
         let (title, message, button_text, url) = if is_limit_reached {
             match self.plan {
-                Plan::ZedFree => (
+                Plan::ZedFree | Plan::ZedFreeV2 => (
                     "Out of free prompts",
                     "Upgrade to continue, wait for the next reset, or switch to API key."
                         .to_string(),
                     "Upgrade",
                     zed_urls::account_url(cx),
                 ),
-                Plan::ZedProTrial => (
+                Plan::ZedProTrial | Plan::ZedProTrialV2 => (
                     "Out of trial prompts",
                     "Upgrade to Zed Pro to continue, or switch to API key.".to_string(),
                     "Upgrade",
                     zed_urls::account_url(cx),
                 ),
-                Plan::ZedPro => (
+                Plan::ZedPro | Plan::ZedProV2 => (
                     "Out of included prompts",
                     "Enable usage-based billing to continue.".to_string(),
                     "Manage",

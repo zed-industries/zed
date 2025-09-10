@@ -28,7 +28,6 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use agent::{Thread, ThreadId};
-use agent_servers::AgentServerCommand;
 use agent_settings::{AgentProfileId, AgentSettings, LanguageModelSelection};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
@@ -41,6 +40,7 @@ use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
 };
 use project::DisableAiSettings;
+use project::agent_server_store::AgentServerCommand;
 use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -72,8 +72,10 @@ actions!(
         ToggleOptionsMenu,
         /// Deletes the recently opened thread from history.
         DeleteRecentlyOpenThread,
-        /// Toggles the profile selector for switching between agent profiles.
+        /// Toggles the profile or mode selector for switching between agent profiles.
         ToggleProfileSelector,
+        /// Cycles through available session modes.
+        CycleModeSelector,
         /// Removes all added context from the current conversation.
         RemoveAllContext,
         /// Expands the message editor to full size.
@@ -174,6 +176,14 @@ enum ExternalAgent {
     },
 }
 
+fn placeholder_command() -> AgentServerCommand {
+    AgentServerCommand {
+        path: "/placeholder".into(),
+        args: vec![],
+        env: None,
+    }
+}
+
 impl ExternalAgent {
     fn name(&self) -> &'static str {
         match self {
@@ -193,10 +203,9 @@ impl ExternalAgent {
             Self::Gemini => Rc::new(agent_servers::Gemini),
             Self::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
             Self::NativeAgent => Rc::new(agent2::NativeAgentServer::new(fs, history)),
-            Self::Custom { name, command } => Rc::new(agent_servers::CustomAgentServer::new(
-                name.clone(),
-                command.clone(),
-            )),
+            Self::Custom { name, command: _ } => {
+                Rc::new(agent_servers::CustomAgentServer::new(name.clone()))
+            }
         }
     }
 }

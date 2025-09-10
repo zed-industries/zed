@@ -805,6 +805,7 @@ pub enum AcpThreadEvent {
     PromptCapabilitiesUpdated,
     Refusal,
     AvailableCommandsUpdated(Vec<acp::AvailableCommand>),
+    ModeUpdated(acp::SessionModeId),
 }
 
 impl EventEmitter<AcpThreadEvent> for AcpThread {}
@@ -1006,6 +1007,9 @@ impl AcpThread {
             }
             acp::SessionUpdate::AvailableCommandsUpdate { available_commands } => {
                 cx.emit(AcpThreadEvent::AvailableCommandsUpdated(available_commands))
+            }
+            acp::SessionUpdate::CurrentModeUpdate { current_mode_id } => {
+                cx.emit(AcpThreadEvent::ModeUpdated(current_mode_id))
             }
         }
         Ok(())
@@ -1303,11 +1307,12 @@ impl AcpThread {
         &mut self,
         tool_call: acp::ToolCallUpdate,
         options: Vec<acp::PermissionOption>,
+        respect_always_allow_setting: bool,
         cx: &mut Context<Self>,
     ) -> Result<BoxFuture<'static, acp::RequestPermissionOutcome>> {
         let (tx, rx) = oneshot::channel();
 
-        if AgentSettings::get_global(cx).always_allow_tool_actions {
+        if respect_always_allow_setting && AgentSettings::get_global(cx).always_allow_tool_actions {
             // Don't use AllowAlways, because then if you were to turn off always_allow_tool_actions,
             // some tools would (incorrectly) continue to auto-accept.
             if let Some(allow_once_option) = options.iter().find_map(|option| {
@@ -1640,13 +1645,13 @@ impl AcpThread {
         cx.foreground_executor().spawn(send_task)
     }
 
-    /// Rewinds this thread to before the entry at `index`, removing it and all
-    /// subsequent entries while reverting any changes made from that point.
-    pub fn rewind(&mut self, id: UserMessageId, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let Some(truncate) = self.connection.truncate(&self.session_id, cx) else {
-            return Task::ready(Err(anyhow!("not supported")));
-        };
-        let Some(message) = self.user_message(&id) else {
+    /// Restores the git working tree to the state at the given checkpoint (if one exists)
+    pub fn restore_checkpoint(
+        &mut self,
+        id: UserMessageId,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let Some((_, message)) = self.user_message_mut(&id) else {
             return Task::ready(Err(anyhow!("message not found")));
         };
 
@@ -1654,15 +1659,30 @@ impl AcpThread {
             .checkpoint
             .as_ref()
             .map(|c| c.git_checkpoint.clone());
-
+        let rewind = self.rewind(id.clone(), cx);
         let git_store = self.project.read(cx).git_store().clone();
-        cx.spawn(async move |this, cx| {
+
+        cx.spawn(async move |_, cx| {
+            rewind.await?;
             if let Some(checkpoint) = checkpoint {
                 git_store
                     .update(cx, |git, cx| git.restore_checkpoint(checkpoint, cx))?
                     .await?;
             }
 
+            Ok(())
+        })
+    }
+
+    /// Rewinds this thread to before the entry at `index`, removing it and all
+    /// subsequent entries while rejecting any action_log changes made from that point.
+    /// Unlike `restore_checkpoint`, this method does not restore from git.
+    pub fn rewind(&mut self, id: UserMessageId, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let Some(truncate) = self.connection.truncate(&self.session_id, cx) else {
+            return Task::ready(Err(anyhow!("not supported")));
+        };
+
+        cx.spawn(async move |this, cx| {
             cx.update(|cx| truncate.run(id.clone(), cx))?.await?;
             this.update(cx, |this, cx| {
                 if let Some((ix, _)) = this.user_message_mut(&id) {
@@ -1670,7 +1690,11 @@ impl AcpThread {
                     this.entries.truncate(ix);
                     cx.emit(AcpThreadEvent::EntriesRemoved(range));
                 }
-            })
+                this.action_log()
+                    .update(cx, |action_log, cx| action_log.reject_all_edits(cx))
+            })?
+            .await;
+            Ok(())
         })
     }
 
@@ -1725,20 +1749,6 @@ impl AcpThread {
                     None
                 }
             })
-    }
-
-    fn user_message(&self, id: &UserMessageId) -> Option<&UserMessage> {
-        self.entries.iter().find_map(|entry| {
-            if let AgentThreadEntry::UserMessage(message) = entry {
-                if message.id.as_ref() == Some(id) {
-                    Some(message)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        })
     }
 
     fn user_message_mut(&mut self, id: &UserMessageId) -> Option<(usize, &mut UserMessage)> {
@@ -2684,7 +2694,7 @@ mod tests {
                 let AgentThreadEntry::UserMessage(message) = &thread.entries[2] else {
                     panic!("unexpected entries {:?}", thread.entries)
                 };
-                thread.rewind(message.id.clone().unwrap(), cx)
+                thread.restore_checkpoint(message.id.clone().unwrap(), cx)
             })
             .await
             .unwrap();
@@ -2758,7 +2768,7 @@ mod tests {
         }));
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new("/test"), cx))
+            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
