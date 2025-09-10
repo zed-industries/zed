@@ -399,6 +399,79 @@ impl ActionRegistry {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+#[serde(untagged)]
+enum RawAction {
+    Simple(String),
+    Obj {
+        name: String,
+        #[serde(default)]
+        args: Option<serde_json::Value>,
+        /// Any unknown fields.
+        #[serde(flatten)]
+        unknown: serde_json::Map<String, serde_json::Value>,
+    }
+}
+
+/// An item in an action sequence.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ActionSequenceItem {
+    /// A simple action.
+    Simple(String),
+    /// An action with arguments.
+    WithArgs(String, serde_json::Value),
+    /// An action with named arguments.
+    WithNamedArgs(String, serde_json::Map<String, serde_json::Value>),
+}
+
+/// A sequence of actions. Allows for action chains.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ActionSequence {
+    /// The actions in the sequence.
+    pub actions: Vec<ActionSequenceItem>,
+}
+
+impl Action for ActionSequence {
+    fn boxed_clone(&self) -> Box<dyn Action> {
+        Box::new(self.clone())
+    }
+
+    fn partial_eq(&self, action: &dyn Action) -> bool {
+        action.as_any().downcast_ref::<Self>().map_or(false, |a| self == a)
+    }
+
+    fn name(&self) -> &'static str {
+        "ActionSequence"
+    }
+
+    fn name_for_type() -> &'static str {
+        "ActionSequence"
+    }
+
+
+    fn build(value: serde_json::Value) -> Result<Box<dyn Action>> {
+        let raw_items: Vec<RawAction> = serde_json::from_value(value)
+            .context("ActionSequence must be an array")?;
+
+        let actions = raw_items
+            .into_iter()
+            .map(to_action_item)
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(Box::new(ActionSequence {
+            actions
+        }))
+    }
+}
+
+mod action_sequence {
+    use crate as gpui;
+    use crate::ActionSequence;
+    use gpui_macros::register_action;
+
+    register_action!(ActionSequence);
+}
+
 /// Generate a list of all the registered actions.
 /// Useful for transforming the list of available actions into a
 /// format suited for static analysis such as in validating keymaps, or
@@ -409,6 +482,24 @@ pub fn generate_list_of_all_registered_actions() -> impl Iterator<Item = MacroAc
         .map(|builder| builder.0())
 }
 
+fn to_action_item(item: RawAction) -> Result<ActionSequenceItem> {
+    match item {
+        RawAction::Simple(name) => Ok(ActionSequenceItem::Simple(name)),
+        RawAction::Obj { name, args, unknown } => {
+            if let Some(vals) = args {
+                match vals {
+                    serde_json::Value::Object(named_args) => Ok(ActionSequenceItem::WithNamedArgs(name, named_args)),
+                    other => Ok(ActionSequenceItem::WithArgs(name, other)),
+                }
+            } else if unknown.is_empty() {
+                Ok(ActionSequenceItem::Simple(name))
+            } else {
+                // Leftover keys are assumed to be named arguments.
+                Ok(ActionSequenceItem::WithNamedArgs(name, unknown))
+            }
+        },
+    }
+}
 mod no_action {
     use crate as gpui;
     use std::any::Any as _;

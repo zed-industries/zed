@@ -39,12 +39,13 @@ use futures::{
     future::{Shared, try_join_all},
 };
 use gpui::{
-    Action, AnyEntity, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Bounds, Context,
-    CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke, ManagedView, MouseButton,
-    PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription,
-    SystemWindowTabController, Task, Tiling, WeakEntity, WindowBounds, WindowHandle, WindowId,
-    WindowOptions, actions, canvas, point, relative, size, transparent_black,
+    actions, canvas, point, relative, size, transparent_black, Action, ActionSequence,
+    ActionSequenceItem, AnyEntity, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext,
+    Bounds, Context, CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter,
+    FocusHandle, Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke,
+    ManagedView, MouseButton, PathPromptOptions, Point, PromptLevel, Render, ResizeEdge,
+    Size, Stateful, Subscription, SystemWindowTabController, Task, Tiling, WeakEntity,
+    WindowBounds, WindowHandle, WindowId, WindowOptions
 };
 pub use history_manager::*;
 pub use item::{
@@ -79,6 +80,7 @@ use project::{
 use remote::{RemoteClientDelegate, RemoteConnectionOptions, remote_client::ConnectionIdentifier};
 use schemars::JsonSchema;
 use serde::Deserialize;
+use serde_json::Value;
 use session::AppSession;
 use settings::{Settings, SettingsLocation, update_settings_file};
 use shared_screen::SharedScreen;
@@ -2433,6 +2435,40 @@ impl Workspace {
             );
         }
         state.task.clone().unwrap()
+    }
+
+    fn execute_action_sequence(
+        &mut self,
+        sequence: &ActionSequence,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for action in &sequence.actions {
+            let action_to_execute = match action {
+                ActionSequenceItem::Simple(name) => {
+                    cx.build_action(name, None).log_err()
+                }
+                ActionSequenceItem::WithArgs(name, args) => {
+                    cx.build_action(name, Some(args.clone())).log_err()
+                }
+                ActionSequenceItem::WithNamedArgs(name, args) => {
+                    cx.build_action(name, Some(Value::Object(args.clone()))).log_err()
+                }
+            };
+
+            if let Some(action) = action_to_execute {
+                window.dispatch_action(action, cx);
+            }
+        }
+    }
+
+    fn on_action_sequence(
+        &mut self,
+        sequence: &ActionSequence,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.execute_action_sequence(sequence, window, cx);
     }
 
     fn save_all_internal(
@@ -5528,6 +5564,7 @@ impl Workspace {
             .on_action(cx.listener(Self::close_all_items_and_panes))
             .on_action(cx.listener(Self::save_all))
             .on_action(cx.listener(Self::send_keystrokes))
+            .on_action(cx.listener(Self::on_action_sequence))
             .on_action(cx.listener(Self::add_folder_to_project))
             .on_action(cx.listener(Self::follow_next_collaborator))
             .on_action(cx.listener(Self::close_window))
