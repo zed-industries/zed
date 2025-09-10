@@ -130,6 +130,12 @@ impl TestScheduler {
     }
 
     pub fn run(&self) {
+        while self.step() {
+            // Continue until no work remains
+        }
+    }
+
+    pub fn run_with_clock_advancement(&self) {
         while self.step() || self.advance_clock_to_next_timer() {
             // Continue until no work remains
         }
