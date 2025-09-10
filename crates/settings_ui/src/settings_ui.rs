@@ -899,10 +899,12 @@ fn render_toggle_button_group_inner(
         on_write: Rc<dyn Fn(usize, &mut App)>,
         labels: &'static [&'static str],
     ) -> AnyElement {
-        let mut labels_array: [&'static str; LEN] = ["unused"; LEN];
-        for i in 0..LEN {
-            labels_array[i] = labels[i];
-        }
+        let labels_array: [&'static str; LEN] = {
+            let mut arr = ["unused"; LEN];
+            arr.copy_from_slice(labels);
+            arr
+        };
+
         let mut idx = 0;
         ToggleButtonGroup::single_row(
             title,
