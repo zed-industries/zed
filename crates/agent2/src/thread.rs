@@ -741,7 +741,7 @@ impl Thread {
             return;
         };
 
-        let title = tool.initial_title(tool_use.input.clone());
+        let title = tool.initial_title(tool_use.input.clone(), cx);
         let kind = tool.kind();
         stream.send_tool_call(&tool_use.id, title, kind, tool_use.input.clone());
 
@@ -1062,7 +1062,11 @@ impl Thread {
             self.action_log.clone(),
         ));
         self.add_tool(DiagnosticsTool::new(self.project.clone()));
-        self.add_tool(EditFileTool::new(cx.weak_entity(), language_registry));
+        self.add_tool(EditFileTool::new(
+            self.project.clone(),
+            cx.weak_entity(),
+            language_registry,
+        ));
         self.add_tool(FetchTool::new(self.project.read(cx).client().http_client()));
         self.add_tool(FindPathTool::new(self.project.clone()));
         self.add_tool(GrepTool::new(self.project.clone()));
@@ -1514,7 +1518,7 @@ impl Thread {
         let mut title = SharedString::from(&tool_use.name);
         let mut kind = acp::ToolKind::Other;
         if let Some(tool) = tool.as_ref() {
-            title = tool.initial_title(tool_use.input.clone());
+            title = tool.initial_title(tool_use.input.clone(), cx);
             kind = tool.kind();
         }
 
@@ -2148,7 +2152,11 @@ where
     fn kind() -> acp::ToolKind;
 
     /// The initial tool title to display. Can be updated during the tool run.
-    fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString;
+    fn initial_title(
+        &self,
+        input: Result<Self::Input, serde_json::Value>,
+        cx: &mut App,
+    ) -> SharedString;
 
     /// Returns the JSON schema that describes the tool's input.
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Schema {
@@ -2196,7 +2204,7 @@ pub trait AnyAgentTool {
     fn name(&self) -> SharedString;
     fn description(&self) -> SharedString;
     fn kind(&self) -> acp::ToolKind;
-    fn initial_title(&self, input: serde_json::Value) -> SharedString;
+    fn initial_title(&self, input: serde_json::Value, _cx: &mut App) -> SharedString;
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value>;
     fn supported_provider(&self, _provider: &LanguageModelProviderId) -> bool {
         true
@@ -2232,9 +2240,9 @@ where
         T::kind()
     }
 
-    fn initial_title(&self, input: serde_json::Value) -> SharedString {
+    fn initial_title(&self, input: serde_json::Value, _cx: &mut App) -> SharedString {
         let parsed_input = serde_json::from_value(input.clone()).map_err(|_| input);
-        self.0.initial_title(parsed_input)
+        self.0.initial_title(parsed_input, _cx)
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {

@@ -32,6 +32,7 @@ use gpui::{
 };
 use image_viewer::ImageInfo;
 use language::Capability;
+use language_onboarding::BasedPyrightBanner;
 use language_tools::lsp_button::{self, LspButton};
 use language_tools::lsp_log_view::LspLogToolbarItemView;
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
@@ -552,8 +553,6 @@ fn initialize_panels(
         let git_panel = GitPanel::load(workspace_handle.clone(), cx.clone());
         let channels_panel =
             collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
-        let chat_panel =
-            collab_ui::chat_panel::ChatPanel::load(workspace_handle.clone(), cx.clone());
         let notification_panel = collab_ui::notification_panel::NotificationPanel::load(
             workspace_handle.clone(),
             cx.clone(),
@@ -566,7 +565,6 @@ fn initialize_panels(
             terminal_panel,
             git_panel,
             channels_panel,
-            chat_panel,
             notification_panel,
             debug_panel,
         ) = futures::try_join!(
@@ -575,7 +573,6 @@ fn initialize_panels(
             git_panel,
             terminal_panel,
             channels_panel,
-            chat_panel,
             notification_panel,
             debug_panel,
         )?;
@@ -586,7 +583,6 @@ fn initialize_panels(
             workspace.add_panel(terminal_panel, window, cx);
             workspace.add_panel(git_panel, window, cx);
             workspace.add_panel(channels_panel, window, cx);
-            workspace.add_panel(chat_panel, window, cx);
             workspace.add_panel(notification_panel, window, cx);
             workspace.add_panel(debug_panel, window, cx);
         })?;
@@ -810,7 +806,6 @@ fn register_actions(
                 }
             }
         })
-        .register_action(install_cli)
         .register_action(|_, _: &install_cli::RegisterZedScheme, window, cx| {
             cx.spawn_in(window, async move |workspace, cx| {
                 install_cli::register_zed_scheme(cx).await?;
@@ -862,14 +857,6 @@ fn register_actions(
              window: &mut Window,
              cx: &mut Context<Workspace>| {
                 workspace.toggle_panel_focus::<collab_ui::collab_panel::CollabPanel>(window, cx);
-            },
-        )
-        .register_action(
-            |workspace: &mut Workspace,
-             _: &collab_ui::chat_panel::ToggleFocus,
-             window: &mut Window,
-             cx: &mut Context<Workspace>| {
-                workspace.toggle_panel_focus::<collab_ui::chat_panel::ChatPanel>(window, cx);
             },
         )
         .register_action(
@@ -926,6 +913,9 @@ fn register_actions(
         .register_action(|workspace, _: &CaptureAudio, window, cx| {
             capture_audio(workspace, window, cx);
         });
+
+    #[cfg(not(target_os = "windows"))]
+    workspace.register_action(install_cli);
 
     if workspace.project().read(cx).is_via_remote_server() {
         workspace.register_action({
@@ -1001,6 +991,8 @@ fn initialize_pane(
             toolbar.add_item(project_diff_toolbar, window, cx);
             let agent_diff_toolbar = cx.new(AgentDiffToolbar::new);
             toolbar.add_item(agent_diff_toolbar, window, cx);
+            let basedpyright_banner = cx.new(|cx| BasedPyrightBanner::new(workspace, cx));
+            toolbar.add_item(basedpyright_banner, window, cx);
         })
     });
 }
@@ -1040,13 +1032,14 @@ fn about(
     .detach();
 }
 
+#[cfg(not(target_os = "windows"))]
 fn install_cli(
     _: &mut Workspace,
-    _: &install_cli::Install,
+    _: &install_cli::InstallCliBinary,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    install_cli::install_cli(window, cx);
+    install_cli::install_cli_binary(window, cx)
 }
 
 static WAITING_QUIT_CONFIRMATION: AtomicBool = AtomicBool::new(false);
@@ -1167,7 +1160,7 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut Contex
                         };
                         let project = workspace.project().clone();
                         let buffer = project.update(cx, |project, cx| {
-                            project.create_local_buffer(&log, None, cx)
+                            project.create_local_buffer(&log, None, false, cx)
                         });
 
                         let buffer = cx
@@ -1317,15 +1310,31 @@ pub fn handle_keymap_file_changes(
     })
     .detach();
 
-    let mut current_layout_id = cx.keyboard_layout().id().to_string();
-    cx.on_keyboard_layout_change(move |cx| {
-        let next_layout_id = cx.keyboard_layout().id();
-        if next_layout_id != current_layout_id {
-            current_layout_id = next_layout_id.to_string();
-            keyboard_layout_tx.unbounded_send(()).ok();
-        }
-    })
-    .detach();
+    #[cfg(target_os = "windows")]
+    {
+        let mut current_layout_id = cx.keyboard_layout().id().to_string();
+        cx.on_keyboard_layout_change(move |cx| {
+            let next_layout_id = cx.keyboard_layout().id();
+            if next_layout_id != current_layout_id {
+                current_layout_id = next_layout_id.to_string();
+                keyboard_layout_tx.unbounded_send(()).ok();
+            }
+        })
+        .detach();
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let mut current_mapping = cx.keyboard_mapper().get_key_equivalents().cloned();
+        cx.on_keyboard_layout_change(move |cx| {
+            let next_mapping = cx.keyboard_mapper().get_key_equivalents();
+            if current_mapping.as_ref() != next_mapping {
+                current_mapping = next_mapping.cloned();
+                keyboard_layout_tx.unbounded_send(()).ok();
+            }
+        })
+        .detach();
+    }
 
     load_default_keymap(cx);
 
@@ -1733,7 +1742,7 @@ fn open_telemetry_log_file(
 
             workspace.update_in( cx, |workspace, window, cx| {
                 let project = workspace.project().clone();
-                let buffer = project.update(cx, |project, cx| project.create_local_buffer(&content, json, cx));
+                let buffer = project.update(cx, |project, cx| project.create_local_buffer(&content, json,false, cx));
                 let buffer = cx.new(|cx| {
                     MultiBuffer::singleton(buffer, cx).with_title("Telemetry Log".into())
                 });
@@ -1772,7 +1781,8 @@ fn open_bundled_file(
                 workspace.with_local_workspace(window, cx, |workspace, window, cx| {
                     let project = workspace.project();
                     let buffer = project.update(cx, move |project, cx| {
-                        let buffer = project.create_local_buffer(text.as_ref(), language, cx);
+                        let buffer =
+                            project.create_local_buffer(text.as_ref(), language, false, cx);
                         buffer.update(cx, |buffer, cx| {
                             buffer.set_capability(Capability::ReadOnly, cx);
                         });
@@ -4365,6 +4375,8 @@ mod tests {
                     | "vim::PushJump"
                     | "vim::PushDigraph"
                     | "vim::PushLiteral"
+                    | "vim::PushHelixNext"
+                    | "vim::PushHelixPrevious"
                     | "vim::Number"
                     | "vim::SelectRegister"
                     | "git::StageAndNext"
@@ -4453,7 +4465,6 @@ mod tests {
                 "branches",
                 "buffer_search",
                 "channel_modal",
-                "chat_panel",
                 "cli",
                 "client",
                 "collab",

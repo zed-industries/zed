@@ -10,7 +10,7 @@ use project::{AgentLocation, ImageItem, Project, WorktreeSettings, image_store};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 use util::markdown::MarkdownCodeBlock;
 
 use crate::{AgentTool, ToolCallEventStream};
@@ -68,13 +68,31 @@ impl AgentTool for ReadFileTool {
         acp::ToolKind::Read
     }
 
-    fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString {
-        input
-            .ok()
-            .as_ref()
-            .and_then(|input| Path::new(&input.path).file_name())
-            .map(|file_name| file_name.to_string_lossy().to_string().into())
-            .unwrap_or_default()
+    fn initial_title(
+        &self,
+        input: Result<Self::Input, serde_json::Value>,
+        cx: &mut App,
+    ) -> SharedString {
+        if let Ok(input) = input
+            && let Some(project_path) = self.project.read(cx).find_project_path(&input.path, cx)
+            && let Some(path) = self
+                .project
+                .read(cx)
+                .short_full_path_for_project_path(&project_path, cx)
+        {
+            match (input.start_line, input.end_line) {
+                (Some(start), Some(end)) => {
+                    format!("Read file `{}` (lines {}-{})", path.display(), start, end,)
+                }
+                (Some(start), None) => {
+                    format!("Read file `{}` (from line {})", path.display(), start)
+                }
+                _ => format!("Read file `{}`", path.display()),
+            }
+            .into()
+        } else {
+            "Read file".into()
+        }
     }
 
     fn run(
@@ -85,6 +103,12 @@ impl AgentTool for ReadFileTool {
     ) -> Task<Result<LanguageModelToolResultContent>> {
         let Some(project_path) = self.project.read(cx).find_project_path(&input.path, cx) else {
             return Task::ready(Err(anyhow!("Path {} not found in project", &input.path)));
+        };
+        let Some(abs_path) = self.project.read(cx).absolute_path(&project_path, cx) else {
+            return Task::ready(Err(anyhow!(
+                "Failed to convert {} to absolute path",
+                &input.path
+            )));
         };
 
         // Error out if this path is either excluded or private in global settings
@@ -120,6 +144,14 @@ impl AgentTool for ReadFileTool {
         }
 
         let file_path = input.path.clone();
+
+        event_stream.update_fields(ToolCallUpdateFields {
+            locations: Some(vec![acp::ToolCallLocation {
+                path: abs_path,
+                line: input.start_line.map(|line| line.saturating_sub(1)),
+            }]),
+            ..Default::default()
+        });
 
         if image_store::is_image_file(&self.project, &project_path, cx) {
             return cx.spawn(async move |cx| {
@@ -229,34 +261,25 @@ impl AgentTool for ReadFileTool {
             };
 
             project.update(cx, |project, cx| {
-                if let Some(abs_path) = project.absolute_path(&project_path, cx) {
-                    project.set_agent_location(
-                        Some(AgentLocation {
-                            buffer: buffer.downgrade(),
-                            position: anchor.unwrap_or(text::Anchor::MIN),
-                        }),
-                        cx,
-                    );
+                project.set_agent_location(
+                    Some(AgentLocation {
+                        buffer: buffer.downgrade(),
+                        position: anchor.unwrap_or(text::Anchor::MIN),
+                    }),
+                    cx,
+                );
+                if let Ok(LanguageModelToolResultContent::Text(text)) = &result {
+                    let markdown = MarkdownCodeBlock {
+                        tag: &input.path,
+                        text,
+                    }
+                    .to_string();
                     event_stream.update_fields(ToolCallUpdateFields {
-                        locations: Some(vec![acp::ToolCallLocation {
-                            path: abs_path,
-                            line: input.start_line.map(|line| line.saturating_sub(1)),
+                        content: Some(vec![acp::ToolCallContent::Content {
+                            content: markdown.into(),
                         }]),
                         ..Default::default()
-                    });
-                    if let Ok(LanguageModelToolResultContent::Text(text)) = &result {
-                        let markdown = MarkdownCodeBlock {
-                            tag: &input.path,
-                            text,
-                        }
-                        .to_string();
-                        event_stream.update_fields(ToolCallUpdateFields {
-                            content: Some(vec![acp::ToolCallContent::Content {
-                                content: markdown.into(),
-                            }]),
-                            ..Default::default()
-                        })
-                    }
+                    })
                 }
             })?;
 

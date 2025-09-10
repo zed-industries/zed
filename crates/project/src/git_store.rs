@@ -3317,7 +3317,7 @@ impl Repository {
     ) -> Task<Result<Entity<Buffer>>> {
         cx.spawn(async move |repository, cx| {
             let buffer = buffer_store
-                .update(cx, |buffer_store, cx| buffer_store.create_buffer(cx))?
+                .update(cx, |buffer_store, cx| buffer_store.create_buffer(false, cx))?
                 .await?;
 
             if let Some(language_registry) = language_registry {
@@ -4752,6 +4752,7 @@ fn branch_to_proto(branch: &git::repository::Branch) -> proto::Branch {
                 sha: commit.sha.to_string(),
                 subject: commit.subject.to_string(),
                 commit_timestamp: commit.commit_timestamp,
+                author_name: commit.author_name.to_string(),
             }),
     }
 }
@@ -4781,6 +4782,7 @@ fn proto_to_branch(proto: &proto::Branch) -> git::repository::Branch {
                 sha: commit.sha.to_string().into(),
                 subject: commit.subject.to_string().into(),
                 commit_timestamp: commit.commit_timestamp,
+                author_name: commit.author_name.to_string().into(),
                 has_parent: true,
             }
         }),

@@ -493,6 +493,10 @@ actions!(
         GoToTypeDefinition,
         /// Goes to type definition in a split pane.
         GoToTypeDefinitionSplit,
+        /// Goes to the next document highlight.
+        GoToNextDocumentHighlight,
+        /// Goes to the previous document highlight.
+        GoToPreviousDocumentHighlight,
         /// Scrolls down by half a page.
         HalfPageDown,
         /// Scrolls up by half a page.
@@ -640,6 +644,10 @@ actions!(
         SelectEnclosingSymbol,
         /// Selects the next larger syntax node.
         SelectLargerSyntaxNode,
+        /// Selects the next syntax node sibling.
+        SelectNextSyntaxNode,
+        /// Selects the previous syntax node sibling.
+        SelectPreviousSyntaxNode,
         /// Extends selection left.
         SelectLeft,
         /// Selects the current line.

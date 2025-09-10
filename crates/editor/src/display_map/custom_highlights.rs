@@ -25,9 +25,8 @@ pub struct CustomHighlightsChunks<'a> {
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 struct HighlightEndpoint {
     offset: usize,
-    is_start: bool,
     tag: HighlightKey,
-    style: HighlightStyle,
+    style: Option<HighlightStyle>,
 }
 
 impl<'a> CustomHighlightsChunks<'a> {
@@ -92,17 +91,20 @@ fn create_highlight_endpoints(
                     break;
                 }
 
+                let start = range.start.to_offset(buffer);
+                let end = range.end.to_offset(buffer);
+                if start == end {
+                    continue;
+                }
                 highlight_endpoints.push(HighlightEndpoint {
-                    offset: range.start.to_offset(buffer),
-                    is_start: true,
+                    offset: start,
                     tag,
-                    style,
+                    style: Some(style),
                 });
                 highlight_endpoints.push(HighlightEndpoint {
-                    offset: range.end.to_offset(buffer),
-                    is_start: false,
+                    offset: end,
                     tag,
-                    style,
+                    style: None,
                 });
             }
         }
@@ -118,8 +120,8 @@ impl<'a> Iterator for CustomHighlightsChunks<'a> {
         let mut next_highlight_endpoint = usize::MAX;
         while let Some(endpoint) = self.highlight_endpoints.peek().copied() {
             if endpoint.offset <= self.offset {
-                if endpoint.is_start {
-                    self.active_highlights.insert(endpoint.tag, endpoint.style);
+                if let Some(style) = endpoint.style {
+                    self.active_highlights.insert(endpoint.tag, style);
                 } else {
                     self.active_highlights.remove(&endpoint.tag);
                 }
@@ -168,6 +170,6 @@ impl Ord for HighlightEndpoint {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
         self.offset
             .cmp(&other.offset)
-            .then_with(|| other.is_start.cmp(&self.is_start))
+            .then_with(|| self.style.is_some().cmp(&other.style.is_some()))
     }
 }

@@ -196,9 +196,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.2.0-alpha.6"
+version = "0.2.0-alpha.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d02292efd75080932b6466471d428c70e2ac06908ae24792fc7c36ecbaf67ca"
+checksum = "08539e8d6b2ccca6cd00afdd42211698f7677adef09108a09414c11f1f45fdaf"
 dependencies = [
  "anyhow",
  "async-broadcast",
@@ -308,22 +308,18 @@ dependencies = [
  "libc",
  "log",
  "nix 0.29.0",
- "node_runtime",
- "paths",
  "project",
  "reqwest_client",
- "schemars",
- "semver",
  "serde",
  "serde_json",
  "settings",
  "smol",
+ "task",
  "tempfile",
  "thiserror 2.0.12",
  "ui",
  "util",
  "watch",
- "which 6.0.3",
  "workspace-hack",
 ]
 
@@ -359,6 +355,7 @@ dependencies = [
  "agent_settings",
  "ai_onboarding",
  "anyhow",
+ "arrayvec",
  "assistant_context",
  "assistant_slash_command",
  "assistant_slash_commands",
@@ -486,6 +483,7 @@ dependencies = [
  "client",
  "cloud_llm_client",
  "component",
+ "feature_flags",
  "gpui",
  "language_model",
  "serde",
@@ -2352,19 +2350,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "blake3"
-version = "1.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3888aaa89e4b2a40fca9848e400f6a658a5a3978de7be858e209cafa8be9a4a0"
-dependencies = [
- "arrayref",
- "arrayvec",
- "cc",
- "cfg-if",
- "constant_time_eq 0.3.1",
-]
-
-[[package]]
 name = "block"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2899,11 +2884,9 @@ dependencies = [
  "language",
  "log",
  "postage",
- "rand 0.9.1",
  "release_channel",
  "rpc",
  "settings",
- "sum_tree",
  "text",
  "time",
  "util",
@@ -3391,12 +3374,10 @@ dependencies = [
  "collections",
  "db",
  "editor",
- "emojis",
  "futures 0.3.31",
  "fuzzy",
  "gpui",
  "http_client",
- "language",
  "log",
  "menu",
  "notifications",
@@ -3404,7 +3385,6 @@ dependencies = [
  "pretty_assertions",
  "project",
  "release_channel",
- "rich_text",
  "rpc",
  "schemars",
  "serde",
@@ -3577,12 +3557,6 @@ name = "constant_time_eq"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "245097e9a4535ee1e3e3931fcfcd55a796a44c643e8596ff6566d68f09b87bbc"
-
-[[package]]
-name = "constant_time_eq"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c74b8349d32d297c9134b8c88677813a227df8f779daa29bfc29c183fe3dca6"
 
 [[package]]
 name = "context_server"
@@ -6165,17 +6139,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "futures-batch"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f444c45a1cb86f2a7e301469fd50a82084a60dadc25d94529a8312276ecb71a"
-dependencies = [
- "futures 0.3.31",
- "futures-timer",
- "pin-utils",
-]
-
-[[package]]
 name = "futures-channel"
 version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6269,12 +6232,6 @@ name = "futures-task"
 version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f90f7dce0722e95104fcb095585910c0977252f286e354b5e3bd38902cd99988"
-
-[[package]]
-name = "futures-timer"
-version = "3.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f288b0a4f20f9a56b5d1da57e2227c661b7b16168e2f72365f57b63326e29b24"
 
 [[package]]
 name = "futures-util"
@@ -9222,6 +9179,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "language_onboarding"
+version = "0.1.0"
+dependencies = [
+ "db",
+ "editor",
+ "gpui",
+ "project",
+ "ui",
+ "workspace",
+ "workspace-hack",
+]
+
+[[package]]
 name = "language_selector"
 version = "0.1.0"
 dependencies = [
@@ -9283,7 +9253,6 @@ dependencies = [
  "chrono",
  "collections",
  "dap",
- "feature_flags",
  "futures 0.3.31",
  "gpui",
  "http_client",
@@ -12640,6 +12609,7 @@ dependencies = [
  "remote",
  "rpc",
  "schemars",
+ "semver",
  "serde",
  "serde_json",
  "settings",
@@ -12659,6 +12629,7 @@ dependencies = [
  "unindent",
  "url",
  "util",
+ "watch",
  "which 6.0.3",
  "workspace-hack",
  "worktree",
@@ -14377,9 +14348,9 @@ name = "scheduler"
 version = "0.1.0"
 dependencies = [
  "async-task",
+ "backtrace",
  "chrono",
  "futures 0.3.31",
- "parking",
  "parking_lot",
  "rand 0.9.1",
  "workspace-hack",
@@ -14688,49 +14659,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0f7d95a54511e0c7be3f51e8867aa8cf35148d7b9445d44de2f943e2b206e749"
 
 [[package]]
-name = "semantic_index"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arrayvec",
- "blake3",
- "client",
- "clock",
- "collections",
- "feature_flags",
- "fs",
- "futures 0.3.31",
- "futures-batch",
- "gpui",
- "heed",
- "http_client",
- "language",
- "language_model",
- "languages",
- "log",
- "open_ai",
- "parking_lot",
- "project",
- "reqwest_client",
- "serde",
- "serde_json",
- "settings",
- "sha2",
- "smol",
- "streaming-iterator",
- "tempfile",
- "theme",
- "tree-sitter",
- "ui",
- "unindent",
- "util",
- "workspace",
- "workspace-hack",
- "worktree",
- "zlog",
-]
-
-[[package]]
 name = "semantic_version"
 version = "0.1.0"
 dependencies = [
@@ -14943,6 +14871,7 @@ dependencies = [
  "editor",
  "feature_flags",
  "gpui",
+ "menu",
  "serde",
  "serde_json",
  "settings",
@@ -15941,9 +15870,11 @@ dependencies = [
  "editor",
  "file_icons",
  "gpui",
+ "project",
  "ui",
  "workspace",
  "workspace-hack",
+ "worktree",
 ]
 
 [[package]]
@@ -20441,12 +20372,11 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.204.0"
+version = "0.205.0"
 dependencies = [
  "acp_tools",
  "activity_indicator",
  "agent",
- "agent_servers",
  "agent_settings",
  "agent_ui",
  "anyhow",
@@ -20510,6 +20440,7 @@ dependencies = [
  "language_extension",
  "language_model",
  "language_models",
+ "language_onboarding",
  "language_selector",
  "language_tools",
  "languages",
@@ -20915,7 +20846,7 @@ dependencies = [
  "aes",
  "byteorder",
  "bzip2",
- "constant_time_eq 0.1.5",
+ "constant_time_eq",
  "crc32fast",
  "crossbeam-utils",
  "flate2",

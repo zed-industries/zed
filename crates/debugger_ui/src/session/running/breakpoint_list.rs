@@ -216,7 +216,7 @@ impl BreakpointList {
         });
 
         self.input.update(cx, |this, cx| {
-            this.set_placeholder_text(placeholder, cx);
+            this.set_placeholder_text(placeholder, window, cx);
             this.set_read_only(is_exception_breakpoint);
             this.set_text(active_value.as_deref().unwrap_or(""), window, cx);
         });

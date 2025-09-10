@@ -60,7 +60,7 @@ use language::{
     Bias, BinaryStatus, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel, Diagnostic,
     DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff, File as _, Language, LanguageName,
     LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, ManifestDelegate, ManifestName,
-    Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Toolchain, Transaction,
+    Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPoint, ToPointUtf16, Toolchain, Transaction,
     Unclipped,
     language_settings::{
         FormatOnSave, Formatter, LanguageSettings, SelectedFormatter, language_settings,
@@ -86,7 +86,6 @@ use node_runtime::read_package_installed_version;
 use parking_lot::Mutex;
 use postage::{mpsc, sink::Sink, stream::Stream, watch};
 use rand::prelude::*;
-
 use rpc::{
     AnyProtoClient,
     proto::{FromProto, LspRequestId, LspRequestMessage as _, ToProto},
@@ -6357,14 +6356,38 @@ impl LspStore {
 
                         for (range, text) in edits {
                             let primary = &completion.replace_range;
-                            let start_within = primary.start.cmp(&range.start, buffer).is_le()
-                                && primary.end.cmp(&range.start, buffer).is_ge();
-                            let end_within = range.start.cmp(&primary.end, buffer).is_le()
-                                && range.end.cmp(&primary.end, buffer).is_ge();
+
+                            // Special case: if both ranges start at the very beginning of the file (line 0, column 0),
+                            // and the primary completion is just an insertion (empty range), then this is likely
+                            // an auto-import scenario and should not be considered overlapping
+                            // https://github.com/zed-industries/zed/issues/26136
+                            let is_file_start_auto_import = {
+                                let snapshot = buffer.snapshot();
+                                let primary_start_point = primary.start.to_point(&snapshot);
+                                let range_start_point = range.start.to_point(&snapshot);
+
+                                let result = primary_start_point.row == 0
+                                    && primary_start_point.column == 0
+                                    && range_start_point.row == 0
+                                    && range_start_point.column == 0;
+
+                                result
+                            };
+
+                            let has_overlap = if is_file_start_auto_import {
+                                false
+                            } else {
+                                let start_within = primary.start.cmp(&range.start, buffer).is_le()
+                                    && primary.end.cmp(&range.start, buffer).is_ge();
+                                let end_within = range.start.cmp(&primary.end, buffer).is_le()
+                                    && range.end.cmp(&primary.end, buffer).is_ge();
+                                let result = start_within || end_within;
+                                result
+                            };
 
                             //Skip additional edits which overlap with the primary completion edit
                             //https://github.com/zed-industries/zed/pull/1871
-                            if !start_within && !end_within {
+                            if !has_overlap {
                                 buffer.edit([(range, text)], None, cx);
                             }
                         }
@@ -7122,6 +7145,36 @@ impl LspStore {
             summary.warning_count += path_summary.warning_count;
         }
         summary
+    }
+
+    /// Returns the diagnostic summary for a specific project path.
+    pub fn diagnostic_summary_for_path(
+        &self,
+        project_path: &ProjectPath,
+        _: &App,
+    ) -> DiagnosticSummary {
+        if let Some(summaries) = self
+            .diagnostic_summaries
+            .get(&project_path.worktree_id)
+            .and_then(|map| map.get(&project_path.path))
+        {
+            let (error_count, warning_count) = summaries.iter().fold(
+                (0, 0),
+                |(error_count, warning_count), (_language_server_id, summary)| {
+                    (
+                        error_count + summary.error_count,
+                        warning_count + summary.warning_count,
+                    )
+                },
+            );
+
+            DiagnosticSummary {
+                error_count,
+                warning_count,
+            }
+        } else {
+            DiagnosticSummary::default()
+        }
     }
 
     pub fn diagnostic_summaries<'a>(
