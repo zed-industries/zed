@@ -2104,8 +2104,8 @@ mod tests {
         init_test(cx);
 
         // Generate random buffer using existing test infrastructure
-        let text_len = rng.gen_range(0..10000);
-        let buffer = if rng.r#gen() {
+        let text_len = rng.random_range(0..10000);
+        let buffer = if rng.random() {
             let text = RandomCharIter::new(&mut rng)
                 .take(text_len)
                 .collect::<String>();
@@ -2118,7 +2118,7 @@ mod tests {
         let (mut fold_map, _) = FoldMap::new(inlay_snapshot.clone());
 
         // Perform random mutations
-        let mutation_count = rng.gen_range(1..10);
+        let mutation_count = rng.random_range(1..10);
         for _ in 0..mutation_count {
             fold_map.randomly_mutate(&mut rng);
         }

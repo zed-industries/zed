@@ -3865,7 +3865,7 @@ fn test_random_chunk_bitmaps(cx: &mut App, mut rng: StdRng) {
     use util::RandomCharIter;
 
     // Generate random text
-    let len = rng.gen_range(0..10000);
+    let len = rng.random_range(0..10000);
     let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
 
     let buffer = cx.new(|cx| Buffer::local(text, cx));

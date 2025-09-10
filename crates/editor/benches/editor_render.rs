@@ -21,7 +21,13 @@ fn editor_input_with_1000_cursors(bencher: &mut Bencher<'_>, cx: &TestAppContext
             let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
             editor.set_style(editor::EditorStyle::default(), window, cx);
             editor.select_all(&SelectAll, window, cx);
-            editor.split_selection_into_lines(&SplitSelectionIntoLines, window, cx);
+            editor.split_selection_into_lines(
+                &SplitSelectionIntoLines {
+                    keep_selections: true,
+                },
+                window,
+                cx,
+            );
             editor
         });
         window.focus(&editor.focus_handle(cx));
@@ -35,6 +41,7 @@ fn editor_input_with_1000_cursors(bencher: &mut Bencher<'_>, cx: &TestAppContext
                 editor.delete_to_previous_word_start(
                     &DeleteToPreviousWordStart {
                         ignore_newlines: false,
+                        ignore_brackets: false,
                     },
                     window,
                     cx,
@@ -42,6 +49,7 @@ fn editor_input_with_1000_cursors(bencher: &mut Bencher<'_>, cx: &TestAppContext
                 editor.delete_to_previous_word_start(
                     &DeleteToPreviousWordStart {
                         ignore_newlines: false,
+                        ignore_brackets: false,
                     },
                     window,
                     cx,
@@ -75,8 +83,8 @@ fn editor_render(bencher: &mut Bencher<'_>, cx: &TestAppContext) {
     let mut cx = cx.clone();
     let buffer = cx.update(|cx| {
         let mut rng = StdRng::seed_from_u64(1);
-        let text_len = rng.gen_range(10000..90000);
-        if rng.r#gen() {
+        let text_len = rng.random_range(10000..90000);
+        if rng.random() {
             let text = RandomCharIter::new(&mut rng)
                 .take(text_len)
                 .collect::<String>();

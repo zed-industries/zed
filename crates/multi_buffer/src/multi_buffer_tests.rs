@@ -3720,8 +3720,8 @@ fn test_new_empty_buffers_title_can_be_set(cx: &mut App) {
 
 #[gpui::test(iterations = 100)]
 fn test_random_chunk_bitmaps(cx: &mut App, mut rng: StdRng) {
-    let multibuffer = if rng.r#gen() {
-        let len = rng.gen_range(0..10000);
+    let multibuffer = if rng.random() {
+        let len = rng.random_range(0..10000);
         let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
         let buffer = cx.new(|cx| Buffer::local(text, cx));
         cx.new(|cx| MultiBuffer::singleton(buffer, cx))
@@ -3799,7 +3799,7 @@ fn test_random_chunk_bitmaps_with_diffs(cx: &mut App, mut rng: StdRng) {
     use util::RandomCharIter;
 
     let multibuffer = if rng.r#gen() {
-        let len = rng.gen_range(100..10000);
+        let len = rng.random_range(100..10000);
         let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
         let buffer = cx.new(|cx| Buffer::local(text, cx));
         cx.new(|cx| MultiBuffer::singleton(buffer, cx))
@@ -3807,21 +3807,21 @@ fn test_random_chunk_bitmaps_with_diffs(cx: &mut App, mut rng: StdRng) {
         MultiBuffer::build_random(&mut rng, cx)
     };
 
-    let _diff_count = rng.gen_range(1..5);
+    let _diff_count = rng.random_range(1..5);
     let mut diffs = Vec::new();
 
     multibuffer.update(cx, |multibuffer, cx| {
         for buffer_id in multibuffer.excerpt_buffer_ids() {
-            if rng.gen_bool(0.7) {
+            if rng.random_bool(0.7) {
                 if let Some(buffer_handle) = multibuffer.buffer(buffer_id) {
                     let buffer_text = buffer_handle.read(cx).text();
                     let mut base_text = String::new();
 
                     for line in buffer_text.lines() {
-                        if rng.gen_bool(0.3) {
+                        if rng.random_bool(0.3) {
                             continue;
-                        } else if rng.gen_bool(0.3) {
-                            let line_len = rng.gen_range(0..50);
+                        } else if rng.random_bool(0.3) {
+                            let line_len = rng.random_range(0..50);
                             let modified_line = RandomCharIter::new(&mut rng)
                                 .take(line_len)
                                 .collect::<String>();
@@ -3833,10 +3833,10 @@ fn test_random_chunk_bitmaps_with_diffs(cx: &mut App, mut rng: StdRng) {
                         }
                     }
 
-                    if rng.gen_bool(0.5) {
-                        let extra_lines = rng.gen_range(1..5);
+                    if rng.random_bool(0.5) {
+                        let extra_lines = rng.random_range(1..5);
                         for _ in 0..extra_lines {
-                            let line_len = rng.gen_range(0..50);
+                            let line_len = rng.random_range(0..50);
                             let extra_line = RandomCharIter::new(&mut rng)
                                 .take(line_len)
                                 .collect::<String>();
@@ -3855,26 +3855,26 @@ fn test_random_chunk_bitmaps_with_diffs(cx: &mut App, mut rng: StdRng) {
     });
 
     multibuffer.update(cx, |multibuffer, cx| {
-        if rng.gen_bool(0.5) {
+        if rng.random_bool(0.5) {
             multibuffer.set_all_diff_hunks_expanded(cx);
         } else {
             let snapshot = multibuffer.snapshot(cx);
             let text = snapshot.text();
 
             let mut ranges = Vec::new();
-            for _ in 0..rng.gen_range(1..5) {
+            for _ in 0..rng.random_range(1..5) {
                 if snapshot.len() == 0 {
                     break;
                 }
 
-                let diff_size = rng.gen_range(5..1000);
-                let mut start = rng.gen_range(0..snapshot.len());
+                let diff_size = rng.random_range(5..1000);
+                let mut start = rng.random_range(0..snapshot.len());
 
                 while !text.is_char_boundary(start) {
                     start = start.saturating_sub(1);
                 }
 
-                let mut end = rng.gen_range(start..snapshot.len().min(start + diff_size));
+                let mut end = rng.random_range(start..snapshot.len().min(start + diff_size));
 
                 while !text.is_char_boundary(end) {
                     end = end.saturating_add(1);

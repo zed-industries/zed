@@ -2009,8 +2009,8 @@ mod tests {
         init_test(cx);
 
         // Generate random buffer using existing test infrastructure
-        let text_len = rng.gen_range(0..10000);
-        let buffer = if rng.r#gen() {
+        let text_len = rng.random_range(0..10000);
+        let buffer = if rng.random() {
             let text = RandomCharIter::new(&mut rng)
                 .take(text_len)
                 .collect::<String>();
@@ -2024,7 +2024,7 @@ mod tests {
 
         // Perform random mutations to add inlays
         let mut next_inlay_id = 0;
-        let mutation_count = rng.gen_range(1..10);
+        let mutation_count = rng.random_range(1..10);
         for _ in 0..mutation_count {
             inlay_map.randomly_mutate(&mut next_inlay_id, &mut rng);
         }

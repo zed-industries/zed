@@ -201,8 +201,8 @@ mod tests {
     #[gpui::test(iterations = 100)]
     fn test_random_chunk_bitmaps(cx: &mut App, mut rng: StdRng) {
         // Generate random buffer using existing test infrastructure
-        let len = rng.gen_range(10..10000);
-        let buffer = if rng.r#gen() {
+        let len = rng.random_range(10..10000);
+        let buffer = if rng.random() {
             let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
             MultiBuffer::build_simple(&text, cx)
         } else {
@@ -213,35 +213,35 @@ mod tests {
 
         // Create random highlights
         let mut highlights = sum_tree::TreeMap::default();
-        let highlight_count = rng.gen_range(1..10);
+        let highlight_count = rng.random_range(1..10);
 
         for _i in 0..highlight_count {
             let style = HighlightStyle {
                 color: Some(gpui::Hsla {
-                    h: rng.r#gen::<f32>(),
-                    s: rng.r#gen::<f32>(),
-                    l: rng.r#gen::<f32>(),
+                    h: rng.random::<f32>(),
+                    s: rng.random::<f32>(),
+                    l: rng.random::<f32>(),
                     a: 1.0,
                 }),
                 ..Default::default()
             };
 
             let mut ranges = Vec::new();
-            let range_count = rng.gen_range(1..10);
+            let range_count = rng.random_range(1..10);
             let text = buffer_snapshot.text();
             for _ in 0..range_count {
                 if buffer_snapshot.len() == 0 {
                     continue;
                 }
 
-                let mut start = rng.gen_range(0..=buffer_snapshot.len().saturating_sub(10));
+                let mut start = rng.random_range(0..=buffer_snapshot.len().saturating_sub(10));
 
                 while !text.is_char_boundary(start) {
                     start = start.saturating_sub(1);
                 }
 
                 let end_end = buffer_snapshot.len().min(start + 100);
-                let mut end = rng.gen_range(start..=end_end);
+                let mut end = rng.random_range(start..=end_end);
                 while !text.is_char_boundary(end) {
                     end = end.saturating_sub(1);
                 }

@@ -851,18 +851,18 @@ mod tests {
     fn test_collapse_tabs_random(cx: &mut gpui::App, mut rng: StdRng) {
         // Generate random input string with up to 200 characters including tabs
         // to stay within the MAX_EXPANSION_COLUMN limit of 256
-        let len = rng.gen_range(0..=2048);
-        let tab_size = NonZeroU32::new(rng.gen_range(1..=4)).unwrap();
+        let len = rng.random_range(0..=2048);
+        let tab_size = NonZeroU32::new(rng.random_range(1..=4)).unwrap();
         let mut input = String::with_capacity(len);
 
         for _ in 0..len {
-            if rng.gen_bool(0.1) {
+            if rng.random_bool(0.1) {
                 // 10% chance of inserting a tab
                 input.push('\t');
             } else {
                 // 90% chance of inserting a random ASCII character (excluding tab, newline, carriage return)
                 let ch = loop {
-                    let ascii_code = rng.gen_range(32..=126); // printable ASCII range
+                    let ascii_code = rng.random_range(32..=126); // printable ASCII range
                     let ch = ascii_code as u8 as char;
                     if ch != '\t' {
                         break ch;
@@ -877,7 +877,7 @@ mod tests {
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, mut tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
-        tab_snapshot.max_expansion_column = rng.gen_range(0..323);
+        tab_snapshot.max_expansion_column = rng.random_range(0..323);
         tab_snapshot.tab_size = tab_size;
 
         for (ix, _) in input.char_indices() {
@@ -1105,8 +1105,8 @@ mod tests {
 
     #[gpui::test(iterations = 100)]
     fn test_to_tab_point_random(cx: &mut gpui::App, mut rng: StdRng) {
-        let tab_size = NonZeroU32::new(rng.gen_range(1..=16)).unwrap();
-        let len = rng.gen_range(0..=2000);
+        let tab_size = NonZeroU32::new(rng.random_range(1..=16)).unwrap();
+        let len = rng.random_range(0..=2000);
 
         // Generate random text using RandomCharIter
         let text = util::RandomCharIter::new(&mut rng)
@@ -1128,15 +1128,15 @@ mod tests {
 
         // Test random fold points
         for _ in 0..50 {
-            tab_snapshot.max_expansion_column = rng.gen_range(0..=256);
+            tab_snapshot.max_expansion_column = rng.random_range(0..=256);
             // Generate random fold point
-            let row = rng.gen_range(0..=max_fold_point.row());
+            let row = rng.random_range(0..=max_fold_point.row());
             let max_column = if row < max_fold_point.row() {
                 fold_snapshot.line_len(row)
             } else {
                 max_fold_point.column()
             };
-            let column = rng.gen_range(0..=max_column + 10);
+            let column = rng.random_range(0..=max_column + 10);
             let fold_point = FoldPoint::new(row, column);
 
             let actual = tab_snapshot.to_tab_point(fold_point);
@@ -1225,20 +1225,20 @@ mod tests {
     #[gpui::test(iterations = 100)]
     fn test_tab_stop_cursor_random_utf8(cx: &mut gpui::App, mut rng: StdRng) {
         // Generate random input string with up to 512 characters including tabs
-        let len = rng.gen_range(0..=2048);
+        let len = rng.random_range(0..=2048);
         let mut input = String::with_capacity(len);
 
-        let mut skip_tabs = rng.gen_bool(0.10);
+        let mut skip_tabs = rng.random_bool(0.10);
         for idx in 0..len {
             if idx % 128 == 0 {
-                skip_tabs = rng.gen_bool(0.10);
+                skip_tabs = rng.random_bool(0.10);
             }
 
-            if rng.gen_bool(0.15) && !skip_tabs {
+            if rng.random_bool(0.15) && !skip_tabs {
                 input.push('\t');
             } else {
                 let ch = loop {
-                    let ascii_code = rng.gen_range(32..=126); // printable ASCII range
+                    let ascii_code = rng.random_range(32..=126); // printable ASCII range
                     let ch = ascii_code as u8 as char;
                     if ch != '\t' {
                         break ch;
@@ -1353,7 +1353,7 @@ mod tests {
     #[gpui::test(iterations = 100)]
     fn test_tab_stop_cursor_random_utf16(cx: &mut gpui::App, mut rng: StdRng) {
         // Generate random input string with up to 512 characters including tabs
-        let len = rng.gen_range(0..=2048);
+        let len = rng.random_range(0..=2048);
         let input = util::RandomCharIter::new(&mut rng)
             .take(len)
             .collect::<String>();

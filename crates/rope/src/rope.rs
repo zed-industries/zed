@@ -790,7 +790,7 @@ impl<'a> Chunks<'a> {
         let tabs = (chunk.tabs & bitmask) >> slice_range.start;
 
         Some(ChunkBitmaps {
-            text: &chunk.text[slice_range.clone()],
+            text: &chunk.text[slice_range],
             chars,
             tabs,
         })
