@@ -5017,6 +5017,7 @@ dependencies = [
  "clock",
  "collections",
  "convert_case 0.8.0",
+ "criterion",
  "ctor",
  "dap",
  "db",

@@ -37,13 +37,13 @@ pub use block_map::{
 use block_map::{BlockRow, BlockSnapshot};
 use collections::{HashMap, HashSet};
 pub use crease_map::*;
+use fold_map::FoldSnapshot;
 pub use fold_map::{
     ChunkRenderer, ChunkRendererContext, ChunkRendererId, Fold, FoldId, FoldPlaceholder, FoldPoint,
 };
-use fold_map::{FoldMap, FoldSnapshot};
 use gpui::{App, Context, Entity, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle};
 pub use inlay_map::Inlay;
-use inlay_map::{InlayMap, InlaySnapshot};
+use inlay_map::InlaySnapshot;
 pub use inlay_map::{InlayOffset, InlayPoint};
 pub use invisibles::{is_invisible, replacement};
 use language::{
@@ -66,11 +66,13 @@ use std::{
     sync::Arc,
 };
 use sum_tree::{Bias, TreeMap};
-use tab_map::{TabMap, TabSnapshot};
+use tab_map::TabSnapshot;
 use text::{BufferId, LineIndent};
 use ui::{SharedString, px};
 use unicode_segmentation::UnicodeSegmentation;
 use wrap_map::{WrapMap, WrapSnapshot};
+
+pub use crate::display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FoldStatus {

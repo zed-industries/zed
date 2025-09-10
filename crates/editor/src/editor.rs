@@ -18906,12 +18906,7 @@ impl Editor {
     }
 
     /// called by the Element so we know what style we were most recently rendered with.
-    pub(crate) fn set_style(
-        &mut self,
-        style: EditorStyle,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn set_style(&mut self, style: EditorStyle, window: &mut Window, cx: &mut Context<Self>) {
         // We intentionally do not inform the display map about the minimap style
         // so that wrapping is not recalculated and stays consistent for the editor
         // and its linked minimap.
