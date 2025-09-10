@@ -6119,7 +6119,7 @@ impl MultiBufferSnapshot {
 
     pub fn outline(&self, theme: Option<&SyntaxTheme>) -> Option<Outline<Anchor>> {
         let (excerpt_id, _, buffer) = self.as_singleton()?;
-        let outline = buffer.outline(theme)?;
+        let outline = buffer.outline(theme);
         Some(Outline::new(
             outline
                 .items
@@ -6164,7 +6164,6 @@ impl MultiBufferSnapshot {
                 .buffer
                 .symbols_containing(anchor.text_anchor, theme)
                 .into_iter()
-                .flatten()
                 .flat_map(|item| {
                     Some(OutlineItem {
                         depth: item.depth,

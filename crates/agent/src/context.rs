@@ -201,10 +201,9 @@ impl FileContextHandle {
                         parse_status.changed().await.log_err();
                     }
 
-                    if let Ok(snapshot) = buffer.read_with(cx, |buffer, _| buffer.snapshot())
-                        && let Some(outline) = snapshot.outline(None)
-                    {
-                        let items = outline
+                    if let Ok(snapshot) = buffer.read_with(cx, |buffer, _| buffer.snapshot()) {
+                        let items = snapshot
+                            .outline(None)
                             .items
                             .into_iter()
                             .map(|item| item.to_point(&snapshot));

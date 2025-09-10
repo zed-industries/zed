@@ -41,9 +41,7 @@ pub async fn file_outline(
     }
 
     let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-    let outline = snapshot
-        .outline(None)
-        .context("No outline information available for this file at path {path}")?;
+    let outline = snapshot.outline(None);
 
     render_outline(
         outline

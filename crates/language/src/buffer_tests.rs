@@ -779,9 +779,7 @@ async fn test_outline(cx: &mut gpui::TestAppContext) {
     .unindent();
 
     let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
-    let outline = buffer
-        .update(cx, |buffer, _| buffer.snapshot().outline(None))
-        .unwrap();
+    let outline = buffer.update(cx, |buffer, _| buffer.snapshot().outline(None));
 
     assert_eq!(
         outline
@@ -863,9 +861,7 @@ async fn test_outline_nodes_with_newlines(cx: &mut gpui::TestAppContext) {
     .unindent();
 
     let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
-    let outline = buffer
-        .update(cx, |buffer, _| buffer.snapshot().outline(None))
-        .unwrap();
+    let outline = buffer.update(cx, |buffer, _| buffer.snapshot().outline(None));
 
     assert_eq!(
         outline
@@ -902,7 +898,7 @@ async fn test_outline_with_extra_context(cx: &mut gpui::TestAppContext) {
     let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
 
     // extra context nodes are included in the outline.
-    let outline = snapshot.outline(None).unwrap();
+    let outline = snapshot.outline(None);
     assert_eq!(
         outline
             .items
@@ -913,7 +909,7 @@ async fn test_outline_with_extra_context(cx: &mut gpui::TestAppContext) {
     );
 
     // extra context nodes do not appear in breadcrumbs.
-    let symbols = snapshot.symbols_containing(3, None).unwrap();
+    let symbols = snapshot.symbols_containing(3, None);
     assert_eq!(
         symbols
             .iter()
@@ -945,9 +941,7 @@ fn test_outline_annotations(cx: &mut App) {
     .unindent();
 
     let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
-    let outline = buffer
-        .update(cx, |buffer, _| buffer.snapshot().outline(None))
-        .unwrap();
+    let outline = buffer.update(cx, |buffer, _| buffer.snapshot().outline(None));
 
     assert_eq!(
         outline
@@ -1051,7 +1045,6 @@ async fn test_symbols_containing(cx: &mut gpui::TestAppContext) {
     ) -> Vec<(String, Range<Point>)> {
         snapshot
             .symbols_containing(position, None)
-            .unwrap()
             .into_iter()
             .map(|item| {
                 (

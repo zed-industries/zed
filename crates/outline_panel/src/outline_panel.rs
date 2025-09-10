@@ -3350,13 +3350,11 @@ impl OutlinePanel {
                         let buffer_language = buffer_snapshot.language().cloned();
                         let fetched_outlines = cx
                             .background_spawn(async move {
-                                let mut outlines = buffer_snapshot
-                                    .outline_items_containing(
-                                        excerpt_range.context,
-                                        false,
-                                        Some(&syntax_theme),
-                                    )
-                                    .unwrap_or_default();
+                                let mut outlines = buffer_snapshot.outline_items_containing(
+                                    excerpt_range.context,
+                                    false,
+                                    Some(&syntax_theme),
+                                );
                                 outlines.retain(|outline| {
                                     buffer_language.is_none()
                                         || buffer_language.as_ref()
