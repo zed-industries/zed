@@ -813,7 +813,6 @@ impl EventEmitter<AcpThreadEvent> for AcpThread {}
 #[derive(PartialEq, Eq, Debug)]
 pub enum ThreadStatus {
     Idle,
-    WaitingForToolConfirmation,
     Generating,
 }
 
@@ -936,11 +935,7 @@ impl AcpThread {
 
     pub fn status(&self) -> ThreadStatus {
         if self.send_task.is_some() {
-            if self.waiting_for_tool_confirmation() {
-                ThreadStatus::WaitingForToolConfirmation
-            } else {
-                ThreadStatus::Generating
-            }
+            ThreadStatus::Generating
         } else {
             ThreadStatus::Idle
         }
@@ -1382,26 +1377,27 @@ impl AcpThread {
         cx.emit(AcpThreadEvent::EntryUpdated(ix));
     }
 
-    /// Returns true if the last turn is awaiting tool authorization
-    pub fn waiting_for_tool_confirmation(&self) -> bool {
+    pub fn first_tool_awaiting_confirmation(&self) -> Option<&ToolCall> {
+        let mut first_tool_call = None;
+
         for entry in self.entries.iter().rev() {
             match &entry {
-                AgentThreadEntry::ToolCall(call) => match call.status {
-                    ToolCallStatus::WaitingForConfirmation { .. } => return true,
-                    ToolCallStatus::Pending
-                    | ToolCallStatus::InProgress
-                    | ToolCallStatus::Completed
-                    | ToolCallStatus::Failed
-                    | ToolCallStatus::Rejected
-                    | ToolCallStatus::Canceled => continue,
-                },
+                AgentThreadEntry::ToolCall(call) => {
+                    if let ToolCallStatus::WaitingForConfirmation { .. } = call.status {
+                        first_tool_call = Some(call);
+                    } else {
+                        continue;
+                    }
+                }
                 AgentThreadEntry::UserMessage(_) | AgentThreadEntry::AssistantMessage(_) => {
-                    // Reached the beginning of the turn
-                    return false;
+                    // Reached the beginning of the turn.
+                    // If we had pending permission requests in the previous turn, they have been cancelled.
+                    break;
                 }
             }
         }
-        false
+
+        first_tool_call
     }
 
     pub fn plan(&self) -> &Plan {

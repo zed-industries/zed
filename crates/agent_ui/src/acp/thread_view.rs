@@ -2474,6 +2474,12 @@ impl AcpThreadView {
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
+        let is_first = self.thread().is_some_and(|thread| {
+            thread
+                .read(cx)
+                .first_tool_awaiting_confirmation()
+                .is_some_and(|call| call.id == tool_call_id)
+        });
         let mut seen_kinds: ArrayVec<acp::PermissionOptionKind, 3> = ArrayVec::new();
         let buttons = div()
             .map(|this| {
@@ -2510,7 +2516,7 @@ impl AcpThreadView {
                             return this;
                         };
 
-                        if seen_kinds.contains(&option.kind) {
+                        if !is_first || seen_kinds.contains(&option.kind) {
                             return this;
                         }
 
@@ -4003,15 +4009,15 @@ impl AcpThreadView {
     }
 
     fn allow_always(&mut self, _: &AllowAlways, window: &mut Window, cx: &mut Context<Self>) {
-        self.authorize_pending_tool_call(acp::PermissionOptionKind::AllowAlways, window, cx)
+        self.authorize_pending_tool_call(acp::PermissionOptionKind::AllowAlways, window, cx);
     }
 
     fn allow_once(&mut self, _: &AllowOnce, window: &mut Window, cx: &mut Context<Self>) {
-        self.authorize_pending_tool_call(acp::PermissionOptionKind::AllowOnce, window, cx)
+        self.authorize_pending_tool_call(acp::PermissionOptionKind::AllowOnce, window, cx);
     }
 
     fn reject_once(&mut self, _: &RejectOnce, window: &mut Window, cx: &mut Context<Self>) {
-        self.authorize_pending_tool_call(acp::PermissionOptionKind::RejectOnce, window, cx)
+        self.authorize_pending_tool_call(acp::PermissionOptionKind::RejectOnce, window, cx);
     }
 
     fn authorize_pending_tool_call(
@@ -4019,23 +4025,13 @@ impl AcpThreadView {
         kind: acp::PermissionOptionKind,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
-        let Some(thread) = self.thread() else {
-            return;
+    ) -> Option<()> {
+        let thread = self.thread()?.read(cx);
+        let tool_call = thread.first_tool_awaiting_confirmation()?;
+        let ToolCallStatus::WaitingForConfirmation { options, .. } = &tool_call.status else {
+            return None;
         };
-
-        let Some((tool_call, option)) = thread.read(cx).entries().iter().find_map(|entry| {
-            if let AgentThreadEntry::ToolCall(tool_call) = entry
-                && let ToolCallStatus::WaitingForConfirmation { options, .. } = &tool_call.status
-            {
-                let option = options.iter().find(|o| o.kind == kind)?;
-                Some((tool_call, option))
-            } else {
-                None
-            }
-        }) else {
-            return;
-        };
+        let option = options.iter().find(|o| o.kind == kind)?;
 
         self.authorize_tool_call(
             tool_call.id.clone(),
@@ -4044,6 +4040,8 @@ impl AcpThreadView {
             window,
             cx,
         );
+
+        Some(())
     }
 
     fn render_burn_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
