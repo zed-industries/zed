@@ -80,28 +80,31 @@ See: [Working with Language Servers](https://zed.dev/docs/configuring-languages#
 
 ### Basedpyright
 
-[basedpyright](https://docs.basedpyright.com/latest/) replaced [Pyright](https://github.com/microsoft/pyright) as the primary Python language server beginning with Zed v0.204.0. It provides support for core language server functionality like navigation (go to definition/find all references) and type checking. Compared to Pyright, it adds support for additional language server features (like inlay hints) and checking rules.
+[basedpyright](https://docs.basedpyright.com/latest/) replaced [Pyright](https://github.com/microsoft/pyright) as the primary Python language server beginning with Zed v0.204.0. It provides core language server functionality like navigation (go to definition/find all references) and type checking. Compared to Pyright, it adds support for additional language server features (like inlay hints) and checking rules.
 
-Note that while basedpyright itself defaults to the `recommended` [type-checking mode](https://docs.basedpyright.com/latest/benefits-over-pyright/better-defaults/#typecheckingmode), Zed configures it to use the less-strict `standard` mode by default, which matches the behavior of Pyright. This Zed-specific override is not applied if your project has any basedpyright (or Pyright) configuration (see below), allowing you to configure your preferred type-checking mode in each project.
+Note that while basedpyright in isolation defaults to the `recommended` [type-checking mode](https://docs.basedpyright.com/latest/benefits-over-pyright/better-defaults/#typecheckingmode), Zed configures it to use the less-strict `standard` mode by default, which matches the behavior of Pyright. You can set the type-checking mode for your project using the `typeCheckingMode` setting in `pyrightconfig.json` or `pyproject.toml`, which will override Zed's default. Read on more for more details about how to configure basedpyright.
 
-#### Configure Basedpyright
+#### Basedpyright Configuration
 
-basedpyright offers flexible configuration options specified in a JSON-formatted text configuration. 
+basedpyright reads configuration options from two different kinds of sources:
 
-By default, the file is called `pyrightconfig.json` and is located within the root directory of your project. basedpyright settings can also be specified in a `[tool.basedpyright]` (or `[tool.pyright]`) section of a `pyproject.toml` file. A `pyrightconfig.json` file always takes precedence over `pyproject.toml` if both are present.
+- Language server settings ("workspace configuration"), which must be configured per-editor (using `settings.json` in Zed's case) but apply to all projects opened in that editor
+- Configuration files (`pyrightconfig.json`, `pyproject.toml`), which are editor-independent but specific to the project where they are placed
 
-For more information, see the basedpyright [configuration documentation](https://docs.basedpyright.com/latest/configuration/config-files/).
+As a rule of thumb, options that are only relevant when using basedpyright from an editor must be set in language server settings, and options that are relevant even if you're running it [as a command-line tool](https://docs.basedpyright.com/latest/configuration/command-line/) must be set in configuration files. Settings related to inlay hints are examples of the first category, and the [diagnostic category](https://docs.basedpyright.com/latest/configuration/config-files/#diagnostic-categories) settings are examples of the second category.
 
-#### Basedpyright Settings
+Examples of both kinds of configuration are provided below. Refer to the basedpyright documentation on [language server settings](https://docs.basedpyright.com/latest/configuration/language-server-settings/) and [configuration files](https://docs.basedpyright.com/latest/configuration/config-files/) for comprehensive lists of available options.
 
-basedpyright also accepts specific LSP-related settings, not necessarily connected to a project. 
+##### Language server settings
+
+Language server settings for basedpyright in Zed can be set in the `lsp` section of your `settings.json`.
 
 For example, in order to:
 
-- Use strict type-checking level
-- Diagnose all files in the workspace instead of the only open files default
+- diagnose all files in the workspace instead of the only open files default
+- disable inlay hints on function arguments
 
-These can be changed in the `lsp` section of your `settings.json`.
+You can use the following configuration:
 ```json
 {
   "lsp": {
@@ -109,7 +112,7 @@ These can be changed in the `lsp` section of your `settings.json`.
       "settings": {
         "basedpyright.analysis": {
           "diagnosticMode": "workspace",
-          "typeCheckingMode": "strict"
+          "inlayHints.callArgumentNames": false
         }
       }
     }
@@ -117,9 +120,21 @@ These can be changed in the `lsp` section of your `settings.json`.
 }
 ```
 
-For more information, see the basedpyright [settings documentation](https://docs.basedpyright.com/latest/configuration/language-server-settings/).
 
-## Configure PyLSP
+##### Configuration files
+
+basedpyright reads project-specific configuration from the `pyrightconfig.json` configuration file and from the `[tool.basedpyright]` and `[tool.pyright]` sections of `pyproject.toml` manifests. `pyrightconfig.json` overrides `pyproject.toml` if configuration is present in both places.
+
+Here's an example `pyrightconfig.json` file that configures basedpyright to use the `strict` type-checking mode and not to issue diagnostics for any files in `__pycache__` directories:
+
+```json
+{
+  "typeCheckingMode": "strict",
+  "ignore": ["**/__pycache__"]
+}
+```
+
+### PyLSP
 
 [python-lsp-server](https://github.com/python-lsp/python-lsp-server/), more commonly known as PyLSP, by default integrates with a number of external tools (autopep8, mccabe, pycodestyle, yapf) while others are optional and must be explicitly enabled and configured (flake8, pylint).
 
@@ -196,20 +211,73 @@ This is useful when working across projects with different environments.
 
 ## Code Formatting & Linting
 
-Zed provides the [Ruff](https://docs.astral.sh/ruff/) formatter and linter, which is enabled by default. (Specifically, Zed runs Ruff as an LSP server using the `ruff server` subcommand.) Ruff has many configurable options, which can be set in the following places, among others:
+Zed provides the [Ruff](https://docs.astral.sh/ruff/) formatter and linter for Python code. (Specifically, Zed runs Ruff as an LSP server using the `ruff server` subcommand.) Both formatting and linting are enabled by default, including format-on-save.
 
-- The `ruff.toml` configuration file
-- The `[tool.ruff]` section of a `pyproject.toml` manifest
-- The language server initialization options, configured in Zed's `settings.json`
+### Configuring formatting
 
-For example, to disable all Ruff linting in your project, and configure the formatter to use a custom line width, you can add the following configuration to `ruff.toml` at the root of your project:
+You can disable format-on-save for Python files in your `settings.json`:
+
+```json
+{
+  "languages": {
+    "Python": {
+      "format_on_save": false
+    }
+  }
+}
+```
+
+Alternatively, you can use the `black` command-line tool for Python formatting, while keeping Ruff enabled for linting:
+
+```json
+{
+  "languages": {
+    "Python": {
+      "formatter": {
+        "external": {
+          "command": "black",
+          "arguments": ["--stdin-filename", "{buffer_path}", "-"]
+        }
+      }
+      // Or use `"formatter": null` to disable formatting entirely.
+    }
+  }
+}
+```
+
+### Configuring Ruff
+
+Like basedpyright, Ruff reads options from both Zed's language server settings and configuration files (`ruff.toml`) when used in Zed. Unlike basedpyright, _all_ options can be configured in either of these locations, so the choice of where to put your Ruff configuration comes down to whether you want it to be shared between projects but specific to Zed (in which case you should use language server settings), or specific to one project but common to all Ruff invocations (in which case you should use `ruff.toml`).
+
+Here's an example of using language server settings in Zed's `settings.json` to disable all Ruff lints in Zed (while still using Ruff as a formatter):
+
+```json
+{
+  "lsp": {
+    "ruff": {
+      "initialization_options": {
+        "settings": {
+          "exclude": ["*"]
+        }
+      }
+    }
+  }
+}
+```
+
+And here's an example `ruff.toml` with linting and formatting options, adapted from the Ruff documentation:
 
 ```toml
-line-length = 100
-
 [lint]
-exclude = ["*"]
+# Avoid enforcing line-length violations (`E501`)
+ignore = ["E501"]
+
+[format]
+# Use single quotes when formatting.
+quote-style = "single"
 ```
+
+For more details, refer to the Ruff documentation about [configuration files](https://docs.astral.sh/ruff/configuration/) and [language server settings](https://docs.astral.sh/ruff/editors/settings/), and the [list of options](https://docs.astral.sh/ruff/settings/).
 
 ## Debugging
 
