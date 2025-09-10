@@ -1,4 +1,4 @@
-# Python
+# How to Set Up Python in Zed
 
 Python support is available natively in Zed.
 
@@ -11,9 +11,57 @@ Python support is available natively in Zed.
   - [python-lsp/python-lsp-server](https://github.com/python-lsp/python-lsp-server) (PyLSP)
 - Debug Adapter: [debugpy](https://github.com/microsoft/debugpy)
 
-## Language Servers
+## Install Zed and Python on Your Machine
+Zed supports Python development natively. You'll need both Zed and Python installed before you can begin.
 
-Zed provides several Python language servers by default. By default, [basedpyright](https://github.com/DetachHead/basedpyright) is used as the primary language server, and [Ruff](https://github.com/astral-sh/ruff) is used for formatting. Other language servers are disabled by default, but can be enabled in your settings. For example:
+### Step 1: Install Zed
+- Go to [zed.dev/download](https://zed.dev/download) and download the latest release.
+- Open the `.dmg` file and drag Zed into your Applications folder.
+- Launch Zed. If on Mac, You may need to right-click > Open to bypass macOS Gatekeeper on first launch.
+
+### Step 2: Install Python
+Zed does not bundle a Python runtime, so you’ll need to install one yourself.
+Choose one of the following options:
+- Astral (recommended):
+```json
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+To learn more, visit Astral’s installation guide
+- Homebrew:
+```json
+brew install python
+```
+- Python.org installer: Download the latest version from [python.org/downloads](https://python.org/downloads).
+
+### Step 3: Verify Python Installation
+Confirm Python is installed and available in your shell:
+```json
+uv --version
+```
+You should see an output like `Python 3.x.x`.
+
+## Open Your First Python Project in Zed
+Once Zed and Python are installed, open a folder containing Python code to start working.
+
+### Step 1: Launch Zed with a Python Project
+Open Zed.
+From the menu bar, choose File > Open Folder, or launch from the terminal:
+`zed path/to/your/project`
+
+Zed will recognize `.py` files automatically using its native tree-sitter-python parser, with no plugins or manual setup required.
+
+### Step 2: Use the Integrated Terminal (Optional)
+Zed includes a terminal, accessible from the bottom panel (). You can also use your external terminal of choice.
+
+From the terminal, verify you’re in the correct environment:
+`python3 script.py`
+
+If you’re using a virtual environment, Zed will attempt to auto-activate it in the terminal if it detects one (see `detect_venv` behavior in docs).
+
+
+## Configure Python Language Servers in Zed
+
+Zed provides several Python language servers by default. By default, [basedpyright](https://github.com/DetachHead/basedpyright) is the primary language server, and [Ruff](https://github.com/astral-sh/ruff) is used for formatting. Other language servers are disabled by default, but can be enabled in your settings. For example:
 
 ```json
 {
@@ -36,7 +84,7 @@ See: [Working with Language Servers](https://zed.dev/docs/configuring-languages#
 
 Note that while basedpyright itself defaults to the `recommended` [type-checking mode](https://docs.basedpyright.com/latest/benefits-over-pyright/better-defaults/#typecheckingmode), Zed configures it to use the less-strict `standard` mode by default, which matches the behavior of Pyright. This Zed-specific override is not applied if your project has any basedpyright (or Pyright) configuration (see below), allowing you to configure your preferred type-checking mode in each project.
 
-#### Basedpyright Configuration
+#### Configure Basedpyright
 
 basedpyright offers flexible configuration options specified in a JSON-formatted text configuration. By default, the file is called `pyrightconfig.json` and is located within the root directory of your project. basedpyright settings can also be specified in a `[tool.basedpyright]` (or `[tool.pyright]`) section of a `pyproject.toml` file. A `pyrightconfig.json` file always takes precedence over `pyproject.toml` if both are present.
 
@@ -68,7 +116,7 @@ For example, in order to:
 
 For more information, see the basedpyright [settings documentation](https://docs.basedpyright.com/latest/configuration/language-server-settings/).
 
-## PyLSP
+## Configure PyLSP
 
 [python-lsp-server](https://github.com/python-lsp/python-lsp-server/), more commonly known as PyLSP, by default integrates with a number of external tools (autopep8, mccabe, pycodestyle, yapf) while others are optional and must be explicitly enabled and configured (flake8, pylint).
 
