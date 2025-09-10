@@ -329,6 +329,7 @@ fn item_group_from_fields(fields: &syn::Fields, parent_serde_attrs: &SerdeOption
             (
                 title,
                 doc_str,
+                // todo(settings_ui): Have apply_rename_to_field take flatten into account
                 name.filter(|_| !field_serde_attrs.flatten).map(|name| {
                     parent_serde_attrs.apply_rename_to_field(&field_serde_attrs, &name)
                 }),
@@ -341,7 +342,7 @@ fn item_group_from_fields(fields: &syn::Fields, parent_serde_attrs: &SerdeOption
         });
 
     quote! {
-        settings::SettingsUiItem::Group(settings::SettingsUiItemGroup{ items: vec![#(#group_items),*] })
+        settings::SettingsUiItem::Group(settings::SettingsUiItemGroup{ items: Box::new([#(#group_items),*]) })
     }
 }
 

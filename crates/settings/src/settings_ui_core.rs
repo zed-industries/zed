@@ -136,7 +136,7 @@ pub struct SettingsUiItemDynamicMap {
 
 #[derive(Clone)]
 pub struct SettingsUiItemGroup {
-    pub items: Vec<SettingsUiEntry>,
+    pub items: Box<[SettingsUiEntry]>,
 }
 
 #[derive(Clone)]
