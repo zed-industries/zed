@@ -667,14 +667,8 @@ struct ConfigurationView {
 
 impl ConfigurationView {
     pub fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let api_key_editor = cx.new(|cx| {
-            SingleLineInput::new(
-                window,
-                cx,
-                "ol-000000000000000000000000000000000000000000000000",
-            )
-            .label("API key")
-        });
+        let api_key_editor =
+            cx.new(|cx| SingleLineInput::new(window, cx, "63e02e...").label("API key"));
 
         let api_url = AllLanguageModelSettings::get_global(cx)
             .ollama
