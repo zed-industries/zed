@@ -14,6 +14,7 @@ use arrayvec::ArrayVec;
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
 use client::zed_urls;
+use cloud_llm_client::PlanV1;
 use collections::{HashMap, HashSet};
 use editor::scroll::Autoscroll;
 use editor::{Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects};
@@ -4875,7 +4876,9 @@ impl AcpThreadView {
             return None;
         }
 
-        let plan = user_store.plan().unwrap_or(cloud_llm_client::Plan::ZedFree);
+        let plan = user_store
+            .plan()
+            .unwrap_or(cloud_llm_client::Plan::V1(PlanV1::ZedFree));
 
         let usage = user_store.model_request_usage()?;
 
@@ -5134,13 +5137,12 @@ impl AcpThreadView {
         cx: &mut Context<Self>,
     ) -> Callout {
         let error_message = match plan {
-            cloud_llm_client::Plan::ZedPro => "Upgrade to usage-based billing for more prompts.",
-            cloud_llm_client::Plan::ZedProTrial | cloud_llm_client::Plan::ZedFree => {
-                "Upgrade to Zed Pro for more prompts."
+            cloud_llm_client::Plan::V1(PlanV1::ZedPro) => {
+                "Upgrade to usage-based billing for more prompts."
             }
-            cloud_llm_client::Plan::ZedProV2
-            | cloud_llm_client::Plan::ZedProTrialV2
-            | cloud_llm_client::Plan::ZedFreeV2 => "",
+            cloud_llm_client::Plan::V1(PlanV1::ZedProTrial)
+            | cloud_llm_client::Plan::V1(PlanV1::ZedFree) => "Upgrade to Zed Pro for more prompts.",
+            cloud_llm_client::Plan::V2(_) => "",
         };
 
         Callout::new()

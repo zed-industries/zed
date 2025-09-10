@@ -1,7 +1,7 @@
 #![allow(unused, dead_code)]
 
 use client::{ModelRequestUsage, RequestUsage};
-use cloud_llm_client::{Plan, UsageLimit};
+use cloud_llm_client::{Plan, PlanV1, UsageLimit};
 use gpui::Global;
 use std::ops::{Deref, DerefMut};
 use ui::prelude::*;
@@ -75,7 +75,7 @@ impl Default for DebugAccountState {
         Self {
             enabled: false,
             trial_expired: false,
-            plan: Plan::ZedFree,
+            plan: Plan::V1(PlanV1::ZedFree),
             custom_prompt_usage: ModelRequestUsage(RequestUsage {
                 limit: UsageLimit::Unlimited,
                 amount: 0,
