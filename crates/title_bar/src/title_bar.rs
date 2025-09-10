@@ -29,7 +29,6 @@ use gpui::{
     IntoElement, MouseButton, ParentElement, Render, StatefulInteractiveElement, Styled,
     Subscription, WeakEntity, Window, actions, div,
 };
-use keymap_editor;
 use onboarding_banner::OnboardingBanner;
 use project::{Project, WorktreeSettings};
 use remote::RemoteConnectionOptions;
@@ -705,7 +704,7 @@ impl TitleBar {
                             "Settings Profiles",
                             zed_actions::settings_profile_selector::Toggle.boxed_clone(),
                         )
-                        .action("Keymap Editor", Box::new(keymap_editor::OpenKeymapEditor))
+                        .action("Keymap Editor", Box::new(zed_actions::OpenKeymapEditor))
                         .action(
                             "Themes…",
                             zed_actions::theme_selector::Toggle::default().boxed_clone(),
@@ -753,7 +752,7 @@ impl TitleBar {
                                 "Settings Profiles",
                                 zed_actions::settings_profile_selector::Toggle.boxed_clone(),
                             )
-                            .action("Key Bindings", Box::new(keymap_editor::OpenKeymapEditor))
+                            .action("Key Bindings", Box::new(zed_actions::OpenKeymapEditor))
                             .action(
                                 "Themes…",
                                 zed_actions::theme_selector::Toggle::default().boxed_clone(),

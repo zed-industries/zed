@@ -36,6 +36,8 @@ actions!(
         OpenDefaultKeymap,
         /// Opens account settings.
         OpenAccountSettings,
+        /// Opens the keymap editor.
+        OpenKeymapEditor,
         /// Opens server settings.
         OpenServerSettings,
         /// Quits the application.
