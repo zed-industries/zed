@@ -2478,7 +2478,7 @@ impl GitPanel {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
             if let Some(git_panel) = handle.upgrade() {
                 git_panel
-                    .update(cx, |git_panel, cx| {
+                    .update_in(cx, |git_panel, window, cx| {
                         if clear_pending {
                             git_panel.clear_pending();
                         }
