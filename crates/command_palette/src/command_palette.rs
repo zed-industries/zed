@@ -9,7 +9,7 @@ use std::{
 
 use client::parse_zed_link;
 use command_palette_hooks::{
-    CommandInterceptResult, CommandPaletteFilter, CommandPaletteInterceptor,
+    CommandInterceptResult, CommandPaletteFilter, GlobalCommandPaletteInterceptor,
 };
 
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -297,8 +297,7 @@ impl PickerDelegate for CommandPaletteDelegate {
 
         let workspace = self.workspace.clone();
 
-        let intercept_task = CommandPaletteInterceptor::try_global(cx)
-            .map(|interceptor| interceptor.intercept(&query, workspace, cx));
+        let intercept_task = GlobalCommandPaletteInterceptor::intercept(&query, workspace, cx);
 
         let (mut tx, mut rx) = postage::dispatch::channel(1);
 

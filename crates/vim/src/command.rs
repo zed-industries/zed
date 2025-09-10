@@ -735,7 +735,7 @@ impl VimCommand {
         query: &str,
         has_trailing_space: bool,
         workspace: WeakEntity<Workspace>,
-        cx: &App,
+        cx: &mut App,
     ) -> Task<Vec<String>> {
         if self.filename_autocomplete.is_none() {
             return Task::ready(Vec::new());
@@ -1450,7 +1450,7 @@ fn wrap_count(action: Box<dyn Action>, range: &CommandRange) -> Option<Box<dyn A
 pub fn command_interceptor(
     mut input: &str,
     workspace: WeakEntity<Workspace>,
-    cx: &App,
+    cx: &mut App,
 ) -> Task<Vec<CommandInterceptResult>> {
     while input.starts_with(':') {
         input = &input[1..];
