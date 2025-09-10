@@ -2174,26 +2174,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_search_query_history(cx: &mut TestAppContext) {
-        init_globals(cx);
-        let buffer_text = r#"
-        A regular expression (shortened as regex or regexp;[1] also referred to as
-        rational expression[2][3]) is a sequence of characters that specifies a search
-        pattern in text. Usually such patterns are used by string-searching algorithms
-        for "find" or "find and replace" operations on strings, or for input validation.
-        "#
-        .unindent();
-        let buffer = cx.new(|cx| Buffer::local(buffer_text, cx));
-        let cx = cx.add_empty_window();
-
-        let editor =
-            cx.new_window_entity(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
-
-        let search_bar = cx.new_window_entity(|window, cx| {
-            let mut search_bar = BufferSearchBar::new(None, window, cx);
-            search_bar.set_active_pane_item(Some(&editor), window, cx);
-            search_bar.show(window, cx);
-            search_bar
-        });
+        let (_editor, search_bar, cx) = init_test(cx);
 
         // Add 3 search items into the history.
         search_bar
