@@ -981,11 +981,17 @@ impl<'de> Deserialize<'de> for SelectedFormatter {
 }
 
 /// Controls which formatters should be used when formatting code.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi)]
 #[serde(untagged)]
 pub enum FormatterList {
     Single(Formatter),
-    Vec(Vec<Formatter>),
+    Vec(#[settings_ui(skip)] Vec<Formatter>),
+}
+
+impl Default for FormatterList {
+    fn default() -> Self {
+        Self::Single(Formatter::default())
+    }
 }
 
 impl AsRef<[Formatter]> for FormatterList {
@@ -998,12 +1004,13 @@ impl AsRef<[Formatter]> for FormatterList {
 }
 
 /// Controls which formatter should be used when formatting code. If there are multiple formatters, they are executed in the order of declaration.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Formatter {
     /// Format code using the current language server.
     LanguageServer { name: Option<String> },
     /// Format code using Zed's Prettier integration.
+    #[default]
     Prettier,
     /// Format code using an external command.
     External {

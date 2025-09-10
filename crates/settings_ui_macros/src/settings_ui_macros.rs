@@ -185,23 +185,7 @@ fn generate_ui_item_body(
                 return variants_select;
             }
             // else: Union!
-
-            // todo(settings_ui)
-            if serde_attrs.untagged {
-                return quote! {
-                    settings::SettingsUiItem::None
-                };
-            }
-            // todo(settings_ui)
-            if data_enum
-                .variants
-                .iter()
-                .any(|v| v.fields.iter().any(|f| f.ident.is_some()))
-            {
-                return quote! {
-                    settings::SettingsUiItem::None
-                };
-            }
+            let enum_name = &input.ident;
 
             let options = data_enum.variants.iter().map(|variant| {
                 let name = &variant.ident;
@@ -215,8 +199,34 @@ fn generate_ui_item_body(
                 }
             });
             let defaults = data_enum.variants.iter().map(|variant| {
-                quote! {
-                    serde_json::Value::Null
+                let variant_name = &variant.ident;
+                if variant.fields.is_empty() {
+                    quote! {
+                        serde_json::to_value(#enum_name::#variant_name).expect("Failed to serialize default value for #enum_name::#variant_name")
+                    }
+                } else {
+                    let fields = variant.fields.iter().enumerate().map(|(index, field)| {
+                        let field_name = field.ident.as_ref().map_or_else(|| syn::Index::from(index).into_token_stream(), |ident| ident.to_token_stream());
+                        let field_type_is_option = option_inner_type(field.ty.to_token_stream()).is_some();
+                        let field_default = if field_type_is_option {
+                            quote! {
+                                Some(Default::default())
+                            }
+                        } else {
+                            quote! {
+                                Default::default()
+                            }
+                        };
+
+                        quote!{
+                            #field_name: #field_default
+                        }
+                    });
+                    quote! {
+                        serde_json::to_value(#enum_name::#variant_name {
+                            #(#fields),*
+                        }).expect("Failed to serialize default value for #enum_name::#variant_name")
+                    }
                 }
             });
             // todo(settings_ui): Identify #[default] attr and use it for index, defaulting to 0
@@ -228,19 +238,10 @@ fn generate_ui_item_body(
                     .enumerate()
                     .map(|(index, variant)| {
                         let variant_name = &variant.ident;
-                        // todo(settings_ui): Can use explicit discriminant if present
-                        let variant_body = if variant.fields.is_empty() {
-                            quote! {}
-                        } else if variant.fields.iter().any(|f| f.ident.is_some()) {
-                            quote! { { .. } }
-                        } else {
-                            quote! { (..) }
-                        };
                         quote! {
-                            Ok(#variant_name #variant_body) => #index
+                            Ok(#variant_name {..}) => #index
                         }
                     });
-                let enum_name = &input.ident;
                 quote! {
                     |value: &serde_json::Value, _cx: &gpui::App| -> usize {
                         use #enum_name::*;
