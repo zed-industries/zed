@@ -1,0 +1,19 @@
+# JSONL (JSON Lines) language configuration
+# This configuration is derived from the JSON language configuration
+# and should be kept in sync with crates/languages/src/json/config.toml
+# The main differences are:
+# - name: "JSONL" instead of "JSON"  
+# - path_suffixes: ["jsonl", "ndjson"] instead of ["json", "flake.lock"]
+# - No prettier_parser_name or debuggers (JSONL-specific)
+
+name = "JSONL"
+grammar = "json"
+path_suffixes = ["jsonl", "ndjson"]
+line_comments = ["// "]
+autoclose_before = ",]}"
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "\"", end = "\"", close = true, newline = false, not_in = ["string"] },
+]
+tab_size = 2
