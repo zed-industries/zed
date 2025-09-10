@@ -1108,6 +1108,8 @@ impl MentionCompletion {
             match rest_of_line[mode_text.len()..].find(|c: char| !c.is_whitespace()) {
                 Some(whitespace_count) => {
                     if let Some(argument_text) = parts.next() {
+                        // If mode wasn't recognized but we have an argument, don't suggest completions
+                        // (e.g. '@something word')
                         if mode.is_none() && !argument_text.is_empty() {
                             return None;
                         }
