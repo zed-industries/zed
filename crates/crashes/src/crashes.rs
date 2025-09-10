@@ -298,6 +298,12 @@ pub fn panic_hook(info: &PanicHookInfo) {
                 Ordering::SeqCst,
             );
 
+            #[cfg(target_os = "linux")]
+            {
+                CrashHandler.simulate_signal(crash_handler::Signal::Trap as u32);
+                break;
+            }
+            #[cfg(not(target_os = "linux"))]
             std::process::abort();
         }
         thread::sleep(retry_frequency);

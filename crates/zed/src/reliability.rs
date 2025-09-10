@@ -1,5 +1,4 @@
 use anyhow::{Context as _, Result};
-use backtrace::{self};
 use client::{TelemetrySettings, telemetry::MINIDUMP_ENDPOINT};
 use futures::AsyncReadExt;
 use gpui::{App, AppContext as _};
@@ -9,7 +8,7 @@ use proto::{CrashReport, GetCrashFilesResponse};
 use reqwest::multipart::{Form, Part};
 use settings::Settings;
 use smol::stream::StreamExt;
-use std::{env, ffi::OsStr, fs, sync::Arc};
+use std::{ffi::OsStr, fs, sync::Arc};
 use util::ResultExt;
 
 pub fn init(http_client: Arc<HttpClientWithUrl>, installation_id: Option<String>, cx: &mut App) {
@@ -236,7 +235,7 @@ pub fn monitor_main_thread_hangs(
                         app_version: Some(app_version),
                         os_name: os_name.clone(),
                         os_version: Some(os_version.clone()),
-                        architecture: env::consts::ARCH.into(),
+                        architecture: std::env::consts::ARCH.into(),
                         installation_id: installation_id.clone(),
                     };
 
