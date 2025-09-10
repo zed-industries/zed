@@ -36,7 +36,7 @@ use terminal_tab_tooltip::TerminalTooltip;
 use ui::{
     ContextMenu, Icon, IconName, Label, ScrollAxes, Scrollbars, Tooltip, WithScrollbar, h_flex,
     prelude::*,
-    scrollbars::{self, GlobalValue, ScrollbarVisibilitySetting},
+    scrollbars::{self, GlobalSetting, ScrollbarVisibility},
 };
 use util::ResultExt;
 use workspace::{
@@ -986,14 +986,14 @@ fn regex_search_for_query(query: &project::search::SearchQuery) -> Option<RegexS
 
 struct TerminalScrollbarSettingsWrapper;
 
-impl GlobalValue for TerminalScrollbarSettingsWrapper {
+impl GlobalSetting for TerminalScrollbarSettingsWrapper {
     fn get_value(_cx: &App) -> &Self {
         &Self
     }
 }
 
-impl ScrollbarVisibilitySetting for TerminalScrollbarSettingsWrapper {
-    fn scrollbar_visibility(&self, cx: &App) -> scrollbars::ShowScrollbar {
+impl ScrollbarVisibility for TerminalScrollbarSettingsWrapper {
+    fn visibility(&self, cx: &App) -> scrollbars::ShowScrollbar {
         TerminalSettings::get_global(cx)
             .scrollbar
             .show

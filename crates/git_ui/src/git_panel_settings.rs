@@ -3,7 +3,7 @@ use gpui::Pixels;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
-use ui::scrollbars::{ScrollbarVisibilitySetting, ShowScrollbar};
+use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 use workspace::dock::DockPosition;
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -91,8 +91,8 @@ pub struct GitPanelSettings {
     pub collapse_untracked_diff: bool,
 }
 
-impl ScrollbarVisibilitySetting for GitPanelSettings {
-    fn scrollbar_visibility(&self, cx: &ui::App) -> ShowScrollbar {
+impl ScrollbarVisibility for GitPanelSettings {
+    fn visibility(&self, cx: &ui::App) -> ShowScrollbar {
         // TODO: This PR should have defined Editor's `scrollbar.axis`
         // as an Option<ScrollbarAxis>, not a ScrollbarAxes as it would allow you to
         // `.unwrap_or(EditorSettings::get_global(cx).scrollbar.show)`.

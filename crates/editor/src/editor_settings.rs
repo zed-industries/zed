@@ -7,7 +7,7 @@ use project::project_settings::DiagnosticSeverity;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsKey, SettingsSources, SettingsUi, VsCodeSettings};
-use ui::scrollbars::{ScrollbarVisibilitySetting, ShowScrollbar};
+use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 use util::serde::default_true;
 
 /// Imports from the VSCode settings at
@@ -762,8 +762,8 @@ impl EditorSettings {
     }
 }
 
-impl ScrollbarVisibilitySetting for EditorSettings {
-    fn scrollbar_visibility(&self, _cx: &App) -> ShowScrollbar {
+impl ScrollbarVisibility for EditorSettings {
+    fn visibility(&self, _cx: &App) -> ShowScrollbar {
         self.scrollbar.show
     }
 }

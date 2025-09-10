@@ -3,7 +3,7 @@ use gpui::Pixels;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
-use ui::scrollbars::{ScrollbarVisibilitySetting, ShowScrollbar};
+use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Copy, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -169,8 +169,8 @@ pub struct ProjectPanelSettingsContent {
     pub drag_and_drop: Option<bool>,
 }
 
-impl ScrollbarVisibilitySetting for ProjectPanelSettings {
-    fn scrollbar_visibility(&self, cx: &ui::App) -> ShowScrollbar {
+impl ScrollbarVisibility for ProjectPanelSettings {
+    fn visibility(&self, cx: &ui::App) -> ShowScrollbar {
         self.scrollbar
             .show
             .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show)
