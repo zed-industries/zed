@@ -1108,6 +1108,10 @@ impl MentionCompletion {
             match rest_of_line[mode_text.len()..].find(|c: char| !c.is_whitespace()) {
                 Some(whitespace_count) => {
                     if let Some(argument_text) = parts.next() {
+                        if mode.is_none() && !argument_text.is_empty() {
+                            return None;
+                        }
+
                         argument = Some(argument_text.to_string());
                         end += whitespace_count + argument_text.len();
                     }
@@ -1265,6 +1269,17 @@ mod tests {
             })
         );
 
+        assert_eq!(
+            MentionCompletion::try_parse(true, "Lorem @main ", 0),
+            Some(MentionCompletion {
+                source_range: 6..12,
+                mode: None,
+                argument: Some("main".to_string()),
+            })
+        );
+
+        assert_eq!(MentionCompletion::try_parse(true, "Lorem @main m", 0), None);
+
         assert_eq!(MentionCompletion::try_parse(true, "test@", 0), None);
 
         // Allowed non-file mentions
@@ -1279,14 +1294,9 @@ mod tests {
         );
 
         // Disallowed non-file mentions
-
         assert_eq!(
             MentionCompletion::try_parse(false, "Lorem @symbol main", 0),
-            Some(MentionCompletion {
-                source_range: 6..18,
-                mode: None,
-                argument: Some("main".to_string()),
-            })
+            None
         );
 
         assert_eq!(
