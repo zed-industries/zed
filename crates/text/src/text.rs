@@ -37,7 +37,7 @@ use std::{
 };
 pub use subscription::*;
 pub use sum_tree::Bias;
-use sum_tree::{FilterCursor, SumTree, TreeMap, TreeSet};
+use sum_tree::{Dimensions, FilterCursor, SumTree, TreeMap, TreeSet};
 use undo_map::UndoMap;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -446,10 +446,10 @@ impl History {
     }
 
     fn merge_transactions(&mut self, transaction: TransactionId, destination: TransactionId) {
-        if let Some(transaction) = self.forget(transaction) {
-            if let Some(destination) = self.transaction_mut(destination) {
-                destination.edit_ids.extend(transaction.edit_ids);
-            }
+        if let Some(transaction) = self.forget(transaction)
+            && let Some(destination) = self.transaction_mut(destination)
+        {
+            destination.edit_ids.extend(transaction.edit_ids);
         }
     }
 
@@ -713,7 +713,7 @@ impl Buffer {
         let mut base_text = base_text.into();
         let line_ending = LineEnding::detect(&base_text);
         LineEnding::normalize(&mut base_text);
-        Self::new_normalized(replica_id, remote_id, line_ending, Rope::from(base_text))
+        Self::new_normalized(replica_id, remote_id, line_ending, Rope::from(&*base_text))
     }
 
     pub fn new_normalized(
@@ -1071,7 +1071,9 @@ impl Buffer {
         let mut insertion_offset = 0;
         let mut new_ropes =
             RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
-        let mut old_fragments = self.fragments.cursor::<(VersionedFullOffset, usize)>(&cx);
+        let mut old_fragments = self
+            .fragments
+            .cursor::<Dimensions<VersionedFullOffset, usize>>(&cx);
         let mut new_fragments =
             old_fragments.slice(&VersionedFullOffset::Offset(ranges[0].start), Bias::Left);
         new_ropes.append(new_fragments.summary().text);
@@ -1147,7 +1149,7 @@ impl Buffer {
             // Insert the new text before any existing fragments within the range.
             if !new_text.is_empty() {
                 let mut old_start = old_fragments.start().1;
-                if old_fragments.item().map_or(false, |f| f.visible) {
+                if old_fragments.item().is_some_and(|f| f.visible) {
                     old_start += fragment_start.0 - old_fragments.start().0.full_offset().0;
                 }
                 let new_start = new_fragments.summary().text.visible;
@@ -1298,7 +1300,9 @@ impl Buffer {
         self.snapshot.undo_map.insert(undo);
 
         let mut edits = Patch::default();
-        let mut old_fragments = self.fragments.cursor::<(Option<&Locator>, usize)>(&None);
+        let mut old_fragments = self
+            .fragments
+            .cursor::<Dimensions<Option<&Locator>, usize>>(&None);
         let mut new_fragments = SumTree::new(&None);
         let mut new_ropes =
             RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
@@ -1561,7 +1565,9 @@ impl Buffer {
         D: TextDimension,
     {
         // get fragment ranges
-        let mut cursor = self.fragments.cursor::<(Option<&Locator>, usize)>(&None);
+        let mut cursor = self
+            .fragments
+            .cursor::<Dimensions<Option<&Locator>, usize>>(&None);
         let offset_ranges = self
             .fragment_ids_for_edits(edit_ids.into_iter())
             .into_iter()
@@ -1579,11 +1585,11 @@ impl Buffer {
             .map(Some)
             .chain([None])
             .filter_map(move |range| {
-                if let Some((range, prev_range)) = range.as_ref().zip(prev_range.as_mut()) {
-                    if prev_range.end == range.start {
-                        prev_range.end = range.end;
-                        return None;
-                    }
+                if let Some((range, prev_range)) = range.as_ref().zip(prev_range.as_mut())
+                    && prev_range.end == range.start
+                {
+                    prev_range.end = range.end;
+                    return None;
                 }
                 let result = prev_range.clone();
                 prev_range = range;
@@ -1679,10 +1685,10 @@ impl Buffer {
             rx = Some(channel.1);
         }
         async move {
-            if let Some(mut rx) = rx {
-                if rx.recv().await.is_none() {
-                    anyhow::bail!("gave up waiting for version");
-                }
+            if let Some(mut rx) = rx
+                && rx.recv().await.is_none()
+            {
+                anyhow::bail!("gave up waiting for version");
             }
             Ok(())
         }
@@ -1812,8 +1818,8 @@ impl Buffer {
     }
 
     pub fn random_byte_range(&self, start_offset: usize, rng: &mut impl rand::Rng) -> Range<usize> {
-        let end = self.clip_offset(rng.gen_range(start_offset..=self.len()), Bias::Right);
-        let start = self.clip_offset(rng.gen_range(start_offset..=end), Bias::Right);
+        let end = self.clip_offset(rng.random_range(start_offset..=self.len()), Bias::Right);
+        let start = self.clip_offset(rng.random_range(start_offset..=end), Bias::Right);
         start..end
     }
 
@@ -1828,14 +1834,14 @@ impl Buffer {
         let mut edits: Vec<(Range<usize>, Arc<str>)> = Vec::new();
         let mut last_end = None;
         for _ in 0..edit_count {
-            if last_end.map_or(false, |last_end| last_end >= self.len()) {
+            if last_end.is_some_and(|last_end| last_end >= self.len()) {
                 break;
             }
             let new_start = last_end.map_or(0, |last_end| last_end + 1);
             let range = self.random_byte_range(new_start, rng);
             last_end = Some(range.end);
 
-            let new_text_len = rng.gen_range(0..10);
+            let new_text_len = rng.random_range(0..10);
             let new_text: String = RandomCharIter::new(&mut *rng).take(new_text_len).collect();
 
             edits.push((range, new_text.into()));
@@ -1871,7 +1877,7 @@ impl Buffer {
         use rand::prelude::*;
 
         let mut ops = Vec::new();
-        for _ in 0..rng.gen_range(1..=5) {
+        for _ in 0..rng.random_range(1..=5) {
             if let Some(entry) = self.history.undo_stack.choose(rng) {
                 let transaction = entry.transaction.clone();
                 log::info!(
@@ -2232,7 +2238,9 @@ impl BufferSnapshot {
     {
         let anchors = anchors.into_iter();
         let mut insertion_cursor = self.insertions.cursor::<InsertionFragmentKey>(&());
-        let mut fragment_cursor = self.fragments.cursor::<(Option<&Locator>, usize)>(&None);
+        let mut fragment_cursor = self
+            .fragments
+            .cursor::<Dimensions<Option<&Locator>, usize>>(&None);
         let mut text_cursor = self.visible_text.cursor(0);
         let mut position = D::zero(&());
 
@@ -2318,7 +2326,9 @@ impl BufferSnapshot {
                 );
             };
 
-            let mut fragment_cursor = self.fragments.cursor::<(Option<&Locator>, usize)>(&None);
+            let mut fragment_cursor = self
+                .fragments
+                .cursor::<Dimensions<Option<&Locator>, usize>>(&None);
             fragment_cursor.seek(&Some(&insertion.fragment_id), Bias::Left);
             let fragment = fragment_cursor.item().unwrap();
             let mut fragment_offset = fragment_cursor.start().1;
@@ -2330,10 +2340,19 @@ impl BufferSnapshot {
     }
 
     fn fragment_id_for_anchor(&self, anchor: &Anchor) -> &Locator {
+        self.try_fragment_id_for_anchor(anchor).unwrap_or_else(|| {
+            panic!(
+                "invalid anchor {:?}. buffer id: {}, version: {:?}",
+                anchor, self.remote_id, self.version,
+            )
+        })
+    }
+
+    fn try_fragment_id_for_anchor(&self, anchor: &Anchor) -> Option<&Locator> {
         if *anchor == Anchor::MIN {
-            Locator::min_ref()
+            Some(Locator::min_ref())
         } else if *anchor == Anchor::MAX {
-            Locator::max_ref()
+            Some(Locator::max_ref())
         } else {
             let anchor_key = InsertionFragmentKey {
                 timestamp: anchor.timestamp,
@@ -2354,20 +2373,12 @@ impl BufferSnapshot {
                 insertion_cursor.prev();
             }
 
-            let Some(insertion) = insertion_cursor.item().filter(|insertion| {
-                if cfg!(debug_assertions) {
-                    insertion.timestamp == anchor.timestamp
-                } else {
-                    true
-                }
-            }) else {
-                panic!(
-                    "invalid anchor {:?}. buffer id: {}, version: {:?}",
-                    anchor, self.remote_id, self.version
-                );
-            };
-
-            &insertion.fragment_id
+            insertion_cursor
+                .item()
+                .filter(|insertion| {
+                    !cfg!(debug_assertions) || insertion.timestamp == anchor.timestamp
+                })
+                .map(|insertion| &insertion.fragment_id)
         }
     }
 
@@ -2475,7 +2486,7 @@ impl BufferSnapshot {
         };
         let mut cursor = self
             .fragments
-            .cursor::<(Option<&Locator>, FragmentTextSummary)>(&None);
+            .cursor::<Dimensions<Option<&Locator>, FragmentTextSummary>>(&None);
 
         let start_fragment_id = self.fragment_id_for_anchor(&range.start);
         cursor.seek(&Some(start_fragment_id), Bias::Left);
@@ -2660,7 +2671,7 @@ impl<D: TextDimension + Ord, F: FnMut(&FragmentSummary) -> bool> Iterator for Ed
 
             if pending_edit
                 .as_ref()
-                .map_or(false, |(change, _)| change.new.end < self.new_end)
+                .is_some_and(|(change, _)| change.new.end < self.new_end)
             {
                 break;
             }

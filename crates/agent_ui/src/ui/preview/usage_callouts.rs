@@ -1,8 +1,8 @@
 use client::{ModelRequestUsage, RequestUsage, zed_urls};
+use cloud_llm_client::{Plan, PlanV1, PlanV2, UsageLimit};
 use component::{empty_example, example_group_with_title, single_example};
 use gpui::{AnyElement, App, IntoElement, RenderOnce, Window};
 use ui::{Callout, prelude::*};
-use zed_llm_client::{Plan, UsageLimit};
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct UsageCallout {
@@ -38,20 +38,20 @@ impl RenderOnce for UsageCallout {
 
         let (title, message, button_text, url) = if is_limit_reached {
             match self.plan {
-                Plan::ZedFree => (
+                Plan::V1(PlanV1::ZedFree) | Plan::V2(PlanV2::ZedFree) => (
                     "Out of free prompts",
                     "Upgrade to continue, wait for the next reset, or switch to API key."
                         .to_string(),
                     "Upgrade",
                     zed_urls::account_url(cx),
                 ),
-                Plan::ZedProTrial => (
+                Plan::V1(PlanV1::ZedProTrial) | Plan::V2(PlanV2::ZedProTrial) => (
                     "Out of trial prompts",
                     "Upgrade to Zed Pro to continue, or switch to API key.".to_string(),
                     "Upgrade",
                     zed_urls::account_url(cx),
                 ),
-                Plan::ZedPro => (
+                Plan::V1(PlanV1::ZedPro) | Plan::V2(PlanV2::ZedPro) => (
                     "Out of included prompts",
                     "Enable usage-based billing to continue.".to_string(),
                     "Manage",
@@ -60,7 +60,7 @@ impl RenderOnce for UsageCallout {
             }
         } else {
             match self.plan {
-                Plan::ZedFree => (
+                Plan::V1(PlanV1::ZedFree) => (
                     "Reaching free plan limit soon",
                     format!(
                         "{remaining} remaining - Upgrade to increase limit, or switch providers",
@@ -68,7 +68,7 @@ impl RenderOnce for UsageCallout {
                     "Upgrade",
                     zed_urls::account_url(cx),
                 ),
-                Plan::ZedProTrial => (
+                Plan::V1(PlanV1::ZedProTrial) => (
                     "Reaching trial limit soon",
                     format!(
                         "{remaining} remaining - Upgrade to increase limit, or switch providers",
@@ -76,35 +76,28 @@ impl RenderOnce for UsageCallout {
                     "Upgrade",
                     zed_urls::account_url(cx),
                 ),
-                _ => return div().into_any_element(),
+                Plan::V1(PlanV1::ZedPro) | Plan::V2(_) => return div().into_any_element(),
             }
         };
 
-        let icon = if is_limit_reached {
-            Icon::new(IconName::X)
-                .color(Color::Error)
-                .size(IconSize::XSmall)
+        let (icon, severity) = if is_limit_reached {
+            (IconName::Close, Severity::Error)
         } else {
-            Icon::new(IconName::Warning)
-                .color(Color::Warning)
-                .size(IconSize::XSmall)
+            (IconName::Warning, Severity::Warning)
         };
 
-        div()
-            .border_t_1()
-            .border_color(cx.theme().colors().border)
-            .child(
-                Callout::new()
-                    .icon(icon)
-                    .title(title)
-                    .description(message)
-                    .primary_action(
-                        Button::new("upgrade", button_text)
-                            .label_size(LabelSize::Small)
-                            .on_click(move |_, _, cx| {
-                                cx.open_url(&url);
-                            }),
-                    ),
+        Callout::new()
+            .icon(icon)
+            .severity(severity)
+            .icon(icon)
+            .title(title)
+            .description(message)
+            .actions_slot(
+                Button::new("upgrade", button_text)
+                    .label_size(LabelSize::Small)
+                    .on_click(move |_, _, cx| {
+                        cx.open_url(&url);
+                    }),
             )
             .into_any_element()
     }
@@ -126,7 +119,7 @@ impl Component for UsageCallout {
                 single_example(
                     "Approaching limit (90%)",
                     UsageCallout::new(
-                        Plan::ZedFree,
+                        Plan::V1(PlanV1::ZedFree),
                         ModelRequestUsage(RequestUsage {
                             limit: UsageLimit::Limited(50),
                             amount: 45, // 90% of limit
@@ -137,7 +130,7 @@ impl Component for UsageCallout {
                 single_example(
                     "Limit reached (100%)",
                     UsageCallout::new(
-                        Plan::ZedFree,
+                        Plan::V1(PlanV1::ZedFree),
                         ModelRequestUsage(RequestUsage {
                             limit: UsageLimit::Limited(50),
                             amount: 50, // 100% of limit
@@ -154,7 +147,7 @@ impl Component for UsageCallout {
                 single_example(
                     "Approaching limit (90%)",
                     UsageCallout::new(
-                        Plan::ZedProTrial,
+                        Plan::V1(PlanV1::ZedProTrial),
                         ModelRequestUsage(RequestUsage {
                             limit: UsageLimit::Limited(150),
                             amount: 135, // 90% of limit
@@ -165,7 +158,7 @@ impl Component for UsageCallout {
                 single_example(
                     "Limit reached (100%)",
                     UsageCallout::new(
-                        Plan::ZedProTrial,
+                        Plan::V1(PlanV1::ZedProTrial),
                         ModelRequestUsage(RequestUsage {
                             limit: UsageLimit::Limited(150),
                             amount: 150, // 100% of limit
@@ -182,7 +175,7 @@ impl Component for UsageCallout {
                 single_example(
                     "Limit reached (100%)",
                     UsageCallout::new(
-                        Plan::ZedPro,
+                        Plan::V1(PlanV1::ZedPro),
                         ModelRequestUsage(RequestUsage {
                             limit: UsageLimit::Limited(500),
                             amount: 500, // 100% of limit

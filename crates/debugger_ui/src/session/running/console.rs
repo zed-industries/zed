@@ -15,7 +15,7 @@ use gpui::{
 use language::{Anchor, Buffer, CodeLabel, TextBufferSnapshot, ToOffset};
 use menu::{Confirm, SelectNext, SelectPrevious};
 use project::{
-    Completion, CompletionResponse,
+    Completion, CompletionDisplayOptions, CompletionResponse,
     debugger::session::{CompletionsQuery, OutputToken, Session},
     lsp_store::CompletionDocumentation,
     search_history::{SearchHistory, SearchHistoryCursor},
@@ -83,7 +83,7 @@ impl Console {
         let this = cx.weak_entity();
         let query_bar = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Evaluate an expression", cx);
+            editor.set_placeholder_text("Evaluate an expression", window, cx);
             editor.set_use_autoclose(false);
             editor.set_show_gutter(false, cx);
             editor.set_show_wrap_guides(false, cx);
@@ -352,7 +352,7 @@ impl Console {
                     .child(
                         div()
                             .px_1()
-                            .child(Icon::new(IconName::ChevronDownSmall).size(IconSize::XSmall)),
+                            .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall)),
                     ),
             )
             .when(
@@ -365,9 +365,9 @@ impl Console {
                         Some(ContextMenu::build(window, cx, |context_menu, _, _| {
                             context_menu
                                 .when_some(keybinding_target.clone(), |el, keybinding_target| {
-                                    el.context(keybinding_target.clone())
+                                    el.context(keybinding_target)
                                 })
-                                .action("Watch expression", WatchExpression.boxed_clone())
+                                .action("Watch Expression", WatchExpression.boxed_clone())
                         }))
                     })
                 },
@@ -452,18 +452,22 @@ impl Render for Console {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let query_focus_handle = self.query_bar.focus_handle(cx);
         self.update_output(window, cx);
+
         v_flex()
             .track_focus(&self.focus_handle)
             .key_context("DebugConsole")
             .on_action(cx.listener(Self::evaluate))
             .on_action(cx.listener(Self::watch_expression))
             .size_full()
+            .border_2()
+            .bg(cx.theme().colors().editor_background)
             .child(self.render_console(cx))
             .when(self.is_running(cx), |this| {
                 this.child(Divider::horizontal()).child(
                     h_flex()
                         .on_action(cx.listener(Self::previous_query))
                         .on_action(cx.listener(Self::next_query))
+                        .p_1()
                         .gap_1()
                         .bg(cx.theme().colors().editor_background)
                         .child(self.render_query_bar(cx))
@@ -474,6 +478,9 @@ impl Render for Console {
                             .on_click(move |_, window, cx| {
                                 window.dispatch_action(Box::new(Confirm), cx)
                             })
+                            .layer(ui::ElevationIndex::ModalSurface)
+                            .size(ui::ButtonSize::Compact)
+                            .child(Label::new("Evaluate"))
                             .tooltip({
                                 let query_focus_handle = query_focus_handle.clone();
 
@@ -486,10 +493,7 @@ impl Render for Console {
                                         cx,
                                     )
                                 }
-                            })
-                            .layer(ui::ElevationIndex::ModalSurface)
-                            .size(ui::ButtonSize::Compact)
-                            .child(Label::new("Evaluate")),
+                            }),
                             self.render_submit_menu(
                                 ElementId::Name("split-button-right-confirm-button".into()),
                                 Some(query_focus_handle.clone()),
@@ -499,7 +503,6 @@ impl Render for Console {
                         )),
                 )
             })
-            .border_2()
     }
 }
 
@@ -608,17 +611,16 @@ impl ConsoleQueryBarCompletionProvider {
             for variable in console.variable_list.update(cx, |variable_list, cx| {
                 variable_list.completion_variables(cx)
             }) {
-                if let Some(evaluate_name) = &variable.evaluate_name {
-                    if variables
+                if let Some(evaluate_name) = &variable.evaluate_name
+                    && variables
                         .insert(evaluate_name.clone(), variable.value.clone())
                         .is_none()
-                    {
-                        string_matches.push(StringMatchCandidate {
-                            id: 0,
-                            string: evaluate_name.clone(),
-                            char_bag: evaluate_name.chars().collect(),
-                        });
-                    }
+                {
+                    string_matches.push(StringMatchCandidate {
+                        id: 0,
+                        string: evaluate_name.clone(),
+                        char_bag: evaluate_name.chars().collect(),
+                    });
                 }
 
                 if variables
@@ -683,6 +685,7 @@ impl ConsoleQueryBarCompletionProvider {
 
             Ok(vec![project::CompletionResponse {
                 is_incomplete: completions.len() >= LIMIT,
+                display_options: CompletionDisplayOptions::default(),
                 completions,
             }])
         })
@@ -694,7 +697,7 @@ impl ConsoleQueryBarCompletionProvider {
         new_bytes: &[u8],
         snapshot: &TextBufferSnapshot,
     ) -> Range<Anchor> {
-        let buffer_offset = buffer_position.to_offset(&snapshot);
+        let buffer_offset = buffer_position.to_offset(snapshot);
         let buffer_bytes = &buffer_text.as_bytes()[0..buffer_offset];
 
         let mut prefix_len = 0;
@@ -795,6 +798,7 @@ impl ConsoleQueryBarCompletionProvider {
 
             Ok(vec![project::CompletionResponse {
                 completions,
+                display_options: CompletionDisplayOptions::default(),
                 is_incomplete: false,
             }])
         })
@@ -974,7 +978,7 @@ mod tests {
             &cx.buffer_text(),
             snapshot.anchor_before(buffer_position),
             replacement.as_bytes(),
-            &snapshot,
+            snapshot,
         );
 
         cx.update_editor(|editor, _, cx| {

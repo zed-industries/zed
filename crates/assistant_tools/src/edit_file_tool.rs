@@ -4,18 +4,20 @@ use crate::{
     schema::json_schema_for,
     ui::{COLLAPSED_LINES, ToolOutputPreview},
 };
+use action_log::ActionLog;
 use agent_settings;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{
-    ActionLog, AnyToolCard, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput,
-    ToolUseStatus,
+    AnyToolCard, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput, ToolUseStatus,
 };
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
-use editor::{Editor, EditorMode, MinimapVisibility, MultiBuffer, PathKey};
+use editor::{
+    Editor, EditorMode, MinimapVisibility, MultiBuffer, PathKey, multibuffer_context_lines,
+};
 use futures::StreamExt;
 use gpui::{
     Animation, AnimationExt, AnyWindowHandle, App, AppContext, AsyncApp, Entity, Task,
-    TextStyleRefinement, Transformation, WeakEntity, percentage, pulsating_between, px,
+    TextStyleRefinement, WeakEntity, pulsating_between, px,
 };
 use indoc::formatdoc;
 use language::{
@@ -42,7 +44,7 @@ use std::{
     time::Duration,
 };
 use theme::ThemeSettings;
-use ui::{Disclosure, Tooltip, prelude::*};
+use ui::{CommonAnimationExt, Disclosure, Tooltip, prelude::*};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -155,10 +157,10 @@ impl Tool for EditFileTool {
 
         // It's also possible that the global config dir is configured to be inside the project,
         // so check for that edge case too.
-        if let Ok(canonical_path) = std::fs::canonicalize(&input.path) {
-            if canonical_path.starts_with(paths::config_dir()) {
-                return true;
-            }
+        if let Ok(canonical_path) = std::fs::canonicalize(&input.path)
+            && canonical_path.starts_with(paths::config_dir())
+        {
+            return true;
         }
 
         // Check if path is inside the global config directory
@@ -199,10 +201,10 @@ impl Tool for EditFileTool {
                     .any(|c| c.as_os_str() == local_settings_folder.as_os_str())
                 {
                     description.push_str(" (local settings)");
-                } else if let Ok(canonical_path) = std::fs::canonicalize(&input.path) {
-                    if canonical_path.starts_with(paths::config_dir()) {
-                        description.push_str(" (global settings)");
-                    }
+                } else if let Ok(canonical_path) = std::fs::canonicalize(&input.path)
+                    && canonical_path.starts_with(paths::config_dir())
+                {
+                    description.push_str(" (global settings)");
                 }
 
                 description
@@ -307,7 +309,7 @@ impl Tool for EditFileTool {
             let mut ambiguous_ranges = Vec::new();
             while let Some(event) = events.next().await {
                 match event {
-                    EditAgentOutputEvent::Edited => {
+                    EditAgentOutputEvent::Edited { .. } => {
                         if let Some(card) = card_clone.as_ref() {
                             card.update(cx, |card, cx| card.update_diff(cx))?;
                         }
@@ -376,7 +378,7 @@ impl Tool for EditFileTool {
 
             let output = EditFileToolOutput {
                 original_path: project_path.path.to_path_buf(),
-                new_text: new_text.clone(),
+                new_text,
                 old_text,
                 raw_output: Some(agent_output),
             };
@@ -474,7 +476,7 @@ impl Tool for EditFileTool {
                             PathKey::for_buffer(&buffer, cx),
                             buffer,
                             diff_hunk_ranges,
-                            editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                            multibuffer_context_lines(cx),
                             cx,
                         );
                         multibuffer.add_diff(buffer_diff, cx);
@@ -536,7 +538,7 @@ fn resolve_path(
 
             let parent_entry = parent_project_path
                 .as_ref()
-                .and_then(|path| project.entry_for_path(&path, cx))
+                .and_then(|path| project.entry_for_path(path, cx))
                 .context("Can't create file: parent directory doesn't exist")?;
 
             anyhow::ensure!(
@@ -643,7 +645,7 @@ impl EditFileToolCard {
             diff
         });
 
-        self.buffer = Some(buffer.clone());
+        self.buffer = Some(buffer);
         self.base_text = Some(base_text.into());
         self.buffer_diff = Some(buffer_diff.clone());
 
@@ -703,7 +705,7 @@ impl EditFileToolCard {
                 PathKey::for_buffer(buffer, cx),
                 buffer.clone(),
                 ranges,
-                editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                multibuffer_context_lines(cx),
                 cx,
             );
             let end = multibuffer.len(cx);
@@ -723,13 +725,13 @@ impl EditFileToolCard {
         let buffer = buffer.read(cx);
         let diff = diff.read(cx);
         let mut ranges = diff
-            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &buffer, cx)
-            .map(|diff_hunk| diff_hunk.buffer_range.to_point(&buffer))
+            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, buffer, cx)
+            .map(|diff_hunk| diff_hunk.buffer_range.to_point(buffer))
             .collect::<Vec<_>>();
         ranges.extend(
             self.revealed_ranges
                 .iter()
-                .map(|range| range.to_point(&buffer)),
+                .map(|range| range.to_point(buffer)),
         );
         ranges.sort_unstable_by_key(|range| (range.start, Reverse(range.end)));
 
@@ -776,7 +778,6 @@ impl EditFileToolCard {
 
         let buffer_diff = cx.spawn({
             let buffer = buffer.clone();
-            let language_registry = language_registry.clone();
             async move |_this, cx| {
                 build_buffer_diff(base_text, &buffer, &language_registry, cx).await
             }
@@ -792,7 +793,7 @@ impl EditFileToolCard {
                         path_key,
                         buffer,
                         ranges,
-                        editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                        multibuffer_context_lines(cx),
                         cx,
                     );
                     multibuffer.add_diff(buffer_diff.clone(), cx);
@@ -857,13 +858,12 @@ impl ToolCard for EditFileToolCard {
                     )
                     .child(
                         Icon::new(IconName::ArrowUpRight)
-                            .size(IconSize::XSmall)
+                            .size(IconSize::Small)
                             .color(Color::Ignored),
                     ),
             )
             .on_click({
                 let path = self.path.clone();
-                let workspace = workspace.clone();
                 move |_, window, cx| {
                     workspace
                         .update(cx, {
@@ -939,11 +939,7 @@ impl ToolCard for EditFileToolCard {
                     Icon::new(IconName::ArrowCircle)
                         .size(IconSize::XSmall)
                         .color(Color::Info)
-                        .with_animation(
-                            "arrow-circle",
-                            Animation::new(Duration::from_secs(2)).repeat(),
-                            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                        ),
+                        .with_rotate_animation(2),
                 )
             })
             .when_some(error_message, |header, error_message| {
@@ -1356,8 +1352,7 @@ mod tests {
             mode: mode.clone(),
         };
 
-        let result = cx.update(|cx| resolve_path(&input, project, cx));
-        result
+        cx.update(|cx| resolve_path(&input, project, cx))
     }
 
     fn assert_resolved_path_eq(path: anyhow::Result<ProjectPath>, expected: &str) {
@@ -1577,7 +1572,7 @@ mod tests {
 
             // Stream the unformatted content
             cx.executor().run_until_parked();
-            model.stream_last_completion_response(UNFORMATTED_CONTENT.to_string());
+            model.send_last_completion_stream_text_chunk(UNFORMATTED_CONTENT.to_string());
             model.end_last_completion_stream();
 
             edit_task.await
@@ -1641,7 +1636,7 @@ mod tests {
 
             // Stream the unformatted content
             cx.executor().run_until_parked();
-            model.stream_last_completion_response(UNFORMATTED_CONTENT.to_string());
+            model.send_last_completion_stream_text_chunk(UNFORMATTED_CONTENT.to_string());
             model.end_last_completion_stream();
 
             edit_task.await
@@ -1720,7 +1715,9 @@ mod tests {
 
             // Stream the content with trailing whitespace
             cx.executor().run_until_parked();
-            model.stream_last_completion_response(CONTENT_WITH_TRAILING_WHITESPACE.to_string());
+            model.send_last_completion_stream_text_chunk(
+                CONTENT_WITH_TRAILING_WHITESPACE.to_string(),
+            );
             model.end_last_completion_stream();
 
             edit_task.await
@@ -1777,7 +1774,9 @@ mod tests {
 
             // Stream the content with trailing whitespace
             cx.executor().run_until_parked();
-            model.stream_last_completion_response(CONTENT_WITH_TRAILING_WHITESPACE.to_string());
+            model.send_last_completion_stream_text_chunk(
+                CONTENT_WITH_TRAILING_WHITESPACE.to_string(),
+            );
             model.end_last_completion_stream();
 
             edit_task.await

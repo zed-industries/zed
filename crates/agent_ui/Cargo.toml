@@ -17,12 +17,15 @@ test-support = ["gpui/test-support", "language/test-support"]
 
 [dependencies]
 acp_thread.workspace = true
+action_log.workspace = true
 agent-client-protocol.workspace = true
 agent.workspace = true
+agent2.workspace = true
 agent_servers.workspace = true
 agent_settings.workspace = true
 ai_onboarding.workspace = true
 anyhow.workspace = true
+arrayvec.workspace = true
 assistant_context.workspace = true
 assistant_slash_command.workspace = true
 assistant_slash_commands.workspace = true
@@ -31,6 +34,7 @@ audio.workspace = true
 buffer_diff.workspace = true
 chrono.workspace = true
 client.workspace = true
+cloud_llm_client.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
 component.workspace = true
@@ -46,9 +50,8 @@ futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 html_to_markdown.workspace = true
-indoc.workspace = true
 http_client.workspace = true
-indexed_docs.workspace = true
+indoc.workspace = true
 inventory.workspace = true
 itertools.workspace = true
 jsonschema.workspace = true
@@ -65,6 +68,7 @@ ordered-float.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
 picker.workspace = true
+postage.workspace = true
 project.workspace = true
 prompt_store.workspace = true
 proto.workspace = true
@@ -77,6 +81,7 @@ serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
 settings.workspace = true
+shlex.workspace = true
 smol.workspace = true
 streaming_diff.workspace = true
 task.workspace = true
@@ -90,6 +95,7 @@ time.workspace = true
 time_format.workspace = true
 ui.workspace = true
 ui_input.workspace = true
+url.workspace = true
 urlencoding.workspace = true
 util.workspace = true
 uuid.workspace = true
@@ -97,11 +103,15 @@ watch.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-zed_llm_client.workspace = true
 
 [dev-dependencies]
+acp_thread = { workspace = true, features = ["test-support"] }
+agent = { workspace = true, features = ["test-support"] }
+agent2 = { workspace = true, features = ["test-support"] }
+assistant_context = { workspace = true, features = ["test-support"] }
 assistant_tools.workspace = true
 buffer_diff = { workspace = true, features = ["test-support"] }
+db = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, "features" = ["test-support"] }
 indoc.workspace = true

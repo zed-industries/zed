@@ -57,7 +57,7 @@ where
             // Push the old edit if its new end is before the new edit's old start.
             if let Some(old_edit) = old_edit.as_ref() {
                 let new_edit = new_edit.as_ref();
-                if new_edit.map_or(true, |new_edit| old_edit.new.end < new_edit.old.start) {
+                if new_edit.is_none_or(|new_edit| old_edit.new.end < new_edit.old.start) {
                     let catchup = old_edit.old.start - old_start;
                     old_start += catchup;
                     new_start += catchup;
@@ -78,7 +78,7 @@ where
             // Push the new edit if its old end is before the old edit's new start.
             if let Some(new_edit) = new_edit.as_ref() {
                 let old_edit = old_edit.as_ref();
-                if old_edit.map_or(true, |old_edit| new_edit.old.end < old_edit.new.start) {
+                if old_edit.is_none_or(|old_edit| new_edit.old.end < old_edit.new.start) {
                     let catchup = new_edit.new.start - new_start;
                     old_start += catchup;
                     new_start += catchup;
@@ -497,8 +497,8 @@ mod tests {
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(20);
 
-        let initial_chars = (0..rng.gen_range(0..=100))
-            .map(|_| rng.gen_range(b'a'..=b'z') as char)
+        let initial_chars = (0..rng.random_range(0..=100))
+            .map(|_| rng.random_range(b'a'..=b'z') as char)
             .collect::<Vec<_>>();
         log::info!("initial chars: {:?}", initial_chars);
 
@@ -517,11 +517,11 @@ mod tests {
                     break;
                 }
 
-                let end = rng.gen_range(last_edit_end..=expected_chars.len());
-                let start = rng.gen_range(last_edit_end..=end);
+                let end = rng.random_range(last_edit_end..=expected_chars.len());
+                let start = rng.random_range(last_edit_end..=end);
                 let old_len = end - start;
 
-                let mut new_len = rng.gen_range(0..=3);
+                let mut new_len = rng.random_range(0..=3);
                 if start == end && new_len == 0 {
                     new_len += 1;
                 }
@@ -529,7 +529,7 @@ mod tests {
                 last_edit_end = start + new_len + 1;
 
                 let new_chars = (0..new_len)
-                    .map(|_| rng.gen_range(b'A'..=b'Z') as char)
+                    .map(|_| rng.random_range(b'A'..=b'Z') as char)
                     .collect::<Vec<_>>();
                 log::info!(
                     "  editing {:?}: {:?}",

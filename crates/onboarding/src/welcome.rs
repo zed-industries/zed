@@ -1,13 +1,17 @@
 use gpui::{
     Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    NoAction, ParentElement, Render, Styled, Window, actions,
+    ParentElement, Render, Styled, Task, Window, actions,
 };
+use menu::{SelectNext, SelectPrevious};
 use ui::{ButtonLike, Divider, DividerColor, KeyBinding, Vector, VectorName, prelude::*};
 use workspace::{
-    NewFile, Open, Workspace, WorkspaceId,
+    NewFile, Open, WorkspaceId,
     item::{Item, ItemEvent},
+    with_active_or_new_workspace,
 };
-use zed_actions::{Extensions, OpenSettings, command_palette};
+use zed_actions::{Extensions, OpenSettings, agent, command_palette};
+
+use crate::{Onboarding, OpenOnboarding};
 
 actions!(
     zed,
@@ -33,9 +37,8 @@ const CONTENT: (Section<4>, Section<3>) = (
             },
             SectionEntry {
                 icon: IconName::CloudDownload,
-                title: "Clone a Repo",
-                // TODO: use proper action
-                action: &NoAction,
+                title: "Clone Repository",
+                action: &git::Clone,
             },
             SectionEntry {
                 icon: IconName::ListCollapse,
@@ -55,8 +58,7 @@ const CONTENT: (Section<4>, Section<3>) = (
             SectionEntry {
                 icon: IconName::ZedAssistant,
                 title: "View AI Settings",
-                // TODO: use proper action
-                action: &NoAction,
+                action: &agent::OpenSettings,
             },
             SectionEntry {
                 icon: IconName::Blocks,
@@ -85,24 +87,24 @@ impl<const COLS: usize> Section<COLS> {
     ) -> impl IntoElement {
         v_flex()
             .min_w_full()
-            .gap_2()
             .child(
                 h_flex()
                     .px_1()
-                    .gap_4()
+                    .mb_2()
+                    .gap_2()
                     .child(
                         Label::new(self.title.to_ascii_uppercase())
                             .buffer_font(cx)
                             .color(Color::Muted)
                             .size(LabelSize::XSmall),
                     )
-                    .child(Divider::horizontal().color(DividerColor::Border)),
+                    .child(Divider::horizontal().color(DividerColor::BorderVariant)),
             )
             .children(
                 self.entries
                     .iter()
                     .enumerate()
-                    .map(|(index, entry)| entry.render(index_offset + index, &focus, window, cx)),
+                    .map(|(index, entry)| entry.render(index_offset + index, focus, window, cx)),
             )
     }
 }
@@ -122,11 +124,12 @@ impl SectionEntry {
         cx: &App,
     ) -> impl IntoElement {
         ButtonLike::new(("onboarding-button-id", button_index))
+            .tab_index(button_index as isize)
             .full_width()
+            .size(ButtonSize::Medium)
             .child(
                 h_flex()
                     .w_full()
-                    .gap_1()
                     .justify_between()
                     .child(
                         h_flex()
@@ -138,7 +141,10 @@ impl SectionEntry {
                             )
                             .child(Label::new(self.title)),
                     )
-                    .children(KeyBinding::for_action_in(self.action, focus, window, cx)),
+                    .children(
+                        KeyBinding::for_action_in(self.action, focus, window, cx)
+                            .map(|s| s.size(rems_from_px(12.))),
+                    ),
             )
             .on_click(|_, window, cx| window.dispatch_action(self.action.boxed_clone(), cx))
     }
@@ -148,10 +154,23 @@ pub struct WelcomePage {
     focus_handle: FocusHandle,
 }
 
+impl WelcomePage {
+    fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus_next();
+        cx.notify();
+    }
+
+    fn select_previous(&mut self, _: &SelectPrevious, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus_prev();
+        cx.notify();
+    }
+}
+
 impl Render for WelcomePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (first_section, second_entries) = CONTENT;
+        let (first_section, second_section) = CONTENT;
         let first_section_entries = first_section.entries.len();
+        let last_index = first_section_entries + second_section.entries.len();
 
         h_flex()
             .size_full()
@@ -160,6 +179,8 @@ impl Render for WelcomePage {
             .bg(cx.theme().colors().editor_background)
             .key_context("Welcome")
             .track_focus(&self.focus_handle(cx))
+            .on_action(cx.listener(Self::select_previous))
+            .on_action(cx.listener(Self::select_next))
             .child(
                 h_flex()
                     .px_12()
@@ -189,15 +210,15 @@ impl Render for WelcomePage {
                             )
                             .child(
                                 v_flex()
-                                    .mt_12()
-                                    .gap_8()
+                                    .mt_10()
+                                    .gap_6()
                                     .child(first_section.render(
                                         Default::default(),
                                         &self.focus_handle,
                                         window,
                                         cx,
                                     ))
-                                    .child(second_entries.render(
+                                    .child(second_section.render(
                                         first_section_entries,
                                         &self.focus_handle,
                                         window,
@@ -211,15 +232,71 @@ impl Render for WelcomePage {
                                             // We call this a hack
                                             .rounded_b_xs()
                                             .border_t_1()
-                                            .border_color(DividerColor::Border.hsla(cx))
+                                            .border_color(cx.theme().colors().border.opacity(0.6))
                                             .border_dashed()
                                             .child(
-                                                div().child(
                                                     Button::new("welcome-exit", "Return to Setup")
+                                                        .tab_index(last_index as isize)
                                                         .full_width()
-                                                        .label_size(LabelSize::XSmall),
+                                                        .label_size(LabelSize::XSmall)
+                                                        .on_click(|_, window, cx| {
+                                                            window.dispatch_action(
+                                                                OpenOnboarding.boxed_clone(),
+                                                                cx,
+                                                            );
+
+                                                            with_active_or_new_workspace(cx, |workspace, window, cx| {
+                                                                let Some((welcome_id, welcome_idx)) = workspace
+                                                                    .active_pane()
+                                                                    .read(cx)
+                                                                    .items()
+                                                                    .enumerate()
+                                                                    .find_map(|(idx, item)| {
+                                                                        let _ = item.downcast::<WelcomePage>()?;
+                                                                        Some((item.item_id(), idx))
+                                                                    })
+                                                                else {
+                                                                    return;
+                                                                };
+
+                                                                workspace.active_pane().update(cx, |pane, cx| {
+                                                                    // Get the index here to get around the borrow checker
+                                                                    let idx = pane.items().enumerate().find_map(
+                                                                        |(idx, item)| {
+                                                                            let _ =
+                                                                                item.downcast::<Onboarding>()?;
+                                                                            Some(idx)
+                                                                        },
+                                                                    );
+
+                                                                    if let Some(idx) = idx {
+                                                                        pane.activate_item(
+                                                                            idx, true, true, window, cx,
+                                                                        );
+                                                                    } else {
+                                                                        let item =
+                                                                            Box::new(Onboarding::new(workspace, cx));
+                                                                        pane.add_item(
+                                                                            item,
+                                                                            true,
+                                                                            true,
+                                                                            Some(welcome_idx),
+                                                                            window,
+                                                                            cx,
+                                                                        );
+                                                                    }
+
+                                                                    pane.remove_item(
+                                                                        welcome_id,
+                                                                        false,
+                                                                        false,
+                                                                        window,
+                                                                        cx,
+                                                                    );
+                                                                });
+                                                            });
+                                                        }),
                                                 ),
-                                            ),
                                     ),
                             ),
                     ),
@@ -228,12 +305,14 @@ impl Render for WelcomePage {
 }
 
 impl WelcomePage {
-    pub fn new(cx: &mut Context<Workspace>) -> Entity<Self> {
-        let this = cx.new(|cx| WelcomePage {
-            focus_handle: cx.focus_handle(),
-        });
+    pub fn new(window: &mut Window, cx: &mut App) -> Entity<Self> {
+        cx.new(|cx| {
+            let focus_handle = cx.focus_handle();
+            cx.on_focus(&focus_handle, window, |_, _, cx| cx.notify())
+                .detach();
 
-        this
+            WelcomePage { focus_handle }
+        })
     }
 }
 
@@ -271,5 +350,118 @@ impl Item for WelcomePage {
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
         f(*event)
+    }
+}
+
+impl workspace::SerializableItem for WelcomePage {
+    fn serialized_item_kind() -> &'static str {
+        "WelcomePage"
+    }
+
+    fn cleanup(
+        workspace_id: workspace::WorkspaceId,
+        alive_items: Vec<workspace::ItemId>,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> Task<gpui::Result<()>> {
+        workspace::delete_unloaded_items(
+            alive_items,
+            workspace_id,
+            "welcome_pages",
+            &persistence::WELCOME_PAGES,
+            cx,
+        )
+    }
+
+    fn deserialize(
+        _project: Entity<project::Project>,
+        _workspace: gpui::WeakEntity<workspace::Workspace>,
+        workspace_id: workspace::WorkspaceId,
+        item_id: workspace::ItemId,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<gpui::Result<Entity<Self>>> {
+        if persistence::WELCOME_PAGES
+            .get_welcome_page(item_id, workspace_id)
+            .ok()
+            .is_some_and(|is_open| is_open)
+        {
+            window.spawn(cx, async move |cx| cx.update(WelcomePage::new))
+        } else {
+            Task::ready(Err(anyhow::anyhow!("No welcome page to deserialize")))
+        }
+    }
+
+    fn serialize(
+        &mut self,
+        workspace: &mut workspace::Workspace,
+        item_id: workspace::ItemId,
+        _closing: bool,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<gpui::Result<()>>> {
+        let workspace_id = workspace.database_id()?;
+        Some(cx.background_spawn(async move {
+            persistence::WELCOME_PAGES
+                .save_welcome_page(item_id, workspace_id, true)
+                .await
+        }))
+    }
+
+    fn should_serialize(&self, event: &Self::Event) -> bool {
+        event == &ItemEvent::UpdateTab
+    }
+}
+
+mod persistence {
+    use db::{
+        query,
+        sqlez::{domain::Domain, thread_safe_connection::ThreadSafeConnection},
+        sqlez_macros::sql,
+    };
+    use workspace::WorkspaceDb;
+
+    pub struct WelcomePagesDb(ThreadSafeConnection);
+
+    impl Domain for WelcomePagesDb {
+        const NAME: &str = stringify!(WelcomePagesDb);
+
+        const MIGRATIONS: &[&str] = (&[sql!(
+                    CREATE TABLE welcome_pages (
+                        workspace_id INTEGER,
+                        item_id INTEGER UNIQUE,
+                        is_open INTEGER DEFAULT FALSE,
+
+                        PRIMARY KEY(workspace_id, item_id),
+                        FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                        ON DELETE CASCADE
+                    ) STRICT;
+        )]);
+    }
+
+    db::static_connection!(WELCOME_PAGES, WelcomePagesDb, [WorkspaceDb]);
+
+    impl WelcomePagesDb {
+        query! {
+            pub async fn save_welcome_page(
+                item_id: workspace::ItemId,
+                workspace_id: workspace::WorkspaceId,
+                is_open: bool
+            ) -> Result<()> {
+                INSERT OR REPLACE INTO welcome_pages(item_id, workspace_id, is_open)
+                VALUES (?, ?, ?)
+            }
+        }
+
+        query! {
+            pub fn get_welcome_page(
+                item_id: workspace::ItemId,
+                workspace_id: workspace::WorkspaceId
+            ) -> Result<bool> {
+                SELECT is_open
+                FROM welcome_pages
+                WHERE item_id = ? AND workspace_id = ?
+            }
+        }
     }
 }

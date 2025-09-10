@@ -188,22 +188,26 @@ impl Editor {
 
     pub fn scroll_hover(
         &mut self,
-        amount: &ScrollAmount,
+        amount: ScrollAmount,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
         let selection = self.selections.newest_anchor().head();
         let snapshot = self.snapshot(window, cx);
 
-        let Some(popover) = self.hover_state.info_popovers.iter().find(|popover| {
+        if let Some(popover) = self.hover_state.info_popovers.iter().find(|popover| {
             popover
                 .symbol_range
                 .point_within_range(&TriggerPoint::Text(selection), &snapshot)
-        }) else {
-            return false;
-        };
-        popover.scroll(amount, window, cx);
-        true
+        }) {
+            popover.scroll(amount, window, cx);
+            true
+        } else if let Some(context_menu) = self.context_menu.borrow_mut().as_mut() {
+            context_menu.scroll_aside(amount, window, cx);
+            true
+        } else {
+            false
+        }
     }
 
     fn cmd_click_reveal_task(
@@ -271,7 +275,7 @@ impl Editor {
             Task::ready(Ok(Navigated::No))
         };
         self.select(SelectPhase::End, window, cx);
-        return navigate_task;
+        navigate_task
     }
 }
 
@@ -321,7 +325,10 @@ pub fn update_inlay_link_and_hover_points(
             if let Some(cached_hint) = inlay_hint_cache.hint_by_id(excerpt_id, hovered_hint.id) {
                 match cached_hint.resolve_state {
                     ResolveState::CanResolve(_, _) => {
-                        if let Some(buffer_id) = previous_valid_anchor.buffer_id {
+                        if let Some(buffer_id) = snapshot
+                            .buffer_snapshot
+                            .buffer_id_for_anchor(previous_valid_anchor)
+                        {
                             inlay_hint_cache.spawn_hint_resolve(
                                 buffer_id,
                                 excerpt_id,
@@ -418,24 +425,22 @@ pub fn update_inlay_link_and_hover_points(
                                     }
                                     if let Some((language_server_id, location)) =
                                         hovered_hint_part.location
+                                        && secondary_held
+                                        && !editor.has_pending_nonempty_selection()
                                     {
-                                        if secondary_held
-                                            && !editor.has_pending_nonempty_selection()
-                                        {
-                                            go_to_definition_updated = true;
-                                            show_link_definition(
-                                                shift_held,
-                                                editor,
-                                                TriggerPoint::InlayHint(
-                                                    highlight,
-                                                    location,
-                                                    language_server_id,
-                                                ),
-                                                snapshot,
-                                                window,
-                                                cx,
-                                            );
-                                        }
+                                        go_to_definition_updated = true;
+                                        show_link_definition(
+                                            shift_held,
+                                            editor,
+                                            TriggerPoint::InlayHint(
+                                                highlight,
+                                                location,
+                                                language_server_id,
+                                            ),
+                                            snapshot,
+                                            window,
+                                            cx,
+                                        );
                                     }
                                 }
                             }
@@ -561,7 +566,7 @@ pub fn show_link_definition(
                             provider.definitions(&buffer, buffer_position, preferred_kind, cx)
                         })?;
                         if let Some(task) = task {
-                            task.await.ok().map(|definition_result| {
+                            task.await.ok().flatten().map(|definition_result| {
                                 (
                                     definition_result.iter().find_map(|link| {
                                         link.origin.as_ref().and_then(|origin| {
@@ -657,11 +662,11 @@ pub fn show_link_definition(
 pub(crate) fn find_url(
     buffer: &Entity<language::Buffer>,
     position: text::Anchor,
-    mut cx: AsyncWindowContext,
+    cx: AsyncWindowContext,
 ) -> Option<(Range<text::Anchor>, String)> {
     const LIMIT: usize = 2048;
 
-    let Ok(snapshot) = buffer.read_with(&mut cx, |buffer, _| buffer.snapshot()) else {
+    let Ok(snapshot) = buffer.read_with(&cx, |buffer, _| buffer.snapshot()) else {
         return None;
     };
 
@@ -719,11 +724,11 @@ pub(crate) fn find_url(
 pub(crate) fn find_url_from_range(
     buffer: &Entity<language::Buffer>,
     range: Range<text::Anchor>,
-    mut cx: AsyncWindowContext,
+    cx: AsyncWindowContext,
 ) -> Option<String> {
     const LIMIT: usize = 2048;
 
-    let Ok(snapshot) = buffer.read_with(&mut cx, |buffer, _| buffer.snapshot()) else {
+    let Ok(snapshot) = buffer.read_with(&cx, |buffer, _| buffer.snapshot()) else {
         return None;
     };
 
@@ -766,10 +771,11 @@ pub(crate) fn find_url_from_range(
     let mut finder = LinkFinder::new();
     finder.kinds(&[LinkKind::Url]);
 
-    if let Some(link) = finder.links(&text).next() {
-        if link.start() == 0 && link.end() == text.len() {
-            return Some(link.as_str().to_string());
-        }
+    if let Some(link) = finder.links(&text).next()
+        && link.start() == 0
+        && link.end() == text.len()
+    {
+        return Some(link.as_str().to_string());
     }
 
     None
@@ -794,7 +800,7 @@ pub(crate) async fn find_file(
     ) -> Option<ResolvedPath> {
         project
             .update(cx, |project, cx| {
-                project.resolve_path_in_buffer(&candidate_file_path, buffer, cx)
+                project.resolve_path_in_buffer(candidate_file_path, buffer, cx)
             })
             .ok()?
             .await
@@ -872,7 +878,7 @@ fn surrounding_filename(
         .peekable();
     while let Some(ch) = forwards.next() {
         // Skip escaped whitespace
-        if ch == '\\' && forwards.peek().map_or(false, |ch| ch.is_whitespace()) {
+        if ch == '\\' && forwards.peek().is_some_and(|ch| ch.is_whitespace()) {
             token_end += ch.len_utf8();
             let whitespace = forwards.next().unwrap();
             token_end += whitespace.len_utf8();

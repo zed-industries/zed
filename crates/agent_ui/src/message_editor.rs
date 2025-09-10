@@ -6,7 +6,7 @@ use crate::agent_diff::AgentDiffThread;
 use crate::agent_model_selector::AgentModelSelector;
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use crate::ui::{
-    MaxModeTooltip,
+    BurnModeTooltip,
     preview::{AgentPreview, UsageCallout},
 };
 use agent::history_store::HistoryStore;
@@ -14,10 +14,10 @@ use agent::{
     context::{AgentContextKey, ContextLoadResult, load_context},
     context_store::ContextStoreEvent,
 };
-use agent_settings::{AgentSettings, CompletionMode};
+use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
 use ai_onboarding::ApiKeysWithProviders;
 use buffer_diff::BufferDiff;
-use client::UserStore;
+use cloud_llm_client::{CompletionIntent, PlanV1};
 use collections::{HashMap, HashSet};
 use editor::actions::{MoveUp, Paste};
 use editor::display_map::CreaseId;
@@ -42,7 +42,6 @@ use language_model::{
 use multi_buffer;
 use project::Project;
 use prompt_store::PromptStore;
-use proto::Plan;
 use settings::Settings;
 use std::time::Duration;
 use theme::ThemeSettings;
@@ -53,11 +52,10 @@ use util::ResultExt as _;
 use workspace::{CollaboratorId, Workspace};
 use zed_actions::agent::Chat;
 use zed_actions::agent::ToggleModelSelector;
-use zed_llm_client::CompletionIntent;
 
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider, crease_for_mention};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
-use crate::profile_selector::ProfileSelector;
+use crate::profile_selector::{ProfileProvider, ProfileSelector};
 use crate::{
     ActiveThread, AgentDiffPane, ChatWithFollow, ExpandMessageEditor, Follow, KeepAll,
     ModelUsageContext, NewThread, OpenAgentDiff, RejectAll, RemoveAllContext, ToggleBurnMode,
@@ -79,7 +77,6 @@ pub struct MessageEditor {
     editor: Entity<Editor>,
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
-    user_store: Entity<UserStore>,
     context_store: Entity<ContextStore>,
     prompt_store: Option<Entity<PromptStore>>,
     history_store: Option<WeakEntity<HistoryStore>>,
@@ -120,14 +117,15 @@ pub(crate) fn create_editor(
         let mut editor = Editor::new(
             editor::EditorMode::AutoHeight {
                 min_lines,
-                max_lines: max_lines,
+                max_lines,
             },
             buffer,
             None,
             window,
             cx,
         );
-        editor.set_placeholder_text("Message the agent – @ to include context", cx);
+        editor.set_placeholder_text("Message the agent – @ to include context", window, cx);
+        editor.disable_word_completions();
         editor.set_show_indent_guides(false, cx);
         editor.set_soft_wrap();
         editor.set_use_modal_editing(true);
@@ -155,11 +153,28 @@ pub(crate) fn create_editor(
     editor
 }
 
+impl ProfileProvider for Entity<Thread> {
+    fn profiles_supported(&self, cx: &App) -> bool {
+        self.read(cx)
+            .configured_model()
+            .is_some_and(|model| model.model.supports_tools())
+    }
+
+    fn profile_id(&self, cx: &App) -> AgentProfileId {
+        self.read(cx).profile().id().clone()
+    }
+
+    fn set_profile(&self, profile_id: AgentProfileId, cx: &mut App) {
+        self.update(cx, |this, cx| {
+            this.set_profile(profile_id, cx);
+        });
+    }
+}
+
 impl MessageEditor {
     pub fn new(
         fs: Arc<dyn Fs>,
         workspace: WeakEntity<Workspace>,
-        user_store: Entity<UserStore>,
         context_store: Entity<ContextStore>,
         prompt_store: Option<Entity<PromptStore>>,
         thread_store: WeakEntity<ThreadStore>,
@@ -201,9 +216,10 @@ impl MessageEditor {
 
         let subscriptions = vec![
             cx.subscribe_in(&context_strip, window, Self::handle_context_strip_event),
-            cx.subscribe(&editor, |this, _, event, cx| match event {
-                EditorEvent::BufferEdited => this.handle_message_changed(cx),
-                _ => {}
+            cx.subscribe(&editor, |this, _, event: &EditorEvent, cx| {
+                if event == &EditorEvent::BufferEdited {
+                    this.handle_message_changed(cx)
+                }
             }),
             cx.observe(&context_store, |this, _, cx| {
                 // When context changes, reload it for token counting.
@@ -225,15 +241,15 @@ impl MessageEditor {
             )
         });
 
-        let profile_selector =
-            cx.new(|cx| ProfileSelector::new(fs, thread.clone(), editor.focus_handle(cx), cx));
+        let profile_selector = cx.new(|cx| {
+            ProfileSelector::new(fs, Arc::new(thread.clone()), editor.focus_handle(cx), cx)
+        });
 
         Self {
             editor: editor.clone(),
             project: thread.read(cx).project().clone(),
-            user_store,
             thread,
-            incompatible_tools_state: incompatible_tools.clone(),
+            incompatible_tools_state: incompatible_tools,
             workspace,
             context_store,
             prompt_store,
@@ -363,17 +379,12 @@ impl MessageEditor {
     }
 
     fn send_to_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(ConfiguredModel { model, provider }) = self
+        let Some(ConfiguredModel { model, .. }) = self
             .thread
             .update(cx, |thread, cx| thread.get_or_init_configured_model(cx))
         else {
             return;
         };
-
-        if provider.must_accept_terms(cx) {
-            cx.notify();
-            return;
-        }
 
         let (user_message, user_message_creases) = self.editor.update(cx, |editor, cx| {
             let creases = extract_message_creases(editor, cx);
@@ -427,11 +438,11 @@ impl MessageEditor {
             thread.cancel_editing(cx);
         });
 
-        let cancelled = self.thread.update(cx, |thread, cx| {
+        let canceled = self.thread.update(cx, |thread, cx| {
             thread.cancel_last_completion(Some(window.window_handle()), cx)
         });
 
-        if cancelled {
+        if canceled {
             self.set_editor_is_expanded(false, cx);
             self.send_to_model(window, cx);
         }
@@ -610,7 +621,7 @@ impl MessageEditor {
                     this.toggle_burn_mode(&ToggleBurnMode, window, cx);
                 }))
                 .tooltip(move |_window, cx| {
-                    cx.new(|_| MaxModeTooltip::new().selected(burn_mode_enabled))
+                    cx.new(|_| BurnModeTooltip::new().selected(burn_mode_enabled))
                         .into()
                 })
                 .into_any_element(),
@@ -676,11 +687,7 @@ impl MessageEditor {
             .as_ref()
             .map(|model| {
                 self.incompatible_tools_state.update(cx, |state, cx| {
-                    state
-                        .incompatible_tools(&model.model, cx)
-                        .iter()
-                        .cloned()
-                        .collect::<Vec<_>>()
+                    state.incompatible_tools(&model.model, cx).to_vec()
                 })
             })
             .unwrap_or_default();
@@ -730,7 +737,7 @@ impl MessageEditor {
                     .when(focus_handle.is_focused(window), |this| {
                         this.child(
                             IconButton::new("toggle-height", expand_icon)
-                                .icon_size(IconSize::XSmall)
+                                .icon_size(IconSize::Small)
                                 .icon_color(Color::Muted)
                                 .tooltip({
                                     let focus_handle = focus_handle.clone();
@@ -828,7 +835,6 @@ impl MessageEditor {
                                     .child(self.profile_selector.clone())
                                     .child(self.model_selector.clone())
                                     .map({
-                                        let focus_handle = focus_handle.clone();
                                         move |parent| {
                                             if is_generating {
                                                 parent
@@ -836,7 +842,7 @@ impl MessageEditor {
                                                         parent.child(
                                                             IconButton::new(
                                                                 "stop-generation",
-                                                                IconName::StopFilled,
+                                                                IconName::Stop,
                                                             )
                                                             .icon_color(Color::Error)
                                                             .style(ButtonStyle::Tinted(
@@ -1122,7 +1128,7 @@ impl MessageEditor {
             )
             .when(is_edit_changes_expanded, |parent| {
                 parent.child(
-                    v_flex().children(changed_buffers.into_iter().enumerate().flat_map(
+                    v_flex().children(changed_buffers.iter().enumerate().flat_map(
                         |(index, (buffer, _diff))| {
                             let file = buffer.read(cx).file()?;
                             let path = file.path();
@@ -1152,7 +1158,7 @@ impl MessageEditor {
                                     .buffer_font(cx)
                             });
 
-                            let file_icon = FileIcons::get_icon(&path, cx)
+                            let file_icon = FileIcons::get_icon(path, cx)
                                 .map(Icon::from_path)
                                 .map(|icon| icon.color(Color::Muted).size(IconSize::Small))
                                 .unwrap_or_else(|| {
@@ -1279,7 +1285,7 @@ impl MessageEditor {
         self.thread
             .read(cx)
             .configured_model()
-            .map_or(false, |model| model.provider.id() == ZED_CLOUD_PROVIDER_ID)
+            .is_some_and(|model| model.provider.id() == ZED_CLOUD_PROVIDER_ID)
     }
 
     fn render_usage_callout(&self, line_height: Pixels, cx: &mut Context<Self>) -> Option<Div> {
@@ -1287,24 +1293,14 @@ impl MessageEditor {
             return None;
         }
 
-        let user_store = self.user_store.read(cx);
-
-        let ubb_enable = user_store
-            .usage_based_billing_enabled()
-            .map_or(false, |enabled| enabled);
-
-        if ubb_enable {
+        let user_store = self.project.read(cx).user_store().read(cx);
+        if user_store.is_usage_based_billing_enabled() {
             return None;
         }
 
         let plan = user_store
-            .current_plan()
-            .map(|plan| match plan {
-                Plan::Free => zed_llm_client::Plan::ZedFree,
-                Plan::ZedPro => zed_llm_client::Plan::ZedPro,
-                Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
-            })
-            .unwrap_or(zed_llm_client::Plan::ZedFree);
+            .plan()
+            .unwrap_or(cloud_llm_client::Plan::V1(PlanV1::ZedFree));
 
         let usage = user_store.model_request_usage()?;
 
@@ -1321,14 +1317,10 @@ impl MessageEditor {
         token_usage_ratio: TokenUsageRatio,
         cx: &mut Context<Self>,
     ) -> Option<Div> {
-        let icon = if token_usage_ratio == TokenUsageRatio::Exceeded {
-            Icon::new(IconName::X)
-                .color(Color::Error)
-                .size(IconSize::XSmall)
+        let (icon, severity) = if token_usage_ratio == TokenUsageRatio::Exceeded {
+            (IconName::Close, Severity::Error)
         } else {
-            Icon::new(IconName::Warning)
-                .color(Color::Warning)
-                .size(IconSize::XSmall)
+            (IconName::Warning, Severity::Warning)
         };
 
         let title = if token_usage_ratio == TokenUsageRatio::Exceeded {
@@ -1343,29 +1335,33 @@ impl MessageEditor {
             "To continue, start a new thread from a summary."
         };
 
-        let mut callout = Callout::new()
+        let callout = Callout::new()
             .line_height(line_height)
+            .severity(severity)
             .icon(icon)
             .title(title)
             .description(description)
-            .primary_action(
-                Button::new("start-new-thread", "Start New Thread")
-                    .label_size(LabelSize::Small)
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        let from_thread_id = Some(this.thread.read(cx).id().clone());
-                        window.dispatch_action(Box::new(NewThread { from_thread_id }), cx);
-                    })),
+            .actions_slot(
+                h_flex()
+                    .gap_0p5()
+                    .when(self.is_using_zed_provider(cx), |this| {
+                        this.child(
+                            IconButton::new("burn-mode-callout", IconName::ZedBurnMode)
+                                .icon_size(IconSize::XSmall)
+                                .on_click(cx.listener(|this, _event, window, cx| {
+                                    this.toggle_burn_mode(&ToggleBurnMode, window, cx);
+                                })),
+                        )
+                    })
+                    .child(
+                        Button::new("start-new-thread", "Start New Thread")
+                            .label_size(LabelSize::Small)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                let from_thread_id = Some(this.thread.read(cx).id().clone());
+                                window.dispatch_action(Box::new(NewThread { from_thread_id }), cx);
+                            })),
+                    ),
             );
-
-        if self.is_using_zed_provider(cx) {
-            callout = callout.secondary_action(
-                IconButton::new("burn-mode-callout", IconName::ZedBurnMode)
-                    .icon_size(IconSize::XSmall)
-                    .on_click(cx.listener(|this, _event, window, cx| {
-                        this.toggle_burn_mode(&ToggleBurnMode, window, cx);
-                    })),
-            );
-        }
 
         Some(
             div()
@@ -1402,7 +1398,7 @@ impl MessageEditor {
             })
             .ok();
         });
-        // Replace existing load task, if any, causing it to be cancelled.
+        // Replace existing load task, if any, causing it to be canceled.
         let load_task = load_task.shared();
         self.load_context_task = Some(load_task.clone());
         cx.spawn(async move |this, cx| {
@@ -1444,7 +1440,7 @@ impl MessageEditor {
                     let message_text = editor.read(cx).text(cx);
 
                     if message_text.is_empty()
-                        && loaded_context.map_or(true, |loaded_context| loaded_context.is_empty())
+                        && loaded_context.is_none_or(|loaded_context| loaded_context.is_empty())
                     {
                         return None;
                     }
@@ -1557,9 +1553,8 @@ impl ContextCreasesAddon {
         cx: &mut Context<Editor>,
     ) {
         self.creases.entry(key).or_default().extend(creases);
-        self._subscription = Some(cx.subscribe(
-            &context_store,
-            |editor, _, event, cx| match event {
+        self._subscription = Some(
+            cx.subscribe(context_store, |editor, _, event, cx| match event {
                 ContextStoreEvent::ContextRemoved(key) => {
                     let Some(this) = editor.addon_mut::<Self>() else {
                         return;
@@ -1579,8 +1574,8 @@ impl ContextCreasesAddon {
                     editor.edit(ranges.into_iter().zip(replacement_texts), cx);
                     cx.notify();
                 }
-            },
-        ))
+            }),
+        )
     }
 
     pub fn into_inner(self) -> HashMap<AgentContextKey, Vec<(CreaseId, SharedString)>> {
@@ -1608,7 +1603,8 @@ pub fn extract_message_creases(
         .collect::<HashMap<_, _>>();
     // Filter the addon's list of creases based on what the editor reports,
     // since the addon might have removed creases in it.
-    let creases = editor.display_map.update(cx, |display_map, cx| {
+
+    editor.display_map.update(cx, |display_map, cx| {
         display_map
             .snapshot(cx)
             .crease_snapshot
@@ -1632,8 +1628,7 @@ pub fn extract_message_creases(
                 }
             })
             .collect()
-    });
-    creases
+    })
 }
 
 impl EventEmitter<MessageEditorEvent> for MessageEditor {}
@@ -1685,7 +1680,7 @@ impl Render for MessageEditor {
         let has_history = self
             .history_store
             .as_ref()
-            .and_then(|hs| hs.update(cx, |hs, cx| hs.entries(cx).len() > 0).ok())
+            .and_then(|hs| hs.update(cx, |hs, cx| !hs.entries(cx).is_empty()).ok())
             .unwrap_or(false)
             || self
                 .thread
@@ -1698,7 +1693,7 @@ impl Render for MessageEditor {
                 !has_history && is_signed_out && has_configured_providers,
                 |this| this.child(cx.new(ApiKeysWithProviders::new)),
             )
-            .when(changed_buffers.len() > 0, |parent| {
+            .when(!changed_buffers.is_empty(), |parent| {
                 parent.child(self.render_edits_bar(&changed_buffers, window, cx))
             })
             .child(self.render_editor(window, cx))
@@ -1769,7 +1764,6 @@ impl AgentPreview for MessageEditor {
     ) -> Option<AnyElement> {
         if let Some(workspace) = workspace.upgrade() {
             let fs = workspace.read(cx).app_state().fs.clone();
-            let user_store = workspace.read(cx).app_state().user_store.clone();
             let project = workspace.read(cx).project().clone();
             let weak_project = project.downgrade();
             let context_store = cx.new(|_cx| ContextStore::new(weak_project, None));
@@ -1782,7 +1776,6 @@ impl AgentPreview for MessageEditor {
                 MessageEditor::new(
                     fs,
                     workspace.downgrade(),
-                    user_store,
                     context_store,
                     None,
                     thread_store.downgrade(),
@@ -1805,7 +1798,7 @@ impl AgentPreview for MessageEditor {
                             .bg(cx.theme().colors().panel_background)
                             .border_1()
                             .border_color(cx.theme().colors().border)
-                            .child(default_message_editor.clone())
+                            .child(default_message_editor)
                             .into_any_element(),
                     )])
                     .into_any_element(),

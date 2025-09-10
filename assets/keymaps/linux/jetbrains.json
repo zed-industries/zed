@@ -95,7 +95,7 @@
       "ctrl-shift-r": ["pane::DeploySearch", { "replace_enabled": true }],
       "alt-shift-f10": "task::Spawn",
       "ctrl-e": "file_finder::Toggle",
-      "ctrl-k": "git_panel::ToggleFocus", // bug: This should also focus commit editor
+      // "ctrl-k": "git_panel::ToggleFocus", // bug: This should also focus commit editor
       "ctrl-shift-n": "file_finder::Toggle",
       "ctrl-shift-a": "command_palette::Toggle",
       "shift shift": "command_palette::Toggle",
@@ -125,7 +125,7 @@
   {
     "context": "Workspace || Editor",
     "bindings": {
-      "alt-f12": "terminal_panel::ToggleFocus",
+      "alt-f12": "terminal_panel::Toggle",
       "ctrl-shift-k": "git::Push"
     }
   },
@@ -166,7 +166,7 @@
   { "context": "Diagnostics > Editor", "bindings": { "alt-6": "pane::CloseActiveItem" } },
   { "context": "OutlinePanel", "bindings": { "alt-7": "workspace::CloseActiveDock" } },
   {
-    "context": "Dock || Workspace || Terminal || OutlinePanel || ProjectPanel || CollabPanel || (Editor && mode == auto_height)",
+    "context": "Dock || Workspace || OutlinePanel || ProjectPanel || CollabPanel || (Editor && mode == auto_height)",
     "bindings": {
       "escape": "editor::ToggleFocus",
       "shift-escape": "workspace::CloseActiveDock"

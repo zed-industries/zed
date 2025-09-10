@@ -88,11 +88,11 @@ pub fn text_diff_with_options(
                 let new_offset = new_byte_range.start;
                 hunk_input.clear();
                 hunk_input.update_before(tokenize(
-                    &old_text[old_byte_range.clone()],
+                    &old_text[old_byte_range],
                     options.language_scope.clone(),
                 ));
                 hunk_input.update_after(tokenize(
-                    &new_text[new_byte_range.clone()],
+                    &new_text[new_byte_range],
                     options.language_scope.clone(),
                 ));
                 diff_internal(&hunk_input, |old_byte_range, new_byte_range, _, _| {
@@ -103,7 +103,7 @@ pub fn text_diff_with_options(
                     let replacement_text = if new_byte_range.is_empty() {
                         empty.clone()
                     } else {
-                        new_text[new_byte_range.clone()].into()
+                        new_text[new_byte_range].into()
                     };
                     edits.push((old_byte_range, replacement_text));
                 });
@@ -111,9 +111,9 @@ pub fn text_diff_with_options(
                 let replacement_text = if new_byte_range.is_empty() {
                     empty.clone()
                 } else {
-                    new_text[new_byte_range.clone()].into()
+                    new_text[new_byte_range].into()
                 };
-                edits.push((old_byte_range.clone(), replacement_text));
+                edits.push((old_byte_range, replacement_text));
             }
         },
     );
@@ -154,19 +154,19 @@ fn diff_internal(
         input,
         |old_tokens: Range<u32>, new_tokens: Range<u32>| {
             old_offset += token_len(
-                &input,
+                input,
                 &input.before[old_token_ix as usize..old_tokens.start as usize],
             );
             new_offset += token_len(
-                &input,
+                input,
                 &input.after[new_token_ix as usize..new_tokens.start as usize],
             );
             let old_len = token_len(
-                &input,
+                input,
                 &input.before[old_tokens.start as usize..old_tokens.end as usize],
             );
             let new_len = token_len(
-                &input,
+                input,
                 &input.after[new_tokens.start as usize..new_tokens.end as usize],
             );
             let old_byte_range = old_offset..old_offset + old_len;
@@ -186,14 +186,14 @@ fn tokenize(text: &str, language_scope: Option<LanguageScope>) -> impl Iterator<
     let mut prev = None;
     let mut start_ix = 0;
     iter::from_fn(move || {
-        while let Some((ix, c)) = chars.next() {
+        for (ix, c) in chars.by_ref() {
             let mut token = None;
             let kind = classifier.kind(c);
-            if let Some((prev_char, prev_kind)) = prev {
-                if kind != prev_kind || (kind == CharKind::Punctuation && c != prev_char) {
-                    token = Some(&text[start_ix..ix]);
-                    start_ix = ix;
-                }
+            if let Some((prev_char, prev_kind)) = prev
+                && (kind != prev_kind || (kind == CharKind::Punctuation && c != prev_char))
+            {
+                token = Some(&text[start_ix..ix]);
+                start_ix = ix;
             }
             prev = Some((c, kind));
             if token.is_some() {

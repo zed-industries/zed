@@ -1,22 +1,29 @@
 use std::sync::Arc;
 
+use gpui::Transformation;
 use gpui::{App, IntoElement, Rems, RenderOnce, Size, Styled, Window, svg};
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString, IntoStaticStr};
 
 use crate::Color;
 use crate::prelude::*;
+use crate::traits::transformable::Transformable;
 
 #[derive(
     Debug, PartialEq, Eq, Copy, Clone, EnumIter, EnumString, IntoStaticStr, Serialize, Deserialize,
 )]
 #[strum(serialize_all = "snake_case")]
 pub enum VectorName {
-    ZedLogo,
-    ZedXCopilot,
-    Grid,
+    AcpGrid,
+    AcpLogo,
+    AcpLogoSerif,
     AiGrid,
     DebuggerGrid,
+    Grid,
+    ProTrialStamp,
+    ProUserStamp,
+    ZedLogo,
+    ZedXCopilot,
 }
 
 impl VectorName {
@@ -37,6 +44,7 @@ pub struct Vector {
     path: Arc<str>,
     color: Color,
     size: Size<Rems>,
+    transformation: Transformation,
 }
 
 impl Vector {
@@ -46,6 +54,7 @@ impl Vector {
             path: vector.path(),
             color: Color::default(),
             size: Size { width, height },
+            transformation: Transformation::default(),
         }
     }
 
@@ -68,6 +77,13 @@ impl Vector {
     }
 }
 
+impl Transformable for Vector {
+    fn transform(mut self, transformation: Transformation) -> Self {
+        self.transformation = transformation;
+        self
+    }
+}
+
 impl RenderOnce for Vector {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let width = self.size.width;
@@ -81,6 +97,7 @@ impl RenderOnce for Vector {
             .h(height)
             .path(self.path)
             .text_color(self.color.color(cx))
+            .with_transformation(self.transformation)
     }
 }
 

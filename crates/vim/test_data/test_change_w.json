@@ -30,3 +30,7 @@
 {"Key":"c"}
 {"Key":"shift-w"}
 {"Get":{"state":"Test teˇ test","mode":"Insert"}}
+{"Put":{"state":"tesˇt-test"}}
+{"Key":"c"}
+{"Key":"w"}
+{"Get":{"state":"tesˇ-test","mode":"Insert"}}

@@ -32,7 +32,7 @@ impl Vim {
         let count = Vim::take_count(cx).unwrap_or(1);
         Vim::take_forced_motion(cx);
 
-        self.update_editor(window, cx, |vim, editor, window, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             let text_layout_details = editor.text_layout_details(window);
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
@@ -236,7 +236,7 @@ impl Vim {
     ) {
         self.stop_recording(cx);
         let selected_register = self.selected_register.take();
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
@@ -273,7 +273,7 @@ impl Vim {
     ) {
         self.stop_recording(cx);
         let selected_register = self.selected_register.take();
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             let text_layout_details = editor.text_layout_details(window);
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
@@ -474,8 +474,7 @@ mod test {
             Mode::Normal,
         );
         assert_eq!(
-            cx.read_from_clipboard()
-                .map(|item| item.text().unwrap().to_string()),
+            cx.read_from_clipboard().map(|item| item.text().unwrap()),
             Some("jumps".into())
         );
         cx.simulate_keystrokes("d d p");
@@ -487,8 +486,7 @@ mod test {
             Mode::Normal,
         );
         assert_eq!(
-            cx.read_from_clipboard()
-                .map(|item| item.text().unwrap().to_string()),
+            cx.read_from_clipboard().map(|item| item.text().unwrap()),
             Some("jumps".into())
         );
         cx.write_to_clipboard(ClipboardItem::new_string("test-copy".to_string()));

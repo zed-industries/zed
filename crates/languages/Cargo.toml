@@ -36,12 +36,12 @@ load-grammars = [
 [dependencies]
 anyhow.workspace = true
 async-compression.workspace = true
+async-fs.workspace = true
 async-tar.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
 collections.workspace = true
 dap.workspace = true
-feature_flags.workspace = true
 futures.workspace = true
 gpui.workspace = true
 http_client.workspace = true
@@ -62,6 +62,7 @@ regex.workspace = true
 rope.workspace = true
 rust-embed.workspace = true
 schemars.workspace = true
+sha2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
@@ -69,6 +70,7 @@ settings.workspace = true
 smol.workspace = true
 snippet_provider.workspace = true
 task.workspace = true
+tempfile.workspace = true
 toml.workspace = true
 tree-sitter = { workspace = true, optional = true }
 tree-sitter-bash = { workspace = true, optional = true }

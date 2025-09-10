@@ -317,7 +317,7 @@ async fn filter_and_sort_matches(
     let candidates: Arc<[StringMatchCandidate]> = completions
         .iter()
         .enumerate()
-        .map(|(id, completion)| StringMatchCandidate::new(id, &completion.label.filter_text()))
+        .map(|(id, completion)| StringMatchCandidate::new(id, completion.label.filter_text()))
         .collect();
     let cancel_flag = Arc::new(AtomicBool::new(false));
     let background_executor = cx.executor();
@@ -331,5 +331,5 @@ async fn filter_and_sort_matches(
         background_executor,
     )
     .await;
-    CompletionsMenu::sort_string_matches(matches, Some(query), snippet_sort_order, &completions)
+    CompletionsMenu::sort_string_matches(matches, Some(query), snippet_sort_order, completions)
 }

@@ -1,8 +1,8 @@
 use crate::{
     Copy, CopyAndTrim, CopyPermalinkToLine, Cut, DisplayPoint, DisplaySnapshot, Editor,
     EvaluateSelectedText, FindAllReferences, GoToDeclaration, GoToDefinition, GoToImplementation,
-    GoToTypeDefinition, Paste, Rename, RevealInFileManager, SelectMode, SelectionEffects,
-    SelectionExt, ToDisplayPoint, ToggleCodeActions,
+    GoToTypeDefinition, Paste, Rename, RevealInFileManager, RunToCursor, SelectMode,
+    SelectionEffects, SelectionExt, ToDisplayPoint, ToggleCodeActions,
     actions::{Format, FormatSelections},
     selections_collection::SelectionsCollection,
 };
@@ -61,13 +61,13 @@ impl MouseContextMenu {
             source,
             offset: position - (source_position + content_origin),
         };
-        return Some(MouseContextMenu::new(
+        Some(MouseContextMenu::new(
             editor,
             menu_position,
             context_menu,
             window,
             cx,
-        ));
+        ))
     }
 
     pub(crate) fn new(
@@ -102,11 +102,11 @@ impl MouseContextMenu {
                 let display_snapshot = &editor
                     .display_map
                     .update(cx, |display_map, cx| display_map.snapshot(cx));
-                let selection_init_range = selection_init.display_range(&display_snapshot);
+                let selection_init_range = selection_init.display_range(display_snapshot);
                 let selection_now_range = editor
                     .selections
                     .newest_anchor()
-                    .display_range(&display_snapshot);
+                    .display_range(display_snapshot);
                 if selection_now_range == selection_init_range {
                     return;
                 }
@@ -190,25 +190,33 @@ pub fn deploy_context_menu(
             .all::<PointUtf16>(cx)
             .into_iter()
             .any(|s| !s.is_empty());
-        let has_git_repo = anchor.buffer_id.is_some_and(|buffer_id| {
-            project
-                .read(cx)
-                .git_store()
-                .read(cx)
-                .repository_and_path_for_buffer_id(buffer_id, cx)
-                .is_some()
-        });
+        let has_git_repo = buffer
+            .buffer_id_for_anchor(anchor)
+            .is_some_and(|buffer_id| {
+                project
+                    .read(cx)
+                    .git_store()
+                    .read(cx)
+                    .repository_and_path_for_buffer_id(buffer_id, cx)
+                    .is_some()
+            });
 
         let evaluate_selection = window.is_action_available(&EvaluateSelectedText, cx);
+        let run_to_cursor = window.is_action_available(&RunToCursor, cx);
 
         ui::ContextMenu::build(window, cx, |menu, _window, _cx| {
             let builder = menu
                 .on_blur_subscription(Subscription::new(|| {}))
-                .when(evaluate_selection && has_selections, |builder| {
-                    builder
-                        .action("Evaluate Selection", Box::new(EvaluateSelectedText))
-                        .separator()
+                .when(run_to_cursor, |builder| {
+                    builder.action("Run to Cursor", Box::new(RunToCursor))
                 })
+                .when(evaluate_selection && has_selections, |builder| {
+                    builder.action("Evaluate Selection", Box::new(EvaluateSelectedText))
+                })
+                .when(
+                    run_to_cursor || (evaluate_selection && has_selections),
+                    |builder| builder.separator(),
+                )
                 .action("Go to Definition", Box::new(GoToDefinition))
                 .action("Go to Declaration", Box::new(GoToDeclaration))
                 .action("Go to Type Definition", Box::new(GoToTypeDefinition))

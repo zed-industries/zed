@@ -78,11 +78,11 @@ impl TestDispatcher {
             let state = self.state.lock();
             let next_due_time = state.delayed.first().map(|(time, _)| *time);
             drop(state);
-            if let Some(due_time) = next_due_time {
-                if due_time <= new_now {
-                    self.state.lock().time = due_time;
-                    continue;
-                }
+            if let Some(due_time) = next_due_time
+                && due_time <= new_now
+            {
+                self.state.lock().time = due_time;
+                continue;
             }
             break;
         }
@@ -118,7 +118,7 @@ impl TestDispatcher {
         }
 
         YieldNow {
-            count: self.state.lock().random.gen_range(0..10),
+            count: self.state.lock().random.random_range(0..10),
         }
     }
 
@@ -151,11 +151,11 @@ impl TestDispatcher {
             if deprioritized_background_len == 0 {
                 return false;
             }
-            let ix = state.random.gen_range(0..deprioritized_background_len);
+            let ix = state.random.random_range(0..deprioritized_background_len);
             main_thread = false;
             runnable = state.deprioritized_background.swap_remove(ix);
         } else {
-            main_thread = state.random.gen_ratio(
+            main_thread = state.random.random_ratio(
                 foreground_len as u32,
                 (foreground_len + background_len) as u32,
             );
@@ -170,7 +170,7 @@ impl TestDispatcher {
                     .pop_front()
                     .unwrap();
             } else {
-                let ix = state.random.gen_range(0..background_len);
+                let ix = state.random.random_range(0..background_len);
                 runnable = state.background.swap_remove(ix);
             };
         };
@@ -241,7 +241,7 @@ impl TestDispatcher {
     pub fn gen_block_on_ticks(&self) -> usize {
         let mut lock = self.state.lock();
         let block_on_ticks = lock.block_on_ticks.clone();
-        lock.random.gen_range(block_on_ticks)
+        lock.random.random_range(block_on_ticks)
     }
 }
 
@@ -270,9 +270,7 @@ impl PlatformDispatcher for TestDispatcher {
     fn dispatch(&self, runnable: Runnable, label: Option<TaskLabel>) {
         {
             let mut state = self.state.lock();
-            if label.map_or(false, |label| {
-                state.deprioritized_task_labels.contains(&label)
-            }) {
+            if label.is_some_and(|label| state.deprioritized_task_labels.contains(&label)) {
                 state.deprioritized_background.push(runnable);
             } else {
                 state.background.push(runnable);

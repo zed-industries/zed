@@ -45,10 +45,11 @@ impl Cursor {
     }
 
     fn set_theme_internal(&mut self, theme_name: Option<String>) {
-        if let Some(loaded_theme) = self.loaded_theme.as_ref() {
-            if loaded_theme.name == theme_name && loaded_theme.scaled_size == self.scaled_size {
-                return;
-            }
+        if let Some(loaded_theme) = self.loaded_theme.as_ref()
+            && loaded_theme.name == theme_name
+            && loaded_theme.scaled_size == self.scaled_size
+        {
+            return;
         }
         let result = if let Some(theme_name) = theme_name.as_ref() {
             CursorTheme::load_from_name(
@@ -66,7 +67,7 @@ impl Cursor {
         {
             self.loaded_theme = Some(LoadedTheme {
                 theme,
-                name: theme_name.map(|name| name.to_string()),
+                name: theme_name,
                 scaled_size: self.scaled_size,
             });
         }
@@ -144,7 +145,7 @@ impl Cursor {
             hot_y as i32 / scale,
         );
 
-        self.surface.attach(Some(&buffer), 0, 0);
+        self.surface.attach(Some(buffer), 0, 0);
         self.surface.damage(0, 0, width as i32, height as i32);
         self.surface.commit();
     }

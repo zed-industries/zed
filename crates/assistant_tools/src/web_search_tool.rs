@@ -2,10 +2,12 @@ use std::{sync::Arc, time::Duration};
 
 use crate::schema::json_schema_for;
 use crate::ui::ToolCallCardHeader;
+use action_log::ActionLog;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{
-    ActionLog, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput, ToolUseStatus,
+    Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput, ToolUseStatus,
 };
+use cloud_llm_client::{WebSearchResponse, WebSearchResult};
 use futures::{Future, FutureExt, TryFutureExt};
 use gpui::{
     AnyWindowHandle, App, AppContext, Context, Entity, IntoElement, Task, WeakEntity, Window,
@@ -17,7 +19,6 @@ use serde::{Deserialize, Serialize};
 use ui::{IconName, Tooltip, prelude::*};
 use web_search::WebSearchRegistry;
 use workspace::Workspace;
-use zed_llm_client::{WebSearchResponse, WebSearchResult};
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct WebSearchToolInput {
@@ -45,7 +46,7 @@ impl Tool for WebSearchTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::Globe
+        IconName::ToolWeb
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
@@ -177,7 +178,7 @@ impl ToolCard for WebSearchToolCard {
                             .label_size(LabelSize::Small)
                             .color(Color::Muted)
                             .icon(IconName::ArrowUpRight)
-                            .icon_size(IconSize::XSmall)
+                            .icon_size(IconSize::Small)
                             .icon_position(IconPosition::End)
                             .truncate(true)
                             .tooltip({
@@ -192,10 +193,7 @@ impl ToolCard for WebSearchToolCard {
                                     )
                                 }
                             })
-                            .on_click({
-                                let url = url.clone();
-                                move |_, _, cx| cx.open_url(&url)
-                            })
+                            .on_click(move |_, _, cx| cx.open_url(&url))
                     }))
                     .into_any(),
             ),

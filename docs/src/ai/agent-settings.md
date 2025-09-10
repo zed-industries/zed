@@ -108,7 +108,7 @@ Specify a custom temperature for a provider and/or model:
 
 ## Agent Panel Settings {#agent-panel-settings}
 
-Note that some of these settings are also surfaced in the Agent Panel's settings UI, which you can access either via the `agent: open configuration` action or by the dropdown menu on the top-right corner of the panel.
+Note that some of these settings are also surfaced in the Agent Panel's settings UI, which you can access either via the `agent: open settings` action or by the dropdown menu on the top-right corner of the panel.
 
 ### Default View
 
@@ -131,7 +131,7 @@ The default value is `false`.
 ```json
 {
   "agent": {
-    "always_allow_tool_actions": "true"
+    "always_allow_tool_actions": true
   }
 }
 ```
@@ -146,7 +146,7 @@ The default value is `false`.
 ```json
 {
   "agent": {
-    "single_file_review": "true"
+    "single_file_review": true
   }
 }
 ```
@@ -163,7 +163,7 @@ The default value is `false`.
 ```json
 {
   "agent": {
-    "play_sound_when_agent_done": "true"
+    "play_sound_when_agent_done": true
   }
 }
 ```
@@ -179,7 +179,7 @@ The default value is `false`.
 ```json
 {
   "agent": {
-    "use_modifier_to_send": "true"
+    "use_modifier_to_send": true
   }
 }
 ```
@@ -194,7 +194,7 @@ It is set to `true` by default, but if set to false, the card's height is capped
 ```json
 {
   "agent": {
-    "expand_edit_card": "false"
+    "expand_edit_card": false
   }
 }
 ```
@@ -207,7 +207,7 @@ It is set to `true` by default, but if set to false, the card will be fully coll
 ```json
 {
   "agent": {
-    "expand_terminal_card": "false"
+    "expand_terminal_card": false
   }
 }
 ```
@@ -220,7 +220,7 @@ The default value is `true`.
 ```json
 {
   "agent": {
-    "enable_feedback": "false"
+    "enable_feedback": false
   }
 }
 ```

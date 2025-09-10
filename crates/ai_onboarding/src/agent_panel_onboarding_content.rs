@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use client::{Client, UserStore};
+use cloud_llm_client::{Plan, PlanV1, PlanV2};
 use gpui::{Entity, IntoElement, ParentElement};
 use language_model::{LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID};
 use ui::prelude::*;
@@ -24,7 +25,7 @@ impl AgentPanelOnboarding {
         cx.subscribe(
             &LanguageModelRegistry::global(cx),
             |this: &mut Self, _registry, event: &language_model::Event, cx| match event {
-                language_model::Event::ProviderStateChanged
+                language_model::Event::ProviderStateChanged(_)
                 | language_model::Event::AddedProvider(_)
                 | language_model::Event::RemovedProvider(_) => {
                     this.configured_providers = Self::compute_available_providers(cx)
@@ -49,22 +50,22 @@ impl AgentPanelOnboarding {
             .filter(|provider| {
                 provider.is_authenticated(cx) && provider.id() != ZED_CLOUD_PROVIDER_ID
             })
-            .map(|provider| (provider.icon(), provider.name().0.clone()))
+            .map(|provider| (provider.icon(), provider.name().0))
             .collect()
     }
 }
 
 impl Render for AgentPanelOnboarding {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let enrolled_in_trial = matches!(
-            self.user_store.read(cx).current_plan(),
-            Some(proto::Plan::ZedProTrial)
-        );
-
-        let is_pro_user = matches!(
-            self.user_store.read(cx).current_plan(),
-            Some(proto::Plan::ZedPro)
-        );
+        let enrolled_in_trial = self.user_store.read(cx).plan().is_some_and(|plan| {
+            matches!(
+                plan,
+                Plan::V1(PlanV1::ZedProTrial) | Plan::V2(PlanV2::ZedProTrial)
+            )
+        });
+        let is_pro_user = self.user_store.read(cx).plan().is_some_and(|plan| {
+            matches!(plan, Plan::V1(PlanV1::ZedPro) | Plan::V2(PlanV2::ZedPro))
+        });
 
         AgentPanelOnboardingCard::new()
             .child(
@@ -80,7 +81,7 @@ impl Render for AgentPanelOnboarding {
                 }),
             )
             .map(|this| {
-                if enrolled_in_trial || is_pro_user || self.configured_providers.len() >= 1 {
+                if enrolled_in_trial || is_pro_user || !self.configured_providers.is_empty() {
                     this
                 } else {
                     this.child(ApiKeysWithoutProviders::new())

@@ -1,20 +1,19 @@
 mod base_keymap_setting;
 mod editable_setting_control;
-mod key_equivalents;
 mod keymap_file;
 mod settings_file;
 mod settings_json;
 mod settings_store;
+mod settings_ui_core;
 mod vscode_import;
 
-use gpui::App;
+use gpui::{App, Global};
 use rust_embed::RustEmbed;
 use std::{borrow::Cow, fmt, str};
 use util::asset_str;
 
 pub use base_keymap_setting::*;
 pub use editable_setting_control::*;
-pub use key_equivalents::*;
 pub use keymap_file::{
     KeyBindingValidator, KeyBindingValidatorRegistration, KeybindSource, KeybindUpdateOperation,
     KeybindUpdateTarget, KeymapFile, KeymapFileLoadResult,
@@ -22,12 +21,20 @@ pub use keymap_file::{
 pub use settings_file::*;
 pub use settings_json::*;
 pub use settings_store::{
-    InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation, SettingsSources,
-    SettingsStore,
+    InvalidSettingsError, LocalSettingsKind, Settings, SettingsKey, SettingsLocation,
+    SettingsSources, SettingsStore,
 };
+pub use settings_ui_core::*;
+// Re-export the derive macro
+pub use settings_ui_macros::{SettingsKey, SettingsUi};
 pub use vscode_import::{VsCodeSettings, VsCodeSettingsSource};
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ActiveSettingsProfileName(pub String);
+
+impl Global for ActiveSettingsProfileName {}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord, serde::Serialize)]
 pub struct WorktreeId(usize);
 
 impl From<WorktreeId> for usize {
@@ -45,11 +52,11 @@ impl WorktreeId {
         Self(id as usize)
     }
 
-    pub fn to_proto(&self) -> u64 {
+    pub fn to_proto(self) -> u64 {
         self.0 as u64
     }
 
-    pub fn to_usize(&self) -> usize {
+    pub fn to_usize(self) -> usize {
         self.0
     }
 }
@@ -74,6 +81,7 @@ pub fn init(cx: &mut App) {
         .unwrap();
     cx.set_global(settings);
     BaseKeymap::register(cx);
+    SettingsStore::observe_active_settings_profile_name(cx).detach();
 }
 
 pub fn default_settings() -> Cow<'static, str> {
@@ -83,7 +91,10 @@ pub fn default_settings() -> Cow<'static, str> {
 #[cfg(target_os = "macos")]
 pub const DEFAULT_KEYMAP_PATH: &str = "keymaps/default-macos.json";
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+pub const DEFAULT_KEYMAP_PATH: &str = "keymaps/default-windows.json";
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub const DEFAULT_KEYMAP_PATH: &str = "keymaps/default-linux.json";
 
 pub fn default_keymap() -> Cow<'static, str> {
