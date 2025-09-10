@@ -86,19 +86,22 @@ Note that while basedpyright itself defaults to the `recommended` [type-checking
 
 #### Configure Basedpyright
 
-basedpyright offers flexible configuration options specified in a JSON-formatted text configuration. By default, the file is called `pyrightconfig.json` and is located within the root directory of your project. basedpyright settings can also be specified in a `[tool.basedpyright]` (or `[tool.pyright]`) section of a `pyproject.toml` file. A `pyrightconfig.json` file always takes precedence over `pyproject.toml` if both are present.
+basedpyright offers flexible configuration options specified in a JSON-formatted text configuration. 
+
+By default, the file is called `pyrightconfig.json` and is located within the root directory of your project. basedpyright settings can also be specified in a `[tool.basedpyright]` (or `[tool.pyright]`) section of a `pyproject.toml` file. A `pyrightconfig.json` file always takes precedence over `pyproject.toml` if both are present.
 
 For more information, see the basedpyright [configuration documentation](https://docs.basedpyright.com/latest/configuration/config-files/).
 
 #### Basedpyright Settings
 
-basedpyright also accepts specific LSP-related settings, not necessarily connected to a project. These can be changed in the `lsp` section of your `settings.json`.
+basedpyright also accepts specific LSP-related settings, not necessarily connected to a project. 
 
 For example, in order to:
 
-- use strict type-checking level
-- diagnose all files in the workspace instead of the only open files default
+- Use strict type-checking level
+- Diagnose all files in the workspace instead of the only open files default
 
+These can be changed in the `lsp` section of your `settings.json`.
 ```json
 {
   "lsp": {
@@ -131,10 +134,10 @@ In your project root:
 `python3 -m venv .venv
 source .venv/bin/activate`
 
-Zed will recognize .venv and activate it in the terminal without extra configuration.
+Zed will recognize `.venv` and activate it in the terminal without extra configuration.
 
-Link Virtual Environment to Language Server
-For Pyright, create a pyrightconfig.json at the root of your project:
+### Link Virtual Environment to Language Server
+For Pyright, create a `pyrightconfig.json` at the root of your project:
 ``` json {
   "venvPath": ".",
   "venv": ".venv"
@@ -142,12 +145,13 @@ For Pyright, create a pyrightconfig.json at the root of your project:
 ```
 
 Or, if you're using pyproject.toml, add:
-`[tool.pyright]
+``` json 
+[tool.pyright]
 venvPath = "."
 venv = ".venv"`
+```
 
-You can also set the path directly in `settings.json` as shown above.
-This ensures Pyright uses the correct interpreter and dependencies when analyzing your code.
+You can also set the path directly in `settings.json` as shown above. This ensures Pyright uses the correct interpreter and dependencies when analyzing your code.
 
 ## Virtual Environments in the Terminal {#terminal-detect_venv}
 
@@ -223,7 +227,7 @@ Zed uses `debugpy` under the hood, but no manual adapter configuration is requir
 ### Define Custom Debug Configurations
 For reusable setups, create a `.zed/debug.json` file in your project root. This gives you more control over how Zed runs and debugs your code.
 
-### Debug Active File
+#### Debug Active File
 
 ```json
 [
@@ -237,7 +241,7 @@ For reusable setups, create a `.zed/debug.json` file in your project root. This 
 ```
 This runs the file currently open in the editor.
 
-### Debug a Flask App
+#### Debug a Flask App
 
 For projects using Flask, you can define a full launch configuration:
 
