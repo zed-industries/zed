@@ -12,7 +12,7 @@ use util::RandomCharIter;
 
 fn editor_input_with_1000_cursors(bencher: &mut Bencher<'_>, cx: &TestAppContext) {
     let mut cx = cx.clone();
-    let text = String::from_iter(["line:\n"; 500]);
+    let text = String::from_iter(["line:\n"; 1000]);
     let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
 
     let cx = cx.add_empty_window();
