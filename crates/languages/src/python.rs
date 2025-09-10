@@ -763,7 +763,7 @@ fn get_venv_parent_dir(env: &PythonEnvironment) -> Option<PathBuf> {
         .as_ref()
         .and_then(|p| p.parent())
         .and_then(|p| p.parent())
-        .filter(|p| is_virtualenv_dir(*p))?;
+        .filter(|p| is_virtualenv_dir(p))?;
 
     venv.parent().map(|parent| parent.to_path_buf())
 }
@@ -828,16 +828,8 @@ impl ToolchainLister for PythonToolchainProvider {
 
             // Compare project paths against worktree root
             let proj_ordering = || {
-                let lhs_project = lhs
-                    .project
-                    .clone()
-                    .or_else(|| get_venv_parent_dir(lhs))
-                    .map(|p| p.to_path_buf());
-                let rhs_project = rhs
-                    .project
-                    .clone()
-                    .or_else(|| get_venv_parent_dir(rhs))
-                    .map(|p| p.to_path_buf());
+                let lhs_project = lhs.project.clone().or_else(|| get_venv_parent_dir(lhs));
+                let rhs_project = rhs.project.clone().or_else(|| get_venv_parent_dir(rhs));
                 match (&lhs_project, &rhs_project) {
                     (Some(l), Some(r)) => (r == &wr).cmp(&(l == &wr)),
                     (Some(l), None) if l == &wr => Ordering::Less,
