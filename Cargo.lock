@@ -13578,6 +13578,7 @@ dependencies = [
  "runtimelib",
  "schemars",
  "serde",
+ "serde_derive",
  "serde_json",
  "settings",
  "smol",

@@ -31,7 +31,7 @@ use theme::ThemeSettings;
 use ui::{IntoElement, prelude::*};
 
 use crate::outputs::OutputContent;
-use crate::repl_settings::REPLSettings;
+use crate::repl_settings::ReplSettings;
 
 /// The `TerminalOutput` struct handles the parsing and rendering of text input,
 /// simulating a basic terminal environment within REPL output.
@@ -97,8 +97,8 @@ pub fn terminal_size(window: &mut Window, cx: &mut App) -> terminal::TerminalBou
         .unwrap()
         .width;
 
-    let num_lines = REPLSettings::get_global(cx).max_number_of_lines;
-    let columns = REPLSettings::get_global(cx).max_number_of_columns;
+    let num_lines = ReplSettings::get_global(cx).max_number_of_lines;
+    let columns = ReplSettings::get_global(cx).max_number_of_columns;
 
     // Reversed math from terminal::TerminalSize to get pixel width according to terminal width
     let width = columns as f32 * cell_width;

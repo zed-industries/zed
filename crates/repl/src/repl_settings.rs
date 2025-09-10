@@ -20,7 +20,7 @@ pub struct ReplSettings {
     pub max_number_of_columns: usize,
 }
 
-impl Settings for REPLSettings {
+impl Settings for ReplSettings {
     type FileContent = Self;
 
     fn load(sources: SettingsSources<Self::FileContent>, _cx: &mut App) -> anyhow::Result<Self> {
@@ -46,9 +46,9 @@ fn max_number_of_columns() -> usize {
 }
 
 // Optional: implement Default for programmatic instantiation
-impl Default for REPLSettings {
+impl Default for ReplSettings {
     fn default() -> Self {
-        REPLSettings {
+        ReplSettings {
             max_number_of_lines: DEFAULT_NUM_LINES,
             max_number_of_columns: DEFAULT_NUM_COLUMNS,
         }
