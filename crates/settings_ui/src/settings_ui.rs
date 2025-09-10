@@ -375,6 +375,7 @@ fn render_content(
         &mut path,
         content,
         &mut None,
+        true,
         window,
         cx,
     );
@@ -385,8 +386,8 @@ fn render_recursive(
     index: usize,
     path: &mut SmallVec<[SharedString; 1]>,
     mut element: Div,
-    // todo(settings_ui): can this be a ref without cx borrow issues?
     fallback_path: &mut Option<SmallVec<[SharedString; 1]>>,
+    render_next_title: bool,
     window: &mut Window,
     cx: &mut App,
 ) -> Div {
@@ -395,7 +396,9 @@ fn render_recursive(
             .child(Label::new(SharedString::new_static("No settings found")).color(Color::Error));
     };
 
-    element = element.child(Label::new(child.title.clone()).size(LabelSize::Large));
+    if render_next_title {
+        element = element.child(Label::new(child.title.clone()).size(LabelSize::Large));
+    }
 
     // todo(settings_ui): subgroups?
     let mut pushed_path = false;
@@ -452,6 +455,7 @@ fn render_recursive(
                 path,
                 element,
                 fallback_path,
+                false,
                 window,
                 cx,
             );
@@ -494,6 +498,7 @@ fn render_recursive(
                     path,
                     element,
                     &mut Some(defaults_path.clone()),
+                    true,
                     window,
                     cx,
                 );
@@ -516,6 +521,7 @@ fn render_recursive(
                 path,
                 element,
                 fallback_path,
+                true,
                 window,
                 cx,
             );
