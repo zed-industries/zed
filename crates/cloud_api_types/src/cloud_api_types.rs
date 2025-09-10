@@ -29,6 +29,8 @@ pub struct AuthenticatedUser {
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct PlanInfo {
     pub plan: cloud_llm_client::PlanV1,
+    #[serde(default)]
+    pub plan_v2: Option<cloud_llm_client::PlanV2>,
     pub subscription_period: Option<SubscriptionPeriod>,
     pub usage: cloud_llm_client::CurrentUsage,
     pub trial_started_at: Option<Timestamp>,
@@ -39,7 +41,7 @@ pub struct PlanInfo {
 
 impl PlanInfo {
     pub fn plan(&self) -> Plan {
-        Plan::V1(self.plan)
+        self.plan_v2.map(Plan::V2).unwrap_or(Plan::V1(self.plan))
     }
 }
 

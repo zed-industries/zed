@@ -270,6 +270,7 @@ pub fn make_get_authenticated_user_response(
         feature_flags: vec![],
         plan: PlanInfo {
             plan: PlanV1::ZedPro,
+            plan_v2: None,
             subscription_period: None,
             usage: CurrentUsage {
                 model_requests: UsageData {
