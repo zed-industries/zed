@@ -1455,11 +1455,28 @@ impl PickerDelegate for DebugDelegate {
 
         let subtitle = match task_kind {
             Some(TaskSourceKind::Worktree {
+                id: worktree_id,
                 directory_in_worktree,
                 ..
-                // todo!("We should get the absolute path by using the worktree id if there's more than one
-                // visible worktrees
-            }) => Some(directory_in_worktree.display().to_string()),
+            }) => self
+                .debug_panel
+                .update(cx, |debug_panel, cx| {
+                    let project = debug_panel.project().read(cx);
+                    let worktrees: Vec<_> = project.visible_worktrees(cx).collect();
+
+                    if worktrees.len() > 1 {
+                        if let Some(worktree) = project.worktree_for_id(*worktree_id, cx) {
+                            let worktree_path = worktree.read(cx).abs_path();
+                            let full_path = worktree_path.join(directory_in_worktree);
+                            Some(full_path.display().to_string())
+                        } else {
+                            Some(directory_in_worktree.display().to_string())
+                        }
+                    } else {
+                        Some(directory_in_worktree.display().to_string())
+                    }
+                })
+                .unwrap_or_else(|_| Some(directory_in_worktree.display().to_string())),
             Some(TaskSourceKind::AbsPath { abs_path, .. }) => {
                 Some(abs_path.to_string_lossy().into_owned())
             }
