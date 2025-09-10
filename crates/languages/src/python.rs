@@ -6,7 +6,6 @@ use dap::adapters::latest_github_release;
 use futures::{AsyncBufReadExt, StreamExt as _};
 use gpui::{App, Task};
 use gpui::{AsyncApp, SharedString};
-#[cfg(target_os = "macos")]
 use http_client::github::AssetKind;
 use http_client::github::GitHubLspBinaryVersion;
 use language::ToolchainList;
@@ -1834,7 +1833,6 @@ impl LspAdapter for RuffLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        dbg!();
         maybe!(async {
             let mut last = None;
             let mut entries = self.fs.read_dir(&container_dir).await?;
@@ -1846,8 +1844,6 @@ impl LspAdapter for RuffLspAdapter {
                 last = Some(path);
             }
 
-            dbg!(&last);
-
             let path = last.context("no cached binary")?;
             let path = match Self::GITHUB_ASSET_KIND {
                 AssetKind::TarGz | AssetKind::Gz => {
@@ -1856,11 +1852,11 @@ impl LspAdapter for RuffLspAdapter {
                 AssetKind::Zip => path.join("ruff.exe"),
             };
 
-            anyhow::Ok(dbg!(LanguageServerBinary {
+            anyhow::Ok(LanguageServerBinary {
                 path,
                 env: None,
                 arguments: vec!["server".into()],
-            }))
+            })
         })
         .await
         .log_err()
