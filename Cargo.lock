@@ -16710,7 +16710,6 @@ dependencies = [
  "db",
  "gpui",
  "http_client",
- "keymap_editor",
  "notifications",
  "pretty_assertions",
  "project",
