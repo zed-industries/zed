@@ -20,46 +20,16 @@
       "ctrl-c": "menu::Cancel",
       "escape": "menu::Cancel",
       "alt-shift-enter": "menu::Restart",
-      "alt-enter": [
-        "picker::ConfirmInput",
-        {
-          "secondary": false
-        }
-      ],
-      "ctrl-alt-enter": [
-        "picker::ConfirmInput",
-        {
-          "secondary": true
-        }
-      ],
+      "alt-enter": ["picker::ConfirmInput", { "secondary": false }],
+      "ctrl-alt-enter": ["picker::ConfirmInput", { "secondary": true }],
       "ctrl-shift-w": "workspace::CloseWindow",
       "shift-escape": "workspace::ToggleZoom",
       "open": "workspace::Open",
       "ctrl-o": "workspace::Open",
-      "ctrl-=": [
-        "zed::IncreaseBufferFontSize",
-        {
-          "persist": false
-        }
-      ],
-      "ctrl-+": [
-        "zed::IncreaseBufferFontSize",
-        {
-          "persist": false
-        }
-      ],
-      "ctrl--": [
-        "zed::DecreaseBufferFontSize",
-        {
-          "persist": false
-        }
-      ],
-      "ctrl-0": [
-        "zed::ResetBufferFontSize",
-        {
-          "persist": false
-        }
-      ],
+      "ctrl-=": ["zed::IncreaseBufferFontSize", { "persist": false }],
+      "ctrl-+": ["zed::IncreaseBufferFontSize", { "persist": false }],
+      "ctrl--": ["zed::DecreaseBufferFontSize", { "persist": false }],
+      "ctrl-0": ["zed::ResetBufferFontSize", { "persist": false }],
       "ctrl-,": "zed::OpenSettings",
       "ctrl-q": "zed::Quit",
       "f4": "debugger::Start",
@@ -94,20 +64,8 @@
       "ctrl-k": "editor::CutToEndOfLine",
       "ctrl-k ctrl-q": "editor::Rewrap",
       "ctrl-k q": "editor::Rewrap",
-      "ctrl-backspace": [
-        "editor::DeleteToPreviousWordStart",
-        {
-          "ignore_newlines": false,
-          "ignore_brackets": false
-        }
-      ],
-      "ctrl-delete": [
-        "editor::DeleteToNextWordEnd",
-        {
-          "ignore_newlines": false,
-          "ignore_brackets": false
-        }
-      ],
+      "ctrl-backspace": ["editor::DeleteToPreviousWordStart", { "ignore_newlines": false, "ignore_brackets": false }],
+      "ctrl-delete": ["editor::DeleteToNextWordEnd", { "ignore_newlines": false, "ignore_brackets": false }],
       "cut": "editor::Cut",
       "shift-delete": "editor::Cut",
       "ctrl-x": "editor::Cut",
@@ -128,23 +86,12 @@
       "pageup": "editor::MovePageUp",
       "alt-pageup": "editor::PageUp",
       "shift-pageup": "editor::SelectPageUp",
-      "home": [
-        "editor::MoveToBeginningOfLine",
-        {
-          "stop_at_soft_wraps": true,
-          "stop_at_indent": true
-        }
-      ],
+      "home": ["editor::MoveToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }],
       "down": "editor::MoveDown",
       "pagedown": "editor::MovePageDown",
       "alt-pagedown": "editor::PageDown",
       "shift-pagedown": "editor::SelectPageDown",
-      "end": [
-        "editor::MoveToEndOfLine",
-        {
-          "stop_at_soft_wraps": true
-        }
-      ],
+      "end": ["editor::MoveToEndOfLine", { "stop_at_soft_wraps": true }],
       "left": "editor::MoveLeft",
       "right": "editor::MoveRight",
       "ctrl-left": "editor::MoveToPreviousWordStart",
@@ -163,19 +110,8 @@
       "ctrl-l": "editor::SelectLine",
       "ctrl-shift-i": "editor::Format",
       "alt-shift-o": "editor::OrganizeImports",
-      "shift-home": [
-        "editor::SelectToBeginningOfLine",
-        {
-          "stop_at_soft_wraps": true,
-          "stop_at_indent": true
-        }
-      ],
-      "shift-end": [
-        "editor::SelectToEndOfLine",
-        {
-          "stop_at_soft_wraps": true
-        }
-      ],
+      "shift-home": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }],
+      "shift-end": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }],
       "ctrl-alt-space": "editor::ShowCharacterPalette",
       "ctrl-;": "editor::ToggleLineNumbers",
       "ctrl-'": "editor::ToggleSelectedDiffHunks",
@@ -501,90 +437,28 @@
   {
     "context": "Pane",
     "bindings": {
-      "alt-1": [
-        "pane::ActivateItem",
-        0
-      ],
-      "alt-2": [
-        "pane::ActivateItem",
-        1
-      ],
-      "alt-3": [
-        "pane::ActivateItem",
-        2
-      ],
-      "alt-4": [
-        "pane::ActivateItem",
-        3
-      ],
-      "alt-5": [
-        "pane::ActivateItem",
-        4
-      ],
-      "alt-6": [
-        "pane::ActivateItem",
-        5
-      ],
-      "alt-7": [
-        "pane::ActivateItem",
-        6
-      ],
-      "alt-8": [
-        "pane::ActivateItem",
-        7
-      ],
-      "alt-9": [
-        "pane::ActivateItem",
-        8
-      ],
+      "alt-1": ["pane::ActivateItem", 0],
+      "alt-2": ["pane::ActivateItem", 1],
+      "alt-3": ["pane::ActivateItem", 2],
+      "alt-4": ["pane::ActivateItem", 3],
+      "alt-5": ["pane::ActivateItem", 4],
+      "alt-6": ["pane::ActivateItem", 5],
+      "alt-7": ["pane::ActivateItem", 6],
+      "alt-8": ["pane::ActivateItem", 7],
+      "alt-9": ["pane::ActivateItem", 8],
       "alt-0": "pane::ActivateLastItem",
       "ctrl-pageup": "pane::ActivatePreviousItem",
       "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-shift-pageup": "pane::SwapItemLeft",
       "ctrl-shift-pagedown": "pane::SwapItemRight",
-      "ctrl-f4": [
-        "pane::CloseActiveItem",
-        {
-          "close_pinned": false
-        }
-      ],
-      "ctrl-w": [
-        "pane::CloseActiveItem",
-        {
-          "close_pinned": false
-        }
-      ],
-      "alt-ctrl-t": [
-        "pane::CloseOtherItems",
-        {
-          "close_pinned": false
-        }
-      ],
+      "ctrl-f4": ["pane::CloseActiveItem", { "close_pinned": false }],
+      "ctrl-w": ["pane::CloseActiveItem", { "close_pinned": false }],
+      "alt-ctrl-t": ["pane::CloseOtherItems", { "close_pinned": false }],
       "alt-ctrl-shift-w": "workspace::CloseInactiveTabsAndPanes",
-      "ctrl-k e": [
-        "pane::CloseItemsToTheLeft",
-        {
-          "close_pinned": false
-        }
-      ],
-      "ctrl-k t": [
-        "pane::CloseItemsToTheRight",
-        {
-          "close_pinned": false
-        }
-      ],
-      "ctrl-k u": [
-        "pane::CloseCleanItems",
-        {
-          "close_pinned": false
-        }
-      ],
-      "ctrl-k w": [
-        "pane::CloseAllItems",
-        {
-          "close_pinned": false
-        }
-      ],
+      "ctrl-k e": ["pane::CloseItemsToTheLeft", { "close_pinned": false }],
+      "ctrl-k t": ["pane::CloseItemsToTheRight", { "close_pinned": false }],
+      "ctrl-k u": ["pane::CloseCleanItems", { "close_pinned": false }],
+      "ctrl-k w": ["pane::CloseAllItems", { "close_pinned": false }],
       "ctrl-k ctrl-w": "workspace::CloseAllItemsAndPanes",
       "back": "pane::GoBack",
       "ctrl-alt--": "pane::GoBack",
@@ -626,62 +500,16 @@
       "alt-shift-left": "editor::SelectSmallerSyntaxNode", // Shrink selection
       "ctrl-shift-l": "editor::SelectAllMatches", // Select all occurrences of current selection
       "ctrl-f2": "editor::SelectAllMatches", // Select all occurrences of current word
-      "ctrl-d": [
-        "editor::SelectNext",
-        {
-          "replace_newest": false
-        }
-      ], // editor.action.addSelectionToNextFindMatch  / find_under_expand
-      "ctrl-shift-down": [
-        "editor::SelectNext",
-        {
-          "replace_newest": false
-        }
-      ], // editor.action.addSelectionToNextFindMatch
-      "ctrl-shift-up": [
-        "editor::SelectPrevious",
-        {
-          "replace_newest": false
-        }
-      ], // editor.action.addSelectionToPreviousFindMatch
-      "ctrl-k ctrl-d": [
-        "editor::SelectNext",
-        {
-          "replace_newest": true
-        }
-      ], // editor.action.moveSelectionToNextFindMatch  / find_under_expand_skip
-      "ctrl-k ctrl-shift-d": [
-        "editor::SelectPrevious",
-        {
-          "replace_newest": true
-        }
-      ], // editor.action.moveSelectionToPreviousFindMatch
+      "ctrl-d": ["editor::SelectNext", { "replace_newest": false }], // editor.action.addSelectionToNextFindMatch  / find_under_expand
+      "ctrl-shift-down": ["editor::SelectNext", { "replace_newest": false }], // editor.action.addSelectionToNextFindMatch
+      "ctrl-shift-up": ["editor::SelectPrevious", { "replace_newest": false }], // editor.action.addSelectionToPreviousFindMatch
+      "ctrl-k ctrl-d": ["editor::SelectNext", { "replace_newest": true }], // editor.action.moveSelectionToNextFindMatch  / find_under_expand_skip
+      "ctrl-k ctrl-shift-d": ["editor::SelectPrevious", { "replace_newest": true }], // editor.action.moveSelectionToPreviousFindMatch
       "ctrl-k ctrl-i": "editor::Hover",
       "ctrl-k ctrl-b": "editor::BlameHover",
-      "ctrl-/": [
-        "editor::ToggleComments",
-        {
-          "advance_downwards": false
-        }
-      ],
-      "f8": [
-        "editor::GoToDiagnostic",
-        {
-          "severity": {
-            "min": "hint",
-            "max": "error"
-          }
-        }
-      ],
-      "shift-f8": [
-        "editor::GoToPreviousDiagnostic",
-        {
-          "severity": {
-            "min": "hint",
-            "max": "error"
-          }
-        }
-      ],
+      "ctrl-/": ["editor::ToggleComments", { "advance_downwards": false }],
+      "f8": ["editor::GoToDiagnostic", { "severity": { "min": "hint", "max": "error" } }],
+      "shift-f8": ["editor::GoToPreviousDiagnostic", { "severity": { "min": "hint", "max": "error" } }],
       "f2": "editor::Rename",
       "f12": "editor::GoToDefinition",
       "alt-f12": "editor::GoToDefinitionSplit",
@@ -697,42 +525,15 @@
       "ctrl-k ctrl-l": "editor::ToggleFold",
       "ctrl-k ctrl-[": "editor::FoldRecursive",
       "ctrl-k ctrl-]": "editor::UnfoldRecursive",
-      "ctrl-k ctrl-1": [
-        "editor::FoldAtLevel",
-        1
-      ],
-      "ctrl-k ctrl-2": [
-        "editor::FoldAtLevel",
-        2
-      ],
-      "ctrl-k ctrl-3": [
-        "editor::FoldAtLevel",
-        3
-      ],
-      "ctrl-k ctrl-4": [
-        "editor::FoldAtLevel",
-        4
-      ],
-      "ctrl-k ctrl-5": [
-        "editor::FoldAtLevel",
-        5
-      ],
-      "ctrl-k ctrl-6": [
-        "editor::FoldAtLevel",
-        6
-      ],
-      "ctrl-k ctrl-7": [
-        "editor::FoldAtLevel",
-        7
-      ],
-      "ctrl-k ctrl-8": [
-        "editor::FoldAtLevel",
-        8
-      ],
-      "ctrl-k ctrl-9": [
-        "editor::FoldAtLevel",
-        9
-      ],
+      "ctrl-k ctrl-1": ["editor::FoldAtLevel", 1],
+      "ctrl-k ctrl-2": ["editor::FoldAtLevel", 2],
+      "ctrl-k ctrl-3": ["editor::FoldAtLevel", 3],
+      "ctrl-k ctrl-4": ["editor::FoldAtLevel", 4],
+      "ctrl-k ctrl-5": ["editor::FoldAtLevel", 5],
+      "ctrl-k ctrl-6": ["editor::FoldAtLevel", 6],
+      "ctrl-k ctrl-7": ["editor::FoldAtLevel", 7],
+      "ctrl-k ctrl-8": ["editor::FoldAtLevel", 8],
+      "ctrl-k ctrl-9": ["editor::FoldAtLevel", 9],
       "ctrl-k ctrl-0": "editor::FoldAll",
       "ctrl-k ctrl-j": "editor::UnfoldAll",
       "ctrl-space": "editor::ShowCompletions",
@@ -772,36 +573,14 @@
   {
     "context": "Workspace",
     "bindings": {
-      "alt-open": [
-        "projects::OpenRecent",
-        {
-          "create_new_window": false
-        }
-      ],
+      "alt-open": ["projects::OpenRecent", { "create_new_window": false }],
       // Change the default action on `menu::Confirm` by setting the parameter
       // "alt-ctrl-o": ["projects::OpenRecent", { "create_new_window": true }],
-      "alt-ctrl-o": [
-        "projects::OpenRecent",
-        {
-          "create_new_window": false
-        }
-      ],
-      "alt-shift-open": [
-        "projects::OpenRemote",
-        {
-          "from_existing_connection": false,
-          "create_new_window": false
-        }
-      ],
+      "alt-ctrl-o": ["projects::OpenRecent", { "create_new_window": false }],
+      "alt-shift-open": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
       // Change to open path modal for existing remote connection by setting the parameter
       // "alt-ctrl-shift-o": "["projects::OpenRemote", { "from_existing_connection": true }]",
-      "alt-ctrl-shift-o": [
-        "projects::OpenRemote",
-        {
-          "from_existing_connection": false,
-          "create_new_window": false
-        }
-      ],
+      "alt-ctrl-shift-o": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
       "alt-ctrl-shift-b": "branches::OpenRecent",
       "alt-shift-enter": "toast::RunAction",
       "ctrl-~": "workspace::NewTerminal",
@@ -815,85 +594,30 @@
       "shift-new": "workspace::NewWindow",
       "ctrl-shift-n": "workspace::NewWindow",
       "ctrl-`": "terminal_panel::Toggle",
-      "f10": [
-        "app_menu::OpenApplicationMenu",
-        "Zed"
-      ],
-      "alt-1": [
-        "workspace::ActivatePane",
-        0
-      ],
-      "alt-2": [
-        "workspace::ActivatePane",
-        1
-      ],
-      "alt-3": [
-        "workspace::ActivatePane",
-        2
-      ],
-      "alt-4": [
-        "workspace::ActivatePane",
-        3
-      ],
-      "alt-5": [
-        "workspace::ActivatePane",
-        4
-      ],
-      "alt-6": [
-        "workspace::ActivatePane",
-        5
-      ],
-      "alt-7": [
-        "workspace::ActivatePane",
-        6
-      ],
-      "alt-8": [
-        "workspace::ActivatePane",
-        7
-      ],
-      "alt-9": [
-        "workspace::ActivatePane",
-        8
-      ],
+      "f10": ["app_menu::OpenApplicationMenu", "Zed"],
+      "alt-1": ["workspace::ActivatePane", 0],
+      "alt-2": ["workspace::ActivatePane", 1],
+      "alt-3": ["workspace::ActivatePane", 2],
+      "alt-4": ["workspace::ActivatePane", 3],
+      "alt-5": ["workspace::ActivatePane", 4],
+      "alt-6": ["workspace::ActivatePane", 5],
+      "alt-7": ["workspace::ActivatePane", 6],
+      "alt-8": ["workspace::ActivatePane", 7],
+      "alt-9": ["workspace::ActivatePane", 8],
       "ctrl-alt-b": "workspace::ToggleRightDock",
       "ctrl-b": "workspace::ToggleLeftDock",
       "ctrl-j": "workspace::ToggleBottomDock",
       "ctrl-alt-y": "workspace::CloseAllDocks",
       "ctrl-alt-0": "workspace::ResetActiveDockSize",
       // For 0px parameter, uses UI font size value.
-      "ctrl-alt--": [
-        "workspace::DecreaseActiveDockSize",
-        {
-          "px": 0
-        }
-      ],
-      "ctrl-alt-=": [
-        "workspace::IncreaseActiveDockSize",
-        {
-          "px": 0
-        }
-      ],
+      "ctrl-alt--": ["workspace::DecreaseActiveDockSize", { "px": 0 }],
+      "ctrl-alt-=": ["workspace::IncreaseActiveDockSize", { "px": 0 }],
       "ctrl-alt-)": "workspace::ResetOpenDocksSize",
-      "ctrl-alt-_": [
-        "workspace::DecreaseOpenDocksSize",
-        {
-          "px": 0
-        }
-      ],
-      "ctrl-alt-+": [
-        "workspace::IncreaseOpenDocksSize",
-        {
-          "px": 0
-        }
-      ],
+      "ctrl-alt-_": ["workspace::DecreaseOpenDocksSize", { "px": 0 }],
+      "ctrl-alt-+": ["workspace::IncreaseOpenDocksSize", { "px": 0 }],
       "shift-find": "pane::DeploySearch",
       "ctrl-shift-f": "pane::DeploySearch",
-      "ctrl-shift-h": [
-        "pane::DeploySearch",
-        {
-          "replace_enabled": true
-        }
-      ],
+      "ctrl-shift-h": ["pane::DeploySearch", { "replace_enabled": true }],
       "ctrl-shift-t": "pane::ReopenClosedItem",
       "ctrl-k ctrl-s": "zed::OpenKeymapEditor",
       "ctrl-k ctrl-t": "theme_selector::Toggle",
@@ -901,12 +625,7 @@
       "ctrl-t": "project_symbols::Toggle",
       "ctrl-p": "file_finder::Toggle",
       "ctrl-tab": "tab_switcher::Toggle",
-      "ctrl-shift-tab": [
-        "tab_switcher::Toggle",
-        {
-          "select_last": true
-        }
-      ],
+      "ctrl-shift-tab": ["tab_switcher::Toggle", { "select_last": true }],
       "ctrl-e": "file_finder::Toggle",
       "f1": "command_palette::Toggle",
       "ctrl-shift-p": "command_palette::Toggle",
@@ -934,12 +653,7 @@
       "ctrl-alt-r": "task::Rerun",
       "alt-t": "task::Rerun",
       "alt-shift-t": "task::Spawn",
-      "alt-shift-r": [
-        "task::Spawn",
-        {
-          "reveal_target": "center"
-        }
-      ],
+      "alt-shift-r": ["task::Spawn", { "reveal_target": "center" }],
       // also possible to spawn tasks by name:
       // "foo-bar": ["task::Spawn", { "task_name": "MyTask", "reveal_target": "dock" }]
       // or by tag:
@@ -1149,36 +863,11 @@
       "alt-ctrl-shift-c": "workspace::CopyRelativePath",
       "enter": "project_panel::Rename",
       "f2": "project_panel::Rename",
-      "backspace": [
-        "project_panel::Trash",
-        {
-          "skip_prompt": false
-        }
-      ],
-      "delete": [
-        "project_panel::Trash",
-        {
-          "skip_prompt": false
-        }
-      ],
-      "shift-delete": [
-        "project_panel::Delete",
-        {
-          "skip_prompt": false
-        }
-      ],
-      "ctrl-backspace": [
-        "project_panel::Delete",
-        {
-          "skip_prompt": false
-        }
-      ],
-      "ctrl-delete": [
-        "project_panel::Delete",
-        {
-          "skip_prompt": false
-        }
-      ],
+      "backspace": ["project_panel::Trash", { "skip_prompt": false }],
+      "delete": ["project_panel::Trash", { "skip_prompt": false }],
+      "shift-delete": ["project_panel::Delete", { "skip_prompt": false }],
+      "ctrl-backspace": ["project_panel::Delete", { "skip_prompt": false }],
+      "ctrl-delete": ["project_panel::Delete", { "skip_prompt": false }],
       "alt-ctrl-r": "project_panel::RevealInFileManager",
       "ctrl-shift-enter": "workspace::OpenWithSystem",
       "alt-d": "project_panel::CompareMarkedFiles",
@@ -1210,36 +899,11 @@
       "shift-tab": "git_panel::FocusEditor",
       "escape": "git_panel::ToggleFocus",
       "alt-enter": "menu::SecondaryConfirm",
-      "delete": [
-        "git::RestoreFile",
-        {
-          "skip_prompt": false
-        }
-      ],
-      "backspace": [
-        "git::RestoreFile",
-        {
-          "skip_prompt": false
-        }
-      ],
-      "shift-delete": [
-        "git::RestoreFile",
-        {
-          "skip_prompt": false
-        }
-      ],
-      "ctrl-backspace": [
-        "git::RestoreFile",
-        {
-          "skip_prompt": false
-        }
-      ],
-      "ctrl-delete": [
-        "git::RestoreFile",
-        {
-          "skip_prompt": false
-        }
-      ]
+      "delete": ["git::RestoreFile", { "skip_prompt": false }],
+      "backspace": ["git::RestoreFile", { "skip_prompt": false }],
+      "shift-delete": ["git::RestoreFile", { "skip_prompt": false }],
+      "ctrl-backspace": ["git::RestoreFile", { "skip_prompt": false }],
+      "ctrl-delete": ["git::RestoreFile", { "skip_prompt": false }]
     }
   },
   {
@@ -1366,12 +1030,7 @@
       "up": "menu::SelectPrevious",
       "down": "menu::SelectNext",
       "tab": "picker::ConfirmCompletion",
-      "alt-enter": [
-        "picker::ConfirmInput",
-        {
-          "secondary": false
-        }
-      ]
+      "alt-enter": ["picker::ConfirmInput", { "secondary": false }]
     }
   },
   {
@@ -1425,76 +1084,28 @@
       "shift-insert": "terminal::Paste",
       "ctrl-shift-v": "terminal::Paste",
       "ctrl-enter": "assistant::InlineAssist",
-      "alt-b": [
-        "terminal::SendText",
-        "\u001bb"
-      ],
-      "alt-f": [
-        "terminal::SendText",
-        "\u001bf"
-      ],
-      "alt-.": [
-        "terminal::SendText",
-        "\u001b."
-      ],
-      "ctrl-delete": [
-        "terminal::SendText",
-        "\u001bd"
-      ],
+      "alt-b": ["terminal::SendText", "\u001bb"],
+      "alt-f": ["terminal::SendText", "\u001bf"],
+      "alt-.": ["terminal::SendText", "\u001b."],
+      "ctrl-delete": ["terminal::SendText", "\u001bd"],
       // Overrides for conflicting keybindings
-      "ctrl-b": [
-        "terminal::SendKeystroke",
-        "ctrl-b"
-      ],
-      "ctrl-c": [
-        "terminal::SendKeystroke",
-        "ctrl-c"
-      ],
-      "ctrl-e": [
-        "terminal::SendKeystroke",
-        "ctrl-e"
-      ],
-      "ctrl-o": [
-        "terminal::SendKeystroke",
-        "ctrl-o"
-      ],
-      "ctrl-w": [
-        "terminal::SendKeystroke",
-        "ctrl-w"
-      ],
-      "ctrl-backspace": [
-        "terminal::SendKeystroke",
-        "ctrl-w"
-      ],
+      "ctrl-b": ["terminal::SendKeystroke", "ctrl-b"],
+      "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"],
+      "ctrl-e": ["terminal::SendKeystroke", "ctrl-e"],
+      "ctrl-o": ["terminal::SendKeystroke", "ctrl-o"],
+      "ctrl-w": ["terminal::SendKeystroke", "ctrl-w"],
+      "ctrl-backspace": ["terminal::SendKeystroke", "ctrl-w"],
       "ctrl-shift-a": "editor::SelectAll",
       "find": "buffer_search::Deploy",
       "ctrl-shift-f": "buffer_search::Deploy",
       "ctrl-shift-l": "terminal::Clear",
       "ctrl-shift-w": "pane::CloseActiveItem",
-      "up": [
-        "terminal::SendKeystroke",
-        "up"
-      ],
-      "pageup": [
-        "terminal::SendKeystroke",
-        "pageup"
-      ],
-      "down": [
-        "terminal::SendKeystroke",
-        "down"
-      ],
-      "pagedown": [
-        "terminal::SendKeystroke",
-        "pagedown"
-      ],
-      "escape": [
-        "terminal::SendKeystroke",
-        "escape"
-      ],
-      "enter": [
-        "terminal::SendKeystroke",
-        "enter"
-      ],
+      "up": ["terminal::SendKeystroke", "up"],
+      "pageup": ["terminal::SendKeystroke", "pageup"],
+      "down": ["terminal::SendKeystroke", "down"],
+      "pagedown": ["terminal::SendKeystroke", "pagedown"],
+      "escape": ["terminal::SendKeystroke", "escape"],
+      "enter": ["terminal::SendKeystroke", "enter"],
       "shift-pageup": "terminal::ScrollPageUp",
       "shift-pagedown": "terminal::ScrollPageDown",
       "shift-up": "terminal::ScrollLineUp",
