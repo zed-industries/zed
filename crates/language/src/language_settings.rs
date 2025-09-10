@@ -8,7 +8,7 @@ use ec4rs::{
     property::{FinalNewline, IndentSize, IndentStyle, MaxLineLen, TabWidth, TrimTrailingWs},
 };
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
-use gpui::{App, Modifiers};
+use gpui::{App, Modifiers, SharedString};
 use itertools::{Either, Itertools};
 use schemars::{JsonSchema, json_schema};
 use serde::{
@@ -545,6 +545,8 @@ pub struct LanguageSettingsContent {
     #[serde(default)]
     pub show_whitespaces: Option<ShowWhitespaceSetting>,
     /// Visible characters used to render whitespace when show_whitespaces is enabled.
+    ///
+    /// Default: "•" for spaces, "→" for tabs.
     #[serde(default)]
     pub whitespace_map: Option<WhitespaceMap>,
     /// Whether to start a new line with a comment when a previous line is a comment as well.
@@ -823,10 +825,23 @@ pub enum ShowWhitespaceSetting {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, SettingsUi)]
 pub struct WhitespaceMap {
     #[serde(default)]
-    pub space: String,
-
+    pub space: Option<String>,
     #[serde(default)]
-    pub tab: String,
+    pub tab: Option<String>,
+}
+
+impl WhitespaceMap {
+    pub fn space(&self) -> SharedString {
+        self.space
+            .as_ref()
+            .map_or_else(|| SharedString::from("•"), |s| SharedString::from(s))
+    }
+
+    pub fn tab(&self) -> SharedString {
+        self.tab
+            .as_ref()
+            .map_or_else(|| SharedString::from("→"), |s| SharedString::from(s))
+    }
 }
 
 /// Controls which formatter should be used when formatting code.
