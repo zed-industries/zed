@@ -822,7 +822,7 @@ impl ConfigurationView {
                   Label::new(
                       format!("You can also assign the {OLLAMA_API_KEY_VAR} environment variable and restart Zed.")
                   )
-                  .size(LabelSize::XSmall)
+                  .size(LabelSize::Small)
                   .color(Color::Muted),
               )
         } else {
