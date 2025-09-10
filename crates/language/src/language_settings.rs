@@ -8,7 +8,7 @@ use ec4rs::{
     property::{FinalNewline, IndentSize, IndentStyle, MaxLineLen, TabWidth, TrimTrailingWs},
 };
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
-use gpui::{App, Modifiers};
+use gpui::{App, Modifiers, SharedString};
 use itertools::{Either, Itertools};
 use schemars::{JsonSchema, json_schema};
 use serde::{
@@ -123,6 +123,8 @@ pub struct LanguageSettings {
     pub edit_predictions_disabled_in: Vec<String>,
     /// Whether to show tabs and spaces in the editor.
     pub show_whitespaces: ShowWhitespaceSetting,
+    /// Visible characters used to render whitespace when show_whitespaces is enabled.
+    pub whitespace_map: WhitespaceMap,
     /// Whether to start a new line with a comment when a previous line is a comment as well.
     pub extend_comment_on_newline: bool,
     /// Inlay hint related settings.
@@ -578,6 +580,11 @@ pub struct LanguageSettingsContent {
     /// Whether to show tabs and spaces in the editor.
     #[serde(default)]
     pub show_whitespaces: Option<ShowWhitespaceSetting>,
+    /// Visible characters used to render whitespace when show_whitespaces is enabled.
+    ///
+    /// Default: "•" for spaces, "→" for tabs.
+    #[serde(default)]
+    pub whitespace_map: Option<WhitespaceMap>,
     /// Whether to start a new line with a comment when a previous line is a comment as well.
     ///
     /// Default: true
@@ -853,6 +860,28 @@ pub enum ShowWhitespaceSetting {
     Boundary,
     /// Draw whitespaces only after non-whitespace characters.
     Trailing,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, SettingsUi)]
+pub struct WhitespaceMap {
+    #[serde(default)]
+    pub space: Option<String>,
+    #[serde(default)]
+    pub tab: Option<String>,
+}
+
+impl WhitespaceMap {
+    pub fn space(&self) -> SharedString {
+        self.space
+            .as_ref()
+            .map_or_else(|| SharedString::from("•"), |s| SharedString::from(s))
+    }
+
+    pub fn tab(&self) -> SharedString {
+        self.tab
+            .as_ref()
+            .map_or_else(|| SharedString::from("→"), |s| SharedString::from(s))
+    }
 }
 
 /// Controls which formatter should be used when formatting code.
@@ -1643,6 +1672,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
         src.edit_predictions_disabled_in.clone(),
     );
     merge(&mut settings.show_whitespaces, src.show_whitespaces);
+    merge(&mut settings.whitespace_map, src.whitespace_map.clone());
     merge(
         &mut settings.extend_comment_on_newline,
         src.extend_comment_on_newline,
