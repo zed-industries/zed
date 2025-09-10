@@ -157,7 +157,10 @@ use project::{
         session::{Session, SessionEvent},
     },
     git_store::{GitStoreEvent, RepositoryEvent},
-    lsp_store::{CompletionDocumentation, FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
+    lsp_store::{
+        CompletionDocumentation, FormatTrigger, LspFormatTarget, OpenLspBufferHandle,
+        RowChunkCachedHints,
+    },
     project_settings::{DiagnosticSeverity, GoToDiagnosticSeverityFilter, ProjectSettings},
 };
 use rand::seq::SliceRandom;
@@ -22459,8 +22462,7 @@ pub trait SemanticsProvider {
         _buffer: Entity<Buffer>,
         _range: Range<text::Anchor>,
         _cx: &mut App,
-    ) -> Option<Task<Result<HashMap<Range<BufferRow>, HashMap<LanguageServerId, Vec<InlayHint>>>>>>
-    {
+    ) -> Option<Task<Result<HashMap<Range<BufferRow>, RowChunkCachedHints>>>> {
         None
     }
 
@@ -22973,12 +22975,10 @@ impl SemanticsProvider for Entity<Project> {
         buffer: Entity<Buffer>,
         range: Range<text::Anchor>,
         cx: &mut App,
-    ) -> Option<Task<Result<HashMap<Range<BufferRow>, HashMap<LanguageServerId, Vec<InlayHint>>>>>>
-    {
-        let new_hints = self.read(cx).lsp_store().update(cx, |lsp_store, cx| {
+    ) -> Option<Task<Result<HashMap<Range<BufferRow>, RowChunkCachedHints>>>> {
+        Some(self.read(cx).lsp_store().update(cx, |lsp_store, cx| {
             lsp_store.inlay_hints(invalidate_cache, buffer, range, cx)
-        });
-        Some(new_hints)
+        }))
     }
 
     fn resolve_inlay_hint(
