@@ -41,6 +41,7 @@ pub struct LspInlayHintData {
     append_debounce: Option<Duration>,
     inlays_for_version: Option<clock::Global>,
     inlay_tasks: HashMap<BufferId, HashMap<Range<BufferRow>, Task<()>>>,
+    inlay_chunks_received: HashSet<Range<BufferRow>>,
 }
 
 impl LspInlayHintData {
@@ -51,6 +52,7 @@ impl LspInlayHintData {
             enabled_in_settings: settings.enabled,
             inlays_for_version: None,
             inlay_tasks: HashMap::default(),
+            inlay_chunks_received: HashSet::default(),
             invalidate_debounce: debounce_value(settings.edit_debounce_ms),
             append_debounce: debounce_value(settings.scroll_debounce_ms),
             allowed_hint_kinds: settings.enabled_inlay_hint_kinds(),
@@ -85,6 +87,7 @@ impl LspInlayHintData {
 
     pub fn clear(&mut self) {
         self.inlay_tasks.clear();
+        self.inlay_chunks_received.clear();
         // TODO kb splice!? We have to splice inlays inside the editor!
     }
 
@@ -411,16 +414,19 @@ impl Editor {
                 return;
             };
             let hints_range = buffer_point_range.start.row..buffer_point_range.end.row;
+            // TODO kb check if the range is covered already by the fetched chunks
+            // TODO kb also, avoid splices that remove and re-add same inlays
+            let a = &inlay_hints.inlay_chunks_received;
 
             inlay_hints
                 .inlay_tasks
                 .entry(buffer_id)
                 .or_default()
                 .insert(
+                    // TODO kb this is a range of the visible excerpt
+                    // does not look appropriate?
                     hints_range.clone(),
                     cx.spawn(async move |editor, cx| {
-                        // TODO kb this will spam with same hints on scroll, need to deduplicate
-                        // ??? use cache_version and Option, after all?
                         let new_hints = new_hints.await;
                         editor
                             .update(cx, |editor, cx| {
@@ -437,6 +443,7 @@ impl Editor {
                                 };
 
                                 let mut update_data = None;
+                                let should_invalidate = invalidate_cache.should_invalidate();
                                 if let Some(inlay_hints) = editor.inlay_hints.as_mut() {
                                     let inlay_tasks =
                                         inlay_hints.inlay_tasks.entry(buffer_id).or_default();
@@ -448,11 +455,14 @@ impl Editor {
                                                     if !inlays_for_version
                                                         .changed_since(&buffer_version)
                                                     {
-                                                        if invalidate_cache.should_invalidate()
+                                                        if should_invalidate
                                                             || buffer_version
                                                                 .changed_since(inlays_for_version)
                                                         {
                                                             inlay_tasks.clear();
+                                                            inlay_hints
+                                                                .inlay_chunks_received
+                                                                .clear();
                                                             hints_to_remove
                                                                 .extend(visible_inlay_hint_ids);
                                                         }
@@ -465,11 +475,16 @@ impl Editor {
                                             .into_iter()
                                             .flat_map(
                                                 |(chunk, RowChunkCachedHints { cached, hints })| {
-                                                    let was_fetched =
-                                                        inlay_tasks.contains_key(&chunk);
+                                                    let was_fetched = !inlay_hints
+                                                        .inlay_chunks_received
+                                                        .insert(chunk.clone());
                                                     hints
                                                         .into_values()
-                                                        .filter(move |_| !cached || !was_fetched)
+                                                        .filter(move |_| {
+                                                            should_invalidate
+                                                                || !cached
+                                                                || !was_fetched
+                                                        })
                                                         .flatten()
                                                         .dedup()
                                                 },
