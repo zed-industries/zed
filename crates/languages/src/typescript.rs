@@ -19,7 +19,7 @@ use std::{
     borrow::Cow,
     ffi::OsString,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, LazyLock},
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::merge_json_value_into;
@@ -510,7 +510,8 @@ fn eslint_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 fn replace_test_name_parameters(test_name: &str) -> String {
     use rand::Rng;
 
-    let pattern = regex::Regex::new(r"(%|\$)[0-9a-zA-Z]+").unwrap();
+    static PATTERN: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"(%|\$)[0-9a-zA-Z]+").unwrap());
     let placeholder = format!(
         "__zed_{}__",
         rand::thread_rng()
@@ -520,7 +521,7 @@ fn replace_test_name_parameters(test_name: &str) -> String {
             .collect::<String>()
     );
 
-    regex::escape(&pattern.replace_all(test_name, &placeholder)).replace(&placeholder, "(.+?)")
+    regex::escape(&PATTERN.replace_all(test_name, &placeholder)).replace(&placeholder, "(.+?)")
 }
 
 pub struct TypeScriptLspAdapter {
