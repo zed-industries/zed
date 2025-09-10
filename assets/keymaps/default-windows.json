@@ -249,7 +249,10 @@
       "ctrl-shift-e": "project_panel::ToggleFocus",
       "ctrl-shift-enter": "agent::ContinueThread",
       "super-ctrl-b": "agent::ToggleBurnMode",
-      "alt-enter": "agent::ContinueWithBurnMode"
+      "alt-enter": "agent::ContinueWithBurnMode",
+      "ctrl-y": "agent::AllowOnce",
+      "ctrl-alt-y": "agent::AllowAlways",
+      "ctrl-d": "agent::RejectOnce"
     }
   },
   {

@@ -116,6 +116,12 @@ actions!(
         RejectAll,
         /// Keeps all suggestions or changes.
         KeepAll,
+        /// Allow this operation only this time.
+        AllowOnce,
+        /// Allow this operation and remember the choice.
+        AllowAlways,
+        /// Reject this operation only this time.
+        RejectOnce,
         /// Follows the agent's suggestions.
         Follow,
         /// Resets the trial upsell notification.
